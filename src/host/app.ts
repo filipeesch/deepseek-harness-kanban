@@ -83,6 +83,7 @@ export class KanbanApp {
   return {state,attention,sequence,questionRounds};
  }
  async branches(taskId:string):Promise<string[]>{const task=this.store.requireTask(taskId);return this.git.branches(this.store.requireProject(task.projectId),task.sessionIds);}
+ async inferProject(path:string):Promise<{projectPath:string;gitRootPath:string}>{return this.git.discover(path);}
  async assertExecutionContext(sessionId:string):Promise<void>{
   const state=this.store.snapshot();const task=state.tasks.find(value=>value.sessionIds.includes(sessionId));if(!task)return;
   const project=this.store.requireProject(task.projectId,state);
@@ -163,6 +164,7 @@ export class KanbanApp {
   let commandReceipt:BoardSnapshot['commandReceipt'];
   switch(command.type){
    case 'project.save':{const value=await this.store.saveProject(await this.project(command.project),command.expectedRevision);commandReceipt={kind:'project',id:value.id};break;}
+   case 'project.delete':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the project registration.');await this.store.deleteProject(command.projectId,command.expectedRevision);break;
    case 'workflow.save':await this.store.setWorkflow(command.yaml,command.expectedRevision);break;
    case 'task.create':{const value=await this.createTaskNow(command);commandReceipt={kind:'task',id:value.id};break;}
    case 'task.edit':await this.store.editTask(command.taskId,{...(command.title!==undefined?{title:command.title}:{}),...(command.description!==undefined?{description:command.description}:{})},command.expectedRevision);break;

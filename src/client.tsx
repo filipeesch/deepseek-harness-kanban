@@ -53,6 +53,10 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   const held = new Set<SessionReference>();
   const bridge = new ClientBridge(ctx.remote, ctx.uiSession.sessionStatus);
   const scopedSessions = ctx.sessions;
+  const pickDirectory = async (): Promise<string | null> => {
+    const workspace = ctx.get('uiWorkspace') as { pickDirectory?: () => Promise<string | null> } | undefined;
+    return workspace?.pickDirectory ? await workspace.pickDirectory() : null;
+  };
   const emptySessionState = { ids: [], byId: {}, phase: 'ready' as const, projectionsBySession: {} };
   const emptySessionList = { subscribe: () => () => {}, getSnapshot: () => emptySessionState };
 
@@ -123,7 +127,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
         if (!result.ok) throw new Error(result.error.message);
       },
     };
-    return <BoardView api={props.api} pageState={pageState} sessionTitles={sessionTitles} renderConversation={(id) => <RetainedConversation key={id} id={id} owner={props} />} />;
+    return <BoardView api={props.api} pageState={pageState} sessionTitles={sessionTitles} pickDirectory={pickDirectory} renderConversation={(id) => <RetainedConversation key={id} id={id} owner={props} />} />;
   }
   function Main(props: MainProps) {
     const active = props.usePanelInfo(value => value.activePanelId === 'kanban');

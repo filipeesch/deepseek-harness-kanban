@@ -41,6 +41,7 @@ export interface ProjectInput { id?: string; name: string; projectPath: string; 
 export interface NewTask { projectId: string; title: string; description: string }
 export type Command =
   | { type: 'project.save'; project: ProjectInput; expectedRevision?: number }
+  | { type: 'project.delete'; projectId: string; confirmed: boolean; expectedRevision?: number }
   | { type: 'workflow.save'; yaml: string; expectedRevision?: number }
   | ({ type: 'task.create' } & NewTask)
   | { type: 'task.edit'; taskId: string; title?: string; description?: string; expectedRevision?: number }
@@ -58,6 +59,7 @@ export interface ClientApi {
   snapshot(): Promise<BoardSnapshot>;
   command(command: Command): Promise<BoardSnapshot>;
   branches(taskId: string): Promise<string[]>;
+  inferProject(path: string): Promise<{ projectPath: string; gitRootPath: string }>;
   subscribe(listener: (snapshot: BoardSnapshot) => void): () => void;
 }
 export interface QuestionOption { title: string; description: string }

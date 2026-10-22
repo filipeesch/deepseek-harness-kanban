@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
-import type { BoardState, Problem, Project, Task } from '../shared/types.js';
+import type { BoardState, ClientApi, Problem, Project, Task } from '../shared/types.js';
 import { creationReceiptId, ErrorNotice, Markdown, Modal, Tabs, useAction, type RunCommand } from './ui.js';
 import { createTaskPageState, usePageField, type TaskPageState } from './page-state.js';
 
@@ -50,26 +50,56 @@ function InfoEditor({ task, state, run, viewState }: TaskPanelProps) {
   </form>;
 }
 
-export function Configuration({ state, run, onClose, initial = 'Projects' }: { state: BoardState; run: RunCommand; onClose: () => void; initial?: string }) {
+export function Configuration({ state, run, api, pickDirectory, onClose, initial = 'Projects' }: { state: BoardState; run: RunCommand; api?: ClientApi; pickDirectory?: () => Promise<string | null>; onClose: () => void; initial?: string }) {
   const [section, setSection] = useState(initial); const id = useId();
-  return <Modal title="Kanban configuration" onClose={onClose}><Tabs label="Configuration sections" values={['Projects', 'Workflow']} selected={section} onSelect={setSection} id={id} /><section className="kb-panel" role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>{section === 'Projects' ? <Projects state={state} run={run} /> : <WorkflowEditor state={state} run={run} />}</section></Modal>;
+  return <Modal title="Kanban configuration" onClose={onClose}><Tabs label="Configuration sections" values={['Projects', 'Workflow']} selected={section} onSelect={setSection} id={id} /><section className="kb-panel" role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>{section === 'Projects' ? <Projects state={state} run={run} api={api} pickDirectory={pickDirectory} /> : <WorkflowEditor state={state} run={run} />}</section></Modal>;
 }
 
-function Projects({ state, run }: { state: BoardState; run: RunCommand }) {
+function Projects({ state, run, api, pickDirectory }: { state: BoardState; run: RunCommand; api?: ClientApi; pickDirectory?: () => Promise<string | null> }) {
   const [selected, setSelected] = useState<string | null>(null); const [name, setName] = useState(''); const [projectPath, setProjectPath] = useState(''); const [gitRootPath, setGitRootPath] = useState(''); const [defaultBranch, setDefaultBranch] = useState('');
-  const [revision, setRevision] = useState(state.revision); const [saved, setSaved] = useState(false); const action = useAction(run); const [creationError, setCreationError] = useState<Problem | null>(null);
+  const [revision, setRevision] = useState(state.revision); const [saved, setSaved] = useState(false); const [deleted, setDeleted] = useState(false); const [deleting, setDeleting] = useState<string | null>(null); const [browseError, setBrowseError] = useState<Problem | null>(null); const action = useAction(run); const [creationError, setCreationError] = useState<Problem | null>(null);
   const draftGeneration = useRef(0);
   useEffect(() => () => { draftGeneration.current++; }, []);
   const changeDraft = (change: () => void) => { if (action.pending) return; draftGeneration.current++; change(); setSaved(false); };
-  const load = (project?: Project) => { if (action.pending) return; draftGeneration.current++; setSelected(project?.id ?? null); setName(project?.name ?? ''); setProjectPath(project?.projectPath ?? ''); setGitRootPath(project?.gitRootPath ?? ''); setDefaultBranch(project?.defaultBranch ?? ''); setRevision(state.revision); setSaved(false); setCreationError(null); action.clearError(); };
-  return <div className="kb-form"><div className="kb-row"><h3>Projects</h3><button className="kb-button" type="button" disabled={action.pending} onClick={() => load()}>New project</button></div><ul className="kb-project-list">{state.projects.map(project => <li key={project.id}><strong>{project.name}</strong><span className="kb-hint">{project.projectPath}</span><button className="kb-button" type="button" aria-label={'Edit project ' + project.name} disabled={action.pending} onClick={() => load(project)}>Edit</button></li>)}</ul>
-    <form className="kb-form" aria-label={selected ? 'Edit project' : 'New project'} aria-busy={action.pending} onSubmit={async event => { event.preventDefault(); if (!name.trim() || !projectPath.trim() || !gitRootPath.trim() || creationError || action.pending) return; const generation = draftGeneration.current; const result = await action.execute({ type: 'project.save', project: { ...(selected ? { id: selected } : {}), name: name.trim(), projectPath: projectPath.trim(), gitRootPath: gitRootPath.trim(), ...(defaultBranch.trim() ? { defaultBranch: defaultBranch.trim() } : {}) }, expectedRevision: revision }); if (generation !== draftGeneration.current) return; if (result) { const id = selected ?? creationReceiptId(result, 'project'); if (!id) { setCreationError({ code: 'CREATION_RECEIPT_REQUIRED', message: 'The host saved the project but did not return its exact project creation receipt. Select the saved project explicitly from the list or refresh before saving again.' }); return; } if (!result.state.projects.some(project => project.id === id)) { setCreationError({ code: 'CREATED_PROJECT_UNAVAILABLE', message: 'The saved project is not available in the current list. Refresh and select the project explicitly before saving again.' }); return; } setSelected(id); setRevision(result.state.revision); setSaved(true); } }}>
+  const load = (project?: Project) => { if (action.pending) return; draftGeneration.current++; setSelected(project?.id ?? null); setName(project?.name ?? ''); setProjectPath(project?.projectPath ?? ''); setGitRootPath(project?.gitRootPath ?? ''); setDefaultBranch(project?.defaultBranch ?? ''); setRevision(state.revision); setSaved(false); setDeleted(false); setDeleting(null); setCreationError(null); action.clearError(); };
+  async function browse() {
+    if (!pickDirectory || !api) return;
+    setBrowseError(null);
+    let picked: string | null;
+    try { picked = await pickDirectory(); }
+    catch (error) { setBrowseError({ code: 'DIRECTORY_PICKER_FAILED', message: error instanceof Error ? error.message : 'The directory picker could not open.' }); return; }
+    if (!picked) return;
+    setProjectPath(picked);
+    try {
+      const inferred = await api.inferProject(picked);
+      setProjectPath(inferred.projectPath); setGitRootPath(inferred.gitRootPath);
+      if (!name.trim()) setName(inferred.projectPath.split(/[\\/]/).filter(Boolean).at(-1) ?? '');
+    } catch (error) { setBrowseError({ code: 'PROJECT_INFERENCE_FAILED', message: error instanceof Error ? error.message : 'The Git root could not be inferred.' }); }
+  }
+  async function remove(project: Project) {
+    const result = await action.execute({ type: 'project.delete', projectId: project.id, confirmed: true, expectedRevision: state.revision });
+    if (!result) return;
+    setDeleting(null); setDeleted(true); setRevision(result.state.revision);
+    if (selected === project.id) { setSelected(null); setName(''); setProjectPath(''); setGitRootPath(''); setDefaultBranch(''); }
+  }
+  return <div className="kb-form">
+    <div className="kb-row"><h3>Projects</h3><button className="kb-button" type="button" disabled={action.pending} onClick={() => load()}>New project</button></div>
+    <ul className="kb-project-list">{state.projects.map(project => {
+      const used = state.tasks.some(task => task.projectId === project.id);
+      return <li key={project.id}>
+        <strong>{project.name}</strong><span className="kb-hint">{project.projectPath}</span>
+        <button className="kb-button" type="button" aria-label={'Edit project ' + project.name} disabled={action.pending} onClick={() => load(project)}>Edit</button>
+        <button className="kb-button kb-danger" type="button" aria-label={'Delete project ' + project.name} disabled={action.pending || used} title={used ? 'Move or delete the tasks in this project first.' : 'Delete this project registration'} onClick={() => { setDeleting(project.id); setDeleted(false); }}>Delete</button>
+        {deleting === project.id && <div className="kb-inline-confirm" role="alertdialog" aria-label={'Confirm deleting project ' + project.name}><p>Delete <strong>{project.name}</strong>? The project registration is removed; files and native workspaces are kept.</p><div className="kb-actions"><button type="button" className="kb-button" disabled={action.pending} onClick={() => setDeleting(null)}>Cancel</button><button type="button" className="kb-button kb-danger" disabled={action.pending} onClick={() => void remove(project)}>{action.pending ? 'Deleting…' : 'Delete project'}</button></div></div>}
+      </li>;
+    })}</ul>
+    <form className="kb-form" aria-label={selected ? 'Edit project' : 'New project'} aria-busy={action.pending} onSubmit={async event => { event.preventDefault(); if (!name.trim() || !projectPath.trim() || !gitRootPath.trim() || creationError || action.pending) return; const generation = draftGeneration.current; const result = await action.execute({ type: 'project.save', project: { ...(selected ? { id: selected } : {}), name: name.trim(), projectPath: projectPath.trim(), gitRootPath: gitRootPath.trim(), ...(defaultBranch.trim() ? { defaultBranch: defaultBranch.trim() } : {}) }, expectedRevision: revision }); if (generation !== draftGeneration.current) return; if (result) { const id = selected ?? creationReceiptId(result, 'project'); if (!id) { setCreationError({ code: 'CREATION_RECEIPT_REQUIRED', message: 'The host saved the project but did not return its exact project creation receipt. Select the saved project explicitly from the list or refresh before saving again.' }); return; } if (!result.state.projects.some(project => project.id === id)) { setCreationError({ code: 'CREATED_PROJECT_UNAVAILABLE', message: 'The saved project is not available in the current list. Refresh and select the saved project explicitly before saving again.' }); return; } setSelected(id); setRevision(result.state.revision); setSaved(true); } }}>
       <h3>{selected ? 'Edit project' : 'New project'}</h3><label className="kb-field">Project name<input className="kb-input" required disabled={action.pending} value={name} onChange={event => changeDraft(() => setName(event.target.value))} /></label>
-      <label className="kb-field">Project path<input className="kb-input" required disabled={action.pending} value={projectPath} onChange={event => changeDraft(() => setProjectPath(event.target.value))} /></label><label className="kb-field">Git root<input className="kb-input" required disabled={action.pending} value={gitRootPath} onChange={event => changeDraft(() => setGitRootPath(event.target.value))} /></label><p className="kb-hint">The project path can be a subdirectory of the Git root. Agents work in the project path, including its equivalent subdirectory in a worktree.</p>
-      <label className="kb-field">Default branch (optional)<input className="kb-input" disabled={action.pending} value={defaultBranch} onChange={event => changeDraft(() => setDefaultBranch(event.target.value))} /></label><ErrorNotice problem={action.error} /><ErrorNotice problem={creationError} /><button className="kb-button kb-primary" disabled={action.pending || Boolean(creationError) || !name.trim() || !projectPath.trim() || !gitRootPath.trim()}>{action.pending ? 'Saving…' : 'Save project'}</button>{saved && <p role="status">Project saved.</p>}
-    </form></div>;
+      <label className="kb-field">Project path<div className="kb-input-row"><input className="kb-input" aria-label="Project path" required disabled={action.pending} value={projectPath} onChange={event => changeDraft(() => setProjectPath(event.target.value))} /><button type="button" className="kb-button" aria-label="Browse for project path" disabled={action.pending || !pickDirectory || !api} onClick={() => void browse()}>Browse…</button></div></label><label className="kb-field">Git root<input className="kb-input" required disabled={action.pending} value={gitRootPath} onChange={event => changeDraft(() => setGitRootPath(event.target.value))} /></label><p className="kb-hint">The project path can be a subdirectory of the Git root. Agents work in the project path, including its equivalent subdirectory in a worktree.</p>
+      <label className="kb-field">Default branch (optional)<input className="kb-input" disabled={action.pending} value={defaultBranch} onChange={event => changeDraft(() => setDefaultBranch(event.target.value))} /></label><ErrorNotice problem={action.error} /><ErrorNotice problem={creationError} /><ErrorNotice problem={browseError} /><button className="kb-button kb-primary" disabled={action.pending || Boolean(creationError) || !name.trim() || !projectPath.trim() || !gitRootPath.trim()}>{action.pending ? 'Saving…' : 'Save project'}</button>{saved && <p role="status">Project saved.</p>}{deleted && <p role="status">Project deleted.</p>}
+    </form>
+  </div>;
 }
-
 function WorkflowEditor({ state, run }: { state: BoardState; run: RunCommand }) {
   const [yaml, setYaml] = useState(state.workflowYaml); const [revision, setRevision] = useState(state.revision); const [saved, setSaved] = useState(false); const action = useAction(run);
   const draftGeneration = useRef(0);

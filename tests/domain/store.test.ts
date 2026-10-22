@@ -336,6 +336,14 @@ describe('task and project behavior', () => {
     await expect(store.saveNote('missing', null as never)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
 
+  it('deletes only project registrations that have no tasks', async () => {
+    const { store, project } = await fixture();
+    const unused = await store.saveProject(sampleProject('project-unused'));
+    await store.createTask(newTask, 'session-1');
+    await expect(store.deleteProject(project.id)).rejects.toMatchObject({ code: 'PROJECT_IN_USE' });
+    await expect(store.deleteProject(unused.id)).resolves.toMatchObject({ id: unused.id });
+    expect(store.snapshot().projects.map(value => value.id)).toEqual([project.id]);
+  });
   it('protects project paths referenced by tasks while permitting name/default-branch edits', async () => {
     const { store } = await fixture();
     await store.createTask(newTask, 'session-1');

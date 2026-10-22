@@ -18,7 +18,7 @@ export interface SessionPort {
   archive(sessionId: string): Promise<void>;
   attention(sessionId: string): Promise<Attention>;
   /** Includes cold sessions' projected effective directories where available. */
-  directories(): Promise<Array<{ sessionId: string; directory: string }>>;
+  directories(within?: string): Promise<Array<{ sessionId: string; directory: string }>>;
 }
 export interface GitTree { path: string; branch: string; dirty: boolean; commonDirectory: string }
 export interface GitPort {
@@ -28,6 +28,7 @@ export interface GitPort {
   remove(project: Project, path: string, discardChanges: boolean, sessionIds: string[], signal?: AbortSignal): Promise<void>;
   assertPolicy(project: Project, paths: string[], sessionIds: string[], write: boolean): Promise<void>;
   projectDirectory(project: Project, worktreeRoot?: string): Promise<string>;
+  discover(path: string): Promise<{ projectPath: string; gitRootPath: string }>;
 }
 export interface CommandResult { exitCode: number; stdout: string; stderr: string }
 export interface GitExecutor {

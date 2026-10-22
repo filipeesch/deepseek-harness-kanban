@@ -31,6 +31,7 @@ export class TestGit implements GitPort {
  async create(project:Project,request:CreateWorktree){this.created++;await mkdir(await this.projectDirectory(project,request.path),{recursive:true});const tree={path:request.path,branch:request.branchName,dirty:false,commonDirectory:path.join(project.gitRootPath,'.git')};this.trees.set(request.path,tree);return tree;}
  async remove(_project:Project,root:string,discard:boolean){const tree=this.trees.get(root);if(tree?.dirty&&!discard)throw new KanbanError('DISCARD_REQUIRED','Confirm discard.',{path:root});this.trees.delete(root);this.removed.push(root);}
  async assertPolicy(){}
+ async discover(value:string){return {projectPath:value,gitRootPath:value};}
 }
 export class TestWorkspaces implements WorkspacePort {
  byPath=new Map<string,WorkspaceInfo>();byId=new Map<string,WorkspaceInfo>();deleted:string[]=[];private count=0;

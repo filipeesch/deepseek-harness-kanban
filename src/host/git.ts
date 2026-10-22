@@ -103,6 +103,18 @@ export class GitAdapter implements GitPort {
     return target;
   }
 
+  /** Resolve a picked directory and its Git checkout root without registering a project. */
+  async discover(value: string): Promise<{ projectPath: string; gitRootPath: string }> {
+    const projectPath = await directory(value);
+    const placeholder: Project = { id: 'discover', name: 'discover', projectPath, gitRootPath: projectPath };
+    const result = await this.executor.run(placeholder, ['-C', projectPath, 'rev-parse', '--show-toplevel'], [], AbortSignal.timeout(10_000));
+    const output = result.stdout.trim();
+    if (result.exitCode !== 0 || !output) return { projectPath, gitRootPath: projectPath };
+    const gitRootPath = await directory(output);
+    if (!containsPath(gitRootPath, projectPath)) throw new KanbanError('PROJECT_OUTSIDE_GIT_ROOT', 'The selected project must be inside its Git root.', { projectPath, gitRootPath });
+    return { projectPath, gitRootPath };
+  }
+
   async branches(project: Project, sessionIds: string[]): Promise<string[]> {
     const { root } = await this.roots(project, sessionIds);
     const output = await this.checked(project, ['-C', root, 'for-each-ref', '--format=%(refname:strip=2)', 'refs/heads'], sessionIds);

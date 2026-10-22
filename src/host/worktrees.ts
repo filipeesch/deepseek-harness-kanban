@@ -250,7 +250,7 @@ export class WorktreeCoordinator {
       const otherPath = await canonicalPath(other.worktree.path, true);
       if (containsPath(canonical, otherPath) || containsPath(otherPath, canonical)) throw new KanbanError('SHARED_WORKTREE', 'Another task is associated with this checkout.', { taskId: other.id, path: canonical });
     }
-    for (const session of await this.sessions.directories()) {
+    for (const session of await this.sessions.directories(canonical)) {
       if (task.sessionIds.includes(session.sessionId)) continue;
       const current = await canonicalPath(session.directory, true);
       if (containsPath(canonical, current)) throw new KanbanError('SHARED_WORKTREE', 'Another native session is using this checkout.', { sessionId: session.sessionId, path: canonical });

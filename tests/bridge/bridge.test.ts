@@ -45,6 +45,7 @@ function fixture() {
       snapshot: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot() } }),
       command: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot(2) } }),
       branches: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['main'] } }),
+      inferProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { projectPath: '/repo/apps/web', gitRootPath: '/repo' } } }),
       questions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [round()] } }),
       follow: vi.fn((signal?: AbortSignal) => { const feed = new Feed<BoardSnapshot>(); feeds.push(feed); signal?.addEventListener('abort', () => feed.dispose(), { once: true }); return feed; }),
     },

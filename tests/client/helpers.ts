@@ -28,10 +28,11 @@ export function fakeApi(initial = fixture()) {
       case 'note.save': { const note = value.state.notes.find(note => note.id === input.noteId); if (note) note.content = input.content; else { const id = 'n' + next++; value.state.notes.push({ id, taskId: input.taskId, content: input.content, createdAt: 'now', updatedAt: 'now' }); receipt = { kind: 'note', id }; } break; }
       case 'workflow.save': value.state.workflowYaml = input.yaml; break;
       case 'project.save': { const project = value.state.projects.find(project => project.id === input.project.id); if (project) Object.assign(project, input.project); else { const id = 'p' + next++; value.state.projects.push({ ...input.project, id }); receipt = { kind: 'project', id }; } break; }
+      case 'project.delete': value.state.projects = value.state.projects.filter(project => project.id !== input.projectId); receipt = { kind: 'project', id: input.projectId }; break;
     }
     const snapshot = publish();
     return receipt ? { ...snapshot, commandReceipt: receipt } : snapshot;
   });
-  const api: ClientApi = { snapshot: vi.fn(async () => clone(value)), command, branches: vi.fn(async () => ['main', 'feature']), subscribe: vi.fn(listener => { listeners.add(listener); return () => listeners.delete(listener); }) };
+  const api: ClientApi = { snapshot: vi.fn(async () => clone(value)), command, branches: vi.fn(async () => ['main', 'feature']), inferProject: vi.fn(async (path: string) => ({ projectPath: path, gitRootPath: path })), subscribe: vi.fn(listener => { listeners.add(listener); return () => listeners.delete(listener); }) };
   return { api, command, publish, get: () => clone(value), listeners };
 }

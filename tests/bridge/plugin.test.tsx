@@ -34,6 +34,7 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
     snapshot: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot(rounds) } }),
     command: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot(rounds) } }),
     branches: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['main'] } }),
+    inferProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { projectPath: '/repo', gitRootPath: '/repo' } } }),
     questions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: rounds } }),
     follow(signal?: AbortSignal): RemoteStreamHandle<BoardSnapshot, never> {
       return {

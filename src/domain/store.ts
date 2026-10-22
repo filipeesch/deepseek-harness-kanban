@@ -185,6 +185,16 @@ export class BoardStore {
     }, expectedRevision);
   }
 
+  async deleteProject(projectId: string, expectedRevision?: number): Promise<Project> {
+    assertId(projectId, 'Project ID');
+    return this.transact(state => {
+      const project = this.requireProject(projectId, state);
+      invariant(!state.tasks.some(task => task.projectId === projectId), 'PROJECT_IN_USE', 'Move or delete the tasks in this project before deleting the project.');
+      state.projects.splice(state.projects.indexOf(project), 1);
+      return project;
+    }, expectedRevision);
+  }
+
   async setProjectWorkspace(projectId: string, workspaceId: string, owned: boolean): Promise<Project> {
     assertId(workspaceId, 'Workspace ID');
     return this.transact(state => {

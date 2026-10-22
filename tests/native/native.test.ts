@@ -279,6 +279,19 @@ describe('native conversations', () => {
     expect(await f.sessions.directories()).toEqual([{ sessionId: coldId, directory: changed }, { sessionId: 'a', directory: root }]);
     expect(f.resolveAgent).not.toHaveBeenCalled(); expect(f.inspect).not.toHaveBeenCalled();
   });
+  it('narrows a shared-tree scan to the target path without reading unrelated cold sessions', async () => {
+    const f = fixture(); const within = join(root, 'tree'); await mkdir(within); await mkdir(join(root, 'other'));
+    const cold = SessionId('cold'); const unrelated = SessionId('unrelated');
+    f.list.mockResolvedValue({ items: [
+      { sessionId: cold, agentAvailable: false, running: false, updatedAt: 1, blank: false, cwd: root, formatStatus: 'current', projections: { kind: 'sequenced', asOfSeq: 1, values: { workingDirectory: join(within, 'api') } } },
+      { sessionId: unrelated, agentAvailable: false, running: false, updatedAt: 1, blank: false, cwd: join(root, 'other'), formatStatus: 'current', projections: { kind: 'sequenced', asOfSeq: 1, values: { workingDirectory: join(root, 'other') } } },
+    ] } as never);
+    f.projection.mockImplementation(async ({ sessionId }): Promise<Projection> => sessionId === cold
+      ? { kind: 'sequenced', asOfSeq: 1, values: { workingDirectory: join(within, 'api') } }
+      : { kind: 'sequenced', asOfSeq: 1, values: { workingDirectory: join(root, 'other') } });
+    expect(await f.sessions.directories(within)).toEqual([{ sessionId: cold, directory: join(within, 'api') }]);
+    expect(f.inspect).not.toHaveBeenCalled();
+  });
   it('reads canonical cold cwd when an unrelated aggregate projection fails without activating the peer', async () => {
     const f = fixture(); f.live.clear(); const expected = join(root, 'actual-tree', 'api');
     const snapshot = f.inspections.get('a')!; f.inspections.set('a', { ...snapshot, events: [envelope('working-directory/change', { cwd: expected })] });

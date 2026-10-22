@@ -7,6 +7,12 @@ import { cleanup, fixture, git, gitOk, LocalExecutor } from './helpers.js';
 afterEach(cleanup);
 
 describe('GitAdapter through the injected executor', () => {
+  it('discovers a picked directory and its Git root without a registered project', async () => {
+    const f = await fixture(); const adapter = new GitAdapter(new LocalExecutor());
+    await expect(adapter.discover(f.project.projectPath)).resolves.toEqual({ projectPath: f.project.projectPath, gitRootPath: f.project.gitRootPath });
+    const outside = path.join(f.root, 'outside'); await mkdir(outside);
+    await expect(adapter.discover(outside)).resolves.toEqual({ projectPath: outside, gitRootPath: outside });
+  });
   it('creates a new branch and preserves the monorepo project directory', async () => {
     const f = await fixture(); const executor = new LocalExecutor(); const adapter = new GitAdapter(executor);
     const tree = await adapter.create(f.project, { mode: 'new', path: f.tree, branchName: 'feature', sourceBranch: 'main' }, ['a', 'b']);

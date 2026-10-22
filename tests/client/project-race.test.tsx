@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { BoardView } from '../../src/client/board.js';
@@ -24,6 +24,42 @@ function createdX(receipt = true): BoardSnapshot {
   if (receipt) result.commandReceipt = { kind: 'project', id: 'created-x' };
   return result;
 }
+
+describe('project directory browsing', () => {
+  it('fills the project path and infers the Git root from the picked folder', async () => {
+    const mock = fakeApi(); const pick = vi.fn(async () => '/repo/apps/web');
+    vi.mocked(mock.api.inferProject).mockResolvedValue({ projectPath: '/repo/apps/web', gitRootPath: '/repo' });
+    const user = userEvent.setup(); render(<BoardView api={mock.api} pickDirectory={pick} renderConversation={() => null} />);
+    await screen.findByRole('button', { name: 'Open task Alpha task' }); await user.click(screen.getByRole('button', { name: 'Configuration' }));
+    await user.click(screen.getByRole('button', { name: 'Browse for project path' }));
+    await waitFor(() => expect((screen.getByRole('textbox', { name: 'Project path' }) as HTMLInputElement).value).toBe('/repo/apps/web'));
+    expect((screen.getByRole('textbox', { name: 'Git root' }) as HTMLInputElement).value).toBe('/repo');
+    expect((screen.getByRole('textbox', { name: 'Project name' }) as HTMLInputElement).value).toBe('web');
+    expect(mock.api.inferProject).toHaveBeenCalledWith('/repo/apps/web');
+  });
+});
+
+describe('project registration deletion', () => {
+  it('requires inline confirmation and deletes an unused project registration', async () => {
+    const initial = fixture(); initial.state.tasks = [];
+    const mock = fakeApi(initial); const user = userEvent.setup();
+    render(<BoardView api={mock.api} renderConversation={() => null} />);
+    await screen.findByRole('button', { name: 'Configuration' }); await user.click(screen.getByRole('button', { name: 'Configuration' }));
+    expect((screen.getByRole('button', { name: 'Delete project API' }) as HTMLButtonElement).disabled).toBe(false);
+    await user.click(screen.getByRole('button', { name: 'Delete project API' }));
+    expect(screen.getByRole('alertdialog', { name: 'Confirm deleting project API' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Delete project' }));
+    await screen.findByText('Project deleted.');
+    expect(mock.command).toHaveBeenCalledWith(expect.objectContaining({ type: 'project.delete', projectId: 'p1', confirmed: true }));
+    expect(screen.queryByText('API')).toBeNull();
+  });
+  it('disables deletion for a project that still has tasks', async () => {
+    const mock = fakeApi(); const user = userEvent.setup();
+    render(<BoardView api={mock.api} renderConversation={() => null} />);
+    await screen.findByRole('button', { name: 'Open task Alpha task' }); await user.click(screen.getByRole('button', { name: 'Configuration' }));
+    expect((screen.getByRole('button', { name: 'Delete project API' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
 
 describe('project draft lifetime during save', () => {
   it('never combines a pending X creation receipt with fields from an attempted Y selection', async () => {
