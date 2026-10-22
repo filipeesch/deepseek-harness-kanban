@@ -1,0 +1,25 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/index.ts",
+    "src/host/**/*.ts",
+    "src/domain/**/*.ts",
+    "src/shared/**/*.ts",
+    "src/remote.ts",
+    "src/questions/**/*.ts",
+    "src/questions/**/*.tsx",
+    "tests/host/**/*.ts",
+    "tests/domain/**/*.ts",
+    "tests/native/**/*.ts",
+    "tests/worktrees/**/*.ts",
+    "tests/inspector/**/*.ts",
+    "tests/*-helper/**/*.ts",
+    "tests/questions/**/*.ts",
+    "tests/questions/**/*.tsx",
+    "vitest.config.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "lib"
+  ]
+}

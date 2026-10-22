@@ -1,0 +1,1449 @@
+{
+  "updatedOn": "2026-10-22",
+  "status": "acceptance-in-progress",
+  "environment": {
+    "dsh": "0.2.1-rc.2",
+    "backend": "http://127.0.0.1:51781/",
+    "plugin": "dsh-kanban",
+    "version": "0.1.0",
+    "originalDesktopRendererVerified": false,
+    "replacementServerStarted": false,
+    "coreModified": false
+  },
+  "runs": [
+    {
+      "id": "full-regression-post-audit",
+      "time": "2026-10-21T22:42:03+01:00",
+      "commands": [
+        "pnpm run typecheck",
+        "node node_modules/vitest/vitest.mjs run --reporter=dot"
+      ],
+      "exitCode": 0,
+      "files": 19,
+      "tests": 378,
+      "scope": "Separate host/client TypeScript programs and the full regression suite. Mock adapters, real temporary Git, and real Cordis/Gateway contracts are not equivalent to live native acceptance."
+    },
+    {
+      "id": "independent-audit-regressions",
+      "commands": [
+        "vitest run tests/host/tools.test.ts tests/client/state.test.tsx tests/bridge/generation.test.tsx"
+      ],
+      "exitCode": 0,
+      "files": 3,
+      "tests": 24,
+      "scope": "Independently executed by the verification auditor; overlaps the full suite."
+    },
+    {
+      "id": "rebuilt-host-reconciliation",
+      "commands": [
+        "pnpm run build",
+        "pluginManager.setBundleEnabled('dsh-kanban', true)"
+      ],
+      "exitCode": 0,
+      "result": {
+        "changed": false,
+        "application": "applied",
+        "enabled": true,
+        "warningCount": 0
+      },
+      "behavioralProof": "A real ordinary-chat PTC list_notes({}) dispatch now rejects missing task context; the previous host accepted an empty array."
+    },
+    {
+      "id": "ordinary-chat-ptc-read",
+      "operations": [
+        "list_boards",
+        "get_board_summary",
+        "list_projects"
+      ],
+      "result": {
+        "boardId": "global",
+        "columns": [
+          "Backlog",
+          "Plan",
+          "In Progress",
+          "In Review",
+          "Done"
+        ],
+        "counts": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "projects": []
+      },
+      "scope": "Real native tool dispatch inside an ordinary DSH conversation, not a test double."
+    },
+    {
+      "id": "authenticated-snapshot-rpc",
+      "operation": "POST /api/kanban/snapshot",
+      "result": {
+        "httpStatus": 200,
+        "outerOk": true,
+        "innerOk": true,
+        "revision": 0
+      },
+      "scope": "Official-login ephemeral HTTP browser against the existing backend. No authenticated URL, cookie, or token was saved."
+    },
+    {
+      "id": "latest-clean-browser",
+      "command": "node scripts/live-verify.mjs --allow-owner-test --timeout-ms 30000",
+      "exitCode": 0,
+      "result": {
+        "startupUnchanged": true,
+        "sidebarClicked": true,
+        "heading": "Kanban",
+        "columns": [
+          "Backlog",
+          "Plan",
+          "In Progress",
+          "In Review",
+          "Done"
+        ],
+        "noObstructingDialog": true
+      },
+      "screenshot": ".verification/kanban-existing-backend-651ff265-9314-4738-9a12-93657df56f8f.png",
+      "scope": "New ephemeral HTTP client of the existing backend; not the original Desktop renderer."
+    },
+    {
+      "id": "existing-backend-live-lifecycle",
+      "command": "node scripts/live-lifecycle.mjs --allow-owner-test --timeout-ms 30000",
+      "exitCode": 0,
+      "result": {
+        "startupUnchanged": true,
+        "nativeSidebarCoexistence": [
+          "Automation tasks",
+          "Plugins"
+        ],
+        "disable": {
+          "application": "applied",
+          "changed": true,
+          "warningCount": 0,
+          "selected": false,
+          "active": false,
+          "clientAdvertised": false,
+          "sidebarWithdrawn": true,
+          "boardWithdrawn": true
+        },
+        "enable": {
+          "application": "applied",
+          "changed": true,
+          "warningCount": 0,
+          "selected": true,
+          "active": true,
+          "clientAdvertised": true,
+          "sidebarReturned": true,
+          "defaultColumnsVerified": true
+        },
+        "restoration": {
+          "verified": true,
+          "uncertainRequest": false
+        },
+        "resourcesClosed": true
+      },
+      "artifact": {
+        "sha256": "d09a46bfcf7174c5548ddeeb991cc10c236b46f32c11077daed4172050190175",
+        "revision": "178e820d91d8",
+        "currentLinkedBaselineVerified": true
+      },
+      "screenshot": ".verification/kanban-lifecycle-existing-backend-99048653-e712-4b9b-8bf8-a840eb54840c.png",
+      "scope": "Actual guarded own-bundle off/on and native sidebar assertions in a new ephemeral HTTP browser against the existing backend, not the original Desktop renderer."
+    },
+    {
+      "id": "stable-suite-command-receipts",
+      "time": "2026-10-21T23:19:30+01:00",
+      "exitCode": 0,
+      "tests": 453,
+      "files": 23,
+      "scope": "Host/client typechecks and stable production/helper suites. Subsequent CR01–CR05 fixes are not covered by this historical full result."
+    },
+    {
+      "id": "G2-first-setup-attempt",
+      "exitCode": 1,
+      "stage": "fixture-task",
+      "classification": "Helper-only exact label selector mismatch; no task or model requests",
+      "report": ".verification/native-fixtures/g2/run-fb3b0b75fc9d/evidence/g2.json",
+      "cleanup": {
+        "nativeConversationsArchived": true,
+        "errors": [],
+        "modelRequests": 0
+      }
+    },
+    {
+      "id": "G2-second-setup-attempt",
+      "exitCode": 1,
+      "stage": "fixture-task/native-task-created",
+      "classification": "Native standalone task hero was workspace-gated; retained session/provider existed but composer was not editable",
+      "report": ".verification/native-fixtures/g2/run-d7e45888dbcf/evidence/g2.json",
+      "diagnostic": ".verification/native-fixtures/g2/run-d7e45888dbcf/evidence/diagnostic-native-view-b32e977e.json",
+      "cleanup": {
+        "taskDeleted": true,
+        "nativeConversationsArchived": true,
+        "errors": [],
+        "modelRequests": 0
+      }
+    },
+    {
+      "id": "frozen-post-review-complete-suite",
+      "time": "2026-10-22T00:17:24+01:00",
+      "exitCode": 0,
+      "tests": 672,
+      "files": 32,
+      "scope": "Both public SDK TypeScript programs and the complete current regression suite."
+    },
+    {
+      "id": "G2-actual-native-with-approval",
+      "command": "node scripts/verify-native-conversations.mjs --allow-owner-test --allow-fixture-data --allow-model-requests --verify-approval --allow-fixture-policy-changes --timeout-ms 30000 --model-timeout-ms 90000",
+      "exitCode": 0,
+      "runId": "b05e181a7a5d",
+      "report": ".verification/native-fixtures/g2/run-b05e181a7a5d/evidence/g2.json",
+      "result": {
+        "freshDistinctNoAutomaticPrompt": true,
+        "independentDrafts": true,
+        "onlyAReceivedFirstPrompt": true,
+        "onlyBReceivedSecondPrompt": true,
+        "nativeStopTargetedA": true,
+        "BUnchangedByStop": true,
+        "mainCUnchanged": true,
+        "streamsOnlyAAndB": true,
+        "approvalAskedOnce": true,
+        "nativeRejectTargetedA": true,
+        "approvalCommandExecutionPrevented": true,
+        "approvalModelResumedAOnly": true,
+        "globalDefaultsUnchanged": true,
+        "coreZeroModelToolAttempts": true,
+        "cleanupErrors": [],
+        "taskDeleted": true,
+        "nativeHistoriesArchived": true,
+        "toolGuardDisposed": true
+      },
+      "modelRequests": {
+        "short": 3,
+        "long": 1
+      },
+      "screenshots": [
+        ".verification/native-fixtures/g2/run-b05e181a7a5d/evidence/fixture-A-after-stop.png",
+        ".verification/native-fixtures/g2/run-b05e181a7a5d/evidence/fixture-A-native-approval.png"
+      ],
+      "scope": "Actual configured native model and native UI/tool/approval pipeline in a new ephemeral client of the existing backend; original Desktop renderer not directly exercised."
+    },
+    {
+      "id": "independent-final-source-rereview",
+      "exitCode": 0,
+      "tests": 211,
+      "files": 8,
+      "report": "docs/code-review.md",
+      "result": "CR01–CR07 independently closed at source/local-regression level; no concrete source defect remains open."
+    },
+    {
+      "id": "G4-initial-client-setup",
+      "exitCode": 1,
+      "runId": "1c35ec67416e",
+      "stage": "client-source",
+      "result": {
+        "nativeFixtureCreated": false,
+        "nativeWorkspaceCreated": false,
+        "modelRequests": 0
+      },
+      "scope": "Helper client-source discovery failed before native fixtures or model interaction. Source-only diagnosis requested; not a product-question failure."
+    },
+    {
+      "id": "G3-G5-initial-no-model-core",
+      "exitCode": 1,
+      "runId": "a61f4bd141fa",
+      "stage": "root-fresh",
+      "report": ".verification/native-fixtures/g3/run-a61f4bd141fa/evidence/g3-g5.json",
+      "result": {
+        "projectsCreated": 2,
+        "taskCreated": true,
+        "modelRequests": 0,
+        "fixturePolicyChanges": 0,
+        "fullGatePass": false,
+        "cleanupErrors": [
+          "native-operation-uncertain",
+          "fixture-cleanup-blocked"
+        ]
+      },
+      "scope": "Fixture identity/ownership setup failed before policy or worktree cases. Exact owned task recovery is in progress; no native conversation or filesystem-policy acceptance established."
+    },
+    {
+      "id": "G3-owned-fixture-cleanup-recovery",
+      "exitCode": 0,
+      "runId": "a61f4bd141fa",
+      "report": ".verification/native-fixtures/g3/run-a61f4bd141fa/evidence/cleanup-recovery.json",
+      "result": {
+        "commandAttempts": 1,
+        "taskDeleted": true,
+        "nativeSessionsArchivedAtCanonicalBase": true,
+        "exactNativeHistoryPreserved": true,
+        "modelRequests": 0,
+        "projectsUnchanged": true,
+        "baseDirectoriesRetained": true
+      },
+      "scope": "Rechecked exact owned task, project and both native IDs before one public no-worktree delete. No unarchive, policy/preset change, Git effect or filesystem removal."
+    },
+    {
+      "id": "G3-G5-native-policy-core-partial",
+      "exitCode": 1,
+      "runId": "377e68a305da",
+      "stage": "shared-target",
+      "report": ".verification/native-fixtures/g3/run-377e68a305da/evidence/g3-g5.json",
+      "passed": {
+        "freshDistinctNoTurns": true,
+        "sameNativeIds": true,
+        "nativeHistoryPreserved": true,
+        "readOnlyDenied": true,
+        "outsideRootDenied": true,
+        "newBranch": true,
+        "osConfinement": true,
+        "globalDefaultsUnchanged": true
+      },
+      "modelRequests": 0,
+      "fullGatePass": false,
+      "cleanup": {
+        "nativeSessionsArchivedAtOriginalBase": 3,
+        "taskDeleteBlocked": true,
+        "errors": [
+          "fixture-cleanup-blocked"
+        ]
+      },
+      "scope": "Real native permission presets, confined Git process, and native directory changes exercised. Shared-target failure is under read-only diagnosis; full coordination/lifecycle gates remain open."
+    },
+    {
+      "id": "G4-real-native-ptc-partial-before-reload-discovery",
+      "exitCode": 1,
+      "runId": "ee6d1282bdef",
+      "stage": "client-source/reload/discovery",
+      "result": {
+        "ownedNativeWorkspace": true,
+        "editableOrdinaryNativeComposer": true,
+        "nativeDirectQuestionMode": true,
+        "ptcOnlyRunCodeMode": true,
+        "nativeTwoPages": true,
+        "nativeAggregateHumanSubmission": true,
+        "ptcNestedTwoPages": true,
+        "correctPtcRootAndParent": true,
+        "incrementalFirstPage": true,
+        "submitDisabledBeforeActualEnd": true,
+        "answerRetainedAsPageAppends": true,
+        "actualTurnEnd": true,
+        "cleanupTaskDeleted": true,
+        "ordinaryNativeArchived": true,
+        "workspaceAndBasesRetained": true,
+        "toolGuardDisposed": true,
+        "cleanupFailed": false
+      },
+      "wire": {
+        "nativeToolCount": 44,
+        "nativeHasDecisionRequest": true,
+        "nativeHasRunCode": false,
+        "ptcToolCount": 1,
+        "ptcOnlyRunCode": true
+      },
+      "clientSource": {
+        "phase": "reload",
+        "outcome": "no-fresh-source",
+        "baselineSourceCount": 2,
+        "currentSourceCount": 2,
+        "hostCount": 1,
+        "clientCount": 1,
+        "freshClientCount": 0,
+        "blockedWebSockets": 0
+      },
+      "scope": "Actual real Native/PTC question production, incremental form retention, turn-end gating and ordinary Native answer passed. Reload client-source discovery requires stable-identity handling; remaining reload/PTC answer/dismiss/native ask cases were not exercised.",
+      "humanPrompts": {
+        "initial": 2,
+        "answer": 1,
+        "total": 3
+      },
+      "providerAttempts": "not-collected"
+    },
+    {
+      "id": "CR08-canonical-native-cwd-source-review",
+      "exitCode": 0,
+      "tests": 178,
+      "files": 6,
+      "report": "docs/code-review.md",
+      "nativeFocusedTests": 65,
+      "result": "Aggregate projection failure may use public projection-free canonical inspection; cancellation and unreadable canonical peers remain fail-closed. No peers skipped or policies widened."
+    },
+    {
+      "id": "G4-real-rich-question-complete-native-ask-incomplete",
+      "exitCode": 1,
+      "runId": "1140aaffeaac",
+      "stage": "native-ask",
+      "report": ".verification/native-fixtures/g4/run-1140aaffeaac/evidence/g4.json",
+      "passed": {
+        "zeroModelReloadPreflight": true,
+        "nativeWorkspaceOwned": true,
+        "nativeAndPtcWireModes": true,
+        "nativeAndPtcTwoPageMetadata": true,
+        "allQuestionTypes": true,
+        "markdownRecommendationWeightOtherNotes": true,
+        "incrementalFirstPage": true,
+        "submitDisabledUntilActualEnd": true,
+        "answersRetainedDuringAppend": true,
+        "realPendingRoundReloadReconstructed": true,
+        "nativeAndPtcAggregateHumanAnswers": true,
+        "mainCUnchangedByTaskAnswer": true,
+        "closeDidNotSubmit": true,
+        "ordinaryNativeComposerReply": true,
+        "richRoundRetired": true
+      },
+      "remaining": [
+        "Native built-in ask-user completion; exact failure under owned read-only diagnosis"
+      ],
+      "cleanup": {
+        "taskDeleted": true,
+        "ordinaryArchived": true,
+        "workspaceAndBasesRetained": true,
+        "guardDisposed": true,
+        "errors": []
+      },
+      "scope": "All real rich-question flow and reload assertions passed. Final native built-in ask-user case failed before its DOM checkpoint; no inference of a product defect until exact owned canonical metadata is checked.",
+      "humanPrompts": {
+        "initial": 3,
+        "answer": 3,
+        "total": 6
+      },
+      "providerAttempts": "not-collected"
+    },
+    {
+      "id": "G3-reviewed-build-owned-fixture-repair-stopped",
+      "exitCode": 1,
+      "runId": "377e68a305da",
+      "report": ".verification/native-fixtures/g3/run-377e68a305da/evidence/cleanup-recovery.json",
+      "result": {
+        "operationReturnAttempts": 1,
+        "staleForceConsentCleared": true,
+        "freshDeleteAttempts": 1,
+        "freshDiscardChanges": false,
+        "taskDeleted": false,
+        "targetRemoved": false,
+        "targetAndBranchRetained": true,
+        "allThreeReadOnlyArchivedBase": true,
+        "nativeHistoryPrefixPreserved": true,
+        "models": 0,
+        "globalDefaultsAndProjectsUnchanged": true
+      },
+      "classification": {
+        "projectionPattern": false,
+        "corruptionPattern": true,
+        "underlyingNativePeerOrCauseIdentified": false
+      },
+      "scope": "After reviewed CR08 activation, one public Return succeeded and one fresh non-discard delete stopped on a canonical-observation error. No retry, global peer repair, policy widening, or destructive fallback."
+    },
+    {
+      "id": "CR08-stable-production-regression",
+      "time": "2026-10-22T02:14:34+01:00",
+      "exitCode": 0,
+      "tests": 467,
+      "files": 24,
+      "command": "node node_modules/vitest/vitest.mjs run --exclude 'tests/*-helper/**' --reporter=dot",
+      "scope": "All stable production regressions passed after CR08; excludes in-progress QA helper extensions and does not replace the final complete suite or mandatory native gates."
+    },
+    {
+      "id": "G5-real-metadata-archive-restore",
+      "exitCode": 0,
+      "runId": "377e68a305da",
+      "report": ".verification/native-fixtures/g3/run-377e68a305da/evidence/metadata-archive-restore.json",
+      "result": {
+        "commands": 4,
+        "operationReturn": true,
+        "archiveRestoreArchive": true,
+        "eligibleWaitingAndSendingZeroBeforeEach": true,
+        "finalTaskArchivedRetained": true,
+        "operationCleared": true,
+        "taskContentAndExistingNotesPreserved": true,
+        "allNativeHeadersAndFullHistoriesUnchanged": true,
+        "nativeEventCounts": [
+          18,
+          18,
+          12
+        ],
+        "allThreeReadOnlyArchivedBase": true,
+        "targetAndBranchBindingAndBasesRetained": true,
+        "modelRequests": 0,
+        "repositoryEdits": 0
+      },
+      "scope": "Real metadata-only archive/restore slice. Board metadata persistence changed; no repository/worktree edits, native conversation changes or processes. Physical delete and unreadable native corpus remain unresolved."
+    },
+    {
+      "id": "full-frozen-815",
+      "time": "2026-10-22T03:01:04+01:00",
+      "exitCode": 0,
+      "tests": 815,
+      "files": 35,
+      "durationSeconds": 36.47,
+      "hostTypecheck": true,
+      "clientTypecheck": true,
+      "scope": "Complete frozen regression set including current coordination and targeted native-ask helper contracts. Synthetic helper tests are not native acceptance evidence; both live runner safety reviews still pending."
+    },
+    {
+      "id": "G3-real-native-coordination-partial",
+      "exitCode": 1,
+      "runId": "a3c8497cca85",
+      "report": ".verification/native-fixtures/g3/run-a3c8497cca85/evidence/g3-coordination.json",
+      "evidenceKind": "native-public-services",
+      "passed": [
+        "denied-target",
+        "missing-subdirectory",
+        "mono-jobs",
+        "external-wake",
+        "partial-cwd",
+        "partial-recovery"
+      ],
+      "failed": {
+        "descendant-busy": "NATIVE_ASSERTION_FAILED",
+        "pending-interaction": "NATIVE_ASSERTION_FAILED"
+      },
+      "notTested": {
+        "pending-journal-reload": "LIFECYCLE_TRANSACTION_UNVERIFIED"
+      },
+      "nativeServiceActions": 133,
+      "providerRequests": 0,
+      "globalDefaultsUnchanged": true,
+      "jobs": {
+        "outerAndInnerNativeBash": 4,
+        "registeredSettledAwaitedRead": true,
+        "followupAttempts": 0
+      },
+      "cleanup": {
+        "incomplete": true,
+        "errors": [
+          "owned-cleanup",
+          "owned-cleanup",
+          "owned-cleanup",
+          "owned-cleanup"
+        ],
+        "deletedNoTreeTasks": 2,
+        "retainedFixtureRecords": 4,
+        "guardRetained": 0,
+        "scope": "No physical deletion success is inferred for blocked fixture records; native base/read-only/archive postconditions and retained-resource flags are recorded by the helper. Exact underlying canonical corpus failure remains unidentified."
+      },
+      "fullGatePass": false
+    },
+    {
+      "id": "G4-native-ask-complement-zero-effect-preflight-failure",
+      "exitCode": 1,
+      "stage": "guard",
+      "complementsRunId": "1140aaffeaac",
+      "evidenceKind": "parent-collected-managed-job-stdout",
+      "jobId": "bash-97e7d9d9ef9a4404",
+      "checks": {
+        "historicalRichPass": true,
+        "historicalTaskDeletionReceipt": true,
+        "identityBeforeEffects": false,
+        "guardsBeforeEffects": false
+      },
+      "additionalHumanPrompts": 0,
+      "providerAdmissions": 0,
+      "providerAttempts": 0,
+      "unarchiveAttempted": false,
+      "browserOrAuthenticationStarted": false,
+      "cleanupAttempted": false,
+      "guardsRetained": false,
+      "resourcesClosed": true,
+      "helperArtifactWritten": false,
+      "scope": "The focused complement stopped during guard construction before any fixture or provider effect. The helper writes its separate artifact only after cleanup was attempted; exact file glob confirmed no native-ask-complement artifact. No built-in ask pass or new product defect is established. Source-only contract diagnosis pending."
+    },
+    {
+      "id": "G4-complement-owned-readonly-install-diagnosis",
+      "exitCode": 0,
+      "complementsRunId": "1140aaffeaac",
+      "providerAdmissions": 0,
+      "humanPrompts": 0,
+      "effects": "none",
+      "firstProbe": {
+        "readOnly": true,
+        "installReady": false,
+        "installPoint": "workspace-identity"
+      },
+      "workspaceOnlyProbe": {
+        "exists": true,
+        "idMatches": true,
+        "pathMatches": true,
+        "titleMatches": true,
+        "cIncluded": true,
+        "aIncluded": false,
+        "memberCount": 2,
+        "opaqueExtraMemberCount": 1,
+        "validUniqueIds": true
+      },
+      "conclusion": "The target helper added an unjustified C/A-only workspace-roster assumption. The actual canonical Workspace and C association are intact. Preserve the opaque extra member unchanged without querying or taking ownership of its actor. Source correction and re-review required before any model retry.",
+      "ruledOut": [
+        "Lost Workspace identity/path/title or C membership",
+        "Archive removing the candidate accounting slot",
+        "Ambient digest as the actual first failure (not reached)"
+      ],
+      "originalReportUnchanged": true
+    },
+    {
+      "id": "G4-native-builtin-complement-v2-passed",
+      "exitCode": 0,
+      "complementsRunId": "1140aaffeaac",
+      "report": ".verification/native-fixtures/g4/run-1140aaffeaac/evidence/native-ask-complement-v2.json",
+      "priorRunOverallOk": false,
+      "ok": true,
+      "all20ChecksPassed": true,
+      "additionalHumanPrompts": 1,
+      "combinedHumanPrompts": 7,
+      "providerAdmissions": 2,
+      "canonicalProviderAttempts": 2,
+      "nativeAskCalls": 1,
+      "providerRejected": 0,
+      "providerFailures": 0,
+      "toolDenials": 0,
+      "cancels": 0,
+      "cleanup": {
+        "attempted": true,
+        "archived": true,
+        "idle": true,
+        "prefixUnchanged": true,
+        "workspaceRetained": true,
+        "baseRetained": true,
+        "currentCwdMatches": true,
+        "guardsDisposed": true,
+        "guardsRetained": false,
+        "resourcesClosed": true,
+        "failed": false
+      },
+      "scope": "Separate actual Native built-in completion complements the earlier successful rich Native/PTC/reload/answer/dismiss slices. It never changes the original failed run outcome. Opaque extra Workspace member is preserved without inspecting or taking ownership of its actor."
+    },
+    {
+      "id": "full-frozen-1010",
+      "time": "2026-10-22T04:57:24+01:00",
+      "exitCode": 0,
+      "tests": 1010,
+      "files": 36,
+      "durationSeconds": 36.74,
+      "hostTypecheck": true,
+      "clientTypecheck": true,
+      "scope": "Complete integrated frozen product and helper suite after coordination QR04, native-ask QA02, and lifecycle LT01–03 source corrections. Local/synthetic tests do not replace the outstanding native coordination and physical lifecycle gates."
+    },
+    {
+      "id": "G3-targeted-owned-child-and-pending-question-attempt",
+      "runId": "24023a1bfa4c",
+      "exitCode": 1,
+      "report": ".verification/native-fixtures/g3/run-24023a1bfa4c/evidence/g3-coordination.json",
+      "providerRequests": 0,
+      "globalDefaultsUnchanged": true,
+      "previousSixCasesNotSelected": true,
+      "descendant": {
+        "status": "failed",
+        "failedAt": "descendant.worktree-request",
+        "actualOwnedUserInputAccepted": true,
+        "exactInputIdentityMatched": true,
+        "canonicalInboxMatched": true,
+        "nativeTurnStartedAndEnded": true,
+        "runningDescendantObserved": true,
+        "realWorkStarted": false,
+        "registeredJobs": 0,
+        "scope": "Creator-owned public input driving is genuinely exercised, but the work producer failed before registration, so sustained-busy coordination is not established."
+      },
+      "pendingInteraction": {
+        "status": "failed",
+        "failedAt": "question.native-pending-audit",
+        "actualRootPromptAccepted": true,
+        "explicitSignal": true,
+        "presetPTC": true,
+        "permissionsAndRootsAndBUnchanged": true,
+        "publicRunCodeCapability": true,
+        "exactNativeBrowserTarget": true,
+        "preStepStarted": true,
+        "rootExecutionFinishedAtFailure": false,
+        "scope": "The public PTC root remained pending at the failure checkpoint. No native pending-question gate pass or underlying API cause is inferred without the required correlation proof."
+      },
+      "cleanup": {
+        "incomplete": true,
+        "retainedFixtureRecords": 1,
+        "noTreeTaskDeleted": 1,
+        "guardsRetained": 0,
+        "basesAndNativeHistoriesRetained": true
+      },
+      "fullGatePass": false
+    },
+    {
+      "id": "G3-real-native-pending-question-passed",
+      "runId": "f386b9a39a7f",
+      "exitCode": 1,
+      "report": ".verification/native-fixtures/g3/run-f386b9a39a7f/evidence/g3-coordination.json",
+      "case": "pending-interaction",
+      "casePassed": true,
+      "providerRequests": 0,
+      "acceptedHumanPrompts": 1,
+      "canonicalPTCQuestionStarted": true,
+      "exactNativeQuestionPanel": true,
+      "worktreeWaitingObserved": true,
+      "canonicalAnswerObserved": true,
+      "nativeTurnEnded": true,
+      "globalDefaultsUnchanged": true,
+      "permissionsRootsAndBUnchanged": true,
+      "otherCasesNotRepeated": true,
+      "cleanup": {
+        "incomplete": true,
+        "retainedFixtureRecords": 1,
+        "guardsRetained": 0,
+        "basesAndNativeHistoriesRetained": true
+      },
+      "fullGatePass": false,
+      "scope": "Actual PTC dispatch with native record-valued arguments, native pending panel and answer now passes. Overall exit remains nonzero because the mandatory full gate and physical cleanup are incomplete; descendant and journal were not exercised."
+    },
+    {
+      "id": "production-rebuild-fingerprints-unchanged-after-qa-corrections",
+      "exitCode": 0,
+      "scope": "Rebuilt host, lazy client and public declarations. All three fingerprints exactly match the already activated CR08 build; QA-only changes did not alter the product under native verification. No replacement server, watcher, reinstall or new live activation is claimed.",
+      "hashes": {
+        "host": "39bfa13334f2a41f7cd96a1a52b1056b78a0c6955f1b71b8e57b1286d753b130",
+        "client": "ee74b222bb2a9722da3111d029bc91bf1682a6d68e118ad1ed5333d93d7361a3",
+        "remote": "334237b12cdffc24628b5d80dfc8232fc5821ad59dc690534895f1a4c4672e80"
+      }
+    },
+    {
+      "id": "owned-six-fixture-metadata-cleanup-readonly-preflight-refused",
+      "exitCode": 1,
+      "report": ".verification/metadata-cleanup-six-preflight-1792646118616.json",
+      "scope": "Six exact receipt-owned retained task records only; classification stopped on the first unknown native inbox. No remaining record is inferred ready.",
+      "reason": "NATIVE_INBOX_NOT_EMPTY",
+      "taskId": "14f37564-3416-4fce-ba80-246079b897ed",
+      "sessionId": "session-1e1e69bf-5380-4ee7-9f3e-2e5e62d6c51d",
+      "publicMutationCommands": 0,
+      "mutations": 0,
+      "connectionClosed": true,
+      "cleanupBatchReady": false,
+      "limitations": [
+        "Queue identity/count/content was not classified; no benign-notice inference",
+        "No clearing, draining, driving, return, archive, delete or second read authorized",
+        "Public return/archive schemas lack server CAS; no invented expectedRevision field",
+        "Retained worktree bindings may be null; six records do not prove six trees"
+      ]
+    },
+    {
+      "id": "full-frozen-1102",
+      "time": "2026-10-22T06:23:34+01:00",
+      "exitCode": 0,
+      "tests": 1102,
+      "files": 37,
+      "durationSeconds": 36.79,
+      "hostTypecheck": true,
+      "clientTypecheck": true,
+      "scope": "Integrated product plus frozen QA scripts, including canonical PTC record correlation, public child composition inheritance with QR05 uncertainty correction, reviewed lifecycle prototype and same-Host bridge. Local/synthetic coverage does not establish descendant or journal native acceptance."
+    },
+    {
+      "id": "G3-real-native-descendant-busy-passed",
+      "runId": "f947f6a791b6",
+      "exitCode": 1,
+      "report": ".verification/native-fixtures/g3/run-f947f6a791b6/evidence/g3-coordination.json",
+      "case": "descendant-busy",
+      "casePassed": true,
+      "providerRequests": 0,
+      "acceptedHumanPrompts": 1,
+      "compositionProof": {
+        "id": "session-08fba45f-4180-4894-bbb3-e87807d2c423",
+        "parentId": "session-e5f25d36-bdab-4a20-ba25-2ec0359d15ec",
+        "parentPresetId": "standard",
+        "childPresetId": "standard",
+        "revisionProof": "PUBLIC_RETAINED_COMPOSITION_INHERITANCE",
+        "sameRetainedComposition": true,
+        "parentUnchanged": true,
+        "childPolicyUnchanged": true,
+        "defaultsUnchanged": true,
+        "BUnchanged": true,
+        "bashVisible": true,
+        "runCodeVisible": false,
+        "jobOutputVisible": true
+      },
+      "canonicalInputAndTurnProof": {
+        "messageId": "209c3b75-2c38-4a25-926f-0c4f7a36222b",
+        "canonicalInboxAccepted": true,
+        "userSourceAndRpcMatched": true,
+        "turnStarts": 1,
+        "turnEnds": 1,
+        "blockedTurns": 1,
+        "preStepSeen": true,
+        "humanMatched": true,
+        "actualWorkSettled": true
+      },
+      "nativeJobs": [
+        {
+          "id": "kanban-uat-coordination-7cb41cd14f8d4437",
+          "owner": "session-08fba45f-4180-4894-bbb3-e87807d2c423",
+          "kind": "kanban-uat-coordination",
+          "proofExpected": true,
+          "registered": true,
+          "settled": true,
+          "awaited": true,
+          "read": true
+        },
+        {
+          "id": "bash-6444709e4f334ea6",
+          "owner": "session-08fba45f-4180-4894-bbb3-e87807d2c423",
+          "kind": "bash",
+          "proofExpected": true,
+          "registered": true,
+          "settled": true,
+          "awaited": true,
+          "read": true
+        }
+      ],
+      "waitingObserved": true,
+      "baseRecovered": true,
+      "defaultsUnchanged": true,
+      "previousSevenCasesNotRepeated": true,
+      "cleanup": {
+        "incomplete": true,
+        "retainedFixtureRecords": 1,
+        "guardsRetained": 0,
+        "basesAndNativeHistoriesRetained": true
+      },
+      "fullGatePass": false,
+      "scope": "Genuine creator-owned child inherits exact publicly retained parent composition without preset selection or policy changes. Its real Bash/native outer+inner jobs hold native running descendant activity, worktree operation waits, and native settlement/natural wake recover exact base. Overall exit remains nonzero because journal/full-gate and physical cleanup remain incomplete."
+    },
+    {
+      "id": "full-local-1147-cr09-source",
+      "time": "2026-10-22T07:09:20+01:00",
+      "exitCode": 0,
+      "tests": 1147,
+      "files": 39,
+      "durationSeconds": 37.37,
+      "hostTypecheck": true,
+      "clientTypecheck": true,
+      "scope": "Author-collected complete local suite after the schedule wake source regression/fix and prepared-only bridge close. Production CR09 awaits separate independent review. This snapshot predates correction of the separately reproduced Stage A teardown QR06 finding; no native activation or schedule execution is implied."
+    },
+    {
+      "id": "CR09-reviewed-build-and-public-reconciliation",
+      "exitCode": 0,
+      "requestId": "345170d6-971c-4ae4-876c-bafe146ff4b1",
+      "operation": "Public pluginManager.setBundleEnabled on the already enabled owned bundle; supported publishAndReload path",
+      "name": "dsh-kanban",
+      "changed": false,
+      "application": "applied",
+      "enabled": true,
+      "warningCount": 0,
+      "hashes": {
+        "host": "0e5e36dcf53de94133abe3f138357733d58c35411da7519a35605b42940aac6a",
+        "client": "ee74b222bb2a9722da3111d029bc91bf1682a6d68e118ad1ed5333d93d7361a3",
+        "remote": "334237b12cdffc24628b5d80dfc8232fc5821ad59dc690534895f1a4c4672e80"
+      },
+      "limits": "No replacement server, Core changes, generic lifecycle/journal acceptance, or real schedule execution."
+    },
+    {
+      "id": "CR09-existing-GUI-after-same-tab-refresh",
+      "exitCode": 0,
+      "backend": "http://127.0.0.1:51781/",
+      "refreshed": true,
+      "startupUnchanged": true,
+      "sidebarClicked": true,
+      "heading": "Kanban",
+      "columns": [
+        "Backlog",
+        "Plan",
+        "In Progress",
+        "In Review",
+        "Done"
+      ],
+      "pageErrors": 0,
+      "blockedWebSockets": 0,
+      "contextClosed": true,
+      "browserClosed": true,
+      "explicitTaskOrSessionOrScheduleCommands": 0,
+      "screenshot": ".verification/kanban-cr09-refreshed-33a55dc3-30f2-4965-ac16-b574a153ff45.png",
+      "scope": "Ephemeral fenced HTTP browser of the existing backend, not the existing Desktop renderer. No auth URL, token, trace, storageState, conversation content or raw errors exported."
+    },
+    {
+      "id": "full-frozen-1156-cr09-qr06",
+      "time": "2026-10-22T07:39:26+01:00",
+      "exitCode": 0,
+      "tests": 1156,
+      "files": 39,
+      "durationSeconds": 36.69,
+      "hostTypecheck": true,
+      "clientTypecheck": true,
+      "scope": "Parent-collected integrated suite including independently reviewed production CR09 and corrected Stage A QR06. Fresh QR06 review-record completion remains separate from local green tests. No actual active-schedule or journal execution implied."
+    },
+    {
+      "id": "QR06-fresh-independent-review-record-completed",
+      "time": "2026-10-22T07:41:34+01:00",
+      "exitCode": 0,
+      "tests": 314,
+      "files": 5,
+      "durationSeconds": 0.461,
+      "hostTypecheck": true,
+      "clientTypecheck": true,
+      "review": "docs/coordination-runner-review.md",
+      "reviewHash": "f3a7d0e3fededa82da167a8ef2b49ca94edd9dc51f6a3a153708177a7dad2f77",
+      "scope": "Fresh independent source re-review of centralized uncertainty, all-ACK external-resource retention, exact exported-runner replays and legal tree-only clean teardown. Historical initial OPEN reproduction retained. No actual Native/lifecycle/schedule or release readiness implied."
+    },
+    {
+      "id": "full-frozen-1191-case10-source",
+      "time": "2026-10-22T08:31:17+01:00",
+      "exitCode": 0,
+      "tests": 1191,
+      "files": 40,
+      "durationSeconds": 36.73,
+      "hostTypecheck": true,
+      "clientTypecheck": true,
+      "scope": "Parent-collected complete local suite with frozen case-10 schedule instrument. Independent schedule-protocol review remains pending; no real timer, native actor, model, or active-schedule acceptance is implied."
+    },
+    {
+      "id": "G3-native-active-schedule-attribution-unverified-retained",
+      "runId": "2b35284a93a8",
+      "report": ".verification/native-fixtures/g3/run-2b35284a93a8/evidence/g3-coordination.json",
+      "managedJobId": "bash-c92fe26e17c4482d",
+      "managedJobStatus": "running-retained-recovery-handle",
+      "exitCode": null,
+      "case": "active-schedule",
+      "status": "not-tested",
+      "reason": "SCHEDULE_ATTRIBUTION_UNVERIFIED",
+      "failedAt": "schedule.normal-context-wake",
+      "nativeActions": 21,
+      "providerRequests": 0,
+      "appIssued": 15,
+      "appAcknowledged": 15,
+      "pendingAppReceipts": 0,
+      "recovery": {
+        "status": "UNVERIFIED_RETAIN_REQUIRED",
+        "managedHandleRetentionRequested": true,
+        "bridgeDisposed": false,
+        "runnerAdmission": "closed",
+        "serverAdmission": "unverified",
+        "connectionObservedOpen": true,
+        "referenceLifetime": "retention-requested-not-guaranteed",
+        "remainingKnownResourceCounts": {
+          "projects": 1,
+          "tasks": 1,
+          "sessions": 2,
+          "children": 0,
+          "controllers": 1,
+          "pendingAppReceipts": 0,
+          "nativeSchedules": 0
+        }
+      },
+      "cleanup": {
+        "basesRetained": true,
+        "projectsRetained": true,
+        "errors": [
+          "owned-cleanup",
+          "app-gate-retained"
+        ],
+        "deletedTasks": [],
+        "guardRetained": [
+          "137148a5-1ebb-49e3-9048-c6e0c9621cdb"
+        ],
+        "connectionRetentionRequested": true,
+        "connectionRetained": true,
+        "incomplete": true
+      },
+      "taskId": "137148a5-1ebb-49e3-9048-c6e0c9621cdb",
+      "sessionIds": [
+        "session-bb46ac69-83d8-4839-b5eb-7e481e765a26",
+        "session-7911217a-6678-46e8-8bc2-2392ad0e437f"
+      ],
+      "limits": [
+        "No actual schedule gate qualified, no underlying wake-failure cause inferred",
+        "Sparse original failure report contains no attribution counts; source/artifact diagnosis only is authorized",
+        "defaultsUnchanged:false is not proof of a settings change: the uncertain path skipped final observation",
+        "Readonly/base/archive and controller disposal are unverified; retain actual original connection and known guards",
+        "Do not kill/retry/reconnect/dispose/cancel/delete/rearm or perform new Native reads without a separate scoped recovery decision",
+        "Reported nativeSchedules:0 is a resource counter, not sufficient independent natural-delivery proof"
+      ]
+    },
+    {
+      "id": "full-frozen-1207-qr07-source",
+      "time": "2026-10-22T09:25:52+01:00",
+      "exitCode": 0,
+      "tests": 1207,
+      "files": 40,
+      "durationSeconds": 36.69,
+      "hostTypecheck": true,
+      "clientTypecheck": true,
+      "scope": "Parent-collected complete local suite with frozen QR07 phase-aware schedule quiescence and immutable diagnostics. Independent review pending; no new Native run or control of the original retained process."
+    },
+    {
+      "id": "CR09-isolated-public-consumer-abi",
+      "exitCode": 0,
+      "entries": [
+        "dsh-kanban",
+        "dsh-kanban/client",
+        "dsh-kanban/remote"
+      ],
+      "strictNodeNextTypecheck": true,
+      "skipLibCheck": false,
+      "esbuildBundle": true,
+      "sharedNativeAndReactDependenciesExternal": true,
+      "nativeExecution": false,
+      "fixture": ".verification/consumer-cr09-b3a047e9-a7bd-41ee-8191-973173350f44",
+      "scope": "Rebuilt CR09 public declarations and all exported entries typecheck and bundle in an isolated consumer. No application evaluation, Native service, model, timer, browser or retained-process control."
+    },
+    {
+      "id": "full-frozen-1213-qr07-r1-correction",
+      "time": "2026-10-22T09:41:06+01:00",
+      "exitCode": 0,
+      "tests": 1213,
+      "files": 40,
+      "durationSeconds": 37,
+      "hostTypecheck": true,
+      "clientTypecheck": true,
+      "scope": "Parent-collected complete local suite after one-optional-notice-per-canonical-transition correction. Independent R1 re-review remains pending; original Native attempt/retained process untouched."
+    },
+    {
+      "id": "human-authorized-verifier-transport-abort",
+      "managedJobId": "bash-c92fe26e17c4482d",
+      "status": "killed",
+      "signal": "SIGTERM",
+      "finishedAt": 1792659412682,
+      "explicitHumanAuthorization": true,
+      "scope": "Only the temporary QA verifier process. No conversation/history/file deletion, DSH stop/restart, actor return/archive, guard-disposal or controller-cleanup proof. Original failure artifact remains immutable/unqualified."
+    },
+    {
+      "id": "github-confirmed-public-destination-created",
+      "account": "filipeesch",
+      "repository": "filipeesch/deepseek-harness-kanban",
+      "visibility": "PUBLIC",
+      "url": "https://github.com/filipeesch/deepseek-harness-kanban",
+      "emptyAtVerification": true,
+      "remote": "filipeesch",
+      "fetchAndPushTargetConfirmed": true,
+      "pushPerformed": false,
+      "scope": "Created via authenticated gh after exact repository-not-found result; only the named local remote was configured. Existing URL rewrite retained; no global Git setting changes, staging or commit."
+    },
+    {
+      "id": "final-product-contract-suite-1239",
+      "time": "2026-10-22T11:00:58+01:00",
+      "exitCode": 0,
+      "tests": 1239,
+      "files": 44,
+      "durationSeconds": 43.28,
+      "hostTypecheck": true,
+      "clientTypecheck": true,
+      "scope": "Final product/full regression suite under user-approved public-extension-point boundary, including real temporary Git walkthrough and the reviewed CR10/CR11 fixes. No DSH engine/model requalification."
+    },
+    {
+      "id": "final-product-build-reconciliation",
+      "requestId": "554a3631-49aa-4c33-a837-dba69e30f540",
+      "exitCode": 0,
+      "application": "applied",
+      "enabled": true,
+      "changed": false,
+      "warningCount": 0,
+      "hostHash": "4219e8ab96cfd2031d3d37a11bb46cd131f2bfa99cf401948967ea7d47e490b6",
+      "clientHash": "ffdc0d93719ed9d9609d30aca6c1b31c479b0ca10f81b92b631945726924698b",
+      "remoteHash": "334237b12cdffc24628b5d80dfc8232fc5821ad59dc690534895f1a4c4672e80",
+      "publicConsumerTypecheckAndBundle": true,
+      "scope": "Supported already-enabled owned-bundle publish/reload, not a standalone server or new native fixtures."
+    },
+    {
+      "id": "final-GUI-first-bounded-attempt",
+      "jobId": "bash-b670c14aba2c46ed",
+      "exitCode": 1,
+      "ok": false,
+      "stage": "evidence-path",
+      "pageErrors": 0,
+      "blockedWebSockets": 0,
+      "contextClosed": true,
+      "browserClosed": true,
+      "scope": "Ignored smoke assertion failed after same-tab reload before refreshed=true. No product change, native fixture, message or model action. Next harness revision explicitly awaited async board snapshot and recorded structural checks."
+    },
+    {
+      "id": "final-existing-GUI-refreshed-pass",
+      "jobId": "bash-89d3e804f8e74ba1",
+      "exitCode": 0,
+      "ok": true,
+      "backend": "http://127.0.0.1:51781/",
+      "refreshed": true,
+      "startupUnchanged": true,
+      "sidebarClicked": true,
+      "heading": "Kanban",
+      "columns": [
+        "Backlog",
+        "Plan",
+        "In Progress",
+        "In Review",
+        "Done"
+      ],
+      "alerts": 0,
+      "pageErrors": 0,
+      "blockedWebSockets": 0,
+      "contextClosed": true,
+      "browserClosed": true,
+      "explicitTaskOrSessionOrScheduleCommands": 0,
+      "screenshot": ".verification/kanban-cr09-refreshed-870af273-8043-44bc-bfe5-01ca8aaf8894.png",
+      "scope": "Fenced ephemeral HTTP client of existing backend, not the original Desktop renderer. Async board-data readiness awaited; no native conversation/model/kernel requalification."
+    },
+    {
+      "id": "final-sync-and-archive",
+      "change": "define-kanban-product",
+      "tasksCompleted": 45,
+      "totalTasks": 45,
+      "mainSpecsSynced": 9,
+      "requirements": 56,
+      "scenarios": 105,
+      "semanticDiff": 0,
+      "syncMethod": "Agent-driven additive main-spec merge; all nine main specs verified equal to deltas after removing operation headers.",
+      "preArchiveStrictValidation": "10/10 pass (change + 9 specs), informational long-requirement note only",
+      "archive": "openspec/changes/archive/2026-10-22-define-kanban-product",
+      "archiveExitCode": 0,
+      "archiveCliSkippedSecondSync": true,
+      "postArchiveStrictValidation": "9/9 main specs pass, no active change",
+      "portableMarkdownFilesUpdated": 14,
+      "sourceBehaviorChangedDuringDocumentation": false
+    }
+  ],
+  "gates": {
+    "G1": {
+      "status": "passed",
+      "boundary": "Public build/consumer, manager reconcile and existing GUI navigation"
+    },
+    "G2": {
+      "status": "passed",
+      "boundary": "Scoped native provider/factory/retention/send/Stop/approval delegation",
+      "upstreamTrusted": "DSH chat/model/history implementation, not re-tested"
+    },
+    "G3": {
+      "status": "passed",
+      "boundary": "Product coordinator, public native-port activity/policy/error contracts, journal/retry, real temporary Git"
+    },
+    "G4": {
+      "status": "passed",
+      "boundary": "Product tool/form/schema/PTC/session-binding/ordinary-text contracts with historical native presentation slices"
+    },
+    "G5": {
+      "status": "passed",
+      "boundary": "Controlled native lifecycle ports and actual temporary Git: return before remove/archive, dirty consent, no purge, branch/base/shared-target preservation",
+      "environmentLimit": "Unknown native canonical/shared-target metadata refuses cleanup; no physical-success claim for the old host-profile exploratory run"
+    }
+  },
+  "publication": {
+    "specsSynced": false,
+    "changeArchived": false,
+    "committed": false,
+    "pushed": false,
+    "remoteName": "filipeesch",
+    "remoteUrlConfirmed": false,
+    "remoteDiscovery": {
+      "account": "filipeesch",
+      "authenticatedWith": "gh",
+      "exactLocalNameRepositoryExists": false,
+      "existingRelatedRepository": "filipeesch/deepseek-harness",
+      "isCoreFork": true,
+      "defaultBranch": "master",
+      "destinationChoicePending": true
+    },
+    "scopeFeedback": {
+      "file": "issue.txt",
+      "userFilePreserved": true,
+      "staged": false,
+      "scopeChoicePending": true,
+      "note": "Discovered untracked UX feedback includes scope changes. Awaiting a direct human choice before changing approved requirements or publishing the user note."
+    },
+    "privateArtifacts": {
+      "verificationIgnored": true,
+      "nodeModulesIgnored": true,
+      "compiledLibIgnored": true,
+      "sourceHasNoCommitsYet": true,
+      "remoteNotConfigured": true
+    }
+  },
+  "activeAcceptanceBuild": {
+    "activatedWith": "Public pluginManager.setBundleEnabled(dsh-kanban,true) after final reviewed product build",
+    "requestId": "554a3631-49aa-4c33-a837-dba69e30f540",
+    "changed": false,
+    "application": "applied",
+    "warningCount": 0,
+    "artifacts": {
+      "lib/index.js": "4219e8ab96cfd2031d3d37a11bb46cd131f2bfa99cf401948967ea7d47e490b6",
+      "lib/client.js": "ffdc0d93719ed9d9609d30aca6c1b31c479b0ca10f81b92b631945726924698b",
+      "lib/remote.js": "334237b12cdffc24628b5d80dfc8232fc5821ad59dc690534895f1a4c4672e80"
+    },
+    "scope": "Current CR01–CR11 reviewed product. Public contract/real-Git/client acceptance; final existing-GUI smoke tracked separately. Historical exploratory native outcomes unchanged."
+  },
+  "previousAcceptanceBuilds": [
+    {
+      "activatedWith": "Public pluginManager.setBundleEnabled(dsh-kanban,true) after completed build",
+      "changed": false,
+      "application": "applied",
+      "warningCount": 0,
+      "artifacts": {
+        "lib/index.js": "a1f0f655649499fd42bef3ab8474c51a231866198c6efb5e1d576a03272ca97b",
+        "lib/client.js": "ee74b222bb2a9722da3111d029bc91bf1682a6d68e118ad1ed5333d93d7361a3",
+        "lib/remote.js": "334237b12cdffc24628b5d80dfc8232fc5821ad59dc690534895f1a4c4672e80"
+      },
+      "scope": "Frozen source-review-corrected build used for G2 b05e181a7a5d and subsequent setup attempts. Hashes computed from local build artifacts; no original Desktop refresh claim."
+    }
+  ],
+  "latestFullVerification": {
+    "id": "final-product-contract-suite-1239",
+    "tests": 1239,
+    "files": 44,
+    "hostTypecheck": true,
+    "clientTypecheck": true,
+    "passed": true
+  },
+  "counterDefinitions": {
+    "legacyNativeQuestionReportModelRequests": "The legacy G4 report field named modelRequests counts reserved initial/answer HUMAN PROMPT SENDS, not actual provider attempts or internal model continuations. Original run artifacts are retained unchanged. Actual provider attempts were not collected for these runs.",
+    "nativeQuestionComplementProviderAdmissions": "The separate focused native-ask complement counts and hard-limits actual public agent/request provider admissions, suppresses owned retry continuations, and cross-checks canonical assistant attempts."
+  },
+  "openSpec": {
+    "change": "define-kanban-product",
+    "schema": "spec-driven",
+    "strictValidationPassed": true,
+    "completedTasks": 24,
+    "totalTasks": 45,
+    "remainingTasks": 21,
+    "implementationAcceptanceComplete": false,
+    "scope": "Fourteen independently evidenced implementation/local-contract/real-rich-flow tasks reconciled; compound native coordination, built-in ask and physical lifecycle gates remain open. Planning completeness is not release acceptance."
+  },
+  "qaRunnerSafety": {
+    "coordination": {
+      "review": "docs/coordination-runner-review.md",
+      "localTests": 55,
+      "qr01": "closed-source-regression",
+      "qr02": "closed-source-regression",
+      "qr03": "closed-quarantined-not-implemented",
+      "nativePartialRun": "a3c8497cca85",
+      "lifecycleNativeGate": "open",
+      "qr04": "closed-source-regression-84-tests",
+      "qr05": "closed-source-regression-139-tests-and-native-descendant-pass",
+      "qr06": "independently-source-closed-fresh-314-local-tests-and-retention-replays",
+      "qr07": "independently-source-closed-after-one-optional-notice-per-exact-transition-fix-371-tests"
+    },
+    "nativeAsk": {
+      "review": "docs/native-ask-runner-review.md",
+      "frozenReviewedLocalTests": 154,
+      "cleanupProofFinding": "closed-source-and-actual-native-complement",
+      "nativeFirstAttempt": "guard-workspace-exclusivity-defect-zero-prompts",
+      "newInstallDiagnostics": "source-only-in-progress",
+      "receiptFinding": "closed-appearing-v1-acceptance-removed",
+      "nativeComplement": "v2-passed-all-20-checks"
+    },
+    "scope": "These QA instrument findings are separate from the production CR01–CR08 closures. No whole native gate or release approval follows from source closure.",
+    "lifecyclePrototype": {
+      "localTests": 87,
+      "lt01": "closed-source-regression",
+      "lt02": "closed-source-regression",
+      "lt03": "closed-source-regression",
+      "integrated": false,
+      "nativeJournalVerified": false
+    }
+  },
+  "scheduleVerification": {
+    "status": "native-attempt-unqualified-attribution-retained-recovery",
+    "publicService": "ctx.schedule",
+    "activeSemantics": "Every ACTIVE reminder blocks the native workspace/session-activity provider, including future enabled one-shot or recurring records.",
+    "naturalOneShotProof": "Public delivery history messageId correlated to genuine native agent/inbox/spliced insertion and schedule-source turn; no fabricated user/message event required for a rejected pre-step.",
+    "missingRuntimeEvidence": true,
+    "productionWakeOrdering": "Source-only investigation pending; native session-event debounce is not a periodic rescan, and no schedule/changed subscription is currently registered. No live race or production defect is claimed yet.",
+    "noScheduleCreated": false,
+    "noCurrentSessionReminder": true,
+    "instrumentStatus": "QR07-R1-independently-source-verified; full1213-local-only; no fresh-native-retry-authorized",
+    "instrumentHash": "f597b623ae3915638041ae68974031eaf290ef675665defe9e06a6e872fafb8b",
+    "retainedManagedJobId": "bash-c92fe26e17c4482d",
+    "postAttemptSourceFinding": "QR07 verifier parity: real public working-directory changes can inject nonwaking next-step context; old terminal predicate rejected all next-step items. Source RED reproduction confirmed, phase-aware local correction in progress. This is not an observed classification or cause for the immutable live attempt.",
+    "currentInstrumentHash": "f1ed04c1e9fecef156a47c06e7b162a1e47d43126e3def0cf43f0b5e84d2887f",
+    "attemptedNativeInstrumentHash": "f597b623ae3915638041ae68974031eaf290ef675665defe9e06a6e872fafb8b",
+    "retainedVerifierDisposition": "Stopped by explicit human authorization, SIGTERM collected. Original connection is no longer held by this process; native cleanup, base/archive and guards remain unverified.",
+    "currentReview": "docs/schedule-quiescence-review.md",
+    "currentReviewHash": "69b554a69f55067c1f41c53ee5c15eb3dc456d91786022c2f1951591390f520c"
+  },
+  "productionScheduleWakeFix": {
+    "finding": "CR09",
+    "sourceStatus": "independently-source-verified",
+    "entryHash": "ff855138a30892e3a6d22f028854c875888b244ea10c2fa267ca81ba36133dcb",
+    "regressionHash": "47ed90ec823fc029a157529bb8cb55cd41b8cda4a4dec92775aa9882b22998e1",
+    "change": "Subscribe to public payloadless schedule/changed and invoke the existing scoped activityChanged wake, with no required schedule service, polling, status hook or timer change.",
+    "focusedTests": 3,
+    "activeHostStillPriorCr08": false,
+    "noBuildOrActivationYet": false,
+    "nativeScheduleEvidence": false,
+    "review": "docs/schedule-wake-review.md",
+    "reviewHash": "4bdd2941f93c5e69179b1a911ddb88be06a3767d15c5ba3ec1dcc05e1fad046c",
+    "rebuiltHostHash": "0e5e36dcf53de94133abe3f138357733d58c35411da7519a35605b42940aac6a",
+    "publicReconciliationApplied": true,
+    "existingGuiRefreshed": true
+  },
+  "nativeEvidenceBuildQualification": "Historical eight coordination positives and qualified G4 ran against prior CR08 host 39bf. CR09 changes only public schedule wake subscription; local regression, independent review, build, public reconciliation and refreshed GUI pass. A real active-schedule case is still required; old Native cases are not silently relabeled new-host runs.",
+  "historicalCr08AcceptanceBuild": {
+    "activatedWith": "Public pluginManager.setBundleEnabled(dsh-kanban,true) after complete build",
+    "requestId": "2a8cc039-2d32-4703-bc5f-1831a60871cf",
+    "changed": false,
+    "application": "applied",
+    "warningCount": 0,
+    "artifacts": {
+      "lib/index.js": "39bfa13334f2a41f7cd96a1a52b1056b78a0c6955f1b71b8e57b1286d753b130",
+      "lib/client.js": "ee74b222bb2a9722da3111d029bc91bf1682a6d68e118ad1ed5333d93d7361a3",
+      "lib/remote.js": "334237b12cdffc24628b5d80dfc8232fc5821ad59dc690534895f1a4c4672e80"
+    },
+    "scope": "CR08 canonical cold-cwd observation correction. Source/local regression independently verified; exact live worktree fixture repair still pending."
+  },
+  "humanDecisions": {
+    "publicationDestination": "filipeesch/deepseek-harness-kanban",
+    "publicationVisibility": "PUBLIC",
+    "publicationLatestOverridesEarlierPrivate": true,
+    "issueTxtScope": "next-change-not-current",
+    "nativeCanonicalDiagnostic": "metadata-only-authorized-via-native-ask-user-question; no message text, repair, migration or deletion",
+    "questionInterface": "native DSH ask_user_question only; do not use decision_request for human questions",
+    "retainedVerifierDisposition": "explicit-human-authorized-stop-only; data preserved, cleanup/guard-disposal unverified"
+  },
+  "historicalNativeGates": {
+    "G1": {
+      "status": "passed-existing-backend-http-client",
+      "passed": [
+        "Existing-profile installation and active host",
+        "Authenticated snapshot RPC",
+        "Unchanged fresh-client startup",
+        "Real Kanban sidebar navigation and default columns",
+        "Unobstructed existing-backend screenshot",
+        "Native Automation tasks and Plugins remain visible",
+        "Public own-bundle disable withdraws host/client/sidebar/board",
+        "Public re-enable restores host/client/sidebar/board",
+        "Initial enabled/active state restored and resources closed",
+        "Current linked client artifact baseline and hash verified"
+      ],
+      "pending": [],
+      "limitation": "The original Desktop renderer was not directly exercised."
+    },
+    "G2": {
+      "status": "passed-existing-backend-native-model-ui",
+      "passed": [
+        "Fresh distinct native sessions without execution",
+        "A/B native drafts survive tab switching",
+        "Correct scoped human messages, assistant output and streams",
+        "Native Stop aborts A without changing B",
+        "Global main C remains unchanged",
+        "Real native Bash escalation request on A",
+        "Native Reject answers only the matching A approval and prevents command execution",
+        "Native A resumes and completes after rejection",
+        "Owned task deleted and native histories archived, fixture base retained, guards/resources cleaned"
+      ],
+      "pending": [],
+      "limitation": "B was idle during Stop(A); no claim of concurrent-active-B cancellation. Original Desktop renderer not directly exercised."
+    },
+    "G3": {
+      "status": "partial-real-native-jobs-external-wake-and-partial-recovery-passed",
+      "passed": [
+        "Fresh native A/B creation without prompts",
+        "Same IDs and canonical native history across actual root-project directory migration",
+        "Read-only policy rejects writes",
+        "Workspace-write policy rejects an outside target without widening permissions",
+        "Real new local branch worktree creation",
+        "Actual native OS confinement prevents the owned post-checkout sentinel write outside the permitted workspace",
+        "Global default presets remain unchanged",
+        "Real monorepo outer/inner native Bash jobs cause persisted waiting with no premature cwd switch",
+        "All observed native jobs settle with live awaited admission and consuming reads; no followup or provider attempts",
+        "Natural native settlement resumes the coordinator without manual activityChanged calls",
+        "Strong partial A-target/B-base migration is reproduced by synchronously registering real B work after the A commit",
+        "Partial state remains not-ready with original effective base; Return preserves the checkout and native identities",
+        "Actual missing project subdirectory after Git completion does not substitute the repository root",
+        "Real root-A PTC native question keeps its native turn open and worktree operation waiting; normal scoped UI answer settles the actual dispatch and ends the native turn, with zero provider requests and unchanged permission roots/B/defaults",
+        "Genuine native creator-owned child, exact parent composition inheritance, canonical input/turn proof and two real native Bash jobs hold the worktree journal waiting; settlement resumes naturally with no provider or follow-up attempts"
+      ],
+      "pending": [
+        "Actual active-schedule wait, natural one-shot delivery, and automatic wake without cancellation",
+        "Reviewed lifecycle bridge integration and actual journal recovery proof",
+        "Global unreadable native corpus/shared-target and remaining physical lifecycle acceptance"
+      ],
+      "attemptedModelRequests": 0
+    },
+    "G4": {
+      "status": "qualified-composite-native-pass",
+      "passed": [
+        "Genuine owned native Workspace enables ordinary C without workspace or prompt bypass",
+        "Actual Native request header exposes direct decision_request without run_code",
+        "Actual PTC request header exposes only run_code",
+        "Canonical two-page metadata and correct Native/PTC root/call correlation",
+        "Native form Markdown, recommendation, weight, Other and notes",
+        "Native aggregate answer sent as ordinary human-origin text",
+        "PTC first page appears while the real turn remains unended",
+        "Submit is disabled before real turn/end",
+        "Local input survives appending the second PTC page",
+        "Actual canonical turn/end completes the round",
+        "Custom question tools leave no native pending channel; cleanup reaches idle and archives histories",
+        "Generation- and document-proven same-tab reload reconstructs the pending real PTC round",
+        "PTC aggregate answer sent as ordinary human-origin text without changing main C",
+        "All question types exercised through native and PTC presentations",
+        "Closing an optional rich form sends no message",
+        "A normal native composer reply retires the dismissed rich round",
+        "Real built-in ask_user_question exact call, scoped panel, Confirmed radio, normal Submit, successful canonical result and post-answer ACK",
+        "Exactly one additional human prompt and two guarded public provider admissions, matching two canonical assistant attempts",
+        "Original history prefixes, exact base/current cwd, Workspace roster and opaque extra member preserved; same C re-archived; guards disposed and all resources closed",
+        "Separate native approval Reject behavior established by the earlier G2 native approval slice; no replacement pending channel"
+      ],
+      "pending": [],
+      "humanPrompts": {
+        "initial": 3,
+        "answer": 3,
+        "total": 6
+      },
+      "providerAttempts": "not-collected"
+    },
+    "G5": {
+      "status": "partial-real-metadata-lifecycle-passed-physical-delete-blocked",
+      "passed": [
+        "G2 no-worktree task cleanup archives native chats and retains valid base cwd",
+        "Real Return clears failed intent without deleting the retained checkout",
+        "Real metadata archive → restore → archive preserves task content, existing notes and all native histories",
+        "Final fixture task is archived and retained rather than erased; owned checkout, branch and bases remain intact"
+      ],
+      "pending": [
+        "Worktree-bound archive/restore and eligible deletion",
+        "Dirty/shared/denied/failure-retry cases",
+        "Closed retained conversations and later native monorepo unarchive"
+      ],
+      "attemptedModelRequests": 0
+    }
+  },
+  "acceptanceBoundary": {
+    "approvedByDirectHuman": true,
+    "date": "2026-10-22",
+    "scope": "Verify the plugin through public DSH extension points; do not requalify chat/model/kernel/scheduler or add core/QA runtime machinery.",
+    "functionalRequirementsUnchanged": true,
+    "realModelReplay": "not required; user declined new calls",
+    "metadataInvestigation": "abandoned on alignment before any probe",
+    "uxIssueList": "next change; original user file remains untracked"
+  },
+  "productReview": {
+    "status": "CR01-CR11-source-local-closed",
+    "path": "docs/code-review.md",
+    "hash": "b040bde8912f3ee719f2fe2e94c1efccbd8bef259a8c43aef2f0f6a4dde5ce83",
+    "freshFocusedTests": 121,
+    "freshFocusedFiles": 11,
+    "hostTypecheck": true,
+    "clientTypecheck": true,
+    "noResidualConcreteProductP1P2": true,
+    "reviewedDocumentBeforePortableLinks": "148f106a8b69e3edef2c73b470103353c8a6eddd9c9dc5ae132b7b0ff1ced90d",
+    "publicationNormalization": "Relative/archive link destinations, three stale citation end-line bounds and trailing blank EOF lines only; reviewed product source hashes unchanged."
+  },
+  "finalAcceptance": {
+    "scope": "user-approved public-extension-point plugin acceptance",
+    "productTestsPassed": 1239,
+    "testFiles": 44,
+    "typechecks": "host and client passed",
+    "publicConsumer": "3 entries typechecked and bundled",
+    "independentProductReview": "CR01-CR11 source/local closed",
+    "build": "reviewed final host/client applied by supported manager",
+    "gui": "existing backend after refresh passed",
+    "functionalRequirements": 56,
+    "scenarios": 105,
+    "coreRequalificationRequired": false,
+    "realModelCalls": "no new calls; deferred by user",
+    "environmentLimits": [
+      "native Files/workspace/sandbox origin remains host-owned",
+      "unknown canonical/shared-target metadata safely refuses physical cleanup",
+      "historical exploratory schedule attempt unqualified; transport stopped, native fixture/guard cleanup unverified"
+    ],
+    "publication": "Authorized public filipeesch/deepseek-harness-kanban via named remote filipeesch; final commit/ref transport verification is reported to the user after push.",
+    "status": "complete-under-approved-plugin-extension-point-boundary",
+    "tasksCompleted": 45,
+    "totalTasks": 45,
+    "archive": "openspec/changes/archive/2026-10-22-define-kanban-product",
+    "mainSpecsSynced": 9,
+    "linkValidation": {
+      "localLinks": 765,
+      "brokenOwnedTargets": 0,
+      "staleLineBoundsRepaired": 3,
+      "expectedLocalGeneratedOrDependencyTargets": 15,
+      "untrackedUserFileExcluded": true
+    }
+  }
+}

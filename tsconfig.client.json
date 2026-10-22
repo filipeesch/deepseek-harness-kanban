@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/client.tsx",
+    "src/client-bridge.ts",
+    "src/client/**/*.ts",
+    "src/client/**/*.tsx",
+    "tests/client/**/*.ts",
+    "tests/client/**/*.tsx",
+    "tests/bridge/**/*.ts",
+    "tests/bridge/**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "lib"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.client.json",
+  "compilerOptions": {
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationMap": true,
+    "outDir": "lib/types/client",
+    "rootDir": "src"
+  },
+  "include": [
+    "src/client.tsx",
+    "src/client-bridge.ts",
+    "src/client/**/*.ts",
+    "src/client/**/*.tsx"
+  ],
+  "exclude": [
+    "tests",
+    "node_modules",
+    "lib"
+  ]
+}

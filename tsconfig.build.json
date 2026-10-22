@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.host.json",
+  "compilerOptions": {
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationMap": true,
+    "outDir": "lib/types/host",
+    "rootDir": "src"
+  },
+  "include": [
+    "src/index.ts",
+    "src/host/**/*.ts",
+    "src/domain/**/*.ts",
+    "src/shared/**/*.ts",
+    "src/remote.ts",
+    "src/questions/indexer.ts",
+    "src/questions/validation.ts"
+  ],
+  "exclude": [
+    "tests",
+    "node_modules",
+    "lib"
+  ]
+}

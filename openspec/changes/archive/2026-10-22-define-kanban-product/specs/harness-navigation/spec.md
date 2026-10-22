@@ -1,0 +1,42 @@
+## Purpose
+
+Provide a Kanban-centered product entry point within DeepSeek Harness while preserving the host application's normal startup, native conversations, and existing navigation.
+
+## ADDED Requirements
+
+### Requirement: Plugin-provided Kanban main page
+The product SHALL be delivered as an independent DSH plugin without requiring changes to the DSH core. It SHALL expose a main page named Kanban and a corresponding sidebar item alongside Automation tasks and Plugins.
+
+#### Scenario: Open Kanban from the sidebar
+- **WHEN** the plugin is available and the user selects Kanban in the DSH sidebar
+- **THEN** DSH displays the Kanban main page
+- **AND** Automation tasks and Plugins remain available as existing navigation destinations
+
+### Requirement: Preserve normal host startup
+The plugin SHALL preserve DSH's normal startup behavior and SHALL NOT force Kanban to become the startup page.
+
+#### Scenario: Start DSH with the plugin available
+- **WHEN** the user starts DSH with the Kanban plugin available
+- **THEN** DSH follows its normal startup behavior rather than an override introduced by the plugin
+
+### Requirement: Configuration within the Kanban page
+The Kanban page SHALL provide access to Projects and Workflow configuration within the board experience rather than requiring a separate Railyin-style application setup area.
+
+#### Scenario: Configure projects from the board
+- **WHEN** the user accesses Projects configuration from Kanban
+- **THEN** the project configuration experience is available within the Kanban page
+
+#### Scenario: Configure the workflow from the board
+- **WHEN** the user accesses Workflow configuration from Kanban
+- **THEN** the workflow configuration experience is available within the Kanban page
+
+### Requirement: Preserve native DSH interaction boundaries
+The plugin SHALL retain native DSH conversations and execution rather than replace the host's agent experience. It SHALL preserve access to ordinary DSH chats and existing native features. This scope SHALL NOT add a new shortcut for navigating from a task card to the main chat area.
+
+#### Scenario: Continue using ordinary DSH conversations
+- **WHEN** the user opens an ordinary DSH chat outside a task drawer
+- **THEN** the native chat experience remains available independently of the Kanban page
+
+#### Scenario: Use native conversation behavior in task work
+- **WHEN** a conversation is used within a Kanban task
+- **THEN** conversation execution uses the native DSH experience rather than a separate Railyin agent runtime
