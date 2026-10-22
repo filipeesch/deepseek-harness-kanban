@@ -219,4 +219,14 @@ describe('accessibility, pending, subscriptions and errors', () => {
   it('keeps styling scoped away from native chat controls and renders groups once', () => {
     expect(styles.includes('.dsh-kanban button')).toBe(false); expect(styles).not.toMatch(/(^|})\s*body\s*\{/m); const layout = columnLayout(fixture().state.workflow); expect(layout.flatMap(slot => slot.columns.map(column => column.id))).toEqual(['intake', 'review', 'doing']); expect(layout[0]!.group?.name).toBe('Planning');
   });
+
+  it('maps primary actions and accents to host theme tokens', () => {
+    for (const token of ['--dsw-alias-button-primary-fill', '--dsw-alias-label-primary-foreground', '--dsw-alias-button-primary-hover', '--dsw-alias-state-business-primary', '--dsw-focus-ring-width', '--dsw-focus-ring-color']) expect(styles).toContain(token);
+    expect(styles).not.toContain('Highlight');
+    expect(styles).toContain('var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color');
+    const genericHover = styles.indexOf('.dsh-kanban .kb-button:hover:not(:disabled)');
+    const primaryHover = styles.indexOf('.dsh-kanban .kb-primary:hover:not(:disabled)');
+    expect(genericHover).toBeGreaterThan(-1);
+    expect(primaryHover).toBeGreaterThan(genericHover);
+  });
 });
