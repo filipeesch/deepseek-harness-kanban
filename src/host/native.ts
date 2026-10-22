@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import type { GitExecutor, SessionPort, CommandResult } from '../shared/ports.js';
+import type { GitExecutor, SessionPort, CommandResult, WorkspacePort } from '../shared/ports.js';
 import type { Attention } from '../shared/types.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 
@@ -113,7 +113,7 @@ function commonPolicy(policies: SandboxExecutionPolicy[]): SandboxExecutionPolic
 }
 
 /** Native adapters own no session history, permission grants, or replacement runtime. */
-export function createNativePorts(ctx: Context): { sessions: SessionPort; executor: GitExecutor } {
+export function createNativePorts(ctx: Context): { sessions: SessionPort; executor: GitExecutor; workspaces: WorkspacePort } {
   const inspect = (id: string, signal = AbortSignal.timeout(READ_TIMEOUT_MS)) =>
     ctx.sessionController.inspect(SessionId(id), signal);
   const projections = (id: string, signal = AbortSignal.timeout(READ_TIMEOUT_MS)) =>
@@ -155,10 +155,10 @@ export function createNativePorts(ctx: Context): { sessions: SessionPort; execut
   };
   const admissions = new Map<string, { text: string; done: Promise<void> }>();
   const sessions: SessionPort = {
-    async create(projectPath) {
+    async create(projectPath, workspaceId) {
       const cwd = await directoryPath(projectPath);
       // Omitting sessionId is essential: explicit IDs can reuse blank conversations.
-      const created = await ctx.sessionController.create({ cwd });
+      const created = await ctx.sessionController.create(workspaceId ? { workspaceId: workspaceId as never } : { cwd });
       return created.sessionId;
     },
     async directory(id) {
@@ -294,7 +294,21 @@ export function createNativePorts(ctx: Context): { sessions: SessionPort; execut
       return execute(argv, cwd, wrapped, lifetime, timeout);
     },
   };
-  return { sessions, executor };
+  const workspaceInfo = (value: { id: unknown; path: string; title: string; sessionIds: readonly unknown[] }) => ({ id: String(value.id), path: value.path, title: value.title, sessionIds: value.sessionIds.map(String) });
+  const workspaces: WorkspacePort = {
+    async ensure(path, title) {
+      const existing = await ctx.workspaceRegistry.resolveByPath(path);
+      if (existing) return { workspace: workspaceInfo(existing), owned: false };
+      const created = await ctx.workspaceRegistry.create(path, title);
+      return { workspace: workspaceInfo(created), owned: true };
+    },
+    get(id) {
+      const value = ctx.workspaceRegistry.get(id as never);
+      return value ? workspaceInfo(value) : undefined;
+    },
+    async delete(id) { await ctx.workspaceRegistry.delete(id as never); },
+  };
+  return { sessions, executor, workspaces };
 }
 
 /** Spawn only the exact argv returned by native confinement, with bounded output and lifetime. */

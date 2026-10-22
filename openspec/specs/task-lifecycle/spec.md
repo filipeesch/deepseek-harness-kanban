@@ -2,34 +2,44 @@
 
 ## Purpose
 
-Provide reversible task archiving and explicit deletion of plugin-owned task data and worktrees while archiving native conversations, preserving Git branches, and protecting base projects.
+Provide explicit deletion of plugin-owned task data and worktrees while archiving native conversations, preserving Git branches, and protecting base projects.
 
 ## Requirements
 
-### Requirement: Archive without losing task history
-The plugin SHALL support archiving a task so it no longer appears in the active Kanban board while retaining its task details, shared notes, and associated conversation histories for restoration. Archiving SHALL be distinct from permanent deletion.
-
-#### Scenario: Archive an idle task
-- **WHEN** a user archives an idle task containing details, shared notes, and conversation history
-- **THEN** it leaves the active board and the retained task data remains available for restoration
-
-### Requirement: Restore an archived task
-The plugin SHALL allow a user to restore an archived task to the active board without losing the retained task content or conversation histories.
-
-#### Scenario: Restore a previously archived task
-- **WHEN** a user restores an archived task with retained details, notes, and native conversation histories
-- **THEN** the task becomes available on the active board again with that retained content and history
-
 ### Requirement: Explicit permanent deletion confirmation
-The plugin SHALL require explicit confirmation before permanently deleting a task. The confirmation SHALL identify the task and communicate that deletion removes its plugin-owned task data and associated worktree when present, archives its native DSH conversations without erasing their histories, and preserves the Git branch. It SHALL NOT describe conversation archiving as permanent history deletion.
+Delete SHALL be the only task lifecycle action. The plugin SHALL require explicit confirmation before permanently deleting a task. The confirmation SHALL identify the task and communicate that deletion removes its plugin-owned task data, shared notes, and associated worktree when present, archives its native DSH conversations without erasing their histories, and preserves the Git branch. It SHALL NOT describe conversation archiving as permanent history deletion or offer task archiving as an alternative.
 
 #### Scenario: Review a task deletion with a worktree
 - **WHEN** a user requests permanent deletion of a task that has conversations and a worktree
 - **THEN** the plugin presents the destructive consequences and branch preservation before deletion can be confirmed
+- **AND** the confirmation does not offer Archiving as an alternative
 
 #### Scenario: Decline permanent deletion
 - **WHEN** a user declines the permanent deletion confirmation
 - **THEN** the plugin does not perform that requested permanent deletion
+
+### Requirement: Delete is the only task lifecycle action
+The plugin SHALL NOT provide task archive, task restore, or an archived-task view. Delete SHALL be the only task lifecycle action offered, and it SHALL be available from the task drawer and from the board's bulk selection.
+
+#### Scenario: Inspect task lifecycle actions
+- **WHEN** the user opens a task drawer
+- **THEN** Delete is offered and Archive and Restore are absent
+
+#### Scenario: View the board
+- **WHEN** the user views the board
+- **THEN** no archived-task view, filter, or restore action is offered
+
+### Requirement: Best-effort bulk deletion
+When the user deletes multiple tasks, the plugin SHALL apply the individual deletion confirmation and semantics to each eligible task. It SHALL skip a task whose conversations are running, whose operation or pending transition is unresolved, or whose worktree has local changes. It SHALL NOT stop conversations or discard local changes to force a bulk deletion. It SHALL report every skipped task and reason and SHALL leave those tasks undeleted.
+
+#### Scenario: Delete a mixed selection
+- **WHEN** the user confirms a bulk deletion containing eligible and blocked tasks
+- **THEN** every eligible task is deleted with the individual deletion semantics
+- **AND** every blocked task remains and its reason is reported
+
+#### Scenario: Do not force a blocked task
+- **WHEN** a selected task has a running conversation, an unresolved operation, or local worktree changes
+- **THEN** the plugin does not stop the conversation, resolve the operation, or discard the changes to force deletion
 
 ### Requirement: Successful task deletion archives conversations and keeps its branch
 A successfully completed task deletion SHALL remove the task card and its shared notes and archive all native DSH conversations associated with the task without erasing their histories. Before removing an associated worktree, the plugin SHALL return every retained task conversation to the base project path through the all-idle directory coordinator. If that return fails, the plugin SHALL retain the worktree and recovery information rather than report deletion success. Successful deletion SHALL remove an eligible associated worktree, preserve the task's associated Git branch, and SHALL NOT delete native conversation log files directly.

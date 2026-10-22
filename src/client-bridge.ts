@@ -8,7 +8,7 @@ import type { BoardSnapshot, ClientApi, Command, Outcome, Problem, QuestionRound
 import { EMPTY_ATTENTION } from './shared/types.js';
 
 export interface BridgeStatus { error: Problem | null; connected: boolean }
-export interface QuestionView { rounds: readonly QuestionRound[]; dismissed: ReadonlySet<string>; requested: ReadonlyMap<string, string>; errors: ReadonlyMap<string, Problem> }
+export interface QuestionView { rounds: readonly QuestionRound[]; errors: ReadonlyMap<string, Problem> }
 export type BridgeRemote = Pick<ClientRemote, '$stream'> & { kanban: KanbanRemote };
 type Baseline = { kind: 'baseline'; snapshot: BoardSnapshot };
 type Update = { kind: 'update'; snapshot: BoardSnapshot };
@@ -36,7 +36,7 @@ interface Reminder { epoch: number; acknowledged: number; running: boolean; unre
 export class ClientBridge {
   private readonly health = observable<BridgeStatus>({ error: null, connected: false });
   readonly status = this.health.source;
-  private readonly questionState = observable<QuestionView>({ rounds: [], dismissed: new Set(), requested: new Map(), errors: new Map() });
+  private readonly questionState = observable<QuestionView>({ rounds: [], errors: new Map() });
   readonly questionsView = this.questionState.source;
   private readonly snapshots = new Set<(snapshot: BoardSnapshot) => void>();
   private host: BoardSnapshot | undefined;
@@ -206,28 +206,7 @@ export class ClientBridge {
     this.questionState.set({ ...previous, errors });
   }
   private publishQuestions(): void {
-    const previous = this.questionsView.getSnapshot();
-    const requested = new Map(previous.requested);
-    for (const round of this.rounds) {
-      const old = previous.rounds.find((entry) => entry.id === round.id);
-      if (round.answered && old?.answered !== true && requested.get(round.sessionId) === round.id) requested.delete(round.sessionId);
-    }
-    this.questionState.set({ ...previous, rounds: this.rounds, requested });
-  }
-  dismiss(roundId: string): void {
-    const previous = this.questionsView.getSnapshot();
-    this.questionState.set({ ...previous, dismissed: new Set([...previous.dismissed, roundId]) });
-  }
-  reopen(roundId: string): void {
-    const round = this.rounds.find((entry) => entry.id === roundId); if (!round) return;
-    const previous = this.questionsView.getSnapshot(); const dismissed = new Set(previous.dismissed); dismissed.delete(roundId);
-    this.questionState.set({ ...previous, dismissed, requested: new Map([...previous.requested, [round.sessionId, round.id]]) });
-  }
-  async reopenCall(id: string, callId: string): Promise<void> {
-    await this.prepareQuestions(id);
-    const round = this.rounds.find((entry) => entry.sessionId === id && entry.pages.some((page) => page.callId === callId));
-    if (!round) throw new Error('The decision question is not yet available in native history.');
-    this.reopen(round.id);
+    this.questionState.set({ rounds: this.rounds, errors: this.questionsView.getSnapshot().errors });
   }
   async dispose(): Promise<void> {
     if (this.disposed) return;

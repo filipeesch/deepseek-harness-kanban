@@ -13,7 +13,8 @@ const native = (id: string) => <span>Native session {id}</span>;
 
 async function openMove(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByRole('button', { name: 'Open task Alpha task' });
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Move Alpha task to' }), 'review');
+  await user.click(screen.getByRole('button', { name: 'Open task Alpha task' }));
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
   await screen.findByRole('dialog', { name: 'Move to Review' });
 }
 
@@ -45,6 +46,7 @@ describe('workflow instruction approval binding', () => {
 
   it('does not offer execution for an instruction containing only whitespace', async () => {
     const initial = fixture(); initial.state.workflow.columns[2]!.onEnterPrompt = '    ' + String.fromCharCode(10); const mock = fakeApi(initial); const user = userEvent.setup();
-    render(<BoardView api={mock.api} renderConversation={native} />); await openMove(user); expect(screen.queryByRole('button', { name: 'Move and run' })).toBeNull(); expect(mock.command).not.toHaveBeenCalled();
+    render(<BoardView api={mock.api} renderConversation={native} />); await screen.findByRole('button', { name: 'Open task Alpha task' }); await user.click(screen.getByRole('button', { name: 'Open task Alpha task' })); await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
+    await waitFor(() => expect(mock.command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'review', mode: 'move' })); expect(screen.queryByRole('button', { name: 'Move and run' })).toBeNull();
   });
 });

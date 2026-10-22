@@ -42,11 +42,14 @@ describe('scoped Kanban page', () => {
     expect(command.mock.calls.some(([value]) => value.type === 'task.move')).toBe(false); expect(screen.getByRole('button', { name: 'Open task New API task' })).toBeTruthy();
   });
 
-  it('allows any-stage text editing with a worktree and safe Markdown preview', async () => {
+  it('shows read-only Info and edits inline without a worktree-stage restriction', async () => {
     const { user, command } = mount(); await loaded(); await user.click(screen.getByRole('button', { name: 'Open task Beta task' })); await user.click(screen.getByRole('tab', { name: 'Info' }));
+    expect(screen.queryByRole('textbox', { name: 'Title' })).toBeNull();
+    expect(screen.getByText('Searchable documentation')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
     const title = screen.getByRole('textbox', { name: 'Title' }); await user.clear(title); await user.type(title, 'Updated Beta');
-    const description = screen.getByRole('textbox', { name: 'Description' }); await user.clear(description); await user.type(description, '**Bold** <script>bad()</script>'); await user.click(screen.getByRole('button', { name: 'Preview Markdown' }));
-    expect(screen.getByText('Bold').tagName).toBe('STRONG'); expect(document.querySelector('script')).toBeNull();
+    const description = screen.getByRole('textbox', { name: 'Description' }); await user.clear(description); await user.type(description, '**Bold** <script>bad()</script>');
+    expect(document.querySelector('script')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Save task' }));
     await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'task.edit', taskId: 't2', title: 'Updated Beta', description: '**Bold** <script>bad()</script>' })));
     expect(command.mock.calls.some(([value]) => value.type === 'task.move')).toBe(false);
@@ -89,28 +92,33 @@ describe('scoped Kanban page', () => {
 });
 
 describe('workflow confirmation', () => {
-  it('asks optional worktree choice even for an uninstructed move and cancellation has no effect', async () => {
-    const { user, command } = mount(); await loaded(); await user.selectOptions(screen.getByRole('combobox', { name: 'Move Alpha task to' }), 'doing');
-    expect(screen.getByText('Worktree is optional')).toBeTruthy(); expect(screen.getByRole('radio', { name: 'Continue in base project' })).toBeTruthy(); await user.click(screen.getByRole('button', { name: 'Cancel' })); expect(command).not.toHaveBeenCalled();
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Move Alpha task to' }), 'doing'); await user.click(screen.getByRole('button', { name: 'Move only' })); await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'doing', mode: 'move' }));
+  it('moves immediately to an uninstructed stage without a worktree prompt', async () => {
+    const { user, command } = mount(); await openAlpha(user);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'doing');
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'doing', mode: 'move' }));
+    expect(screen.queryByText('Worktree is optional')).toBeNull();
   });
 
   it('requires an explicit run choice and targets an existing or new conversation', async () => {
-    const { user, command } = mount(); await loaded(); await user.selectOptions(screen.getByRole('combobox', { name: 'Move Alpha task to' }), 'review');
+    const { user, command } = mount(); await openAlpha(user);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
     expect(screen.getByRole('button', { name: 'Move only' })).toBeTruthy(); expect(screen.getByRole('button', { name: 'Move and run' })).toBeTruthy(); expect(command).not.toHaveBeenCalled();
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Run in conversation' }), 's2'); await user.click(screen.getByRole('button', { name: 'Move and run' })); await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'review', mode: 'run', sessionId: 's2', expectedInstruction: 'Review **carefully**.' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Run in conversation' }), 's2'); await user.click(screen.getByRole('button', { name: 'Move and run' }));
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'review', mode: 'run', sessionId: 's2', expectedInstruction: 'Review **carefully**.' }));
   });
 
-  it('can select a new conversation and optional worktree without auto-execution', async () => {
-    const { user, command, api } = mount(); await loaded(); await user.selectOptions(screen.getByRole('combobox', { name: 'Move Alpha task to' }), 'review'); await user.selectOptions(screen.getByRole('combobox', { name: 'Run in conversation' }), 'new'); await user.click(screen.getByRole('radio', { name: 'Create worktree and branch' }));
-    await user.clear(screen.getByRole('textbox', { name: 'Branch name' })); await user.type(screen.getByRole('textbox', { name: 'Branch name' }), 'feature/ui'); await user.type(screen.getByRole('textbox', { name: 'Worktree path' }), '/trees/alpha');
-    expect(command).not.toHaveBeenCalled(); await user.click(screen.getByRole('button', { name: 'Move and run' })); await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'review', mode: 'run', newConversation: true, expectedInstruction: 'Review **carefully**.', worktree: { mode: 'new', branchName: 'feature/ui', sourceBranch: 'main', path: '/trees/alpha' } })); expect(api.branches).toHaveBeenCalledWith('t1');
+  it('can select a new conversation without a worktree form', async () => {
+    const { user, command } = mount(); await openAlpha(user);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review'); await user.selectOptions(screen.getByRole('combobox', { name: 'Run in conversation' }), 'new');
+    expect(screen.queryByRole('radio', { name: 'Create worktree and branch' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Move and run' }));
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'review', mode: 'run', newConversation: true, expectedInstruction: 'Review **carefully**.' }));
   });
 
-  it('disables prohibited transitions and supports pointer drag without bypassing confirmation', async () => {
-    const initial = fixture(); initial.state.workflow.columns.push({ id: 'blocked', name: 'Blocked' }); const { command } = mount(initial); await loaded();
-    const select = screen.getByRole('combobox', { name: 'Move Alpha task to' }); expect((within(select).getByRole('option', { name: 'Blocked' }) as HTMLOptionElement).disabled).toBe(true);
-    const card = screen.getByRole('button', { name: 'Open task Alpha task' }).closest('article')!; const transfer = { setData: vi.fn(), getData: vi.fn(() => 't1'), effectAllowed: '' }; fireEvent.dragStart(card, { dataTransfer: transfer }); fireEvent.drop(screen.getByRole('region', { name: 'Doing column' }), { dataTransfer: transfer }); expect(screen.getByRole('dialog', { name: 'Move to Doing' })).toBeTruthy(); expect(command).not.toHaveBeenCalled();
+  it('omits prohibited transitions from the drawer stage control', async () => {
+    const initial = fixture(); initial.state.workflow.columns.push({ id: 'blocked', name: 'Blocked' }); const { user } = mount(initial); await openAlpha(user);
+    const select = screen.getByRole('combobox', { name: 'Move task to' });
+    expect(within(select).queryByRole('option', { name: 'Blocked' })).toBeNull();
   });
 });
 
@@ -122,11 +130,11 @@ describe('Git controls and destructive actions', () => {
   });
 
   it('creates for an existing branch rather than treating it as an existing worktree', async () => {
-    const { user, command } = mount(); await openAlpha(user); await user.click(screen.getByRole('tab', { name: 'Git' })); await screen.findByDisplayValue('main'); await user.selectOptions(screen.getByRole('combobox', { name: 'Branch mode' }), 'existing'); await user.selectOptions(screen.getByRole('combobox', { name: 'Existing branch' }), 'feature'); await user.type(screen.getByRole('textbox', { name: 'Worktree path' }), '/trees/existing'); await user.click(screen.getByRole('button', { name: 'Create worktree' })); await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'worktree.create', taskId: 't1', mode: 'existing', branchName: 'feature', path: '/trees/existing' }));
+    const { user, command } = mount(); await openAlpha(user); await user.click(screen.getByRole('tab', { name: 'Git' })); await screen.findByDisplayValue('main'); await user.selectOptions(screen.getByRole('combobox', { name: 'Branch mode' }), 'existing'); const existing = screen.getByRole('combobox', { name: 'Existing branch' }); await user.clear(existing); await user.type(existing, 'feature'); await user.type(screen.getByRole('textbox', { name: 'Worktree path' }), '/trees/existing'); await user.click(screen.getByRole('button', { name: 'Create worktree' })); await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'worktree.create', taskId: 't1', mode: 'existing', branchName: 'feature', path: '/trees/existing' }));
   });
 
   it('attaches an external checkout with a separate form', async () => {
-    const { user, command } = mount(); await openAlpha(user); await user.click(screen.getByRole('tab', { name: 'Git' })); await user.selectOptions(screen.getByRole('combobox', { name: 'Setup method' }), 'Attach existing worktree'); await user.type(screen.getByRole('textbox', { name: 'Existing worktree path' }), '/external/tree'); await user.click(screen.getByRole('button', { name: 'Attach worktree' })); await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'worktree.attach', taskId: 't1', path: '/external/tree' })); expect(screen.getByText('Attached external worktree')).toBeTruthy();
+    const { user, command } = mount(); await openAlpha(user); await user.click(screen.getByRole('tab', { name: 'Git' })); await user.click(screen.getByRole('button', { name: 'Attach existing worktree' })); await user.type(screen.getByRole('textbox', { name: 'Existing worktree path' }), '/external/tree'); await user.click(screen.getByRole('button', { name: 'Attach worktree' })); await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'worktree.attach', taskId: 't1', path: '/external/tree' })); expect(screen.getByText('Attached external worktree')).toBeTruthy();
   });
 
   it('shows failed operation recovery and sends retry and return commands', async () => {
@@ -174,8 +182,20 @@ describe('Git controls and destructive actions', () => {
     const { user, command } = mount(); await openAlpha(user); await user.click(screen.getByRole('button', { name: 'Delete task' })); expect(command).not.toHaveBeenCalled(); await user.click(screen.getByRole('button', { name: 'Delete task and archive chats' })); await waitFor(() => expect(screen.queryByRole('button', { name: 'Open task Alpha task' })).toBeNull()); expect(command).toHaveBeenCalledWith({ type: 'task.delete', taskId: 't1', confirmed: true, expectedWorktreePath: null }); expect(screen.queryByRole('button', { name: 'Close task details' })).toBeNull();
   });
 
-  it('archives/restores tasks and explains retained native histories and branch on deletion', async () => {
-    const { user, command } = mount(); await openAlpha(user); await user.click(screen.getByRole('button', { name: 'Archive task' })); await waitFor(() => expect(screen.queryByRole('button', { name: 'Open task Alpha task' })).toBeNull()); await user.click(screen.getByRole('button', { name: 'Archived tasks' })); expect(screen.getByRole('button', { name: 'Open task Alpha task' })).toBeTruthy(); await user.click(screen.getByRole('button', { name: 'Restore Alpha task' })); await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.restore', taskId: 't1' })); expect(screen.queryByRole('button', { name: 'Open task Alpha task' })).toBeNull(); await user.click(screen.getByRole('button', { name: 'Back to board' })); await openAlpha(user); await user.click(screen.getByRole('button', { name: 'Delete task' })); const dialog = screen.getByRole('dialog', { name: 'Delete task' }); expect(dialog.textContent).toContain('ARCHIVED, not erased'); expect(dialog.textContent).toContain('Git branch is kept'); await user.click(within(dialog).getByRole('button', { name: 'Cancel' })); expect(command.mock.calls.some(([value]) => value.type === 'task.delete')).toBe(false);
+  it('deletes selected tasks best-effort and reports blocked tasks', async () => {
+    const { user, command } = mount(); await loaded();
+    await user.click(screen.getByRole('button', { name: 'Select cards to delete' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Select Alpha task' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Select Beta task' }));
+    await user.click(screen.getByRole('button', { name: 'Delete 2' }));
+    const dialog = screen.getByRole('dialog', { name: 'Delete selected tasks' });
+    command.mockRejectedValueOnce({ code: 'TASK_BUSY', message: 'Wait for Alpha.' });
+    await user.click(within(dialog).getByRole('button', { name: 'Delete selected' }));
+    await screen.findByRole('dialog', { name: 'Deletion results' });
+    expect(screen.getByText(/Wait for Alpha/)).toBeTruthy();
+    expect(screen.getByText('1 selected')).toBeTruthy();
+    expect(command).toHaveBeenCalledWith({ type: 'task.delete', taskId: 't1', confirmed: true, expectedWorktreePath: null, requireIdle: true });
+    expect(command).toHaveBeenCalledWith({ type: 'task.delete', taskId: 't2', confirmed: true, expectedWorktreePath: '/trees/beta', requireIdle: true });
   });
 });
 

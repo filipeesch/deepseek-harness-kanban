@@ -1,0 +1,17 @@
+- na janela de chat não deveria ser preciso selecionar um workspace para o Agente. Neste momento o chat do DSH pede para eu selecionar u workspace, deveria vir o CWD ja setado
+- o drawer do chat deveria permitir mudar de tamanho
+- não deveria ter um select de coluna no card do board
+- usar mais icones na interface: Botão de configuração, Deletar Task, Close tab
+- O select de coluna do board no chat drawer deveria ser menor. Diria para olhar para o drawer do Railyin hoje para entender melhor o posicionamento do botões.
+- ao arrastar o card, ele não é movido, parece que movemos uma copia do elemtno, UX ruim.
+- não deveria exibir o cwd ali embaixo ta tab name. Deveria ser permitido mudar o nome do agente nas tabs tb.
+- botão de adicionar task deveria estar no topo a primeira coluna , olhe o railyin.
+- não deveria ter botão de archivar a task, somente deletar (que arquiva a conversa, deleta a task e a worktree)
+- faltou a funcionalidade de deletar varios cards juntos no board (olhe o railyin).
+- tire a frase "Execution is independent of workflow stage. Blue: unread · Orange: awaiting reply · Red: failure." do board.
+- remova a frase "Title and description can be edited in any stage. Saving does not message or start agents." da aba Info. Tambem o projeto (isso deveria ficar no header do drawer junto ao nome da task), tire o Effective agent directory tambem. Esta aba deveria mostrar o title e a description como readonly a description em markdown por default, ao clicar num botão editar que isso viraria textboxes para editar.
+- Aba do Git tá muito complexa, gosto mais da versão original do railyil mas com um UI melhor apenas (o posicionbamento do componentes lá tava meio largado)
+- ao clicar fora do drawer, deveria fechar ele.
+- as tools do board devem ficar visiveis em qualquer chat do dsh, não só do kanban.
+- o drawer só abre quando clico no exto do card, deveria abrir quando clico em qualquer parte do card.
+- não validar casos de testes sobre modelos reais. devemos de ter uma forma de ter um modelo deterministico para testes. o DSH já deve fornecer alguma base para isso.

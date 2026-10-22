@@ -9,7 +9,7 @@ export interface WorktreeStore {
   snapshot(): BoardState;
   transact(change: (draft: BoardState) => void): Promise<unknown>;
 }
-export interface WorktreeCoordinatorOptions { signal?: AbortSignal; id?: () => string; now?: () => string }
+export interface WorktreeCoordinatorOptions { signal?: AbortSignal; id?: () => string; now?: () => string; onTaskDeleted?: (task: Task, project: Project) => Promise<void> }
 type CreateAttempt = NonNullable<ContextOperation['createAttempt']>;
 
 function requireTask(state: BoardState, id: string): Task {
@@ -43,6 +43,7 @@ export class WorktreeCoordinator {
   private readonly signal: AbortSignal;
   private readonly id: () => string;
   private readonly now: () => string;
+  private readonly onTaskDeleted?: (task: Task, project: Project) => Promise<void>;
   private readonly tails = new Map<string, Promise<void>>();
   private resumed: Promise<void> | undefined;
   private resumeAgain = false;
@@ -52,6 +53,7 @@ export class WorktreeCoordinator {
     this.signal = options.signal ? AbortSignal.any([this.controller.signal, options.signal]) : this.controller.signal;
     this.id = options.id ?? randomUUID;
     this.now = options.now ?? (() => new Date().toISOString());
+    this.onTaskDeleted = options.onTaskDeleted;
   }
 
   dispose(): void { this.disposed = true; this.controller.abort(); }
@@ -395,11 +397,13 @@ export class WorktreeCoordinator {
         await this.update(taskId, operationId, (_task, operation) => { operation.archivedSessionIds.push(id); });
       }
       this.assertOpen();
+      const deleted = this.read(taskId);
       await this.store.transact(state => {
         if (requireTask(state, taskId).operation?.id !== operationId) throw new KanbanError('OPERATION_CHANGED', 'The deletion operation changed.');
         state.notes = state.notes.filter(note => note.taskId !== taskId);
         state.tasks = state.tasks.filter(item => item.id !== taskId);
       });
+      try { await this.onTaskDeleted?.(deleted.task, deleted.project); } catch { /* cleanup is reported by the callback owner */ }
     } catch (error) {
       const current = this.store.snapshot().tasks.find(task => task.id === taskId);
       if (current?.operation?.id === operationId) {

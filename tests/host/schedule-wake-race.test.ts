@@ -54,11 +54,29 @@ async function runtime() {
   isolated.git = git;
   isolated.spawn.mockReset().mockImplementation(() => { throw new Error('A source-only schedule test must never spawn an executor.'); });
   let persisted: BoardState = initialState();
+  const questionTables = new Map<string, Map<string, unknown>>();
   root.provide('storageDomain', {
-    open: async () => ({
-      global: { get: () => structuredClone(persisted), set: async (value: BoardState) => { persisted = structuredClone(value); } },
-      close: async () => {},
-    }),
+    open: async (spec: { name: string }) => spec.name === 'kanban'
+      ? {
+        global: { get: () => structuredClone(persisted), set: async (value: BoardState) => { persisted = structuredClone(value); } },
+        close: async () => {},
+      }
+      : {
+        table: (name: string) => {
+          const table = questionTables.get(name) ?? new Map<string, unknown>();
+          questionTables.set(name, table);
+          return {
+            get: (key: string) => table.get(key),
+            entries: () => table.entries(),
+            keys: () => table.keys(),
+            size: table.size,
+            put: async (key: string, value: unknown) => { table.set(key, structuredClone(value)); },
+            delete: async (key: string) => table.delete(key),
+            update: async () => { throw new Error('unused'); },
+          };
+        },
+        close: async () => {},
+      },
   } as never);
 
   const sessions = new Map<string, Session>();
@@ -68,12 +86,16 @@ async function runtime() {
   const prompt = vi.fn(async () => ({ accepted: true }));
   const archive = vi.fn(async () => {});
   const resolveAgent = vi.fn(async (id: string) => ({ agent: agents.get(id)! }));
+  const workspaceByPath = new Map<string, { id: string; path: string; title: string; sessionIds: string[] }>();
+  const workspaceById = new Map<string, { id: string; path: string; title: string; sessionIds: string[] }>();
+  const workspaceFor = (path: string, title = path) => { const existing = workspaceByPath.get(path); if (existing) return existing; const workspace = { id: 'workspace-source-only-' + (workspaceById.size + 1), path, title, sessionIds: [] as string[] }; workspaceByPath.set(path, workspace); workspaceById.set(workspace.id, workspace); return workspace; };
   root.provide('sessionController', {
-    create: async ({ cwd }: { cwd: string }) => {
+    create: async ({ cwd, workspaceId }: { cwd?: string; workspaceId?: string }) => {
       const id = SessionId('session-source-only-' + ++nextSession);
+      const directory = workspaceId ? workspaceById.get(workspaceId)?.path ?? cwd : cwd;
       // A public-service fake only: no canonical Native Session history is created or appended.
       const session = { id } as Session;
-      sessions.set(id, session); directories.set(id, cwd);
+      sessions.set(id, session); directories.set(id, directory as string);
       agents.set(id, { id, session, status: 'idle', inbox: { nextTurn: [], nextStep: [] } });
       return { sessionId: id };
     },
@@ -88,7 +110,13 @@ async function runtime() {
     get: (session: Session) => directories.get(session.id),
     set: async (agent: { id: string }, cwd: string) => { directories.set(agent.id, cwd); return cwd; },
   } as never);
-  root.provide('workspaceRegistry', { archiveSession: archive } as never);
+  root.provide('workspaceRegistry', {
+    archiveSession: archive,
+    resolveByPath: async (path: string) => workspaceFor(path),
+    create: async (path: string, title: string) => workspaceFor(path, title),
+    get: (id: string) => workspaceById.get(id),
+    delete: async (id: string) => { const value = workspaceById.get(id); if (!value) return false; workspaceById.delete(id); workspaceByPath.delete(value.path); return true; },
+  } as never);
   root.provide('sandboxPolicy', { resolve: vi.fn(() => { throw new Error('No native executor or policy operation is allowed.'); }) } as never);
   root.provide('tools', { get: () => undefined, register: () => () => {} } as never);
 

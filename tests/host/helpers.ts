@@ -3,12 +3,12 @@ import path from 'node:path';import os from 'node:os';
 import { BoardStore } from '../../src/domain/store.js';
 import { KanbanApp } from '../../src/host/app.js';
 import type { BoardState, Attention, Project, CreateWorktree } from '../../src/shared/types.js';
-import type { StateStorage, SessionPort, GitPort, GitTree } from '../../src/shared/ports.js';
+import type { StateStorage, SessionPort, GitPort, GitTree, WorkspacePort, WorkspaceInfo } from '../../src/shared/ports.js';
 import { KanbanError } from '../../src/shared/errors.js';
 export class MemoryStorage implements StateStorage {value:BoardState|null=null;async load(){return structuredClone(this.value);}async save(value:BoardState){this.value=structuredClone(value);}}
 export class TestSessions implements SessionPort {
- dirs=new Map<string,string>();busy=new Set<string>();sent:Array<{id:string;text:string;requestId?:string}>=[];archived:string[]=[];failSend=false;private count=0;private requests=new Set<string>();
- async create(cwd:string){const id='session-'+(++this.count);this.dirs.set(id,cwd);return id;}
+ dirs=new Map<string,string>();workspaceIds=new Map<string,string|undefined>();busy=new Set<string>();sent:Array<{id:string;text:string;requestId?:string}>=[];archived:string[]=[];failSend=false;private count=0;private requests=new Set<string>();
+ async create(cwd:string,workspaceId?:string){const id='session-'+(++this.count);this.dirs.set(id,cwd);this.workspaceIds.set(id,workspaceId);return id;}
  async directory(id:string){const value=this.dirs.get(id);if(!value)throw new KanbanError('SESSION_NOT_FOUND','Missing test session.');return value;}
  async validateDirectory(id:string,expected:string):Promise<void>{
   let target:string;let current:string;
@@ -32,4 +32,10 @@ export class TestGit implements GitPort {
  async remove(_project:Project,root:string,discard:boolean){const tree=this.trees.get(root);if(tree?.dirty&&!discard)throw new KanbanError('DISCARD_REQUIRED','Confirm discard.',{path:root});this.trees.delete(root);this.removed.push(root);}
  async assertPolicy(){}
 }
-export async function fixture(){const root=await realpath(await mkdtemp(path.join(os.tmpdir(),'dsh-kanban-host-')));const gitRoot=path.join(root,'repo');const projectPath=path.join(gitRoot,'apps','web');await mkdir(projectPath,{recursive:true});const storage=new MemoryStorage();const store=await BoardStore.open(storage);const project=await store.saveProject({name:'Web',projectPath,gitRootPath:gitRoot});const sessions=new TestSessions();const git=new TestGit();const app=new KanbanApp(store,sessions,git);return {root,gitRoot,projectPath,storage,store,project,sessions,git,app,async close(){await app.close();if(path.dirname(root)!==await realpath(os.tmpdir())||!path.basename(root).startsWith('dsh-kanban-host-')||await realpath(root)!==root)throw new Error('Unsafe test cleanup target');await rm(root,{recursive:true,force:true});}};}
+export class TestWorkspaces implements WorkspacePort {
+ byPath=new Map<string,WorkspaceInfo>();byId=new Map<string,WorkspaceInfo>();deleted:string[]=[];private count=0;
+ async ensure(path:string,title:string){const existing=this.byPath.get(path);if(existing)return {workspace:existing,owned:false};const workspace:WorkspaceInfo={id:'workspace-'+(++this.count),path,title,sessionIds:[]};this.byPath.set(path,workspace);this.byId.set(workspace.id,workspace);return {workspace,owned:true};}
+ get(id:string){return this.byId.get(id);}
+ async delete(id:string){this.deleted.push(id);const value=this.byId.get(id);if(value)this.byPath.delete(value.path);this.byId.delete(id);}
+}
+export async function fixture(){const root=await realpath(await mkdtemp(path.join(os.tmpdir(),'dsh-kanban-host-')));const gitRoot=path.join(root,'repo');const projectPath=path.join(gitRoot,'apps','web');await mkdir(projectPath,{recursive:true});const storage=new MemoryStorage();const store=await BoardStore.open(storage);const project=await store.saveProject({name:'Web',projectPath,gitRootPath:gitRoot});const sessions=new TestSessions();const git=new TestGit();const workspaces=new TestWorkspaces();const app=new KanbanApp(store,sessions,git,{},workspaces);return {root,gitRoot,projectPath,storage,store,project,sessions,git,workspaces,app,async close(){await app.close();if(path.dirname(root)!==await realpath(os.tmpdir())||!path.basename(root).startsWith('dsh-kanban-host-')||await realpath(root)!==root)throw new Error('Unsafe test cleanup target');await rm(root,{recursive:true,force:true});}};}

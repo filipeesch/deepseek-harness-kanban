@@ -42,7 +42,7 @@ describe('plugin-owned page bookmarks', () => {
   it('creates independent preference objects with no native resources', () => {
     const first = createBoardPageState(); const second = createBoardPageState();
     expect(first).not.toBe(second); expect(first.drawers).not.toBe(second.drawers);
-    expect(first).toEqual({ search: '', projectFilter: '', archive: false, selectedTaskId: null, drawers: {} });
+    expect(first).toEqual({ search: '', projectFilter: '', selectedTaskId: null, drawers: {} });
     expect(Object.getPrototypeOf(first.drawers)).toBeNull();
   });
 
@@ -81,17 +81,16 @@ describe('plugin-owned page bookmarks', () => {
     expect(screen.getByRole('tab', { name: 'Agent 2' }).getAttribute('aria-selected')).toBe('true');
   });
 
-  it('preserves archive view and archived task selection across page remounts', async () => {
-    const initial = fixture(); initial.state.tasks[0]!.archivedAt = '2026-10-21T12:00:00Z'; const mock = fakeApi(initial); const pageState = createBoardPageState(); const user = userEvent.setup();
+  it('preserves search, project filter, and selected task across page remounts', async () => {
+    const mock = fakeApi(); const pageState = createBoardPageState(); const user = userEvent.setup();
     const first = render(<BoardView api={mock.api} pageState={pageState} renderConversation={renderNative} />);
-    await screen.findByRole('button', { name: 'Open task Beta task' }); await user.click(screen.getByRole('button', { name: 'Archived tasks' }));
+    await screen.findByRole('button', { name: 'Open task Beta task' });
     await user.type(screen.getByRole('searchbox', { name: 'Search tasks' }), 'Alpha'); await user.selectOptions(screen.getByRole('combobox', { name: 'Project filter' }), 'p1');
     await user.click(screen.getByRole('button', { name: 'Open task Alpha task' })); await user.click(screen.getByRole('tab', { name: 'Info' })); first.unmount();
     render(<BoardView api={mock.api} pageState={pageState} renderConversation={renderNative} />);
     await screen.findByRole('button', { name: 'Close task details' });
-    expect(screen.getByRole('button', { name: 'Back to board' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('tab', { name: 'Info' }).getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByRole('button', { name: 'Restore task' })).toBeTruthy(); expect(pageState.archive).toBe(true); expect(pageState.selectedTaskId).toBe('t1');
+    expect(pageState.search).toBe('Alpha'); expect(pageState.projectFilter).toBe('p1'); expect(pageState.selectedTaskId).toBe('t1');
   });
 });
 

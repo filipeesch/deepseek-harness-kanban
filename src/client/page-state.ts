@@ -1,18 +1,18 @@
 import { useCallback, useState, type Dispatch, type SetStateAction } from 'react';
 
 export type DrawerSection = 'Conversations' | 'Info' | 'Git' | 'Notes';
-export interface TaskPageState { section: DrawerSection; conversationId: string | null; conversationSelectionRequired?: boolean }
+export interface InfoDraft { title: string; description: string }
+export interface TaskPageState { section: DrawerSection; conversationId: string | null; conversationSelectionRequired?: boolean; infoDraft?: InfoDraft }
 /** Plugin-lifetime UI bookmarks only: never store native views, transports, or session references here. */
 export interface BoardPageState {
   search: string;
   projectFilter: string;
-  archive: boolean;
   selectedTaskId: string | null;
   drawers: Record<string, TaskPageState>;
 }
 
 export function createBoardPageState(): BoardPageState {
-  return { search: '', projectFilter: '', archive: false, selectedTaskId: null, drawers: Object.create(null) as Record<string, TaskPageState> };
+  return { search: '', projectFilter: '', selectedTaskId: null, drawers: Object.create(null) as Record<string, TaskPageState> };
 }
 
 export function createTaskPageState(): TaskPageState { return { section: 'Conversations', conversationId: null }; }

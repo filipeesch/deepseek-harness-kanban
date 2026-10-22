@@ -11,18 +11,21 @@ function pending() { let resolve!: (value: BoardSnapshot) => void; let reject!: 
 describe('editor save draft lifetime',()=>{
  it('locks task fields until a save completes and permits the next draft afterward',async()=>{
   const value=fixture(), p=pending(), user=userEvent.setup(); const view=render(<InfoPanel task={value.state.tasks[0]!} state={value.state} run={p.run}/>);
+  await user.click(screen.getByRole('button',{name:'Edit'}));
   const title=screen.getByRole('textbox',{name:'Title'}) as HTMLInputElement;
   await user.clear(title);await user.type(title,'FIRST SAVE');await user.click(screen.getByRole('button',{name:'Save task'}));
   expect(title.disabled).toBe(true);expect((screen.getByRole('textbox',{name:'Description'}) as HTMLTextAreaElement).disabled).toBe(true);
   await user.type(title,'UNSAVED DRAFT');expect(title.value).toBe('FIRST SAVE');
   const saved=fixture();saved.state.revision=2;saved.state.tasks[0]!.title='FIRST SAVE';
   await act(async()=>{view.rerender(<InfoPanel task={saved.state.tasks[0]!} state={saved.state} run={p.run}/>);p.resolve(saved);});
-  await screen.findByText('Task saved.');expect(title.disabled).toBe(false);await user.clear(title);await user.type(title,'NEXT DRAFT');expect(title.value).toBe('NEXT DRAFT');
+  await screen.findByText('Task saved.');await user.click(screen.getByRole('button',{name:'Edit'}));const nextTitle=screen.getByRole('textbox',{name:'Title'}) as HTMLInputElement;await user.clear(nextTitle);await user.type(nextTitle,'NEXT DRAFT');expect(nextTitle.value).toBe('NEXT DRAFT');
  });
  it.each(['success','failure'] as const)('isolates a different task editor from an older save (%s)',async outcome=>{
   const value=fixture(),p=pending(),user=userEvent.setup();const view=render(<InfoPanel task={value.state.tasks[0]!} state={value.state} run={p.run}/>);
+  await user.click(screen.getByRole('button',{name:'Edit'}));
   await user.type(screen.getByRole('textbox',{name:'Title'}),' edited');await user.click(screen.getByRole('button',{name:'Save task'}));
   view.rerender(<InfoPanel task={value.state.tasks[1]!} state={value.state} run={p.run}/>);
+  await user.click(screen.getByRole('button',{name:'Edit'}));
   expect((screen.getByRole('textbox',{name:'Title'}) as HTMLInputElement).value).toBe('Beta task');
   await user.clear(screen.getByRole('textbox',{name:'Title'}));await user.type(screen.getByRole('textbox',{name:'Title'}),'B DRAFT');
   await act(async()=>{if(outcome==='failure')p.reject({code:'OLD_A_FAILURE',message:'Old editor failure'});else p.resolve(value);});

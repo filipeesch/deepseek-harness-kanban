@@ -5,6 +5,7 @@ import { SessionId } from '@deepseek-ai/dsh-session';
 import { TYPERT_HOST } from './remote.js';
 import { BoardStore } from './domain/store.js';
 import { openNativeStorage } from './host/storage.js';
+import { openQuestionStorage } from './host/question-storage.js';
 import { createNativePorts } from './host/native.js';
 import { GitAdapter } from './host/git.js';
 import { KanbanApp } from './host/app.js';
@@ -40,12 +41,15 @@ export function registerTaskExecutionGuards(ctx:Context,store:Pick<BoardStore,'s
 export const name='kanban';
 export const inject=['storageDomain','sessionController','sessions','agents','workingDirectory','workspaceRegistry','sandboxPolicy','tools','typert'];
 export async function apply(ctx:Context):Promise<void>{
- const storage=await openNativeStorage(ctx);const lifetime=new AbortController();
+ const storage=await openNativeStorage(ctx);
+ let questions:{storage:import('./host/question-storage.js').QuestionStore;close:()=>Promise<void>};
+ try{questions=await openQuestionStorage(ctx);}catch(error){await storage.close();throw error;}
+ const lifetime=new AbortController();
  const native=createNativePorts(ctx);const store=await BoardStore.open(storage.storage);
  const report=(error:unknown)=>ctx.logger.warn(error instanceof Error?error.message:String(error));
- const app=new KanbanApp(store,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await ctx.sessionController.inspect(SessionId(id),lifetime.signal)).events});
+ const app=new KanbanApp(store,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await ctx.sessionController.inspect(SessionId(id),lifetime.signal)).events,questionStore:questions.storage},native.workspaces);
  let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;
- ctx.effect(()=>async()=>{lifetime.abort();offTools?.();offWire?.();offGuards?.();await app.close();await storage.close();});
+ ctx.effect(()=>async()=>{lifetime.abort();offTools?.();offWire?.();offGuards?.();await app.close();await storage.close();await questions.close();});
  offWire=ctx.typert.register(TYPERT_HOST);
  ctx.plugin(KanbanController,app);
  offTools=registerProductTools(ctx,app);

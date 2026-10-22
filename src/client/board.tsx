@@ -2,17 +2,22 @@ import React, { useCallback, useEffect, useRef, useState, type ReactNode } from 
 import type { BoardSnapshot, ClientApi, Column, ColumnGroup, Command, Problem, Task, Workflow } from '../shared/types.js';
 import { EMPTY_ATTENTION } from '../shared/types.js';
 import { Configuration, NewTaskDialog } from './forms.js';
-import { TaskDrawer } from './drawer.js';
+import { TaskDrawer, type SessionTitles } from './drawer.js';
 import { MoveDialog } from './move.js';
 import { asProblem, ErrorNotice, Modal, type RunCommand } from './ui.js';
 import { styles } from './styles.js';
+import { CheckSquareIcon, PlusIcon, SettingsIcon, TrashIcon } from './icons.js';
+import { useCardDrag, type CardDragState } from './useCardDrag.js';
 import { createBoardPageState, taskPageState, usePageField, type BoardPageState } from './page-state.js';
 export { createBoardPageState } from './page-state.js';
 export type { BoardPageState } from './page-state.js';
 
-export interface BoardViewProps { api: ClientApi; renderConversation: (id: string) => ReactNode; pageState?: BoardPageState }
+export interface BoardViewProps { api: ClientApi; renderConversation: (id: string) => ReactNode; pageState?: BoardPageState; sessionTitles?: SessionTitles }
 type DestructiveCommand = Extract<Command, { type: 'task.delete' | 'worktree.remove' }>;
 interface Destruction { command: DestructiveCommand; title: string; path: string | null; expectedWorktreePath: string | null; error?: Problem }
+interface MoveRequest { taskId: string; columnId: string; beforeTaskId?: string | null }
+interface OptimisticMove { taskId: string; columnId: string; beforeTaskId: string | null }
+interface BatchResult { deleted: number; skipped: Array<{ title: string; message: string }> }
 
 export function columnLayout(workflow: Workflow): Array<{ key: string; group?: ColumnGroup; columns: Column[] }> {
   const result: Array<{ key: string; group?: ColumnGroup; columns: Column[] }> = []; const seen = new Set<string>();
@@ -26,13 +31,18 @@ export function columnLayout(workflow: Workflow): Array<{ key: string; group?: C
   return result;
 }
 
-export function BoardView({ api, renderConversation, pageState }: BoardViewProps) {
+export function BoardView({ api, renderConversation, pageState, sessionTitles }: BoardViewProps) {
   const [localPageState] = useState(createBoardPageState); const preferences = pageState ?? localPageState;
   const [snapshot, setSnapshot] = useState<BoardSnapshot | null>(null); const latest = useRef<BoardSnapshot | null>(null); const live = useRef(false); const currentApi = useRef(api); currentApi.current = api;
   const [loadError, setLoadError] = useState<Problem | null>(null); const [loadAttempt, setLoadAttempt] = useState(0); const [pending, setPending] = useState(0);
-  const [search, setSearch] = usePageField(preferences, 'search'); const [projectFilter, setProjectFilter] = usePageField(preferences, 'projectFilter'); const [archive, setArchive] = usePageField(preferences, 'archive'); const [selectedId, setSelectedId] = usePageField(preferences, 'selectedTaskId');
-  const [newTask, setNewTask] = useState(false); const [configuration, setConfiguration] = useState(false); const [move, setMove] = useState<{ taskId: string; columnId: string } | null>(null); const [dragging, setDragging] = useState<string | null>(null);
+  const [search, setSearch] = usePageField(preferences, 'search'); const [projectFilter, setProjectFilter] = usePageField(preferences, 'projectFilter'); const [selectedId, setSelectedId] = usePageField(preferences, 'selectedTaskId');
+  const [newTask, setNewTask] = useState(false); const [configuration, setConfiguration] = useState(false); const [move, setMove] = useState<MoveRequest | null>(null);
   const [destruction, setDestruction] = useState<Destruction | null>(null); const [discard, setDiscard] = useState<Destruction | null>(null); const [actionError, setActionError] = useState<Problem | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false); const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [batchConfirm, setBatchConfirm] = useState(false); const [batchPending, setBatchPending] = useState(false); const [batchResult, setBatchResult] = useState<BatchResult | null>(null);
+  const [optimistic, setOptimistic] = useState<OptimisticMove | null>(null);
+  const boardBody = useRef<HTMLDivElement>(null);
+
   const accept = useCallback((next: BoardSnapshot) => { if (!live.current) return; const currentEpoch = latest.current?.clientEpoch ?? 0; const nextEpoch = next.clientEpoch ?? 0; if (latest.current && (nextEpoch < currentEpoch || (nextEpoch === currentEpoch && next.sequence < latest.current.sequence))) return; latest.current = next; setSnapshot(next); }, []);
   useEffect(() => {
     let active = true; live.current = true; latest.current = null; setSnapshot(null); setLoadError(null); let unsubscribe = () => {};
@@ -40,6 +50,7 @@ export function BoardView({ api, renderConversation, pageState }: BoardViewProps
     void Promise.resolve().then(() => api.snapshot()).then(next => { if (active) accept(next); }, error => { if (active) setLoadError(asProblem(error)); });
     return () => { active = false; live.current = false; unsubscribe(); };
   }, [api, loadAttempt, accept]);
+
   const run: RunCommand = useCallback(async (command: Command) => {
     setPending(value => value + 1);
     const invokedTask = 'taskId' in command ? latest.current?.state.tasks.find(value => value.id === command.taskId) : undefined;
@@ -58,17 +69,55 @@ export function BoardView({ api, renderConversation, pageState }: BoardViewProps
       throw error;
     } finally { if (live.current) setPending(value => Math.max(0, value - 1)); }
   }, [api, accept]);
+
   const state = snapshot?.state;
+  const selected = state?.tasks.find(task => task.id === selectedId);
   useEffect(() => { if (state && selectedId && !state.tasks.some(task => task.id === selectedId)) setSelectedId(null); }, [state, selectedId]);
-  async function simple(command: Command) { setActionError(null); try { await run(command); } catch (error) { const problem = asProblem(error); if (problem.code !== 'DISCARD_REQUIRED') setActionError(problem); } }
-  function requestMove(task: Task, column: Column) {
-    if (!state || task.columnId === column.id || task.archivedAt) return;
+  useEffect(() => { setSelectionMode(false); setSelectedIds(new Set()); }, [search, projectFilter]);
+  useEffect(() => {
+    if (!selectedId) return;
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) setSelectedId(null); };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, [selectedId]);
+
+  function simple(command: Command) { setActionError(null); return run(command).catch(error => { const problem = asProblem(error); if (problem.code !== 'DISCARD_REQUIRED') setActionError(problem); }); }
+
+  function allowedDestination(task: Task, column: Column): boolean {
+    if (!state) return false;
+    if (task.columnId === column.id) return true;
     const current = state.workflow.columns.find(value => value.id === task.columnId);
-    if (current?.allowedTransitions !== undefined && !current.allowedTransitions.includes(column.id)) { setActionError({ code: 'TRANSITION_NOT_ALLOWED', message: 'This workflow does not allow that transition.' }); return; }
-    if (task.operation || task.pendingTransition) { setActionError({ code: 'OPERATION_PENDING', message: 'Resolve the current task operation before moving.' }); return; }
-    if (column.onEnterPrompt?.trim() || !task.worktree) setMove({ taskId: task.id, columnId: column.id });
-    else void simple({ type: 'task.move', taskId: task.id, columnId: column.id, mode: 'move' });
+    return current?.allowedTransitions === undefined || current.allowedTransitions.includes(column.id);
   }
+  function canDrop(columnId: string, taskId: string): boolean {
+    if (!state || selectionMode) return false;
+    const task = state.tasks.find(value => value.id === taskId);
+    const column = state.workflow.columns.find(value => value.id === columnId);
+    if (!task || !column || task.operation || task.pendingTransition) return false;
+    return allowedDestination(task, column);
+  }
+
+  async function applyMove(task: Task, column: Column, beforeTaskId: string | null) {
+    setActionError(null);
+    setOptimistic({ taskId: task.id, columnId: column.id, beforeTaskId });
+    try { await run({ type: 'task.move', taskId: task.id, columnId: column.id, mode: 'move', ...(beforeTaskId !== null ? { beforeTaskId } : {}) }); }
+    catch (error) { const problem = asProblem(error); if (problem.code !== 'DISCARD_REQUIRED') setActionError(problem); }
+    finally { setOptimistic(null); }
+  }
+  function requestMove(task: Task, column: Column, beforeTaskId: string | null = null) {
+    if (!state || task.operation || task.pendingTransition) { setActionError({ code: 'OPERATION_PENDING', message: 'Resolve the current task operation before moving.' }); return; }
+    if (!allowedDestination(task, column)) { setActionError({ code: 'TRANSITION_NOT_ALLOWED', message: 'This workflow does not allow that transition.' }); return; }
+    if (task.columnId === column.id) { void applyMove(task, column, beforeTaskId); return; }
+    if (column.onEnterPrompt?.trim()) { setMove({ taskId: task.id, columnId: column.id, beforeTaskId }); return; }
+    void applyMove(task, column, beforeTaskId);
+  }
+
+  const { drag, begin, shouldSuppressClick } = useCardDrag({ enabled: Boolean(state) && !selectionMode, canDrop, onDrop: (taskId, columnId, beforeTaskId) => {
+    const task = latest.current?.state.tasks.find(value => value.id === taskId);
+    const column = latest.current?.state.workflow.columns.find(value => value.id === columnId);
+    if (task && column) requestMove(task, column, beforeTaskId);
+  }});
+
   function requestDanger(task: Task, type: 'task.delete' | 'worktree.remove') { setActionError(null); setDestruction({ command: { type, taskId: task.id, confirmed: true, expectedWorktreePath: task.worktree?.path ?? null }, title: task.title, path: task.worktree?.path ?? null, expectedWorktreePath: task.worktree?.path ?? null }); }
   function runDestruction(request: Destruction, command: Command = request.command) {
     const task = latest.current?.state.tasks.find(value => value.id === request.command.taskId);
@@ -76,28 +125,90 @@ export function BoardView({ api, renderConversation, pageState }: BoardViewProps
     return run(command);
   }
   async function confirmDestruction() { if (!destruction) return; const request = destruction; setDestruction(null); try { await runDestruction(request); if (request.command.type === 'task.delete') setSelectedId(null); } catch (error) { const problem = asProblem(error); if (problem.code !== 'DISCARD_REQUIRED') setActionError(problem); } }
-  const selected = state?.tasks.find(task => task.id === selectedId);
-  const moveTask = state?.tasks.find(task => task.id === move?.taskId); const moveColumn = state?.workflow.columns.find(column => column.id === move?.columnId);
-  const visible = state?.tasks.filter(task => Boolean(task.archivedAt) === archive && (!projectFilter || task.projectId === projectFilter) && (task.title + ' ' + task.description).toLowerCase().includes(search.trim().toLowerCase())).sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt)) ?? [];
+
+  const selectedTasks = state?.tasks.filter(task => selectedIds.has(task.id)) ?? [];
+  const visible = state?.tasks.filter(task => (!projectFilter || task.projectId === projectFilter) && (task.title + ' ' + task.description).toLowerCase().includes(search.trim().toLowerCase())).sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt)) ?? [];
+  function tasksForColumn(columnId: string): Task[] {
+    const source = optimistic ? visible.filter(task => task.id !== optimistic.taskId) : visible;
+    const base = source.filter(task => task.columnId === columnId);
+    if (!optimistic || optimistic.columnId !== columnId) return base;
+    const moving = visible.find(task => task.id === optimistic.taskId);
+    if (!moving) return base;
+    const next = [...base];
+    const index = optimistic.beforeTaskId ? next.findIndex(task => task.id === optimistic.beforeTaskId) : -1;
+    next.splice(index >= 0 ? index : next.length, 0, moving);
+    return next;
+  }
+
+  function toggleSelect(taskId: string) { setSelectedIds(previous => { const next = new Set(previous); if (next.has(taskId)) next.delete(taskId); else next.add(taskId); return next; }); }
+  function enterSelection() { setSelectionMode(true); setSelectedIds(new Set()); setBatchResult(null); }
+  function exitSelection() { setSelectionMode(false); setSelectedIds(new Set()); }
+
+  async function deleteSelected() {
+    if (batchPending) return;
+    setBatchPending(true); setActionError(null);
+    const skipped: Array<{ title: string; message: string }> = []; let deleted = 0;
+    for (const taskId of [...selectedIds]) {
+      const task = latest.current?.state.tasks.find(value => value.id === taskId);
+      if (!task) { setSelectedIds(previous => { const next = new Set(previous); next.delete(taskId); return next; }); continue; }
+      try {
+        await run({ type: 'task.delete', taskId, confirmed: true, expectedWorktreePath: task.worktree?.path ?? null, requireIdle: true });
+        deleted += 1;
+        setSelectedIds(previous => { const next = new Set(previous); next.delete(taskId); return next; });
+      } catch (error) { skipped.push({ title: task.title, message: asProblem(error).message }); }
+    }
+    setBatchConfirm(false); setBatchPending(false);
+    if (skipped.length > 0) setBatchResult({ deleted, skipped });
+    else { setBatchResult(null); exitSelection(); }
+  }
+
   function renderCard(task: Task) {
-    const attention = snapshot?.attention[task.id] ?? EMPTY_ATTENTION; const current = state?.workflow.columns.find(column => column.id === task.columnId);
-    return <article key={task.id} className="kb-card" draggable={!archive && !task.operation && !task.pendingTransition} onDragStart={event => { if (event.target instanceof HTMLElement && event.target.closest('select')) { event.preventDefault(); return; } setDragging(task.id); event.dataTransfer?.setData('application/x-dsh-kanban-task', task.id); if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'; }} onDragEnd={() => setDragging(null)}>
-      <button type="button" className="kb-card-open" aria-label={'Open task ' + task.title} onClick={() => setSelectedId(task.id)}><strong>{task.title}</strong><span className="kb-hint">{state?.projects.find(project => project.id === task.projectId)?.name ?? task.projectId}</span></button>
+    const attention = snapshot?.attention[task.id] ?? EMPTY_ATTENTION;
+    const isSelected = selectedIds.has(task.id);
+    return <article key={task.id} className={'kb-card' + (isSelected ? ' kb-card-selected' : '')} data-task-id={task.id} role="button" tabIndex={0} aria-label={'Open task ' + task.title} aria-pressed={selectionMode ? isSelected : undefined}
+      onPointerDown={event => { if (selectionMode) return; if ((event.target as Element).closest('button, input, select, textarea, a')) return; begin(event, task.id, task.columnId); }}
+      onClick={() => { if (shouldSuppressClick()) return; if (selectionMode) { toggleSelect(task.id); return; } setSelectedId(task.id); }}
+      onKeyDown={event => { if (event.key !== 'Enter' && event.key !== ' ') return; event.preventDefault(); if (selectionMode) toggleSelect(task.id); else setSelectedId(task.id); }}>
+      <div className="kb-card-main">
+        {selectionMode && <input type="checkbox" className="kb-card-check" aria-label={'Select ' + task.title} checked={isSelected} onClick={event => event.stopPropagation()} onChange={() => toggleSelect(task.id)} />}
+        <div className="kb-card-text"><strong>{task.title}</strong><span className="kb-hint">{state?.projects.find(project => project.id === task.projectId)?.name ?? task.projectId}</span></div>
+      </div>
       <div className="kb-attention" role="group" aria-label={'Activity for ' + task.title}>{attention.running && <span className="kb-running">Running</span>}{attention.unread && <span className="kb-dot kb-blue" role="img" aria-label="Unread messages" title="Unread messages" />}{attention.awaitingReply && <span className="kb-dot kb-orange" role="img" aria-label="Awaiting reply" title="Awaiting reply" />}{attention.failed && <span className="kb-dot kb-red" role="img" aria-label="Agent failure" title="Agent failure" />}</div>
       {task.operation && <p className="kb-hint">Operation: {task.operation.phase}</p>}{task.pendingTransition && <p className="kb-hint">Confirmed action: {task.pendingTransition.status}</p>}
-      {archive ? <div className="kb-actions"><button className="kb-button" type="button" disabled={pending > 0 || Boolean(task.operation)} onClick={() => void simple({ type: 'task.restore', taskId: task.id })}>Restore {task.title}</button><button className="kb-button kb-danger" type="button" disabled={pending > 0 || Boolean(task.operation)} onClick={() => requestDanger(task, 'task.delete')}>Delete {task.title}</button></div> : <label className="kb-field kb-card-move"><span className="kb-sr">{'Move ' + task.title + ' to'}</span><select className="kb-input" aria-label={'Move ' + task.title + ' to'} value={task.columnId} disabled={Boolean(task.operation || task.pendingTransition)} onChange={event => { const column = state?.workflow.columns.find(value => value.id === event.target.value); if (column) requestMove(task, column); }}>{state?.workflow.columns.map(column => <option key={column.id} value={column.id} disabled={column.id !== task.columnId && current?.allowedTransitions !== undefined && !current.allowedTransitions.includes(column.id)}>{column.name}</option>)}</select></label>}
     </article>;
   }
-  return <section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style><header className="kb-header"><div><h1>Kanban</h1><p className="kb-hint">One board for all projects</p></div><div className="kb-toolbar"><button type="button" className="kb-button kb-primary" disabled={!state || state.projects.length === 0} onClick={() => setNewTask(true)}>New task</button><label className="kb-field kb-search"><span className="kb-sr">Search tasks</span><input className="kb-input" type="search" aria-label="Search tasks" placeholder="Search title or description" value={search} onChange={event => setSearch(event.target.value)} /></label><label className="kb-field"><span className="kb-sr">Project filter</span><select className="kb-input" aria-label="Project filter" value={projectFilter} onChange={event => setProjectFilter(event.target.value)}><option value="">All projects</option>{state?.projects.map(project => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label><button type="button" className="kb-button" disabled={!state} aria-pressed={archive} onClick={() => setArchive(!archive)}>{archive ? 'Back to board' : 'Archived tasks'}</button><button type="button" className="kb-button" disabled={!state} onClick={() => setConfiguration(true)}>Configuration</button></div></header>
+
+  function renderNewTaskButton(column: Column) { return <div className="kb-column-create"><button type="button" className="kb-button kb-primary" disabled={!state || state.projects.length === 0} onClick={() => setNewTask(true)} aria-label="New task"><PlusIcon size={14} /> New task</button></div>; }
+
+  function onBoardPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    if (!selectedId) return;
+    const target = event.target as Element;
+    if (target.closest('.kb-drawer') || target.closest('.kb-card') || target.closest('button, input, select, textarea, a, [role="dialog"]')) return;
+    setSelectedId(null);
+  }
+
+  return <section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style><header className="kb-header"><div><h1>Kanban</h1><p className="kb-hint">One board for all projects</p></div><div className="kb-toolbar">
+    {!selectionMode ? <>
+      <label className="kb-field kb-search"><span className="kb-sr">Search tasks</span><input className="kb-input" type="search" aria-label="Search tasks" placeholder="Search title or description" value={search} onChange={event => setSearch(event.target.value)} /></label>
+      <label className="kb-field"><span className="kb-sr">Project filter</span><select className="kb-input" aria-label="Project filter" value={projectFilter} onChange={event => setProjectFilter(event.target.value)}><option value="">All projects</option>{state?.projects.map(project => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label>
+      <button type="button" className="kb-button kb-icon-button" disabled={!state || state.tasks.length === 0} aria-label="Select cards to delete" title="Select cards to delete" onClick={enterSelection}><CheckSquareIcon size={16} /></button>
+      <button type="button" className="kb-button kb-icon-button" disabled={!state} aria-label="Configuration" title="Configuration" onClick={() => setConfiguration(true)}><SettingsIcon size={16} /></button>
+    </> : <>
+      <span className="kb-selection-count" role="status">{selectedIds.size} selected</span>
+      <button type="button" className="kb-button kb-danger" disabled={selectedIds.size === 0 || batchPending} onClick={() => setBatchConfirm(true)}><TrashIcon size={14} /> Delete {selectedIds.size || ''}</button>
+      <button type="button" className="kb-button" disabled={batchPending} onClick={exitSelection}>Cancel</button>
+    </>}
+  </div></header>
     <ErrorNotice problem={loadError} />{loadError && <button type="button" className="kb-button" onClick={() => setLoadAttempt(value => value + 1)}>Retry loading board</button>}<ErrorNotice problem={actionError} />{pending > 0 && <p className="kb-save-status" role="status">Saving change…</p>}{!state && !loadError && <p className="kb-empty" role="status">Loading Kanban…</p>}
-    {state && <><div className="kb-page-body">{state.projects.length === 0 && <div className="kb-empty"><h2>Add your first project</h2><p>Register a project path and Git root to create tasks.</p><button type="button" className="kb-button kb-primary" onClick={() => setConfiguration(true)}>Configure projects</button></div>}
-      {archive ? <section className="kb-archive" aria-label="Archived tasks"><h2>Archived tasks</h2><p className="kb-hint">Restore a task to return its retained notes and conversations to the active board.</p>{visible.length ? visible.map(renderCard) : <p>No archived tasks match the current search and project filter.</p>}</section> : <div className="kb-columns" aria-label="Workflow columns">{columnLayout(state.workflow).map(slot => <section key={slot.key} className={'kb-column-slot ' + (slot.group ? 'kb-column-group' : '')} aria-label={slot.group?.name}>{slot.group && <h2 className="kb-group-heading">{slot.group.name}</h2>}{slot.columns.map(column => { const tasks = visible.filter(task => task.columnId === column.id); const dragged = state.tasks.find(task => task.id === dragging); const source = state.workflow.columns.find(value => value.id === dragged?.columnId); const allowed = !dragged || source?.allowedTransitions === undefined || source.allowedTransitions.includes(column.id) || dragged.columnId === column.id;
-        return <section className={'kb-column ' + (dragging && !allowed ? 'kb-drop-disabled' : '')} key={column.id} aria-label={column.name + ' column'} onDragOver={event => { if (allowed) event.preventDefault(); }} onDrop={event => { event.preventDefault(); const taskId = event.dataTransfer?.getData('application/x-dsh-kanban-task') || dragging; const task = state.tasks.find(value => value.id === taskId); setDragging(null); if (task && allowed) requestMove(task, column); }}><header className="kb-column-header"><h2>{column.name}</h2><span aria-label={tasks.length + ' tasks'}>{tasks.length}</span></header><div className="kb-card-list">{tasks.map(renderCard)}{tasks.length === 0 && <p className="kb-empty-column">No matching tasks</p>}</div></section>; })}</section>)}</div>}
-      <p className="kb-legend">Execution is independent of workflow stage. Blue: unread · Orange: awaiting reply · Red: failure.</p>
-    </div>{selected && <TaskDrawer key={selected.id} task={selected} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={() => setSelectedId(null)} onMove={requestMove} onDanger={requestDanger} />}
-    {newTask && <NewTaskDialog state={state} run={run} onClose={() => setNewTask(false)} onCreated={id => { setArchive(false); setSelectedId(id); }} />}{configuration && <Configuration state={state} run={run} onClose={() => setConfiguration(false)} />}{moveTask && moveColumn && <MoveDialog key={moveTask.id + ':' + moveColumn.id} task={moveTask} column={moveColumn} state={state} api={api} run={run} onClose={() => setMove(null)} />}
+    {state && <><div className="kb-page-body" ref={boardBody} onPointerDown={onBoardPointerDown}>{state.projects.length === 0 && <div className="kb-empty"><h2>Add your first project</h2><p>Register a project path and Git root to create tasks.</p><button type="button" className="kb-button kb-primary" onClick={() => setConfiguration(true)}>Configure projects</button></div>}
+      <div className="kb-columns" aria-label="Workflow columns">{columnLayout(state.workflow).map(slot => <section key={slot.key} className={'kb-column-slot ' + (slot.group ? 'kb-column-group' : '')} aria-label={slot.group?.name}>{slot.group && <h2 className="kb-group-heading">{slot.group.name}</h2>}{slot.columns.map(column => { const tasks = tasksForColumn(column.id); const source = state.workflow.columns.find(value => value.id === drag?.sourceColumnId); const allowed = !drag || source?.allowedTransitions === undefined || source.allowedTransitions.includes(column.id) || drag.sourceColumnId === column.id;
+        return <section className={'kb-column ' + (drag && !allowed ? 'kb-drop-disabled' : '')} key={column.id} aria-label={column.name + ' column'} data-column-id={column.id}><header className="kb-column-header"><h2>{column.name}</h2><span aria-label={tasks.length + ' tasks'}>{tasks.length}</span></header>{column.id === state.workflow.initialColumnId && renderNewTaskButton(column)}<div className="kb-card-list">{tasks.map(renderCard)}{drag?.overColumnId === column.id && <div className="kb-drop-indicator" style={{ top: drag.indicatorY }} aria-hidden="true" />}{tasks.length === 0 && <p className="kb-empty-column">No matching tasks</p>}</div></section>; })}</section>)}</div></div>
+      {selected && <TaskDrawer key={selected.id} task={selected} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={() => setSelectedId(null)} onMove={requestMove} onDanger={requestDanger} sessionTitles={sessionTitles} />}
+    {newTask && <NewTaskDialog state={state} run={run} onClose={() => setNewTask(false)} onCreated={id => setSelectedId(id)} />}{configuration && <Configuration state={state} run={run} onClose={() => setConfiguration(false)} />}{move && (() => { const task = state.tasks.find(value => value.id === move.taskId); const column = state.workflow.columns.find(value => value.id === move.columnId); return task && column ? <MoveDialog key={task.id + ':' + column.id} task={task} column={column} beforeTaskId={move.beforeTaskId ?? null} state={state} run={run} onClose={() => setMove(null)} /> : null; })()}
     {destruction && <Modal title={destruction.command.type === 'task.delete' ? 'Delete task' : 'Remove worktree'} onClose={() => setDestruction(null)}><div className="kb-form"><p>{destruction.command.type === 'task.delete' ? 'Permanently delete the Kanban task ' : 'Remove the worktree for '}<strong>{destruction.title}</strong>?</p>{destruction.path && <p>Worktree: <code>{destruction.path}</code></p>}<p>{destruction.command.type === 'task.delete' ? 'Task data and notes are deleted. Its native DSH chats are ARCHIVED, not erased: their histories remain. The Git branch is kept. Conversations return to the base project path before worktree cleanup.' : 'The task, notes, conversations, histories, and Git branch are kept. All conversations return to the base project path before the worktree is removed.'}</p>{destruction.command.type === 'task.delete' && Boolean(state.tasks.find(task => task.id === destruction.command.taskId)?.unclaimedWorktrees?.length) && <p className="kb-warning" role="note" aria-label="Unclaimed checkout deletion warning">Unclaimed checkouts remain on disk. They are not included in this deletion and require manual inspection.</p>}<p>Local changes will not be discarded without an additional explicit confirmation.</p><div className="kb-actions"><button type="button" className="kb-button" onClick={() => setDestruction(null)}>Cancel</button><button type="button" className="kb-button kb-danger" onClick={() => void confirmDestruction()}>{destruction.command.type === 'task.delete' ? 'Delete task and archive chats' : 'Confirm worktree removal'}</button></div></div></Modal>}
-    {discard && <DiscardDialog key={discard.command.type + discard.command.taskId} request={discard} run={command => runDestruction(discard, command)} onClose={() => setDiscard(null)} onDeleted={() => setSelectedId(null)} />}</>}
+    {discard && <DiscardDialog key={discard.command.type + discard.command.taskId} request={discard} run={command => runDestruction(discard, command)} onClose={() => setDiscard(null)} onDeleted={() => setSelectedId(null)} />}
+    {batchConfirm && <Modal title="Delete selected tasks" onClose={() => { if (!batchPending) setBatchConfirm(false); }} busy={batchPending}><div className="kb-form"><p>Delete {selectedTasks.length} selected task{selectedTasks.length === 1 ? '' : 's'}?</p><ul className="kb-batch-list">{selectedTasks.map(task => <li key={task.id}>{task.title}</li>)}</ul><p>Eligible tasks are deleted with the individual deletion rules: task data, notes, and worktree are removed, native chats are archived without erasing histories, and branches are kept. Tasks with running chats, an unresolved operation, or local worktree changes are skipped and reported.</p><div className="kb-actions"><button type="button" className="kb-button" disabled={batchPending} onClick={() => setBatchConfirm(false)}>Cancel</button><button type="button" className="kb-button kb-danger" disabled={batchPending || selectedTasks.length === 0} onClick={() => void deleteSelected()}>{batchPending ? 'Deleting…' : 'Delete selected'}</button></div></div></Modal>}
+    {batchResult && <Modal title="Deletion results" onClose={() => setBatchResult(null)}><div className="kb-form"><p>{batchResult.deleted} task{batchResult.deleted === 1 ? '' : 's'} deleted.</p>{batchResult.skipped.length > 0 && <><p className="kb-warning">Skipped:</p><ul className="kb-batch-list">{batchResult.skipped.map((item, index) => <li key={index}><strong>{item.title}</strong> — {item.message}</li>)}</ul><p>The skipped tasks remain selected so you can retry after resolving them.</p></>}<div className="kb-actions"><button type="button" className="kb-button" onClick={() => setBatchResult(null)}>Close</button></div></div></Modal>}</>}
   </section>;
 }
 

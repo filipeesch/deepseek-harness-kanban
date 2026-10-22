@@ -15,7 +15,7 @@ describe('persisted board schema', () => {
     expect(BoardStateSchema.safeParse({ ...initialState(), revision }).success).toBe(false);
   });
 
-  it.each([0, 2, '1', null])('rejects unsupported schema version %s', schemaVersion => {
+  it.each([0, 3, '1', null])('rejects unsupported schema version %s', schemaVersion => {
     expect(BoardStateSchema.safeParse({ ...initialState(), schemaVersion }).success).toBe(false);
   });
 

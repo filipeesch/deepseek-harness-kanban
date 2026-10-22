@@ -22,7 +22,7 @@ const workflow = z.strictObject({
   name: nonempty, initialColumnId: id, columns: z.array(column).min(1), groups: z.array(group),
 });
 const project = z.strictObject({
-  id, name: nonempty, projectPath: absolutePath, gitRootPath: absolutePath, defaultBranch: nonempty.optional(),
+  id, name: nonempty, projectPath: absolutePath, gitRootPath: absolutePath, defaultBranch: nonempty.optional(), workspaceId: id.optional(), workspaceOwned: z.boolean().optional(),
 });
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 const jsonValue: z.ZodType<JsonValue> = z.lazy(() => z.union([
@@ -46,7 +46,7 @@ const operation = z.strictObject({
   gitCompleted: z.boolean(), error: problem.optional(), createdAt: timestamp,
 });
 const pendingTransition = z.strictObject({
-  id, fromColumnId: id, columnId: id, mode: z.enum(['move', 'run']), sessionId: id.optional(), text: z.string().optional(),
+  id, fromColumnId: id, columnId: id, mode: z.enum(['move', 'run']), sessionId: id.optional(), text: z.string().optional(), beforeTaskId: id.nullable().optional(),
   worktreeRequest: createWorktree.optional(), status: z.enum(['waiting', 'sending', 'failed']), error: problem.optional(),
 });
 const task = z.strictObject({
@@ -54,7 +54,8 @@ const task = z.strictObject({
   sessionIds: z.array(id).min(1), closedSessionIds: z.array(id), effectiveCwd: absolutePath,
   worktree: z.strictObject({ path: absolutePath, branch: nonempty, owned: z.boolean(), status: z.enum(['preparing', 'ready', 'error']) }).nullable(),
   unclaimedWorktrees: z.array(z.strictObject({ path: absolutePath, branch: nonempty, error: problem })).optional(),
-  operation: operation.nullable(), pendingTransition: pendingTransition.optional(), archivedAt: timestamp.nullable(), createdAt: timestamp, updatedAt: timestamp,
+  worktreeWorkspaceId: id.optional(), worktreeWorkspaceOwned: z.boolean().optional(),
+  operation: operation.nullable(), pendingTransition: pendingTransition.optional(), createdAt: timestamp, updatedAt: timestamp,
 });
 const note = z.strictObject({
   id, taskId: id, content: nonempty, createdAt: timestamp, updatedAt: timestamp, tags: z.array(nonempty).optional(),

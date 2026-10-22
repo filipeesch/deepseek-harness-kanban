@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import type { BoardState, Problem, Project, Task } from '../shared/types.js';
 import { creationReceiptId, ErrorNotice, Markdown, Modal, Tabs, useAction, type RunCommand } from './ui.js';
+import { createTaskPageState, usePageField, type TaskPageState } from './page-state.js';
 
 export function NewTaskDialog({ state, run, onClose, onCreated }: { state: BoardState; run: RunCommand; onClose: () => void; onCreated: (id: string) => void }) {
   const [title, setTitle] = useState(''); const [description, setDescription] = useState('');
@@ -14,23 +15,38 @@ export function NewTaskDialog({ state, run, onClose, onCreated }: { state: Board
   </form></Modal>;
 }
 
-type TaskPanelProps = { task: Task; state: BoardState; run: RunCommand };
+type TaskPanelProps = { task: Task; state: BoardState; run: RunCommand; viewState?: TaskPageState };
 
 export function InfoPanel(props: TaskPanelProps) { return <InfoEditor key={props.task.id} {...props} />; }
 
-function InfoEditor({ task, state, run }: TaskPanelProps) {
-  const [title, setTitle] = useState(task.title); const [description, setDescription] = useState(task.description); const [preview, setPreview] = useState(false);
-  const [dirty, setDirty] = useState(false); const [revision, setRevision] = useState(state.revision); const [saved, setSaved] = useState(false); const action = useAction(run);
+function InfoEditor({ task, state, run, viewState }: TaskPanelProps) {
+  const [localViewState] = useState(createTaskPageState); const preferences = viewState ?? localViewState;
+  const [draft, setDraft] = usePageField(preferences, 'infoDraft');
+  const [editing, setEditing] = useState(() => Boolean(draft)); const [saved, setSaved] = useState(false); const action = useAction(run);
   const draftGeneration = useRef(0);
+  const title = editing && draft ? draft.title : task.title;
+  const description = editing && draft ? draft.description : task.description;
+  const previousTask = useRef(task.id);
   useEffect(() => () => { draftGeneration.current++; }, []);
-  useEffect(() => { if (!dirty) { setTitle(task.title); setDescription(task.description); setRevision(state.revision); } }, [task.title, task.description, state.revision, dirty]);
-  return <form className="kb-form" aria-label="Task information" onSubmit={async event => { event.preventDefault(); if (action.pending || !title.trim()) return; const generation = draftGeneration.current; const result = await action.execute({ type: 'task.edit', taskId: task.id, title: title.trim(), description, expectedRevision: revision }); if (result && generation === draftGeneration.current) { setDirty(false); setRevision(result.state.revision); setSaved(true); } }}>
-    <label className="kb-field">Title<input className="kb-input" required disabled={action.pending} value={title} onChange={event => { if (action.pending) return; draftGeneration.current++; setTitle(event.target.value); setDirty(true); setSaved(false); }} /></label>
-    <label className="kb-field">Description<textarea className="kb-input" rows={9} disabled={action.pending} value={description} onChange={event => { if (action.pending) return; draftGeneration.current++; setDescription(event.target.value); setDirty(true); setSaved(false); }} /></label>
-    <button type="button" className="kb-button" aria-expanded={preview} onClick={() => setPreview(!preview)}>{preview ? 'Hide Markdown preview' : 'Preview Markdown'}</button>{preview && <Markdown>{description}</Markdown>}
-    <dl className="kb-details"><dt>Project</dt><dd>{state.projects.find(project => project.id === task.projectId)?.name ?? task.projectId}</dd><dt>Effective agent directory</dt><dd><code>{task.effectiveCwd}</code></dd></dl>
-    <p className="kb-hint">Title and description can be edited in any stage. Saving does not message or start agents.</p><ErrorNotice problem={action.error} />
-    <div className="kb-actions"><button className="kb-button" type="button" disabled={action.pending} onClick={() => { if (action.pending) return; draftGeneration.current++; setDirty(false); setSaved(false); setTitle(task.title); setDescription(task.description); setRevision(state.revision); action.clearError(); }}>Reload saved version</button><button className="kb-button kb-primary" disabled={action.pending || !title.trim()}>{action.pending ? 'Saving…' : 'Save task'}</button></div>{saved && <p role="status">Task saved.</p>}
+  useEffect(() => { if (previousTask.current !== task.id) { previousTask.current = task.id; draftGeneration.current++; setDraft(undefined); setEditing(false); setSaved(false); } }, [task.id, setDraft]);
+  function beginEdit() { if (action.pending) return; draftGeneration.current++; setDraft(draft ?? { title: task.title, description: task.description }); setEditing(true); setSaved(false); action.clearError(); }
+  function cancelEdit() { if (action.pending) return; draftGeneration.current++; setDraft(undefined); setEditing(false); setSaved(false); action.clearError(); }
+  async function save(event: React.FormEvent) {
+    event.preventDefault(); if (action.pending || !title.trim() || !draft) return;
+    const generation = draftGeneration.current;
+    const result = await action.execute({ type: 'task.edit', taskId: task.id, title: title.trim(), description, expectedRevision: state.revision });
+    if (result && generation === draftGeneration.current) { setDraft(undefined); setEditing(false); setSaved(true); }
+  }
+  if (!editing) return <div className="kb-form" aria-label="Task information">
+    <div className="kb-info-read"><h3>{task.title}</h3>{task.description.trim() ? <Markdown>{task.description}</Markdown> : <p className="kb-hint">No description yet.</p>}</div>
+    <div className="kb-actions"><button type="button" className="kb-button" disabled={action.pending} onClick={beginEdit}>Edit</button></div>
+    <ErrorNotice problem={action.error} />{saved && <p role="status">Task saved.</p>}
+  </div>;
+  return <form className="kb-form" aria-label="Task information" onSubmit={save}>
+    <label className="kb-field">Title<input className="kb-input" required disabled={action.pending} value={draft?.title ?? ''} onChange={event => { if (action.pending) return; draftGeneration.current++; setDraft({ title: event.target.value, description: draft?.description ?? task.description }); setSaved(false); }} /></label>
+    <label className="kb-field">Description<textarea className="kb-input" rows={9} disabled={action.pending} value={draft?.description ?? ''} onChange={event => { if (action.pending) return; draftGeneration.current++; setDraft({ title: draft?.title ?? task.title, description: event.target.value }); setSaved(false); }} /></label>
+    <ErrorNotice problem={action.error} />
+    <div className="kb-actions"><button type="button" className="kb-button" disabled={action.pending} onClick={cancelEdit}>Cancel</button><button className="kb-button kb-primary" disabled={action.pending || !title.trim()}>{action.pending ? 'Saving…' : 'Save task'}</button></div>{saved && <p role="status">Task saved.</p>}
   </form>;
 }
 

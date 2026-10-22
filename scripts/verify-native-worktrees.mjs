@@ -871,7 +871,7 @@ async function main(argv = process.argv.slice(2)) {
   if (options.help) return { help: HELP };
   return runVerification(options);
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {if(process.argv.includes("--allow-model-requests")){process.stderr.write("Real-model verification is disabled; use the deterministic kanban-fixture adapter.\n");process.exit(1);}
   try {
     const result = await main();
     process.stdout.write((result.help ?? JSON.stringify(result, null, 2)) + "\n", () => process.exit(result.help || result.ok ? 0 : 1));

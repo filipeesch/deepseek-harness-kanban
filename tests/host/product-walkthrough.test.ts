@@ -132,7 +132,7 @@ async function addSharedNote(f: Awaited<ReturnType<typeof setup>>, task: { id: s
 
 // PW01 maps product tasks 2.2/2.5, 3.2, 4.1/4.3, 5.2–5.4, 6.2/6.4, 7.1, 8.1/8.2/8.4, 9.2/9.4.
 describe('bounded integrated product walkthrough', () => {
-  it('PW01 walks monorepo creation, scoped delegation, restart, archive/restore, and confirmed permanent deletion', async () => {
+  it('PW01 walks monorepo creation, scoped delegation, restart, and confirmed permanent deletion', async () => {
     const f = await setup();
     expect(f.project.projectPath).not.toBe(f.project.gitRootPath);
     const t = await f.task();
@@ -180,13 +180,9 @@ describe('bounded integrated product walkthrough', () => {
     expect(await f.tool('list_notes', {}, t.b)).toEqual([note]);
     expect(f.sessions.origins.get(t.a)).toBe(f.project.projectPath); expect(f.sessions.origins.get(t.b)).toBe(f.project.projectPath);
     expect(f.sessions.dirs.size).toBe(4); expect(f.sessions.sent).toHaveLength(1);
-    await f.app.command({ type: 'task.archive', taskId: t.id });
-    expect(f.app.store.requireTask(t.id).archivedAt).not.toBeNull();
     expect((await stat(f.tree)).isDirectory()).toBe(true);
     expect(f.sessions.archived).toEqual([]);
     expect(f.app.store.snapshot().notes).toEqual([note]);
-    await f.app.command({ type: 'task.restore', taskId: t.id });
-    expect(f.app.store.requireTask(t.id).archivedAt).toBeNull();
     expect([...f.sessions.histories]).toEqual(preservedHistories);
     await writeFile(path.join(targetDirectory, 'app.txt'), 'dirty product change\n');
     const beforeDecline = f.app.store.snapshot();
@@ -276,7 +272,7 @@ describe('bounded integrated product walkthrough', () => {
     expect(await f.tool('list_projects', {}, a.a)).toEqual(await f.tool('list_projects', {}));
     expect(await f.tool('list_boards', {})).toEqual([{ id: 'global', name: 'Kanban' }]);
     expect(await f.tool('list_boards', {}, a.b)).toEqual(await f.tool('list_boards', {}));
-    expect(await f.tool('get_board_summary', {})).toMatchObject({ id: 'global', archived: 0, columns: expect.arrayContaining([expect.objectContaining({ id: 'backlog', count: 2 })]) });
+    expect(await f.tool('get_board_summary', {})).toMatchObject({ id: 'global', columns: expect.arrayContaining([expect.objectContaining({ id: 'backlog', count: 2 })]) });
     expect(await f.tool('get_board_summary', {}, a.a)).toEqual(await f.tool('get_board_summary', {}));
     expect(await f.tool('list_cards', { project_id: f.project.id, query: 'PRODUCT WALKTHROUGH', limit: 1 })).toEqual([f.app.store.requireTask(a.id)]);
     expect(await f.tool('list_cards', { project_id: 'root-project', limit: 1 }, a.b)).toEqual([b]);

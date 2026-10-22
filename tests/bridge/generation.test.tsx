@@ -24,7 +24,7 @@ class Feed implements RemoteStreamHandle<BoardSnapshot, never>, AsyncIterator<Bo
   [Symbol.asyncIterator](): AsyncIterator<BoardSnapshot> { return this; }
 }
 function snapshot(sequence: number, title: string): BoardSnapshot {
-  return { sequence, attention: {}, questionRounds: [], state: { schemaVersion: 1, revision: 0, workflowYaml: '', workflow: { name: 'Workflow', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, projects: [], notes: [], tasks: [{ id: 'task', title, description: '', projectId: 'p', columnId: 'backlog', position: 0, sessionIds: [], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, archivedAt: null, createdAt: '', updatedAt: '' }] } };
+  return { sequence, attention: {}, questionRounds: [], state: { schemaVersion: 2, revision: 0, workflowYaml: '', workflow: { name: 'Workflow', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, projects: [], notes: [], tasks: [{ id: 'task', title, description: '', projectId: 'p', columnId: 'backlog', position: 0, sessionIds: [], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' }] } };
 }
 const success = (value: BoardSnapshot): RemoteResult<Outcome<BoardSnapshot>> => ({ ok: true, value: { ok: true, value } });
 const bridges: ClientBridge[] = [];
@@ -56,7 +56,7 @@ describe('combined native bridge + actual BoardView generation ordering', () => 
     let resolveOld!: (value: RemoteResult<Outcome<BoardSnapshot>>) => void;
     const oldResponse = new Promise<RemoteResult<Outcome<BoardSnapshot>>>(resolve => { resolveOld = resolve; });
     vi.mocked(f.remote.kanban[method]).mockReturnValueOnce(oldResponse);
-    const inFlight = method === 'snapshot' ? f.bridge.api.snapshot() : f.bridge.api.command({ type: 'task.archive', taskId: 'task' });
+    const inFlight = method === 'snapshot' ? f.bridge.api.snapshot() : f.bridge.api.command({ type: 'task.edit', taskId: 'task', title: 'Changed' });
     f.bridge.retry(); await waitFor(() => expect(f.feeds).toHaveLength(2));
     await act(async () => f.feeds[1]!.push(snapshot(0, 'After restart')));
     await screen.findByRole('button', { name: 'Open task After restart' });

@@ -1,6 +1,6 @@
-export const DATA_VERSION = 1 as const;
+export const DATA_VERSION = 2 as const;
 export interface Problem { code: string; message: string; details?: Record<string, unknown> }
-export interface Project { id: string; name: string; projectPath: string; gitRootPath: string; defaultBranch?: string }
+export interface Project { id: string; name: string; projectPath: string; gitRootPath: string; defaultBranch?: string; workspaceId?: string; workspaceOwned?: boolean }
 export interface Column { id: string; name: string; onEnterPrompt?: string; allowedTransitions?: string[] }
 export interface ColumnGroup { id: string; name: string; columnIds: string[] }
 export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[] }
@@ -20,17 +20,18 @@ export interface ContextOperation {
   archivedSessionIds: string[]; gitCompleted: boolean; error?: Problem; createdAt: string;
   createAttempt?: { operationId: string; path: string; gitRootPath: string; branchName: string; mode: 'new' | 'existing'; absentBefore: true };
 }
-export interface PendingTransition { id: string; fromColumnId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; text?: string; worktreeRequest?: CreateWorktree; status: 'waiting' | 'sending' | 'failed'; error?: Problem }
+export interface PendingTransition { id: string; fromColumnId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; text?: string; beforeTaskId?: string | null; worktreeRequest?: CreateWorktree; status: 'waiting' | 'sending' | 'failed'; error?: Problem }
 export interface Task {
   id: string; projectId: string; title: string; description: string; columnId: string; position: number;
   sessionIds: string[]; closedSessionIds: string[]; effectiveCwd: string;
   worktree: Worktree | null; operation: ContextOperation | null; pendingTransition?: PendingTransition;
   /** Diagnostic-only checkouts left on disk; never an execution or cleanup target. */
   unclaimedWorktrees?: Array<{ path: string; branch: string; error: Problem }>;
-  archivedAt: string | null; createdAt: string; updatedAt: string;
+  worktreeWorkspaceId?: string; worktreeWorkspaceOwned?: boolean;
+  createdAt: string; updatedAt: string;
 }
 export interface Note { id: string; taskId: string; content: string; createdAt: string; updatedAt: string; tags?: string[] }
-export interface BoardState { schemaVersion: 1; revision: number; workflowYaml: string; workflow: Workflow; projects: Project[]; tasks: Task[]; notes: Note[] }
+export interface BoardState { schemaVersion: 2; revision: number; workflowYaml: string; workflow: Workflow; projects: Project[]; tasks: Task[]; notes: Note[] }
 export interface Attention { running: boolean; unread: boolean; awaitingReply: boolean; failed: boolean }
 /** Transient identity of the entity created by this exact command, never persisted. */
 export interface CommandReceipt { kind: 'project' | 'task' | 'conversation' | 'note'; id: string }
@@ -43,11 +44,10 @@ export type Command =
   | { type: 'workflow.save'; yaml: string; expectedRevision?: number }
   | ({ type: 'task.create' } & NewTask)
   | { type: 'task.edit'; taskId: string; title?: string; description?: string; expectedRevision?: number }
-  | { type: 'task.move'; taskId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; newConversation?: boolean; worktree?: CreateWorktree; expectedInstruction?: string }
+  | { type: 'task.move'; taskId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; newConversation?: boolean; worktree?: CreateWorktree; expectedInstruction?: string; beforeTaskId?: string | null }
   | { type: 'conversation.create'; taskId: string }
   | { type: 'conversation.close' | 'conversation.reopen'; taskId: string; sessionId: string }
-  | { type: 'task.archive' | 'task.restore'; taskId: string }
-  | { type: 'task.delete'; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean }
+  | { type: 'task.delete'; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; requireIdle?: boolean }
   | ({ type: 'worktree.create'; taskId: string } & CreateWorktree)
   | { type: 'worktree.attach'; taskId: string; path: string }
   | { type: 'worktree.remove'; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean }

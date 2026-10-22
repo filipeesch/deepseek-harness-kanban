@@ -10,7 +10,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {connectInspector, callHost} from './dsh-inspect.mjs';
 
-export const GUI_URL = 'http://127.0.0.1:51781/';
+export const GUI_URL = process.env.DSH_GUI_URL ?? 'http://127.0.0.1:51781/';
 export const INSPECTOR_URL = 'http://127.0.0.1:9230';
 export const DEFAULT_COLUMNS = ['Backlog', 'Plan', 'In Progress', 'In Review', 'Done'];
 export const BOARD_SELECTOR = 'section.dsh-kanban[aria-label="Kanban"]';
@@ -126,8 +126,8 @@ const PREFLIGHT=async function() {
 };
 // Official public owner-login API, not private launchToken/browserAuth/cookie/config extraction.
 // The secret-bearing return value must remain solely within runVerification's private variable.
-const OFFICIAL_OWNER_LOGIN=function() {
-  return (this.root??this).get('connection').authenticatedUrl('http://127.0.0.1:51781/');
+const OFFICIAL_OWNER_LOGIN=function(base='http://127.0.0.1:51781/') {
+  return (this.root??this).get('connection').authenticatedUrl(base);
 };
 
 export async function runVerification(options,dependencies={}) {
@@ -161,7 +161,7 @@ export async function runVerification(options,dependencies={}) {
     }),timeoutMs);
     stage='page';page=await acquire(()=>context.newPage(),closeResource,timeoutMs);
     stage='owner-login-url';
-    launchUrl=await bounded(()=>hostCall(client,OFFICIAL_OWNER_LOGIN.toString()),timeoutMs);
+    launchUrl=await bounded(()=>hostCall(client,OFFICIAL_OWNER_LOGIN.toString(),[GUI_URL]),timeoutMs);
     assertOfficialLaunchUrl(launchUrl);
     stage='owner-login';
     try {await page.goto(launchUrl,{waitUntil:'domcontentloaded',timeout:timeoutMs});}

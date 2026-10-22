@@ -70,15 +70,15 @@ Normal **Plugins disable/enable** remains a supported native lifecycle action, b
 
 ### Historical exploratory helpers
 
-The scripts under `scripts/verify-native-*` and the lifecycle helpers are optional, guarded historical experiments, not a required part of installation or product acceptance. Do not run them as routine diagnostics, enable consent flags automatically, replay DSH internals, or create native fixtures merely to satisfy a test count. The user-approved boundary is public-adapter/product contracts plus controlled Git and an existing-GUI smoke. Real-model validation was deferred. Native activity and archive/history behavior remain upstream contracts; our coordinator still must respect those contracts and fail safely.
+The scripts under `scripts/verify-native-*` and the lifecycle helpers are optional, guarded historical experiments, not a required part of installation or product acceptance. Do not run them as routine diagnostics, enable consent flags automatically, replay DSH internals, or create native fixtures merely to satisfy a test count. The user-approved boundary is public-adapter/product contracts plus controlled Git and an existing-GUI smoke. Acceptance uses a deterministic, test-only model adapter; real-model requests are not part of it. Native activity and archive/history behavior remain upstream contracts; our coordinator still must respect those contracts and fail safely.
 
 Old reports remain time-scoped and honest. The inconclusive schedule attempt was not qualified, its script was stopped with explicit user consent, and its fixture/base/archive/guard cleanup remains unverified. That does not authorize deleting user data or repairing DSH. Optional local artifacts remain ignored and are not published. See the [current evidence](<verification-preliminary.md>).
 
 ## Working directory and policy boundaries
 
-Keep four paths distinct: **base project path**, **Git root**, **worktree root**, and **effective agent cwd**. The drawer's Info/Git sections expose the effective cwd. For a base monorepo project `/repos/platform/services/api` in Git root `/repos/platform`, a worktree at `/worktrees/task-42` must contain `/worktrees/task-42/services/api`. A missing subdirectory is an error, not a reason to run at the checkout root.
+Keep four paths distinct: **base project path**, **Git root**, **worktree root**, and **effective agent cwd**. The effective cwd is exposed only in the Git section's secondary details; the drawer header and Info do not repeat it. For a base monorepo project `/repos/platform/services/api` in Git root `/repos/platform`, a worktree at `/worktrees/task-42` must contain `/worktrees/task-42/services/api`. A missing subdirectory is an error, not a reason to run at the checkout root.
 
-Native `workingDirectory` changes preserve session IDs, prior histories, and immutable header cwd. New task tabs originate at the base project and then inherit its effective cwd. The committed **effective cwd**, not the mere presence of a retained ready worktree binding, selects the active context: after an explicit return, chats and new tabs use base even if the old checkout remains bound. **Native workspace membership/sidebar grouping, Files, and sandbox root stay at the original location**; neither a displayed cwd nor an attached checkout is an access grant.
+New task conversations join a native workspace for their effective project or worktree path instead of being created with cwd only. The base workspace is shared; a worktree workspace belongs to its task and is removed with the task when no other session uses it. Existing conversations keep their creation-time workspace when the effective directory changes. Native `workingDirectory` changes preserve session IDs, prior histories, and immutable header cwd. The committed **effective cwd**, not the mere presence of a retained ready worktree binding, selects the active context: after an explicit return, chats and new tabs use base even if the old checkout remains bound. **Native Files and sandbox root stay at the original location**; neither a displayed cwd nor an attached checkout is an access grant.
 
 [The native adapter](<../src/host/native.ts>) resolves actual participant policies. Write preflight checks canonical paths against those policies; required Git commands use native confinement unless every participant already has an applicable full-access policy. It does not manufacture a union root, call idle GUI approval as a persistent grant, or auto-escalate/fall back to full access. Missing/incomplete confinement and incompatible participant policies fail visibly. Preflight is diagnostic, not a replacement for actual confinement or a race-free authorization guarantee.
 
@@ -107,7 +107,7 @@ Failed operations remain recorded for explicit recovery; nonfailed recorded work
 
 ### Queued confirmed entry instructions
 
-[The host command path](<../src/host/app.ts>) requires equality with the **exact raw instruction displayed for approval** before creating a new conversation, performing Git work, or journaling the move. A missing/changed instruction produces `INSTRUCTION_CHANGED`: review the current instruction rather than silently approving a replacement. Once admitted, the destination, chosen conversation, captured approved text, and stable native request ID are persisted; waiting/retry does not substitute a newer workflow instruction. With optional worktree setup, the confirmed transition stays waiting until that context is resolved. **Move only** never submits a prompt. **Move and run** queues the instruction into only the selected native conversation; other chats are not messaged.
+[The host command path](<../src/host/app.ts>) requires equality with the **exact raw instruction displayed for approval** before creating a new conversation, performing Git work, or journaling the move. A missing/changed instruction produces `INSTRUCTION_CHANGED`: review the current instruction rather than silently approving a replacement. Once admitted, the destination, chosen conversation, captured approved text, placement anchor, and stable native request ID are persisted; waiting/retry does not substitute a newer workflow instruction. A transition does not create or prompt for a worktree; use the notice or Git section instead. **Move only** never submits a prompt. **Move and run** queues the instruction into only the selected native conversation; other chats are not messaged.
 
 The drawer shows waiting/sending/failed confirmed-action status. Once context is ready, **Retry confirmed action** resumes the saved choice; **Cancel action and return to base** clears it when prompt admission is not in progress. A stage may already have changed when native prompt admission fails, so check both stage and status rather than interpreting the error as a complete rollback.
 
@@ -117,9 +117,8 @@ After an interrupted admission, `DELIVERY_UNCERTAIN` requires an explicit retry 
 
 | Action | Successful effect | Retained |
 | --- | --- | --- |
-| **Archive task** | Hides the idle task from the active board; **Archived tasks → Restore** reverses it. Does not archive native chats. | Card details, notes, session associations/IDs/histories, cwd, checkout, branch. |
 | **Remove worktree** | Returns every retained chat to the base project, then removes only the eligible bound checkout. | Card, notes, native chats/histories, branch. |
-| **Delete task** | Returns every retained chat to the base project; removes an eligible bound checkout; archives native chats; finally removes card/notes. | Native histories and Git branch. |
+| **Delete task** | Returns every retained chat to the base project; removes an eligible bound checkout; removes the owned worktree workspace registration; archives native chats; finally removes card/notes. A best-effort bulk selection skips busy, operation-pending, or dirty tasks and reports them. | Native histories and Git branch. |
 
 For removal or deletion:
 
@@ -141,7 +140,7 @@ These plugin behaviors are verified in controlled public native-port fixtures an
 - Notes are shared by the task. Missing task context in an ordinary chat needs an explicit task ID, not a fallback to another task. There is no decision ledger or plugin TODO list.
 - For feed errors use **Retry updates**; for initial board load use **Retry loading board**. Reopen a failed native tab or use its displayed retry action. A duplicate Kanban composer warning means close the other plugin view first, not copy the chat implementation.
 - Creation commands return a **transient exact entity receipt** for that command; the UI does not infer a new project/task/tab/note by comparing snapshots. A missing receipt or unavailable created entity means inspect/refresh and select the saved entity explicitly before trying another creation. Receipts are not a persisted ledger or execution-success record. Project drafts/selection are locked during saves, and stale completion cannot rebind another draft.
-- For revision conflicts, preserve your unsaved text separately before **Reload saved version/workflow** and reapplying changes. Invalid workflow saves leave the last valid workflow intact; retaining referenced column IDs avoids orphaning active, archived, or pending-transition tasks.
+- For revision conflicts, preserve your unsaved text separately before **Reload saved version/workflow** and reapplying changes. Invalid workflow saves leave the last valid workflow intact; retaining referenced column IDs avoids orphaning active or pending-transition tasks.
 
 ## Metadata, disabling, and rollback
 
@@ -149,7 +148,7 @@ The plugin uses the native storage-domain service's namespaced **kanban**, versi
 
 Use the correct host/profile's supported backup procedure before an upgrade or manual recovery, including both plugin metadata and native session storage as needed. The physical backing path belongs to that host configuration; do not guess it from cwd. This plugin provides no general backup/restore or export UI. Unsupported schema versions fail rather than silently reset; preserve the original snapshot and use compatible code or reviewed migration, not a blank-state overwrite.
 
-Disabling/uninstalling through native plugin management removes plugin UI/tools/listeners and releases its UI session references. It does not mean delete tasks, native histories, branches, worktrees, or stored metadata. A compatible re-enable can reconnect the same native IDs. Reverting plugin code does not undo confirmed checkout deletion or unarchive native chats. Do not use source/core/profile edits to disguise partial cleanup.
+Disabling/uninstalling through native plugin management removes plugin UI/tools/listeners and releases its UI session references. It does not mean delete tasks, native histories, branches, worktrees, or stored metadata. A compatible re-enable can reconnect the same native IDs. Reverting plugin code does not undo confirmed checkout deletion or native-chat archiving. Do not use source/core/profile edits to disguise partial cleanup.
 
 ## Build and test troubleshooting
 
@@ -181,7 +180,7 @@ Acceptance follows the user-approved [public-extension-point boundary](<../opens
 | G4 | Our tool/schema/PTC correlation, dock/form/ordinary-text forwarding and reload behavior; historical native presentation slices supplement the contracts. |
 | G5 | Real temporary Git plus controlled native lifecycle ports for return-before-remove, archive-not-purge, dirty confirmation, branch/base preservation, unknown/shared-target refusal and recovery. |
 
-**Host limitations remain explicit.** Native Files/workspace/sandbox origin is not migrated by cwd changes. Actual policy/confinement can deny operations. An unreadable native record prevents safe shared-target exclusion and therefore physical cleanup in that profile; this is a safe refusal, not a reason to weaken checks or repair native data. A fresh real-model end-to-end conversation was deferred by the user and is not claimed.
+**Host limitations remain explicit.** Native Files and sandbox origin are not migrated by cwd changes. Actual policy/confinement can deny operations. An unreadable native record prevents safe shared-target exclusion and therefore physical cleanup in that profile; this is a safe refusal, not a reason to weaken checks or repair native data. Acceptance uses the deterministic test adapter; a real-model end-to-end conversation is not claimed.
 
 ### Published records versus local-generated evidence
 

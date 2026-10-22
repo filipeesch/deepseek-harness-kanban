@@ -1,7 +1,13 @@
 import type { Attention, BoardState, CreateWorktree, Project } from './types.js';
 export interface StateStorage { load(): Promise<unknown | null>; save(state: BoardState): Promise<void> }
+export interface WorkspaceInfo { id: string; path: string; title: string; sessionIds: string[] }
+export interface WorkspacePort {
+  ensure(path: string, title: string): Promise<{ workspace: WorkspaceInfo; owned: boolean }>;
+  get(id: string): WorkspaceInfo | undefined;
+  delete(id: string): Promise<void>;
+}
 export interface SessionPort {
-  create(projectPath: string): Promise<string>;
+  create(projectPath: string, workspaceId?: string): Promise<string>;
   /** Raw recorded native directory; recovery must still see a missing current worktree. */
   directory(sessionId: string): Promise<string>;
   /** Fail closed unless the expected canonical directory exists and the native effective directory resolves to it. Never recover or grant access. */

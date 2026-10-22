@@ -175,7 +175,7 @@ describe('durable board transactions', () => {
     await expect(store.transact(() => { throw new Error('Mutation failed.'); })).rejects.toThrow('Mutation failed.');
     await expect(store.transact(state => { state.projects = []; state.tasks = populatedState().tasks; })).rejects.toMatchObject({ code: 'INVALID_STATE' });
     await expect(store.transact(state => { state.revision = 10; })).rejects.toMatchObject({ code: 'INVALID_REVISION' });
-    await expect(store.transact(state => { (state as unknown as { schemaVersion: number }).schemaVersion = 2; })).rejects.toMatchObject({ code: 'UNSUPPORTED_VERSION' });
+    await expect(store.transact(state => { (state as unknown as { schemaVersion: number }).schemaVersion = 3; })).rejects.toMatchObject({ code: 'UNSUPPORTED_VERSION' });
     await expect(store.transact(() => () => undefined)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
     expect(store.snapshot()).toEqual(before);
     expect(storage.writes).toHaveLength(writes);
@@ -204,7 +204,7 @@ describe('durable board transactions', () => {
     expect(storage.data).toBeNull();
   });
 
-  it.each([{ ...initialState(), schemaVersion: 2 }, { ...initialState(), schemaVersion: 0 }, undefined, {}, { ...initialState(), revision: -1 }])('never resets unsupported or malformed stored data %#', async persisted => {
+  it.each([{ ...initialState(), schemaVersion: 3 }, { ...initialState(), schemaVersion: 0 }, undefined, {}, { ...initialState(), revision: -1 }])('never resets unsupported or malformed stored data %#', async persisted => {
     const storage = new MemoryStorage();
     storage.data = persisted;
     await expect(BoardStore.open(storage)).rejects.toBeInstanceOf(Error);
@@ -265,21 +265,18 @@ describe('task and project behavior', () => {
     await expect(store.addSession(task.id, 'session-2')).rejects.toMatchObject({ code: 'SESSION_IN_USE' });
   });
 
-  it('blocks adding sessions or archiving while a context operation is unresolved', async () => {
+  it('blocks adding sessions while a context operation is unresolved', async () => {
     const { store } = await fixture();
     const task = await store.createTask(newTask, 'session-1');
     await store.transact(state => {
       store.requireTask(task.id, state).operation = { id: 'operation-1', request: { kind: 'return' }, phase: 'waiting', previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false, createdAt: new Date().toISOString() };
     });
     await expect(store.addSession(task.id, 'session-2')).rejects.toMatchObject({ code: 'TASK_BUSY' });
-    await expect(store.archiveTask(task.id)).rejects.toMatchObject({ code: 'TASK_BUSY' });
-    await expect(store.restoreTask(task.id)).rejects.toMatchObject({ code: 'TASK_BUSY' });
   });
 
-  it('rejects orphaning archived and active tasks and preserves the previous YAML on failure', async () => {
+  it('rejects orphaning active tasks and preserves the previous YAML on failure', async () => {
     const { store } = await fixture();
-    const task = await store.createTask(newTask, 'session-1');
-    await store.archiveTask(task.id);
+    await store.createTask(newTask, 'session-1');
     const before = store.snapshot();
     await expect(store.setWorkflow('columns: [{id: replacement, label: Replacement}]')).rejects.toMatchObject({ code: 'WORKFLOW_ORPHAN_COLUMNS' });
     expect(store.snapshot()).toEqual(before);
@@ -385,7 +382,7 @@ describe('shared notes and reversible archive', () => {
     await expect(store.saveNote(first.id, { content: ' ' })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
 
-  it('keeps notes across worktree context changes, archive, restart, and restore', async () => {
+  it('keeps notes across worktree context changes and restart', async () => {
     const { store, storage } = await fixture();
     const task = await store.createTask(newTask, 'session-1');
     const note = await store.saveNote(task.id, { content: '# Persistent context' });
@@ -394,11 +391,8 @@ describe('shared notes and reversible archive', () => {
       value.worktree = { path: '/worktrees/feature', branch: 'feature', owned: false, status: 'ready' };
       value.effectiveCwd = '/worktrees/feature/services/api';
     });
-    const archived = await store.archiveTask(task.id);
-    expect(archived.archivedAt).not.toBeNull();
     const reopened = await BoardStore.open(storage);
-    const restored = await reopened.restoreTask(task.id);
-    expect(restored).toMatchObject({ archivedAt: null, columnId: task.columnId, sessionIds: ['session-1'], effectiveCwd: '/worktrees/feature/services/api', worktree: { path: '/worktrees/feature', branch: 'feature', owned: false, status: 'ready' } });
+    expect(reopened.requireTask(task.id)).toMatchObject({ columnId: task.columnId, sessionIds: ['session-1'], effectiveCwd: '/worktrees/feature/services/api', worktree: { path: '/worktrees/feature', branch: 'feature', owned: false, status: 'ready' } });
     expect(reopened.snapshot().notes).toEqual([note]);
   });
 });

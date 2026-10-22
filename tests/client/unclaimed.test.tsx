@@ -22,7 +22,7 @@ describe('unclaimed checkout recovery metadata', () => {
     render(<BoardView api={mock.api} renderConversation={id => <span>{id}</span>} />); await openTask(user, 'Alpha task'); await user.click(screen.getByRole('tab', { name: 'Git' }));
     const notice = screen.getByRole('note', { name: 'Unclaimed worktrees' });
     for (const entry of unclaimed) { expect(within(notice).getByText(entry.path)).toBeTruthy(); expect(within(notice).getByText(entry.branch)).toBeTruthy(); expect(within(notice).getByText(entry.error.message)).toBeTruthy(); }
-    expect(within(notice).getByText(/not the task's active worktree/)).toBeTruthy(); expect(within(notice).getByText(/Inspect each checkout manually/)).toBeTruthy();
+    expect(within(notice).getByText(/not the task's active worktree/)).toBeTruthy(); expect(within(notice).getByText(/will not be attached or removed automatically/)).toBeTruthy();
     expect(within(notice).queryAllByRole('button')).toHaveLength(0); expect(within(notice).queryAllByRole('link')).toHaveLength(0);
     expect(screen.queryByRole('button', { name: 'Remove worktree' })).toBeNull(); expect((screen.getByRole('textbox', { name: 'Worktree path' }) as HTMLInputElement).value).toBe(''); expect(mock.command).not.toHaveBeenCalled();
   });

@@ -42,7 +42,7 @@ export function sampleTask(id = 'task-1', sessionId = 'session-1'): Task {
   return {
     id, projectId: 'project-1', title: 'Ship endpoint', description: '**Acceptance** criteria',
     columnId: 'backlog', position: 0, sessionIds: [sessionId], closedSessionIds: [],
-    effectiveCwd: '/repos/platform/services/api', worktree: null, operation: null, archivedAt: null,
+    effectiveCwd: '/repos/platform/services/api', worktree: null, operation: null,
     createdAt: '2026-10-21T10:00:00.000Z', updatedAt: '2026-10-21T10:00:00.000Z',
   };
 }

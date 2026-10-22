@@ -65,7 +65,7 @@ export class MemoryStore {
   }
 }
 export function board(project: Project): BoardState {
-  return { schemaVersion: 1, revision: 0, projects: [project], workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, notes: [{ id: 'note', taskId: 'task', content: 'Retained note', createdAt: '', updatedAt: '' }], tasks: [{ id: 'task', projectId: project.id, title: 'Task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: project.projectPath, worktree: null, operation: null, archivedAt: null, createdAt: '', updatedAt: '' }] };
+  return { schemaVersion: 2, revision: 0, projects: [project], workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, notes: [{ id: 'note', taskId: 'task', content: 'Retained note', createdAt: '', updatedAt: '' }], tasks: [{ id: 'task', projectId: project.id, title: 'Task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: project.projectPath, worktree: null, operation: null, createdAt: '', updatedAt: '' }] };
 }
 export class Sessions implements SessionPort {
   active = new Set<string>();

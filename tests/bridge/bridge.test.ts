@@ -29,9 +29,9 @@ class Feed<T> implements RemoteStreamHandle<T, never>, AsyncIterator<T> {
   return(): Promise<IteratorResult<T>> { this.dispose(); return Promise.resolve({ done: true, value: undefined }); }
   [Symbol.asyncIterator](): AsyncIterator<T> { return this; }
 }
-const task = (id: string, sessionIds: string[]): Task => ({ id, projectId: 'p', title: id, description: '', columnId: 'backlog', position: 0, sessionIds, closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, archivedAt: null, createdAt: '', updatedAt: '' });
+const task = (id: string, sessionIds: string[]): Task => ({ id, projectId: 'p', title: id, description: '', columnId: 'backlog', position: 0, sessionIds, closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' });
 function snapshot(sequence = 1, questionRounds?: QuestionRound[]): BoardSnapshot {
-  return { sequence, state: { schemaVersion: 1, revision: sequence, workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, projects: [], tasks: [task('t1', ['a', 'b']), task('t2', ['c'])], notes: [] }, attention: {}, ...(questionRounds ? { questionRounds } : {}) };
+  return { sequence, state: { schemaVersion: 2, revision: sequence, workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, projects: [], tasks: [task('t1', ['a', 'b']), task('t2', ['c'])], notes: [] }, attention: {}, ...(questionRounds ? { questionRounds } : {}) };
 }
 const round = (answered = false): QuestionRound => ({ id: 'round', sessionId: 'a', turnId: 'turn', pages: [{ callId: 'call', sequence: 1, page: { type: 'freetext', question: 'Which approach?' } }], complete: true, answered });
 const alive = new Set<ClientBridge>();
@@ -63,7 +63,7 @@ describe('real native stream bridge', () => {
     expect(() => unwrap(carrierFailure('kanban/snapshot', new Error('offline')))).toThrow('offline');
     expect(() => unwrap({ ok: true, value: { ok: false, error: { code: 'BAD_COMMAND', message: 'Not allowed' } } })).toThrow('Not allowed');
     vi.mocked(f.remote.kanban.command).mockResolvedValue({ ok: true, value: { ok: false, error: { code: 'BAD_COMMAND', message: 'Not allowed' } } });
-    await expect(f.bridge.api.command({ type: 'task.archive', taskId: 't1' })).rejects.toMatchObject({ code: 'BAD_COMMAND' });
+    await expect(f.bridge.api.command({ type: 'task.edit', taskId: 't1', title: 'Changed' })).rejects.toMatchObject({ code: 'BAD_COMMAND' });
     expect(f.bridge.status.getSnapshot().error?.message).toBe('Not allowed');
     expect(await f.bridge.api.branches('t1')).toEqual(['main']);
     expect(f.remote.kanban.branches).toHaveBeenCalledWith({ taskId: 't1' });
@@ -184,21 +184,18 @@ describe('one-shot cold question preparation', () => {
     await Promise.all([f.bridge.prepareQuestions('a'), f.bridge.prepareQuestions('a')]);
     await f.bridge.prepareQuestions('a'); expect(f.remote.kanban.questions).toHaveBeenCalledOnce();
     expect(f.bridge.questionsView.getSnapshot().rounds).toEqual([round()]);
-    f.bridge.dismiss('round'); expect(f.bridge.questionsView.getSnapshot().dismissed.has('round')).toBe(true);
-    await f.bridge.reopenCall('a', 'call'); expect(f.bridge.questionsView.getSnapshot().dismissed.has('round')).toBe(false);
     f.bridge.start(); await vi.waitFor(() => expect(f.feeds).toHaveLength(1)); f.feeds[0]!.push(snapshot(3, [round(true)]));
     await vi.waitFor(() => expect(f.bridge.questionsView.getSnapshot().rounds[0]?.answered).toBe(true));
-    expect(f.bridge.questionsView.getSnapshot().requested.has('a')).toBe(false);
     expect(f.remote.kanban.questions).toHaveBeenCalledTimes(2); // First physical baseline starts a new preparation epoch.
   });
   it('rehydrates an ordinary pending round after a physical host baseline reset', async () => {
     const f = fixture(); f.bridge.start(); await vi.waitFor(() => expect(f.feeds).toHaveLength(1)); f.feeds[0]!.push(snapshot(7, []));
     await vi.waitFor(() => expect(f.bridge.status.getSnapshot().connected).toBe(true)); await f.bridge.prepareQuestions('a');
-    expect(f.bridge.questionsView.getSnapshot().rounds).toHaveLength(1); f.bridge.reopen('round');
+    expect(f.bridge.questionsView.getSnapshot().rounds).toHaveLength(1);
     f.bridge.retry(); await vi.waitFor(() => expect(f.feeds).toHaveLength(2)); f.feeds[1]!.push(snapshot(0, []));
     await vi.waitFor(() => expect(f.remote.kanban.questions).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(f.bridge.questionsView.getSnapshot().rounds).toHaveLength(1));
-    await expect(f.bridge.reopenCall('a', 'call')).resolves.toBeUndefined(); expect(f.bridge.questionsView.getSnapshot().rounds[0]?.answered).toBe(false);
+    expect(f.bridge.questionsView.getSnapshot().rounds[0]?.answered).toBe(false);
   });
   it('fences an old history response and retires a round answered in the current host epoch', async () => {
     const f = fixture(); f.bridge.start(); await vi.waitFor(() => expect(f.feeds).toHaveLength(1)); f.feeds[0]!.push(snapshot(7, []));
@@ -223,10 +220,10 @@ describe('one-shot cold question preparation', () => {
     expect(f.bridge.status.getSnapshot().connected).toBe(true); await f.bridge.prepareQuestions('a');
     expect(f.bridge.questionsView.getSnapshot().errors.has('a')).toBe(false); expect(f.bridge.questionsView.getSnapshot().rounds).toHaveLength(1);
   });
-  it('can retry a failed initial preparation and keeps local dismissals separate from genuine answers', async () => {
+  it('can retry a failed initial preparation without marking the round answered', async () => {
     const f = fixture(); vi.mocked(f.remote.kanban.questions).mockRejectedValueOnce(new Error('History unavailable'));
     await expect(f.bridge.prepareQuestions('a')).rejects.toThrow('History unavailable');
-    await f.bridge.prepareQuestions('a'); f.bridge.dismiss('round');
+    await f.bridge.prepareQuestions('a');
     expect(f.bridge.questionsView.getSnapshot().rounds[0]?.answered).toBe(false);
     expect(f.remote.kanban.questions).toHaveBeenCalledTimes(2);
   });

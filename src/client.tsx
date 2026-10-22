@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
+import React, { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { Context } from '@deepseek-ai/cordis';
 import type { ISessions, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client';
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client';
@@ -14,6 +14,7 @@ import { TYPERT_REMOTE } from './remote.js';
 import { ClientBridge } from './client-bridge.js';
 import { BoardView, createBoardPageState, type BoardPageState } from './client/board.js';
 import { QuestionForm } from './questions/QuestionForm.js';
+import type { ClientApi } from './shared/types.js';
 
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
   interface SessionReferenceSourceMap { kanbanTaskDrawer: unknown }
@@ -27,7 +28,7 @@ type EmbeddedProps = PropsRuntime<'kanban.conversation'> & PropsRenderFactories;
 export const name = 'kanban-client';
 // Service keys, not package names. Mount our own namespace before any access to remote.kanban.
 export const inject = ['remote', 'slots', 'sessions', 'uiSession', 'conversation', 'layout'];
-const questionCss = '.kanban-question-form{padding:16px;border:1px solid var(--border-color,#d4d4d8);border-radius:12px;background:var(--background-color,#fff);max-height:52vh;overflow:auto;color:inherit}.kanban-question-form header,.kanban-question-form footer{display:flex;gap:8px;align-items:center;justify-content:space-between}.kanban-question-form h2{font-size:15px;margin:0}.kanban-question-form label{display:block;margin:8px 0}.kanban-question-form textarea{display:block;box-sizing:border-box;width:100%;min-height:64px}.kanban-question-form button{cursor:pointer}.kanban-question-form fieldset{border:0;padding:0}.kanban-question-form [role=alert]{color:#b91c1c}.kanban-decision-summary{padding:8px 12px;border-inline-start:3px solid #7c3aed}.kanban-native-state{padding:16px}.kanban-feed-error{padding:8px 16px;color:#b91c1c;border-bottom:1px solid currentColor}';
+const clientCss = '.kanban-native-state{padding:16px;color:inherit}.kanban-feed-error{padding:8px 16px;color:var(--dsw-alias-state-error-primary,crimson);border-bottom:1px solid var(--dsw-alias-border-l2)}';
 
 /** Real client plugin: no replacement server, global Session selection, or native acknowledgement writes. */
 export async function apply(raw: Context): Promise<() => Promise<void>> {
@@ -52,6 +53,8 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   const held = new Set<SessionReference>();
   const bridge = new ClientBridge(ctx.remote, ctx.uiSession.sessionStatus);
   const scopedSessions = ctx.sessions;
+  const emptySessionState = { ids: [], byId: {}, phase: 'ready' as const, projectionsBySession: {} };
+  const emptySessionList = { subscribe: () => () => {}, getSnapshot: () => emptySessionState };
 
   function FeedStatus() {
     const status = useSyncExternalStore(bridge.status.subscribe, bridge.status.getSnapshot, bridge.status.getSnapshot);
@@ -106,10 +109,26 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     const Provider = owner.SessionProvider;
     return <Provider session={reference}>{owner.renderSlot('kanban.conversation', {})}</Provider>;
   }
+  function BoardPage(props: MainProps & { api: ClientApi }) {
+    const sessionListSource = scopedSessions.list ?? emptySessionList;
+    const subscribeSessionList = useCallback((listener: () => void) => sessionListSource.subscribe(listener), [sessionListSource]);
+    const getSessionList = useCallback(() => sessionListSource.getSnapshot(), [sessionListSource]);
+    const sessionList = useSyncExternalStore(subscribeSessionList, getSessionList, getSessionList);
+    const sessionTitles = {
+      title: (sessionId: string) => sessionList.byId[sessionId as SessionId]?.title,
+      rename: async (sessionId: string, title: string) => {
+        const face = scopedSessions.scope(sessionId as SessionId)?.get('session');
+        if (!face) throw new Error('The native conversation is not available for renaming.');
+        const result = await face.rename(title);
+        if (!result.ok) throw new Error(result.error.message);
+      },
+    };
+    return <BoardView api={props.api} pageState={pageState} sessionTitles={sessionTitles} renderConversation={(id) => <RetainedConversation key={id} id={id} owner={props} />} />;
+  }
   function Main(props: MainProps) {
     const active = props.usePanelInfo(value => value.activePanelId === 'kanban');
     if (!active) return null; // A hidden cached page must not leave another copy of a composer mounted.
-    return <><FeedStatus /><BoardView api={bridge.api} pageState={pageState} renderConversation={(id) => <RetainedConversation key={id} id={id} owner={props} />} /></>;
+    return <><style>{clientCss}</style><FeedStatus /><BoardPage {...props} api={bridge.api} /></>;
   }
   function Dock(props: PropsRuntime<'conversation.input.dock'>) {
     const view = useSyncExternalStore(bridge.questionsView.subscribe, bridge.questionsView.getSnapshot, bridge.questionsView.getSnapshot);
@@ -118,10 +137,12 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       void bridge.prepareQuestions(props.sessionId).catch(() => undefined); // The session-scoped observable owns retry errors.
     }, [props.sessionId, attempt]);
     const historyError = view.errors.get(props.sessionId)?.message;
-    const candidates = view.rounds.filter(round => round.sessionId === props.sessionId && !view.dismissed.has(round.id));
-    const requested = view.requested.get(props.sessionId);
-    const round = candidates.find(candidate => candidate.id === requested) ?? [...candidates].reverse().find(candidate => !candidate.answered);
-    return <><style>{questionCss}</style><FeedStatus />{historyError && <div role="alert">Decision questions are unavailable: {historyError} <button type="button" onClick={() => setAttempt(value => value + 1)}>Retry questions</button></div>}{round && <QuestionForm key={round.id} round={round} onDismiss={() => bridge.dismiss(round.id)} onSubmit={async (text) => {
+    const lastSequence = (value: { pages: readonly { sequence: number }[] }) => value.pages.reduce((max, page) => Math.max(max, page.sequence), -1);
+    const round = view.rounds
+      .filter(candidate => candidate.sessionId === props.sessionId && !candidate.answered && candidate.pages.length > 0)
+      .sort((left, right) => Number(left.turnId) - Number(right.turnId) || lastSequence(left) - lastSequence(right))
+      .at(-1);
+    return <><FeedStatus />{historyError && <div role="alert">Decision questions are unavailable: {historyError} <button type="button" onClick={() => setAttempt(value => value + 1)}>Retry questions</button></div>}{round && <QuestionForm key={round.id} round={round} onSubmit={async (text) => {
       // This is ordinary native human text. It does not settle native approvals or userQuestions.
       bridge.assertSubmissionAllowed(props.sessionId);
       const conversation = scopedSessions.scope(props.sessionId)?.get('conversation');
@@ -129,20 +150,15 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       await conversation.send(text);
     }} />}</>;
   }
-  function DecisionSummary(props: PropsRuntime<'tool.call.toolview'>) {
-    const view = useSyncExternalStore(bridge.questionsView.subscribe, bridge.questionsView.getSnapshot, bridge.questionsView.getSnapshot);
-    const [error, setError] = useState<string | null>(null);
-    const round = view.rounds.find(candidate => candidate.sessionId === props.sessionId && candidate.pages.some(page => page.callId === props.callId));
-    const page = round?.pages.find(candidate => candidate.callId === props.callId);
-    return <div className="kanban-decision-summary"><strong>Decision question</strong>{page && <div>{page.page.question}</div>}<small>{round?.answered ? 'Answered in this conversation' : props.phase === 'preparing' ? 'Preparing…' : round?.complete ? 'Ready for your response' : 'Collecting this question round…'}</small>{props.phase !== 'preparing' && <button type="button" onClick={() => { setError(null); void bridge.reopenCall(props.sessionId, props.callId).catch((failure: unknown) => setError(failure instanceof Error ? failure.message : String(failure))); }}>{round?.answered ? 'Review questions' : 'Open questions'}</button>}{error && <div role="alert">{error}</div>}</div>;
-  }
+  /** The strip is the only question surface: the transcript row renders nothing (no generic JSON card). */
+  function HiddenDecisionRow() { return null; }
   function BoardIcon() { return <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor"><rect x="2" y="3" width="16" height="14" rx="2" /><path d="M7 3v14M13 3v14M4 7h1M9 7h2M15 7h1M4 10h1M9 10h2" /></svg>; }
 
   ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'kanban', children: { 'kanban.conversation': { kind: 'single', scope: 'session' } } }, Main));
   ctx.slots.inject('kanban.conversation', () => ctx.slots.register({ name: 'kanban.conversation' }, EmbeddedBody));
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: 'kanban', order: 80, label: 'Kanban' }, BoardIcon));
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'kanban-decision-questions', order: 20 }, Dock));
-  ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: 'decision_request' }, DecisionSummary));
+  ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: 'decision_request' }, HiddenDecisionRow));
   bridge.start();
   return async () => {
     lifetime.abort(); for (const reference of held) reference.release(); held.clear();

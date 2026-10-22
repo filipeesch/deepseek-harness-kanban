@@ -12,11 +12,11 @@ import { TYPERT_REMOTE } from '../../src/remote.js';
 const disposers: Array<() => Promise<void>> = [];
 afterEach(async () => { cleanup(); for (const dispose of disposers.splice(0)) await dispose(); });
 const question: QuestionRound = { id: 'r', sessionId: 'a', turnId: 't', complete: true, answered: false, pages: [{ callId: 'call-a', sequence: 1, page: { question: 'Choose the implementation', type: 'freetext' } }] };
-function snapshot(): BoardSnapshot {
-  return { sequence: 1, attention: {}, questionRounds: [question], state: { schemaVersion: 1, revision: 1, workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, projects: [{ id: 'p', name: 'Project', projectPath: '/project', gitRootPath: '/project' }], tasks: [{ id: 'task', projectId: 'p', title: 'Native task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, archivedAt: null, createdAt: '', updatedAt: '' }], notes: [] } };
+function snapshot(rounds: QuestionRound[] = [question]): BoardSnapshot {
+  return { sequence: 1, attention: {}, questionRounds: rounds, state: { schemaVersion: 2, revision: 1, workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, projects: [{ id: 'p', name: 'Project', projectPath: '/project', gitRootPath: '/project' }], tasks: [{ id: 'task', projectId: 'p', title: 'Native task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' }], notes: [] } };
 }
 type Entry = { options: Record<string, unknown>; Component: ComponentType<Record<string, unknown>> };
-function fixture(deferMount = false) {
+function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
   let mounted = false; let openMount!: () => void;
   const mounting = deferMount ? new Promise<void>(resolve => { openMount = resolve; }) : Promise.resolve();
   const unmount = vi.fn().mockResolvedValue(undefined);
@@ -31,10 +31,10 @@ function fixture(deferMount = false) {
   const refresh = vi.fn().mockResolvedValue(undefined);
   const nativeSelect = vi.fn();
   const remote = {
-    snapshot: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot() } }),
-    command: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot() } }),
+    snapshot: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot(rounds) } }),
+    command: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot(rounds) } }),
     branches: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['main'] } }),
-    questions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [question] } }),
+    questions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: rounds } }),
     follow(signal?: AbortSignal): RemoteStreamHandle<BoardSnapshot, never> {
       return {
         async *[Symbol.asyncIterator]() { if (!signal?.aborted) await new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once: true })); },
@@ -67,8 +67,8 @@ function fixture(deferMount = false) {
   } as unknown as Context;
   return { ctx, entries, mount, unmount, openMount: () => openMount(), remote, send, scope, retain, refresh, references, nativeSelect };
 }
-async function installed() {
-  const f = fixture(); const dispose = await apply(f.ctx); disposers.push(dispose); return f;
+async function installed(rounds?: QuestionRound[]) {
+  const f = fixture(false, rounds); const dispose = await apply(f.ctx); disposers.push(dispose); return f;
 }
 
 describe('public SDK plugin binding contracts', () => {
@@ -82,22 +82,42 @@ describe('public SDK plugin binding contracts', () => {
     expect(f.entries.get('sidebar.panellist:kanban')?.options).toMatchObject({ label: 'Kanban', order: 80 });
     expect(f.nativeSelect).not.toHaveBeenCalled(); await dispose(); expect(f.unmount).toHaveBeenCalledOnce();
   });
-  it('ordinary native chats get the optional rich dock; dismiss/reopen stays local and sends only scoped human text', async () => {
+  it('ordinary native chats get the fixed strip, the transcript row stays silent, and only scoped human text is sent', async () => {
     const f = await installed();
     const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
     const Summary = f.entries.get('tool.call.toolview:decision_request')!.Component;
     render(<><Dock sessionId="a" /><Summary sessionId="a" callId="call-a" phase="result" /></>);
     await screen.findByRole('form', { name: 'Questions from the agent' });
     expect(f.remote.questions).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole('button', { name: 'Close question form' }));
-    expect(screen.queryByRole('form')).toBeNull(); expect(f.remote.command).not.toHaveBeenCalled(); expect(f.send).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Open questions' }));
-    await screen.findByRole('form', { name: 'Questions from the agent' });
+    expect(screen.queryByText('Decision question')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Open questions|Review questions/ })).toBeNull();
+    expect(screen.getByText('1 / 2').getAttribute('aria-live')).toBe('polite');
+    const header = screen.getByRole('button', { name: /Questions from the agent/ });
+    expect(header.getAttribute('aria-controls')).toBe(screen.getByRole('form', { name: 'Questions from the agent' }).querySelector('.kq-panel')?.id ?? '');
+    fireEvent.click(header); expect(header.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(header); expect(header.getAttribute('aria-expanded')).toBe('true');
     fireEvent.change(screen.getByLabelText('Your answer'), { target: { value: 'Use the approved native implementation.' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent.click(screen.getByRole('button', { name: /Submit/ }));
     await waitFor(() => expect(f.send).toHaveBeenCalledOnce());
     expect(f.scope).toHaveBeenCalledWith('a'); expect(f.send.mock.calls[0]?.[0]).toContain('Use the approved native implementation.');
     expect(f.remote.command).not.toHaveBeenCalled(); expect(f.remote.questions).toHaveBeenCalledTimes(1); expect(f.nativeSelect).not.toHaveBeenCalled();
+  });
+  it('shows only the most recent unresolved round and no strip once the round is answered', async () => {
+    const older: QuestionRound = { ...question, id: 'older', turnId: '1', pages: [{ callId: 'call-a', sequence: 1, page: { question: 'Older question', type: 'freetext' } }] };
+    const newer: QuestionRound = { ...question, id: 'newer', turnId: '2', pages: [{ callId: 'call-b', sequence: 2, page: { question: 'Newest question', type: 'freetext' } }] };
+    const f = await installed([older, newer]);
+    const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
+    const first = render(<Dock sessionId="a" />);
+    await screen.findByRole('form', { name: 'Questions from the agent' });
+    expect(screen.getByRole('heading', { name: 'Newest question' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Older question' })).toBeNull();
+    first.unmount();
+    const g = await installed([{ ...newer, answered: true }]);
+    const AnsweredDock = g.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
+    const empty = render(<AnsweredDock sessionId="a" />);
+    await waitFor(() => expect(g.remote.questions).toHaveBeenCalled());
+    expect(empty.container.querySelector('form')).toBeNull();
   });
   it('owns native reference/provider binding, switches A/B by explicit reference, and releases on Info/unmount', async () => {
     const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;

@@ -202,7 +202,7 @@ function createCoordinationLifecycleBridge(config = {}) {
   const restored = () => latest?.operational?.serverSettled === true && latest.operational.restorationConfirmed === true && latest.operational.onSettled === true && latest.operational.onApplication === "applied" && latest.operational.leaseRetained === false && latest.operational.workSettled === true && latest.nativeJobs.length === installed?.jobs.length && latest.nativeJobs.every((job) => terminal(job.nativeStatus) && job.waitObserved === true && job.settledEventObserved === true);
   const cleanupScope = (kind, args) => {
     if (!started || kind === "snapshot") return;
-    const allowed = ["operation.return", "operation.retry", "worktree.remove", "task.delete", "task.archive", "task.restore", "task.edit", "conversation.close", "conversation.reopen"];
+    const allowed = ["operation.return", "operation.retry", "worktree.remove", "task.delete", "task.edit", "conversation.close", "conversation.reopen"];
     if (!args || !allowed.includes(args.type) || !installed.ownedTaskIds.includes(args.taskId) || args.sessionId !== void 0 && !installed.ownedSessionIds.includes(args.sessionId)) fail("POST_ON_OWN_CLEANUP_REQUIRED");
     if (["worktree.remove", "task.delete"].includes(args.type)) {
       const target = args.expectedWorktreePath;

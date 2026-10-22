@@ -1,5 +1,7 @@
 # Product Verification Audit: define-kanban-product
 
+> **Current refinement notice (2026-10-22):** The follow-up [refine-kanban-ux change](<../openspec/changes/refine-kanban-ux/proposal.md>) removes task archive/restore, moves task creation to the initial column, simplifies the board/drawer/Git surfaces, binds new conversations to native workspaces, and introduces a deterministic test-only model adapter. The historical audit below remains frozen as the evidence for the base product. Acceptance for the refinement uses the deterministic adapter and does not make a real-model request.
+
 ## Approved boundary
 
 [Approved G1–G5 strategy](<../openspec/changes/archive/2026-10-22-define-kanban-product/design.md#L172-L186>) validates the plugin’s PUBLIC extension points and own product state machine—not DSH chat/model/scheduler/history engines. Use deterministic public-adapter/component tests, actual temporary Git and a bounded existing-GUI smoke. Real-model calls were declined. No old-record/QA metadata probe, header/queue/scheduler repair or custom recovery/runtime/lease machinery is a completion requirement. Functional 9 capabilities / 56 requirements / 105 scenarios are unchanged.
@@ -28,7 +30,7 @@ All functional evidence and final owner checks are now COMPLETE under the approv
 | G4 | PASS: semantic/schema/canonical metadata/form/dock/ordinary-send/reload contracts; historical Native/PTC supplement preserved. Built-in ask/approval delegated, no new real-model calls. |
 | G5 | PASS: controlled real-Git/lifecycle-port success, dirty/shared/unknown-catalog refusal, base-before-remove/archive-not-purge/same IDs/branch-base preservation. Current-profile unreadable-state refusal remains a documented environment limitation, not permission to repair/skip or claim actual cleanup there. |
 
-All 9 capabilities / 56 requirements / 105 exact scenarios remain [mapped](<scenario-evidence.md>). Deferred UX requests stay NEXT; old metadata/QA probes and header/queue/model/scheduler repairs are out of scope. DSH owns Native history, permission engine and Files/workspace-origin semantics; cwd does not grant access. No current-profile raw-message, disposal, universal atomic lease or all-OS-backend guarantee is claimed.
+All 9 capabilities / 56 requirements / 105 exact scenarios remain [mapped](<scenario-evidence.md>). The UX refinement is captured in `refine-kanban-ux`; old metadata/QA probes and header/queue/model/scheduler repairs are out of scope. DSH owns Native history, permission engine and Files/workspace-origin semantics; cwd does not grant access. No current-profile raw-message, disposal, universal atomic lease or all-OS-backend guarantee is claimed.
 
 ## Audit of all original 21 unchecked tasks
 

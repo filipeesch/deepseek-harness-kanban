@@ -35,7 +35,7 @@ function fixture(){
   const timestamp='2026-10-22T00:00:00.000Z',state=initialState();
   const project:Project={id:'owned-project',name:'Owned lifecycle fixture',projectPath:base,gitRootPath:run+'/monorepo',defaultBranch:'main'};
   const operation:ContextOperation={id:'owned-waiting-operation',request:{kind:'create',mode:'new',path:run+'/journal-tree',branchName:'lifecycle-'+nonce,sourceBranch:'main'},phase:'waiting',targetPath:run+'/journal-tree',previousDirectories:{},switchedSessionIds:[],archivedSessionIds:[],gitCompleted:false,createdAt:timestamp};
-  const task:Task={id:'owned-task',projectId:project.id,title:'Owned lifecycle fixture',description:'In-memory protocol fixture only.',columnId:state.workflow.initialColumnId,position:0,sessionIds:[owner],closedSessionIds:[],effectiveCwd:base,worktree:null,operation,archivedAt:null,createdAt:timestamp,updatedAt:timestamp};
+  const task:Task={id:'owned-task',projectId:project.id,title:'Owned lifecycle fixture',description:'In-memory protocol fixture only.',columnId:state.workflow.initialColumnId,position:0,sessionIds:[owner],closedSessionIds:[],effectiveCwd:base,worktree:null,operation,createdAt:timestamp,updatedAt:timestamp};
   state.projects=[project];state.tasks=[task];
   const board={ok:true,value:{state,attention:{},sequence:0}};
   const invokers={command:vi.fn(async(_request:unknown)=>board),snapshot:vi.fn(async()=>{expect(enabled).toBe(true);calls.push('public-snapshot');return board;})};

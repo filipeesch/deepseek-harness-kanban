@@ -6,7 +6,7 @@ import {pathToFileURL} from 'node:url';
 import {randomUUID} from 'node:crypto';
 
 export const DEFAULT_ENDPOINT = 'http://127.0.0.1:9230';
-const MUTATIONS = new Set(['install','enable']);
+const MUTATIONS = new Set(['install','enable','disable']);
 const COMMANDS = new Set(['inventory','clients','snapshot',...MUTATIONS]);
 export const HELP = [
   'Usage: node scripts/dsh-inspect.mjs [inventory|clients|snapshot] [options]',
@@ -19,6 +19,8 @@ export const HELP = [
   '    Calls public pluginManager.installBundle(link:/path, {enabled:false}).',
   '  enable --path /absolute/built/package --allow-mutation',
   '    Calls public pluginManager.setBundleEnabled(manifest.name, true).',
+  '  disable --path /absolute/built/package --allow-mutation',
+  '    Calls public pluginManager.setBundleEnabled(manifest.name, false).',
   '',
   'Options: --endpoint http://127.0.0.1:9230 (existing loopback inspector only)',
   '  --timeout-ms N  Per-operation timeout 100..300000, default 10000',
@@ -204,7 +206,7 @@ const INVENTORY=async function(filter) {
 const MUTATE=async function(command,target,requestId) {
   const manager=(this.root??this).get('pluginManager');
   if(!manager) throw new Error('Public pluginManager service unavailable');
-  const change=command==='install'?await manager.installBundle(target.spec,{enabled:false,requestId,...(target.registry?{registry:target.registry}:{})}):await manager.setBundleEnabled(target.name,true);
+  const change=command==='install'?await manager.installBundle(target.spec,{enabled:false,requestId,...(target.registry?{registry:target.registry}:{})}):await manager.setBundleEnabled(target.name,command==='enable');
   const raw=JSON.stringify(change.packageResult??{});
   const diagnosticCodes=['ENOTFOUND','ECONNRESET','ECONNREFUSED','ETIMEDOUT','ERR_PNPM_META_FETCH_FAIL','ERR_PNPM_FETCH_401','ERR_PNPM_FETCH_403','ERR_PNPM_FETCH_404','ERR_PNPM_UNSUPPORTED_ENGINE','ERR_TLS_CERT_ALTNAME_INVALID','UNABLE_TO_VERIFY_LEAF_SIGNATURE'].filter(code=>raw.includes(code));
   const registryHosts=['registry.npmjs.org','registry.npmmirror.com'].filter(host=>raw.includes(host));

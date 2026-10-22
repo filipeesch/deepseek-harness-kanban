@@ -71,6 +71,30 @@ export class BoardStore {
       catch (error) { throw storageFailure('save', error); }
       return new BoardStore(storage, state);
     }
+    if (typeof loaded === 'object' && loaded !== null && 'schemaVersion' in loaded && (loaded as { schemaVersion?: unknown }).schemaVersion === 1) {
+      const migrated = clone(loaded) as Record<string, unknown>;
+      const tasks = Array.isArray(migrated.tasks) ? migrated.tasks : [];
+      for (const item of tasks) {
+        if (!item || typeof item !== 'object' || !('archivedAt' in item)) continue;
+        const archive = (item as Record<string, unknown>).archivedAt;
+        if (archive !== null && archive !== undefined) {
+          throw new KanbanError('LEGACY_ARCHIVED_TASK', 'Stored task archive metadata is not supported by the delete-only lifecycle.', { taskId: (item as { id?: unknown }).id });
+        }
+      }
+      migrated.schemaVersion = DATA_VERSION;
+      if (Array.isArray(migrated.tasks)) {
+        migrated.tasks = migrated.tasks.map(item => {
+          if (!item || typeof item !== 'object') return item;
+          const copy = { ...(item as Record<string, unknown>) };
+          delete copy.archivedAt;
+          return copy;
+        });
+      }
+      const state = invalidState(migrated);
+      try { await storage.save(clone(state)); }
+      catch (error) { throw storageFailure('save', error); }
+      return new BoardStore(storage, state);
+    }
     if (typeof loaded === 'object' && loaded !== null && 'schemaVersion' in loaded && loaded.schemaVersion !== DATA_VERSION) {
       throw new KanbanError('UNSUPPORTED_VERSION', 'Stored board schema version is not supported.', { supportedVersion: DATA_VERSION });
     }
@@ -150,7 +174,7 @@ export class BoardStore {
       if (current && (current.projectPath !== value.projectPath || current.gitRootPath !== value.gitRootPath)) {
         invariant(!state.tasks.some(task => task.projectId === projectId), 'PROJECT_IN_USE', 'Project paths cannot change while tasks reference the project.');
       }
-      const project: Project = { id: projectId, name: value.name.trim(), projectPath: value.projectPath, gitRootPath: value.gitRootPath };
+      const project: Project = { id: projectId, name: value.name.trim(), projectPath: value.projectPath, gitRootPath: value.gitRootPath, ...(current?.workspaceId ? { workspaceId: current.workspaceId } : {}), ...(current?.workspaceOwned !== undefined ? { workspaceOwned: current.workspaceOwned } : {}) };
       if (value.defaultBranch !== undefined) {
         invariant(typeof value.defaultBranch === 'string', 'INVALID_INPUT', 'Default branch must be text.');
         if (value.defaultBranch.trim()) project.defaultBranch = value.defaultBranch.trim();
@@ -159,6 +183,26 @@ export class BoardStore {
       else state.projects.push(project);
       return project;
     }, expectedRevision);
+  }
+
+  async setProjectWorkspace(projectId: string, workspaceId: string, owned: boolean): Promise<Project> {
+    assertId(workspaceId, 'Workspace ID');
+    return this.transact(state => {
+      const project = this.requireProject(projectId, state);
+      project.workspaceId = workspaceId;
+      project.workspaceOwned = owned;
+      return project;
+    });
+  }
+
+  async setTaskWorktreeWorkspace(taskId: string, workspaceId: string, owned: boolean): Promise<Task> {
+    assertId(workspaceId, 'Workspace ID');
+    return this.transact(state => {
+      const task = this.requireTask(taskId, state);
+      task.worktreeWorkspaceId = workspaceId;
+      task.worktreeWorkspaceOwned = owned;
+      return task;
+    });
   }
 
   async createTask(input: NewTask, sessionId: string): Promise<Task> {
@@ -180,7 +224,7 @@ export class BoardStore {
       const task: Task = {
         id: nextId(state.tasks), projectId: project.id, title: value.title.trim(), description: value.description,
         columnId: state.workflow.initialColumnId, position, sessionIds: [sessionId], closedSessionIds: [], effectiveCwd: project.projectPath,
-        worktree: null, operation: null, archivedAt: null, createdAt: timestamp, updatedAt: timestamp,
+        worktree: null, operation: null, createdAt: timestamp, updatedAt: timestamp,
       };
       state.tasks.push(task);
       return task;
@@ -257,26 +301,6 @@ export class BoardStore {
       }
       if (value.tags !== undefined) note.tags = [...new Set(value.tags.map(tag => tag.trim()))];
       return note;
-    });
-  }
-
-  async archiveTask(taskId: string): Promise<Task> {
-    return this.transact(state => {
-      const task = this.requireTask(taskId, state);
-      invariant(!task.operation, 'TASK_BUSY', 'Cannot archive a task during a context operation.');
-      task.archivedAt ??= new Date().toISOString();
-      task.updatedAt = new Date().toISOString();
-      return task;
-    });
-  }
-
-  async restoreTask(taskId: string): Promise<Task> {
-    return this.transact(state => {
-      const task = this.requireTask(taskId, state);
-      invariant(!task.operation, 'TASK_BUSY', 'Cannot restore a task during a context operation.');
-      task.archivedAt = null;
-      task.updatedAt = new Date().toISOString();
-      return task;
     });
   }
 

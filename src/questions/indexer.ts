@@ -5,7 +5,7 @@ import { validateQuestionPage } from './validation.js';
 /** Structural input accepted by the published SDK's canonical SessionEvent union. */
 export interface QuestionEvent { readonly type: string; readonly seq: number; readonly data: unknown }
 
-type ProjectionEvent =
+export type ProjectionEvent =
   | { kind: 'call'; seq: number; turn: number; callId: string; name: string }
   | { kind: 'ptc-start'; seq: number; callId: string; rootCallId: string; parentCallId: string }
   | { kind: 'native-page'; seq: number; turn: number; callId: string; page: QuestionPage }
@@ -17,6 +17,13 @@ type ProjectionEvent =
 export interface QuestionIndexSnapshot {
   version: 1;
   sessions: Array<{ sessionId: string; events: ProjectionEvent[] }>;
+}
+
+/** One conversation's durable projection record, independent of board or task state. */
+export interface QuestionSessionRecord {
+  version: 1;
+  sessionId: string;
+  events: ProjectionEvent[];
 }
 
 const EMPTY_ROUNDS: readonly QuestionRound[] = Object.freeze([]);
@@ -170,6 +177,38 @@ export class QuestionIndex {
     return { version: 1, sessions: [...this.events].sort(([a], [b]) => a.localeCompare(b)).map(([sessionId, events]) => ({
       sessionId, events: [...events.values()].sort((a, b) => a.seq - b.seq).map(event => copyEvent(event)),
     })) };
+  }
+
+  /** One conversation's projection record, or undefined when it holds no events. */
+  serializeSession(sessionId: string): QuestionSessionRecord | undefined {
+    const events = this.events.get(sessionId);
+    if (!events || events.size === 0) return undefined;
+    return { version: 1, sessionId, events: [...events.values()].sort((a, b) => a.seq - b.seq).map(event => copyEvent(event)) };
+  }
+
+  /**
+   * Merge one durable record, validating every event before touching state.
+   * Existing sequences win so canonical replay stays authoritative.
+   */
+  restoreSession(record: unknown): boolean {
+    if (this.disposed) return false;
+    if (!object(record) || record.version !== 1 || !id(record.sessionId) || !Array.isArray(record.events)) throw new KanbanError('INVALID_QUESTION_INDEX', 'Invalid question session record.');
+    const sessionId = record.sessionId;
+    const incoming = new Map<number, ProjectionEvent>();
+    for (const stored of record.events) {
+      const event = copyEvent(stored);
+      if (incoming.has(event.seq)) throw new KanbanError('INVALID_QUESTION_INDEX', 'Duplicate question event sequence.');
+      incoming.set(event.seq, event);
+    }
+    const current = this.events.get(sessionId);
+    const merged = current ? new Map(current) : new Map<number, ProjectionEvent>();
+    let changed = false;
+    for (const [seq, event] of incoming) if (!merged.has(seq)) { merged.set(seq, event); changed = true; }
+    if (!changed) return false;
+    this.events.set(sessionId, merged);
+    this.rebuild(sessionId);
+    this.emit();
+    return true;
   }
 
   /** Replace atomically with validated projection data; completeness is reconstructed from actual end records. */

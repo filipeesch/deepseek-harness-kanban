@@ -9,7 +9,7 @@ import { TYPERT_REMOTE } from '../../src/remote.js';
 import * as KanbanClient from '../../src/client.js';
 const fibers: Fiber[] = [];
 afterEach(async () => { for (const fiber of fibers.splice(0).reverse()) await fiber.dispose(); });
-const board: BoardSnapshot = { sequence: 0, attention: {}, questionRounds: [], state: { schemaVersion: 1, revision: 0, workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, projects: [], tasks: [], notes: [] } };
+const board: BoardSnapshot = { sequence: 0, attention: {}, questionRounds: [], state: { schemaVersion: 2, revision: 0, workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, projects: [], tasks: [], notes: [] } };
 async function runtime() {
   const root = new Context();
   const call = vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: board } });

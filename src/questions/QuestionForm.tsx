@@ -1,67 +1,112 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
-import type { QuestionAnswer, QuestionRound } from '../shared/types.js';
+import type { QuestionAnswer, QuestionPage, QuestionRound } from '../shared/types.js';
 import { OTHER_CHOICE, answerFor, emptyAnswer, formatAnswers, isAnswerValid } from './validation.js';
+import { questionCss } from './styles.js';
 
 export interface QuestionFormProps {
   round: QuestionRound;
   onSubmit(text: string): void | Promise<void>;
-  onDismiss(): void;
 }
+
+type ActiveSlide = { kind: 'page'; callId: string } | { kind: 'notes' };
 interface Draft {
   roundId: string;
-  currentCallId?: string;
+  active: ActiveSlide | null;
   answers: Record<string, QuestionAnswer>;
   generalNotes: string;
+  collapsed: boolean;
   submitting: boolean;
   submitted: boolean;
   error: string | null;
 }
+
+const WEIGHT_LABELS: Record<NonNullable<QuestionPage['weight']>, string> = {
+  critical: 'Hard to change later',
+  medium: 'Can change with effort',
+  easy: 'Easy to revisit',
+};
+
 function newDraft(roundId: string): Draft {
-  return { roundId, answers: Object.create(null) as Record<string, QuestionAnswer>, generalNotes: '', submitting: false, submitted: false, error: null };
+  return { roundId, active: null, answers: Object.create(null) as Record<string, QuestionAnswer>, generalNotes: '', collapsed: false, submitting: false, submitted: false, error: null };
 }
 function Markdown({ text }: { text: string }) {
   return <ReactMarkdown skipHtml disallowedElements={['img']}>{text}</ReactMarkdown>;
 }
+function sameSlide(left: ActiveSlide, right: ActiveSlide): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === 'notes') return true;
+  return right.kind === 'page' && left.callId === right.callId;
+}
+function descriptionFor(page: QuestionPage, title: string): string {
+  return page.options?.find(option => option.title === title)?.description ?? '';
+}
+function QuestionGlyph() {
+  return <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M5.6 5.4a2.4 2.4 0 1 1 3.2 2.3c-.6.3-.8.7-.8 1.3v.4" /><circle cx="8" cy="12.2" r=".8" fill="currentColor" stroke="none" /></svg>;
+}
+function Chevron({ up }: { up: boolean }) {
+  return <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d={up ? 'M4 10l4-4 4 4' : 'M4 6l4 4 4-4'} /></svg>;
+}
 
-/** An optional answer composer. It never owns or cancels a native question interaction. */
-export function QuestionForm({ round, onSubmit, onDismiss }: QuestionFormProps) {
+/** The fixed question strip docked above the composer: pages first, Additional Notes last. */
+export function QuestionForm({ round, onSubmit }: QuestionFormProps) {
   const prefix = useId();
+  const bodyId = prefix + '-body';
+  const headingId = prefix + '-heading';
   const [draft, setDraft] = useState<Draft>(() => newDraft(round.id));
+  const [focused, setFocused] = useState<Record<string, string>>({});
   const inFlight = useRef(new Set<string>());
   const sent = useRef(new Set<string>());
+  const headingRef = useRef<HTMLDivElement>(null);
+  const firstSlide = useRef(true);
   useEffect(() => { setDraft(previous => previous.roundId === round.id ? previous : newDraft(round.id)); }, [round.id]);
   const current = draft.roundId === round.id ? draft : newDraft(round.id);
-  const selectedIndex = current.currentCallId ? round.pages.findIndex(page => page.callId === current.currentCallId) : 0;
-  const index = selectedIndex < 0 ? 0 : selectedIndex;
-  const entry = round.pages[index];
+  const slides: ActiveSlide[] = [...round.pages.map(page => ({ kind: 'page' as const, callId: page.callId })), { kind: 'notes' as const }];
+  const active = current.active !== null && slides.some(slide => sameSlide(slide, current.active!)) ? current.active : slides[0]!;
+  const index = slides.findIndex(slide => sameSlide(slide, active));
+  const entry = active.kind === 'page' ? round.pages.find(page => page.callId === active.callId) : undefined;
   const answer = entry ? answerFor(current.answers, entry.callId) ?? emptyAnswer() : emptyAnswer();
   const disabled = round.answered || current.submitting || current.submitted || sent.current.has(round.id);
-  const valid = round.pages.length > 0 && round.pages.every(page => isAnswerValid(page.page, answerFor(current.answers, page.callId)));
-  const canSubmit = round.complete && !disabled && valid;
-  const questionId = prefix + '-question';
+  const answersValid = round.pages.length > 0 && round.pages.every(page => isAnswerValid(page.page, answerFor(current.answers, page.callId)));
+  const canSubmit = round.complete && !disabled && answersValid;
+  const canAdvance = entry !== undefined && !disabled && isAnswerValid(entry.page, answer);
+  const activeKey = active.kind === 'page' ? active.callId : 'notes';
+  const optionFocus = entry ? focused[entry.callId] ?? answer.choices[0] ?? '' : '';
+  const otherActive = answer.choices.includes(OTHER_CHOICE) || optionFocus === OTHER_CHOICE;
+
+  useEffect(() => {
+    if (firstSlide.current) { firstSlide.current = false; return; }
+    headingRef.current?.focus();
+  }, [activeKey]);
 
   function updateDraft(update: (previous: Draft) => Draft) {
     setDraft(previous => update(previous.roundId === round.id ? previous : newDraft(round.id)));
   }
   function updateAnswer(update: (previous: QuestionAnswer) => QuestionAnswer) {
     if (!entry) return;
-    updateDraft(previous => ({ ...previous, currentCallId: entry.callId, error: null,
+    updateDraft(previous => ({ ...previous, error: null, active: { kind: 'page', callId: entry.callId },
       answers: { ...previous.answers, [entry.callId]: update(answerFor(previous.answers, entry.callId) ?? emptyAnswer()) } }));
+  }
+  function focusOption(value: string) {
+    if (!entry) return;
+    setFocused(previous => ({ ...previous, [entry.callId]: value }));
   }
   function choose(value: string, checked: boolean) {
     if (!entry) return;
+    focusOption(value);
     updateAnswer(previous => ({ ...previous,
       choices: entry.page.type === 'exclusive' ? [value] : checked ? [...previous.choices.filter(choice => choice !== value), value] : previous.choices.filter(choice => choice !== value),
     }));
   }
-  function navigate(next: number) {
-    const page = round.pages[next];
-    if (page) updateDraft(previous => ({ ...previous, currentCallId: page.callId }));
+  function goTo(target: ActiveSlide | undefined) {
+    if (!target) return;
+    updateDraft(previous => ({ ...previous, active: target }));
   }
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!canSubmit || inFlight.current.has(round.id) || sent.current.has(round.id)) return;
+  function next() { if (canAdvance) goTo(slides[index + 1]); }
+  function back() { goTo(slides[index - 1]); }
+  function toggle() { updateDraft(previous => ({ ...previous, collapsed: !previous.collapsed })); }
+  async function send(): Promise<void> {
+    if (active.kind !== 'notes' || !canSubmit || inFlight.current.has(round.id) || sent.current.has(round.id)) return;
     const roundId = round.id;
     inFlight.current.add(roundId);
     updateDraft(previous => ({ ...previous, submitting: true, error: null }));
@@ -74,59 +119,81 @@ export function QuestionForm({ round, onSubmit, onDismiss }: QuestionFormProps) 
       setDraft(previous => previous.roundId === roundId ? { ...previous, submitting: false, error: error instanceof Error ? error.message : String(error) } : previous);
     } finally { inFlight.current.delete(roundId); }
   }
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void send();
+  }
 
-  return <form className="kanban-question-form" aria-label="Questions from the agent" onSubmit={submit}>
-    <header className="kanban-question-form-header">
-      <h2>Questions from the agent</h2>
-      <button type="button" aria-label="Close question form" onClick={onDismiss}>Close</button>
-    </header>
-    {!round.complete && <p role="status">More questions may arrive. You can start answering now.</p>}
-    {round.answered && <p role="status">This round has been answered in the conversation.</p>}
-    {current.submitted && <p role="status">Response submitted.</p>}
-    {entry ? <section aria-labelledby={questionId}>
-      <p aria-live="polite">Question {index + 1} of {round.pages.length}</p>
-      {entry.page.context && <div className="kanban-question-context"><Markdown text={entry.page.context} /></div>}
-      <div id={questionId} role="heading" aria-level={3}><Markdown text={entry.page.question} /></div>
-      {entry.page.weight && <p className="kanban-question-weight">Importance: {entry.page.weight}</p>}
-      {entry.page.model_lean && <aside aria-label="Agent recommendation">
-        <strong>Recommended: {entry.page.model_lean}</strong>
-        {entry.page.model_lean_reason && <Markdown text={entry.page.model_lean_reason} />}
-      </aside>}
-      {entry.page.type === 'freetext' ? <label>Your answer
-        <textarea aria-label="Your answer" value={answer.text} disabled={disabled} onChange={event => updateAnswer(previous => ({ ...previous, text: event.target.value }))} />
-      </label> : <fieldset disabled={disabled}>
-        <legend>{entry.page.type === 'exclusive' ? 'Choose one answer' : 'Choose one or more answers'}</legend>
-        {(entry.page.options ?? []).map((option, optionIndex) => <div className="kanban-question-option" key={option.title}>
-          <label htmlFor={prefix + '-option-' + optionIndex}>
-            <input id={prefix + '-option-' + optionIndex} type={entry.page.type === 'exclusive' ? 'radio' : 'checkbox'} name={prefix + '-choices'}
-              checked={answer.choices.includes(option.title)} onChange={event => choose(option.title, event.target.checked)} />
-            {option.title}
-          </label>
-          <div className="kanban-question-option-description"><Markdown text={option.description} /></div>
-        </div>)}
-        <label htmlFor={prefix + '-other'}>
-          <input id={prefix + '-other'} type={entry.page.type === 'exclusive' ? 'radio' : 'checkbox'} name={prefix + '-choices'}
-            checked={answer.choices.includes(OTHER_CHOICE)} onChange={event => choose(OTHER_CHOICE, event.target.checked)} />
-          Other (write your own answer)
-        </label>
-        {answer.choices.includes(OTHER_CHOICE) && <label>Other answer
-          <textarea aria-label="Other answer" value={answer.other} onChange={event => updateAnswer(previous => ({ ...previous, other: event.target.value }))} />
-        </label>}
-      </fieldset>}
-      <label>Notes for this answer
-        <textarea aria-label="Notes for this answer" value={answer.notes} disabled={disabled} onChange={event => updateAnswer(previous => ({ ...previous, notes: event.target.value }))} />
-      </label>
-      {index === round.pages.length - 1 && <label>Additional context for this round
-        <textarea aria-label="Additional context for this round" value={current.generalNotes} disabled={disabled}
-          onChange={event => updateDraft(previous => ({ ...previous, generalNotes: event.target.value }))} />
-      </label>}
-    </section> : <p>Waiting for question pages.</p>}
-    {current.error && <p role="alert">{current.error}</p>}
-    <footer>
-      <button type="button" onClick={() => navigate(index - 1)} disabled={index === 0}>Back</button>
-      {index < round.pages.length - 1
-        ? <button type="button" onClick={() => navigate(index + 1)}>Next</button>
-        : <button type="submit" disabled={!canSubmit}>{current.submitting ? 'Submitting…' : 'Submit answers'}</button>}
-    </footer>
-  </form>;
+  return <>
+    <style>{questionCss}</style>
+    <form className="kq-strip" aria-label="Questions from the agent" onSubmit={submit}>
+      <button type="button" className="kq-header" aria-expanded={!current.collapsed} aria-controls={bodyId} onClick={toggle}>
+        <span className="kq-icon"><QuestionGlyph /></span>
+        <span className="kq-title">Questions from the agent</span>
+        <span className="kq-progress" aria-live="polite">{index + 1} / {slides.length}</span>
+        <span className="kq-chevron" data-open={!current.collapsed}><Chevron up={!current.collapsed} /></span>
+      </button>
+      {!current.collapsed && <div className="kq-panel" id={bodyId}>
+        <div className="kq-scroll">
+          {round.answered && <p className="kq-status" role="status">This round has been answered in the conversation.</p>}
+          {current.submitted && <p className="kq-status" role="status">Response submitted.</p>}
+          {entry ? <section className="kq-slide" aria-labelledby={headingId}>
+            {entry.page.context && <div className="kq-context"><Markdown text={entry.page.context} /></div>}
+            <div className="kq-question-head">
+              <div ref={headingRef} id={headingId} role="heading" aria-level={3} tabIndex={-1} className="kq-question"><Markdown text={entry.page.question} /></div>
+              {entry.page.weight && <span className={'kq-weight kq-weight-' + entry.page.weight}>{WEIGHT_LABELS[entry.page.weight]}</span>}
+            </div>
+            {entry.page.model_lean && <p className="kq-lean">I lean toward <strong>{entry.page.model_lean}</strong>{entry.page.model_lean_reason ? ' — ' + entry.page.model_lean_reason : ''}</p>}
+            {entry.page.type === 'freetext'
+              ? <label className="kq-field">Your answer
+                <textarea className="kq-input" aria-label="Your answer" value={answer.text} disabled={disabled} onChange={event => updateAnswer(previous => ({ ...previous, text: event.target.value }))} />
+              </label>
+              : <>
+                <fieldset className="kq-options" disabled={disabled}>
+                  <legend>{entry.page.type === 'exclusive' ? 'Choose one answer' : 'Choose one or more answers'}</legend>
+                  {(entry.page.options ?? []).map((option, optionIndex) => {
+                    const selected = answer.choices.includes(option.title);
+                    return <div key={option.title} className="kq-option" data-focused={optionFocus === option.title} data-selected={selected}
+                      onClick={() => { focusOption(option.title); if (entry.page.type === 'exclusive') choose(option.title, true); }}>
+                      <input id={prefix + '-option-' + optionIndex} type={entry.page.type === 'exclusive' ? 'radio' : 'checkbox'} name={prefix + '-choices-' + entry.callId}
+                        checked={selected} disabled={disabled} onChange={event => choose(option.title, event.target.checked)} onFocus={() => focusOption(option.title)} />
+                      <label htmlFor={prefix + '-option-' + optionIndex} className="kq-option-title">{option.title}</label>
+                      {entry.page.model_lean === option.title && <span className="kq-ai">AI suggests</span>}
+                    </div>;
+                  })}
+                  <div className="kq-option" data-focused={optionFocus === OTHER_CHOICE} data-selected={answer.choices.includes(OTHER_CHOICE)}
+                    onClick={() => { focusOption(OTHER_CHOICE); if (entry.page.type === 'exclusive') choose(OTHER_CHOICE, true); }}>
+                    <input id={prefix + '-other'} type={entry.page.type === 'exclusive' ? 'radio' : 'checkbox'} name={prefix + '-choices-' + entry.callId}
+                      checked={answer.choices.includes(OTHER_CHOICE)} disabled={disabled} onChange={event => choose(OTHER_CHOICE, event.target.checked)} onFocus={() => focusOption(OTHER_CHOICE)} />
+                    <label htmlFor={prefix + '-other'} className="kq-option-title">Other (write your own answer)</label>
+                  </div>
+                </fieldset>
+                <div className="kq-desc" data-other={otherActive}>
+                  {otherActive
+                    ? <textarea className="kq-input" data-fill="true" aria-label="Other answer" value={answer.other} disabled={disabled} onChange={event => updateAnswer(previous => ({ ...previous, other: event.target.value }))} />
+                    : optionFocus
+                      ? <div className="kq-desc-body"><Markdown text={descriptionFor(entry.page, optionFocus)} /></div>
+                      : <p className="kq-desc-empty">Select an option to see details.</p>}
+                </div>
+              </>}
+            <label className="kq-field">Notes for this answer
+              <textarea className="kq-input" aria-label="Notes for this answer" value={answer.notes} disabled={disabled} onChange={event => updateAnswer(previous => ({ ...previous, notes: event.target.value }))} />
+            </label>
+            {entry.page.answers_affect_followup && <p className="kq-hint">Your answer here will shape follow-up questions.</p>}
+          </section> : <section className="kq-slide" aria-labelledby={headingId}>
+            <div ref={headingRef} id={headingId} role="heading" aria-level={3} tabIndex={-1} className="kq-question">Additional Notes</div>
+            {round.pages.length === 0 && <p className="kq-hint">Waiting for question pages.</p>}
+            <textarea className="kq-input" aria-label="Additional Notes" placeholder="Anything else the agent should know?" value={current.generalNotes} disabled={disabled} onChange={event => updateDraft(previous => ({ ...previous, generalNotes: event.target.value }))} />
+          </section>}
+          {current.error && <p className="kq-error" role="alert">{current.error}</p>}
+        </div>
+        <footer className="kq-footer">
+          <button type="button" className="kq-secondary" onClick={back} disabled={index === 0}>Back</button>
+          {active.kind === 'notes'
+            ? <button type="button" className="kq-primary" disabled={!canSubmit} onClick={event => { if (event.detail > 1) return; void send(); }}>{current.submitting ? 'Submitting…' : 'Submit'}</button>
+            : <button type="button" className="kq-primary" onClick={next} disabled={!canAdvance}>Next</button>}
+        </footer>
+      </div>}
+    </form>
+  </>;
 }
