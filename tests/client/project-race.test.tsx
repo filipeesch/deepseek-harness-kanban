@@ -13,7 +13,7 @@ async function startProjectSave() {
   const mock = fakeApi(); let resolve!: (result: BoardSnapshot) => void; let reject!: (error: unknown) => void;
   mock.command.mockImplementationOnce(() => new Promise((done, fail) => { resolve = done; reject = fail; }));
   const user = userEvent.setup(); render(<BoardView api={mock.api} renderConversation={id => <span>{id}</span>} />);
-  await screen.findByRole('button', { name: 'Open task Alpha task' }); await user.click(screen.getByRole('button', { name: 'Configuration' }));
+  await screen.findByRole('button', { name: 'Open task Alpha task' }); await user.click(screen.getByRole('button', { name: 'Configuration' })); await user.click(screen.getByRole('tab', { name: 'Projects' }));
   await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Created X'); await user.type(screen.getByRole('textbox', { name: 'Project path' }), '/projects/x'); await user.type(screen.getByRole('textbox', { name: 'Git root' }), '/projects');
   await user.click(screen.getByRole('button', { name: 'Save project' }));
   return { ...mock, user, resolve, reject };
@@ -30,7 +30,7 @@ describe('project directory browsing', () => {
     const mock = fakeApi(); const pick = vi.fn(async () => '/repo/apps/web');
     vi.mocked(mock.api.inferProject).mockResolvedValue({ projectPath: '/repo/apps/web', gitRootPath: '/repo' });
     const user = userEvent.setup(); render(<BoardView api={mock.api} pickDirectory={pick} renderConversation={() => null} />);
-    await screen.findByRole('button', { name: 'Open task Alpha task' }); await user.click(screen.getByRole('button', { name: 'Configuration' }));
+    await screen.findByRole('button', { name: 'Open task Alpha task' }); await user.click(screen.getByRole('button', { name: 'Configuration' })); await user.click(screen.getByRole('tab', { name: 'Projects' }));
     await user.click(screen.getByRole('button', { name: 'Browse for project path' }));
     await waitFor(() => expect((screen.getByRole('textbox', { name: 'Project path' }) as HTMLInputElement).value).toBe('/repo/apps/web'));
     expect((screen.getByRole('textbox', { name: 'Git root' }) as HTMLInputElement).value).toBe('/repo');
@@ -44,7 +44,7 @@ describe('project registration deletion', () => {
     const initial = fixture(); initial.state.tasks = [];
     const mock = fakeApi(initial); const user = userEvent.setup();
     render(<BoardView api={mock.api} renderConversation={() => null} />);
-    await screen.findByRole('button', { name: 'Configuration' }); await user.click(screen.getByRole('button', { name: 'Configuration' }));
+    await screen.findByRole('button', { name: 'Configuration' }); await user.click(screen.getByRole('button', { name: 'Configuration' })); await user.click(screen.getByRole('tab', { name: 'Projects' }));
     expect((screen.getByRole('button', { name: 'Delete project API' }) as HTMLButtonElement).disabled).toBe(false);
     await user.click(screen.getByRole('button', { name: 'Delete project API' }));
     expect(screen.getByRole('alertdialog', { name: 'Confirm deleting project API' })).toBeTruthy();
@@ -56,7 +56,7 @@ describe('project registration deletion', () => {
   it('disables deletion for a project that still has tasks', async () => {
     const mock = fakeApi(); const user = userEvent.setup();
     render(<BoardView api={mock.api} renderConversation={() => null} />);
-    await screen.findByRole('button', { name: 'Open task Alpha task' }); await user.click(screen.getByRole('button', { name: 'Configuration' }));
+    await screen.findByRole('button', { name: 'Open task Alpha task' }); await user.click(screen.getByRole('button', { name: 'Configuration' })); await user.click(screen.getByRole('tab', { name: 'Projects' }));
     expect((screen.getByRole('button', { name: 'Delete project API' }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
@@ -91,14 +91,14 @@ describe('project draft lifetime during save', () => {
 
   it('also locks project selection during an existing-project edit that has no creation receipt', async () => {
     const mock = fakeApi(); let resolve!: (value: BoardSnapshot) => void; mock.command.mockImplementationOnce(() => new Promise(done => { resolve = done; })); const user = userEvent.setup();
-    render(<BoardView api={mock.api} renderConversation={id => <span>{id}</span>} />); await screen.findByRole('button', { name: 'Open task Alpha task' }); await user.click(screen.getByRole('button', { name: 'Configuration' })); await user.click(screen.getByRole('button', { name: 'Edit project API' })); await user.clear(screen.getByRole('textbox', { name: 'Project name' })); await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Edited API'); await user.click(screen.getByRole('button', { name: 'Save project' }));
+    render(<BoardView api={mock.api} renderConversation={id => <span>{id}</span>} />); await screen.findByRole('button', { name: 'Open task Alpha task' }); await user.click(screen.getByRole('button', { name: 'Configuration' })); await user.click(screen.getByRole('tab', { name: 'Projects' })); await user.click(screen.getByRole('button', { name: 'Edit project API' })); await user.clear(screen.getByRole('textbox', { name: 'Project name' })); await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Edited API'); await user.click(screen.getByRole('button', { name: 'Save project' }));
     await user.click(screen.getByRole('button', { name: 'Edit project Web' })); await user.click(screen.getByRole('button', { name: 'New project' }));
     expect((screen.getByRole('textbox', { name: 'Project name' }) as HTMLInputElement).value).toBe('Edited API');
     const result = fixture(); result.sequence = 2; result.state.revision = 2; result.state.projects[0]!.name = 'Edited API'; await act(async () => { mock.publish(result); resolve(result); }); await screen.findByText('Project saved.'); await user.click(screen.getByRole('button', { name: 'Save project' })); await waitFor(() => expect(mock.command).toHaveBeenCalledTimes(2)); expect(mock.command.mock.calls[1]![0]).toEqual(expect.objectContaining({ type: 'project.save', project: expect.objectContaining({ id: 'p1', name: 'Edited API', projectPath: '/repo/apps/api' }) }));
   });
 
   it.each(['receipt', 'missing receipt', 'error'] as const)('does not apply a late %s completion to a remounted editor for Y', async outcome => {
-    const mock = await startProjectSave(); await mock.user.click(screen.getByRole('button', { name: 'Close Kanban configuration' })); await mock.user.click(screen.getByRole('button', { name: 'Configuration' })); await mock.user.click(screen.getByRole('button', { name: 'Edit project Web' }));
+    const mock = await startProjectSave(); await mock.user.click(screen.getByRole('button', { name: 'Close Kanban configuration' })); await mock.user.click(screen.getByRole('button', { name: 'Configuration' })); await mock.user.click(screen.getByRole('tab', { name: 'Projects' })); await mock.user.click(screen.getByRole('button', { name: 'Edit project Web' }));
     if (outcome === 'error') await act(async () => { mock.reject({ code: 'OLD_SAVE_FAILED', message: 'Failure belongs to the prior editor.' }); });
     else { const result = createdX(outcome === 'receipt'); await act(async () => { const feed = { ...result }; delete feed.commandReceipt; mock.publish(feed); mock.resolve(result); }); }
     expect((screen.getByRole('textbox', { name: 'Project name' }) as HTMLInputElement).value).toBe('Web'); expect(screen.queryByText('CREATION_RECEIPT_REQUIRED')).toBeNull(); expect(screen.queryByText('OLD_SAVE_FAILED')).toBeNull();

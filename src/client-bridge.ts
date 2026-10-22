@@ -60,6 +60,7 @@ export class ClientBridge {
       snapshot: () => this.unarySnapshot(() => remote.kanban.snapshot()),
       command: (command: Command) => this.unarySnapshot(() => remote.kanban.command(command)),
       branches: async (taskId: string) => unwrap(await remote.kanban.branches({ taskId })),
+      worktreeDefault: async (taskId: string) => unwrap(await remote.kanban.worktreeDefault({ taskId })),
       inferProject: async (path: string) => unwrap(await remote.kanban.inferProject({ path })),
       subscribe: (listener) => { this.snapshots.add(listener); return () => this.snapshots.delete(listener); },
     };

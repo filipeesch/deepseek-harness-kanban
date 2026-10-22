@@ -45,6 +45,7 @@ function fixture() {
       snapshot: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot() } }),
       command: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot(2) } }),
       branches: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['main'] } }),
+      worktreeDefault: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { branchName: 'task', path: '' } } }),
       inferProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { projectPath: '/repo/apps/web', gitRootPath: '/repo' } } }),
       questions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [round()] } }),
       follow: vi.fn((signal?: AbortSignal) => { const feed = new Feed<BoardSnapshot>(); feeds.push(feed); signal?.addEventListener('abort', () => feed.dispose(), { once: true }); return feed; }),
@@ -69,6 +70,13 @@ describe('real native stream bridge', () => {
     expect(await f.bridge.api.branches('t1')).toEqual(['main']);
     expect(f.remote.kanban.branches).toHaveBeenCalledWith({ taskId: 't1' });
   });
+  it('forwards the worktree default lookup and unwraps its result', async () => {
+    const f = fixture();
+    vi.mocked(f.remote.kanban.worktreeDefault).mockResolvedValueOnce({ ok: true, value: { ok: true, value: { branchName: 'fix-login', path: '/worktrees/fix-login' } } });
+    await expect(f.bridge.api.worktreeDefault('t1')).resolves.toEqual({ branchName: 'fix-login', path: '/worktrees/fix-login' });
+    expect(f.remote.kanban.worktreeDefault).toHaveBeenCalledWith({ taskId: 't1' });
+  });
+
   it('uses native RemoteSnapshotStream with a baseline per physical generation and full-state updates', async () => {
     const f = fixture(); const accept = vi.fn(); f.bridge.api.subscribe(accept); f.bridge.start();
     await vi.waitFor(() => expect(f.feeds).toHaveLength(1));

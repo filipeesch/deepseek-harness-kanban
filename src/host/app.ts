@@ -1,16 +1,19 @@
 import { randomUUID } from 'node:crypto';
-import { realpath, stat } from 'node:fs/promises';
+import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { BoardStore } from '../domain/store.js';
 import { canTransition } from '../domain/workflow.js';
 import { QuestionIndex } from '../questions/indexer.js';
-import type { BoardSnapshot, BoardState, Command, PendingTransition, Project, ProjectInput, QuestionRound, Task, Attention } from '../shared/types.js';
+import type { BoardSettings, BoardSnapshot, BoardState, Command, PendingTransition, Project, ProjectInput, QuestionRound, Task, Attention } from '../shared/types.js';
 import { EMPTY_ATTENTION } from '../shared/types.js';
 import type { GitPort, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionStore } from './question-storage.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
 import { WorktreeCoordinator } from './worktrees.js';
+import { isAbsolutePath } from '../domain/validation.js';
+import { taskTitleSlug, worktreePathForBranch } from '../shared/worktree-name.js';
 
+async function pathExists(value:string):Promise<boolean>{try{await lstat(value);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}}
 function isEvent(value:unknown):value is {type:string;seq:number;data:unknown}{return Boolean(value&&typeof value==='object'&&'type'in value&&typeof value.type==='string'&&'seq'in value&&typeof value.seq==='number'&&Number.isSafeInteger(value.seq)&&'data'in value);}
 export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore }
 /** Coordinates domain commands while the host continues to own sessions and execution. */
@@ -83,6 +86,17 @@ export class KanbanApp {
   return {state,attention,sequence,questionRounds};
  }
  async branches(taskId:string):Promise<string[]>{const task=this.store.requireTask(taskId);return this.git.branches(this.store.requireProject(task.projectId),task.sessionIds);}
+ async worktreeDefault(taskId:string):Promise<{branchName:string;path:string}>{
+  const state=this.store.snapshot();const task=this.store.requireTask(taskId,state);const project=this.store.requireProject(task.projectId,state);const basePath=state.settings?.worktreeBasePath;const slug=taskTitleSlug(task.title);
+  const branches=await this.git.branches(project,task.sessionIds);const occupied=new Set<string>();
+  for(const other of state.tasks){if(other.worktree?.path)occupied.add(other.worktree.path);for(const entry of other.unclaimedWorktrees??[])occupied.add(entry.path);const attempt=other.operation?.createAttempt;if(attempt?.path)occupied.add(attempt.path);const pending=other.pendingTransition?.worktreeRequest;if(pending?.path)occupied.add(pending.path);}
+  for(let index=1;index<=100;index++){
+   const branchName=index===1?slug:slug+'-'+index;if(branches.includes(branchName))continue;if(!basePath)return {branchName,path:''};
+   const path=worktreePathForBranch(basePath,branchName);if(!path)throw new KanbanError('INVALID_WORKTREE_PATH','The task title cannot be converted into a usable worktree path.');
+   if(occupied.has(path)||await pathExists(path))continue;return {branchName,path};
+  }
+  throw new KanbanError('WORKTREE_NAME_UNAVAILABLE','Could not derive an available worktree name from the task title.');
+ }
  async inferProject(path:string):Promise<{projectPath:string;gitRootPath:string}>{return this.git.discover(path);}
  async assertExecutionContext(sessionId:string):Promise<void>{
   const state=this.store.snapshot();const task=state.tasks.find(value=>value.sessionIds.includes(sessionId));if(!task)return;
@@ -96,6 +110,15 @@ export class KanbanApp {
   const latestState=this.store.snapshot();const latest=this.store.requireTask(task.id,latestState);const latestProject=this.store.requireProject(latest.projectId,latestState);
   const latestRoot=latest.effectiveCwd!==latestProject.projectPath&&latest.worktree?.status==='ready'?latest.worktree.path:undefined;
   invariant(latest.projectId===project.id&&latestProject.projectPath===project.projectPath&&latestProject.gitRootPath===project.gitRootPath&&latest.sessionIds.includes(sessionId)&&latest.effectiveCwd===expected&&latestRoot===root,'CONTEXT_CHANGED','The task context changed while execution was being validated. Review its directory before retrying.');
+ }
+ private async settings(input:BoardSettings,expectedRevision?:number):Promise<BoardSettings>{
+  invariant(input&&typeof input==='object'&&!Array.isArray(input),'INVALID_INPUT','Settings input must be a mapping.');
+  invariant(Object.keys(input).every(key=>key==='worktreeBasePath'),'INVALID_INPUT','Unsupported board setting.');
+  const raw=input.worktreeBasePath;if(raw===undefined||(typeof raw==='string'&&!raw.trim()))return this.store.saveSettings({},expectedRevision);
+  invariant(typeof raw==='string','INVALID_INPUT','Worktree base path must be text.');const base=raw.trim();invariant(isAbsolutePath(base),'INVALID_INPUT','Worktree base path must be an absolute path.');
+  let resolved:string;try{resolved=await realpath(base);}catch{throw new KanbanError('INVALID_WORKTREE_BASE_PATH','Worktree base path must be an existing directory.',{path:base});}
+  invariant((await stat(resolved)).isDirectory(),'INVALID_WORKTREE_BASE_PATH','Worktree base path must be an existing directory.');
+  return this.store.saveSettings({worktreeBasePath:resolved},expectedRevision);
  }
  private async project(input:ProjectInput):Promise<ProjectInput>{
   const projectPath=await realpath(input.projectPath);const gitRootPath=await realpath(input.gitRootPath);
@@ -166,6 +189,7 @@ export class KanbanApp {
    case 'project.save':{const value=await this.store.saveProject(await this.project(command.project),command.expectedRevision);commandReceipt={kind:'project',id:value.id};break;}
    case 'project.delete':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the project registration.');await this.store.deleteProject(command.projectId,command.expectedRevision);break;
    case 'workflow.save':await this.store.setWorkflow(command.yaml,command.expectedRevision);break;
+   case 'settings.save':await this.settings(command.settings,command.expectedRevision);break;
    case 'task.create':{const value=await this.createTaskNow(command);commandReceipt={kind:'task',id:value.id};break;}
    case 'task.edit':await this.store.editTask(command.taskId,{...(command.title!==undefined?{title:command.title}:{}),...(command.description!==undefined?{description:command.description}:{})},command.expectedRevision);break;
    case 'conversation.create':{const id=await this.createConversationNow(command.taskId);commandReceipt={kind:'conversation',id};break;}

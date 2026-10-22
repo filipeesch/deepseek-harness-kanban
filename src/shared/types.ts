@@ -31,7 +31,8 @@ export interface Task {
   createdAt: string; updatedAt: string;
 }
 export interface Note { id: string; taskId: string; content: string; createdAt: string; updatedAt: string; tags?: string[] }
-export interface BoardState { schemaVersion: 2; revision: number; workflowYaml: string; workflow: Workflow; projects: Project[]; tasks: Task[]; notes: Note[] }
+export interface BoardSettings { worktreeBasePath?: string }
+export interface BoardState { schemaVersion: 2; revision: number; workflowYaml: string; workflow: Workflow; projects: Project[]; tasks: Task[]; notes: Note[]; settings?: BoardSettings }
 export interface Attention { running: boolean; unread: boolean; awaitingReply: boolean; failed: boolean }
 /** Transient identity of the entity created by this exact command, never persisted. */
 export interface CommandReceipt { kind: 'project' | 'task' | 'conversation' | 'note'; id: string }
@@ -43,6 +44,7 @@ export type Command =
   | { type: 'project.save'; project: ProjectInput; expectedRevision?: number }
   | { type: 'project.delete'; projectId: string; confirmed: boolean; expectedRevision?: number }
   | { type: 'workflow.save'; yaml: string; expectedRevision?: number }
+  | { type: 'settings.save'; settings: BoardSettings; expectedRevision?: number }
   | ({ type: 'task.create' } & NewTask)
   | { type: 'task.edit'; taskId: string; title?: string; description?: string; expectedRevision?: number }
   | { type: 'task.move'; taskId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; newConversation?: boolean; worktree?: CreateWorktree; expectedInstruction?: string; beforeTaskId?: string | null }
@@ -59,6 +61,7 @@ export interface ClientApi {
   snapshot(): Promise<BoardSnapshot>;
   command(command: Command): Promise<BoardSnapshot>;
   branches(taskId: string): Promise<string[]>;
+  worktreeDefault(taskId: string): Promise<{ branchName: string; path: string }>;
   inferProject(path: string): Promise<{ projectPath: string; gitRootPath: string }>;
   subscribe(listener: (snapshot: BoardSnapshot) => void): () => void;
 }

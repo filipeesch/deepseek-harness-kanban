@@ -49,7 +49,7 @@ export function TaskDrawer({ task, state, api, run, renderConversation, onClose,
     <section className={'kb-drawer-panel ' + (section === 'Conversations' ? 'kb-chat-panel' : '')} role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>
       {section === 'Conversations' && <>{!task.worktree && !dismissed && <div className="kb-notice" role="note" aria-label="Worktree not created"><strong>No worktree has been created</strong><p>Agents are working in the base project directory. Isolation is optional.</p><div className="kb-actions"><button type="button" className="kb-button kb-primary" disabled={blocked} onClick={() => setSection('Git')}>Create worktree</button><button type="button" className="kb-button" onClick={() => setDismissed(true)}>Dismiss</button></div></div>}<OperationStatus task={task} run={run} /><Conversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} /></>}
       {section === 'Info' && <InfoPanel task={task} state={state} run={run} viewState={preferences} />}
-      {section === 'Git' && <GitPanel task={task} project={project} api={api} run={run} />}
+      {section === 'Git' && <GitPanel task={task} project={project} api={api} run={run} worktreeBasePath={state.settings?.worktreeBasePath} />}
       {section === 'Notes' && <NotesPanel task={task} state={state} run={run} viewState={preferences} />}
     </section>
   </aside>;

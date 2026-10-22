@@ -1,5 +1,6 @@
 import { vi } from 'vitest';
 import type { BoardSnapshot, ClientApi, Command, Task } from '../../src/shared/types.js';
+import { taskTitleSlug, worktreePathForBranch } from '../../src/shared/worktree-name.js';
 
 export function fixture(): BoardSnapshot {
   return { sequence: 1, attention: { t1: { running: true, unread: true, awaitingReply: true, failed: true } }, state: { schemaVersion: 2, revision: 1, workflowYaml: 'name: Delivery', workflow: { name: 'Delivery', initialColumnId: 'intake', columns: [{ id: 'intake', name: 'Intake', allowedTransitions: ['doing', 'review'] }, { id: 'doing', name: 'Doing' }, { id: 'review', name: 'Review', onEnterPrompt: 'Review **carefully**.' }], groups: [{ id: 'plan', name: 'Planning', columnIds: ['intake', 'review'] }] }, projects: [{ id: 'p1', name: 'API', projectPath: '/repo/apps/api', gitRootPath: '/repo', defaultBranch: 'main' }, { id: 'p2', name: 'Web', projectPath: '/web', gitRootPath: '/web', defaultBranch: 'main' }], tasks: [task('t1', 'Alpha task', 'p1', 'intake'), { ...task('t2', 'Beta task', 'p2', 'doing'), description: 'Searchable documentation', worktree: { path: '/trees/beta', branch: 'beta', owned: true, status: 'ready' }, effectiveCwd: '/trees/beta' }], notes: [] } };
@@ -29,10 +30,16 @@ export function fakeApi(initial = fixture()) {
       case 'workflow.save': value.state.workflowYaml = input.yaml; break;
       case 'project.save': { const project = value.state.projects.find(project => project.id === input.project.id); if (project) Object.assign(project, input.project); else { const id = 'p' + next++; value.state.projects.push({ ...input.project, id }); receipt = { kind: 'project', id }; } break; }
       case 'project.delete': value.state.projects = value.state.projects.filter(project => project.id !== input.projectId); receipt = { kind: 'project', id: input.projectId }; break;
+      case 'settings.save': value.state.settings = { ...input.settings }; break;
     }
     const snapshot = publish();
     return receipt ? { ...snapshot, commandReceipt: receipt } : snapshot;
   });
-  const api: ClientApi = { snapshot: vi.fn(async () => clone(value)), command, branches: vi.fn(async () => ['main', 'feature']), inferProject: vi.fn(async (path: string) => ({ projectPath: path, gitRootPath: path })), subscribe: vi.fn(listener => { listeners.add(listener); return () => listeners.delete(listener); }) };
+  const worktreeDefault = vi.fn(async (taskId: string) => {
+    const task = value.state.tasks.find(item => item.id === taskId);
+    const branchName = task ? taskTitleSlug(task.title) : 'task';
+    return { branchName, path: worktreePathForBranch(value.state.settings?.worktreeBasePath, branchName) };
+  });
+  const api: ClientApi = { snapshot: vi.fn(async () => clone(value)), command, branches: vi.fn(async () => ['main', 'feature']), worktreeDefault, inferProject: vi.fn(async (path: string) => ({ projectPath: path, gitRootPath: path })), subscribe: vi.fn(listener => { listeners.add(listener); return () => listeners.delete(listener); }) };
   return { api, command, publish, get: () => clone(value), listeners };
 }

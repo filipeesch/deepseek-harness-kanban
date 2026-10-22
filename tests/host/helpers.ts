@@ -24,8 +24,8 @@ export class TestSessions implements SessionPort {
  async directories(){return [...this.dirs].map(([sessionId,directory])=>({sessionId,directory}));}
 }
 export class TestGit implements GitPort {
- trees=new Map<string,GitTree>();created=0;removed:string[]=[];
- async branches(){return ['main','feature'];}
+ trees=new Map<string,GitTree>();created=0;removed:string[]=[];branchNames=['main','feature'];
+ async branches(){return [...this.branchNames];}
  async projectDirectory(project:Project,root?:string){return root?path.join(root,path.relative(project.gitRootPath,project.projectPath)):project.projectPath;}
  async inspect(_project:Project,root:string){const tree=this.trees.get(root);if(!tree)throw new KanbanError('NOT_WORKTREE','Not a test worktree.');return {...tree};}
  async create(project:Project,request:CreateWorktree){this.created++;await mkdir(await this.projectDirectory(project,request.path),{recursive:true});const tree={path:request.path,branch:request.branchName,dirty:false,commonDirectory:path.join(project.gitRootPath,'.git')};this.trees.set(request.path,tree);return tree;}

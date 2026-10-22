@@ -10,10 +10,13 @@ const revision=z.number().int().nonnegative().optional();
 const project=z.object({id:id.optional(),name:z.string().min(1),projectPath:z.string().min(1),gitRootPath:z.string().min(1),defaultBranch:z.string().optional()}).strict();
 const inferredProject=z.object({projectPath:z.string(),gitRootPath:z.string()}).strict();
 const tree={mode:z.enum(['new','existing']),path:z.string().min(1),branchName:z.string().min(1),sourceBranch:z.string().optional()};
+const boardSettings=z.object({worktreeBasePath:z.string().optional()}).strict();
+const worktreeDefault=z.object({branchName:z.string().min(1),path:z.string()}).strict();
 export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('project.save'),project,expectedRevision:revision}).strict(),
  z.object({type:z.literal('project.delete'),projectId:id,confirmed:z.boolean(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('workflow.save'),yaml:z.string(),expectedRevision:revision}).strict(),
+ z.object({type:z.literal('settings.save'),settings:boardSettings,expectedRevision:revision}).strict(),
  z.object({type:z.literal('task.create'),projectId:id,title:z.string().min(1),description:z.string()}).strict(),
  z.object({type:z.literal('task.edit'),taskId:id,title:z.string().optional(),description:z.string().optional(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('task.move'),taskId:id,columnId:id,mode:z.enum(['move','run']),sessionId:id.optional(),newConversation:z.boolean().optional(),worktree:z.object(tree).strict().optional(),expectedInstruction:z.string().optional(),beforeTaskId:id.nullable().optional()}).strict(),
@@ -38,6 +41,7 @@ export const TYPERT_REMOTE=createTypertRemoteInfo({package:PACKAGE_NAME,methods:
  'kanban/snapshot':{...base,parameters:[],result:codec('SnapshotOutcome',()=>outcome(SnapshotSchema))},
  'kanban/command':{...base,parameters:[parameter('request',CommandSchema,'Command')],result:codec('CommandOutcome',()=>outcome(SnapshotSchema))},
  'kanban/branches':{...base,parameters:[parameter('request',z.object({taskId:id}).strict(),'TaskLookup')],result:codec('BranchesOutcome',()=>outcome(z.array(z.string())))},
+ 'kanban/worktreeDefault':{...base,parameters:[parameter('request',z.object({taskId:id}).strict(),'TaskLookup')],result:codec('WorktreeDefaultOutcome',()=>outcome(worktreeDefault))},
  'kanban/inferProject':{...base,parameters:[parameter('request',z.object({path:z.string().min(1)}).strict(),'ProjectPathLookup')],result:codec('ProjectPathOutcome',()=>outcome(inferredProject))},
  'kanban/questions':{...base,parameters:[parameter('request',z.object({sessionId:id}).strict(),'SessionLookup')],result:codec('QuestionOutcome',()=>outcome(z.array(QuestionRoundSchema)))},
  'kanban/follow':{...base,mode:'stream',parameters:[],cancellation:{parameter:'signal'},result:codec('Snapshot',()=>SnapshotSchema)},
@@ -47,6 +51,7 @@ export interface KanbanRemote {
  snapshot():Promise<RemoteResult<Outcome<BoardSnapshot>>>;
  command(request:Command):Promise<RemoteResult<Outcome<BoardSnapshot>>>;
  branches(request:{taskId:string}):Promise<RemoteResult<Outcome<string[]>>>;
+ worktreeDefault(request:{taskId:string}):Promise<RemoteResult<Outcome<{branchName:string;path:string}>>>;
  inferProject(request:{path:string}):Promise<RemoteResult<Outcome<{projectPath:string;gitRootPath:string}>>>;
  questions(request:{sessionId:string}):Promise<RemoteResult<Outcome<QuestionRound[]>>>;
  follow(signal?:AbortSignal):RemoteStreamHandle<BoardSnapshot, never>;
@@ -55,7 +60,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
  interface TypertRemoteNamespaceMap {kanban:KanbanRemote}
  interface TypertRemoteMap {
   'kanban/snapshot':KanbanRemote['snapshot']; 'kanban/command':KanbanRemote['command'];
-  'kanban/branches':KanbanRemote['branches']; 'kanban/inferProject':KanbanRemote['inferProject']; 'kanban/questions':KanbanRemote['questions']; 'kanban/follow':KanbanRemote['follow'];
+  'kanban/branches':KanbanRemote['branches']; 'kanban/worktreeDefault':KanbanRemote['worktreeDefault']; 'kanban/inferProject':KanbanRemote['inferProject']; 'kanban/questions':KanbanRemote['questions']; 'kanban/follow':KanbanRemote['follow'];
  }
 }
 export default TYPERT_REMOTE;

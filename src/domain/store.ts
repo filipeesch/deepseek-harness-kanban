@@ -1,12 +1,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import type { StateStorage } from '../shared/ports.js';
-import type { BoardState, NewTask, Note, Project, ProjectInput, Task, Workflow } from '../shared/types.js';
+import type { BoardSettings, BoardState, NewTask, Note, Project, ProjectInput, Task, Workflow } from '../shared/types.js';
 import { DATA_VERSION } from '../shared/types.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 import { BoardStateSchema, initialState } from './schema.js';
 import { parseWorkflow } from './workflow.js';
-import { assertId, assertRevision } from './validation.js';
+import { assertId, assertRevision, isAbsolutePath } from './validation.js';
 
 export interface NoteInput { id?: string; content: string; tags?: string[] }
 export interface TaskTextPatch { title?: string; description?: string }
@@ -182,6 +182,21 @@ export class BoardStore {
       if (current) state.projects[state.projects.indexOf(current)] = project;
       else state.projects.push(project);
       return project;
+    }, expectedRevision);
+  }
+
+  async saveSettings(input: BoardSettings, expectedRevision?: number): Promise<BoardSettings> {
+    const value = clone(input);
+    invariant(value && typeof value === 'object' && !Array.isArray(value), 'INVALID_INPUT', 'Settings input must be a mapping.');
+    invariant(Object.keys(value).every(key => key === 'worktreeBasePath'), 'INVALID_INPUT', 'Unsupported board setting.');
+    const raw = value.worktreeBasePath;
+    invariant(raw === undefined || typeof raw === 'string', 'INVALID_INPUT', 'Worktree base path must be text.');
+    const base = raw?.trim();
+    invariant(!base || isAbsolutePath(base), 'INVALID_INPUT', 'Worktree base path must be an absolute path.');
+    return this.transact(state => {
+      const next: BoardSettings = base ? { worktreeBasePath: base } : {};
+      state.settings = next;
+      return next;
     }, expectedRevision);
   }
 

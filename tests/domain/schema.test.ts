@@ -82,6 +82,28 @@ describe('persisted board schema', () => {
     expect(BoardStateSchema.safeParse(state).success).toBe(false);
   });
 
+  it('accepts optional board settings and a stored board without them', () => {
+    expect(BoardStateSchema.safeParse(initialState()).success).toBe(true);
+    const withBase = initialState();
+    withBase.settings = { worktreeBasePath: '/worktrees' };
+    expect(BoardStateSchema.safeParse(withBase).success).toBe(true);
+    const legacy = initialState() as unknown as Record<string, unknown>;
+    delete legacy.settings;
+    expect(BoardStateSchema.safeParse(legacy).success).toBe(true);
+  });
+
+  it.each([
+    { worktreeBasePath: 'relative/path' },
+    { worktreeBasePath: '' },
+    { worktreeBasePath: 12 },
+    { worktreeBasePath: null },
+    { worktreeBasePath: '/worktrees', engine: 'legacy' },
+  ])('rejects invalid board settings %#', settings => {
+    const state = initialState();
+    state.settings = settings as never;
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+
   it('rejects operation bookkeeping for another native conversation', () => {
     const state = populatedState();
     state.tasks[0]!.operation = {

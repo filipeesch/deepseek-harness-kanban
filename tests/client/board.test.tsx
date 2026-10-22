@@ -76,18 +76,46 @@ describe('scoped Kanban page', () => {
   });
 
   it('configures projects and YAML inside Kanban and reports host errors', async () => {
-    const { user, command } = mount(); await loaded(); await user.click(screen.getByRole('button', { name: 'Configuration' }));
+    const { user, command } = mount(); await loaded(); await user.click(screen.getByRole('button', { name: 'Configuration' })); await user.click(screen.getByRole('tab', { name: 'Projects' }));
     await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Worker'); await user.type(screen.getByRole('textbox', { name: 'Project path' }), '/mono/apps/worker'); await user.type(screen.getByRole('textbox', { name: 'Git root' }), '/mono'); await user.click(screen.getByRole('button', { name: 'Save project' }));
     await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'project.save', project: { name: 'Worker', projectPath: '/mono/apps/worker', gitRootPath: '/mono' } })));
     await user.click(screen.getByRole('tab', { name: 'Workflow' })); const yaml = screen.getByRole('textbox', { name: 'Workflow YAML' }); await user.clear(yaml); await user.type(yaml, 'invalid'); command.mockRejectedValueOnce({ code: 'INVALID_WORKFLOW', message: 'Column is missing.' }); await user.click(screen.getByRole('button', { name: 'Save workflow' })); expect(await screen.findByRole('alert')).toBeTruthy(); expect(screen.getByText('Column is missing.')).toBeTruthy();
   });
 
   it('edits a newly saved project rather than creating it again', async () => {
-    const { user, command } = mount(); await loaded(); await user.click(screen.getByRole('button', { name: 'Configuration' })); await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Worker'); await user.type(screen.getByRole('textbox', { name: 'Project path' }), '/mono/apps/worker'); await user.type(screen.getByRole('textbox', { name: 'Git root' }), '/mono'); await user.click(screen.getByRole('button', { name: 'Save project' })); await screen.findByText('Project saved.'); await user.clear(screen.getByRole('textbox', { name: 'Project name' })); await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Updated Worker'); await user.click(screen.getByRole('button', { name: 'Save project' })); await waitFor(() => expect(command).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'project.save', project: { id: 'p3', name: 'Updated Worker', projectPath: '/mono/apps/worker', gitRootPath: '/mono' } })));
+    const { user, command } = mount(); await loaded(); await user.click(screen.getByRole('button', { name: 'Configuration' })); await user.click(screen.getByRole('tab', { name: 'Projects' })); await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Worker'); await user.type(screen.getByRole('textbox', { name: 'Project path' }), '/mono/apps/worker'); await user.type(screen.getByRole('textbox', { name: 'Git root' }), '/mono'); await user.click(screen.getByRole('button', { name: 'Save project' })); await screen.findByText('Project saved.'); await user.clear(screen.getByRole('textbox', { name: 'Project name' })); await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Updated Worker'); await user.click(screen.getByRole('button', { name: 'Save project' })); await waitFor(() => expect(command).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'project.save', project: { id: 'p3', name: 'Updated Worker', projectPath: '/mono/apps/worker', gitRootPath: '/mono' } })));
+  });
+
+  it('opens General first and saves or clears the worktree base path', async () => {
+    const { user, command } = mount(); await loaded();
+    await user.click(screen.getByRole('button', { name: 'Configuration' }));
+    expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe('true');
+    const input = screen.getByRole('textbox', { name: 'Worktree base path' });
+    await user.type(input, '/worktrees');
+    expect(screen.getByText('/worktrees/fix-login')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Save settings' }));
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'settings.save', settings: { worktreeBasePath: '/worktrees' }, expectedRevision: 1 }));
+    await screen.findByText('Settings saved.');
+    expect((screen.getByRole('textbox', { name: 'Worktree base path' }) as HTMLInputElement).value).toBe('/worktrees');
+    await user.clear(screen.getByRole('textbox', { name: 'Worktree base path' }));
+    await user.click(screen.getByRole('button', { name: 'Save settings' }));
+    await waitFor(() => expect(command).toHaveBeenLastCalledWith({ type: 'settings.save', settings: {}, expectedRevision: 2 }));
+    expect((screen.getByRole('textbox', { name: 'Worktree base path' }) as HTMLInputElement).value).toBe('');
+  });
+
+  it('browses for the worktree base path and reports a validation error', async () => {
+    const mock = fakeApi(); const pick = vi.fn(async () => '/picked/trees');
+    const user = userEvent.setup(); render(<BoardView api={mock.api} pickDirectory={pick} renderConversation={() => null} />);
+    await loaded(); await user.click(screen.getByRole('button', { name: 'Configuration' }));
+    await user.click(screen.getByRole('button', { name: 'Browse for worktree base path' }));
+    await waitFor(() => expect((screen.getByRole('textbox', { name: 'Worktree base path' }) as HTMLInputElement).value).toBe('/picked/trees'));
+    mock.command.mockRejectedValueOnce({ code: 'INVALID_WORKTREE_BASE_PATH', message: 'The base path must be an existing directory.' });
+    await user.click(screen.getByRole('button', { name: 'Save settings' }));
+    expect(await screen.findByText('The base path must be an existing directory.')).toBeTruthy();
   });
 
   it('shows project onboarding without an invented default project', async () => {
-    const initial = fixture(); initial.state.projects = []; initial.state.tasks = []; const { user, command } = mount(initial); await screen.findByText('Add your first project'); expect((screen.getByRole('button', { name: 'New task' }) as HTMLButtonElement).disabled).toBe(true); await user.click(screen.getByRole('button', { name: 'Configure projects' })); expect(screen.getByRole('dialog', { name: 'Kanban configuration' })).toBeTruthy(); expect(command).not.toHaveBeenCalled();
+    const initial = fixture(); initial.state.projects = []; initial.state.tasks = []; const { user, command } = mount(initial); await screen.findByText('Add your first project'); expect((screen.getByRole('button', { name: 'New task' }) as HTMLButtonElement).disabled).toBe(true); await user.click(screen.getByRole('button', { name: 'Configure projects' })); expect(screen.getByRole('dialog', { name: 'Kanban configuration' })).toBeTruthy(); expect(screen.getByRole('tab', { name: 'Projects' }).getAttribute('aria-selected')).toBe('true'); expect(command).not.toHaveBeenCalled();
   });
 });
 

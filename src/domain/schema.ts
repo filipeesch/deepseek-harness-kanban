@@ -1,17 +1,11 @@
 import { z } from 'zod';
 import { DATA_VERSION, type BoardState } from '../shared/types.js';
-import { isDomainId } from './validation.js';
+import { isAbsolutePath, isDomainId } from './validation.js';
 import { DEFAULT_WORKFLOW_YAML, parseWorkflow } from './workflow.js';
 
 const id = z.string().refine(isDomainId, 'Expected a safe identifier.');
 const nonempty = z.string().refine(value => value.trim().length > 0, 'Expected nonempty text.');
-const absolutePath = z.string().refine(value => {
-  if (!value || value.includes(String.fromCharCode(0))) return false;
-  if (value.startsWith('/')) return true;
-  const separator = String.fromCharCode(92);
-  if (value.startsWith(separator + separator)) return true;
-  return /^[A-Za-z]$/.test(value[0] ?? '') && value[1] === ':' && (value[2] === '/' || value[2] === separator);
-}, 'Expected an absolute project or worktree path.');
+const absolutePath = z.string().refine(isAbsolutePath, 'Expected an absolute project or worktree path.');
 const timestamp = z.string().datetime({ offset: true });
 const revision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const column = z.strictObject({
@@ -70,10 +64,12 @@ function canonicalWorkflow(value: BoardState['workflow']): string {
   });
 }
 
+const settings = z.strictObject({ worktreeBasePath: absolutePath.optional() });
+
 /** Validates persisted data without resetting unknown versions or dropping orphaned records. */
 export const BoardStateSchema: z.ZodType<BoardState> = z.strictObject({
   schemaVersion: z.literal(DATA_VERSION), revision, workflowYaml: nonempty, workflow,
-  projects: z.array(project), tasks: z.array(task), notes: z.array(note),
+  projects: z.array(project), tasks: z.array(task), notes: z.array(note), settings: settings.optional(),
 }).superRefine((state, context) => {
   const issue = (path: (string | number)[], message: string): void => {
     context.addIssue({ code: 'custom', path, message });
@@ -146,6 +142,6 @@ export function initialState(): BoardState {
     revision: 0,
     workflowYaml: DEFAULT_WORKFLOW_YAML,
     workflow: parseWorkflow(DEFAULT_WORKFLOW_YAML),
-    projects: [], tasks: [], notes: [],
+    projects: [], tasks: [], notes: [], settings: {},
   };
 }

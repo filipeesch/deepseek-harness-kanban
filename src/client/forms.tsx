@@ -2,6 +2,7 @@ import React, { useEffect, useId, useRef, useState } from 'react';
 import type { BoardState, ClientApi, Problem, Project, Task } from '../shared/types.js';
 import { creationReceiptId, ErrorNotice, Markdown, Modal, Tabs, useAction, type RunCommand } from './ui.js';
 import { createTaskPageState, usePageField, type TaskPageState } from './page-state.js';
+import { worktreePathForBranch } from '../shared/worktree-name.js';
 
 export function NewTaskDialog({ state, run, onClose, onCreated }: { state: BoardState; run: RunCommand; onClose: () => void; onCreated: (id: string) => void }) {
   const [title, setTitle] = useState(''); const [description, setDescription] = useState('');
@@ -50,9 +51,43 @@ function InfoEditor({ task, state, run, viewState }: TaskPanelProps) {
   </form>;
 }
 
-export function Configuration({ state, run, api, pickDirectory, onClose, initial = 'Projects' }: { state: BoardState; run: RunCommand; api?: ClientApi; pickDirectory?: () => Promise<string | null>; onClose: () => void; initial?: string }) {
+export function Configuration({ state, run, api, pickDirectory, onClose, initial = 'General' }: { state: BoardState; run: RunCommand; api?: ClientApi; pickDirectory?: () => Promise<string | null>; onClose: () => void; initial?: string }) {
   const [section, setSection] = useState(initial); const id = useId();
-  return <Modal title="Kanban configuration" onClose={onClose}><Tabs label="Configuration sections" values={['Projects', 'Workflow']} selected={section} onSelect={setSection} id={id} /><section className="kb-panel" role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>{section === 'Projects' ? <Projects state={state} run={run} api={api} pickDirectory={pickDirectory} /> : <WorkflowEditor state={state} run={run} />}</section></Modal>;
+  return <Modal title="Kanban configuration" onClose={onClose}><Tabs label="Configuration sections" values={['General', 'Projects', 'Workflow']} selected={section} onSelect={setSection} id={id} /><section className="kb-panel" role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>{section === 'General' ? <General state={state} run={run} pickDirectory={pickDirectory} /> : section === 'Projects' ? <Projects state={state} run={run} api={api} pickDirectory={pickDirectory} /> : <WorkflowEditor state={state} run={run} />}</section></Modal>;
+}
+
+function General({ state, run, pickDirectory }: { state: BoardState; run: RunCommand; pickDirectory?: () => Promise<string | null> }) {
+  const stored = state.settings?.worktreeBasePath ?? '';
+  const [basePath, setBasePath] = useState(stored); const [revision, setRevision] = useState(state.revision); const [saved, setSaved] = useState(false); const [browseError, setBrowseError] = useState<Problem | null>(null); const action = useAction(run);
+  const draftGeneration = useRef(0);
+  useEffect(() => () => { draftGeneration.current++; }, []);
+  const change = (value: string) => { if (action.pending) return; draftGeneration.current++; setBasePath(value); setSaved(false); };
+  async function browse() {
+    if (!pickDirectory) return;
+    setBrowseError(null);
+    let picked: string | null;
+    try { picked = await pickDirectory(); }
+    catch (error) { setBrowseError({ code: 'DIRECTORY_PICKER_FAILED', message: error instanceof Error ? error.message : 'The directory picker could not open.' }); return; }
+    if (picked) change(picked);
+  }
+  function reload() { if (action.pending) return; draftGeneration.current++; setBasePath(stored); setRevision(state.revision); setSaved(false); action.clearError(); }
+  const example = worktreePathForBranch(basePath.trim(), 'fix-login');
+  return <form className="kb-form" aria-label="General settings" onSubmit={async event => {
+    event.preventDefault(); if (action.pending) return;
+    const generation = draftGeneration.current; const path = basePath.trim();
+    const result = await action.execute({ type: 'settings.save', settings: path ? { worktreeBasePath: path } : {}, expectedRevision: revision });
+    if (!result || generation !== draftGeneration.current) return;
+    setBasePath(result.state.settings?.worktreeBasePath ?? ''); setRevision(result.state.revision); setSaved(true);
+  }}>
+    <h3>Worktree base path</h3>
+    <label className="kb-field">Worktree base path<div className="kb-input-row"><input className="kb-input" aria-label="Worktree base path" disabled={action.pending} value={basePath} placeholder="Absolute path for task worktrees" onChange={event => change(event.target.value)} /><button type="button" className="kb-button" aria-label="Browse for worktree base path" disabled={action.pending || !pickDirectory} onClick={() => void browse()}>Browse…</button></div></label>
+    <p className="kb-hint">New task worktrees default to this directory plus the branch name. Leave empty to enter each task's destination manually.</p>
+    <p className="kb-hint">Example default: <code>{example || '<base path>/fix-login'}</code></p>
+    <p className="kb-hint">Existing worktrees keep their current paths when this setting changes. A base path inside a repository is allowed; its worktrees appear as untracked content.</p>
+    <ErrorNotice problem={action.error} /><ErrorNotice problem={browseError} />
+    <div className="kb-actions"><button type="button" className="kb-button" disabled={action.pending} onClick={reload}>Reload saved settings</button><button className="kb-button kb-primary" disabled={action.pending}>{action.pending ? 'Saving…' : 'Save settings'}</button></div>
+    {saved && <p role="status">Settings saved.</p>}
+  </form>;
 }
 
 function Projects({ state, run, api, pickDirectory }: { state: BoardState; run: RunCommand; api?: ClientApi; pickDirectory?: () => Promise<string | null> }) {

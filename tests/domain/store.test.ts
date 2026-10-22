@@ -404,3 +404,43 @@ describe('shared notes and reversible archive', () => {
     expect(reopened.snapshot().notes).toEqual([note]);
   });
 });
+
+describe('board settings', () => {
+  it('saves, replaces, clears, and persists the worktree base path', async () => {
+    const { store, storage } = await fixture();
+    await store.saveSettings({ worktreeBasePath: '/worktrees' });
+    expect(store.snapshot().settings).toEqual({ worktreeBasePath: '/worktrees' });
+    expect((storage.data as BoardState).settings).toEqual({ worktreeBasePath: '/worktrees' });
+    await store.saveSettings({ worktreeBasePath: '/other/trees' });
+    expect(store.snapshot().settings).toEqual({ worktreeBasePath: '/other/trees' });
+    await store.saveSettings({});
+    expect(store.snapshot().settings).toEqual({});
+    const reopened = await BoardStore.open(storage);
+    expect(reopened.snapshot().settings).toEqual({});
+  });
+
+  it('rejects relative, duplicate, and unknown settings values', async () => {
+    const { store } = await fixture();
+    await expect(store.saveSettings({ worktreeBasePath: 'relative/trees' })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    await expect(store.saveSettings({ worktreeBasePath: '' })).resolves.toEqual({});
+    await expect(store.saveSettings({ worktreeBasePath: '/trees', engine: 'legacy' } as never)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    await expect(store.saveSettings({ worktreeBasePath: 12 } as never)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+  });
+
+  it('honors expectedRevision for settings saves', async () => {
+    const { store } = await fixture();
+    const revision = store.snapshot().revision;
+    await store.saveSettings({ worktreeBasePath: '/worktrees' }, revision);
+    await expect(store.saveSettings({ worktreeBasePath: '/other' }, revision)).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+    expect(store.snapshot().settings).toEqual({ worktreeBasePath: '/worktrees' });
+  });
+
+  it('loads a stored board that predates the settings field', async () => {
+    const storage = new MemoryStorage();
+    const legacy = initialState() as unknown as Record<string, unknown>;
+    delete legacy.settings;
+    storage.data = legacy;
+    const store = await BoardStore.open(storage);
+    expect(store.snapshot().settings).toBeUndefined();
+  });
+});

@@ -48,7 +48,7 @@ The latest installation attempt initially failed fetching from the default regis
 
 ## First use
 
-1. Open **Configuration → Projects** (or **Configure projects** on an empty board). Save a name, absolute **Project path**, separate **Git root**, and optional default branch. Saving validates existing canonical directories and containment. Repository identity is validated when a scoped Git action is requested; registration does not start a native agent or grant Git access.
+1. Optionally open **Configuration → General** and choose an existing absolute **Worktree base path** for new task worktrees. Then open **Configuration → Projects** (or **Configure projects** on an empty board) and save a name, absolute **Project path**, separate **Git root**, and optional default branch. Saving validates existing canonical directories and containment. Repository identity is validated when a scoped Git action is requested; registration does not start a native agent or grant Git access.
 2. Select **New task** at the top of the configured initial column and supply its title, Markdown description, and registered project. Saving creates a card in that initial stage and one fresh native conversation; it does **not** start an agent.
 3. Open the card. Its drawer contains **Conversations / Info / Git / Notes**. Use **+** for another distinct, continuous native conversation. Closing/reopening a tab or drawer preserves its association and history.
 4. Send messages through the native composer when you want execution. **Info** shows the title and Markdown description read-only until you select **Edit**; saving never messages agents. **Notes** stores Markdown shared by every conversation of that task, not a per-chat collection. The drawer header shows the task and project, the compact toolbar shows only permitted stage transitions, and conversation tabs use the native session title.
@@ -58,7 +58,7 @@ Embedded chat uses native transcript, composer, tools, execution, permissions, a
 
 ## Workflow and deliberate execution
 
-**Configuration → Workflow** edits YAML. The default is exactly five stages with **no entry instructions**:
+**Configuration → Workflow** edits YAML. Configuration opens on **General**; the empty-board **Configure projects** action opens **Projects**. The default is exactly five stages with **no entry instructions**:
 
 ```yaml
 name: Delivery Flow
@@ -115,6 +115,8 @@ A confirmed run can remain queued while context setup completes. Native prompt a
 ## Worktrees and native boundaries
 
 A task can work directly in its base project. The notice above chat offers **Create worktree** or **Dismiss**; dismissing changes no Git resources. **Git** presents the worktree as no-worktree, creating, ready, or error and shows only the applicable branch, path, state, and actions. Branch selectors are searchable over local branches; remote refs are accepted only as an explicitly entered source for a **new** branch. Existing-branch mode never silently creates a detached remote checkout. Attaching an existing checkout remains a secondary action in the no-worktree state; attachment reuses the checkout and branch rather than creating them. Unclaimed checkouts appear as a compact warning.
+
+**Configuration → General** sets an optional worktree base path. The Git form derives a new branch name from the task title (lowercase ASCII, hyphenated, at most 48 characters, with `task` as the fallback) and prefills the destination with the base path joined to that branch. Collisions append `-2`, `-3`, and so on to both values, checking local branches and occupied destinations. Both fields stay editable: the destination follows the branch until you edit it, and **Use default path** restores the join. Existing-branch mode keeps the chosen branch and does not apply a counter. Changing or clearing the base path never moves or renames existing worktrees, and existing UUID-based branch names are left unchanged.
 
 For a monorepo, the effective agent directory is:
 
