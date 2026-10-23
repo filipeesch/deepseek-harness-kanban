@@ -14,15 +14,14 @@ import { randomUUID } from 'node:crypto';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import type { GitExecutor, SessionPort, CommandResult, WorkspacePort } from '../shared/ports.js';
-import type { Attention } from '../shared/types.js';
 import { KanbanError, invariant } from '../shared/errors.js';
+import { createNativeSessionFacts, inspectedOpenTurn, nativePending } from './native-facts.js';
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const EXECUTION_TIMEOUT_MS = 60_000;
 const READ_TIMEOUT_MS = 30_000;
 const KILL_GRACE_MS = 500;
 type Inspection = Awaited<ReturnType<Context['sessionController']['inspect']>>;
-type Projection = Awaited<ReturnType<Context['sessionController']['projections']>>;
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -62,36 +61,6 @@ function inspectedDirectory(inspection: Inspection): string | undefined {
     if (event.type === 'working-directory/change') current = event.data.cwd;
   }
   return current;
-}
-function nativePending(projection: Projection, inspection: Inspection): boolean {
-  // Native timed questions publish this browser-safe projection, including continued questions.
-  const questions: unknown = projection?.values['userQuestions'];
-  if (record(questions) && Array.isArray(questions.active) && questions.active.length > 0) return true;
-  const approvals = new Set<string>();
-  for (const event of inspection.events) {
-    const type: string = event.type;
-    const data: unknown = event.data;
-    if (type === 'turn/end') approvals.clear();
-    if (!record(data) || typeof data.id !== 'string') continue;
-    if (type === 'approval/asked') approvals.add(data.id);
-    if (type === 'approval/decided') approvals.delete(data.id);
-  }
-  return approvals.size > 0;
-}
-function inspectedOpenTurn(inspection: Inspection): boolean {
-  let open = false;
-  for (const event of inspection.events) {
-    if (event.type === 'turn/start') open = true;
-    if (event.type === 'turn/end') open = false;
-  }
-  return open;
-}
-function lastOutcomeFailed(inspection: Inspection): boolean {
-  let failed = false;
-  for (const event of inspection.events) {
-    if (event.type === 'turn/end') failed = event.data.reason.kind === 'error';
-  }
-  return failed;
 }
 function validatePolicy(policy: SandboxExecutionPolicy): SandboxExecutionPolicy {
   invariant(['read-only', 'workspace-write', 'danger-full-access'].includes(policy.mode),
@@ -154,6 +123,7 @@ export function createNativePorts(ctx: Context): { sessions: SessionPort; execut
     }
   };
   const admissions = new Map<string, { text: string; done: Promise<void> }>();
+  const sessionFacts = createNativeSessionFacts({ activity, projections, inspect });
   const sessions: SessionPort = {
     async create(projectPath, workspaceId) {
       const cwd = await directoryPath(projectPath);
@@ -249,16 +219,46 @@ export function createNativePorts(ctx: Context): { sessions: SessionPort; execut
       // Native archive checks its waterfall again; no stopActivity and no log deletion.
       await ctx.workspaceRegistry.archiveSession(SessionId(id));
     },
-    async attention(id): Promise<Attention> {
-      const [owned, projection, snapshot] = await Promise.all([activity(id), projections(id), inspect(id)]);
-      const live = ctx.agents.get(SessionId(id));
-      return {
-        running: live?.status === 'running' || owned.length > 0,
-        // Unread is client-owned UiSession.sessionStatus.completionUnread; the client merges it.
-        unread: false,
-        awaitingReply: nativePending(projection, snapshot),
-        failed: lastOutcomeFailed(snapshot),
+    async facts(id) {
+      return sessionFacts.read(id);
+    },
+    async directories(within?: string) {
+      const target = within ? await directoryPath(within) : undefined;
+      const listed = await ctx.sessionController.list({}, AbortSignal.timeout(READ_TIMEOUT_MS));
+      const items = new Map(listed.items.map((item) => [String(item.sessionId), item]));
+      const ids = new Set([...listed.items.map((item) => item.sessionId), ...ctx.sessions.list().map((session) => session.id)]);
+      const workspaceSessions = new Set<string>();
+      if (target) {
+        const workspaces = typeof ctx.workspaceRegistry.list === 'function' ? ctx.workspaceRegistry.list() : [];
+        for (const workspace of workspaces) {
+          const path = await directoryPath(workspace.path).catch(() => undefined);
+          if (path === target) for (const sessionId of workspace.sessionIds) workspaceSessions.add(String(sessionId));
+        }
+      }
+      const related = async (value: string): Promise<boolean> => {
+        try {
+          const path = await directoryPath(value);
+          return inside(target!, path);
+        } catch { return true; }
       };
+      const result: Array<{ sessionId: string; directory: string }> = [];
+      for (const id of ids) {
+        if (target) {
+          const candidates: string[] = [];
+          const live = ctx.sessions.get(SessionId(id));
+          if (live) { try { candidates.push(ctx.workingDirectory.get(live)); } catch { /* fall back to listed cwd */ } }
+          const item = items.get(String(id));
+          const projected = (item as { projections?: { values?: { workingDirectory?: unknown } } } | undefined)?.projections?.values?.workingDirectory;
+          if (typeof projected === 'string') candidates.push(projected);
+          if (item?.cwd) candidates.push(item.cwd);
+          if (workspaceSessions.has(String(id))) candidates.push(target);
+          let candidateRelated = false;
+          for (const candidate of candidates) if (await related(candidate)) { candidateRelated = true; break; }
+          if (!candidateRelated) continue;
+        }
+        result.push({ sessionId: id, directory: await sessions.directory(id) });
+      }
+      return result;
     },
     async topology(within?: string) {
       const target = within ? await directoryPath(within) : undefined;

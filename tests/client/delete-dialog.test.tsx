@@ -41,7 +41,7 @@ describe('DeleteTaskDialog', () => {
   });
 
   it('identifies an attached checkout and a running conversation', () => {
-    mount({ request: { ...request, owned: false }, attention: { running: true, unread: false, awaitingReply: false, failed: false } });
+    mount({ request: { ...request, owned: false }, attention: { running: true, background: [], unread: false, awaitingReply: false, failed: false } });
     const dialog = screen.getByRole('dialog', { name: 'Delete task' });
     expect(within(dialog).getByText(/attached externally/)).toBeTruthy();
     expect(within(dialog).getByText(/A conversation is running/)).toBeTruthy();

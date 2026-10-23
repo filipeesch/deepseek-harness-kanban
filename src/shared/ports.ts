@@ -1,4 +1,4 @@
-import type { Attention, BoardState, CreateWorktree, Project } from './types.js';
+import type { BoardState, CreateWorktree, Project, SessionFacts } from './types.js';
 export interface StateStorage { load(): Promise<unknown | null>; save(state: BoardState): Promise<void> }
 export interface WorkspaceInfo { id: string; path: string; title: string; sessionIds: string[] }
 export interface WorkspacePort {
@@ -24,7 +24,10 @@ export interface SessionPort extends SessionTopologyPort {
   isIdle(sessionId: string): Promise<boolean>;
   send(sessionId: string, text: string, requestId?: string): Promise<void>;
   archive(sessionId: string): Promise<void>;
-  attention(sessionId: string): Promise<Attention>;
+  /** Native execution facts: turn, background work, pending interaction, and the last outcome. */
+  facts(sessionId: string): Promise<SessionFacts>;
+  /** Includes cold sessions' projected effective directories where available. */
+  directories(within?: string): Promise<Array<{ sessionId: string; directory: string }>>;
 }
 export interface GitTree { path: string; branch: string; dirty: boolean; commonDirectory: string }
 export interface GitPort {

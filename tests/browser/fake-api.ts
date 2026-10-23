@@ -7,7 +7,9 @@ export interface HarnessApi {
   commands(): readonly Command[];
 }
 
-export function createHarnessApi(): HarnessApi {
+export interface HarnessOptions { attention?: boolean }
+
+export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
   const tasks: Task[] = [
     ...Array.from({ length: 12 }, (_, index) => task('long-' + index, 'Long column task ' + index, 'explore', index)),
     task('short', 'Short task', 'propose', 40),
@@ -16,8 +18,13 @@ export function createHarnessApi(): HarnessApi {
     failedDelete(),
     failedDeleteReturn(),
   ];
+  const attention: BoardSnapshot['attention'] = options.attention ? {
+    'long-0': { running: true, background: [], unread: false, awaitingReply: false, failed: false },
+    'long-1': { running: false, background: [{ kind: 'job', label: 'Run tests' }], unread: false, awaitingReply: false, failed: false },
+    'long-2': { running: true, background: [{ kind: 'subagent', label: 'Research' }], unread: false, awaitingReply: false, failed: false },
+  } : {};
   let value: BoardSnapshot = {
-    sequence: 1, attention: {},
+    sequence: 1, attention,
     state: {
       schemaVersion: 2, revision: 1, workflowYaml: workflowYaml(),
       workflow: { name: 'Harness flow', initialColumnId: 'explore', columns: [

@@ -3,6 +3,7 @@ import type { BoardSnapshot, ClientApi, Column, ColumnGroup, Command, Problem, T
 import { EMPTY_ATTENTION } from '../shared/types.js';
 import { Configuration, NewTaskDialog } from './forms.js';
 import { TaskDrawer, type SessionTitles } from './drawer.js';
+import { TaskActivity } from './activity.js';
 import { permittedDestinations } from '../domain/transitions.js';
 import { RunInstructionButton } from './run-instruction.js';
 import type { InstructionDraftPort } from './instruction-draft.js';
@@ -260,14 +261,24 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
     const attention = snapshot?.attention[task.id] ?? EMPTY_ATTENTION;
     const isSelected = selectedIds.has(task.id);
     const project = state?.projects.find(project => project.id === task.projectId)?.name ?? task.projectId;
-    return <article key={task.id} className={'kb-card' + (isSelected ? ' kb-card-selected' : '') + (selectionMode ? ' kb-card-selecting' : '')} data-task-id={task.id}
-      onPointerDown={event => { if (selectionMode) return; if ((event.target as Element).closest('.kb-card-run, input, select, textarea, a')) return; begin(event, task.id, task.columnId); }}>
+    return <article key={task.id} className={'kb-card' + (isSelected ? ' kb-card-selected' : '') + (selectionMode ? ' kb-card-selecting' : '')} data-task-id={task.id} data-working={attention.running ? 'true' : undefined}
+      onPointerDown={event => { if (selectionMode) return; if ((event.target as Element).closest('.kb-card-run, .kb-card-signals, input, select, textarea, a')) return; begin(event, task.id, task.columnId); }}>
       {selectionMode && <input type="checkbox" className="kb-card-check" aria-label={'Select ' + task.title} checked={isSelected} onClick={event => event.stopPropagation()} onChange={() => toggleSelect(task.id)} />}
-      <button type="button" className="kb-card-open" aria-label={(selectionMode ? 'Select task ' : 'Open task ') + task.title} aria-pressed={selectionMode ? isSelected : undefined}
+      <button type="button" className="kb-card-open" data-working={attention.running ? 'true' : undefined} aria-label={(selectionMode ? 'Select task ' : 'Open task ') + task.title} aria-pressed={selectionMode ? isSelected : undefined}
         onClick={() => { if (shouldSuppressClick()) return; if (selectionMode) { toggleSelect(task.id); return; } openTask(task.id); }}>
-        <span className="kb-card-text"><strong>{task.title}</strong><span className="kb-hint">{project}</span></span>
+        <span className="kb-card-text"><strong>{task.title}</strong>
+          <span className="kb-card-meta">
+            <span className="kb-hint kb-card-project" title={project}>{project}</span>
+            <span className="kb-card-signals" role="group" aria-label={'Activity for ' + task.title}>
+              {attention.unread && <span className="kb-dot kb-blue" role="img" aria-label="Unread messages" title="Unread messages" />}
+              {attention.awaitingReply && <span className="kb-dot kb-orange" role="img" aria-label="Awaiting reply" title="Awaiting reply" />}
+              {attention.failed && <span className="kb-dot kb-red" role="img" aria-label="Agent failure" title="Agent failure" />}
+              <TaskActivity attention={attention} variant="card" label={task.title} />
+            </span>
+          </span>
+        </span>
       </button>
-      <div className="kb-attention" role="group" aria-label={'Activity for ' + task.title}>{attention.running && <span className="kb-running">Running</span>}{attention.unread && <span className="kb-dot kb-blue" role="img" aria-label="Unread messages" title="Unread messages" />}{attention.awaitingReply && <span className="kb-dot kb-orange" role="img" aria-label="Awaiting reply" title="Awaiting reply" />}{attention.failed && <span className="kb-dot kb-red" role="img" aria-label="Agent failure" title="Agent failure" />}{!selectionMode && <RunInstructionButton key={column.id} task={task} column={column} run={run} />}</div>
+      <div className="kb-attention">{!selectionMode && <RunInstructionButton key={column.id} task={task} column={column} run={run} />}</div>
       {task.operation && <p className="kb-hint">Operation: {task.operation.phase}</p>}{task.pendingTransition && <p className="kb-hint">Confirmed action: {task.pendingTransition.status}</p>}
     </article>;
   }
@@ -297,7 +308,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
     {state && <><div className="kb-page-body" ref={boardBody} onPointerDown={onBoardPointerDown}>{state.projects.length === 0 && <div className="kb-empty"><h2>Add your first project</h2><p>Register a project path and Git root to create tasks.</p><button type="button" className="kb-button kb-primary" onClick={() => setConfiguration('Projects')}>Configure projects</button></div>}
       <div className="kb-columns" aria-label="Workflow columns">{columnLayout(state.workflow).map(slot => <section key={slot.key} className={'kb-column-slot ' + (slot.group ? 'kb-column-group' : '')} aria-label={slot.group?.name}>{slot.group && <h2 className="kb-group-heading">{slot.group.name}</h2>}{slot.columns.map(column => { const tasks = tasksForColumn(column.id); const allowed = !drag || permittedDestinations(state.workflow, drag.sourceColumnId).some(value => value.id === column.id);
         return <section className={'kb-column ' + (drag && !allowed ? 'kb-drop-disabled' : '')} key={column.id} aria-label={column.name + ' column'} data-column-id={column.id}><header className="kb-column-header"><h2>{column.name}</h2><span aria-label={tasks.length + ' tasks'}>{tasks.length}</span></header>{column.id === state.workflow.initialColumnId && renderNewTaskButton(column)}<div className="kb-card-list">{tasks.map(task => renderCard(task, column))}{drag?.overColumnId === column.id && <div className="kb-drop-indicator" style={{ top: drag.indicatorY }} aria-hidden="true" />}{tasks.length === 0 && <p className="kb-empty-column">No matching tasks</p>}</div></section>; })}</section>)}</div></div>
-      {selected && <TaskDrawer key={selected.id} task={selected} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} sessionTitles={sessionTitles} entering={drawerEntering} closing={drawerClosing} draftPort={draftPort} />}
+      {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} sessionTitles={sessionTitles} entering={drawerEntering} closing={drawerClosing} draftPort={draftPort} />}
     {newTask && <NewTaskDialog state={state} run={run} onClose={() => setNewTask(false)} onCreated={openTask} />}{configuration && <Configuration key={configuration} state={state} run={run} api={api} pickDirectory={pickDirectory} initial={configuration} onClose={() => setConfiguration(null)} />}
     {destruction && (() => {
       const task = state.tasks.find(value => value.id === destruction.taskId);

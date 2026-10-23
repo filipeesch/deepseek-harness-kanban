@@ -1,5 +1,5 @@
 import React, { Component, useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import type { BoardState, ClientApi, Column, Problem, Task } from '../shared/types.js';
+import { EMPTY_ATTENTION, type Attention, type BoardState, type ClientApi, type Column, type Problem, type Task } from '../shared/types.js';
 import { InfoPanel, NotesPanel } from './forms.js';
 import { GitPanel, PendingTransitionStatus } from './git.js';
 import { OperationStatus } from './operation-status.js';
@@ -8,6 +8,7 @@ import { useWorktreeDraft } from './worktree-draft.js';
 import { creationReceiptId, ErrorNotice, Tabs, useAction, type RunCommand } from './ui.js';
 import { CloseIcon, TrashIcon } from './icons.js';
 import { createTaskPageState, resolveActiveConversation, usePageField, type DrawerSection, type TaskPageState } from './page-state.js';
+import { TaskActivity } from './activity.js';
 import { permittedDestinations } from '../domain/transitions.js';
 import type { DraftResult, InstructionDraftPort } from './instruction-draft.js';
 
@@ -17,14 +18,14 @@ export function conversationLabel(task: Task, sessionId: string, titles?: Sessio
 }
 
 interface PrefillStatus { status: 'pending' | DraftResult; sessionId: string | null; column: Column; message?: string }
-interface DrawerProps { task: Task; state: BoardState; api: ClientApi; run: RunCommand; renderConversation: (id: string) => ReactNode; onClose: () => void; onMove: (task: Task, column: Column, beforeTaskId?: string | null) => Promise<boolean>; onDanger: (task: Task, type: 'task.delete' | 'worktree.remove') => void; viewState?: TaskPageState; sessionTitles?: SessionTitles; draftPort?: InstructionDraftPort; entering?: boolean; closing?: boolean }
+interface DrawerProps { task: Task; attention?: Attention; state: BoardState; api: ClientApi; run: RunCommand; renderConversation: (id: string) => ReactNode; onClose: () => void; onMove: (task: Task, column: Column, beforeTaskId?: string | null) => Promise<boolean>; onDanger: (task: Task, type: 'task.delete' | 'worktree.remove') => void; viewState?: TaskPageState; sessionTitles?: SessionTitles; draftPort?: InstructionDraftPort; entering?: boolean; closing?: boolean }
 
 const DRAWER_WIDTH_KEY = 'dsh-kanban.drawer.width';
 const DRAWER_DEFAULT_WIDTH = 620;
 function clampWidth(value: number): number { const max = Math.max(360, (typeof window === 'undefined' ? 1200 : window.innerWidth) * 0.9); return Math.min(Math.max(value, 360), max); }
 function storedWidth(): number { try { const value = Number(window.localStorage.getItem(DRAWER_WIDTH_KEY)); if (Number.isFinite(value) && value > 0) return clampWidth(value === 560 ? DRAWER_DEFAULT_WIDTH : value); } catch { /* storage is optional */ } return clampWidth(DRAWER_DEFAULT_WIDTH); }
 
-export function TaskDrawer({ task, state, api, run, renderConversation, onClose, onMove, onDanger, viewState, sessionTitles, draftPort, entering = false, closing = false }: DrawerProps) {
+export function TaskDrawer({ task, attention = EMPTY_ATTENTION, state, api, run, renderConversation, onClose, onMove, onDanger, viewState, sessionTitles, draftPort, entering = false, closing = false }: DrawerProps) {
   const [localViewState] = useState(createTaskPageState); const preferences = viewState ?? localViewState;
   const [section, setSection] = usePageField(preferences, 'section'); const [dismissed, setDismissed] = useState(false); const id = useId(); const close = useRef<HTMLButtonElement>(null);
   const [width, setWidth] = useState(storedWidth); const widthRef = useRef(width); widthRef.current = width;
@@ -116,7 +117,7 @@ export function TaskDrawer({ task, state, api, run, renderConversation, onClose,
 
   return <aside ref={aside} className="kb-drawer" aria-label="Task details" aria-labelledby={id + '-title'} style={{ width }} data-entering={entering ? 'true' : undefined} data-closing={closing ? 'true' : undefined}>
     <div className="kb-drawer-resize" role="separator" aria-orientation="vertical" aria-label="Resize task drawer" aria-valuenow={Math.round(width)} aria-valuemin={360} aria-valuemax={Math.round(Math.max(360, (typeof window === 'undefined' ? 1200 : window.innerWidth) * 0.9))} tabIndex={0} onPointerDown={startResize} onDoubleClick={() => persistWidth(clampWidth(DRAWER_DEFAULT_WIDTH))} onKeyDown={resizeKey} />
-    <header className="kb-drawer-header"><div><h2 id={id + '-title'}>{task.title}</h2><p className="kb-hint">{project?.name ?? task.projectId}</p></div><div className="kb-drawer-header-actions">
+    <header className="kb-drawer-header"><div><h2 id={id + '-title'}>{task.title}</h2><p className="kb-hint">{project?.name ?? task.projectId}</p><TaskActivity attention={attention} variant="drawer" /></div><div className="kb-drawer-header-actions">
       <button type="button" className="kb-button kb-icon-button kb-danger" aria-label="Delete task" title="Delete task" disabled={blocked} onClick={() => onDanger(task, 'task.delete')}><TrashIcon size={16} /></button>
       <button ref={close} type="button" className="kb-button kb-icon-button" aria-label="Close task details" title="Close task details" onClick={onClose}><CloseIcon size={16} /></button>
     </div></header>

@@ -35,11 +35,16 @@ export interface Task {
 export interface Note { id: string; taskId: string; content: string; createdAt: string; updatedAt: string; tags?: string[] }
 export interface BoardSettings { worktreeBasePath?: string }
 export interface BoardState { schemaVersion: 2; revision: number; workflowYaml: string; workflow: Workflow; projects: Project[]; tasks: Task[]; notes: Note[]; settings?: BoardSettings }
-export interface Attention { running: boolean; unread: boolean; awaitingReply: boolean; failed: boolean }
+export type BackgroundKind = 'job' | 'subagent' | 'schedule';
+/** One unsettled non-turn activity owned by a task conversation. */
+export interface BackgroundActivity { kind: BackgroundKind; label: string }
+/** One conversation's native execution facts as the host owns them. */
+export interface SessionFacts { turn: boolean; background: BackgroundActivity[]; awaitingReply: boolean; failed: boolean }
+export interface Attention { running: boolean; background: BackgroundActivity[]; unread: boolean; awaitingReply: boolean; failed: boolean }
 /** Transient identity of the entity created by this exact command, never persisted. */
 export interface CommandReceipt { kind: 'project' | 'task' | 'conversation' | 'note'; id: string }
 export interface BoardSnapshot { commandReceipt?: CommandReceipt; state: BoardState; attention: Record<string, Attention>; sequence: number; clientEpoch?: number; questionRounds?: QuestionRound[] }
-export const EMPTY_ATTENTION: Attention = { running: false, unread: false, awaitingReply: false, failed: false };
+export const EMPTY_ATTENTION: Attention = { running: false, background: [], unread: false, awaitingReply: false, failed: false };
 export interface ProjectInput { id?: string; name: string; projectPath: string; gitRootPath: string; defaultBranch?: string }
 export interface NewTask { projectId: string; title: string; description: string }
 export type Command =

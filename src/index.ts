@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-typert-registry';
 import type {} from '@deepseek-ai/dsh-agent';
+import type {} from '@deepseek-ai/dsh-subagent';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { TYPERT_HOST } from './remote.js';
 import { BoardStore } from './domain/store.js';
@@ -16,6 +17,16 @@ import { registerTaskContextInjection } from './host/task-context.js';
 
 // The optional public schedule module emits this payloadless event; listening does not require its service.
 declare module '@deepseek-ai/cordis' { interface Events { 'schedule/changed'():void } }
+
+/** Invalidate attention from the canonical activity edges; the app owns the coalesced refresh. */
+export function registerAttentionSignals(ctx:Context,app:Pick<KanbanApp,'sessionActivity'|'activityChanged'>):()=>void{
+ const invalidateSubagent=(info:{id:Parameters<typeof ctx.sessions.get>[0]})=>{const child=ctx.sessions.get(info.id);const parent=child?.header.parentSession;app.sessionActivity(parent?String(parent):undefined);};
+ const offAgent=ctx.on('agent/status',({agent})=>app.sessionActivity(String(agent.id)));
+ const offSubagentStart=ctx.on('subagent/start',invalidateSubagent);
+ const offSubagentEnd=ctx.on('subagent/end',invalidateSubagent);
+ const offSchedule=ctx.on('schedule/changed',()=>app.activityChanged());
+ return()=>{offAgent();offSubagentStart();offSubagentEnd();offSchedule();};
+}
 
 /** Public native hooks, not a lease: assembly/working-directory recovery precedes both admission boundaries. */
 export function registerTaskExecutionGuards(ctx:Context,store:Pick<BoardStore,'snapshot'>,app:Pick<KanbanApp,'assertExecutionContext'>):()=>void{
@@ -49,13 +60,13 @@ export async function apply(ctx:Context):Promise<void>{
  const native=createNativePorts(ctx);const store=await BoardStore.open(storage.storage);
  const report=(error:unknown)=>ctx.logger.warn(error instanceof Error?error.message:String(error));
  const app=new KanbanApp(store,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await ctx.sessionController.inspect(SessionId(id),lifetime.signal)).events,questionStore:questions.storage},native.workspaces);
- let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;
- ctx.effect(()=>async()=>{lifetime.abort();offTools?.();offWire?.();offGuards?.();offContext?.();await app.close();await storage.close();await questions.close();});
+ let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offSignals:(()=>void)|undefined;
+ ctx.effect(()=>async()=>{lifetime.abort();offTools?.();offWire?.();offGuards?.();offContext?.();offSignals?.();await app.close();await storage.close();await questions.close();});
  offWire=ctx.typert.register(TYPERT_HOST);
  ctx.plugin(KanbanController,app);
  offTools=registerProductTools(ctx,app);
  ctx.on('session/event',(session,event)=>{app.observe(session.id,event);});
- ctx.on('schedule/changed',()=>app.activityChanged());
+ offSignals=registerAttentionSignals(ctx,app);
  offGuards=registerTaskExecutionGuards(ctx,store,app);
  offContext=registerTaskContextInjection(ctx,store,{report});
  await app.initialize();

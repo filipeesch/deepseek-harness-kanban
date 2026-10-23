@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BoardStore } from '../../src/domain/store.js';
 import { KanbanApp } from '../../src/host/app.js';
-import type { Attention } from '../../src/shared/types.js';
+import type { Attention, SessionFacts } from '../../src/shared/types.js';
 import { MemoryStorage, TestGit, TestSessions } from './helpers.js';
 
 // Actual app/store and public memory ports only: no host runtime, filesystem, jobs or models.
@@ -22,13 +22,14 @@ async function fixture() {
   apps.push(app);
   const task = await app.createTask({ projectId: project.id, title: 'Attention fixture', description: '' });
   const sessionId = task.sessionIds[0]!;
-  const attention = vi.spyOn(sessions, 'attention');
+  const facts = vi.spyOn(sessions, 'facts');
   const notify = vi.fn();
   app.subscribe(notify);
-  return { app, store, sessions, task, sessionId, attention, notify, report };
+  return { app, store, sessions, task, sessionId, facts, notify, report };
 }
 
-const idle: Attention = { running: false, unread: false, awaitingReply: false, failed: false };
+const idleFacts: SessionFacts = { turn: false, background: [], awaitingReply: false, failed: false };
+const idleAttention: Attention = { running: false, background: [], unread: false, awaitingReply: false, failed: false };
 function event(app: KanbanApp, sessionId: string) {
   app.observe(sessionId, { type: 'turn/end', seq: 1, data: { turn: 1, reason: { kind: 'blocked' } } });
 }
@@ -53,29 +54,30 @@ describe('coalesced public attention refresh', () => {
     const fresh = await f.app.snapshot();
     expect(fresh.attention[f.task.id]?.running).toBe(false);
     expect(fresh.sequence).toBeGreaterThan(early.sequence);
-    expect(f.attention).toHaveBeenCalledTimes(2);
+    expect(f.facts).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(f.attention).toHaveBeenCalledTimes(2);
+    expect(f.facts).toHaveBeenCalledTimes(2);
     expect(f.notify).toHaveBeenCalledOnce();
   });
 
-  it('CR11 recovers a rejected initial read on the next ordinary snapshot without any event or timer', async () => {
+  it('CR11 recovers a rejected initial read on the bounded retry without an event', async () => {
     const f = await fixture();
-    f.attention.mockRejectedValueOnce(new Error('Initial memory-port failure'));
+    f.facts.mockRejectedValueOnce(new Error('Initial memory-port failure'));
     expect((await f.app.snapshot()).attention[f.task.id]?.failed).toBe(true);
     expect(f.notify).not.toHaveBeenCalled();
-    expect(vi.getTimerCount()).toBe(0);
-    await vi.advanceTimersByTimeAsync(100);
-    expect((await f.app.snapshot()).attention[f.task.id]).toEqual(idle);
-    expect(f.attention).toHaveBeenCalledTimes(2);
-    expect(f.notify).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(1);
+    f.notify.mockClear();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(f.notify).toHaveBeenCalledOnce();
+    expect((await f.app.snapshot()).attention[f.task.id]).toEqual(idleAttention);
+    expect(f.facts).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
   });
 
   it('CR11 does not let a late old rejection evict a newer successful cached read', async () => {
     const f = await fixture();
-    const old = deferred<Attention>();
-    f.attention.mockImplementationOnce(() => old.promise).mockResolvedValue(idle);
+    const old = deferred<SessionFacts>();
+    f.facts.mockImplementationOnce(() => old.promise).mockResolvedValue(idleFacts);
     const pending = f.app.snapshot();
     f.app.activityChanged();
     const fresh = await f.app.snapshot();
@@ -83,41 +85,41 @@ describe('coalesced public attention refresh', () => {
     const stale = await pending;
     expect(stale.attention[f.task.id]?.failed).toBe(true);
     expect(stale.sequence).toBeLessThan(fresh.sequence);
-    expect(fresh.attention[f.task.id]).toEqual(idle);
-    expect((await f.app.snapshot()).attention[f.task.id]).toEqual(idle);
-    expect(f.attention).toHaveBeenCalledTimes(2);
+    expect(fresh.attention[f.task.id]).toEqual(idleAttention);
+    expect((await f.app.snapshot()).attention[f.task.id]).toEqual(idleAttention);
+    expect(f.facts).toHaveBeenCalledTimes(2);
   });
 
   it('recovers an early failed attention read on the existing debounce', async () => {
     const f = await fixture();
-    f.attention.mockRejectedValueOnce(new Error('Transient memory-port failure'));
+    f.facts.mockRejectedValueOnce(new Error('Transient memory-port failure'));
     event(f.app, f.sessionId);
     expect((await f.app.snapshot()).attention[f.task.id]?.failed).toBe(true);
     f.notify.mockClear();
     await vi.advanceTimersByTimeAsync(50);
     expect(f.notify).toHaveBeenCalledOnce();
-    expect((await f.app.snapshot()).attention[f.task.id]).toEqual(idle);
-    expect(f.attention).toHaveBeenCalledTimes(2);
+    expect((await f.app.snapshot()).attention[f.task.id]).toEqual(idleAttention);
+    expect(f.facts).toHaveBeenCalledTimes(2);
   });
 
   it('keeps delayed stale snapshots older than the refreshed sequence and out of the new cache', async () => {
     const f = await fixture();
-    const old = deferred<Attention>();
-    f.attention.mockImplementationOnce(() => old.promise).mockResolvedValue(idle);
+    const old = deferred<SessionFacts>();
+    f.facts.mockImplementationOnce(() => old.promise).mockResolvedValue(idleFacts);
     event(f.app, f.sessionId);
     const pending = f.app.snapshot();
     await vi.advanceTimersByTimeAsync(50);
     const refreshed = f.app.snapshot();
-    old.resolve({ ...idle, running: true });
+    old.resolve({ ...idleFacts, turn: true });
     const [stale, fresh] = await Promise.all([pending, refreshed]);
     expect(stale.attention[f.task.id]?.running).toBe(true);
     expect(stale.sequence).toBeLessThan(fresh.sequence);
     expect(fresh.attention[f.task.id]?.running).toBe(false);
     expect((await f.app.snapshot()).attention[f.task.id]?.running).toBe(false);
-    expect(f.attention).toHaveBeenCalledTimes(2);
+    expect(f.facts).toHaveBeenCalledTimes(2);
   });
 
-  it('coalesces observe and activity changes into the same worktree retry and final notification', async () => {
+  it('coalesces observe and activity changes into the same worktree retry without a quiet publish', async () => {
     const f = await fixture();
     const retry = vi.spyOn(f.app.worktrees, 'resumePending');
     event(f.app, f.sessionId);
@@ -131,7 +133,8 @@ describe('coalesced public attention refresh', () => {
     expect(f.notify).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(retry).toHaveBeenCalledOnce();
-    expect(f.notify).toHaveBeenCalledOnce();
+    // The projection is idle before and after, so the coalesced tick publishes nothing.
+    expect(f.notify).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -163,7 +166,7 @@ describe('coalesced public attention refresh', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(f.notify).toHaveBeenCalledTimes(notifications);
     expect((await f.app.snapshot()).sequence).toBe(before.sequence);
-    expect(f.attention).toHaveBeenCalledOnce();
+    expect(f.facts).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -180,7 +183,7 @@ describe('coalesced public attention refresh', () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(vi.getTimerCount()).toBe(0);
     expect(retry).not.toHaveBeenCalled();
-    expect(f.attention).toHaveBeenCalledOnce();
+    expect(f.facts).toHaveBeenCalledOnce();
     expect(f.notify).toHaveBeenCalledTimes(notifications);
   });
 });

@@ -2,10 +2,9 @@ import { RemoteSnapshotStream, RemoteStreamCarrierError, type ClientRemote } fro
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots';
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client';
-import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import type { KanbanRemote } from './remote.js';
 import type { BoardSnapshot, ClientApi, Command, Outcome, Problem, QuestionRound } from './shared/types.js';
-import { EMPTY_ATTENTION } from './shared/types.js';
+import { projectTaskAttention, ReminderTracker } from './client/attention.js';
 
 export interface BridgeStatus { error: Problem | null; connected: boolean }
 export interface QuestionView { rounds: readonly QuestionRound[]; errors: ReadonlyMap<string, Problem> }
@@ -30,8 +29,6 @@ function observable<T>(initial: T) {
   const source: HostObservable<T> = { getSnapshot: () => value, subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
   return { source, set(next: T) { value = next; for (const listener of [...listeners]) { try { listener(); } catch { /* One consumer cannot take down other native surfaces. */ } } }, clear() { listeners.clear(); } };
 }
-interface Reminder { epoch: number; acknowledged: number; running: boolean; unread: boolean; viewers: number }
-
 /** One plugin-owned native feed; ordinary chats and Kanban share the same prepared question cache. */
 export class ClientBridge {
   private readonly health = observable<BridgeStatus>({ error: null, connected: false });
@@ -46,7 +43,7 @@ export class ClientBridge {
   private readonly prepared = new Map<string, Promise<readonly QuestionRound[]>>();
   private readonly questionSessions = new Set<string>();
   private readonly dismissed = new Set<string>();
-  private readonly reminders = new Map<string, Reminder>();
+  private readonly reminders = new ReminderTracker();
   private readonly composers = new Set<string>();
   private readonly stopStatus: () => void;
   private control: RemoteSnapshotStream<Baseline, Update>;
@@ -55,8 +52,8 @@ export class ClientBridge {
   readonly api: ClientApi;
   constructor(private readonly remote: BridgeRemote, private readonly nativeStatus: HostObservable<SessionStatusSnapshot>) {
     this.control = this.makeControl();
-    this.stopStatus = nativeStatus.subscribe(() => { this.syncReminders(); this.publish(); });
-    this.syncReminders();
+    this.stopStatus = nativeStatus.subscribe(() => { this.reminders.sync(this.nativeStatus.getSnapshot()); this.publish(); });
+    this.reminders.sync(this.nativeStatus.getSnapshot());
     this.api = {
       snapshot: () => this.unarySnapshot(() => remote.kanban.snapshot()),
       command: (command: Command) => this.unarySnapshot(() => remote.kanban.command(command)),
@@ -122,44 +119,21 @@ export class ClientBridge {
     // Ordinary chats are absent from host startup replay; refresh their tracked histories in each new epoch.
     if (baseline) for (const id of this.questionSessions) void this.prepareQuestions(id).catch(() => undefined);
   }
-  private syncReminders(): void {
-    const current = this.nativeStatus.getSnapshot();
-    for (const [id, reminder] of this.reminders) if (!current.has(id as SessionId)) { reminder.running = false; reminder.unread = false; }
-    for (const [id, status] of current) {
-      let reminder = this.reminders.get(id);
-      if (!reminder) { reminder = { epoch: 0, acknowledged: -1, running: false, unread: false, viewers: 0 }; this.reminders.set(id, reminder); }
-      // A new run resets a prior local read even when the host's old unread boolean remains true.
-      if ((!reminder.running && status.running === true) || (!reminder.unread && status.completionUnread)) reminder.epoch++;
-      reminder.running = status.running === true;
-      reminder.unread = status.completionUnread;
-      if (reminder.viewers > 0) reminder.acknowledged = reminder.epoch;
-    }
-  }
   private publish(): void {
     if (this.disposed || !this.host) return;
-    const attention = { ...this.host.attention };
+    const attention: BoardSnapshot['attention'] = { ...this.host.attention };
     const statuses = this.nativeStatus.getSnapshot();
     for (const task of this.host.state.tasks) {
-      const value = { ...(attention[task.id] ?? EMPTY_ATTENTION) };
-      for (const id of task.sessionIds) {
-        const status = statuses.get(id as SessionId); if (!status) continue;
-        const reminder = this.reminders.get(id);
-        value.running ||= status.running === true;
-        value.awaitingReply ||= status.pendingInteraction !== undefined;
-        value.unread ||= status.completionUnread && (!reminder || reminder.acknowledged !== reminder.epoch);
-      }
-      attention[task.id] = value;
+      attention[task.id] = projectTaskAttention(this.host.attention[task.id], statuses, this.reminders, task.sessionIds);
     }
     this.merged = { ...this.host, attention, questionRounds: [...this.rounds], clientEpoch: this.clientEpoch };
     for (const listener of [...this.snapshots]) { try { listener(this.merged); } catch { /* Keep sibling consumers alive. */ } }
   }
   /** Acknowledge only the actually mounted/read drawer session, without native mainView writes. */
   viewSession(id: string): () => void {
-    let reminder = this.reminders.get(id);
-    if (!reminder) { reminder = { epoch: 0, acknowledged: -1, running: false, unread: false, viewers: 0 }; this.reminders.set(id, reminder); }
-    reminder.viewers++; reminder.acknowledged = reminder.epoch; this.publish();
-    let active = true;
-    return () => { if (!active) return; active = false; reminder!.viewers = Math.max(0, reminder!.viewers - 1); };
+    const release = this.reminders.view(id);
+    this.publish();
+    return release;
   }
   /** Prevent two plugin occurrences from mounting the same native composer simultaneously. */
   claimComposer(id: string): (() => void) | undefined {

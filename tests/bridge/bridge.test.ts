@@ -151,7 +151,8 @@ describe('real native stream bridge', () => {
   it('keeps clientApi identity and methods stable while native attention changes', async () => {
     const f = fixture(); const api = f.bridge.api; const notify = vi.fn(); api.subscribe(notify);
     await api.snapshot(); f.status.set(states([['a', native(true, true)]]));
-    expect(f.bridge.api).toBe(api); expect(notify.mock.calls.at(-1)?.[0].attention.t1).toMatchObject({ running: true, unread: true });
+    // Native status still owns unread, while turn execution is host-only.
+    expect(f.bridge.api).toBe(api); expect(notify.mock.calls.at(-1)?.[0].attention.t1).toMatchObject({ running: false, unread: true });
   });
 });
 

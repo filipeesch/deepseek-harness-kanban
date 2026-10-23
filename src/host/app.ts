@@ -4,12 +4,12 @@ import path from 'node:path';
 import { BoardStore } from '../domain/store.js';
 import { canTransition } from '../domain/workflow.js';
 import { QuestionIndex } from '../questions/indexer.js';
-import type { BoardSettings, BoardSnapshot, BoardState, Command, PendingTransition, Project, ProjectInput, QuestionRound, Task, Attention } from '../shared/types.js';
-import { EMPTY_ATTENTION } from '../shared/types.js';
+import type { BoardSettings, BoardSnapshot, BoardState, Command, PendingTransition, Project, ProjectInput, QuestionRound, Task } from '../shared/types.js';
 import type { GitPort, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionStore } from './question-storage.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
 import { WorktreeCoordinator } from './worktrees.js';
+import { AttentionCoordinator } from './attention.js';
 import { isAbsolutePath } from '../domain/validation.js';
 import { taskTitleSlug, worktreePathForBranch } from '../shared/worktree-name.js';
 import { ownedSessionIds } from '../domain/session-lineage.js';
@@ -30,13 +30,13 @@ export class KanbanApp {
  readonly worktrees:WorktreeCoordinator;
  private readonly listeners=new Set<()=>void>();
  private readonly prepared=new Map<string,Promise<void>>();
- private readonly attention=new Map<string,Promise<Attention>>();
+ private readonly attention:AttentionCoordinator;
  private readonly disposers:Array<()=>void>=[];
  private sequence=0; private disposed=false; private driving=false; private driveAgain=false; private drivePromise:Promise<void>|undefined; private commandTail:Promise<void>=Promise.resolve();
- private activityTimer:ReturnType<typeof setTimeout>|undefined;
  private readonly saveTimers=new Map<string,ReturnType<typeof setTimeout>>();
  constructor(readonly store:BoardStore,readonly sessions:SessionPort,readonly git:GitPort,private readonly options:AppOptions={},private readonly workspaces?:WorkspacePort){
   this.worktrees=new WorktreeCoordinator(store,sessions,git,{signal:options.signal,onTaskDeleted:async task=>{try{await this.cleanupWorktreeWorkspace(task);}catch(error){this.options.report?.(error);}}});
+  this.attention=new AttentionCoordinator({source:{read:id=>this.sessions.facts(id)},tasks:()=>this.store.snapshot().tasks.map(task=>({id:task.id,sessionIds:task.sessionIds})),pendingQuestion:id=>this.questions.pending(id),refreshWorktrees:async()=>{await this.worktrees.resumePending();await this.dispatchPending();},onChange:()=>this.changed(),report:error=>this.options.report?.(error)});
   this.disposers.push(store.subscribe(()=>{this.changed();void this.dispatchPending().catch(error=>options.report?.(error));}));
   this.disposers.push(this.questions.subscribe(()=>this.changed()));
  }
@@ -104,15 +104,10 @@ export class KanbanApp {
   }
   return structuredClone([...this.questions.getRounds(sessionId)]);
  }
- private retryActivity():void{
-  // Canonical events can precede idle state; expire reads made during the existing debounce and publish a newer sequence.
-  if(this.disposed||this.activityTimer!==undefined)return;
-  this.activityTimer=setTimeout(()=>{this.activityTimer=undefined;void this.worktrees.resumePending().then(()=>this.dispatchPending()).catch(error=>this.options.report?.(error)).finally(()=>{if(this.disposed)return;this.attention.clear();this.changed();});},50);
- }
  observe(sessionId:string,event:unknown):void{
   if(this.disposed)return;
   const promptTime=userPromptTime(event);if(promptTime!==undefined)this.clearInstructionPending(sessionId,promptTime);
-  if(isEvent(event)&&this.questions.apply(sessionId,event))this.schedulePersist(sessionId);this.attention.delete(sessionId);this.changed();this.retryActivity();
+  if(isEvent(event)&&this.questions.apply(sessionId,event))this.schedulePersist(sessionId);this.attention.touch(sessionId);this.changed();
  }
  private clearInstructionPending(sessionId:string,time:number):void{
   const task=this.store.snapshot().tasks.find(value=>value.sessionIds.includes(sessionId));const marker=task?.instructionPending;
@@ -131,10 +126,12 @@ export class KanbanApp {
    if(prompted)await this.store.transact(draft=>{const current=draft.tasks.find(value=>value.id===task.id);if(current?.instructionPending?.enteredAt===marker.enteredAt)delete current.instructionPending;});
   }
  }
- activityChanged():void{if(this.disposed)return;this.attention.clear();this.changed();this.retryActivity();}
+ activityChanged():void{if(this.disposed)return;this.attention.touch();this.changed();}
+ /** Invalidate one conversation's facts after a canonical activity edge. Omit the id to invalidate every conversation. */
+ sessionActivity(sessionId?:string):void{if(this.disposed)return;this.attention.touch(sessionId);this.changed();}
  async snapshot():Promise<BoardSnapshot>{
-  const sequence=this.sequence;const state=this.store.snapshot();const questionRounds=structuredClone([...this.questions.getRounds()]);const attention:Record<string,Attention>={};
-  for(const task of state.tasks){const value={...EMPTY_ATTENTION};for(const id of task.sessionIds){if(!this.attention.has(id)){const pending:Promise<Attention>=this.sessions.attention(id).catch(()=>{if(this.attention.get(id)===pending)this.attention.delete(id);return {...EMPTY_ATTENTION,failed:true};});this.attention.set(id,pending);}const item=await this.attention.get(id)!;value.running ||= item.running;value.unread ||= item.unread;value.awaitingReply ||= item.awaitingReply||this.questions.pending(id);value.failed ||= item.failed;}attention[task.id]=value;}
+  const sequence=this.sequence;const state=this.store.snapshot();const questionRounds=structuredClone([...this.questions.getRounds()]);
+  const attention=await this.attention.project(state.tasks);
   return {state,attention,sequence,questionRounds};
  }
  async branches(taskId:string):Promise<string[]>{const task=this.store.requireTask(taskId);return this.git.branches(this.store.requireProject(task.projectId),task.sessionIds);}
@@ -351,5 +348,5 @@ export class KanbanApp {
    }catch(error){await this.failPending(task.id,pending.id,error);this.options.report?.(error);}
   }}while(this.driveAgain&&!this.disposed);}finally{this.driving=false;}
  }
- async close():Promise<void>{if(this.disposed)return;await this.flushQuestions();this.disposed=true;if(this.activityTimer!==undefined)clearTimeout(this.activityTimer);for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.worktrees.settle();}
+ async close():Promise<void>{if(this.disposed)return;await this.flushQuestions();this.disposed=true;this.attention.dispose();for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.worktrees.settle();}
 }

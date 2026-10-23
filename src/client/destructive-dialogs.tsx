@@ -48,6 +48,7 @@ export function DeleteTaskDialog({ request, task, project, attention, sessionTit
   const summaryId = useId();
   const conversations = task.sessionIds.length;
   const closed = task.closedSessionIds.length;
+  const busy = attention.running || attention.background.length > 0;
   const unclaimed = task.unclaimedWorktrees ?? [];
   const detached = request.branch === 'HEAD';
   const title = isDelete ? 'Delete task' : 'Remove worktree';
@@ -66,7 +67,7 @@ export function DeleteTaskDialog({ request, task, project, attention, sessionTit
           ? <li>The checkout at <code>{request.path}</code>{request.branch ? <> on branch <code>{request.branch}</code></> : null} will be removed{request.owned === false ? ' (it was attached externally)' : request.owned === true ? ' (created by Kanban)' : ''}. {isDelete ? (detached ? 'The checkout is detached; Git has no branch to preserve.' : 'The branch is kept.') : ''}</li>
           : isDelete && <li>No worktree is associated, so the project folder is not removed.</li>}
         {unclaimed.length > 0 && <li><span className="kb-warning" role="note" aria-label="Unclaimed checkout deletion warning">Unclaimed checkouts remain on disk. They are not included in this deletion and require manual inspection.</span><ul className="kb-unclaimed-list">{unclaimed.map(entry => <li key={entry.path}><code>{entry.path}</code>{entry.branch ? <> on <code>{entry.branch}</code></> : null}</li>)}</ul></li>}
-        {attention.running && <li>A conversation is running. Deletion waits until every conversation is idle.</li>}
+        {busy && <li>A conversation is running or has unsettled background work. Deletion waits until the task is idle.</li>}
         {request.path && <li>If the worktree has local changes, a separate discard confirmation appears before removal.</li>}
       </ul>
       {description && !failed && <p className="kb-hint" role="status">{description.detail}</p>}
@@ -129,7 +130,7 @@ export function BulkDeleteDialog({ tasks, attention, pending, progress, onCancel
 }) {
   const conversations = tasks.reduce((total, task) => total + task.sessionIds.length, 0);
   const worktrees = tasks.filter(task => task.worktree).length;
-  const running = tasks.filter(task => attention[task.id]?.running).length;
+  const running = tasks.filter(task => { const value = attention[task.id]; return Boolean(value?.running || (value?.background.length ?? 0) > 0); }).length;
   const unclaimed = tasks.reduce((total, task) => total + (task.unclaimedWorktrees?.length ?? 0), 0);
   return <Modal title="Delete selected tasks" onClose={onCancel} busy={pending} initialFocus="cancel">
     <div className="kb-destructive-dialog">
@@ -138,8 +139,8 @@ export function BulkDeleteDialog({ tasks, attention, pending, progress, onCancel
         <li>{conversations} conversation{conversations === 1 ? '' : 's'} will be archived; their histories remain in DSH.</li>
         <li>{worktrees} worktree{worktrees === 1 ? '' : 's'} will be removed; branches are kept.</li>
         {unclaimed > 0 && <li>{unclaimed} unclaimed checkout{unclaimed === 1 ? '' : 's'} remain on disk.</li>}
-        {running > 0 && <li>{running} selected task{running === 1 ? ' has' : 's have'} a running conversation and will be skipped.</li>}
-        <li>Tasks with running chats, an unresolved operation, or local worktree changes are skipped and reported.</li>
+        {running > 0 && <li>{running} selected task{running === 1 ? ' has' : 's have'} a running turn or unsettled background work and will be skipped.</li>}
+        <li>Tasks with a running turn or unsettled background work, an unresolved operation, or local worktree changes are skipped and reported.</li>
       </ul>
       <ul className="kb-batch-list">{tasks.map(task => <li key={task.id}><strong>{task.title}</strong>{task.worktree ? <> — <code>{task.worktree.path}</code></> : null}</li>)}</ul>
       {progress && <p className="kb-hint" role="status">Deleting {progress.current} of {progress.total}: {progress.title}</p>}

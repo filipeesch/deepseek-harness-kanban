@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, realpath, rm, stat } from 'node:fs/promises';
 import path from 'node:path';import os from 'node:os';
 import { BoardStore } from '../../src/domain/store.js';
 import { KanbanApp } from '../../src/host/app.js';
-import type { BoardState, Attention, Project, CreateWorktree } from '../../src/shared/types.js';
+import type { BoardState, SessionFacts, Project, CreateWorktree } from '../../src/shared/types.js';
 import type { StateStorage, SessionPort, GitPort, GitTree, WorkspacePort, WorkspaceInfo } from '../../src/shared/ports.js';
 import { KanbanError } from '../../src/shared/errors.js';
 export class MemoryStorage implements StateStorage {value:BoardState|null=null;async load(){return structuredClone(this.value);}async save(value:BoardState){this.value=structuredClone(value);}}
@@ -20,7 +20,8 @@ export class TestSessions implements SessionPort {
  async isIdle(id:string){return !this.busy.has(id);}
  async send(id:string,text:string,requestId?:string){if(this.failSend)throw new KanbanError('SEND_FAILED','Injected native admission failure.');if(requestId&&this.requests.has(requestId))return;if(requestId)this.requests.add(requestId);this.sent.push({id,text,requestId});}
  async archive(id:string){this.archived.push(id);}
- async attention(id:string):Promise<Attention>{return {running:this.busy.has(id),unread:false,awaitingReply:this.awaiting.has(id),failed:false};}
+ async facts(id:string):Promise<SessionFacts>{return {turn:this.busy.has(id),background:[],awaitingReply:this.awaiting.has(id),failed:false};}
+ async directories(){return [...this.dirs].map(([sessionId,directory])=>({sessionId,directory}));}
  seedSubagent(parent:string,child:string,directory:string,origin:'subagent'|undefined='subagent'){this.dirs.set(child,directory);this.lineage.set(child,{parentSessionId:parent,...(origin?{origin}:{})});return child;}
  async topology(within?:string){
   const related=within===undefined?[]:[...this.dirs].filter(([,directory])=>inside(within,directory)).map(([sessionId,directory])=>({sessionId,directory}));
