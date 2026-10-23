@@ -6,7 +6,15 @@ export interface WorkspacePort {
   get(id: string): WorkspaceInfo | undefined;
   delete(id: string): Promise<void>;
 }
-export interface SessionPort {
+export interface SessionLineage { sessionId: string; parentSessionId?: string; origin?: 'subagent' }
+export interface SessionDirectory { sessionId: string; directory: string }
+export interface SessionTopology { related: SessionDirectory[]; lineage: SessionLineage[] }
+/** Read-only view used by ownership-sensitive cleanup; no execution or mutation. */
+export interface SessionTopologyPort {
+  /** Include related directories when `within` is set; lineage is always global. */
+  topology(within?: string): Promise<SessionTopology>;
+}
+export interface SessionPort extends SessionTopologyPort {
   create(projectPath: string, workspaceId?: string): Promise<string>;
   /** Raw recorded native directory; recovery must still see a missing current worktree. */
   directory(sessionId: string): Promise<string>;
@@ -17,8 +25,6 @@ export interface SessionPort {
   send(sessionId: string, text: string, requestId?: string): Promise<void>;
   archive(sessionId: string): Promise<void>;
   attention(sessionId: string): Promise<Attention>;
-  /** Includes cold sessions' projected effective directories where available. */
-  directories(within?: string): Promise<Array<{ sessionId: string; directory: string }>>;
 }
 export interface GitTree { path: string; branch: string; dirty: boolean; commonDirectory: string }
 export interface GitPort {

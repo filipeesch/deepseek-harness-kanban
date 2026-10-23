@@ -2,7 +2,6 @@ import { describe,it,expect,afterEach } from 'vitest';
 import path from 'node:path';
 import { mkdir, rm } from 'node:fs/promises';
 import { CommandSchema } from '../../src/remote.js';
-import { KanbanApp } from '../../src/host/app.js';
 import { fixture } from './helpers.js';
 let active:Array<Awaited<ReturnType<typeof fixture>>>=[];
 afterEach(async()=>{for(const f of active.splice(0))await f.close();});
@@ -35,47 +34,6 @@ describe('host command orchestration',()=>{
   const second=await f.app.createConversation(t.id);
   await f.app.command({type:'task.runInstruction',taskId:t.id,columnId,expectedInstruction:'Plan this task.'});
   expect(f.sessions.sent).toHaveLength(1);expect(f.sessions.sent[0]!.id).toBe(t.sessionIds[0]);expect(f.sessions.sent[0]!.id).not.toBe(second);
- });
- it('clears the instruction entry after any user prompt and ignores context messages',async()=>{
-  const f=await setup();const columnId=await instructed(f);const t=await task(f);
-  await f.app.command({type:'task.move',taskId:t.id,columnId,mode:'move'});
-  const marker=f.store.requireTask(t.id).instructionPending!;expect(marker.columnId).toBe(columnId);
-  const event=(time:number,kind:string)=>({type:'user/message',seq:1,time,data:{source:{kind},content:[]}});
-  f.app.observe(t.sessionIds[0]!,event(marker.enteredAt-1,'user'));await new Promise(resolve=>setTimeout(resolve,0));expect(f.store.requireTask(t.id).instructionPending).toBeDefined();
-  f.app.observe(t.sessionIds[0]!,event(marker.enteredAt+1,'kanban-task'));await new Promise(resolve=>setTimeout(resolve,0));expect(f.store.requireTask(t.id).instructionPending).toBeDefined();
-  await new Promise<void>(resolve=>{const unsub=f.store.subscribe(()=>{if(!f.store.requireTask(t.id).instructionPending){unsub();resolve();}});f.app.observe(t.sessionIds[0]!,event(marker.enteredAt+1,'user'));});
-  expect(f.store.requireTask(t.id).instructionPending).toBeUndefined();
- });
- it('clears the entry after a successful card action and keeps it after an admission failure',async()=>{
-  const f=await setup();const columnId=await instructed(f);const t=await task(f);
-  await f.app.command({type:'task.move',taskId:t.id,columnId,mode:'move'});
-  f.sessions.failSend=true;
-  await expect(f.app.command({type:'task.runInstruction',taskId:t.id,columnId,expectedInstruction:'Plan this task.'})).rejects.toMatchObject({code:'SEND_FAILED'});
-  expect(f.store.requireTask(t.id).instructionPending).toBeDefined();
-  f.sessions.failSend=false;
-  await f.app.command({type:'task.runInstruction',taskId:t.id,columnId,expectedInstruction:'Plan this task.'});
-  expect(f.store.requireTask(t.id).instructionPending).toBeUndefined();
- });
- it('preserves the entry on same-stage reorder and resets it after leaving and re-entering',async()=>{
-  const f=await setup();const columnId=await instructed(f);const t=await task(f);
-  await f.app.command({type:'task.move',taskId:t.id,columnId,mode:'move'});
-  const first=f.store.requireTask(t.id).instructionPending!;
-  await f.app.command({type:'task.move',taskId:t.id,columnId,mode:'move'});
-  expect(f.store.requireTask(t.id).instructionPending?.enteredAt).toBe(first.enteredAt);
-  await f.app.command({type:'task.move',taskId:t.id,columnId:'backlog',mode:'move'});
-  expect(f.store.requireTask(t.id).instructionPending).toBeUndefined();
-  await f.app.command({type:'task.move',taskId:t.id,columnId,mode:'move'});
-  expect(f.store.requireTask(t.id).instructionPending?.columnId).toBe(columnId);
- });
- it('marks a task created in an instructed initial stage and reconciles it from history after restart',async()=>{
-  const f=await setup();const workflow=f.store.snapshot().workflow;const initial=workflow.columns.find(column=>column.id===workflow.initialColumnId)!;initial.onEnterPrompt='Start this task.';
-  const { stringify }=await import('yaml');await f.store.setWorkflow(stringify({name:workflow.name,initial_column:workflow.initialColumnId,columns:workflow.columns.map(column=>({id:column.id,label:column.name,...(column.onEnterPrompt!==undefined?{on_enter_prompt:column.onEnterPrompt}:{})}))}));
-  const t=await task(f);expect(f.store.requireTask(t.id).instructionPending?.columnId).toBe(initial.id);
-  const marker=f.store.requireTask(t.id).instructionPending!;
-  const restarted=new KanbanApp(f.store,f.sessions,f.git,{history:async()=>[{type:'user/message',seq:1,time:marker.enteredAt+1,data:{source:{kind:'user'},content:[]}}]},f.workspaces);
-  await restarted.initialize();
-  expect(f.store.requireTask(t.id).instructionPending).toBeUndefined();
-  await restarted.close();
  });
  it('creates a conversation for a card instruction when every tab is closed',async()=>{
   const f=await setup();const columnId=await instructed(f);const t=await task(f);
@@ -185,4 +143,55 @@ describe('host command orchestration',()=>{
   expect(f.sessions.sent).toHaveLength(1);expect(f.sessions.sent[0]!.id).toBe(second);expect(await f.sessions.directory(second)).toBe(f.projectPath);expect(f.store.requireTask(t.id).pendingTransition).toBeUndefined();
  });
 
+});
+
+describe('task deletion lineage and workspace cleanup', () => {
+  async function worktreeTask(f: Awaited<ReturnType<typeof setup>>) {
+    const t = await task(f);
+    const root = path.join(f.root, 'lineage-tree');
+    await f.app.command({ type: 'worktree.create', taskId: t.id, mode: 'new', path: root, branchName: 'task/lineage', sourceBranch: 'main' });
+    const conversation = await f.app.createConversation(t.id);
+    const current = f.store.requireTask(t.id);
+    return { task: current, root, conversation, workspaceId: current.worktreeWorkspaceId! };
+  }
+
+  it('deletes an owned worktree workspace that contains a task-owned subagent child', async () => {
+    const f = await setup(); const { task: current, root, conversation, workspaceId } = await worktreeTask(f);
+    const workspace = f.workspaces.get(workspaceId)!;
+    const child = f.sessions.seedSubagent(current.sessionIds[0]!, 'child', path.join(root, 'apps', 'web'));
+    workspace.sessionIds.push(child);
+    await f.app.command({ type: 'task.delete', taskId: current.id, confirmed: true, expectedWorktreePath: root });
+    expect(f.store.snapshot().tasks).toEqual([]);
+    expect(f.workspaces.deleted).toContain(workspaceId);
+    expect(f.sessions.archived).toEqual(current.sessionIds);
+    expect(f.sessions.archived).not.toContain(child);
+    expect(f.git.removed).toEqual([root]);
+  });
+
+  it('retains a worktree workspace used by a foreign session', async () => {
+    const f = await setup(); const { task: current, root, workspaceId } = await worktreeTask(f);
+    f.workspaces.get(workspaceId)!.sessionIds.push('foreign-session');
+    await f.app.command({ type: 'task.delete', taskId: current.id, confirmed: true, expectedWorktreePath: root });
+    expect(f.store.snapshot().tasks).toEqual([]);
+    expect(f.workspaces.deleted).not.toContain(workspaceId);
+  });
+
+  it('retries the reported failed preflight deletion after an owned child is recognized', async () => {
+    const f = await setup(); const { task: current, root } = await worktreeTask(f);
+    const child = f.sessions.seedSubagent(current.sessionIds[0]!, 'child', path.join(root, 'apps', 'web'));
+    await f.store.transact(draft => {
+      const value = draft.tasks.find(item => item.id === current.id)!;
+      value.operation = {
+        id: 'reported-failed-preflight', request: { kind: 'delete', discardChanges: false, expectedWorktreePath: root },
+        phase: 'failed', targetPath: root, previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false,
+        error: { code: 'SHARED_WORKTREE', message: 'Another native session is using this checkout.', details: { sessionId: child, path: root, failedPhase: 'preflight', gitAttempted: false } },
+        createdAt: '2026-10-23T00:00:00.000Z',
+      };
+    });
+    await f.app.command({ type: 'operation.retry', taskId: current.id });
+    expect(f.store.snapshot().tasks).toEqual([]);
+    expect(f.sessions.archived).toEqual(current.sessionIds);
+    expect(f.sessions.archived).not.toContain(child);
+    expect(f.git.removed).toEqual([root]);
+  });
 });

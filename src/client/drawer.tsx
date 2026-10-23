@@ -1,7 +1,8 @@
 import React, { Component, useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import type { BoardState, ClientApi, Column, Problem, Task } from '../shared/types.js';
 import { InfoPanel, NotesPanel } from './forms.js';
-import { GitPanel, OperationStatus, PendingTransitionStatus } from './git.js';
+import { GitPanel, PendingTransitionStatus } from './git.js';
+import { OperationStatus } from './operation-status.js';
 import { WorktreeNotice } from './worktree-notice.js';
 import { useWorktreeDraft } from './worktree-draft.js';
 import { creationReceiptId, ErrorNotice, Tabs, useAction, type RunCommand } from './ui.js';
@@ -119,11 +120,14 @@ export function TaskDrawer({ task, state, api, run, renderConversation, onClose,
       <button type="button" className="kb-button kb-icon-button kb-danger" aria-label="Delete task" title="Delete task" disabled={blocked} onClick={() => onDanger(task, 'task.delete')}><TrashIcon size={16} /></button>
       <button ref={close} type="button" className="kb-button kb-icon-button" aria-label="Close task details" title="Close task details" onClick={onClose}><CloseIcon size={16} /></button>
     </div></header>
+    {(task.operation || task.pendingTransition) && <div className="kb-status-stack">
+      <OperationStatus task={task} run={run} sessionTitles={sessionTitles} />
+      <PendingTransitionStatus task={task} run={run} columnName={state.workflow.columns.find(column => column.id === task.pendingTransition?.columnId)?.name ?? task.pendingTransition?.columnId ?? ''} />
+    </div>}
     <div className="kb-drawer-toolbar"><Tabs label="Task sections" values={['Conversations', 'Info', 'Git', 'Notes']} selected={section} onSelect={value => setSection(value as DrawerSection)} id={id} /><label className="kb-stage-compact"><span className="kb-sr">Move task to</span><select className="kb-input kb-stage-select" aria-label="Move task to" value={movingTo ?? task.columnId} disabled={blocked || movingTo !== null} onChange={event => { const column = state.workflow.columns.find(value => value.id === event.target.value); if (column && column.id !== task.columnId) void moveTo(column); }}>{permitted.map(column => <option key={column.id} value={column.id}>{column.name}</option>)}</select></label></div>
-    <PendingTransitionStatus task={task} run={run} columnName={state.workflow.columns.find(column => column.id === task.pendingTransition?.columnId)?.name ?? task.pendingTransition?.columnId ?? ''} />
     {prefill && <div className={'kb-prefill kb-prefill-' + prefill.status} role="status"><p>{prefillText(prefill)}</p>{prefill.status === 'preserved' && <button type="button" className="kb-button" onClick={() => void replaceDraft()}>Replace draft</button>}</div>}
     <section className={'kb-drawer-panel ' + (section === 'Conversations' ? 'kb-chat-panel' : '')} role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>
-      {section === 'Conversations' && <>{!task.worktree && !dismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} onDismiss={() => setDismissed(true)} />}<OperationStatus task={task} run={run} /><Conversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} /></>}
+      {section === 'Conversations' && <>{!task.worktree && !dismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} onDismiss={() => setDismissed(true)} />}<Conversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} /></>}
       {section === 'Info' && <InfoPanel task={task} state={state} run={run} viewState={preferences} />}
       {section === 'Git' && <GitPanel task={task} project={project} api={api} run={run} worktreeBasePath={state.settings?.worktreeBasePath} draft={worktreeDraft} />}
       {section === 'Notes' && <NotesPanel task={task} state={state} run={run} viewState={preferences} />}

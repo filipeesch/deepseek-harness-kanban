@@ -190,7 +190,7 @@ describe('bounded integrated product walkthrough', () => {
     await expect(f.app.command({ type: 'task.delete', taskId: t.id, confirmed: true, expectedWorktreePath: f.tree, discardChanges: false })).rejects.toMatchObject({ code: 'DISCARD_REQUIRED' });
     expect(f.app.store.requireTask(t.id).operation).toMatchObject({ phase: 'failed', error: { code: 'DISCARD_REQUIRED' } });
     expect(f.executor.removals).toEqual([]); expect((await stat(f.tree)).isDirectory()).toBe(true);
-    const unavailable = vi.spyOn(f.sessions, 'directories').mockRejectedValue(new KanbanError('SESSION_CONTEXT_UNAVAILABLE', 'Synthetic public directory catalog unavailable.'));
+    const unavailable = vi.spyOn(f.sessions, 'topology').mockRejectedValue(new KanbanError('SESSION_CONTEXT_UNAVAILABLE', 'Synthetic public directory catalog unavailable.'));
     await expect(f.app.command({ type: 'task.delete', taskId: t.id, confirmed: true, expectedWorktreePath: f.tree, discardChanges: true })).rejects.toMatchObject({ code: 'SESSION_CONTEXT_UNAVAILABLE' });
     expect(f.app.store.requireTask(t.id).sessionIds).toEqual([t.a, t.b, c]);
     expect(f.app.store.snapshot().notes).toEqual([note]);
@@ -253,6 +253,25 @@ describe('bounded integrated product walkthrough', () => {
     f.noNativeDestruction();
   }, 15000);
 
+
+  it('PW05 deletes a task whose own subagent child uses the worktree', async () => {
+    const f = await setup(); const t = await f.task();
+    await f.app.command({ type: 'worktree.create', taskId: t.id, mode: 'new', path: f.tree, branchName: 'task/product-lineage', sourceBranch: 'main' });
+    await waitForReady(f, t.id);
+    const target = path.join(f.tree, 'packages', 'api');
+    const child = f.sessions.seedSubagent(t.a, 'synthetic-subagent', target);
+    expect(f.app.store.requireTask(t.id).sessionIds).toEqual([t.a, t.b]);
+    await f.app.command({ type: 'task.delete', taskId: t.id, confirmed: true, expectedWorktreePath: f.tree });
+    expect(f.app.store.snapshot().tasks).toEqual([]);
+    expect(f.sessions.archived).toEqual([t.a, t.b]);
+    expect(f.sessions.archived).not.toContain(child);
+    expect(f.sessions.dirs.get(child)).toBe(target);
+    expect(f.executor.removals).toEqual([{ directories: [[t.a, f.project.projectPath], [t.b, f.project.projectPath]], archived: [] }]);
+    await expect(stat(f.tree)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(path.join(f.project.projectPath, 'app.txt'), 'utf8')).toBe('initial\n');
+    expect((await gitOk(f.project.gitRootPath, ['show-ref', '--verify', 'refs/heads/task/product-lineage'])).trim()).toContain('refs/heads/task/product-lineage');
+    f.noNativeDestruction();
+  }, 20000);
 
   // PW04 maps tasks 2.2/2.3, 6.2/6.4 and 8.1: ordinary and bound callers discover the same product metadata.
   it('PW04 checks canonical project metadata, scoped Git identity, discovery, and shared-note task isolation', async () => {

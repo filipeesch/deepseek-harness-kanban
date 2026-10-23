@@ -45,3 +45,10 @@ export function fakeApi(initial = fixture()) {
   const api: ClientApi = { snapshot: vi.fn(async () => clone(value)), command, branches: vi.fn(async () => ['main', 'feature']), worktreeDefault, inferProject: vi.fn(async (path: string) => ({ projectPath: path, gitRootPath: path })), subscribe: vi.fn(listener => { listeners.add(listener); return () => listeners.delete(listener); }) };
   return { api, command, publish, get: () => clone(value), listeners };
 }
+
+export function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((success, failure) => { resolve = success; reject = failure; });
+  return { promise, resolve, reject };
+}

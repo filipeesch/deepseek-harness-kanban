@@ -32,7 +32,7 @@ describe('unclaimed checkout recovery metadata', () => {
     if (hasActive) { target.worktree = { path: '/trees/verified-active', branch: 'feature/active', owned: true, status: 'ready' }; target.effectiveCwd = '/trees/verified-active/apps/api'; }
     const mock = fakeApi(initial); const user = userEvent.setup(); render(<BoardView api={mock.api} renderConversation={id => <span>{id}</span>} />); await openTask(user, 'Alpha task'); await user.click(screen.getByRole('button', { name: 'Delete task' }));
     const dialog = screen.getByRole('dialog', { name: 'Delete task' }); const warning = within(dialog).getByRole('note', { name: 'Unclaimed checkout deletion warning' }); expect(warning.textContent).toContain('Unclaimed checkouts remain on disk'); expect(warning.textContent).toContain('not included in this deletion'); expect(mock.command).not.toHaveBeenCalled();
-    await user.click(within(dialog).getByRole('button', { name: 'Delete task and archive chats' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Delete task' }));
     await waitFor(() => expect(mock.command).toHaveBeenCalledWith({ type: 'task.delete', taskId: 't1', confirmed: true, expectedWorktreePath: hasActive ? '/trees/verified-active' : null }));
     expect(mock.command).toHaveBeenCalledTimes(1); expect(mock.command.mock.calls[0]![0]).not.toHaveProperty('discardChanges');
     for (const entry of unclaimed) expect(JSON.stringify(mock.command.mock.calls[0]![0])).not.toContain(entry.path);

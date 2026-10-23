@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { lstat, mkdir, stat, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { GitAdapter } from '../../src/host/git.js';
 import { WorktreeCoordinator } from '../../src/host/worktrees.js';
@@ -533,4 +533,77 @@ describe('WorktreeCoordinator', () => {
     await coordinator.returnToBase('task'); expect(f.store.snapshot().tasks[0]!.operation).toBeNull(); expect(f.store.snapshot().tasks[0]!.unclaimedWorktrees?.[0]?.path).toBe(f.tree);
   });
 
+});
+
+describe('task lineage and destructive sharing', () => {
+  it('deletes a task whose own subagent child uses the worktree', async () => {
+    const f = await setup(); await create(f);
+    f.sessions.setCalls.length = 0; f.sessions.archiveCalls.length = 0;
+    const target = path.join(f.tree, 'packages/api');
+    const child = f.sessions.seedSubagent('a', 'child', target);
+    await f.coordinator.request('task', { kind: 'delete', discardChanges: false });
+    expect(f.store.snapshot().tasks).toEqual([]);
+    expect([...new Set(f.sessions.archiveCalls)]).toEqual(['a', 'b']);
+    expect(f.sessions.archiveCalls).not.toContain(child);
+    expect(f.sessions.setCalls.map(call => call.id)).toEqual(['a', 'b']);
+    expect(f.sessions.dirs.get(child)).toBe(target);
+    await expect(stat(f.tree)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect((await git(f.project.gitRootPath, ['show-ref', '--verify', 'refs/heads/feature'])).exitCode).toBe(0);
+  });
+
+  it('owns nested subagent descendants and does not archive or move them', async () => {
+    const f = await setup(); await create(f);
+    f.sessions.setCalls.length = 0; f.sessions.archiveCalls.length = 0;
+    const target = path.join(f.tree, 'packages/api');
+    const child = f.sessions.seedSubagent('a', 'child', target);
+    const grandchild = f.sessions.seedSubagent(child, 'grandchild', target);
+    await f.coordinator.request('task', { kind: 'delete', discardChanges: false });
+    expect([...new Set(f.sessions.archiveCalls)]).toEqual(['a', 'b']);
+    expect(f.sessions.archiveCalls).not.toContain(child);
+    expect(f.sessions.archiveCalls).not.toContain(grandchild);
+    expect(f.sessions.setCalls.map(call => call.id)).toEqual(['a', 'b']);
+    expect(f.sessions.dirs.get(grandchild)).toBe(target);
+    expect(f.store.snapshot().tasks).toEqual([]);
+  });
+
+  it('still blocks a fork outside the task lineage', async () => {
+    const f = await setup(); await create(f);
+    const target = path.join(f.tree, 'packages/api');
+    f.sessions.dirs.set('peer', target);
+    f.sessions.lineage.set('peer', { parentSessionId: 'a' });
+    await expect(f.coordinator.request('task', { kind: 'delete', discardChanges: false })).rejects.toMatchObject({ code: 'SHARED_WORKTREE' });
+    expect(f.store.snapshot().tasks).toHaveLength(1);
+    expect(f.sessions.archiveCalls).toEqual([]);
+    expect((await stat(f.tree)).isDirectory()).toBe(true);
+  });
+
+  it('still blocks a foreign native session outside the task lineage', async () => {
+    const f = await setup(); await create(f);
+    f.sessions.seedSubagent('outside-parent', 'peer', path.join(f.tree, 'packages/api'));
+    await expect(f.coordinator.request('task', { kind: 'delete', discardChanges: false })).rejects.toMatchObject({ code: 'SHARED_WORKTREE' });
+    expect(f.store.snapshot().tasks).toHaveLength(1);
+    expect(f.sessions.archiveCalls).toEqual([]);
+    expect((await stat(f.tree)).isDirectory()).toBe(true);
+  });
+
+  it('removes an already-absent worktree registration and still deletes the task', async () => {
+    const f = await setup(); await create(f);
+    await rm(f.tree, { recursive: true, force: true });
+    await f.coordinator.request('task', { kind: 'delete', discardChanges: false });
+    expect(f.store.snapshot().tasks).toEqual([]);
+    expect(f.sessions.archiveCalls).toEqual(['a', 'b']);
+    expect((await git(f.project.gitRootPath, ['worktree', 'list', '--porcelain'])).stdout).not.toContain(f.tree);
+    expect((await git(f.project.gitRootPath, ['show-ref', '--verify', 'refs/heads/feature'])).exitCode).toBe(0);
+  });
+
+  it('deletes a task with an externally attached worktree and keeps its branch', async () => {
+    const f = await setup();
+    await f.adapter.create(f.project, { mode: 'new', path: f.tree, branchName: 'external' }, []);
+    await f.coordinator.request('task', { kind: 'attach', path: f.tree });
+    await f.coordinator.request('task', { kind: 'delete', discardChanges: false });
+    expect(f.store.snapshot().tasks).toEqual([]);
+    expect(f.sessions.archiveCalls).toEqual(['a', 'b']);
+    await expect(stat(f.tree)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect((await git(f.project.gitRootPath, ['show-ref', '--verify', 'refs/heads/external'])).exitCode).toBe(0);
+  });
 });

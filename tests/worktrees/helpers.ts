@@ -70,6 +70,7 @@ export function board(project: Project): BoardState {
 export class Sessions implements SessionPort {
   active = new Set<string>();
   dirs = new Map<string, string>();
+  lineage = new Map<string, { parentSessionId?: string; origin?: 'subagent' }>();
   setCalls: Array<{ id: string; directory: string }> = [];
   archiveCalls: string[] = [];
   beforeSet: ((id: string, directory: string, signal?: AbortSignal) => void | Promise<void>) | undefined;
@@ -86,5 +87,26 @@ export class Sessions implements SessionPort {
   async send(): Promise<void> {}
   async archive(id: string): Promise<void> { await this.beforeArchive?.(id); this.archiveCalls.push(id); }
   async attention(): Promise<Attention> { return { running: false, unread: false, awaitingReply: false, failed: false }; }
-  async directories(): Promise<Array<{ sessionId: string; directory: string }>> { return [...this.dirs].map(([sessionId, directory]) => ({ sessionId, directory })); }
+  /** Add a real-child-like session for ownership tests. Pass `origin: undefined` for a fork. */
+  seedSubagent(parent: string, child: string, directory: string, origin: 'subagent' | undefined = 'subagent'): string {
+    this.dirs.set(child, directory);
+    this.lineage.set(child, { parentSessionId: parent, ...(origin ? { origin } : {}) });
+    return child;
+  }
+  async topology(within?: string) {
+    const related = within === undefined ? [] : [...this.dirs]
+      .filter(([, directory]) => inside(within, directory))
+      .map(([sessionId, directory]) => ({ sessionId, directory }));
+    return {
+      related,
+      lineage: [...this.dirs.keys()].map(sessionId => ({
+        sessionId,
+        ...(this.lineage.get(sessionId) ?? {}),
+      })),
+    };
+  }
+}
+function inside(root: string, candidate: string): boolean {
+  const part = path.relative(root, candidate);
+  return part === '' || (!path.isAbsolute(part) && part !== '..' && !part.startsWith('..' + path.sep));
 }

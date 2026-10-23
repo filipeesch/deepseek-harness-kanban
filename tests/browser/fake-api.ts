@@ -12,6 +12,9 @@ export function createHarnessApi(): HarnessApi {
     ...Array.from({ length: 12 }, (_, index) => task('long-' + index, 'Long column task ' + index, 'explore', index)),
     task('short', 'Short task', 'propose', 40),
     task('other', 'Other task', 'apply', 41),
+    deleteTarget(),
+    failedDelete(),
+    failedDeleteReturn(),
   ];
   let value: BoardSnapshot = {
     sequence: 1, attention: {},
@@ -56,4 +59,44 @@ export function workflowYaml(): string {
 
 function task(id: string, title: string, columnId: string, position: number): Task {
   return { id, projectId: 'p', title, description: 'Harness task', columnId, position, sessionIds: ['s-' + id], closedSessionIds: [], effectiveCwd: '/repo', worktree: null, operation: null, createdAt: '', updatedAt: '' };
+}
+
+function deleteTarget(): Task {
+  return {
+    ...task('delete-target', 'Delete target', 'propose', 42),
+    sessionIds: ['s-delete-target-1', 's-delete-target-2'],
+    effectiveCwd: '/worktrees/delete-target',
+    worktree: { path: '/worktrees/delete-target', branch: 'delete-target', owned: true, status: 'ready' },
+    unclaimedWorktrees: [{ path: '/manual/delete-checkout', branch: 'manual', error: { code: 'DETACHED', message: 'Detached checkout.' } }],
+  };
+}
+
+function failedDeleteReturn(): Task {
+  const taskValue = failedDelete();
+  return {
+    ...taskValue,
+    id: 'failed-delete-return',
+    title: 'Failed return',
+    position: 44,
+    sessionIds: ['s-failed-delete-return'],
+    operation: {
+      ...taskValue.operation!,
+      id: 'failed-delete-return-op',
+      archivedSessionIds: [],
+      error: { code: 'SHARED_WORKTREE', message: 'Another DSH conversation is using this checkout.', details: { sessionId: 'child', path: '/worktrees/failed-delete', failedPhase: 'preflight' } },
+    },
+  };
+}
+
+function failedDelete(): Task {
+  return {
+    ...task('failed-delete', 'Failed delete', 'apply', 43),
+    effectiveCwd: '/worktrees/failed-delete',
+    worktree: { path: '/worktrees/failed-delete', branch: 'failed-delete', owned: true, status: 'ready' },
+    operation: {
+      id: 'failed-delete-op', request: { kind: 'delete', discardChanges: false, expectedWorktreePath: '/worktrees/failed-delete' },
+      phase: 'failed', targetPath: '/worktrees/failed-delete', previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: ['s-failed-delete'], gitCompleted: true,
+      createdAt: 'now', error: { code: 'SHARED_WORKTREE', message: 'Another DSH conversation is using this checkout.', details: { sessionId: 'child', path: '/worktrees/failed-delete', failedPhase: 'archiving' } },
+    },
+  };
 }

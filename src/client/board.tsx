@@ -6,8 +6,9 @@ import { TaskDrawer, type SessionTitles } from './drawer.js';
 import { permittedDestinations } from '../domain/transitions.js';
 import { RunInstructionButton } from './run-instruction.js';
 import type { InstructionDraftPort } from './instruction-draft.js';
-import { asProblem, ErrorNotice, Modal, type RunCommand } from './ui.js';
+import { asProblem, ErrorNotice, type RunCommand } from './ui.js';
 import { styles } from './styles.js';
+import { BulkDeleteDialog, BulkResultDialog, DeleteTaskDialog, DiscardDialog, type BulkDeletionResult, type BulkProgress, type DestructiveCommand, type DestructiveRequest } from './destructive-dialogs.js';
 import { CheckSquareIcon, PlusIcon, SettingsIcon, TrashIcon } from './icons.js';
 import { useCardDrag, type CardDragState } from './useCardDrag.js';
 import { createBoardPageState, taskPageState, usePageField, type BoardPageState } from './page-state.js';
@@ -15,10 +16,7 @@ export { createBoardPageState } from './page-state.js';
 export type { BoardPageState } from './page-state.js';
 
 export interface BoardViewProps { api: ClientApi; renderConversation: (id: string) => ReactNode; pageState?: BoardPageState; sessionTitles?: SessionTitles; pickDirectory?: () => Promise<string | null>; draftPort?: InstructionDraftPort }
-type DestructiveCommand = Extract<Command, { type: 'task.delete' | 'worktree.remove' }>;
-interface Destruction { command: DestructiveCommand; title: string; path: string | null; expectedWorktreePath: string | null; error?: Problem }
 interface OptimisticMove { taskId: string; columnId: string; beforeTaskId: string | null }
-interface BatchResult { deleted: number; skipped: Array<{ title: string; message: string }> }
 
 export function columnLayout(workflow: Workflow): Array<{ key: string; group?: ColumnGroup; columns: Column[] }> {
   const result: Array<{ key: string; group?: ColumnGroup; columns: Column[] }> = []; const seen = new Set<string>();
@@ -38,9 +36,9 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
   const [loadError, setLoadError] = useState<Problem | null>(null); const [loadAttempt, setLoadAttempt] = useState(0); const [pending, setPending] = useState(0);
   const [search, setSearch] = usePageField(preferences, 'search'); const [projectFilter, setProjectFilter] = usePageField(preferences, 'projectFilter'); const [selectedId, setSelectedId] = usePageField(preferences, 'selectedTaskId');
   const [newTask, setNewTask] = useState(false); const [configuration, setConfiguration] = useState<string | null>(null);
-  const [destruction, setDestruction] = useState<Destruction | null>(null); const [discard, setDiscard] = useState<Destruction | null>(null); const [actionError, setActionError] = useState<Problem | null>(null);
+  const [destruction, setDestruction] = useState<DestructiveRequest | null>(null); const [destructionStarted, setDestructionStarted] = useState(false); const [discard, setDiscard] = useState<DestructiveRequest | null>(null); const [destructionError, setDestructionError] = useState<Problem | null>(null); const [destructionPending, setDestructionPending] = useState(false); const [actionError, setActionError] = useState<Problem | null>(null);
   const [selectionMode, setSelectionMode] = useState(false); const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
-  const [batchConfirm, setBatchConfirm] = useState(false); const [batchPending, setBatchPending] = useState(false); const [batchResult, setBatchResult] = useState<BatchResult | null>(null);
+  const [batchConfirm, setBatchConfirm] = useState(false); const [batchPending, setBatchPending] = useState(false); const [batchTasks, setBatchTasks] = useState<Task[]>([]); const [batchProgress, setBatchProgress] = useState<BulkProgress | null>(null); const [batchResult, setBatchResult] = useState<BulkDeletionResult | null>(null);
   const [optimistic, setOptimistic] = useState<OptimisticMove | null>(null);
   const [drawerEntering, setDrawerEntering] = useState(false);
   const [drawerClosing, setDrawerClosing] = useState(false);
@@ -56,7 +54,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
     return () => { active = false; live.current = false; unsubscribe(); };
   }, [api, loadAttempt, accept]);
 
-  const run: RunCommand = useCallback(async (command: Command) => {
+  const run = useCallback(async (command: Command, allowDiscard = true): Promise<BoardSnapshot> => {
     setPending(value => value + 1);
     const invokedTask = 'taskId' in command ? latest.current?.state.tasks.find(value => value.id === command.taskId) : undefined;
     const priorOperation = invokedTask?.operation;
@@ -70,13 +68,25 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
         if (capturedPath !== undefined) original = { type: priorOperation.request.kind === 'delete' ? 'task.delete' : 'worktree.remove', taskId: task.id, confirmed: true, expectedWorktreePath: capturedPath };
         else setActionError({ code: 'CONFIRMATION_REQUIRED', message: 'The original removal target is unavailable. Return to base and review a new removal confirmation.' });
       }
-      if (problem.code === 'DISCARD_REQUIRED' && original && task) setDiscard({ command: original, title: task.title, path: original.expectedWorktreePath, expectedWorktreePath: original.expectedWorktreePath, error: problem });
+      if (allowDiscard && problem.code === 'DISCARD_REQUIRED' && original && task) setDiscard({ command: original, taskId: task.id, title: task.title, path: original.expectedWorktreePath ?? task.worktree?.path ?? null, expectedWorktreePath: original.expectedWorktreePath ?? task.worktree?.path ?? null, branch: task.worktree?.branch ?? null, owned: task.worktree?.owned, error: problem });
       throw error;
     } finally { if (live.current) setPending(value => Math.max(0, value - 1)); }
   }, [api, accept]);
 
   const state = snapshot?.state;
   const selected = state?.tasks.find(task => task.id === selectedId);
+  useEffect(() => {
+    if (!destruction) return;
+    const task = state?.tasks.find(value => value.id === destruction.taskId);
+    if (!task) {
+      setDestruction(null); setDestructionError(null); setDestructionStarted(false);
+      if (destruction.command.type === 'task.delete') setSelectedId(null);
+      return;
+    }
+    if (destructionStarted && !task.operation) {
+      setDestruction(null); setDestructionError(null); setDestructionStarted(false);
+    }
+  }, [state, destruction, destructionStarted]);
   function clearCloseTimer() { if (closeTimer.current !== undefined) { clearTimeout(closeTimer.current); closeTimer.current = undefined; } }
   function finishClose() {
     restoreFocus.current = selectedId;
@@ -111,7 +121,6 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
     return () => window.removeEventListener('keydown', key);
   }, [selectedId, drawerClosing]);
 
-  function simple(command: Command) { setActionError(null); return run(command).catch(error => { const problem = asProblem(error); if (problem.code !== 'DISCARD_REQUIRED') setActionError(problem); }); }
 
   function allowedDestination(task: Task, column: Column): boolean {
     if (!state) return false;
@@ -144,13 +153,66 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
     if (task && column) void moveTo(task, column, beforeTaskId);
   }});
 
-  function requestDanger(task: Task, type: 'task.delete' | 'worktree.remove') { setActionError(null); setDestruction({ command: { type, taskId: task.id, confirmed: true, expectedWorktreePath: task.worktree?.path ?? null }, title: task.title, path: task.worktree?.path ?? null, expectedWorktreePath: task.worktree?.path ?? null }); }
-  function runDestruction(request: Destruction, command: Command = request.command) {
+  function requestDanger(task: Task, type: 'task.delete' | 'worktree.remove') {
+    setActionError(null); setDestructionError(null); setDestructionStarted(false);
+    setDestruction({
+      command: { type, taskId: task.id, confirmed: true, expectedWorktreePath: task.worktree?.path ?? null },
+      taskId: task.id, title: task.title, path: task.worktree?.path ?? null,
+      expectedWorktreePath: task.worktree?.path ?? null,
+      branch: task.worktree?.branch ?? null, owned: task.worktree?.owned,
+    });
+  }
+  function runDestruction(request: DestructiveRequest, command: Command = request.command) {
     const task = latest.current?.state.tasks.find(value => value.id === request.command.taskId);
     if (!task || (task.worktree?.path ?? null) !== request.expectedWorktreePath) return Promise.reject({ code: 'CONTEXT_CHANGED', message: 'The task worktree changed while confirmation was open. Cancel and review the current target before trying again.' });
     return run(command);
   }
-  async function confirmDestruction() { if (!destruction) return; const request = destruction; setDestruction(null); try { await runDestruction(request); if (request.command.type === 'task.delete') setSelectedId(null); } catch (error) { const problem = asProblem(error); if (problem.code !== 'DISCARD_REQUIRED') setActionError(problem); } }
+  async function confirmDestruction() {
+    if (!destruction || destructionPending) return;
+    const request = destruction;
+    setDestructionPending(true); setDestructionError(null);
+    try {
+      const result = await runDestruction(request);
+      const current = result.state.tasks.find(task => task.id === request.taskId);
+      if (current?.operation) { setDestructionStarted(true); return; }
+      setDestruction(null);
+      if (!current && request.command.type === 'task.delete') setSelectedId(null);
+    } catch (error) {
+      const problem = asProblem(error);
+      if (problem.code === 'DISCARD_REQUIRED') { setDestruction(null); setDestructionStarted(false); setDiscard({ ...request, error: problem }); }
+      else setDestructionError(problem);
+    } finally { setDestructionPending(false); }
+  }
+  async function retryDestruction() {
+    if (!destruction || destructionPending) return;
+    const request = destruction;
+    setDestructionPending(true); setDestructionError(null);
+    try {
+      const result = await run({ type: 'operation.retry', taskId: request.taskId });
+      const current = result.state.tasks.find(task => task.id === request.taskId);
+      if (current?.operation) { setDestructionStarted(true); return; }
+      setDestruction(null);
+      if (!current && request.command.type === 'task.delete') setSelectedId(null);
+    } catch (error) {
+      const problem = asProblem(error);
+      if (problem.code === 'DISCARD_REQUIRED') { setDestruction(null); setDestructionStarted(false); setDiscard({ ...request, error: problem }); }
+      else setDestructionError(problem);
+    } finally { setDestructionPending(false); }
+  }
+  async function returnDestruction() {
+    if (!destruction || destructionPending) return;
+    const request = destruction;
+    setDestructionPending(true); setDestructionError(null);
+    try {
+      const result = await run({ type: 'operation.return', taskId: request.taskId });
+      const current = result.state.tasks.find(task => task.id === request.taskId);
+      if (current?.operation) { setDestructionStarted(true); return; }
+      setDestruction(null);
+      if (!current && request.command.type === 'task.delete') setSelectedId(null);
+    }
+    catch (error) { setDestructionError(asProblem(error)); }
+    finally { setDestructionPending(false); }
+  }
 
   const selectedTasks = state?.tasks.filter(task => selectedIds.has(task.id)) ?? [];
   const visible = state?.tasks.filter(task => (!projectFilter || task.projectId === projectFilter) && (task.title + ' ' + task.description).toLowerCase().includes(search.trim().toLowerCase())).sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt)) ?? [];
@@ -167,23 +229,29 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
   }
 
   function toggleSelect(taskId: string) { setSelectedIds(previous => { const next = new Set(previous); if (next.has(taskId)) next.delete(taskId); else next.add(taskId); return next; }); }
-  function enterSelection() { setSelectionMode(true); setSelectedIds(new Set()); setBatchResult(null); }
-  function exitSelection() { setSelectionMode(false); setSelectedIds(new Set()); }
+  function enterSelection() { setSelectionMode(true); setSelectedIds(new Set()); setBatchResult(null); setBatchTasks([]); setBatchProgress(null); }
+  function exitSelection() { setSelectionMode(false); setSelectedIds(new Set()); setBatchTasks([]); setBatchProgress(null); }
 
   async function deleteSelected() {
     if (batchPending) return;
-    setBatchPending(true); setActionError(null);
-    const skipped: Array<{ title: string; message: string }> = []; let deleted = 0;
+    const tasks = latest.current?.state.tasks ?? [];
+    const total = batchTasks.length || selectedIds.size;
+    const skipped: Array<{ title: string; message: string }> = []; let deleted = 0; let current = 0;
+    setBatchPending(true); setActionError(null); setBatchProgress(null);
     for (const taskId of [...selectedIds]) {
-      const task = latest.current?.state.tasks.find(value => value.id === taskId);
+      current += 1;
+      const task = tasks.find(value => value.id === taskId);
       if (!task) { setSelectedIds(previous => { const next = new Set(previous); next.delete(taskId); return next; }); continue; }
+      setBatchProgress({ current, total, title: task.title });
       try {
-        await run({ type: 'task.delete', taskId, confirmed: true, expectedWorktreePath: task.worktree?.path ?? null, requireIdle: true });
+        await run({ type: 'task.delete', taskId, confirmed: true, expectedWorktreePath: task.worktree?.path ?? null, requireIdle: true }, false);
         deleted += 1;
         setSelectedIds(previous => { const next = new Set(previous); next.delete(taskId); return next; });
-      } catch (error) { skipped.push({ title: task.title, message: asProblem(error).message }); }
+      } catch (error) {
+        skipped.push({ title: task.title, message: asProblem(error).message });
+      }
     }
-    setBatchConfirm(false); setBatchPending(false);
+    setBatchPending(false); setBatchProgress(null); setBatchConfirm(false);
     if (skipped.length > 0) setBatchResult({ deleted, skipped });
     else { setBatchResult(null); exitSelection(); }
   }
@@ -221,7 +289,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
       <button type="button" className="kb-button kb-icon-button" disabled={!state} aria-label="Configuration" title="Configuration" onClick={() => setConfiguration('General')}><SettingsIcon size={16} /></button>
     </> : <>
       <span className="kb-selection-count" role="status">{selectedIds.size} selected</span>
-      <button type="button" className="kb-button kb-danger" disabled={selectedIds.size === 0 || batchPending} onClick={() => setBatchConfirm(true)}><TrashIcon size={14} /> Delete {selectedIds.size || ''}</button>
+      <button type="button" className="kb-button kb-danger" disabled={selectedIds.size === 0 || batchPending} onClick={() => { setBatchTasks(selectedTasks); setBatchProgress(null); setBatchConfirm(true); }}><TrashIcon size={14} /> Delete {selectedIds.size || ''}</button>
       <button type="button" className="kb-button" disabled={batchPending} onClick={exitSelection}>Cancel</button>
     </>}
   </div></header>
@@ -231,14 +299,14 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
         return <section className={'kb-column ' + (drag && !allowed ? 'kb-drop-disabled' : '')} key={column.id} aria-label={column.name + ' column'} data-column-id={column.id}><header className="kb-column-header"><h2>{column.name}</h2><span aria-label={tasks.length + ' tasks'}>{tasks.length}</span></header>{column.id === state.workflow.initialColumnId && renderNewTaskButton(column)}<div className="kb-card-list">{tasks.map(task => renderCard(task, column))}{drag?.overColumnId === column.id && <div className="kb-drop-indicator" style={{ top: drag.indicatorY }} aria-hidden="true" />}{tasks.length === 0 && <p className="kb-empty-column">No matching tasks</p>}</div></section>; })}</section>)}</div></div>
       {selected && <TaskDrawer key={selected.id} task={selected} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} sessionTitles={sessionTitles} entering={drawerEntering} closing={drawerClosing} draftPort={draftPort} />}
     {newTask && <NewTaskDialog state={state} run={run} onClose={() => setNewTask(false)} onCreated={openTask} />}{configuration && <Configuration key={configuration} state={state} run={run} api={api} pickDirectory={pickDirectory} initial={configuration} onClose={() => setConfiguration(null)} />}
-    {destruction && <Modal title={destruction.command.type === 'task.delete' ? 'Delete task' : 'Remove worktree'} onClose={() => setDestruction(null)}><div className="kb-form"><p>{destruction.command.type === 'task.delete' ? 'Permanently delete the Kanban task ' : 'Remove the worktree for '}<strong>{destruction.title}</strong>?</p>{destruction.path && <p>Worktree: <code>{destruction.path}</code></p>}<p>{destruction.command.type === 'task.delete' ? 'Task data and notes are deleted. Its native DSH chats are ARCHIVED, not erased: their histories remain. The Git branch is kept. Conversations return to the base project path before worktree cleanup.' : 'The task, notes, conversations, histories, and Git branch are kept. All conversations return to the base project path before the worktree is removed.'}</p>{destruction.command.type === 'task.delete' && Boolean(state.tasks.find(task => task.id === destruction.command.taskId)?.unclaimedWorktrees?.length) && <p className="kb-warning" role="note" aria-label="Unclaimed checkout deletion warning">Unclaimed checkouts remain on disk. They are not included in this deletion and require manual inspection.</p>}<p>Local changes will not be discarded without an additional explicit confirmation.</p><div className="kb-actions"><button type="button" className="kb-button" onClick={() => setDestruction(null)}>Cancel</button><button type="button" className="kb-button kb-danger" onClick={() => void confirmDestruction()}>{destruction.command.type === 'task.delete' ? 'Delete task and archive chats' : 'Confirm worktree removal'}</button></div></div></Modal>}
+    {destruction && (() => {
+      const task = state.tasks.find(value => value.id === destruction.taskId);
+      if (!task) return null;
+      return <DeleteTaskDialog request={destruction} task={task} project={state.projects.find(value => value.id === task.projectId)} attention={snapshot?.attention[task.id] ?? EMPTY_ATTENTION} sessionTitles={sessionTitles} pending={destructionPending} problem={destructionError} onCancel={() => { setDestruction(null); setDestructionError(null); setDestructionStarted(false); }} onConfirm={() => void confirmDestruction()} onRetry={() => void retryDestruction()} onReturn={() => void returnDestruction()} />;
+    })()}
     {discard && <DiscardDialog key={discard.command.type + discard.command.taskId} request={discard} run={command => runDestruction(discard, command)} onClose={() => setDiscard(null)} onDeleted={() => setSelectedId(null)} />}
-    {batchConfirm && <Modal title="Delete selected tasks" onClose={() => { if (!batchPending) setBatchConfirm(false); }} busy={batchPending}><div className="kb-form"><p>Delete {selectedTasks.length} selected task{selectedTasks.length === 1 ? '' : 's'}?</p><ul className="kb-batch-list">{selectedTasks.map(task => <li key={task.id}>{task.title}</li>)}</ul><p>Eligible tasks are deleted with the individual deletion rules: task data, notes, and worktree are removed, native chats are archived without erasing histories, and branches are kept. Tasks with running chats, an unresolved operation, or local worktree changes are skipped and reported.</p><div className="kb-actions"><button type="button" className="kb-button" disabled={batchPending} onClick={() => setBatchConfirm(false)}>Cancel</button><button type="button" className="kb-button kb-danger" disabled={batchPending || selectedTasks.length === 0} onClick={() => void deleteSelected()}>{batchPending ? 'Deleting…' : 'Delete selected'}</button></div></div></Modal>}
-    {batchResult && <Modal title="Deletion results" onClose={() => setBatchResult(null)}><div className="kb-form"><p>{batchResult.deleted} task{batchResult.deleted === 1 ? '' : 's'} deleted.</p>{batchResult.skipped.length > 0 && <><p className="kb-warning">Skipped:</p><ul className="kb-batch-list">{batchResult.skipped.map((item, index) => <li key={index}><strong>{item.title}</strong> — {item.message}</li>)}</ul><p>The skipped tasks remain selected so you can retry after resolving them.</p></>}<div className="kb-actions"><button type="button" className="kb-button" onClick={() => setBatchResult(null)}>Close</button></div></div></Modal>}</>}
+    {batchConfirm && <BulkDeleteDialog tasks={batchTasks} attention={snapshot?.attention ?? {}} pending={batchPending} progress={batchProgress} onCancel={() => { if (!batchPending) setBatchConfirm(false); }} onConfirm={() => void deleteSelected()} />}
+    {batchResult && <BulkResultDialog result={batchResult} onClose={() => setBatchResult(null)} />}
+    </>}
   </section>;
-}
-
-function DiscardDialog({ request, run, onClose, onDeleted }: { request: Destruction; run: RunCommand; onClose: () => void; onDeleted: () => void }) {
-  const [understood, setUnderstood] = useState(false); const [pending, setPending] = useState(false); const [error, setError] = useState<Problem | null>(null);
-  return <Modal title="Discard local worktree changes?" onClose={onClose} busy={pending}><div className="kb-form"><p className="kb-warning">Additional confirmation required: modified tracked files and untracked files in this worktree can be permanently lost.</p><strong>{request.title}</strong>{request.path && <code>{request.path}</code>}<ErrorNotice problem={error ?? request.error ?? null} /><label className="kb-choice"><input type="checkbox" checked={understood} disabled={pending} onChange={event => setUnderstood(event.target.checked)} />I understand that these local changes and untracked files will be discarded.</label><div className="kb-actions"><button type="button" className="kb-button" disabled={pending} onClick={onClose}>Keep local changes</button><button type="button" className="kb-button kb-danger" disabled={pending || !understood} onClick={async () => { if (!understood) return; setPending(true); setError(null); try { await run({ ...request.command, discardChanges: true }); if (request.command.type === 'task.delete') onDeleted(); onClose(); } catch (failure) { setError(asProblem(failure)); } finally { setPending(false); } }}>{pending ? 'Removing…' : 'Discard changes and continue'}</button></div></div></Modal>;
 }

@@ -1,5 +1,5 @@
 {
-  "updatedOn": "2026-10-22",
+  "updatedOn": "2026-10-23",
   "status": "acceptance-in-progress",
   "environment": {
     "dsh": "0.2.1-rc.2",
@@ -1413,6 +1413,26 @@
     "noResidualConcreteProductP1P2": true,
     "reviewedDocumentBeforePortableLinks": "148f106a8b69e3edef2c73b470103353c8a6eddd9c9dc5ae132b7b0ff1ced90d",
     "publicationNormalization": "Relative/archive link destinations, three stale citation end-line bounds and trailing blank EOF lines only; reviewed product source hashes unchanged."
+  },
+  "fixTaskDeletion": {
+    "change": "fix-task-deletion",
+    "archive": "openspec/changes/archive/2026-10-23-fix-task-deletion",
+    "tasks": "44/51 complete; native DSH e2e (9.2-9.6) and manual GUI checks (10.4-10.5) remain open",
+    "localVerification": {
+      "time": "2026-10-23T10:17:16+01:00",
+      "typecheck": "host and client passed",
+      "tests": "1500 passed / 68 files (sequential, 15s timeout)",
+      "browser": "9 passed / 9",
+      "build": "host, lazy client, and public declarations built",
+      "status": "pass",
+      "note": "The normal 5s run had one unrelated real-Git timeout; the same test passed isolated and the full sequential suite passed with a 15s timeout."
+    },
+    "manualDshE2e": {
+      "command": "node scripts/e2e-dsh.mjs --checkout /Users/filipe.esch/projects/pessoal/deepseek-harness --only deletion",
+      "template": "tests/e2e-dsh/kanban-deletion.e2e.template.ts",
+      "status": "blocked-prerequisite-not-run",
+      "detail": "The template was repaired after independent review: zero-call primary replay fixture, prepared child fixture, parent discovery from the drawer tab, and persisted child inspection. The pinned DSH checkout still imports session-persistence-jsonl without p-limit, and installing its dependencies is blocked by unavailable pnpm@11.28.5. The lane has never executed; do not claim a pass."
+    }
   },
   "finalAcceptance": {
     "scope": "user-approved public-extension-point plugin acceptance",

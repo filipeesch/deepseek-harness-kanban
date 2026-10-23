@@ -23,6 +23,31 @@ export function ErrorNotice({ problem }: { problem: Problem | null }) {
   return problem ? <div className="kb-error" role="alert"><strong>{problem.code}</strong><span>{problem.message}</span></div> : null;
 }
 
+export function ProblemNotice({ problem, title = 'The operation needs attention', sessionTitles, detailsLabel = 'Details' }: {
+  problem: Problem | null;
+  title?: string;
+  sessionTitles?: { title(sessionId: string): string | undefined };
+  detailsLabel?: string;
+}) {
+  if (!problem) return null;
+  const details = problem.details ?? {};
+  const sessionId = typeof details.sessionId === 'string' ? details.sessionId : undefined;
+  const sessionTitle = sessionId ? sessionTitles?.title(sessionId) : undefined;
+  const values = Object.entries(details);
+  return <div className="kb-error" role="alert">
+    <strong>{title}</strong>
+    <span>{problem.message || 'The operation could not be completed.'}</span>
+    {sessionId && <span className="kb-hint">Conversation: {sessionTitle ? sessionTitle + ' (' + sessionId + ')' : sessionId}</span>}
+    <details className="kb-problem-details">
+      <summary>{detailsLabel}</summary>
+      <dl className="kb-problem-facts">
+        <div><dt>Code</dt><dd><code>{problem.code}</code></dd></div>
+        {values.map(([key, value]) => <div key={key}><dt>{key}</dt><dd><code>{typeof value === 'string' ? value : JSON.stringify(value)}</code></dd></div>)}
+      </dl>
+    </details>
+  </div>;
+}
+
 export function Markdown({ children }: { children: string }) {
   return <div className="kb-markdown"><ReactMarkdown skipHtml components={{ a: ({ children: label, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer">{label}</a> }}>{children}</ReactMarkdown></div>;
 }
@@ -42,14 +67,16 @@ export function useAction(run: RunCommand) {
   return { pending, error, execute, clearError: () => setError(null) };
 }
 
-export function Modal({ title, children, onClose, busy = false, size = 'default' }: { title: string; children: ReactNode; onClose: () => void; busy?: boolean; size?: 'default' | 'wide' }) {
+export function Modal({ title, children, onClose, busy = false, size = 'default', initialFocus = 'first', describedBy }: { title: string; children: ReactNode; onClose: () => void; busy?: boolean; size?: 'default' | 'wide'; initialFocus?: 'first' | 'cancel'; describedBy?: string }) {
   const id = useId(); const ref = useRef<HTMLDivElement>(null);
   const state = useRef({ onClose, busy }); state.current = { onClose, busy };
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = ref.current;
-    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"], [contenteditable="true"]:not([aria-disabled="true"])') ?? []).filter(el => !el.hidden && el.getAttribute('aria-hidden') !== 'true');
-    (focusable()[0] ?? dialog)?.focus();
+    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), summary, input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"], [contenteditable="true"]:not([aria-disabled="true"])') ?? []).filter(el => !el.hidden && el.getAttribute('aria-hidden') !== 'true');
+    const preferred = initialFocus === 'cancel' ? dialog?.querySelector<HTMLElement>('[data-kb-initial-focus]') : undefined;
+    const target = busy ? dialog : preferred ?? focusable()[0] ?? dialog;
+    target?.focus();
     const key = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (!state.current.busy) state.current.onClose(); }
@@ -61,8 +88,8 @@ export function Modal({ title, children, onClose, busy = false, size = 'default'
     };
     dialog?.addEventListener('keydown', key);
     return () => { dialog?.removeEventListener('keydown', key); if (previous?.isConnected) previous.focus(); };
-  }, []);
-  return <div className="kb-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}><div className={'kb-dialog' + (size === 'wide' ? ' kb-dialog-wide' : '')} role="dialog" aria-modal="true" aria-labelledby={id} aria-busy={busy} ref={ref} tabIndex={-1}><header className="kb-dialog-header"><h2 id={id}>{title}</h2><button type="button" className="kb-button kb-icon-button" disabled={busy} onClick={onClose} aria-label={'Close ' + title}>×</button></header>{children}</div></div>;
+  }, [initialFocus, busy]);
+  return <div className="kb-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}><div className={'kb-dialog' + (size === 'wide' ? ' kb-dialog-wide' : '')} role="dialog" aria-modal="true" aria-labelledby={id} aria-describedby={describedBy} aria-busy={busy} ref={ref} tabIndex={-1}><header className="kb-dialog-header"><h2 id={id}>{title}</h2><button type="button" className="kb-button kb-icon-button" disabled={busy} onClick={onClose} aria-label={'Close ' + title}>×</button></header>{children}</div></div>;
 }
 
 export function Tabs({ label, values, selected, onSelect, id }: { label: string; values: readonly string[]; selected: string; onSelect: (value: string) => void; id: string }) {

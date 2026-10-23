@@ -3,13 +3,14 @@ import { lstat, stat } from 'node:fs/promises';
 import { KanbanError, problem } from '../shared/errors.js';
 import type { GitPort, GitTree, SessionPort } from '../shared/ports.js';
 import type { BoardState, ContextOperation, OperationRequest, Project, Task } from '../shared/types.js';
-import { canonicalPath, containsPath } from './git.js';
+import { canonicalPath } from './git.js';
+import { WorktreeSharingGuard } from './worktree-sharing.js';
 
 export interface WorktreeStore {
   snapshot(): BoardState;
   transact(change: (draft: BoardState) => void): Promise<unknown>;
 }
-export interface WorktreeCoordinatorOptions { signal?: AbortSignal; id?: () => string; now?: () => string; onTaskDeleted?: (task: Task, project: Project) => Promise<void> }
+export interface WorktreeCoordinatorOptions { signal?: AbortSignal; id?: () => string; now?: () => string; onTaskDeleted?: (task: Task, project: Project) => Promise<void>; sharing?: WorktreeSharingGuard }
 type CreateAttempt = NonNullable<ContextOperation['createAttempt']>;
 
 function requireTask(state: BoardState, id: string): Task {
@@ -44,6 +45,7 @@ export class WorktreeCoordinator {
   private readonly id: () => string;
   private readonly now: () => string;
   private readonly onTaskDeleted?: (task: Task, project: Project) => Promise<void>;
+  private readonly sharing: WorktreeSharingGuard;
   private readonly tails = new Map<string, Promise<void>>();
   private resumed: Promise<void> | undefined;
   private resumeAgain = false;
@@ -54,6 +56,7 @@ export class WorktreeCoordinator {
     this.id = options.id ?? randomUUID;
     this.now = options.now ?? (() => new Date().toISOString());
     this.onTaskDeleted = options.onTaskDeleted;
+    this.sharing = options.sharing ?? new WorktreeSharingGuard(store, sessions);
   }
 
   dispose(): void { this.disposed = true; this.controller.abort(); }
@@ -241,22 +244,6 @@ export class WorktreeCoordinator {
     if (tree.branch === 'HEAD' || tree.branch !== request.branchName || tree.path !== request.path) throw new KanbanError('RECOVERY_TARGET_MISMATCH', 'The recovered checkout does not match the requested branch.', { path: tree.path, branch: tree.branch });
   }
 
-  private async shared(taskId: string, target: string): Promise<void> {
-    const canonical = await canonicalPath(target, true);
-    const state = this.store.snapshot();
-    const task = requireTask(state, taskId);
-    for (const other of state.tasks) {
-      if (other.id === taskId || !other.worktree) continue;
-      const otherPath = await canonicalPath(other.worktree.path, true);
-      if (containsPath(canonical, otherPath) || containsPath(otherPath, canonical)) throw new KanbanError('SHARED_WORKTREE', 'Another task is associated with this checkout.', { taskId: other.id, path: canonical });
-    }
-    for (const session of await this.sessions.directories(canonical)) {
-      if (task.sessionIds.includes(session.sessionId)) continue;
-      const current = await canonicalPath(session.directory, true);
-      if (containsPath(canonical, current)) throw new KanbanError('SHARED_WORKTREE', 'Another native session is using this checkout.', { sessionId: session.sessionId, path: canonical });
-    }
-  }
-
   private sourceUnchanged(taskId: string, expected: Project): void {
     const { project } = this.read(taskId);
     if (project.id !== expected.id || project.projectPath !== expected.projectPath || project.gitRootPath !== expected.gitRootPath) throw new KanbanError('PROJECT_CONTEXT_CHANGED', 'The project paths changed during the operation.');
@@ -348,7 +335,7 @@ export class WorktreeCoordinator {
       } else {
         target = await this.git.projectDirectory(project);
         if ((request.kind === 'remove' || request.kind === 'delete') && task.worktree && !op.gitCompleted) {
-          await this.shared(taskId, task.worktree.path);
+          await this.sharing.assertExclusive(taskId, task.worktree.path);
           if (await exists(task.worktree.path)) {
             const tree = await this.git.inspect(project, task.worktree.path, task.sessionIds);
             if (tree.dirty && !request.discardChanges) throw new KanbanError('DISCARD_REQUIRED', 'Explicit confirmation is required to discard local worktree changes.', { path: tree.path });
@@ -373,12 +360,12 @@ export class WorktreeCoordinator {
       if (!task.operation!.gitCompleted) {
         if (!await this.idle(taskId, operationId)) return;
         if (task.worktree) {
-          await this.shared(taskId, task.worktree.path);
+          await this.sharing.assertExclusive(taskId, task.worktree.path);
           await this.update(taskId, operationId, (_task, operation) => { operation.phase = 'removing'; });
           this.assertOpen();
           if (!await this.idle(taskId, operationId)) return;
           this.sourceUnchanged(taskId, expectedProject);
-          await this.shared(taskId, op.targetPath!);
+          await this.sharing.assertExclusive(taskId, op.targetPath!);
           this.sourceUnchanged(taskId, expectedProject);
           const confirmed = this.read(taskId).task.worktree;
           if (!confirmed || await canonicalPath(confirmed.path, true) !== op.targetPath) throw new KanbanError('OPERATION_TARGET_CHANGED', 'The worktree binding changed before removal.');

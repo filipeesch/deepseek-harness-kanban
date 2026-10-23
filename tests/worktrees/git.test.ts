@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdir, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { GitAdapter } from '../../src/host/git.js';
 import { cleanup, fixture, git, gitOk, LocalExecutor } from './helpers.js';
@@ -145,4 +145,18 @@ describe('GitAdapter through the injected executor', () => {
     await expect(stat(f.tree)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+});
+
+describe('absent worktree removal', () => {
+  it('removes an absent registered checkout without pruning unrelated missing worktrees', async () => {
+    const f = await fixture(); const adapter = new GitAdapter(new LocalExecutor());
+    const other = path.join(f.root, 'trees', 'other');
+    await adapter.create(f.project, { mode: 'new', path: f.tree, branchName: 'absent' }, []);
+    await adapter.create(f.project, { mode: 'new', path: other, branchName: 'other' }, []);
+    await rm(f.tree, { recursive: true, force: true });
+    await adapter.remove(f.project, f.tree, false, []);
+    const listed = (await git(f.project.gitRootPath, ['worktree', 'list', '--porcelain'])).stdout;
+    expect(listed).not.toContain(f.tree);
+    expect(listed).toContain(other);
+  });
 });

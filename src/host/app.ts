@@ -12,6 +12,7 @@ import { KanbanError, invariant, problem } from '../shared/errors.js';
 import { WorktreeCoordinator } from './worktrees.js';
 import { isAbsolutePath } from '../domain/validation.js';
 import { taskTitleSlug, worktreePathForBranch } from '../shared/worktree-name.js';
+import { ownedSessionIds } from '../domain/session-lineage.js';
 
 async function pathExists(value:string):Promise<boolean>{try{await lstat(value);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}}
 function isEvent(value:unknown):value is {type:string;seq:number;data:unknown}{return Boolean(value&&typeof value==='object'&&'type'in value&&typeof value.type==='string'&&'seq'in value&&typeof value.seq==='number'&&Number.isSafeInteger(value.seq)&&'data'in value);}
@@ -212,7 +213,8 @@ export class KanbanApp {
   if(!this.workspaces||!task.worktreeWorkspaceId||!task.worktreeWorkspaceOwned)return;
   const info=this.workspaces.get(task.worktreeWorkspaceId);
   if(!info)return;
-  if(info.sessionIds.some(id=>!task.sessionIds.includes(id)))return;
+  const owned=ownedSessionIds(task.sessionIds,(await this.sessions.topology()).lineage);
+  if(info.sessionIds.some(id=>!owned.has(id)))return;
   if(this.store.snapshot().tasks.some(other=>other.id!==task.id&&other.worktreeWorkspaceId===task.worktreeWorkspaceId))return;
   await this.workspaces.delete(task.worktreeWorkspaceId);
  }
@@ -252,7 +254,7 @@ export class KanbanApp {
    case 'worktree.attach':this.assertContext(command.taskId);invariant(!this.store.requireTask(command.taskId).pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'attach',path:command.path});break;
    case 'worktree.remove':this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'remove');invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm removal of the worktree while preserving the task and branch.');await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'remove',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath});break;
    case 'operation.retry':{
-    const task=this.store.requireTask(command.taskId);if(task.operation){await this.worktrees.retry(command.taskId);const current=this.store.requireTask(command.taskId);if(!current.operation&&current.pendingTransition?.worktreeRequest&&current.pendingTransition.status==='failed')await this.store.transact(d=>{const p=d.tasks.find(t=>t.id===command.taskId)!.pendingTransition!;p.status='waiting';delete p.error;});}else if(task.pendingTransition){await this.store.transact(d=>{const t=d.tasks.find(t=>t.id===command.taskId)!;if(t.pendingTransition){t.pendingTransition.status='waiting';delete t.pendingTransition.error;}});}await this.dispatchPending();break;
+    const task=this.store.requireTask(command.taskId);if(task.operation){await this.worktrees.retry(command.taskId);const current=this.store.snapshot().tasks.find(t=>t.id===command.taskId);if(current&&!current.operation&&current.pendingTransition?.worktreeRequest&&current.pendingTransition.status==='failed')await this.store.transact(d=>{const p=d.tasks.find(t=>t.id===command.taskId)!.pendingTransition!;p.status='waiting';delete p.error;});}else if(task.pendingTransition){await this.store.transact(d=>{const t=d.tasks.find(t=>t.id===command.taskId)!;if(t.pendingTransition){t.pendingTransition.status='waiting';delete t.pendingTransition.error;}});}await this.dispatchPending();break;
    }
    case 'operation.return':await this.clearPending(command.taskId);await this.worktrees.returnToBase(command.taskId);break;
    case 'task.move':await this.move(command);break;

@@ -13,7 +13,7 @@ describe('destructive consent applies to both lifecycle commands',()=>{
    await user.click(await screen.findByRole('button',{name:'Open task Beta task'}));
    mock.command.mockRejectedValueOnce({code:'DISCARD_REQUIRED',message:'Local changes exist.',details:{path:'/trees/beta'}});
    if(type==='worktree.remove'){await user.click(screen.getByRole('tab',{name:'Git'}));await user.click(screen.getByRole('button',{name:'Remove worktree'}));await user.click(screen.getByRole('button',{name:'Confirm worktree removal'}));}
-   else {await user.click(screen.getByRole('button',{name:'Delete task'}));await user.click(screen.getByRole('button',{name:'Delete task and archive chats'}));}
+   else {await user.click(screen.getByRole('button',{name:'Delete task'}));const deleteDialog=await screen.findByRole('dialog',{name:'Delete task'});await user.click(within(deleteDialog).getByRole('button',{name:'Delete task'}));}
    const dialog=await screen.findByRole('dialog',{name:'Discard local worktree changes?'});
    expect(mock.command).toHaveBeenCalledTimes(1);expect(mock.command.mock.calls[0]![0]).toEqual({type,taskId:'t2',confirmed:true,expectedWorktreePath:'/trees/beta'});
    if(choice==='decline'){await user.click(within(dialog).getByRole('button',{name:'Keep local changes'}));expect(mock.command).toHaveBeenCalledTimes(1);expect(mock.get().state.tasks.find(t=>t.id==='t2')?.worktree?.path).toBe('/trees/beta');}

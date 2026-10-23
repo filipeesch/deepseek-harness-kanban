@@ -260,43 +260,52 @@ export function createNativePorts(ctx: Context): { sessions: SessionPort; execut
         failed: lastOutcomeFailed(snapshot),
       };
     },
-    async directories(within?: string) {
+    async topology(within?: string) {
       const target = within ? await directoryPath(within) : undefined;
       const listed = await ctx.sessionController.list({}, AbortSignal.timeout(READ_TIMEOUT_MS));
       const items = new Map(listed.items.map((item) => [String(item.sessionId), item]));
       const ids = new Set([...listed.items.map((item) => item.sessionId), ...ctx.sessions.list().map((session) => session.id)]);
+      const lineage: Array<{ sessionId: string; parentSessionId?: string; origin?: 'subagent' }> = [];
+      for (const id of ids) {
+        const key = String(id);
+        const item = items.get(key);
+        const live = ctx.sessions.get(SessionId(key));
+        const parent = item?.parentSessionId !== undefined
+          ? String(item.parentSessionId)
+          : live?.header.parentSession !== undefined ? String(live.header.parentSession) : undefined;
+        const origin = item?.origin ?? live?.header.origin;
+        lineage.push({ sessionId: key, ...(parent ? { parentSessionId: parent } : {}), ...(origin ? { origin } : {}) });
+      }
+      if (target === undefined) return { related: [], lineage };
       const workspaceSessions = new Set<string>();
-      if (target) {
-        const workspaces = typeof ctx.workspaceRegistry.list === 'function' ? ctx.workspaceRegistry.list() : [];
-        for (const workspace of workspaces) {
-          const path = await directoryPath(workspace.path).catch(() => undefined);
-          if (path === target) for (const sessionId of workspace.sessionIds) workspaceSessions.add(String(sessionId));
-        }
+      const workspaces = typeof ctx.workspaceRegistry.list === 'function' ? ctx.workspaceRegistry.list() : [];
+      for (const workspace of workspaces) {
+        const path = await directoryPath(workspace.path).catch(() => undefined);
+        if (path === target) for (const sessionId of workspace.sessionIds) workspaceSessions.add(String(sessionId));
       }
       const related = async (value: string): Promise<boolean> => {
         try {
           const path = await directoryPath(value);
-          return inside(target!, path);
+          return inside(target, path);
         } catch { return true; } // An unreadable peer remains fail-closed.
       };
       const result: Array<{ sessionId: string; directory: string }> = [];
       for (const id of ids) {
-        if (target) {
-          const candidates: string[] = [];
-          const live = ctx.sessions.get(SessionId(id));
-          if (live) { try { candidates.push(ctx.workingDirectory.get(live)); } catch { /* fall back to listed cwd */ } }
-          const item = items.get(String(id));
-          const projected = (item as { projections?: { values?: { workingDirectory?: unknown } } } | undefined)?.projections?.values?.workingDirectory;
-          if (typeof projected === 'string') candidates.push(projected);
-          if (item?.cwd) candidates.push(item.cwd);
-          if (workspaceSessions.has(String(id))) candidates.push(target);
-          let candidateRelated = false;
-          for (const candidate of candidates) if (await related(candidate)) { candidateRelated = true; break; }
-          if (!candidateRelated) continue;
-        }
-        result.push({ sessionId: id, directory: await sessions.directory(id) });
+        const key = String(id);
+        const candidates: string[] = [];
+        const live = ctx.sessions.get(SessionId(key));
+        if (live) { try { candidates.push(ctx.workingDirectory.get(live)); } catch { /* fall back to listed cwd */ } }
+        const item = items.get(key);
+        const projected = (item as { projections?: { values?: { workingDirectory?: unknown } } } | undefined)?.projections?.values?.workingDirectory;
+        if (typeof projected === 'string') candidates.push(projected);
+        if (item?.cwd) candidates.push(item.cwd);
+        if (workspaceSessions.has(key)) candidates.push(target);
+        let candidateRelated = false;
+        for (const candidate of candidates) if (await related(candidate)) { candidateRelated = true; break; }
+        if (!candidateRelated) continue;
+        result.push({ sessionId: key, directory: await sessions.directory(key) });
       }
-      return result; // An unreadable peer is not silently dropped from shared-tree protection.
+      return { related: result, lineage };
     },
   };
   const executor: GitExecutor = {

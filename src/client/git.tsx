@@ -23,13 +23,6 @@ export function WorktreeFields({ value, onChange, branches, disabled = false, ca
   </fieldset>;
 }
 
-export function OperationStatus({ task, run }: { task: Task; run: RunCommand }) {
-  const action = useAction(run); const operation = task.operation;
-  if (!operation) return null;
-  const text = operation.phase === 'waiting' ? 'Waiting for every conversation to become idle.' : operation.phase === 'failed' ? 'The operation needs attention. Recovery information has been retained.' : 'Worktree operation: ' + operation.phase + '.';
-  return <div className="kb-operation" aria-live="polite"><p role="status">{text}</p>{operation.targetDirectory && <p className="kb-hint">Target: <code>{operation.targetDirectory}</code></p>}<p className="kb-hint">Conversations switched: {operation.switchedSessionIds.length} / {task.sessionIds.length}</p><ErrorNotice problem={operation.error ?? null} /><ErrorNotice problem={action.error} />{(operation.phase === 'failed' || operation.phase === 'waiting') && <div className="kb-actions"><button className="kb-button" disabled={action.pending} onClick={() => void action.execute({ type: 'operation.retry', taskId: task.id })}>{action.pending ? 'Working…' : 'Retry operation'}</button>{operation.phase === 'failed' && <button className="kb-button" disabled={action.pending} onClick={() => void action.execute({ type: 'operation.return', taskId: task.id })}>Return chats to base project</button>}</div>}</div>;
-}
-
 export function PendingTransitionStatus({ task, run, columnName }: { task: Task; run: RunCommand; columnName: string }) {
   const action = useAction(run); const transition = task.pendingTransition;
   if (!transition) return null;
@@ -86,7 +79,6 @@ export function GitPanel({ task, project, api, run, worktreeBasePath, draft }: {
           <div className="kb-git-card-actions"><button type="button" className="kb-button kb-primary" disabled={blocked || action.pending || !attachPath.trim()} onClick={() => void attach()}>{action.pending ? 'Attaching…' : 'Attach worktree'}</button></div>
         </>}
       </div>}
-      {task.operation && <div className="kb-git-card-body"><OperationStatus task={task} run={run} /></div>}
       <ErrorNotice problem={action.error} />
     </section>
     <details className="kb-git-card kb-details-card">

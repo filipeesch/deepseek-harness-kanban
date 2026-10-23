@@ -276,7 +276,7 @@ describe('native conversations', () => {
     f.projection.mockImplementation(async ({ sessionId }): Promise<Projection> => sessionId === coldId
       ? { kind: 'sequenced', asOfSeq: 0, values: { workingDirectory: changed } }
       : { kind: 'sequenced', asOfSeq: 0, values: {} });
-    expect(await f.sessions.directories()).toEqual([{ sessionId: coldId, directory: changed }, { sessionId: 'a', directory: root }]);
+    expect((await f.sessions.topology(root)).related).toEqual([{ sessionId: coldId, directory: changed }, { sessionId: 'a', directory: root }]);
     expect(f.resolveAgent).not.toHaveBeenCalled(); expect(f.inspect).not.toHaveBeenCalled();
   });
   it('narrows a shared-tree scan to the target path without reading unrelated cold sessions', async () => {
@@ -289,9 +289,34 @@ describe('native conversations', () => {
     f.projection.mockImplementation(async ({ sessionId }): Promise<Projection> => sessionId === cold
       ? { kind: 'sequenced', asOfSeq: 1, values: { workingDirectory: join(within, 'api') } }
       : { kind: 'sequenced', asOfSeq: 1, values: { workingDirectory: join(root, 'other') } });
-    expect(await f.sessions.directories(within)).toEqual([{ sessionId: cold, directory: join(within, 'api') }]);
+    expect((await f.sessions.topology(within)).related).toEqual([{ sessionId: cold, directory: join(within, 'api') }]);
     expect(f.inspect).not.toHaveBeenCalled();
   });
+  it('returns global lineage even when related directories are filtered', async () => {
+    const f = fixture(); const child = SessionId('cold-child');
+    f.list.mockResolvedValue({ items: [{ sessionId: child, agentAvailable: false, running: false, updatedAt: 1, blank: false, cwd: root, parentSessionId: SessionId('a'), origin: 'subagent' }] } as never);
+    f.inspections.set(String(child), { meta: { ...f.inspections.get('a')!.meta, id: child, cwd: root }, events: [], inheritedEventCount: SessionLogOffset(0) });
+    const scoped = await f.sessions.topology(root);
+    expect(scoped.related.map(item => item.sessionId).sort()).toEqual(['a', String(child)].sort());
+    expect(scoped.lineage).toEqual(expect.arrayContaining([
+      { sessionId: 'a' },
+      { sessionId: String(child), parentSessionId: 'a', origin: 'subagent' },
+    ]));
+    const global = await f.sessions.topology();
+    expect(global.related).toEqual([]);
+    expect(global.lineage).toEqual(expect.arrayContaining([{ sessionId: String(child), parentSessionId: 'a', origin: 'subagent' }]));
+  });
+
+  it('uses the live header for lineage when list metadata omits parent and origin', async () => {
+    const f = fixture(); const child = SessionId('live-child');
+    const meta = { ...f.session.header, id: child, parentSession: SessionId('a'), origin: 'subagent' as const, delegationDepth: 1 };
+    f.live.set(String(child), Session.create(child, [], meta));
+    f.inspections.set(String(child), { meta, events: [], inheritedEventCount: SessionLogOffset(0) });
+    f.list.mockResolvedValue({ items: [{ sessionId: child, agentAvailable: true, running: false, updatedAt: 1, blank: false, cwd: root }] } as never);
+    const topology = await f.sessions.topology(root);
+    expect(topology.lineage).toContainEqual({ sessionId: String(child), parentSessionId: 'a', origin: 'subagent' });
+  });
+
   it('reads canonical cold cwd when an unrelated aggregate projection fails without activating the peer', async () => {
     const f = fixture(); f.live.clear(); const expected = join(root, 'actual-tree', 'api');
     const snapshot = f.inspections.get('a')!; f.inspections.set('a', { ...snapshot, events: [envelope('working-directory/change', { cwd: expected })] });
@@ -304,13 +329,13 @@ describe('native conversations', () => {
     f.list.mockResolvedValue({ items: [{ sessionId: id, agentAvailable: false, running: false, updatedAt: 1, blank: false, cwd: root }] });
     f.inspections.set(id, { ...f.inspections.get('a')!, meta: { ...f.inspections.get('a')!.meta, id }, events: [envelope('working-directory/change', { cwd: expected })] });
     f.projection.mockRejectedValue(new Error('Session projections are unavailable'));
-    expect(await f.sessions.directories()).toEqual([{ sessionId: id, directory: expected }, { sessionId: 'a', directory: root }]);
+    expect((await f.sessions.topology(root)).related).toEqual([{ sessionId: id, directory: expected }, { sessionId: 'a', directory: root }]);
     expect(f.resolveAgent).not.toHaveBeenCalled(); expect(f.ensure).not.toHaveBeenCalled();
   });
   it('still fails closed if canonical peer history is unreadable after a projection error', async () => {
     const f = fixture(); f.live.clear(); f.list.mockResolvedValue({ items: [{ sessionId: SessionId('a'), agentAvailable: false, running: false, updatedAt: 1, blank: false, cwd: root }] });
     f.projection.mockRejectedValue(new Error('Session projection read failed')); f.inspect.mockRejectedValue(new Error('Canonical observation unavailable'));
-    await expect(f.sessions.directories()).rejects.toThrow('Canonical observation unavailable'); expect(f.resolveAgent).not.toHaveBeenCalled();
+    await expect(f.sessions.topology(root)).rejects.toThrow('Canonical observation unavailable'); expect(f.resolveAgent).not.toHaveBeenCalled();
   });
   it('propagates projection cancellation rather than starting another native read', async () => {
     const f = fixture(); f.live.clear(); const cancelled = Object.assign(new Error('Session projection read was cancelled'), { code: 'gateway/cancelled' });
@@ -322,8 +347,8 @@ describe('native conversations', () => {
     const snapshot = f.inspections.get('a')!;
     f.inspections.set('a', { ...snapshot, events: [envelope('working-directory/change', { cwd: join(root, 'current') })] });
     expect(await f.sessions.directory('a')).toBe(join(root, 'current'));
-    f.list.mockResolvedValue({ items: [{ sessionId: SessionId('missing'), agentAvailable: false, running: false, updatedAt: 1, blank: false }] });
-    await expect(f.sessions.directories()).rejects.toThrow('session missing');
+    f.list.mockResolvedValue({ items: [{ sessionId: SessionId('missing'), agentAvailable: false, running: false, updatedAt: 1, blank: false, cwd: root }] });
+    await expect(f.sessions.topology(root)).rejects.toThrow('session missing');
     expect(f.resolveAgent).not.toHaveBeenCalled();
   });
 });
