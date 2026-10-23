@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { Context } from '@deepseek-ai/cordis';
 import type { ISessions, SessionEventSource, SessionEventWindow, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client';
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client';
@@ -47,15 +47,61 @@ export function taskContextText(window: SessionEventWindow): string | null {
   return null;
 }
 
-/** The native Chat hides ordinary context rows; show the same injected context in the Kanban panel. */
-function KanbanTaskContextRow({ source }: { source: SessionEventSource }) {
+/** Render the task context at the start of the native transcript, scrolling with it. */
+function KanbanTaskContextRow({ source, hostRef }: { source: SessionEventSource; hostRef: React.RefObject<HTMLDivElement | null> }) {
   const subscribe = useCallback((listener: () => void) => source.subscribe(listener), [source]);
   const getSnapshot = useCallback(() => source.getSnapshot(), [source]);
   const events = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const [open, setOpen] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
   const text = taskContextText(events);
+
+  useLayoutEffect(() => {
+    const host = hostRef.current; const row = rowRef.current;
+    if (!host || !row || text === null) return;
+    let flow: HTMLElement | null = null; let scroll: HTMLElement | null = null;
+    let basePadding = 0; let originalPadding = ''; let resize: ResizeObserver | null = null; let observer: MutationObserver | null = null;
+    const findScroll = (element: HTMLElement): HTMLElement => {
+      let parent = element.parentElement;
+      while (parent && parent !== host) {
+        if (/(auto|scroll)/.test(getComputedStyle(parent).overflowY)) return parent;
+        parent = parent.parentElement;
+      }
+      return element.parentElement ?? host;
+    };
+    const update = () => {
+      if (!flow || !scroll) return;
+      const height = row.getBoundingClientRect().height;
+      flow.style.paddingTop = (basePadding + height + 8) + 'px';
+      const hostRect = host.getBoundingClientRect(); const scrollRect = scroll.getBoundingClientRect();
+      row.style.top = (scrollRect.top - hostRect.top) + 'px';
+      row.style.transform = 'translateY(' + (-scroll.scrollTop) + 'px)';
+    };
+    const attach = (): boolean => {
+      flow = host.querySelector<HTMLElement>('[data-chat-flow]');
+      if (!flow) return false;
+      scroll = findScroll(flow);
+      originalPadding = flow.style.paddingTop;
+      basePadding = parseFloat(getComputedStyle(flow).paddingTop) || 0;
+      scroll.addEventListener('scroll', update, { passive: true });
+      if (typeof ResizeObserver !== 'undefined') { resize = new ResizeObserver(update); resize.observe(host); resize.observe(row); }
+      update();
+      return true;
+    };
+    if (!attach() && typeof MutationObserver !== 'undefined') {
+      observer = new MutationObserver(() => { if (attach()) { observer?.disconnect(); observer = null; } });
+      observer.observe(host, { childList: true, subtree: true });
+    }
+    return () => {
+      observer?.disconnect(); resize?.disconnect();
+      if (scroll) scroll.removeEventListener('scroll', update);
+      if (flow) flow.style.paddingTop = originalPadding;
+      row.style.top = ''; row.style.transform = '';
+    };
+  }, [hostRef, open, text]);
+
   if (text === null) return null;
-  return <div className="kb-task-context" role="note" aria-label="Task context">
+  return <div ref={rowRef} className="kb-task-context" role="note" aria-label="Task context">
     <button type="button" className="kb-task-context-toggle" aria-expanded={open} onClick={() => setOpen(value => !value)}><span aria-hidden="true">{open ? '▾' : '▸'}</span> Task context <span className="kb-task-context-source">kanban-task</span></button>
     {open && <pre className="kb-task-context-body">{text}</pre>}
   </div>;
@@ -143,6 +189,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     const [reference, setReference] = useState<SessionReference | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [attempt, setAttempt] = useState(0);
+    const conversationHost = useRef<HTMLDivElement>(null);
     useEffect(() => {
       if (!reference) return;
       return draftPort.attach(id, draftBinding(reference));
@@ -172,9 +219,9 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     return <Provider session={reference}>
       <div className="kb-session-frame">
         {owner.renderSlot('kanban.session.status', {})}
-        <div className="kb-native-conversation">
-          <KanbanTaskContextRow source={reference.binding.eventSource} />
+        <div className="kb-native-conversation" ref={conversationHost}>
           {owner.renderSlot('kanban.conversation', {})}
+          <KanbanTaskContextRow source={reference.binding.eventSource} hostRef={conversationHost} />
         </div>
       </div>
     </Provider>;
