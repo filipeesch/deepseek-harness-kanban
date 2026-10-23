@@ -17,6 +17,13 @@ export function createBoardPageState(): BoardPageState {
 
 export function createTaskPageState(): TaskPageState { return { section: 'Conversations', conversationId: null }; }
 
+/** Pick the visible conversation for the tab strip and the status row. */
+export function resolveActiveConversation(sessionIds: readonly string[], closedSessionIds: readonly string[], selected: string | null, fallbackAllowed: boolean): string | null {
+  const open = sessionIds.filter(id => !closedSessionIds.includes(id));
+  if (selected !== null && open.includes(selected)) return selected;
+  return fallbackAllowed ? open[0] ?? null : null;
+}
+
 export function taskPageState(state: BoardPageState, taskId: string): TaskPageState {
   if (!Object.prototype.hasOwnProperty.call(state.drawers, taskId)) state.drawers[taskId] = createTaskPageState();
   return state.drawers[taskId]!;

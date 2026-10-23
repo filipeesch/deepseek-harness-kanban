@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
@@ -25,6 +26,33 @@ function mount(data = fixture()) {
 }
 async function loaded() { await screen.findByRole('button', { name: 'Open task Alpha task' }); }
 async function openAlpha(user: ReturnType<typeof userEvent.setup>) { await loaded(); await user.click(screen.getByRole('button', { name: 'Open task Alpha task' })); }
+
+describe('native overlay protection', () => {
+  it('keeps the drawer open when a native-style menu portal is used', async () => {
+    // Native action popovers portal out of the drawer; the page-body outside-close
+    // handler is a sibling, so selecting inside that portal must leave the task open.
+    const mock = fakeApi(); const user = userEvent.setup();
+    render(<BoardView api={mock.api} renderConversation={() => createPortal(<div role="tree" aria-label="Native subagent tree">native menu</div>, document.body)} />);
+    await screen.findByRole('button', { name: 'Open task Alpha task' });
+    await user.click(screen.getByRole('button', { name: 'Open task Alpha task' }));
+    fireEvent.pointerDown(screen.getByLabelText('Native subagent tree'));
+    expect(screen.getByRole('heading', { name: 'Alpha task', level: 2 })).toBeTruthy();
+  });
+});
+
+describe('board header layout', () => {
+  it('defines the status row container and hides it when empty', () => {
+    expect(styles).toContain('.dsh-kanban .kb-conversation-status{');
+    expect(styles).toContain('container-type:inline-size');
+    expect(styles).toContain('.dsh-kanban .kb-conversation-status:empty{display:none}');
+  });
+
+  it('reserves the host frame leading clearance for the collapsed sidebar', () => {
+    const rule = styles.match(/\.dsh-kanban \.kb-header\{[^}]*\}/)?.[0] ?? '';
+    expect(rule).toContain('padding-inline-start:max(20px,var(--dsh-frame-leading-clearance,20px))');
+    expect(styles).toContain('.dsh-kanban .kb-header{padding:12px;padding-inline-start:max(12px,var(--dsh-frame-leading-clearance,12px))}');
+  });
+});
 
 describe('scoped Kanban page', () => {
   it('renders grouped columns, search/project intersection, and simultaneous independent attention', async () => {

@@ -80,13 +80,14 @@ describe('real Cordis + real gateway namespace injection', () => {
       const key = options.name + ':' + (options.key ?? options.id ?? ''); components.set(key, component);
       return () => components.delete(key);
     });
-    root.provide('slots', { inject(_name: string, install: () => unknown) { install(); }, register: registrations });
+    root.provide('slots', { inject(_name: string, install: () => unknown) { install(); }, register: registrations, entriesOfSlot: () => [], subscribe: () => () => {} });
     root.provide('sessions', {});
     root.provide('uiSession', { sessionStatus: { getSnapshot: () => new Map(), subscribe: () => () => {} } });
     root.provide('conversation', {});
     root.provide('layout', {});
+    root.provide('locale', { bind: () => (key: string) => key });
     const client = root.plugin(KanbanClient); fibers.push(client); await client;
-    expect(registrations).toHaveBeenCalledTimes(5);
+    expect(registrations).toHaveBeenCalledTimes(6);
     expect(components.has('main:kanban')).toBe(true);
     // Invoke the page's own bridge API, not a separately authorized stand-in consumer.
     const Main = components.get('main:kanban') as (props: { usePanelInfo: (selector: (value: { activePanelId: string }) => boolean) => boolean }) => ReactNode;

@@ -56,6 +56,10 @@ The latest installation attempt initially failed fetching from the default regis
 
 Embedded chat uses native transcript, composer, tools, execution, permissions, and session services. Under design assumption **A7**, auxiliary native file/fork/workspace actions are **not guaranteed to remain contained in the drawer**. The plugin supplies the scoped native session/provider and delegates these actions to DSH; it does not reimplement or requalify their navigation. Do not assume every native action is an embedded-only action.
 
+In the **Conversations** section, a compact row beneath the agent tabs shows the active conversation's native agent mode, subagent activity, and background-job activity. It hosts the pinned DSH's own header-action components, so their labels, counts, and popovers are the native ones. The mode is read-only; the drawer does not offer a mode picker. This is a private integration with the pinned DSH release: a different DSH layout may require a plugin update, although it does not require a DSH patch. The row follows the selected tab, hides when no native action renders, and does not aggregate other task conversations.
+
+When the DSH sidebar is fully collapsed on macOS, the Kanban header uses the host-published frame leading clearance so its title, subtitle, and toolbar clear the window traffic lights and shell controls. The header falls back to its normal inset when the clearance is absent and reflows at narrow widths.
+
 ## Workflow and deliberate execution
 
 **Configuration → Workflow** edits YAML in a code editor with line numbers, YAML highlighting, folding, search, live diagnostics, vertical resize, and a maximize toggle. Save is disabled while the YAML is invalid or still checking; the host remains authoritative for orphaned columns and revision conflicts. The draft survives Configuration tab switches, and closing or reloading with unsaved changes asks first. Configuration opens on **General**; the empty-board **Configure projects** action opens **Projects**. The default is exactly five stages with **no entry instructions**:

@@ -8,11 +8,13 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client';
 import type { ConversationViewsProps, DraftAttachmentId } from '@deepseek-ai/dsh-client-ui-conversation/client';
 import type {} from '@deepseek-ai/dsh-client-ui-chat/client';
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client';
+import type {} from '@deepseek-ai/dsh-client-locale/client';
 import type { PropsRuntime, PropsRenderSlots, PropsRenderFactories } from '@deepseek-ai/dsh-client-ui-slots';
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import { TYPERT_REMOTE } from './remote.js';
 import { ClientBridge } from './client-bridge.js';
 import { BoardView, createBoardPageState, type BoardPageState } from './client/board.js';
+import { NativeSessionActions } from './client/native-session-actions.js';
 import { InstructionDraftPortImpl, type InstructionDraftBinding } from './client/instruction-draft.js';
 import { QuestionForm } from './questions/QuestionForm.js';
 import type { ClientApi } from './shared/types.js';
@@ -21,14 +23,18 @@ declare module '@deepseek-ai/dsh-api-session-controller/client' {
   interface SessionReferenceSourceMap { kanbanTaskDrawer: unknown }
 }
 declare module '@deepseek-ai/dsh-client-ui-slots' {
-  interface SlotMap { 'kanban.conversation': { kind: 'single'; scope: 'session' } }
+  interface SlotMap {
+    'kanban.conversation': { kind: 'single'; scope: 'session' };
+    'kanban.session.status': { kind: 'single'; scope: 'session' };
+  }
 }
 type ClientContext = Omit<Context, 'sessions'> & { sessions: ISessions };
-type MainProps = PropsRuntime<'main'> & PropsRenderSlots<'kanban.conversation'>;
+type MainProps = PropsRuntime<'main'> & PropsRenderSlots<'kanban.conversation' | 'kanban.session.status'>;
 type EmbeddedProps = PropsRuntime<'kanban.conversation'> & PropsRenderFactories;
+type SessionStatusProps = PropsRuntime<'kanban.session.status'> & PropsRenderFactories;
 export const name = 'kanban-client';
 // Service keys, not package names. Mount our own namespace before any access to remote.kanban.
-export const inject = ['remote', 'slots', 'sessions', 'uiSession', 'conversation', 'layout'];
+export const inject = ['remote', 'slots', 'sessions', 'uiSession', 'conversation', 'layout', 'locale'];
 const clientCss = '.kanban-native-state{padding:16px;color:inherit}.kanban-feed-error{padding:8px 16px;color:var(--dsw-alias-state-error-primary,crimson);border-bottom:1px solid var(--dsw-alias-border-l2)}';
 
 /** Read the first durable plugin-owned task-context message from a retained event window. */
@@ -111,6 +117,19 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       variant: 'embedded', phase: session.openState !== 'open' ? 'settling' : 'active', hero: false,
     }, { slots: { views: FixedChat } });
   }
+  function SessionStatus(props: SessionStatusProps) {
+    const open = props.useSession(value => value.openState === 'open');
+    const subscribeLocale = useCallback((listener: () => void) => ctx.locale.subscribe(listener), []);
+    useSyncExternalStore(subscribeLocale, () => ctx.locale.getSnapshot().revision, () => 0);
+    const [, setEntriesRevision] = useState(0);
+    useEffect(() => ctx.slots.subscribe('conversation.session.header.actions', () => setEntriesRevision(value => value + 1)), []);
+    if (!open) return null;
+    const entries = ctx.slots.entriesOfSlot('conversation.session.header.actions');
+    const translate = (namespace: string) => ctx.locale.bind(namespace);
+    return <div className="kb-conversation-status" data-conversation-status="" role="group" aria-label="Conversation status">
+      <NativeSessionActions entries={entries} translate={translate} standard={props as unknown as Record<string, unknown>} />
+    </div>;
+  }
   function draftBinding(reference: SessionReference): InstructionDraftBinding {
     const input = () => ctx.conversation.input.for(reference.binding.ctx);
     return {
@@ -150,7 +169,15 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     if (error) return <div className="kanban-native-state" role="alert">{error} <button type="button" onClick={() => setAttempt(value => value + 1)}>Retry conversation</button></div>;
     if (!reference) return <div className="kanban-native-state" role="status">Opening native conversation…</div>;
     const Provider = owner.SessionProvider;
-    return <Provider session={reference}><KanbanTaskContextRow source={reference.binding.eventSource} />{owner.renderSlot('kanban.conversation', {})}</Provider>;
+    return <Provider session={reference}>
+      <div className="kb-session-frame">
+        {owner.renderSlot('kanban.session.status', {})}
+        <div className="kb-native-conversation">
+          <KanbanTaskContextRow source={reference.binding.eventSource} />
+          {owner.renderSlot('kanban.conversation', {})}
+        </div>
+      </div>
+    </Provider>;
   }
   function BoardPage(props: MainProps & { api: ClientApi }) {
     const sessionListSource = scopedSessions.list ?? emptySessionList;
@@ -199,8 +226,9 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   function HiddenDecisionRow() { return null; }
   function BoardIcon() { return <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor"><rect x="2" y="3" width="16" height="14" rx="2" /><path d="M7 3v14M13 3v14M4 7h1M9 7h2M15 7h1M4 10h1M9 10h2" /></svg>; }
 
-  ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'kanban', children: { 'kanban.conversation': { kind: 'single', scope: 'session' } } }, Main));
+  ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'kanban', children: { 'kanban.conversation': { kind: 'single', scope: 'session' }, 'kanban.session.status': { kind: 'single', scope: 'session' } } }, Main));
   ctx.slots.inject('kanban.conversation', () => ctx.slots.register({ name: 'kanban.conversation' }, EmbeddedBody));
+  ctx.slots.inject('kanban.session.status', () => ctx.slots.register({ name: 'kanban.session.status' }, SessionStatus));
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: 'kanban', order: 80, label: 'Kanban' }, BoardIcon));
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'kanban-decision-questions', order: 20 }, Dock));
   ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: 'decision_request' }, HiddenDecisionRow));
