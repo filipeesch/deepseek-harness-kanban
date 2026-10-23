@@ -246,10 +246,11 @@ export class BoardStore {
         position = -1;
       }
       const timestamp = new Date().toISOString();
+      const initialColumn = state.workflow.columns.find(column => column.id === state.workflow.initialColumnId);
       const task: Task = {
         id: nextId(state.tasks), projectId: project.id, title: value.title.trim(), description: value.description,
         columnId: state.workflow.initialColumnId, position, sessionIds: [sessionId], closedSessionIds: [], effectiveCwd: project.projectPath,
-        worktree: null, operation: null, createdAt: timestamp, updatedAt: timestamp,
+        worktree: null, operation: null, ...(initialColumn?.onEnterPrompt?.trim() ? { instructionPending: { columnId: initialColumn.id, enteredAt: Date.now() } } : {}), createdAt: timestamp, updatedAt: timestamp,
       };
       state.tasks.push(task);
       return task;

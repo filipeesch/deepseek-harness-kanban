@@ -25,6 +25,8 @@ export interface Task {
   id: string; projectId: string; title: string; description: string; columnId: string; position: number;
   sessionIds: string[]; closedSessionIds: string[]; effectiveCwd: string;
   worktree: Worktree | null; operation: ContextOperation | null; pendingTransition?: PendingTransition;
+  /** The current instructed-stage entry whose card action has not been satisfied by a prompt. */
+  instructionPending?: { columnId: string; enteredAt: number };
   /** Diagnostic-only checkouts left on disk; never an execution or cleanup target. */
   unclaimedWorktrees?: Array<{ path: string; branch: string; error: Problem }>;
   worktreeWorkspaceId?: string; worktreeWorkspaceOwned?: boolean;

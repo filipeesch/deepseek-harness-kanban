@@ -29,9 +29,8 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
     hasMore: false, revision: 1, change: { kind: 'replace', entries: [] },
   };
   const eventSource = { getSnapshot: () => contextWindow, subscribe: () => () => {} };
-  const loadOlder = vi.fn().mockResolvedValue(undefined);
   const retain = vi.fn((id: string, options: { source: string; signal: AbortSignal }) => {
-    const reference = { sessionId: id, binding: { ctx: {}, eventSource, session: { loadOlder } }, ready: Promise.resolve({}), release: vi.fn(), [Symbol.dispose]() {} } as unknown as SessionReference;
+    const reference = { sessionId: id, binding: { ctx: {}, eventSource }, ready: Promise.resolve({}), release: vi.fn(), [Symbol.dispose]() {} } as unknown as SessionReference;
     references.push(reference); expect(options.source).toBe('kanbanTaskDrawer'); return reference;
   });
   const requestDraftInitialization = vi.fn().mockReturnValue('applied');
@@ -83,7 +82,7 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
     get mainView() { throw new Error('Global main session access is forbidden'); },
     get userQuestions() { throw new Error('Native question lifecycle access is forbidden'); },
   } as unknown as Context;
-  return { ctx, entries, mount, unmount, openMount: () => openMount(), remote, send, scope, retain, refresh, references, nativeSelect, requestDraftInitialization, focus, contextWindow, loadOlder };
+  return { ctx, entries, mount, unmount, openMount: () => openMount(), remote, send, scope, retain, refresh, references, nativeSelect, requestDraftInitialization, focus };
 }
 async function installed(rounds?: QuestionRound[]) {
   const f = fixture(false, rounds); const dispose = await apply(f.ctx); disposers.push(dispose); return f;
@@ -167,16 +166,6 @@ describe('public SDK plugin binding contracts', () => {
     await screen.findByText("Instruction inserted into Agent 1's composer.");
     expect(f.focus).toHaveBeenCalledOnce();
     expect(f.remote.command.mock.calls.every(([value]) => value.type === 'task.move')).toBe(true);
-  });
-  it('offers to load older messages when the task context is outside the loaded window', async () => {
-    const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;
-    f.contextWindow.entries = []; f.contextWindow.hasMore = true;
-    const provider = ({ children }: { children: ReactNode }) => <div data-testid="retained-body">{children}</div>;
-    render(<Main usePanelInfo={(select: (value: { activePanelId: string | null }) => unknown) => select({ activePanelId: 'kanban' })} SessionProvider={provider} renderSlot={() => <div>Native slot body</div>} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Open task Native task' }));
-    await screen.findByTestId('retained-body');
-    fireEvent.click(screen.getByRole('button', { name: /Load task context/ }));
-    await waitFor(() => expect(f.loadOlder).toHaveBeenCalledOnce());
   });
   it('preserves filters and selected task across native page switches while releasing the composer', async () => {
     const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;

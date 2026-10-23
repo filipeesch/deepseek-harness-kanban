@@ -13,17 +13,24 @@ function mount(initial = fixture()) {
   return { ...mock, user: userEvent.setup() };
 }
 async function loaded() { await screen.findByRole('button', { name: 'Open task Alpha task' }); }
-function inReview() { const value = fixture(); value.state.tasks[0]!.columnId = 'review'; return value; }
+function inReview() { const value = fixture(); const alpha = value.state.tasks[0]!; alpha.columnId = 'review'; alpha.instructionPending = { columnId: 'review', enteredAt: 1 }; return value; }
 
 describe('card instruction action', () => {
   it('sends the current stage instruction without moving the task', async () => {
     const { user, command, get } = mount(inReview()); await loaded();
     await user.click(screen.getByRole('button', { name: 'Run Review instruction' }));
     await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.runInstruction', taskId: 't1', columnId: 'review', expectedInstruction: 'Review **carefully**.' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Run Review instruction' })).toBeNull());
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Move and run' })).toBeNull();
     expect(get().state.tasks[0]!.columnId).toBe('review');
     expect(command.mock.calls.some(([value]) => value.type === 'task.move')).toBe(false);
+  });
+
+  it('does not show the action without an unresolved entry', async () => {
+    const initial = inReview(); delete initial.state.tasks[0]!.instructionPending;
+    mount(initial); await loaded();
+    expect(screen.queryByRole('button', { name: 'Run Review instruction' })).toBeNull();
   });
 
   it('is absent without an entry instruction and hidden in selection mode', async () => {

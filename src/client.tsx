@@ -42,26 +42,13 @@ export function taskContextText(window: SessionEventWindow): string | null {
 }
 
 /** The native Chat hides ordinary context rows; show the same injected context in the Kanban panel. */
-function KanbanTaskContextRow({ source, loadOlder }: { source: SessionEventSource; loadOlder?: () => Promise<void> }) {
+function KanbanTaskContextRow({ source }: { source: SessionEventSource }) {
   const subscribe = useCallback((listener: () => void) => source.subscribe(listener), [source]);
   const getSnapshot = useCallback(() => source.getSnapshot(), [source]);
   const events = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [loadError, setLoadError] = useState(false);
   const text = taskContextText(events);
-  if (text === null) {
-    if (!events.hasMore || !loadOlder) return null;
-    return <div className="kb-task-context" role="note" aria-label="Task context">
-      <button type="button" className="kb-task-context-toggle" disabled={loading} onClick={async () => {
-        setLoading(true); setLoadError(false);
-        try { await loadOlder(); }
-        catch { setLoadError(true); }
-        finally { setLoading(false); }
-      }}>{loading ? 'Loading older messages…' : 'Load task context from older messages'}</button>
-      {loadError && <p className="kb-task-context-error" role="alert">Older messages could not be loaded. Retry or use the native conversation history.</p>}
-    </div>;
-  }
+  if (text === null) return null;
   return <div className="kb-task-context" role="note" aria-label="Task context">
     <button type="button" className="kb-task-context-toggle" aria-expanded={open} onClick={() => setOpen(value => !value)}><span aria-hidden="true">{open ? '▾' : '▸'}</span> Task context <span className="kb-task-context-source">kanban-task</span></button>
     {open && <pre className="kb-task-context-body">{text}</pre>}
@@ -163,7 +150,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     if (error) return <div className="kanban-native-state" role="alert">{error} <button type="button" onClick={() => setAttempt(value => value + 1)}>Retry conversation</button></div>;
     if (!reference) return <div className="kanban-native-state" role="status">Opening native conversation…</div>;
     const Provider = owner.SessionProvider;
-    return <Provider session={reference}><KanbanTaskContextRow source={reference.binding.eventSource} loadOlder={() => reference.binding.session.loadOlder()} />{owner.renderSlot('kanban.conversation', {})}</Provider>;
+    return <Provider session={reference}><KanbanTaskContextRow source={reference.binding.eventSource} />{owner.renderSlot('kanban.conversation', {})}</Provider>;
   }
   function BoardPage(props: MainProps & { api: ClientApi }) {
     const sessionListSource = scopedSessions.list ?? emptySessionList;

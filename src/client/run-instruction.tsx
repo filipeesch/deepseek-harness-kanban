@@ -12,6 +12,7 @@ export function RunInstructionButton({ task, column, run }: { task: Task; column
   const action = useAction(run);
   useEffect(() => { action.clearError(); }, [task.id, column.id, column.onEnterPrompt]);
   if (!column.onEnterPrompt?.trim()) return null;
+  if (task.instructionPending?.columnId !== column.id) return null;
   const label = 'Run ' + column.name + ' instruction';
   const blocked = Boolean(task.operation || task.pendingTransition);
   return <div className="kb-card-run">

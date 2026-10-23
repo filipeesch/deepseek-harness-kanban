@@ -49,7 +49,7 @@ const task = z.strictObject({
   worktree: z.strictObject({ path: absolutePath, branch: nonempty, owned: z.boolean(), status: z.enum(['preparing', 'ready', 'error']) }).nullable(),
   unclaimedWorktrees: z.array(z.strictObject({ path: absolutePath, branch: nonempty, error: problem })).optional(),
   worktreeWorkspaceId: id.optional(), worktreeWorkspaceOwned: z.boolean().optional(),
-  operation: operation.nullable(), pendingTransition: pendingTransition.optional(), createdAt: timestamp, updatedAt: timestamp,
+  operation: operation.nullable(), pendingTransition: pendingTransition.optional(), instructionPending: z.strictObject({ columnId: id, enteredAt: z.number().finite() }).optional(), createdAt: timestamp, updatedAt: timestamp,
 });
 const note = z.strictObject({
   id, taskId: id, content: nonempty, createdAt: timestamp, updatedAt: timestamp, tags: z.array(nonempty).optional(),
@@ -102,6 +102,7 @@ export const BoardStateSchema: z.ZodType<BoardState> = z.strictObject({
     for (const sessionId of value.closedSessionIds) {
       if (!sessions.has(sessionId)) issue(['tasks', index, 'closedSessionIds'], 'Closed sessions must belong to the task.');
     }
+    if (value.instructionPending && !columnIds.has(value.instructionPending.columnId)) issue(['tasks', index, 'instructionPending', 'columnId'], 'Instruction entry column does not exist.');
     if (value.pendingTransition) {
       const pending = value.pendingTransition;
       if (transitionIds.has(pending.id)) issue(['tasks', index, 'pendingTransition', 'id'], 'Pending transition IDs must be unique.');

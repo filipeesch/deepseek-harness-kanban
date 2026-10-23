@@ -47,8 +47,9 @@ replace the existing GUI.
      **Conversations**, and inserts only the instruction into the composer.
    - Existing composer text/attachments are preserved; **Replace draft** replaces
      both and focuses the composer.
-   - The card play action sends the stage instruction without a dialog and leaves
-     the stage and position unchanged.
+   - The card play action sends the stage instruction without a dialog, leaves
+     the stage and position unchanged, and disappears after a prompt is sent.
+   - The play action is hidden without an unresolved instructed-stage entry.
    - A later instruction does not add another task-context message.
    - A new conversation receives its own first-turn context, visible as the
      plugin task-context row in the Kanban **Conversations** panel.

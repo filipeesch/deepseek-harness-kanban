@@ -15,6 +15,13 @@ import { taskTitleSlug, worktreePathForBranch } from '../shared/worktree-name.js
 
 async function pathExists(value:string):Promise<boolean>{try{await lstat(value);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}}
 function isEvent(value:unknown):value is {type:string;seq:number;data:unknown}{return Boolean(value&&typeof value==='object'&&'type'in value&&typeof value.type==='string'&&'seq'in value&&typeof value.seq==='number'&&Number.isSafeInteger(value.seq)&&'data'in value);}
+function userPromptTime(event:unknown):number|undefined{
+ if(!isEvent(event)||event.type!=='user/message')return undefined;
+ const source=(event.data as {source?:{kind?:unknown}}|null)?.source;
+ if(source?.kind!=='user')return undefined;
+ const time=(event as {time?:unknown}).time;
+ return typeof time==='number'&&Number.isFinite(time)?time:Date.now();
+}
 export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore }
 /** Coordinates domain commands while the host continues to own sessions and execution. */
 export class KanbanApp {
@@ -38,6 +45,7 @@ export class KanbanApp {
   await this.reconcileWorkspaces();
   const state=this.store.snapshot();
   await Promise.allSettled([...new Set(state.tasks.flatMap(t=>t.sessionIds))].map(id=>this.prepareQuestions(id)));
+  await this.reconcileInstructionPending();
   for(const task of state.tasks){if(task.pendingTransition?.status==='sending')await this.store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id);if(t?.pendingTransition?.status==='sending'){t.pendingTransition.status='failed';t.pendingTransition.error={code:'DELIVERY_UNCERTAIN',message:'A prior prompt admission was interrupted. Retry explicitly; the same native request identity will be reused.'};}});}
   for(const task of this.store.snapshot().tasks){const p=task.pendingTransition;if(p?.status==='waiting'&&p.worktreeRequest&&!task.operation&&task.worktree?.status!=='ready'){try{await this.worktrees.request(task.id,{kind:'create',...p.worktreeRequest});}catch(error){await this.failPending(task.id,p.id,error);}}}
   await this.worktrees.resumePending();await this.dispatchPending();
@@ -102,7 +110,25 @@ export class KanbanApp {
  }
  observe(sessionId:string,event:unknown):void{
   if(this.disposed)return;
+  const promptTime=userPromptTime(event);if(promptTime!==undefined)this.clearInstructionPending(sessionId,promptTime);
   if(isEvent(event)&&this.questions.apply(sessionId,event))this.schedulePersist(sessionId);this.attention.delete(sessionId);this.changed();this.retryActivity();
+ }
+ private clearInstructionPending(sessionId:string,time:number):void{
+  const task=this.store.snapshot().tasks.find(value=>value.sessionIds.includes(sessionId));const marker=task?.instructionPending;
+  if(!task||!marker||marker.columnId!==task.columnId||marker.enteredAt>time)return;
+  void this.store.transact(draft=>{const current=draft.tasks.find(value=>value.id===task.id);const pending=current?.instructionPending;if(!current||!pending||pending.columnId!==current.columnId||pending.enteredAt>time)return;delete current.instructionPending;}).catch(error=>this.options.report?.(error));
+ }
+ private async reconcileInstructionPending():Promise<void>{
+  if(!this.options.history)return;
+  for(const task of this.store.snapshot().tasks){
+   const marker=task.instructionPending;if(!marker||marker.columnId!==task.columnId)continue;
+   let prompted=false;
+   for(const sessionId of task.sessionIds){
+    try{const events=await this.options.history(sessionId);if(events.some(event=>{const time=userPromptTime(event);return time!==undefined&&time>=marker.enteredAt;})){prompted=true;break;}}
+    catch(error){this.options.report?.(error);}
+   }
+   if(prompted)await this.store.transact(draft=>{const current=draft.tasks.find(value=>value.id===task.id);if(current?.instructionPending?.enteredAt===marker.enteredAt)delete current.instructionPending;});
+  }
  }
  activityChanged():void{if(this.disposed)return;this.attention.clear();this.changed();this.retryActivity();}
  async snapshot():Promise<BoardSnapshot>{
@@ -254,6 +280,11 @@ export class KanbanApp {
   const requestedIndex=beforeTaskId?destination.findIndex(value=>value.id===beforeTaskId):-1;
   const index=requestedIndex>=0?requestedIndex:destination.length;
   task.columnId=columnId;
+  if(sourceColumnId!==columnId){
+   const destinationColumn=state.workflow.columns.find(value=>value.id===columnId);
+   if(destinationColumn?.onEnterPrompt?.trim())task.instructionPending={columnId,enteredAt:Date.now()};
+   else delete task.instructionPending;
+  }
   destination.splice(index,0,task);
   destination.forEach((value,position)=>{value.position=position;});
   if(sourceColumnId!==columnId)state.tasks.filter(value=>value.columnId===sourceColumnId).sort((left,right)=>left.position-right.position||left.createdAt.localeCompare(right.createdAt)).forEach((value,position)=>{value.position=position;});
@@ -294,6 +325,7 @@ export class KanbanApp {
   const sessionId=task.sessionIds.find(id=>!task.closedSessionIds.includes(id))??await this.createConversationNow(task.id);
   await this.assertExecutionContext(sessionId);
   await this.sessions.send(sessionId,instruction);
+  await this.store.transact(d=>{const current=d.tasks.find(value=>value.id===command.taskId);if(current?.instructionPending?.columnId===command.columnId)delete current.instructionPending;});
  }
  private async failPending(taskId:string,id:string,error:unknown):Promise<void>{await this.store.transact(d=>{const t=d.tasks.find(t=>t.id===taskId);if(t?.pendingTransition?.id===id){t.pendingTransition.status='failed';t.pendingTransition.error=problem(error);}});}
  private dispatchPending():Promise<void>{
