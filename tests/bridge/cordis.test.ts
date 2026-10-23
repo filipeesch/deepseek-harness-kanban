@@ -97,4 +97,22 @@ describe('real Cordis + real gateway namespace injection', () => {
     expect(call).toHaveBeenCalledWith('/api', 'kanban/snapshot', { args: {} }, expect.any(AbortSignal));
     await client.dispose();
   });
+
+  it('exposes the question dismissal endpoint through the mounted namespace', async () => {
+    const { root, call } = await runtime();
+    call.mockResolvedValueOnce({ ok: true, value: { ok: true, value: [] } });
+    const owner = root.plugin({
+      name: 'regression-dismiss-owner', inject: ['remote'],
+      async apply(ctx) {
+        const unmount = await ctx.remote.$mount(TYPERT_REMOTE);
+        const consumer = ctx.inject(['remote.kanban'], async scoped => {
+          await expect(scoped.remote.kanban.dismissQuestions({ sessionId: 's', roundId: 'r' })).resolves.toEqual({ ok: true, value: { ok: true, value: [] } });
+        });
+        await consumer;
+        return async () => { await consumer.dispose(); await unmount(); };
+      },
+    });
+    fibers.push(owner); await owner;
+    expect(call).toHaveBeenCalledWith('/api', 'kanban/dismissQuestions', { args: { request: { sessionId: 's', roundId: 'r' } } }, expect.any(AbortSignal));
+  });
 });

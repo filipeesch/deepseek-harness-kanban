@@ -180,4 +180,66 @@ describe('QuestionForm strip', () => {
     expect(screen.getByText('Waiting for question pages.')).toBeTruthy();
     expect(submitButton().disabled).toBe(true);
   });
+
+  it('keeps the footer Dismiss action optional and left-aligned', async () => {
+    const without = render(<QuestionForm round={round([free])} onSubmit={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+    without.unmount();
+    const onDismiss = vi.fn();
+    render(<QuestionForm round={round([free])} onSubmit={vi.fn()} onDismiss={onDismiss} />);
+    const footer = screen.getByRole('form', { name: 'Questions from the agent' }).querySelector('.kq-footer')!;
+    const dismiss = screen.getByRole('button', { name: 'Dismiss' });
+    expect(footer.firstElementChild).toBe(dismiss);
+    await userEvent.setup().click(dismiss);
+    await waitFor(() => expect(onDismiss).toHaveBeenCalledTimes(1));
+  });
+
+  it('confirms only when a draft exists and keeps the draft on cancel', async () => {
+    const user = userEvent.setup(); const onDismiss = vi.fn();
+    render(<QuestionForm round={round([free])} onSubmit={vi.fn()} onDismiss={onDismiss} />);
+    await user.type(screen.getByRole('textbox', { name: 'Your answer' }), 'A draft answer');
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.getByText(/Discard this and other unanswered rounds/)).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep answering' })));
+    await user.click(screen.getByRole('button', { name: 'Keep answering' }));
+    expect(screen.queryByText(/Discard this and other unanswered rounds/)).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect((screen.getByRole('textbox', { name: 'Your answer' }) as HTMLTextAreaElement).value).toBe('A draft answer');
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+    await user.click(screen.getByRole('button', { name: 'Dismiss questions' }));
+    await waitFor(() => expect(onDismiss).toHaveBeenCalledTimes(1));
+  });
+
+  it('reports a dismissal failure and leaves an untouched round available for retry', async () => {
+    const user = userEvent.setup(); const onDismiss = vi.fn().mockRejectedValue(new Error('Dismissal failed'));
+    render(<QuestionForm round={round([free])} onSubmit={vi.fn()} onDismiss={onDismiss} />);
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(await screen.findByText('Dismissal failed')).toBeTruthy();
+    expect(screen.queryByText(/Discard this and other unanswered rounds/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeTruthy();
+  });
+
+  it('disables dismissal on an answered round', () => {
+    const answered = { ...round([free]), answered: true };
+    render(<QuestionForm round={answered} onSubmit={vi.fn()} onDismiss={vi.fn()} />);
+    expect((screen.getByRole('button', { name: 'Dismiss' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('renders a structured host dismissal error instead of [object Object]', async () => {
+    const user = userEvent.setup(); const onDismiss = vi.fn().mockRejectedValue({ code: 'STORAGE_FAILED', message: 'Could not persist dismissal.' });
+    render(<QuestionForm round={round([free])} onSubmit={vi.fn()} onDismiss={onDismiss} />);
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(await screen.findByText('Could not persist dismissal.')).toBeTruthy();
+    expect(screen.queryByText('[object Object]')).toBeNull();
+  });
+
+  it('confirms before dismissing after a choice draft', async () => {
+    const user = userEvent.setup(); const onDismiss = vi.fn();
+    render(<QuestionForm round={round([choice])} onSubmit={vi.fn()} onDismiss={onDismiss} />);
+    await user.click(screen.getByRole('radio', { name: 'Local' }));
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.getByText(/Discard this and other unanswered rounds/)).toBeTruthy();
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
 });

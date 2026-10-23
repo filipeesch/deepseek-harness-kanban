@@ -42,15 +42,16 @@ export function useAction(run: RunCommand) {
   return { pending, error, execute, clearError: () => setError(null) };
 }
 
-export function Modal({ title, children, onClose, busy = false }: { title: string; children: ReactNode; onClose: () => void; busy?: boolean }) {
+export function Modal({ title, children, onClose, busy = false, size = 'default' }: { title: string; children: ReactNode; onClose: () => void; busy?: boolean; size?: 'default' | 'wide' }) {
   const id = useId(); const ref = useRef<HTMLDivElement>(null);
   const state = useRef({ onClose, busy }); state.current = { onClose, busy };
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = ref.current;
-    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]') ?? []).filter(el => !el.hidden && el.getAttribute('aria-hidden') !== 'true');
+    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"], [contenteditable="true"]:not([aria-disabled="true"])') ?? []).filter(el => !el.hidden && el.getAttribute('aria-hidden') !== 'true');
     (focusable()[0] ?? dialog)?.focus();
     const key = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (!state.current.busy) state.current.onClose(); }
       if (event.key !== 'Tab') return;
       const items = focusable(); const first = items[0]; const last = items.at(-1);
@@ -61,7 +62,7 @@ export function Modal({ title, children, onClose, busy = false }: { title: strin
     dialog?.addEventListener('keydown', key);
     return () => { dialog?.removeEventListener('keydown', key); if (previous?.isConnected) previous.focus(); };
   }, []);
-  return <div className="kb-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}><div className="kb-dialog" role="dialog" aria-modal="true" aria-labelledby={id} aria-busy={busy} ref={ref} tabIndex={-1}><header className="kb-dialog-header"><h2 id={id}>{title}</h2><button type="button" className="kb-button kb-icon-button" disabled={busy} onClick={onClose} aria-label={'Close ' + title}>×</button></header>{children}</div></div>;
+  return <div className="kb-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}><div className={'kb-dialog' + (size === 'wide' ? ' kb-dialog-wide' : '')} role="dialog" aria-modal="true" aria-labelledby={id} aria-busy={busy} ref={ref} tabIndex={-1}><header className="kb-dialog-header"><h2 id={id}>{title}</h2><button type="button" className="kb-button kb-icon-button" disabled={busy} onClick={onClose} aria-label={'Close ' + title}>×</button></header>{children}</div></div>;
 }
 
 export function Tabs({ label, values, selected, onSelect, id }: { label: string; values: readonly string[]; selected: string; onSelect: (value: string) => void; id: string }) {

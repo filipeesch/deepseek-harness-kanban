@@ -39,6 +39,7 @@ function fixture() {
       worktreeDefault: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { branchName: 'task', path: '' } } }),
       inferProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { projectPath: '/repo', gitRootPath: '/repo' } } }),
       questions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
+      dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
       follow: (signal?: AbortSignal) => { const feed = new Feed(); feeds.push(feed); signal?.addEventListener('abort', () => feed.dispose(), { once: true }); return feed; },
     },
     $stream<Item>(options: RemoteStreamOptions<Item>) { return new RemoteStream({ generation: { getSnapshot: () => ({ id: 1, host: { home: '/home' } }), subscribe: () => () => {} } }, options); },

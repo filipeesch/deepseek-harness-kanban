@@ -45,6 +45,7 @@ export class ClientBridge {
   private rounds: readonly QuestionRound[] = [];
   private readonly prepared = new Map<string, Promise<readonly QuestionRound[]>>();
   private readonly questionSessions = new Set<string>();
+  private readonly dismissed = new Set<string>();
   private readonly reminders = new Map<string, Reminder>();
   private readonly composers = new Set<string>();
   private readonly stopStatus: () => void;
@@ -115,7 +116,7 @@ export class ClientBridge {
     if (this.disposed || (!baseline && this.host && snapshot.sequence < this.host.sequence)) return;
     if (baseline) { this.clientEpoch++; this.prepared.clear(); }
     this.host = snapshot;
-    if (snapshot.questionRounds !== undefined) { this.rounds = snapshot.questionRounds; this.publishQuestions(); }
+    if (snapshot.questionRounds !== undefined) { this.rounds = snapshot.questionRounds.filter(round => !this.dismissed.has(round.id)); this.publishQuestions(); }
     this.health.set({ error: null, connected: true });
     this.publish();
     // Ordinary chats are absent from host startup replay; refresh their tracked histories in each new epoch.
@@ -182,9 +183,10 @@ export class ClientBridge {
         if (this.disposed) return [];
         if (this.clientEpoch !== epoch) return this.prepareQuestions(id);
         if (this.host?.sequence === before) {
-          const current = this.rounds.filter(round => round.sessionId === id);
-          const incoming = new Set(rounds.map(round => round.id));
-          const merged = rounds.map(round => {
+          const current = this.rounds.filter(round => round.sessionId === id && !this.dismissed.has(round.id));
+          const visible = rounds.filter(round => !this.dismissed.has(round.id));
+          const incoming = new Set(visible.map(round => round.id));
+          const merged = visible.map(round => {
             const known = current.find(old => old.id === round.id);
             return known && (known.answered || known.complete && !round.complete) ? known : round;
           });
@@ -202,6 +204,29 @@ export class ClientBridge {
     });
     this.prepared.set(id, work); return work;
   }
+  /** Dismiss the displayed round and every other unresolved round in that conversation. */
+  async dismissQuestions(sessionId: string, roundId: string): Promise<readonly QuestionRound[]> {
+    if (this.disposed) return [];
+    let remaining: readonly QuestionRound[];
+    let missing = false;
+    try {
+      remaining = unwrap(await this.remote.kanban.dismissQuestions({ sessionId, roundId }));
+    } catch (error) {
+      if ((error as { code?: unknown }).code !== 'QUESTION_ROUND_NOT_FOUND') throw error;
+      // The displayed round was already answered or dismissed elsewhere. Do not hide
+      // unrelated unresolved rounds that the host did not actually dismiss.
+      missing = true;
+      remaining = this.rounds.filter(round => round.sessionId === sessionId && round.id !== roundId);
+    }
+    if (this.disposed) return [];
+    if (!missing) for (const round of this.rounds) if (round.sessionId === sessionId && !round.answered) this.dismissed.add(round.id);
+    this.dismissed.add(roundId);
+    this.rounds = [...this.rounds.filter(round => round.sessionId !== sessionId), ...remaining.filter(round => !this.dismissed.has(round.id))];
+    this.prepared.delete(sessionId);
+    this.publishQuestions(); this.publish();
+    return this.rounds.filter(round => round.sessionId === sessionId);
+  }
+
   private questionError(id: string, error?: Problem): void {
     const previous = this.questionsView.getSnapshot(); const errors = new Map(previous.errors);
     if (error) errors.set(id, error); else errors.delete(id);
@@ -212,7 +237,7 @@ export class ClientBridge {
   }
   async dispose(): Promise<void> {
     if (this.disposed) return;
-    this.disposed = true; this.stopStatus(); this.snapshots.clear(); this.composers.clear(); this.prepared.clear(); this.questionSessions.clear();
+    this.disposed = true; this.stopStatus(); this.snapshots.clear(); this.composers.clear(); this.prepared.clear(); this.questionSessions.clear(); this.dismissed.clear();
     this.health.clear(); this.questionState.clear();
     await this.restarting; await this.control.dispose();
   }

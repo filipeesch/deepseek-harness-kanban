@@ -41,6 +41,10 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
   const [selectionMode, setSelectionMode] = useState(false); const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [batchConfirm, setBatchConfirm] = useState(false); const [batchPending, setBatchPending] = useState(false); const [batchResult, setBatchResult] = useState<BatchResult | null>(null);
   const [optimistic, setOptimistic] = useState<OptimisticMove | null>(null);
+  const [drawerEntering, setDrawerEntering] = useState(false);
+  const [drawerClosing, setDrawerClosing] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const restoreFocus = useRef<string | null>(null);
   const boardBody = useRef<HTMLDivElement>(null);
 
   const accept = useCallback((next: BoardSnapshot) => { if (!live.current) return; const currentEpoch = latest.current?.clientEpoch ?? 0; const nextEpoch = next.clientEpoch ?? 0; if (latest.current && (nextEpoch < currentEpoch || (nextEpoch === currentEpoch && next.sequence < latest.current.sequence))) return; latest.current = next; setSnapshot(next); }, []);
@@ -72,14 +76,39 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
 
   const state = snapshot?.state;
   const selected = state?.tasks.find(task => task.id === selectedId);
-  useEffect(() => { if (state && selectedId && !state.tasks.some(task => task.id === selectedId)) setSelectedId(null); }, [state, selectedId]);
+  function clearCloseTimer() { if (closeTimer.current !== undefined) { clearTimeout(closeTimer.current); closeTimer.current = undefined; } }
+  function finishClose() {
+    restoreFocus.current = selectedId;
+    clearCloseTimer(); setDrawerClosing(false); setDrawerEntering(false); setSelectedId(null);
+  }
+  function prefersReducedMotion(): boolean { return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+  function requestCloseDrawer() {
+    if (!selectedId || drawerClosing) return;
+    if (prefersReducedMotion()) { finishClose(); return; }
+    setDrawerClosing(true); setDrawerEntering(false);
+    clearCloseTimer();
+    closeTimer.current = setTimeout(finishClose, 180);
+  }
+  function openTask(taskId: string) {
+    clearCloseTimer();
+    const entering = selectedId === null && !prefersReducedMotion();
+    setDrawerClosing(false); setDrawerEntering(entering); setSelectedId(taskId);
+  }
+  useEffect(() => () => clearCloseTimer(), []);
+  useEffect(() => {
+    if (selectedId !== null) { restoreFocus.current = null; return; }
+    const closedTaskId = restoreFocus.current;
+    restoreFocus.current = null;
+    if (closedTaskId) document.querySelector<HTMLElement>('[data-task-id="' + closedTaskId + '"]')?.focus();
+  }, [selectedId]);
+  useEffect(() => { if (state && selectedId && !state.tasks.some(task => task.id === selectedId)) { clearCloseTimer(); setDrawerClosing(false); setDrawerEntering(false); setSelectedId(null); } }, [state, selectedId]);
   useEffect(() => { setSelectionMode(false); setSelectedIds(new Set()); }, [search, projectFilter]);
   useEffect(() => {
     if (!selectedId) return;
-    const key = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) setSelectedId(null); };
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) requestCloseDrawer(); };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [selectedId]);
+  }, [selectedId, drawerClosing]);
 
   function simple(command: Command) { setActionError(null); return run(command).catch(error => { const problem = asProblem(error); if (problem.code !== 'DISCARD_REQUIRED') setActionError(problem); }); }
 
@@ -167,8 +196,8 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
     const isSelected = selectedIds.has(task.id);
     return <article key={task.id} className={'kb-card' + (isSelected ? ' kb-card-selected' : '')} data-task-id={task.id} role="button" tabIndex={0} aria-label={'Open task ' + task.title} aria-pressed={selectionMode ? isSelected : undefined}
       onPointerDown={event => { if (selectionMode) return; if ((event.target as Element).closest('button, input, select, textarea, a')) return; begin(event, task.id, task.columnId); }}
-      onClick={() => { if (shouldSuppressClick()) return; if (selectionMode) { toggleSelect(task.id); return; } setSelectedId(task.id); }}
-      onKeyDown={event => { if (event.key !== 'Enter' && event.key !== ' ') return; event.preventDefault(); if (selectionMode) toggleSelect(task.id); else setSelectedId(task.id); }}>
+      onClick={() => { if (shouldSuppressClick()) return; if (selectionMode) { toggleSelect(task.id); return; } openTask(task.id); }}
+      onKeyDown={event => { if (event.key !== 'Enter' && event.key !== ' ') return; event.preventDefault(); if (selectionMode) toggleSelect(task.id); else openTask(task.id); }}>
       <div className="kb-card-main">
         {selectionMode && <input type="checkbox" className="kb-card-check" aria-label={'Select ' + task.title} checked={isSelected} onClick={event => event.stopPropagation()} onChange={() => toggleSelect(task.id)} />}
         <div className="kb-card-text"><strong>{task.title}</strong><span className="kb-hint">{state?.projects.find(project => project.id === task.projectId)?.name ?? task.projectId}</span></div>
@@ -184,7 +213,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
     if (!selectedId) return;
     const target = event.target as Element;
     if (target.closest('.kb-drawer') || target.closest('.kb-card') || target.closest('button, input, select, textarea, a, [role="dialog"]')) return;
-    setSelectedId(null);
+    requestCloseDrawer();
   }
 
   return <section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style><header className="kb-header"><div><h1>Kanban</h1><p className="kb-hint">One board for all projects</p></div><div className="kb-toolbar">
@@ -203,8 +232,8 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
     {state && <><div className="kb-page-body" ref={boardBody} onPointerDown={onBoardPointerDown}>{state.projects.length === 0 && <div className="kb-empty"><h2>Add your first project</h2><p>Register a project path and Git root to create tasks.</p><button type="button" className="kb-button kb-primary" onClick={() => setConfiguration('Projects')}>Configure projects</button></div>}
       <div className="kb-columns" aria-label="Workflow columns">{columnLayout(state.workflow).map(slot => <section key={slot.key} className={'kb-column-slot ' + (slot.group ? 'kb-column-group' : '')} aria-label={slot.group?.name}>{slot.group && <h2 className="kb-group-heading">{slot.group.name}</h2>}{slot.columns.map(column => { const tasks = tasksForColumn(column.id); const source = state.workflow.columns.find(value => value.id === drag?.sourceColumnId); const allowed = !drag || source?.allowedTransitions === undefined || source.allowedTransitions.includes(column.id) || drag.sourceColumnId === column.id;
         return <section className={'kb-column ' + (drag && !allowed ? 'kb-drop-disabled' : '')} key={column.id} aria-label={column.name + ' column'} data-column-id={column.id}><header className="kb-column-header"><h2>{column.name}</h2><span aria-label={tasks.length + ' tasks'}>{tasks.length}</span></header>{column.id === state.workflow.initialColumnId && renderNewTaskButton(column)}<div className="kb-card-list">{tasks.map(renderCard)}{drag?.overColumnId === column.id && <div className="kb-drop-indicator" style={{ top: drag.indicatorY }} aria-hidden="true" />}{tasks.length === 0 && <p className="kb-empty-column">No matching tasks</p>}</div></section>; })}</section>)}</div></div>
-      {selected && <TaskDrawer key={selected.id} task={selected} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={() => setSelectedId(null)} onMove={requestMove} onDanger={requestDanger} sessionTitles={sessionTitles} />}
-    {newTask && <NewTaskDialog state={state} run={run} onClose={() => setNewTask(false)} onCreated={id => setSelectedId(id)} />}{configuration && <Configuration key={configuration} state={state} run={run} api={api} pickDirectory={pickDirectory} initial={configuration} onClose={() => setConfiguration(null)} />}{move && (() => { const task = state.tasks.find(value => value.id === move.taskId); const column = state.workflow.columns.find(value => value.id === move.columnId); return task && column ? <MoveDialog key={task.id + ':' + column.id} task={task} column={column} beforeTaskId={move.beforeTaskId ?? null} state={state} run={run} onClose={() => setMove(null)} /> : null; })()}
+      {selected && <TaskDrawer key={selected.id} task={selected} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={requestMove} onDanger={requestDanger} sessionTitles={sessionTitles} entering={drawerEntering} closing={drawerClosing} />}
+    {newTask && <NewTaskDialog state={state} run={run} onClose={() => setNewTask(false)} onCreated={id => openTask(id)} />}{configuration && <Configuration key={configuration} state={state} run={run} api={api} pickDirectory={pickDirectory} initial={configuration} onClose={() => setConfiguration(null)} />}{move && (() => { const task = state.tasks.find(value => value.id === move.taskId); const column = state.workflow.columns.find(value => value.id === move.columnId); return task && column ? <MoveDialog key={task.id + ':' + column.id} task={task} column={column} beforeTaskId={move.beforeTaskId ?? null} state={state} run={run} onClose={() => setMove(null)} /> : null; })()}
     {destruction && <Modal title={destruction.command.type === 'task.delete' ? 'Delete task' : 'Remove worktree'} onClose={() => setDestruction(null)}><div className="kb-form"><p>{destruction.command.type === 'task.delete' ? 'Permanently delete the Kanban task ' : 'Remove the worktree for '}<strong>{destruction.title}</strong>?</p>{destruction.path && <p>Worktree: <code>{destruction.path}</code></p>}<p>{destruction.command.type === 'task.delete' ? 'Task data and notes are deleted. Its native DSH chats are ARCHIVED, not erased: their histories remain. The Git branch is kept. Conversations return to the base project path before worktree cleanup.' : 'The task, notes, conversations, histories, and Git branch are kept. All conversations return to the base project path before the worktree is removed.'}</p>{destruction.command.type === 'task.delete' && Boolean(state.tasks.find(task => task.id === destruction.command.taskId)?.unclaimedWorktrees?.length) && <p className="kb-warning" role="note" aria-label="Unclaimed checkout deletion warning">Unclaimed checkouts remain on disk. They are not included in this deletion and require manual inspection.</p>}<p>Local changes will not be discarded without an additional explicit confirmation.</p><div className="kb-actions"><button type="button" className="kb-button" onClick={() => setDestruction(null)}>Cancel</button><button type="button" className="kb-button kb-danger" onClick={() => void confirmDestruction()}>{destruction.command.type === 'task.delete' ? 'Delete task and archive chats' : 'Confirm worktree removal'}</button></div></div></Modal>}
     {discard && <DiscardDialog key={discard.command.type + discard.command.taskId} request={discard} run={command => runDestruction(discard, command)} onClose={() => setDiscard(null)} onDeleted={() => setSelectedId(null)} />}
     {batchConfirm && <Modal title="Delete selected tasks" onClose={() => { if (!batchPending) setBatchConfirm(false); }} busy={batchPending}><div className="kb-form"><p>Delete {selectedTasks.length} selected task{selectedTasks.length === 1 ? '' : 's'}?</p><ul className="kb-batch-list">{selectedTasks.map(task => <li key={task.id}>{task.title}</li>)}</ul><p>Eligible tasks are deleted with the individual deletion rules: task data, notes, and worktree are removed, native chats are archived without erasing histories, and branches are kept. Tasks with running chats, an unresolved operation, or local worktree changes are skipped and reported.</p><div className="kb-actions"><button type="button" className="kb-button" disabled={batchPending} onClick={() => setBatchConfirm(false)}>Cancel</button><button type="button" className="kb-button kb-danger" disabled={batchPending || selectedTasks.length === 0} onClick={() => void deleteSelected()}>{batchPending ? 'Deleting…' : 'Delete selected'}</button></div></div></Modal>}

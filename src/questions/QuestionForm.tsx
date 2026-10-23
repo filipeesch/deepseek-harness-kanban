@@ -7,6 +7,7 @@ import { questionCss } from './styles.js';
 export interface QuestionFormProps {
   round: QuestionRound;
   onSubmit(text: string): void | Promise<void>;
+  onDismiss?(): void | Promise<void>;
 }
 
 type ActiveSlide = { kind: 'page'; callId: string } | { kind: 'notes' };
@@ -19,6 +20,9 @@ interface Draft {
   submitting: boolean;
   submitted: boolean;
   error: string | null;
+  confirmingDismiss: boolean;
+  dismissing: boolean;
+  dismissError: string | null;
 }
 
 const WEIGHT_LABELS: Record<NonNullable<QuestionPage['weight']>, string> = {
@@ -28,7 +32,7 @@ const WEIGHT_LABELS: Record<NonNullable<QuestionPage['weight']>, string> = {
 };
 
 function newDraft(roundId: string): Draft {
-  return { roundId, active: null, answers: Object.create(null) as Record<string, QuestionAnswer>, generalNotes: '', collapsed: false, submitting: false, submitted: false, error: null };
+  return { roundId, active: null, answers: Object.create(null) as Record<string, QuestionAnswer>, generalNotes: '', collapsed: false, submitting: false, submitted: false, error: null, confirmingDismiss: false, dismissing: false, dismissError: null };
 }
 function Markdown({ text }: { text: string }) {
   return <ReactMarkdown skipHtml disallowedElements={['img']}>{text}</ReactMarkdown>;
@@ -41,6 +45,11 @@ function sameSlide(left: ActiveSlide, right: ActiveSlide): boolean {
 function descriptionFor(page: QuestionPage, title: string): string {
   return page.options?.find(option => option.title === title)?.description ?? '';
 }
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string') return (error as { message: string }).message;
+  return String(error);
+}
 function QuestionGlyph() {
   return <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M5.6 5.4a2.4 2.4 0 1 1 3.2 2.3c-.6.3-.8.7-.8 1.3v.4" /><circle cx="8" cy="12.2" r=".8" fill="currentColor" stroke="none" /></svg>;
 }
@@ -49,7 +58,7 @@ function Chevron({ up }: { up: boolean }) {
 }
 
 /** The fixed question strip docked above the composer: pages first, Additional Notes last. */
-export function QuestionForm({ round, onSubmit }: QuestionFormProps) {
+export function QuestionForm({ round, onSubmit, onDismiss }: QuestionFormProps) {
   const prefix = useId();
   const bodyId = prefix + '-body';
   const headingId = prefix + '-heading';
@@ -58,6 +67,9 @@ export function QuestionForm({ round, onSubmit }: QuestionFormProps) {
   const inFlight = useRef(new Set<string>());
   const sent = useRef(new Set<string>());
   const headingRef = useRef<HTMLDivElement>(null);
+  const keepAnsweringRef = useRef<HTMLButtonElement>(null);
+  const dismissRef = useRef<HTMLButtonElement>(null);
+  const wasConfirming = useRef(false);
   const firstSlide = useRef(true);
   useEffect(() => { setDraft(previous => previous.roundId === round.id ? previous : newDraft(round.id)); }, [round.id]);
   const current = draft.roundId === round.id ? draft : newDraft(round.id);
@@ -66,7 +78,8 @@ export function QuestionForm({ round, onSubmit }: QuestionFormProps) {
   const index = slides.findIndex(slide => sameSlide(slide, active));
   const entry = active.kind === 'page' ? round.pages.find(page => page.callId === active.callId) : undefined;
   const answer = entry ? answerFor(current.answers, entry.callId) ?? emptyAnswer() : emptyAnswer();
-  const disabled = round.answered || current.submitting || current.submitted || sent.current.has(round.id);
+  const disabled = round.answered || current.submitting || current.submitted || current.dismissing || sent.current.has(round.id);
+  const hasDraft = Object.values(current.answers).some(answer => answer.choices.length > 0 || answer.text.trim().length > 0 || answer.other.trim().length > 0 || answer.notes.trim().length > 0) || current.generalNotes.trim().length > 0;
   const answersValid = round.pages.length > 0 && round.pages.every(page => isAnswerValid(page.page, answerFor(current.answers, page.callId)));
   const canSubmit = round.complete && !disabled && answersValid;
   const canAdvance = entry !== undefined && !disabled && isAnswerValid(entry.page, answer);
@@ -78,6 +91,12 @@ export function QuestionForm({ round, onSubmit }: QuestionFormProps) {
     if (firstSlide.current) { firstSlide.current = false; return; }
     headingRef.current?.focus();
   }, [activeKey]);
+  useEffect(() => { if (current.confirmingDismiss) keepAnsweringRef.current?.focus(); }, [current.confirmingDismiss]);
+  useEffect(() => {
+    if (wasConfirming.current && !current.confirmingDismiss) dismissRef.current?.focus();
+    if (current.dismissError) (current.confirmingDismiss ? keepAnsweringRef.current : dismissRef.current)?.focus();
+    wasConfirming.current = current.confirmingDismiss;
+  }, [current.confirmingDismiss, current.dismissError]);
 
   function updateDraft(update: (previous: Draft) => Draft) {
     setDraft(previous => update(previous.roundId === round.id ? previous : newDraft(round.id)));
@@ -105,6 +124,28 @@ export function QuestionForm({ round, onSubmit }: QuestionFormProps) {
   function next() { if (canAdvance) goTo(slides[index + 1]); }
   function back() { goTo(slides[index - 1]); }
   function toggle() { updateDraft(previous => ({ ...previous, collapsed: !previous.collapsed })); }
+  function requestDismiss() {
+    if (!onDismiss || disabled) return;
+    if (hasDraft && !current.confirmingDismiss) { updateDraft(previous => ({ ...previous, collapsed: false, confirmingDismiss: true, dismissError: null })); return; }
+    void dismiss();
+  }
+  function cancelDismiss() {
+    if (current.dismissing) return;
+    updateDraft(previous => ({ ...previous, confirmingDismiss: false, dismissError: null }));
+  }
+  async function dismiss(): Promise<void> {
+    if (!onDismiss || disabled || current.dismissing) return;
+    updateDraft(previous => ({ ...previous, dismissing: true, dismissError: null }));
+    try {
+      await onDismiss();
+      setDraft(previous => previous.roundId === round.id ? { ...previous, dismissing: false } : previous);
+    } catch (error) {
+      setDraft(previous => previous.roundId === round.id ? {
+        ...previous, dismissing: false, confirmingDismiss: hasDraft,
+        dismissError: errorMessage(error),
+      } : previous);
+    }
+  }
   async function send(): Promise<void> {
     if (active.kind !== 'notes' || !canSubmit || inFlight.current.has(round.id) || sent.current.has(round.id)) return;
     const roundId = round.id;
@@ -116,7 +157,7 @@ export function QuestionForm({ round, onSubmit }: QuestionFormProps) {
       sent.current.add(roundId);
       setDraft(previous => previous.roundId === roundId ? { ...previous, submitting: false, submitted: true } : previous);
     } catch (error) {
-      setDraft(previous => previous.roundId === roundId ? { ...previous, submitting: false, error: error instanceof Error ? error.message : String(error) } : previous);
+      setDraft(previous => previous.roundId === roundId ? { ...previous, submitting: false, error: errorMessage(error) } : previous);
     } finally { inFlight.current.delete(roundId); }
   }
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -186,12 +227,24 @@ export function QuestionForm({ round, onSubmit }: QuestionFormProps) {
             <textarea className="kq-input" aria-label="Additional Notes" placeholder="Anything else the agent should know?" value={current.generalNotes} disabled={disabled} onChange={event => updateDraft(previous => ({ ...previous, generalNotes: event.target.value }))} />
           </section>}
           {current.error && <p className="kq-error" role="alert">{current.error}</p>}
+          {current.dismissError && <p className="kq-error" role="alert">{current.dismissError}</p>}
         </div>
         <footer className="kq-footer">
-          <button type="button" className="kq-secondary" onClick={back} disabled={index === 0}>Back</button>
-          {active.kind === 'notes'
-            ? <button type="button" className="kq-primary" disabled={!canSubmit} onClick={event => { if (event.detail > 1) return; void send(); }}>{current.submitting ? 'Submitting…' : 'Submit'}</button>
-            : <button type="button" className="kq-primary" onClick={next} disabled={!canAdvance}>Next</button>}
+          {current.confirmingDismiss ? <>
+            <p className="kq-confirm-text">Discard this and other unanswered rounds? Your answers and notes will not be submitted.</p>
+            <div className="kq-footer-actions">
+              <button ref={keepAnsweringRef} type="button" className="kq-secondary" disabled={current.dismissing} onClick={cancelDismiss}>Keep answering</button>
+              <button type="button" className="kq-secondary kq-dismiss-confirm" disabled={current.dismissing} onClick={() => void dismiss()}>{current.dismissing ? 'Dismissing…' : 'Dismiss questions'}</button>
+            </div>
+          </> : <>
+            {onDismiss && <button ref={dismissRef} type="button" className="kq-secondary kq-dismiss" disabled={disabled} onClick={requestDismiss}>Dismiss</button>}
+            <div className="kq-footer-actions">
+              <button type="button" className="kq-secondary" onClick={back} disabled={index === 0 || disabled}>Back</button>
+              {active.kind === 'notes'
+                ? <button type="button" className="kq-primary" disabled={!canSubmit} onClick={event => { if (event.detail > 1) return; void send(); }}>{current.submitting ? 'Submitting…' : 'Submit'}</button>
+                : <button type="button" className="kq-primary" onClick={next} disabled={!canAdvance}>Next</button>}
+            </div>
+          </>}
         </footer>
       </div>}
     </form>

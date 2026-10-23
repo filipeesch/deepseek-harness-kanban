@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import type { BoardState, ClientApi, Problem, Project, Task } from '../shared/types.js';
 import { creationReceiptId, ErrorNotice, Markdown, Modal, Tabs, useAction, type RunCommand } from './ui.js';
+import { WorkflowEditor } from './workflow-editor.js';
 import { createTaskPageState, usePageField, type TaskPageState } from './page-state.js';
 import { worktreePathForBranch } from '../shared/worktree-name.js';
 
@@ -53,7 +54,25 @@ function InfoEditor({ task, state, run, viewState }: TaskPanelProps) {
 
 export function Configuration({ state, run, api, pickDirectory, onClose, initial = 'General' }: { state: BoardState; run: RunCommand; api?: ClientApi; pickDirectory?: () => Promise<string | null>; onClose: () => void; initial?: string }) {
   const [section, setSection] = useState(initial); const id = useId();
-  return <Modal title="Kanban configuration" onClose={onClose}><Tabs label="Configuration sections" values={['General', 'Projects', 'Workflow']} selected={section} onSelect={setSection} id={id} /><section className="kb-panel" role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>{section === 'General' ? <General state={state} run={run} pickDirectory={pickDirectory} /> : section === 'Projects' ? <Projects state={state} run={run} api={api} pickDirectory={pickDirectory} /> : <WorkflowEditor state={state} run={run} />}</section></Modal>;
+  const [workflowDraft, setWorkflowDraft] = useState<{ yaml: string; revision: number } | null>(null);
+  const [closePending, setClosePending] = useState(false);
+  const dirty = workflowDraft !== null && workflowDraft.yaml !== state.workflowYaml;
+  useEffect(() => { if (!dirty) setClosePending(false); }, [dirty]);
+  function requestClose() {
+    if (closePending) { setClosePending(false); return; }
+    if (dirty) { setClosePending(true); return; }
+    onClose();
+  }
+  return <Modal title="Kanban configuration" onClose={requestClose} size={section === 'Workflow' ? 'wide' : 'default'}>
+    <Tabs label="Configuration sections" values={['General', 'Projects', 'Workflow']} selected={section} onSelect={setSection} id={id} />
+    {closePending && <div className="kb-inline-confirm" role="alertdialog" aria-label="Discard workflow changes">
+      <p>You have unsaved workflow changes. Discard them and close configuration?</p>
+      <div className="kb-actions"><button type="button" className="kb-button" onClick={() => setClosePending(false)}>Keep editing</button><button type="button" className="kb-button kb-danger" onClick={onClose}>Discard and close</button></div>
+    </div>}
+    <section className="kb-panel" role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>
+      {section === 'General' ? <General state={state} run={run} pickDirectory={pickDirectory} /> : section === 'Projects' ? <Projects state={state} run={run} api={api} pickDirectory={pickDirectory} /> : <WorkflowEditor state={state} run={run} yaml={workflowDraft?.yaml ?? state.workflowYaml} baseRevision={workflowDraft?.revision ?? state.revision} onYamlChange={yaml => setWorkflowDraft(current => current ? { ...current, yaml } : { yaml, revision: state.revision })} onSaved={() => setWorkflowDraft(null)} onReload={() => setWorkflowDraft(null)} />}
+    </section>
+  </Modal>;
 }
 
 function General({ state, run, pickDirectory }: { state: BoardState; run: RunCommand; pickDirectory?: () => Promise<string | null> }) {
@@ -135,12 +154,7 @@ function Projects({ state, run, api, pickDirectory }: { state: BoardState; run: 
     </form>
   </div>;
 }
-function WorkflowEditor({ state, run }: { state: BoardState; run: RunCommand }) {
-  const [yaml, setYaml] = useState(state.workflowYaml); const [revision, setRevision] = useState(state.revision); const [saved, setSaved] = useState(false); const action = useAction(run);
-  const draftGeneration = useRef(0);
-  useEffect(() => () => { draftGeneration.current++; }, []);
-  return <form className="kb-form" onSubmit={async event => { event.preventDefault(); if (action.pending) return; const generation = draftGeneration.current; const result = await action.execute({ type: 'workflow.save', yaml, expectedRevision: revision }); if (result && generation === draftGeneration.current) { setYaml(result.state.workflowYaml); setRevision(result.state.revision); setSaved(true); } }}><label className="kb-field">Workflow YAML<textarea className="kb-input kb-code" rows={18} spellCheck={false} disabled={action.pending} value={yaml} onChange={event => { if (action.pending) return; draftGeneration.current++; setYaml(event.target.value); setSaved(false); }} /></label><p className="kb-hint">Configure the initial column, groups, allowed transitions, and optional entry instructions. Unsupported or invalid configuration is reported without replacing the last valid workflow. WIP limits are not supported.</p><ErrorNotice problem={action.error} /><div className="kb-actions"><button type="button" className="kb-button" disabled={action.pending} onClick={() => { setYaml(state.workflowYaml); setRevision(state.revision); action.clearError(); }}>Reload saved workflow</button><button className="kb-button kb-primary" disabled={action.pending || !yaml.trim()}>{action.pending ? 'Saving…' : 'Save workflow'}</button></div>{saved && <p role="status">Workflow saved.</p>}</form>;
-}
+
 
 export function NotesPanel(props: TaskPanelProps) { return <NotesEditor key={props.task.id} {...props} />; }
 

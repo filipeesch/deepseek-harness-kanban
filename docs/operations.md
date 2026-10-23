@@ -107,7 +107,7 @@ Failed operations remain recorded for explicit recovery; nonfailed recorded work
 
 ### Queued confirmed entry instructions
 
-[The host command path](<../src/host/app.ts>) requires equality with the **exact raw instruction displayed for approval** before creating a new conversation, performing Git work, or journaling the move. A missing/changed instruction produces `INSTRUCTION_CHANGED`: review the current instruction rather than silently approving a replacement. Once admitted, the destination, chosen conversation, captured approved text, placement anchor, and stable native request ID are persisted; waiting/retry does not substitute a newer workflow instruction. A transition does not create or prompt for a worktree; use the notice or Git section instead. **Move only** never submits a prompt. **Move and run** queues the instruction into only the selected native conversation; other chats are not messaged.
+[The host command path](<../src/host/app.ts>) requires equality with the **exact raw instruction displayed for approval** before creating a new conversation, performing Git work, or journaling the move. A missing/changed instruction produces `INSTRUCTION_CHANGED`: review the current instruction rather than silently approving a replacement. Once admitted, the destination, chosen conversation, captured approved text, placement anchor, and stable native request ID are persisted; waiting/retry does not substitute a newer workflow instruction. A transition does not create or prompt for a worktree; use the notice or Git section instead. The notice's **Create worktree** uses the displayed derived branch, destination, and source directly; it refreshes collision-aware defaults when untouched, routes to Git when no destination is configured, and keeps a Git failure inline with a review path. **Move only** never submits a prompt. **Move and run** queues the instruction into only the selected native conversation; other chats are not messaged.
 
 The drawer shows waiting/sending/failed confirmed-action status. Once context is ready, **Retry confirmed action** resumes the saved choice; **Cancel action and return to base** clears it when prompt admission is not in progress. A stage may already have changed when native prompt admission fails, so check both stage and status rather than interpreting the error as a complete rollback.
 
@@ -135,12 +135,13 @@ These plugin behaviors are verified in controlled public native-port fixtures an
 ## Questions, notes, and stale views
 
 - A `decision_request` page returns immediately. The form is optional text-composition UX, not a native pending-tool/approval interaction. Received pages can be answered while the round streams; Submit waits for actual native turn completion and valid answers, then sends one ordinary question/answer message through the originating conversation.
+- The expanded footer's **Dismiss** action removes every unresolved round in that conversation. An untouched round closes immediately; entered answers or notes show an inline discard confirmation first. Dismissal sends no conversation message, persists a dismissed-turn marker, prunes stored question-page payloads for those turns, and does not modify the native transcript. Reload, reconnect, and transcript replay do not restore the round; future rounds still appear. The awaiting-reply indication clears because the dismissed round is no longer pending.
 - Closing submits no answer. A normal human reply retires the pending round; injected runtime-context records do not count as an answer. The tool row can reopen/review question pages. Canonical events reconstruct the round after reload, including PTC correlation; unsent form drafts are not promised durable.
 - A genuine native ask-user or permission request stays independent. Dismissing a rich form or sending its text does not settle an unrelated native pending interaction.
 - Notes are shared by the task. Missing task context in an ordinary chat needs an explicit task ID, not a fallback to another task. There is no decision ledger or plugin TODO list.
 - For feed errors use **Retry updates**; for initial board load use **Retry loading board**. Reopen a failed native tab or use its displayed retry action. A duplicate Kanban composer warning means close the other plugin view first, not copy the chat implementation.
 - Creation commands return a **transient exact entity receipt** for that command; the UI does not infer a new project/task/tab/note by comparing snapshots. A missing receipt or unavailable created entity means inspect/refresh and select the saved entity explicitly before trying another creation. Receipts are not a persisted ledger or execution-success record. Project drafts/selection are locked during saves, and stale completion cannot rebind another draft.
-- For revision conflicts, preserve your unsaved text separately before **Reload saved version/workflow** and reapplying changes. Invalid workflow saves leave the last valid workflow intact; retaining referenced column IDs avoids orphaning active or pending-transition tasks.
+- Workflow editing uses a code editor with line numbers, YAML highlighting, folding, search, live syntax/schema diagnostics, vertical resize, and a maximize toggle. Save is disabled while the document is invalid or still checking. The draft survives Configuration tabs; closing Configuration or reloading with a dirty draft asks first. Invalid workflow saves leave the last valid workflow intact; retaining referenced column IDs avoids orphaning active or pending-transition tasks.
 
 ## Metadata, disabling, and rollback
 
@@ -159,10 +160,16 @@ node --version
 pnpm --version
 pnpm run typecheck
 pnpm test
+pnpm run test:browser
 pnpm run build
 # Combined sequence: typechecks, tests, then build
 pnpm run check
+# Real-composition e2e is manual before release against a pinned DSH checkout:
+node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness --check
+node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness
 ```
+
+`pnpm run test:browser` is the separate Playwright harness for real CSS layout, CodeMirror, and animation behavior. It is intentionally not part of `pnpm run check`, which stays portable. `scripts/e2e-dsh.mjs` requires a DSH `dsh-v0.2.1-rc.2` checkout installed and built; it copies the plugin-owned scenario templates into that checkout's web test tree, runs them with `DSH_SNAPSHOT=replay`, and removes them afterward. The scenarios seed a question session without a model call and exercise real temporary Git for the worktree flow.
 
 The hardened bundled Node failed loading the Rollup native addon due to a **Team ID/code-signing mismatch**. This does not justify disabling library validation, removing signatures/quarantine, or re-signing the app. Run the suite under normal Node instead and keep the actual failure distinct from test assertions.
 
@@ -186,4 +193,4 @@ Acceptance follows the user-approved [public-extension-point boundary](<../opens
 
 Tracked reports and source tests are clone-accessible. Paths under `.verification` in historical records identify local-generated, ignored evidence only; raw QA JSON, screenshots, auth state and native conversation content are not publication assets. No old failed run or time-scoped resource observation is retroactively rewritten as a pass. The temporary schedule verifier was explicitly stopped; that transport stop did not prove native fixture or guard disposal.
 
-The separate UX issue list belongs to the next change. Release completion is determined by the agreed product scope, final source review/build/tests and existing-GUI smoke, not by upstream DSH internals or historical QA-script counts.
+The UX improvements change owns the workflow editor, worktree notice, content-height columns, drawer animation, and question-dismissal scope. Release completion is determined by the agreed product scope, final source review/build/tests and existing-GUI smoke, not by upstream DSH internals or historical QA-script counts.

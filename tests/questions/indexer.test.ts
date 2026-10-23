@@ -151,4 +151,68 @@ describe('QuestionIndex canonical events', () => {
     expect(index.getRounds()).toEqual([]);
     expect(index.apply('a', result(3, 1, 'q'))).toBe(false);
   });
+
+  it('dismisses a round, filters it from pending, and keeps it dismissed across restore', () => {
+    const index = new QuestionIndex();
+    for (const event of [call(1, 2, 'one'), result(2, 2, 'one'), end(3, 2), call(4, 3, 'two'), result(5, 3, 'two')]) index.apply('a', event);
+    const first = index.getRounds('a')[0]!;
+    expect(index.dismiss('a', [first.id])).toBe(1);
+    expect(index.getRounds('a').map(round => round.turnId)).toEqual(['3']);
+    expect(index.pending('a')).toBe(true);
+    const record = index.serializeSession('a')!;
+    expect(record.dismissedTurns).toEqual([2]);
+    expect(record.events.some(event => event.kind === 'native-page' && event.turn === 2)).toBe(false);
+    expect(record.events.some(event => event.kind === 'call' && event.turn === 2)).toBe(true);
+    expect(record.events.some(event => event.kind === 'end' && event.turn === 2)).toBe(true);
+    const restored = new QuestionIndex();
+    restored.restoreSession(record);
+    expect(restored.getRounds('a').map(round => round.turnId)).toEqual(['3']);
+    expect(restored.pending('a')).toBe(true);
+    expect(new QuestionIndex(index.serialize()).getRounds('a').map(round => round.turnId)).toEqual(['3']);
+  });
+
+  it('dismisses every unresolved round without touching another conversation', () => {
+    const index = new QuestionIndex();
+    for (const event of [call(1, 1, 'a'), result(2, 1, 'a'), end(3, 1), call(4, 2, 'b'), result(5, 2, 'b'), end(6, 2)]) index.apply('one', event);
+    index.apply('two', call(7, 1, 'c'));
+    index.apply('two', result(8, 1, 'c'));
+    expect(index.dismiss('one', index.getRounds('one').map(round => round.id))).toBe(2);
+    expect(index.getRounds('one')).toEqual([]);
+    expect(index.pending('one')).toBe(false);
+    expect(index.getRounds('two')).toHaveLength(1);
+    expect(index.pending('two')).toBe(true);
+  });
+
+  it('does not resurrect a dismissed turn when late pages arrive', () => {
+    const index = new QuestionIndex();
+    for (const event of [call(1, 4, 'first'), result(2, 4, 'first'), end(3, 4)]) index.apply('a', event);
+    index.dismiss('a', [index.getRounds('a')[0]!.id]);
+    index.apply('a', call(4, 4, 'late'));
+    index.apply('a', result(5, 4, 'late', free));
+    expect(index.getRounds('a')).toEqual([]);
+    expect(index.pending('a')).toBe(false);
+    expect(index.serializeSession('a')!.events.some(event => event.kind === 'native-page' && event.callId === 'late')).toBe(false);
+  });
+
+  it('prunes PTC pages by their owning root turn but keeps the surviving projection evidence', () => {
+    const index = new QuestionIndex();
+    for (const event of [call(1, 9, 'root', 'run_code'), ptcStart(2, 'root', 'nested'), ptcResult(3, 'root', 'nested'), end(4, 9)]) index.apply('a', event);
+    index.dismiss('a', [index.getRounds('a')[0]!.id]);
+    const record = index.serializeSession('a')!;
+    expect(record.events.some(event => event.kind === 'ptc-page')).toBe(false);
+    expect(record.events.some(event => event.kind === 'call' && event.callId === 'root')).toBe(true);
+    expect(record.events.some(event => event.kind === 'ptc-start')).toBe(true);
+    expect(record.events.some(event => event.kind === 'end' && event.turn === 9)).toBe(true);
+    expect(record.dismissedTurns).toEqual([9]);
+  });
+
+  it('keeps an unresolvable PTC page while the dismissal marker hides its round', () => {
+    const index = new QuestionIndex();
+    index.apply('a', ptcStart(1, 'root', 'nested'));
+    index.apply('a', ptcResult(2, 'root', 'nested'));
+    index.dismiss('a', ['question-round:a:1']);
+    const record = index.serializeSession('a')!;
+    expect(record.dismissedTurns).toEqual([1]);
+    expect(record.events.some(event => event.kind === 'ptc-page')).toBe(true);
+  });
 });

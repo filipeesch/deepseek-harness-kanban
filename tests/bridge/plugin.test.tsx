@@ -36,6 +36,7 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
     branches: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['main'] } }),
     inferProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { projectPath: '/repo', gitRootPath: '/repo' } } }),
     questions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: rounds } }),
+    dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
     follow(signal?: AbortSignal): RemoteStreamHandle<BoardSnapshot, never> {
       return {
         async *[Symbol.asyncIterator]() { if (!signal?.aborted) await new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once: true })); },
@@ -172,5 +173,16 @@ describe('public SDK plugin binding contracts', () => {
     expect(factory).toHaveBeenCalledWith('conversation.content', { variant: 'embedded', phase: 'active', hero: false }, { slots: { views: expect.any(Function) } });
     const options = factory.mock.calls[0]?.[2] as unknown as { slots: { views: (props: { renderSlot: (key: string, owner: object) => ReactNode }) => ReactNode } };
     const slot = vi.fn(() => null); options.slots.views({ renderSlot: slot }); expect(slot).toHaveBeenCalledWith('conversation.session', { view: 'chat' });
+  });
+
+  it('dismisses the question round through the bridge without sending a native message', async () => {
+    const f = await installed();
+    const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
+    render(<Dock sessionId="a" />);
+    await screen.findByRole('form', { name: 'Questions from the agent' });
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    await waitFor(() => expect(f.remote.dismissQuestions).toHaveBeenCalledWith({ sessionId: 'a', roundId: 'r' }));
+    await waitFor(() => expect(screen.queryByRole('form', { name: 'Questions from the agent' })).toBeNull());
+    expect(f.send).not.toHaveBeenCalled();
   });
 });

@@ -48,6 +48,7 @@ function fixture() {
       worktreeDefault: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { branchName: 'task', path: '' } } }),
       inferProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { projectPath: '/repo/apps/web', gitRootPath: '/repo' } } }),
       questions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [round()] } }),
+      dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
       follow: vi.fn((signal?: AbortSignal) => { const feed = new Feed<BoardSnapshot>(); feeds.push(feed); signal?.addEventListener('abort', () => feed.dispose(), { once: true }); return feed; }),
     },
     $stream<Item>(options: RemoteStreamOptions<Item>) { return new RemoteStream({ generation: generation.observable }, options); },
@@ -235,5 +236,48 @@ describe('one-shot cold question preparation', () => {
     await f.bridge.prepareQuestions('a');
     expect(f.bridge.questionsView.getSnapshot().rounds[0]?.answered).toBe(false);
     expect(f.remote.kanban.questions).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('question dismissal bridge', () => {
+  it('removes the round locally and fences a late preparation merge', async () => {
+    const f = fixture(); await f.bridge.prepareQuestions('a');
+    expect(f.bridge.questionsView.getSnapshot().rounds).toHaveLength(1);
+    let resolve!: (value: Awaited<ReturnType<BridgeRemote['kanban']['questions']>>) => void;
+    vi.mocked(f.remote.kanban.questions).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const stale = f.bridge.prepareQuestions('b');
+    await vi.waitFor(() => expect(f.remote.kanban.questions).toHaveBeenCalledTimes(2));
+    vi.mocked(f.remote.kanban.dismissQuestions).mockResolvedValueOnce({ ok: true, value: { ok: true, value: [] } });
+    await f.bridge.dismissQuestions('a', 'round');
+    expect(f.remote.kanban.dismissQuestions).toHaveBeenCalledWith({ sessionId: 'a', roundId: 'round' });
+    expect(f.bridge.questionsView.getSnapshot().rounds).toEqual([]);
+    await expect(f.bridge.prepareQuestions('a')).resolves.toEqual([]);
+    resolve({ ok: true, value: { ok: true, value: [{ ...round(), sessionId: 'b' }] } });
+    await stale;
+    expect(f.bridge.questionsView.getSnapshot().rounds.filter(value => value.sessionId === 'a')).toEqual([]);
+  });
+
+  it('keeps the round when the host rejects the dismissal', async () => {
+    const f = fixture(); await f.bridge.prepareQuestions('a');
+    vi.mocked(f.remote.kanban.dismissQuestions).mockRejectedValueOnce(Object.assign(new Error('No such round'), { code: 'OTHER_FAILURE' }));
+    await expect(f.bridge.dismissQuestions('a', 'round')).rejects.toThrow('No such round');
+    expect(f.bridge.questionsView.getSnapshot().rounds).toHaveLength(1);
+  });
+
+  it('treats an already dismissed round as success and filters a later snapshot', async () => {
+    const f = fixture(); await f.bridge.prepareQuestions('a');
+    vi.mocked(f.remote.kanban.dismissQuestions).mockResolvedValueOnce({ ok: true, value: { ok: false, error: { code: 'QUESTION_ROUND_NOT_FOUND', message: 'Already dismissed' } } });
+    await expect(f.bridge.dismissQuestions('a', 'round')).resolves.toEqual([]);
+    f.bridge.start(); await vi.waitFor(() => expect(f.feeds).toHaveLength(1)); f.feeds[0]!.push(snapshot(7, [round()]));
+    await vi.waitFor(() => expect(f.bridge.questionsView.getSnapshot().rounds).toEqual([]));
+  });
+
+  it('does not hide unrelated unresolved rounds when the trigger is missing', async () => {
+    const f = fixture();
+    vi.mocked(f.remote.kanban.questions).mockResolvedValueOnce({ ok: true, value: { ok: true, value: [round(), { ...round(), id: 'round-2' }] } });
+    await f.bridge.prepareQuestions('a');
+    vi.mocked(f.remote.kanban.dismissQuestions).mockResolvedValueOnce({ ok: true, value: { ok: false, error: { code: 'QUESTION_ROUND_NOT_FOUND', message: 'Already answered' } } });
+    await expect(f.bridge.dismissQuestions('a', 'round')).resolves.toMatchObject([{ id: 'round-2' }]);
+    expect(f.bridge.questionsView.getSnapshot().rounds.map(value => value.id)).toEqual(['round-2']);
   });
 });

@@ -16,7 +16,7 @@ export type ProjectionEvent =
 /** Minimal projection data only: no transcripts, tool arguments, or human message text. */
 export interface QuestionIndexSnapshot {
   version: 1;
-  sessions: Array<{ sessionId: string; events: ProjectionEvent[] }>;
+  sessions: Array<{ sessionId: string; events: ProjectionEvent[]; dismissedTurns?: number[] }>;
 }
 
 /** One conversation's durable projection record, independent of board or task state. */
@@ -24,11 +24,19 @@ export interface QuestionSessionRecord {
   version: 1;
   sessionId: string;
   events: ProjectionEvent[];
+  dismissedTurns?: number[];
 }
 
 const EMPTY_ROUNDS: readonly QuestionRound[] = Object.freeze([]);
 function object(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function integer(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0; }
+function turnList(value: unknown, label: string): number[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some(turn => !integer(turn))) throw new KanbanError('INVALID_QUESTION_INDEX', label + ' must be an array of nonnegative turn numbers.');
+  const result = [...new Set(value)].sort((a, b) => a - b);
+  if (result.length !== value.length) throw new KanbanError('INVALID_QUESTION_INDEX', label + ' must not contain duplicate turns.');
+  return result;
+}
 function id(value: unknown): value is string { return typeof value === 'string' && value.length > 0; }
 function pageOf(meta: unknown): QuestionPage | undefined {
   if (!object(meta) || meta.kind !== 'kanban.question-page' || meta.version !== 1) return undefined;
@@ -92,7 +100,7 @@ function copyEvent(value: unknown): ProjectionEvent {
   throw new KanbanError('INVALID_QUESTION_INDEX', 'Unknown or malformed question projection event.');
 }
 
-function buildRounds(sessionId: string, entries: Iterable<ProjectionEvent>): readonly QuestionRound[] {
+function buildRounds(sessionId: string, entries: Iterable<ProjectionEvent>, dismissedTurns: ReadonlySet<number> = new Set()): readonly QuestionRound[] {
   const events = [...entries].sort((a, b) => a.seq - b.seq);
   const calls = events.filter((e): e is Extract<ProjectionEvent, { kind: 'call' }> => e.kind === 'call');
   const starts = events.filter((e): e is Extract<ProjectionEvent, { kind: 'ptc-start' }> => e.kind === 'ptc-start');
@@ -124,7 +132,7 @@ function buildRounds(sessionId: string, entries: Iterable<ProjectionEvent>): rea
     }
     rounds.set(turn, round);
   }
-  return freeze([...rounds].map(([turn, round]): QuestionRound => ({
+  return freeze([...rounds].filter(([turn]) => !dismissedTurns.has(turn)).map(([turn, round]): QuestionRound => ({
     id: 'question-round:' + sessionId + ':' + turn,
     sessionId,
     turnId: String(turn),
@@ -138,6 +146,7 @@ function buildRounds(sessionId: string, entries: Iterable<ProjectionEvent>): rea
 /** Canonical-event projection independent of native registration, storage, and presentation. */
 export class QuestionIndex {
   private events = new Map<string, Map<number, ProjectionEvent>>();
+  private dismissed = new Map<string, Set<number>>();
   private rounds = new Map<string, readonly QuestionRound[]>();
   private allRounds: readonly QuestionRound[] = EMPTY_ROUNDS;
   private listeners = new Set<() => void>();
@@ -167,6 +176,37 @@ export class QuestionIndex {
   /** Includes incomplete rounds while questions are still arriving; no native tool is blocked. */
   pending(sessionId?: string): boolean { return this.getRounds(sessionId).some(round => !round.answered && round.pages.length > 0); }
 
+  /** Restore previously dismissed turns when a durable write could not be completed. */
+  undismiss(sessionId: string, turns: readonly number[]): void {
+    const dismissed = this.dismissed.get(sessionId);
+    if (!dismissed) return;
+    let changed = false;
+    for (const turn of turns) if (dismissed.delete(turn)) changed = true;
+    if (!changed) return;
+    if (dismissed.size === 0) this.dismissed.delete(sessionId);
+    this.rebuild(sessionId);
+  }
+
+  /** Permanently hide every supplied round in one conversation. Returns how many turns were newly dismissed. */
+  dismiss(sessionId: string, roundIds: readonly string[]): number {
+    if (this.disposed || !id(sessionId) || !Array.isArray(roundIds)) return 0;
+    const prefix = 'question-round:' + sessionId + ':';
+    const dismissed = new Set(this.dismissed.get(sessionId) ?? []);
+    let added = 0;
+    for (const roundId of roundIds) {
+      if (typeof roundId !== 'string' || !roundId.startsWith(prefix)) continue;
+      const turn = Number(roundId.slice(prefix.length));
+      if (!Number.isSafeInteger(turn) || turn < 0 || dismissed.has(turn)) continue;
+      dismissed.add(turn);
+      added += 1;
+    }
+    if (added === 0) return 0;
+    this.dismissed.set(sessionId, dismissed);
+    this.rebuild(sessionId);
+    this.emit();
+    return added;
+  }
+
   subscribe(listener: () => void): () => void {
     if (this.disposed) return () => {};
     this.listeners.add(listener);
@@ -174,16 +214,44 @@ export class QuestionIndex {
   }
 
   serialize(): QuestionIndexSnapshot {
-    return { version: 1, sessions: [...this.events].sort(([a], [b]) => a.localeCompare(b)).map(([sessionId, events]) => ({
-      sessionId, events: [...events.values()].sort((a, b) => a.seq - b.seq).map(event => copyEvent(event)),
-    })) };
+    const sessionIds = new Set([...this.events.keys(), ...this.dismissed.keys()]);
+    return { version: 1, sessions: [...sessionIds].sort((a, b) => a.localeCompare(b)).map(sessionId => {
+      const dismissedTurns = this.dismissed.get(sessionId);
+      return {
+        sessionId,
+        events: this.serializeEvents(sessionId),
+        ...(dismissedTurns && dismissedTurns.size > 0 ? { dismissedTurns: [...dismissedTurns].sort((a, b) => a - b) } : {}),
+      };
+    }) };
   }
 
-  /** One conversation's projection record, or undefined when it holds no events. */
+  /** One conversation's projection record, or undefined when it holds no events or dismissals. */
   serializeSession(sessionId: string): QuestionSessionRecord | undefined {
     const events = this.events.get(sessionId);
-    if (!events || events.size === 0) return undefined;
-    return { version: 1, sessionId, events: [...events.values()].sort((a, b) => a.seq - b.seq).map(event => copyEvent(event)) };
+    const dismissedTurns = this.dismissed.get(sessionId);
+    if ((!events || events.size === 0) && (!dismissedTurns || dismissedTurns.size === 0)) return undefined;
+    return {
+      version: 1,
+      sessionId,
+      events: this.serializeEvents(sessionId),
+      ...(dismissedTurns && dismissedTurns.size > 0 ? { dismissedTurns: [...dismissedTurns].sort((a, b) => a - b) } : {}),
+    };
+  }
+
+  /** Drop stored question-page payloads for dismissed turns while retaining call/end/human evidence. */
+  private serializeEvents(sessionId: string): ProjectionEvent[] {
+    const events = [...(this.events.get(sessionId)?.values() ?? [])].sort((a, b) => a.seq - b.seq);
+    const dismissedTurns = this.dismissed.get(sessionId);
+    if (!dismissedTurns || dismissedTurns.size === 0) return events.map(event => copyEvent(event));
+    const calls = events.filter((event): event is Extract<ProjectionEvent, { kind: 'call' }> => event.kind === 'call');
+    return events.filter(event => {
+      if (event.kind === 'native-page') return !dismissedTurns.has(event.turn);
+      if (event.kind === 'ptc-page') {
+        const root = calls.findLast(call => call.callId === event.rootCallId);
+        return root === undefined || !dismissedTurns.has(root.turn);
+      }
+      return true;
+    }).map(event => copyEvent(event));
   }
 
   /**
@@ -200,12 +268,16 @@ export class QuestionIndex {
       if (incoming.has(event.seq)) throw new KanbanError('INVALID_QUESTION_INDEX', 'Duplicate question event sequence.');
       incoming.set(event.seq, event);
     }
+    const restoredDismissed = turnList(record.dismissedTurns, 'dismissedTurns');
     const current = this.events.get(sessionId);
     const merged = current ? new Map(current) : new Map<number, ProjectionEvent>();
     let changed = false;
     for (const [seq, event] of incoming) if (!merged.has(seq)) { merged.set(seq, event); changed = true; }
+    const dismissed = new Set(this.dismissed.get(sessionId) ?? []);
+    for (const turn of restoredDismissed) if (!dismissed.has(turn)) { dismissed.add(turn); changed = true; }
     if (!changed) return false;
     this.events.set(sessionId, merged);
+    if (dismissed.size > 0) this.dismissed.set(sessionId, dismissed);
     this.rebuild(sessionId);
     this.emit();
     return true;
@@ -216,6 +288,7 @@ export class QuestionIndex {
     if (this.disposed) return;
     if (!object(snapshot) || snapshot.version !== 1 || !Array.isArray(snapshot.sessions)) throw new KanbanError('INVALID_QUESTION_INDEX', 'Unsupported question index snapshot.');
     const next = new Map<string, Map<number, ProjectionEvent>>();
+    const nextDismissed = new Map<string, Set<number>>();
     for (const value of snapshot.sessions) {
       if (!object(value) || !id(value.sessionId) || !Array.isArray(value.events) || next.has(value.sessionId)) throw new KanbanError('INVALID_QUESTION_INDEX', 'Invalid or duplicate question session.');
       const events = new Map<number, ProjectionEvent>();
@@ -225,11 +298,14 @@ export class QuestionIndex {
         events.set(event.seq, event);
       }
       next.set(value.sessionId, events);
+      const dismissed = turnList(value.dismissedTurns, 'dismissedTurns');
+      if (dismissed.length > 0) nextDismissed.set(value.sessionId, new Set(dismissed));
     }
     this.events = next;
+    this.dismissed = nextDismissed;
     this.rounds.clear();
     this.allRounds = EMPTY_ROUNDS;
-    for (const sessionId of next.keys()) this.rebuild(sessionId);
+    for (const sessionId of new Set([...next.keys(), ...nextDismissed.keys()])) this.rebuild(sessionId);
     this.emit();
   }
 
@@ -237,12 +313,13 @@ export class QuestionIndex {
     this.disposed = true;
     this.listeners.clear();
     this.events.clear();
+    this.dismissed.clear();
     this.rounds.clear();
     this.allRounds = EMPTY_ROUNDS;
   }
 
   private rebuild(sessionId: string): void {
-    this.rounds.set(sessionId, buildRounds(sessionId, this.events.get(sessionId)?.values() ?? []));
+    this.rounds.set(sessionId, buildRounds(sessionId, this.events.get(sessionId)?.values() ?? [], this.dismissed.get(sessionId)));
     this.allRounds = freeze([...this.rounds].sort(([a], [b]) => a.localeCompare(b)).flatMap(([, rounds]) => [...rounds]));
   }
   private emit(): void { for (const listener of [...this.listeners]) listener(); }

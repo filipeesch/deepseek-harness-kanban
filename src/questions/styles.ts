@@ -14,7 +14,7 @@ export const questionCss = String.raw`
 .kq-chevron[data-open=true]{transform:rotate(180deg)}
 .kq-panel{display:flex;flex-direction:column;min-height:0;border-top:0.5px solid var(--dsw-alias-border-l1)}
 .kq-scroll{display:flex;flex-direction:column;gap:10px;max-height:min(52vh,520px);overflow-y:auto;overscroll-behavior:contain;padding:10px 12px}
-.kq-footer{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:8px 12px;border-top:0.5px solid var(--dsw-alias-border-l1);flex-shrink:0}
+.kq-footer{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:8px 12px;border-top:0.5px solid var(--dsw-alias-border-l1);flex-shrink:0}.kq-footer-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-left:auto}.kq-confirm-text{margin:0;flex:1 1 180px;font-size:12px;line-height:1.4;color:var(--dsw-alias-label-secondary,currentColor)}.kq-dismiss{flex:none}.kq-dismiss-confirm{color:var(--dsw-alias-state-error-primary,crimson);border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary,crimson) 40%,transparent)}
 .kq-status{margin:0;font-size:12px;color:var(--dsw-alias-label-tertiary,currentColor)}
 .kq-step{margin:0;font-size:11px;color:var(--dsw-alias-label-tertiary,currentColor)}
 .kq-context{padding-bottom:6px;border-bottom:0.5px solid var(--dsw-alias-border-l1);font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary,currentColor)}
@@ -52,7 +52,7 @@ export const questionCss = String.raw`
 .kq-secondary{flex:none;padding:6px 12px;border:0.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary,currentColor);font:inherit;font-size:13px;cursor:pointer}
 .kq-secondary:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
 .kq-secondary:disabled{opacity:.4;cursor:not-allowed}
-.kq-header:focus-visible,.kq-primary:focus-visible,.kq-secondary:focus-visible,.kq-question:focus-visible,.kq-input:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:2px}
+.kq-header:focus-visible,.kq-primary:focus-visible,.kq-secondary:focus-visible,.kq-question:focus-visible,.kq-input:focus-visible,.kq-dismiss-confirm:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:2px}
 .kq-option:focus-within{box-shadow:inset 0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText))}
-@media(max-width:760px){.kq-scroll{max-height:60vh;padding:8px}.kq-footer{padding:6px 8px}}
+@media(max-width:760px){.kq-scroll{max-height:60vh;padding:8px}.kq-footer{padding:6px 8px}.kq-confirm-text{font-size:11px}}
 `;

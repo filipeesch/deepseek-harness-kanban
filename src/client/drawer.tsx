@@ -2,27 +2,32 @@ import React, { Component, useCallback, useEffect, useId, useRef, useState, type
 import type { BoardState, ClientApi, Column, Problem, Task } from '../shared/types.js';
 import { InfoPanel, NotesPanel } from './forms.js';
 import { GitPanel, OperationStatus, PendingTransitionStatus } from './git.js';
+import { WorktreeNotice } from './worktree-notice.js';
+import { useWorktreeDraft } from './worktree-draft.js';
 import { creationReceiptId, ErrorNotice, Tabs, useAction, type RunCommand } from './ui.js';
 import { CloseIcon, TrashIcon } from './icons.js';
 import { createTaskPageState, usePageField, type DrawerSection, type TaskPageState } from './page-state.js';
 
 export interface SessionTitles { title(sessionId: string): string | undefined; rename(sessionId: string, title: string): Promise<void> }
 
-interface DrawerProps { task: Task; state: BoardState; api: ClientApi; run: RunCommand; renderConversation: (id: string) => ReactNode; onClose: () => void; onMove: (task: Task, column: Column, beforeTaskId?: string | null) => void; onDanger: (task: Task, type: 'task.delete' | 'worktree.remove') => void; viewState?: TaskPageState; sessionTitles?: SessionTitles }
+interface DrawerProps { task: Task; state: BoardState; api: ClientApi; run: RunCommand; renderConversation: (id: string) => ReactNode; onClose: () => void; onMove: (task: Task, column: Column, beforeTaskId?: string | null) => void; onDanger: (task: Task, type: 'task.delete' | 'worktree.remove') => void; viewState?: TaskPageState; sessionTitles?: SessionTitles; entering?: boolean; closing?: boolean }
 
 const DRAWER_WIDTH_KEY = 'dsh-kanban.drawer.width';
 const DRAWER_DEFAULT_WIDTH = 620;
 function clampWidth(value: number): number { const max = Math.max(360, (typeof window === 'undefined' ? 1200 : window.innerWidth) * 0.9); return Math.min(Math.max(value, 360), max); }
 function storedWidth(): number { try { const value = Number(window.localStorage.getItem(DRAWER_WIDTH_KEY)); if (Number.isFinite(value) && value > 0) return clampWidth(value === 560 ? DRAWER_DEFAULT_WIDTH : value); } catch { /* storage is optional */ } return clampWidth(DRAWER_DEFAULT_WIDTH); }
 
-export function TaskDrawer({ task, state, api, run, renderConversation, onClose, onMove, onDanger, viewState, sessionTitles }: DrawerProps) {
+export function TaskDrawer({ task, state, api, run, renderConversation, onClose, onMove, onDanger, viewState, sessionTitles, entering = false, closing = false }: DrawerProps) {
   const [localViewState] = useState(createTaskPageState); const preferences = viewState ?? localViewState;
   const [section, setSection] = usePageField(preferences, 'section'); const [dismissed, setDismissed] = useState(false); const id = useId(); const close = useRef<HTMLButtonElement>(null);
   const [width, setWidth] = useState(storedWidth); const widthRef = useRef(width); widthRef.current = width;
-  useEffect(() => { const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null; close.current?.focus(); return () => { if (previous?.isConnected) previous.focus(); }; }, []);
+  const aside = useRef<HTMLElement>(null);
+  useEffect(() => { close.current?.focus(); }, []);
+  useEffect(() => { const element = aside.current; if (!element) return; if (closing) element.setAttribute('inert', ''); else element.removeAttribute('inert'); return () => element.removeAttribute('inert'); }, [closing]);
   useEffect(() => { setDismissed(false); }, [task.worktree?.path]);
   const project = state.projects.find(value => value.id === task.projectId); const current = state.workflow.columns.find(value => value.id === task.columnId); const blocked = Boolean(task.operation || task.pendingTransition);
   const permitted = state.workflow.columns.filter(column => column.id === task.columnId || current?.allowedTransitions === undefined || current.allowedTransitions.includes(column.id));
+  const worktreeDraft = useWorktreeDraft({ api, task, project, basePath: state.settings?.worktreeBasePath, enabled: !task.worktree && (section === 'Conversations' || section === 'Git') });
 
   function persistWidth(next: number) { setWidth(next); try { window.localStorage.setItem(DRAWER_WIDTH_KEY, String(next)); } catch { /* storage is optional */ } }
   function startResize(event: React.PointerEvent<HTMLDivElement>) {
@@ -38,7 +43,7 @@ export function TaskDrawer({ task, state, api, run, renderConversation, onClose,
     if (event.key === 'Home') { event.preventDefault(); persistWidth(clampWidth(DRAWER_DEFAULT_WIDTH)); }
   }
 
-  return <aside className="kb-drawer" aria-label="Task details" aria-labelledby={id + '-title'} style={{ width }}>
+  return <aside ref={aside} className="kb-drawer" aria-label="Task details" aria-labelledby={id + '-title'} style={{ width }} data-entering={entering ? 'true' : undefined} data-closing={closing ? 'true' : undefined}>
     <div className="kb-drawer-resize" role="separator" aria-orientation="vertical" aria-label="Resize task drawer" aria-valuenow={Math.round(width)} aria-valuemin={360} aria-valuemax={Math.round(Math.max(360, (typeof window === 'undefined' ? 1200 : window.innerWidth) * 0.9))} tabIndex={0} onPointerDown={startResize} onDoubleClick={() => persistWidth(clampWidth(DRAWER_DEFAULT_WIDTH))} onKeyDown={resizeKey} />
     <header className="kb-drawer-header"><div><h2 id={id + '-title'}>{task.title}</h2><p className="kb-hint">{project?.name ?? task.projectId}</p></div><div className="kb-drawer-header-actions">
       <button type="button" className="kb-button kb-icon-button kb-danger" aria-label="Delete task" title="Delete task" disabled={blocked} onClick={() => onDanger(task, 'task.delete')}><TrashIcon size={16} /></button>
@@ -47,9 +52,9 @@ export function TaskDrawer({ task, state, api, run, renderConversation, onClose,
     <div className="kb-drawer-toolbar"><Tabs label="Task sections" values={['Conversations', 'Info', 'Git', 'Notes']} selected={section} onSelect={value => setSection(value as DrawerSection)} id={id} /><label className="kb-stage-compact"><span className="kb-sr">Move task to</span><select className="kb-input kb-stage-select" aria-label="Move task to" value={task.columnId} disabled={blocked} onChange={event => { const column = state.workflow.columns.find(value => value.id === event.target.value); if (column && column.id !== task.columnId) onMove(task, column); }}>{permitted.map(column => <option key={column.id} value={column.id}>{column.name}</option>)}</select></label></div>
     <PendingTransitionStatus task={task} run={run} columnName={state.workflow.columns.find(column => column.id === task.pendingTransition?.columnId)?.name ?? task.pendingTransition?.columnId ?? ''} />
     <section className={'kb-drawer-panel ' + (section === 'Conversations' ? 'kb-chat-panel' : '')} role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>
-      {section === 'Conversations' && <>{!task.worktree && !dismissed && <div className="kb-notice" role="note" aria-label="Worktree not created"><strong>No worktree has been created</strong><p>Agents are working in the base project directory. Isolation is optional.</p><div className="kb-actions"><button type="button" className="kb-button kb-primary" disabled={blocked} onClick={() => setSection('Git')}>Create worktree</button><button type="button" className="kb-button" onClick={() => setDismissed(true)}>Dismiss</button></div></div>}<OperationStatus task={task} run={run} /><Conversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} /></>}
+      {section === 'Conversations' && <>{!task.worktree && !dismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} onDismiss={() => setDismissed(true)} />}<OperationStatus task={task} run={run} /><Conversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} /></>}
       {section === 'Info' && <InfoPanel task={task} state={state} run={run} viewState={preferences} />}
-      {section === 'Git' && <GitPanel task={task} project={project} api={api} run={run} worktreeBasePath={state.settings?.worktreeBasePath} />}
+      {section === 'Git' && <GitPanel task={task} project={project} api={api} run={run} worktreeBasePath={state.settings?.worktreeBasePath} draft={worktreeDraft} />}
       {section === 'Notes' && <NotesPanel task={task} state={state} run={run} viewState={preferences} />}
     </section>
   </aside>;

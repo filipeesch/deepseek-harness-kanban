@@ -8,7 +8,9 @@
     "tests/client/**/*.ts",
     "tests/client/**/*.tsx",
     "tests/bridge/**/*.ts",
-    "tests/bridge/**/*.tsx"
+    "tests/bridge/**/*.tsx",
+    "tests/browser/**/*.ts",
+    "tests/browser/**/*.tsx"
   ],
   "exclude": [
     "node_modules",

@@ -118,9 +118,9 @@ describe('refined board interactions', () => {
     expect(window.localStorage.getItem('dsh-kanban.drawer.width')).toBe('720');
     await user.click(screen.getByRole('tab', { name: 'Info' })); await user.click(screen.getByRole('button', { name: 'Edit' })); const title = screen.getByRole('textbox', { name: 'Title' }); await user.clear(title); await user.type(title, 'Draft Alpha');
     fireEvent.pointerDown(screen.getByLabelText('Workflow columns'));
-    expect(screen.queryByRole('button', { name: 'Close task details' })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Close task details' })).toBeNull());
     await openAlpha(user); await user.click(screen.getByRole('tab', { name: 'Info' }));
     expect((screen.getByRole('textbox', { name: 'Title' }) as HTMLInputElement).value).toBe('Draft Alpha');
-    await user.keyboard('{Escape}'); expect(screen.queryByRole('button', { name: 'Close task details' })).toBeNull();
+    await user.keyboard('{Escape}'); await waitFor(() => expect(screen.queryByRole('button', { name: 'Close task details' })).toBeNull());
   });
 });

@@ -21,6 +21,7 @@ export const QuestionSessionRecordSchema = z.object({
   version: z.literal(1),
   sessionId: z.string().min(1),
   events: z.array(QuestionEventSchema),
+  dismissedTurns: z.array(turn).optional(),
 }).strict();
 
 /** Durable read/write surface owned by the host, never by a task record. */

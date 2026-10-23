@@ -63,6 +63,12 @@ export class KanbanApp {
   const record=this.questions.serializeSession(sessionId);if(record===undefined)return;
   try{await store.save(sessionId,record);}catch(error){this.options.report?.(error);}
  }
+ /** Dismissal must be durable before the host reports success. */
+ private async persistSessionStrict(sessionId:string):Promise<void>{
+  const store=this.options.questionStore;if(!store)return;
+  const record=this.questions.serializeSession(sessionId);if(record===undefined)return;
+  await store.save(sessionId,record);
+ }
  private async flushQuestions():Promise<void>{
   const ids=[...this.saveTimers.keys()];
   for(const timer of this.saveTimers.values())clearTimeout(timer);
@@ -70,6 +76,25 @@ export class KanbanApp {
   await Promise.allSettled(ids.map(sessionId=>this.persistSession(sessionId)));
  }
  async rounds(sessionId:string):Promise<QuestionRound[]>{await this.prepareQuestions(sessionId);return structuredClone([...this.questions.getRounds(sessionId)]);}
+ async dismissQuestions(sessionId:string,roundId:string):Promise<QuestionRound[]>{
+  await this.prepareQuestions(sessionId);
+  const rounds=this.questions.getRounds(sessionId);
+  const target=rounds.find(round=>round.id===roundId);
+  if(!target||target.answered)throw new KanbanError('QUESTION_ROUND_NOT_FOUND','The question round is not available for dismissal.');
+  const unresolved=rounds.filter(round=>!round.answered);
+  const turns=unresolved.map(round=>Number(round.turnId));
+  this.questions.dismiss(sessionId,unresolved.map(round=>round.id));
+  const existing=this.saveTimers.get(sessionId);
+  if(existing!==undefined){clearTimeout(existing);this.saveTimers.delete(sessionId);}
+  try{await this.persistSessionStrict(sessionId);}
+  catch(error){
+   this.questions.undismiss(sessionId,turns);
+   this.schedulePersist(sessionId);
+   this.options.report?.(error);
+   throw new KanbanError('STORAGE_SAVE_FAILED','The question dismissal could not be saved.');
+  }
+  return structuredClone([...this.questions.getRounds(sessionId)]);
+ }
  private retryActivity():void{
   // Canonical events can precede idle state; expire reads made during the existing debounce and publish a newer sequence.
   if(this.disposed||this.activityTimer!==undefined)return;

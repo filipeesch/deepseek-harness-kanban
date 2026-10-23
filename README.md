@@ -58,7 +58,7 @@ Embedded chat uses native transcript, composer, tools, execution, permissions, a
 
 ## Workflow and deliberate execution
 
-**Configuration → Workflow** edits YAML. Configuration opens on **General**; the empty-board **Configure projects** action opens **Projects**. The default is exactly five stages with **no entry instructions**:
+**Configuration → Workflow** edits YAML in a code editor with line numbers, YAML highlighting, folding, search, live diagnostics, vertical resize, and a maximize toggle. Save is disabled while the YAML is invalid or still checking; the host remains authoritative for orphaned columns and revision conflicts. The draft survives Configuration tab switches, and closing or reloading with unsaved changes asks first. Configuration opens on **General**; the empty-board **Configure projects** action opens **Projects**. The default is exactly five stages with **no entry instructions**:
 
 ```yaml
 name: Delivery Flow
@@ -114,9 +114,9 @@ A confirmed run can remain queued while context setup completes. Native prompt a
 
 ## Worktrees and native boundaries
 
-A task can work directly in its base project. The notice above chat offers **Create worktree** or **Dismiss**; dismissing changes no Git resources. **Git** presents the worktree as no-worktree, creating, ready, or error and shows only the applicable branch, path, state, and actions. Branch selectors are searchable over local branches; remote refs are accepted only as an explicitly entered source for a **new** branch. Existing-branch mode never silently creates a detached remote checkout. Attaching an existing checkout remains a secondary action in the no-worktree state; attachment reuses the checkout and branch rather than creating them. Unclaimed checkouts appear as a compact warning.
+A task can work directly in its base project. The notice above chat previews the derived branch, destination, and source and offers **Create worktree** to create immediately with those values, **Review in Git**, or **Dismiss**. Dismissing changes no Git resources; a missing base path routes to Git instead of attempting an empty-path create. **Git** presents the worktree as no-worktree, creating, ready, or error and shows only the applicable branch, path, state, and actions. The Git form also accepts an empty source branch and lets the host fall back to the project default branch or HEAD. Branch selectors are searchable over local branches; remote refs are accepted only as an explicitly entered source for a **new** branch. Existing-branch mode never silently creates a detached remote checkout. Attaching an existing checkout remains a secondary action in the no-worktree state; attachment reuses the checkout and branch rather than creating them. Unclaimed checkouts appear as a compact warning.
 
-**Configuration → General** sets an optional worktree base path. The Git form derives a new branch name from the task title (lowercase ASCII, hyphenated, at most 48 characters, with `task` as the fallback) and prefills the destination with the base path joined to that branch. Collisions append `-2`, `-3`, and so on to both values, checking local branches and occupied destinations. Both fields stay editable: the destination follows the branch until you edit it, and **Use default path** restores the join. Existing-branch mode keeps the chosen branch and does not apply a counter. Changing or clearing the base path never moves or renames existing worktrees, and existing UUID-based branch names are left unchanged.
+**Configuration → General** sets an optional worktree base path. The Git form derives a new branch name from the task title (lowercase ASCII, hyphenated, at most 48 characters, with `task` as the fallback) and prefills the destination with the base path joined to that branch. Collisions append `-2`, `-3`, and so on to both values, checking local branches and occupied destinations. Both fields stay editable: the destination follows the branch until you edit it, and **Use default path** restores the join. Existing-branch mode keeps the chosen branch and does not apply a counter. Changing or clearing the base path never moves or renames existing worktrees, and existing UUID-based branch names are left unchanged. Workflow columns are content-height: a column grows with its cards instead of clipping them, and the board page scrolls vertically.
 
 For a monorepo, the effective agent directory is:
 
@@ -146,16 +146,22 @@ Registered tool names are defined in [the product tool implementation](<src/host
 
 Board reads/create/edit are available in ordinary chats without a task binding. Note tools need an explicit task ID there; a task conversation can resolve its own task. Board/note writes require the user's explicit request, not unsolicited internal progress tracking; there is no additional product approval modal for those requested writes, and native permissions still apply. Intent text is an agent-use rule, not a deterministic consent detector.
 
-There are **no model tools to move/delete cards or message another card**, no plugin checklist or decision ledger, and no plugin terminal/editor, full Git, or rich code-review integration. Existing native DSH features are not removed.
+The question strip's footer has a **Dismiss** action on the left. An untouched round dismisses immediately; a populated draft asks for inline confirmation. Dismissing removes every unresolved round in that conversation, sends no chat message, and permanently hides the round from reload/replay while leaving the composer available. Future rounds still appear.
+
+There are **no model tools to move/delete cards or message another card**, no plugin checklist or decision ledger, and no plugin terminal or full Git/code-review integration; the workflow surface has a YAML editor. Existing native DSH features are not removed.
 
 ## Development and evidence
 
 ```sh
 pnpm run typecheck
 pnpm test
+pnpm run test:browser
 pnpm run build
 # Or run those checks in sequence:
 pnpm run check
+# Manual before release, against a pinned DSH dsh-v0.2.1-rc.2 checkout:
+node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness --check
+node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness
 ```
 
 Host and client types deliberately compile as **separate TypeScript Programs** through [host configuration](<tsconfig.host.json>) and [client configuration](<tsconfig.client.json>); do not combine their native SDK augmentations into one Program. [The build script](<scripts/build.mjs>) emits host ESM, the browser module-loader bundle, and separate public declarations. [The check script](<scripts/check.mjs>) runs both typechecks, tests, and the build with the invoking Node executable. Use normal development Node for tests: the hardened DSH-bundled Node has rejected the Rollup native addon because its Team ID differs. Do **not** weaken code signing to run the suite.

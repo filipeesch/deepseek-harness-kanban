@@ -6,6 +6,15 @@ import {userEvent} from '@testing-library/user-event';
 import {Configuration, InfoPanel, NotesPanel} from '../../src/client/forms.js';
 import type {BoardSnapshot} from '../../src/shared/types.js';
 import {fixture} from './helpers.js';
+
+vi.mock('../../src/client/code-editor.js', async () => {
+  const React = await import('react');
+  return {
+    CodeEditor: ({ value, onChange, label, readOnly }: { value: string; onChange: (value: string) => void; label: string; readOnly?: boolean }) =>
+      React.createElement('textarea', { 'aria-label': label, value, disabled: readOnly, onChange: (event: { target: { value: string } }) => onChange(event.target.value) }),
+  };
+});
+
 afterEach(cleanup);
 function pending() { let resolve!: (value: BoardSnapshot) => void; let reject!: (error: unknown) => void; const run = vi.fn(() => new Promise<BoardSnapshot>((done, fail) => {resolve=done;reject=fail;})); return {run, resolve: (value:BoardSnapshot)=>resolve(value), reject:(error:unknown)=>reject(error)}; }
 describe('editor save draft lifetime',()=>{

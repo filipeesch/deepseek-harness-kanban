@@ -8,6 +8,15 @@ import type { BoardSnapshot, ClientApi, Command } from '../../src/shared/types.j
 import { styles } from '../../src/client/styles.js';
 import { fakeApi, fixture } from './helpers.js';
 
+
+vi.mock('../../src/client/code-editor.js', async () => {
+  const React = await import('react');
+  return {
+    CodeEditor: ({ value, onChange, label, readOnly }: { value: string; onChange: (value: string) => void; label: string; readOnly?: boolean }) =>
+      React.createElement('textarea', { 'aria-label': label, value, disabled: readOnly, onChange: (event: { target: { value: string } }) => onChange(event.target.value) }),
+  };
+});
+
 afterEach(cleanup);
 function mount(data = fixture()) {
   const mock = fakeApi(data); const renderer = vi.fn((id: string) => <div data-testid={'native-' + id}>Native session {id}</div>);
@@ -79,7 +88,7 @@ describe('scoped Kanban page', () => {
     const { user, command } = mount(); await loaded(); await user.click(screen.getByRole('button', { name: 'Configuration' })); await user.click(screen.getByRole('tab', { name: 'Projects' }));
     await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Worker'); await user.type(screen.getByRole('textbox', { name: 'Project path' }), '/mono/apps/worker'); await user.type(screen.getByRole('textbox', { name: 'Git root' }), '/mono'); await user.click(screen.getByRole('button', { name: 'Save project' }));
     await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'project.save', project: { name: 'Worker', projectPath: '/mono/apps/worker', gitRootPath: '/mono' } })));
-    await user.click(screen.getByRole('tab', { name: 'Workflow' })); const yaml = screen.getByRole('textbox', { name: 'Workflow YAML' }); await user.clear(yaml); await user.type(yaml, 'invalid'); command.mockRejectedValueOnce({ code: 'INVALID_WORKFLOW', message: 'Column is missing.' }); await user.click(screen.getByRole('button', { name: 'Save workflow' })); expect(await screen.findByRole('alert')).toBeTruthy(); expect(screen.getByText('Column is missing.')).toBeTruthy();
+    await user.click(screen.getByRole('tab', { name: 'Workflow' })); const yaml = screen.getByRole('textbox', { name: 'Workflow YAML' }); await user.clear(yaml); await user.type(yaml, 'name: Host Reject' + String.fromCharCode(10) + 'initial_column: one' + String.fromCharCode(10) + 'columns:' + String.fromCharCode(10) + '  - id: one' + String.fromCharCode(10) + '    label: One'); command.mockRejectedValueOnce({ code: 'INVALID_WORKFLOW', message: 'Column is missing.' }); const save = screen.getByRole('button', { name: 'Save workflow' }) as HTMLButtonElement; await waitFor(() => expect(save.disabled).toBe(false)); await user.click(save); expect(await screen.findByRole('alert')).toBeTruthy(); expect(screen.getByText('Column is missing.')).toBeTruthy();
   });
 
   it('edits a newly saved project rather than creating it again', async () => {

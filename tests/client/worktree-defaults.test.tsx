@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { BoardView } from '../../src/client/board.js';
 import { fakeApi, fixture } from './helpers.js';
@@ -50,7 +50,7 @@ describe('title-derived worktree defaults', () => {
     const initial = fixture(); const { user } = mount(initial); await openGit(user);
     await waitFor(() => expect(branchField().value).toBe('alpha-task'));
     expect(pathField().value).toBe('');
-    expect(screen.getByText(/Set a worktree base path/)).toBeTruthy();
+    expect(screen.getByText(/A destination is required before creating a worktree/)).toBeTruthy();
   });
 
   it('updates an untouched destination when the branch changes', async () => {
@@ -132,5 +132,23 @@ describe('title-derived worktree defaults', () => {
     expect(screen.getByText('beta')).toBeTruthy();
     expect(screen.getAllByText('/trees/beta').length).toBeGreaterThan(0);
     expect(screen.queryByRole('textbox', { name: 'Worktree path' })).toBeNull();
+  });
+
+  it('allows an empty source branch and lets the host fall back', async () => {
+    const { user, command } = mount(); await openGit(user); await waitFor(() => expect(branchField().value).toBe('alpha-task'));
+    const source = screen.getByRole('combobox', { name: 'Source branch' }) as HTMLInputElement;
+    await user.clear(source);
+    await user.click(screen.getByRole('button', { name: 'Create worktree' }));
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'worktree.create', taskId: 't1', mode: 'new', branchName: 'alpha-task', path: '/worktrees/alpha-task' }));
+  });
+
+  it('shares the same defaults between the conversation notice and Git', async () => {
+    const { user } = mount(); await screen.findByRole('button', { name: 'Open task Alpha task' }); await user.click(screen.getByRole('button', { name: 'Open task Alpha task' }));
+    const notice = screen.getByRole('note', { name: 'Worktree not created' });
+    expect(within(notice).getByText('alpha-task')).toBeTruthy();
+    expect(within(notice).getByText('/worktrees/alpha-task')).toBeTruthy();
+    await user.click(screen.getByRole('tab', { name: 'Git' }));
+    await waitFor(() => expect(branchField().value).toBe('alpha-task'));
+    expect(pathField().value).toBe('/worktrees/alpha-task');
   });
 });

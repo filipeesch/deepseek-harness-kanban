@@ -13,6 +13,7 @@ export class KanbanController extends TypertRemoteService {
  @Remote async worktreeDefault(request:{taskId:string}):Promise<Outcome<{branchName:string;path:string}>>{return this.attempt(()=>this.app.worktreeDefault(request.taskId));}
  @Remote async inferProject(request:{path:string}):Promise<Outcome<{projectPath:string;gitRootPath:string}>>{return this.attempt(()=>this.app.inferProject(request.path));}
  @Remote async questions(request:{sessionId:string}):Promise<Outcome<QuestionRound[]>>{return this.attempt(()=>this.app.rounds(request.sessionId));}
+ @Remote async dismissQuestions(request:{sessionId:string;roundId:string}):Promise<Outcome<QuestionRound[]>>{return this.attempt(()=>this.app.dismissQuestions(request.sessionId,request.roundId));}
  @Remote({mode:'stream'}) async *follow(signal:AbortSignal):AsyncGenerator<BoardSnapshot>{
   this.owner();let dirty=true;let wake:(()=>void)|undefined;
   const changed=()=>{dirty=true;wake?.();};const off=this.app.subscribe(changed);

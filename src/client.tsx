@@ -152,6 +152,8 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       const conversation = scopedSessions.scope(props.sessionId)?.get('conversation');
       if (!conversation) throw new Error('The native conversation scope is not available. Reopen this conversation and retry.');
       await conversation.send(text);
+    }} onDismiss={async () => {
+      await bridge.dismissQuestions(props.sessionId, round.id);
     }} />}</>;
   }
   /** The strip is the only question surface: the transcript row renders nothing (no generic JSON card). */

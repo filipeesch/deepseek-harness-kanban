@@ -7,7 +7,7 @@ import type { StateStorage, SessionPort, GitPort, GitTree, WorkspacePort, Worksp
 import { KanbanError } from '../../src/shared/errors.js';
 export class MemoryStorage implements StateStorage {value:BoardState|null=null;async load(){return structuredClone(this.value);}async save(value:BoardState){this.value=structuredClone(value);}}
 export class TestSessions implements SessionPort {
- dirs=new Map<string,string>();workspaceIds=new Map<string,string|undefined>();busy=new Set<string>();sent:Array<{id:string;text:string;requestId?:string}>=[];archived:string[]=[];failSend=false;private count=0;private requests=new Set<string>();
+ dirs=new Map<string,string>();workspaceIds=new Map<string,string|undefined>();busy=new Set<string>();awaiting=new Set<string>();sent:Array<{id:string;text:string;requestId?:string}>=[];archived:string[]=[];failSend=false;private count=0;private requests=new Set<string>();
  async create(cwd:string,workspaceId?:string){const id='session-'+(++this.count);this.dirs.set(id,cwd);this.workspaceIds.set(id,workspaceId);return id;}
  async directory(id:string){const value=this.dirs.get(id);if(!value)throw new KanbanError('SESSION_NOT_FOUND','Missing test session.');return value;}
  async validateDirectory(id:string,expected:string):Promise<void>{
@@ -20,7 +20,7 @@ export class TestSessions implements SessionPort {
  async isIdle(id:string){return !this.busy.has(id);}
  async send(id:string,text:string,requestId?:string){if(this.failSend)throw new KanbanError('SEND_FAILED','Injected native admission failure.');if(requestId&&this.requests.has(requestId))return;if(requestId)this.requests.add(requestId);this.sent.push({id,text,requestId});}
  async archive(id:string){this.archived.push(id);}
- async attention(id:string):Promise<Attention>{return {running:this.busy.has(id),unread:false,awaitingReply:false,failed:false};}
+ async attention(id:string):Promise<Attention>{return {running:this.busy.has(id),unread:false,awaitingReply:this.awaiting.has(id),failed:false};}
  async directories(){return [...this.dirs].map(([sessionId,directory])=>({sessionId,directory}));}
 }
 export class TestGit implements GitPort {
