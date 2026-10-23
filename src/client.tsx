@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { Context } from '@deepseek-ai/cordis';
-import type { ISessions, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client';
+import type { ISessions, SessionEventSource, SessionEventWindow, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client';
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client';
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client';
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client';
 import type {} from '@deepseek-ai/dsh-client-ui-session/client';
-import type { ConversationViewsProps } from '@deepseek-ai/dsh-client-ui-conversation/client';
+import type { ConversationViewsProps, DraftAttachmentId } from '@deepseek-ai/dsh-client-ui-conversation/client';
 import type {} from '@deepseek-ai/dsh-client-ui-chat/client';
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client';
 import type { PropsRuntime, PropsRenderSlots, PropsRenderFactories } from '@deepseek-ai/dsh-client-ui-slots';
@@ -13,6 +13,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import { TYPERT_REMOTE } from './remote.js';
 import { ClientBridge } from './client-bridge.js';
 import { BoardView, createBoardPageState, type BoardPageState } from './client/board.js';
+import { InstructionDraftPortImpl, type InstructionDraftBinding } from './client/instruction-draft.js';
 import { QuestionForm } from './questions/QuestionForm.js';
 import type { ClientApi } from './shared/types.js';
 
@@ -29,6 +30,43 @@ export const name = 'kanban-client';
 // Service keys, not package names. Mount our own namespace before any access to remote.kanban.
 export const inject = ['remote', 'slots', 'sessions', 'uiSession', 'conversation', 'layout'];
 const clientCss = '.kanban-native-state{padding:16px;color:inherit}.kanban-feed-error{padding:8px 16px;color:var(--dsw-alias-state-error-primary,crimson);border-bottom:1px solid var(--dsw-alias-border-l2)}';
+
+/** Read the first durable plugin-owned task-context message from a retained event window. */
+export function taskContextText(window: SessionEventWindow): string | null {
+  for (const entry of window.entries) {
+    if (entry.type !== 'event' || entry.event.type !== 'user/message') continue;
+    if ((entry.event.data.source as { kind?: string }).kind !== 'kanban-task') continue;
+    return entry.event.data.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n');
+  }
+  return null;
+}
+
+/** The native Chat hides ordinary context rows; show the same injected context in the Kanban panel. */
+function KanbanTaskContextRow({ source, loadOlder }: { source: SessionEventSource; loadOlder?: () => Promise<void> }) {
+  const subscribe = useCallback((listener: () => void) => source.subscribe(listener), [source]);
+  const getSnapshot = useCallback(() => source.getSnapshot(), [source]);
+  const events = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const text = taskContextText(events);
+  if (text === null) {
+    if (!events.hasMore || !loadOlder) return null;
+    return <div className="kb-task-context" role="note" aria-label="Task context">
+      <button type="button" className="kb-task-context-toggle" disabled={loading} onClick={async () => {
+        setLoading(true); setLoadError(false);
+        try { await loadOlder(); }
+        catch { setLoadError(true); }
+        finally { setLoading(false); }
+      }}>{loading ? 'Loading older messages…' : 'Load task context from older messages'}</button>
+      {loadError && <p className="kb-task-context-error" role="alert">Older messages could not be loaded. Retry or use the native conversation history.</p>}
+    </div>;
+  }
+  return <div className="kb-task-context" role="note" aria-label="Task context">
+    <button type="button" className="kb-task-context-toggle" aria-expanded={open} onClick={() => setOpen(value => !value)}><span aria-hidden="true">{open ? '▾' : '▸'}</span> Task context <span className="kb-task-context-source">kanban-task</span></button>
+    {open && <pre className="kb-task-context-body">{text}</pre>}
+  </div>;
+}
 
 /** Real client plugin: no replacement server, global Session selection, or native acknowledgement writes. */
 export async function apply(raw: Context): Promise<() => Promise<void>> {
@@ -52,6 +90,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   const lifetime = new AbortController();
   const held = new Set<SessionReference>();
   const bridge = new ClientBridge(ctx.remote, ctx.uiSession.sessionStatus);
+  const draftPort = new InstructionDraftPortImpl();
   const scopedSessions = ctx.sessions;
   const pickDirectory = async (): Promise<string | null> => {
     const workspace = ctx.get('uiWorkspace') as { pickDirectory?: () => Promise<string | null> } | undefined;
@@ -85,10 +124,23 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       variant: 'embedded', phase: session.openState !== 'open' ? 'settling' : 'active', hero: false,
     }, { slots: { views: FixedChat } });
   }
-  function RetainedConversation({ id, owner }: { id: string; owner: MainProps }) {
+  function draftBinding(reference: SessionReference): InstructionDraftBinding {
+    const input = () => ctx.conversation.input.for(reference.binding.ctx);
+    return {
+      requestDraftInitialization: options => ctx.conversation.input.requestDraftInitialization(reference.binding, options),
+      focus: () => { try { input().focus(); } catch { /* focus is best effort */ } },
+      attachmentIds: () => { try { return input().state.getSnapshot().attachmentIds; } catch { return []; } },
+      removeAttachment: id => { try { return input().removeAttachment(id as DraftAttachmentId); } catch { return false; } },
+    };
+  }
+  function RetainedConversation({ id, owner, draftPort }: { id: string; owner: MainProps; draftPort: InstructionDraftPortImpl }) {
     const [reference, setReference] = useState<SessionReference | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [attempt, setAttempt] = useState(0);
+    useEffect(() => {
+      if (!reference) return;
+      return draftPort.attach(id, draftBinding(reference));
+    }, [reference, id, draftPort]);
     useEffect(() => {
       let active = true; let retained: SessionReference | undefined;
       const cancellation = new AbortController();
@@ -111,7 +163,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     if (error) return <div className="kanban-native-state" role="alert">{error} <button type="button" onClick={() => setAttempt(value => value + 1)}>Retry conversation</button></div>;
     if (!reference) return <div className="kanban-native-state" role="status">Opening native conversation…</div>;
     const Provider = owner.SessionProvider;
-    return <Provider session={reference}>{owner.renderSlot('kanban.conversation', {})}</Provider>;
+    return <Provider session={reference}><KanbanTaskContextRow source={reference.binding.eventSource} loadOlder={() => reference.binding.session.loadOlder()} />{owner.renderSlot('kanban.conversation', {})}</Provider>;
   }
   function BoardPage(props: MainProps & { api: ClientApi }) {
     const sessionListSource = scopedSessions.list ?? emptySessionList;
@@ -127,7 +179,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
         if (!result.ok) throw new Error(result.error.message);
       },
     };
-    return <BoardView api={props.api} pageState={pageState} sessionTitles={sessionTitles} pickDirectory={pickDirectory} renderConversation={(id) => <RetainedConversation key={id} id={id} owner={props} />} />;
+    return <BoardView api={props.api} pageState={pageState} sessionTitles={sessionTitles} pickDirectory={pickDirectory} draftPort={draftPort} renderConversation={(id) => <RetainedConversation key={id} id={id} owner={props} draftPort={draftPort} />} />;
   }
   function Main(props: MainProps) {
     const active = props.usePanelInfo(value => value.activePanelId === 'kanban');

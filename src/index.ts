@@ -12,6 +12,7 @@ import { KanbanApp } from './host/app.js';
 import { KanbanController } from './host/controller.js';
 import { registerProductTools } from './host/tools.js';
 import { KanbanError } from './shared/errors.js';
+import { registerTaskContextInjection } from './host/task-context.js';
 
 // The optional public schedule module emits this payloadless event; listening does not require its service.
 declare module '@deepseek-ai/cordis' { interface Events { 'schedule/changed'():void } }
@@ -48,13 +49,14 @@ export async function apply(ctx:Context):Promise<void>{
  const native=createNativePorts(ctx);const store=await BoardStore.open(storage.storage);
  const report=(error:unknown)=>ctx.logger.warn(error instanceof Error?error.message:String(error));
  const app=new KanbanApp(store,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await ctx.sessionController.inspect(SessionId(id),lifetime.signal)).events,questionStore:questions.storage},native.workspaces);
- let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;
- ctx.effect(()=>async()=>{lifetime.abort();offTools?.();offWire?.();offGuards?.();await app.close();await storage.close();await questions.close();});
+ let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;
+ ctx.effect(()=>async()=>{lifetime.abort();offTools?.();offWire?.();offGuards?.();offContext?.();await app.close();await storage.close();await questions.close();});
  offWire=ctx.typert.register(TYPERT_HOST);
  ctx.plugin(KanbanController,app);
  offTools=registerProductTools(ctx,app);
  ctx.on('session/event',(session,event)=>{app.observe(session.id,event);});
  ctx.on('schedule/changed',()=>app.activityChanged());
  offGuards=registerTaskExecutionGuards(ctx,store,app);
+ offContext=registerTaskContextInjection(ctx,store,{report});
  await app.initialize();
 }

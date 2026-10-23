@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React, { type ComponentType, type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { Context } from '@deepseek-ai/cordis';
 import { RemoteStream, type RemoteStreamOptions } from '@deepseek-ai/dsh-api-gateway/client';
 import type { RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol';
@@ -13,7 +13,7 @@ const disposers: Array<() => Promise<void>> = [];
 afterEach(async () => { cleanup(); for (const dispose of disposers.splice(0)) await dispose(); });
 const question: QuestionRound = { id: 'r', sessionId: 'a', turnId: 't', complete: true, answered: false, pages: [{ callId: 'call-a', sequence: 1, page: { question: 'Choose the implementation', type: 'freetext' } }] };
 function snapshot(rounds: QuestionRound[] = [question]): BoardSnapshot {
-  return { sequence: 1, attention: {}, questionRounds: rounds, state: { schemaVersion: 2, revision: 1, workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, projects: [{ id: 'p', name: 'Project', projectPath: '/project', gitRootPath: '/project' }], tasks: [{ id: 'task', projectId: 'p', title: 'Native task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' }], notes: [] } };
+  return { sequence: 1, attention: {}, questionRounds: rounds, state: { schemaVersion: 2, revision: 1, workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }, { id: 'review', name: 'Review', onEnterPrompt: 'Review **carefully**.' }], groups: [] }, projects: [{ id: 'p', name: 'Project', projectPath: '/project', gitRootPath: '/project' }], tasks: [{ id: 'task', projectId: 'p', title: 'Native task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' }], notes: [] } };
 }
 type Entry = { options: Record<string, unknown>; Component: ComponentType<Record<string, unknown>> };
 function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
@@ -24,10 +24,25 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
   const entries = new Map<string, Entry>();
   const send = vi.fn().mockResolvedValue(undefined); const scope = vi.fn(() => ({ get: vi.fn(() => ({ send })) }));
   const references: SessionReference[] = [];
+  const contextWindow = {
+    entries: [{ type: 'event', event: { type: 'user/message', data: { source: { kind: 'kanban-task' }, content: [{ type: 'text', text: 'Task: Native task (task-1)' }] } } }],
+    hasMore: false, revision: 1, change: { kind: 'replace', entries: [] },
+  };
+  const eventSource = { getSnapshot: () => contextWindow, subscribe: () => () => {} };
+  const loadOlder = vi.fn().mockResolvedValue(undefined);
   const retain = vi.fn((id: string, options: { source: string; signal: AbortSignal }) => {
-    const reference = { sessionId: id, binding: {}, ready: Promise.resolve({}), release: vi.fn(), [Symbol.dispose]() {} } as unknown as SessionReference;
+    const reference = { sessionId: id, binding: { ctx: {}, eventSource, session: { loadOlder } }, ready: Promise.resolve({}), release: vi.fn(), [Symbol.dispose]() {} } as unknown as SessionReference;
     references.push(reference); expect(options.source).toBe('kanbanTaskDrawer'); return reference;
   });
+  const requestDraftInitialization = vi.fn().mockReturnValue('applied');
+  const focus = vi.fn();
+  const removeAttachment = vi.fn();
+  const conversation = {
+    input: {
+      requestDraftInitialization,
+      for: vi.fn(() => ({ focus, removeAttachment, state: { getSnapshot: () => ({ phase: 'plain', attachmentIds: [] }) } })),
+    },
+  };
   const refresh = vi.fn().mockResolvedValue(undefined);
   const nativeSelect = vi.fn();
   const remote = {
@@ -62,12 +77,13 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
       register(options: Record<string, unknown>, Component: ComponentType<Record<string, unknown>>) { entries.set(String(options.name) + ':' + String(options.key ?? options.id ?? ''), { options, Component }); return () => {}; },
     },
     sessions: { refresh, retain, scope },
+    conversation,
     uiSession: { sessionStatus: { getSnapshot: () => new Map(), subscribe: () => () => {} } },
     layout: { selectPanel: nativeSelect },
     get mainView() { throw new Error('Global main session access is forbidden'); },
     get userQuestions() { throw new Error('Native question lifecycle access is forbidden'); },
   } as unknown as Context;
-  return { ctx, entries, mount, unmount, openMount: () => openMount(), remote, send, scope, retain, refresh, references, nativeSelect };
+  return { ctx, entries, mount, unmount, openMount: () => openMount(), remote, send, scope, retain, refresh, references, nativeSelect, requestDraftInitialization, focus, contextWindow, loadOlder };
 }
 async function installed(rounds?: QuestionRound[]) {
   const f = fixture(false, rounds); const dispose = await apply(f.ctx); disposers.push(dispose); return f;
@@ -136,6 +152,31 @@ describe('public SDK plugin binding contracts', () => {
     await waitFor(() => expect(f.references[1]?.release).toHaveBeenCalled());
     expect(screen.queryByTestId('provided-session')).toBeNull(); expect(f.nativeSelect).not.toHaveBeenCalled();
     rendered.unmount(); expect(f.refresh).toHaveBeenCalledTimes(2);
+  });
+  it('binds the drawer prefill to the retained conversation draft API', async () => {
+    const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;
+    const provider = ({ children }: { children: ReactNode }) => <div data-testid="retained-body">{children}</div>;
+    render(<Main usePanelInfo={(select: (value: { activePanelId: string | null }) => unknown) => select({ activePanelId: 'kanban' })} SessionProvider={provider} renderSlot={() => <div>Native slot body</div>} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open task Native task' }));
+    await screen.findByTestId('retained-body');
+    const context = screen.getByRole('note', { name: 'Task context' });
+    fireEvent.click(within(context).getByRole('button', { name: /Task context/ }));
+    expect(within(context).getByText('Task: Native task (task-1)')).toBeTruthy();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Move task to' }), { target: { value: 'review' } });
+    await waitFor(() => expect(f.requestDraftInitialization).toHaveBeenCalledWith(expect.anything(), { prompt: 'Review **carefully**.' }));
+    await screen.findByText("Instruction inserted into Agent 1's composer.");
+    expect(f.focus).toHaveBeenCalledOnce();
+    expect(f.remote.command.mock.calls.every(([value]) => value.type === 'task.move')).toBe(true);
+  });
+  it('offers to load older messages when the task context is outside the loaded window', async () => {
+    const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;
+    f.contextWindow.entries = []; f.contextWindow.hasMore = true;
+    const provider = ({ children }: { children: ReactNode }) => <div data-testid="retained-body">{children}</div>;
+    render(<Main usePanelInfo={(select: (value: { activePanelId: string | null }) => unknown) => select({ activePanelId: 'kanban' })} SessionProvider={provider} renderSlot={() => <div>Native slot body</div>} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open task Native task' }));
+    await screen.findByTestId('retained-body');
+    fireEvent.click(screen.getByRole('button', { name: /Load task context/ }));
+    await waitFor(() => expect(f.loadOlder).toHaveBeenCalledOnce());
   });
   it('preserves filters and selected task across native page switches while releasing the composer', async () => {
     const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;

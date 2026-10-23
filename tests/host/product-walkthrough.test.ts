@@ -163,8 +163,7 @@ describe('bounded integrated product walkthrough', () => {
     expect(f.sessions.dirs.get(t.b)).toBe(targetDirectory);
     expect(f.app.store.requireTask(t.id)).toMatchObject({ sessionIds: [t.a, t.b], columnId: 'in_progress', effectiveCwd: targetDirectory });
     expect(f.sessions.sent[0]).toMatchObject({ id: t.b });
-    expect(f.sessions.sent[0]!.text).toContain('Edited in Plan');
-    expect(f.sessions.sent[0]!.text.endsWith(approvedInstruction)).toBe(true);
+    expect(f.sessions.sent[0]!.text).toBe(approvedInstruction);
     expect(f.sessions.sent.some(value => value.id === t.a)).toBe(false);
     expect([...f.sessions.histories]).toEqual(histories);
     const c = await f.app.createConversation(t.id);

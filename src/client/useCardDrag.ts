@@ -55,7 +55,6 @@ export function useCardDrag(options: CardDragOptions) {
     if (!optionsRef.current.enabled || event.button !== 0 || current.current) return;
     const source = event.currentTarget;
     const rect = source.getBoundingClientRect();
-    event.preventDefault();
     const dragState: PointerDrag = {
       taskId, sourceColumnId, source,
       startX: event.clientX, startY: event.clientY,
@@ -66,7 +65,6 @@ export function useCardDrag(options: CardDragOptions) {
     pendingDrop.current = null;
     document.body.style.userSelect = 'none';
     document.documentElement.style.userSelect = 'none';
-    try { source.setPointerCapture(event.pointerId); } catch { /* pointer capture is best effort */ }
 
     const move = (moveEvent: PointerEvent) => {
       if (current.current !== dragState) return;
@@ -75,6 +73,7 @@ export function useCardDrag(options: CardDragOptions) {
       if (!dragState.active) {
         if (Math.hypot(dx, dy) < 5) return;
         dragState.active = true;
+        try { dragState.source.setPointerCapture(moveEvent.pointerId); } catch { /* pointer capture is best effort */ }
         const sourceRect = dragState.source.getBoundingClientRect();
         const ghost = dragState.source.cloneNode(true) as HTMLElement;
         ghost.classList.add('kb-drag-ghost');

@@ -7,27 +7,97 @@ import { useWorktreeDraft } from './worktree-draft.js';
 import { creationReceiptId, ErrorNotice, Tabs, useAction, type RunCommand } from './ui.js';
 import { CloseIcon, TrashIcon } from './icons.js';
 import { createTaskPageState, usePageField, type DrawerSection, type TaskPageState } from './page-state.js';
+import { permittedDestinations } from '../domain/transitions.js';
+import type { DraftResult, InstructionDraftPort } from './instruction-draft.js';
 
 export interface SessionTitles { title(sessionId: string): string | undefined; rename(sessionId: string, title: string): Promise<void> }
+export function conversationLabel(task: Task, sessionId: string, titles?: SessionTitles): string {
+  return titles?.title(sessionId)?.trim() || 'Agent ' + (task.sessionIds.indexOf(sessionId) + 1);
+}
 
-interface DrawerProps { task: Task; state: BoardState; api: ClientApi; run: RunCommand; renderConversation: (id: string) => ReactNode; onClose: () => void; onMove: (task: Task, column: Column, beforeTaskId?: string | null) => void; onDanger: (task: Task, type: 'task.delete' | 'worktree.remove') => void; viewState?: TaskPageState; sessionTitles?: SessionTitles; entering?: boolean; closing?: boolean }
+interface PrefillStatus { status: 'pending' | DraftResult; sessionId: string | null; column: Column; message?: string }
+interface DrawerProps { task: Task; state: BoardState; api: ClientApi; run: RunCommand; renderConversation: (id: string) => ReactNode; onClose: () => void; onMove: (task: Task, column: Column, beforeTaskId?: string | null) => Promise<boolean>; onDanger: (task: Task, type: 'task.delete' | 'worktree.remove') => void; viewState?: TaskPageState; sessionTitles?: SessionTitles; draftPort?: InstructionDraftPort; entering?: boolean; closing?: boolean }
 
 const DRAWER_WIDTH_KEY = 'dsh-kanban.drawer.width';
 const DRAWER_DEFAULT_WIDTH = 620;
 function clampWidth(value: number): number { const max = Math.max(360, (typeof window === 'undefined' ? 1200 : window.innerWidth) * 0.9); return Math.min(Math.max(value, 360), max); }
 function storedWidth(): number { try { const value = Number(window.localStorage.getItem(DRAWER_WIDTH_KEY)); if (Number.isFinite(value) && value > 0) return clampWidth(value === 560 ? DRAWER_DEFAULT_WIDTH : value); } catch { /* storage is optional */ } return clampWidth(DRAWER_DEFAULT_WIDTH); }
 
-export function TaskDrawer({ task, state, api, run, renderConversation, onClose, onMove, onDanger, viewState, sessionTitles, entering = false, closing = false }: DrawerProps) {
+export function TaskDrawer({ task, state, api, run, renderConversation, onClose, onMove, onDanger, viewState, sessionTitles, draftPort, entering = false, closing = false }: DrawerProps) {
   const [localViewState] = useState(createTaskPageState); const preferences = viewState ?? localViewState;
   const [section, setSection] = usePageField(preferences, 'section'); const [dismissed, setDismissed] = useState(false); const id = useId(); const close = useRef<HTMLButtonElement>(null);
   const [width, setWidth] = useState(storedWidth); const widthRef = useRef(width); widthRef.current = width;
   const aside = useRef<HTMLElement>(null);
-  useEffect(() => { close.current?.focus(); }, []);
+  const [movingTo, setMovingTo] = useState<string | null>(null); const [prefill, setPrefill] = useState<PrefillStatus | null>(null); const prefillAbort = useRef<AbortController | null>(null); const prefillTimer = useRef<number | null>(null); const alive = useRef(true);
+  useEffect(() => {
+    close.current?.focus();
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      prefillAbort.current?.abort();
+      if (prefillTimer.current !== null) { window.clearTimeout(prefillTimer.current); prefillTimer.current = null; }
+    };
+  }, []);
   useEffect(() => { const element = aside.current; if (!element) return; if (closing) element.setAttribute('inert', ''); else element.removeAttribute('inert'); return () => element.removeAttribute('inert'); }, [closing]);
   useEffect(() => { setDismissed(false); }, [task.worktree?.path]);
-  const project = state.projects.find(value => value.id === task.projectId); const current = state.workflow.columns.find(value => value.id === task.columnId); const blocked = Boolean(task.operation || task.pendingTransition);
-  const permitted = state.workflow.columns.filter(column => column.id === task.columnId || current?.allowedTransitions === undefined || current.allowedTransitions.includes(column.id));
+  const project = state.projects.find(value => value.id === task.projectId); const blocked = Boolean(task.operation || task.pendingTransition);
+  const permitted = permittedDestinations(state.workflow, task.columnId);
   const worktreeDraft = useWorktreeDraft({ api, task, project, basePath: state.settings?.worktreeBasePath, enabled: !task.worktree && (section === 'Conversations' || section === 'Git') });
+
+  async function moveTo(column: Column) {
+    if (blocked || movingTo) return;
+    const controller = new AbortController();
+    prefillAbort.current?.abort();
+    if (prefillTimer.current !== null) { window.clearTimeout(prefillTimer.current); prefillTimer.current = null; }
+    prefillAbort.current = controller;
+    setPrefill(null); setMovingTo(column.id);
+    let moved = false;
+    try { moved = await onMove(task, column); }
+    finally { if (alive.current) setMovingTo(null); }
+    if (!moved || !alive.current || controller.signal.aborted) return;
+    const instruction = column.onEnterPrompt ?? '';
+    if (!instruction.trim()) return;
+    if (preferences.conversationSelectionRequired) {
+      setPrefill({ status: 'unavailable', sessionId: null, column, message: 'Select a conversation tab before inserting the instruction.' });
+      return;
+    }
+    const active = preferences.conversationId && task.sessionIds.includes(preferences.conversationId) && !task.closedSessionIds.includes(preferences.conversationId)
+      ? preferences.conversationId
+      : task.sessionIds.find(value => !task.closedSessionIds.includes(value)) ?? null;
+    if (!active) { setPrefill({ status: 'unavailable', sessionId: null, column, message: 'No open conversation is available for the instruction. Open a conversation or use the card run action.' }); return; }
+    if (!draftPort) { setPrefill({ status: 'unavailable', sessionId: active, column, message: 'The conversation composer is unavailable, so the instruction was not inserted.' }); return; }
+    if (section !== 'Conversations') setSection('Conversations');
+    setPrefill({ status: 'pending', sessionId: active, column });
+    prefillTimer.current = window.setTimeout(() => {
+      if (!alive.current || controller.signal.aborted) return;
+      controller.abort();
+      prefillTimer.current = null;
+      setPrefill({ status: 'unavailable', sessionId: active, column, message: 'The conversation did not become ready for the instruction. Select the conversation and use the card run action.' });
+    }, 8000);
+    let result: DraftResult;
+    try { result = await draftPort.prepare(active, instruction, controller.signal); }
+    catch { result = 'unavailable'; }
+    if (prefillTimer.current !== null) { window.clearTimeout(prefillTimer.current); prefillTimer.current = null; }
+    if (alive.current && !controller.signal.aborted) setPrefill({ status: result, sessionId: active, column });
+  }
+  async function replaceDraft() {
+    if (!prefill || prefill.status !== 'preserved' || !prefill.sessionId || !draftPort || !alive.current) return;
+    const currentPrefill = prefill; const sessionId = prefill.sessionId;
+    const controller = new AbortController(); prefillAbort.current?.abort(); prefillAbort.current = controller;
+    setPrefill({ ...currentPrefill, status: 'pending' });
+    let result: DraftResult;
+    try { result = await draftPort.replace(sessionId, currentPrefill.column.onEnterPrompt ?? '', controller.signal); }
+    catch { result = 'unavailable'; }
+    if (alive.current && !controller.signal.aborted) setPrefill({ ...currentPrefill, status: result });
+  }
+  function prefillText(value: PrefillStatus): string {
+    const label = value.sessionId ? conversationLabel(task, value.sessionId, sessionTitles) : null;
+    if (value.status === 'pending') return 'Inserting the ' + value.column.name + ' instruction…';
+    if (value.status === 'applied') return 'Instruction inserted into ' + (label ?? 'the conversation') + "'s composer.";
+    if (value.status === 'preserved') return 'The composer already has unsent text or attachments. The instruction was not inserted.';
+    if (value.status === 'blocked') return 'The conversation is busy. The instruction was not inserted.';
+    return value.message ?? 'No open conversation is available for the instruction.';
+  }
 
   function persistWidth(next: number) { setWidth(next); try { window.localStorage.setItem(DRAWER_WIDTH_KEY, String(next)); } catch { /* storage is optional */ } }
   function startResize(event: React.PointerEvent<HTMLDivElement>) {
@@ -49,8 +119,9 @@ export function TaskDrawer({ task, state, api, run, renderConversation, onClose,
       <button type="button" className="kb-button kb-icon-button kb-danger" aria-label="Delete task" title="Delete task" disabled={blocked} onClick={() => onDanger(task, 'task.delete')}><TrashIcon size={16} /></button>
       <button ref={close} type="button" className="kb-button kb-icon-button" aria-label="Close task details" title="Close task details" onClick={onClose}><CloseIcon size={16} /></button>
     </div></header>
-    <div className="kb-drawer-toolbar"><Tabs label="Task sections" values={['Conversations', 'Info', 'Git', 'Notes']} selected={section} onSelect={value => setSection(value as DrawerSection)} id={id} /><label className="kb-stage-compact"><span className="kb-sr">Move task to</span><select className="kb-input kb-stage-select" aria-label="Move task to" value={task.columnId} disabled={blocked} onChange={event => { const column = state.workflow.columns.find(value => value.id === event.target.value); if (column && column.id !== task.columnId) onMove(task, column); }}>{permitted.map(column => <option key={column.id} value={column.id}>{column.name}</option>)}</select></label></div>
+    <div className="kb-drawer-toolbar"><Tabs label="Task sections" values={['Conversations', 'Info', 'Git', 'Notes']} selected={section} onSelect={value => setSection(value as DrawerSection)} id={id} /><label className="kb-stage-compact"><span className="kb-sr">Move task to</span><select className="kb-input kb-stage-select" aria-label="Move task to" value={movingTo ?? task.columnId} disabled={blocked || movingTo !== null} onChange={event => { const column = state.workflow.columns.find(value => value.id === event.target.value); if (column && column.id !== task.columnId) void moveTo(column); }}>{permitted.map(column => <option key={column.id} value={column.id}>{column.name}</option>)}</select></label></div>
     <PendingTransitionStatus task={task} run={run} columnName={state.workflow.columns.find(column => column.id === task.pendingTransition?.columnId)?.name ?? task.pendingTransition?.columnId ?? ''} />
+    {prefill && <div className={'kb-prefill kb-prefill-' + prefill.status} role="status"><p>{prefillText(prefill)}</p>{prefill.status === 'preserved' && <button type="button" className="kb-button" onClick={() => void replaceDraft()}>Replace draft</button>}</div>}
     <section className={'kb-drawer-panel ' + (section === 'Conversations' ? 'kb-chat-panel' : '')} role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>
       {section === 'Conversations' && <>{!task.worktree && !dismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} onDismiss={() => setDismissed(true)} />}<OperationStatus task={task} run={run} /><Conversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} /></>}
       {section === 'Info' && <InfoPanel task={task} state={state} run={run} viewState={preferences} />}
@@ -68,7 +139,7 @@ function Conversations({ task, run, renderConversation, viewState, sessionTitles
   useEffect(() => { if (canSelectDefault && (selected === null || !open.includes(selected))) setSelected(open[0] ?? null); }, [openKey, selected, setSelected, canSelectDefault]);
   const active = selected !== null && open.includes(selected) ? selected : canSelectDefault ? open[0] : undefined;
   function chooseConversation(sessionId: string) { setSelected(sessionId); setSelectionRequired(false); setCreationError(null); }
-  const label = (sessionId: string) => sessionTitles?.title(sessionId)?.trim() || 'Agent ' + (task.sessionIds.indexOf(sessionId) + 1);
+  const label = (sessionId: string) => conversationLabel(task, sessionId, sessionTitles);
   async function createConversation() {
     if (creationPending || creationError || selectionRequired) return;
     setCreationPending(true);

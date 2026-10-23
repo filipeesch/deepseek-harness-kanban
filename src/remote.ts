@@ -20,6 +20,7 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('task.create'),projectId:id,title:z.string().min(1),description:z.string()}).strict(),
  z.object({type:z.literal('task.edit'),taskId:id,title:z.string().optional(),description:z.string().optional(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('task.move'),taskId:id,columnId:id,mode:z.enum(['move','run']),sessionId:id.optional(),newConversation:z.boolean().optional(),worktree:z.object(tree).strict().optional(),expectedInstruction:z.string().optional(),beforeTaskId:id.nullable().optional()}).strict(),
+ z.object({type:z.literal('task.runInstruction'),taskId:id,columnId:id,expectedInstruction:z.string()}).strict(),
  z.object({type:z.literal('conversation.create'),taskId:id}).strict(),
  z.object({type:z.enum(['conversation.close','conversation.reopen']),taskId:id,sessionId:id}).strict(),
  z.object({type:z.literal('task.delete'),taskId:id,confirmed:z.boolean(),expectedWorktreePath:z.string().nullable(),discardChanges:z.boolean().optional(),requireIdle:z.boolean().optional()}).strict(),

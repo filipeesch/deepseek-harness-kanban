@@ -122,8 +122,4 @@ export function parseWorkflow(yaml: string): Workflow {
 }
 
 /** A transition enters a different existing stage; same-stage ordering is separate. */
-export function canTransition(workflow: Workflow, from: string, to: string): boolean {
-  const source = workflow.columns.find(column => column.id === from);
-  if (!source || from === to || !workflow.columns.some(column => column.id === to)) return false;
-  return source.allowedTransitions === undefined || source.allowedTransitions.includes(to);
-}
+export { canTransition, permittedDestinations } from './transitions.js';

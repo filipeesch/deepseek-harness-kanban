@@ -20,7 +20,7 @@ describe('authoritative command creation identity', () => {
     const renderer = vi.fn((id: string) => <span>Native session {id}</span>); const user = userEvent.setup();
     render(<BoardView api={mock.api} renderConversation={renderer} />);
     await waitFor(() => expect((screen.getByRole('button', { name: 'New task' }) as HTMLButtonElement).disabled).toBe(false));
-    await user.click(screen.getByRole('button', { name: 'New task' })); await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Concurrent task'); await user.click(screen.getByRole('button', { name: 'Create task' }));
+    await user.click(screen.getByRole('button', { name: 'New task' })); await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Concurrent task'); await user.selectOptions(screen.getByRole('combobox', { name: 'Project' }), 'p1'); await user.click(screen.getByRole('button', { name: 'Create task' }));
     await screen.findByRole('button', { name: 'Close task details' });
     expect(renderer).toHaveBeenLastCalledWith('ui-y-session');
     expect(renderer.mock.calls.some(([id]) => id === 'tool-x-session')).toBe(false);
@@ -31,13 +31,13 @@ describe('authoritative command creation identity', () => {
     result.state.tasks = [{ ...task('tool-x', 'Concurrent task', 'p1', 'intake'), sessionIds: ['tool-x-session'] }, { ...task('ui-y', 'Concurrent task', 'p1', 'intake'), sessionIds: ['ui-y-session'] }];
     if (mode === 'mismatched') result.commandReceipt = { kind: 'project', id: 'ui-y' };
     mock.command.mockResolvedValueOnce(result); const renderer = vi.fn((id: string) => <span>{id}</span>); const user = userEvent.setup(); render(<BoardView api={mock.api} renderConversation={renderer} />);
-    await waitFor(() => expect((screen.getByRole('button', { name: 'New task' }) as HTMLButtonElement).disabled).toBe(false)); await user.click(screen.getByRole('button', { name: 'New task' })); await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Concurrent task'); await user.click(screen.getByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'New task' }) as HTMLButtonElement).disabled).toBe(false)); await user.click(screen.getByRole('button', { name: 'New task' })); await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Concurrent task'); await user.selectOptions(screen.getByRole('combobox', { name: 'Project' }), 'p1'); await user.click(screen.getByRole('button', { name: 'Create task' }));
     await screen.findByText('CREATION_RECEIPT_REQUIRED'); expect(screen.getByRole('dialog', { name: 'New task' })).toBeTruthy(); expect(screen.getByText(/inspect or refresh the board/)).toBeTruthy(); expect(renderer).not.toHaveBeenCalled(); expect(screen.queryByRole('button', { name: 'Close task details' })).toBeNull(); expect((screen.getByRole('button', { name: 'Create task' }) as HTMLButtonElement).disabled).toBe(true); expect(mock.command).toHaveBeenCalledTimes(1);
   });
 
   it('does not open a different task when the received exact task ID is unavailable', async () => {
     const initial = fixture(); initial.state.tasks = []; const mock = fakeApi(initial); const result = fixture(); result.sequence = 2; result.commandReceipt = { kind: 'task', id: 'absent-y' }; result.state.tasks = [task('tool-x', 'Concurrent task', 'p1', 'intake')]; mock.command.mockResolvedValueOnce(result);
-    const renderer = vi.fn((id: string) => <span>{id}</span>); const user = userEvent.setup(); render(<BoardView api={mock.api} renderConversation={renderer} />); await waitFor(() => expect((screen.getByRole('button', { name: 'New task' }) as HTMLButtonElement).disabled).toBe(false)); await user.click(screen.getByRole('button', { name: 'New task' })); await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Concurrent task'); await user.click(screen.getByRole('button', { name: 'Create task' })); await screen.findByText('CREATED_TASK_UNAVAILABLE'); expect(renderer).not.toHaveBeenCalled();
+    const renderer = vi.fn((id: string) => <span>{id}</span>); const user = userEvent.setup(); render(<BoardView api={mock.api} renderConversation={renderer} />); await waitFor(() => expect((screen.getByRole('button', { name: 'New task' }) as HTMLButtonElement).disabled).toBe(false)); await user.click(screen.getByRole('button', { name: 'New task' })); await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Concurrent task'); await user.selectOptions(screen.getByRole('combobox', { name: 'Project' }), 'p1'); await user.click(screen.getByRole('button', { name: 'Create task' })); await screen.findByText('CREATED_TASK_UNAVAILABLE'); expect(renderer).not.toHaveBeenCalled();
   });
 
   it('binds subsequent project edits to the exact project creation receipt under concurrent creation', async () => {

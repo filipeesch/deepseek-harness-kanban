@@ -230,6 +230,7 @@ export class KanbanApp {
    }
    case 'operation.return':await this.clearPending(command.taskId);await this.worktrees.returnToBase(command.taskId);break;
    case 'task.move':await this.move(command);break;
+   case 'task.runInstruction':await this.runInstruction(command);break;
   }
   await this.dispatchPending();const snapshot=await this.snapshot();return {...snapshot,...(commandReceipt?{commandReceipt}:{})};
  }
@@ -276,12 +277,23 @@ export class KanbanApp {
    if(command.newConversation)sessionId=await this.createConversationNow(task.id);
    invariant(sessionId&&this.store.requireTask(task.id).sessionIds.includes(sessionId),'INVALID_TARGET','Select a conversation belonging to this task.');
   }
-  const pending:PendingTransition={id:randomUUID(),fromColumnId:task.columnId,columnId:column.id,mode:command.mode,status:'waiting',...(sessionId?{sessionId}:{}),...(command.beforeTaskId!==undefined?{beforeTaskId:command.beforeTaskId}:{}),...(command.worktree?{worktreeRequest:structuredClone(command.worktree)}:{}),...(command.mode==='run'?{text:['Task: '+task.title+' ('+task.id+')','','Description:',task.description,'','Workflow stage: '+column.name,'',approvedInstruction].join(String.fromCharCode(10))}: {})};
+  const pending:PendingTransition={id:randomUUID(),fromColumnId:task.columnId,columnId:column.id,mode:command.mode,status:'waiting',...(sessionId?{sessionId}:{}),...(command.beforeTaskId!==undefined?{beforeTaskId:command.beforeTaskId}:{}),...(command.worktree?{worktreeRequest:structuredClone(command.worktree)}:{}),...(command.mode==='run'?{text:approvedInstruction as string}: {})};
   await this.store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(!t.operation&&!t.pendingTransition&&t.columnId===task.columnId,'REVISION_CONFLICT','Task changed before the transition could be admitted.');t.pendingTransition=pending;});
   if(command.worktree){
    try{await this.worktrees.request(task.id,{kind:'create',...command.worktree});}
    catch(error){await this.failPending(task.id,pending.id,error);throw error;}
   }
+ }
+ private async runInstruction(command:Extract<Command,{type:'task.runInstruction'}>):Promise<void>{
+  this.assertContext(command.taskId);const state=this.store.snapshot();const task=this.store.requireTask(command.taskId,state);
+  invariant(task.columnId===command.columnId,'TASK_MOVED','The task moved to another stage. Review the current stage before running its instruction.');
+  invariant(!task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');
+  const column=state.workflow.columns.find(c=>c.id===command.columnId);
+  invariant(column,'INVALID_TARGET','The destination stage does not exist.');
+  const instruction=this.requireReviewedInstruction(column.onEnterPrompt,command.expectedInstruction);
+  const sessionId=task.sessionIds.find(id=>!task.closedSessionIds.includes(id))??await this.createConversationNow(task.id);
+  await this.assertExecutionContext(sessionId);
+  await this.sessions.send(sessionId,instruction);
  }
  private async failPending(taskId:string,id:string,error:unknown):Promise<void>{await this.store.transact(d=>{const t=d.tasks.find(t=>t.id===taskId);if(t?.pendingTransition?.id===id){t.pendingTransition.status='failed';t.pendingTransition.error=problem(error);}});}
  private dispatchPending():Promise<void>{

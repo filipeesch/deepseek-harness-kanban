@@ -51,6 +51,22 @@ describe('scoped Kanban page', () => {
     expect(command.mock.calls.some(([value]) => value.type === 'task.move')).toBe(false); expect(screen.getByRole('button', { name: 'Open task New API task' })).toBeTruthy();
   });
 
+  it('starts the new task project empty and requires an explicit choice', async () => {
+    const { user } = mount(); await loaded(); await user.click(screen.getByRole('button', { name: 'New task' }));
+    const dialog = screen.getByRole('dialog', { name: 'New task' });
+    await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'Needs a project');
+    const project = within(dialog).getByRole('combobox', { name: 'Project' }) as HTMLSelectElement;
+    expect(project.value).toBe('');
+    expect((within(dialog).getByRole('button', { name: 'Create task' }) as HTMLButtonElement).disabled).toBe(true);
+    await user.selectOptions(project, 'p1');
+    expect((within(dialog).getByRole('button', { name: 'Create task' }) as HTMLButtonElement).disabled).toBe(false);
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Project filter' }), 'p1');
+    await user.click(screen.getByRole('button', { name: 'New task' }));
+    const filtered = screen.getByRole('dialog', { name: 'New task' });
+    expect((within(filtered).getByRole('combobox', { name: 'Project' }) as HTMLSelectElement).value).toBe('');
+  });
+
   it('shows read-only Info and edits inline without a worktree-stage restriction', async () => {
     const { user, command } = mount(); await loaded(); await user.click(screen.getByRole('button', { name: 'Open task Beta task' })); await user.click(screen.getByRole('tab', { name: 'Info' }));
     expect(screen.queryByRole('textbox', { name: 'Title' })).toBeNull();
@@ -136,20 +152,14 @@ describe('workflow confirmation', () => {
     expect(screen.queryByText('Worktree is optional')).toBeNull();
   });
 
-  it('requires an explicit run choice and targets an existing or new conversation', async () => {
+  it('moves immediately to an instructed stage without opening a dialog', async () => {
     const { user, command } = mount(); await openAlpha(user);
     await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
-    expect(screen.getByRole('button', { name: 'Move only' })).toBeTruthy(); expect(screen.getByRole('button', { name: 'Move and run' })).toBeTruthy(); expect(command).not.toHaveBeenCalled();
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Run in conversation' }), 's2'); await user.click(screen.getByRole('button', { name: 'Move and run' }));
-    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'review', mode: 'run', sessionId: 's2', expectedInstruction: 'Review **carefully**.' }));
-  });
-
-  it('can select a new conversation without a worktree form', async () => {
-    const { user, command } = mount(); await openAlpha(user);
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review'); await user.selectOptions(screen.getByRole('combobox', { name: 'Run in conversation' }), 'new');
-    expect(screen.queryByRole('radio', { name: 'Create worktree and branch' })).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Move and run' }));
-    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'review', mode: 'run', newConversation: true, expectedInstruction: 'Review **carefully**.' }));
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'review', mode: 'move' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Move and run' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Move only' })).toBeNull();
+    expect(command.mock.calls.some(([value]) => value.type === 'task.move' && value.mode === 'run')).toBe(false);
   });
 
   it('omits prohibited transitions from the drawer stage control', async () => {
@@ -250,7 +260,7 @@ describe('accessibility, pending, subscriptions and errors', () => {
   });
 
   it('keeps pending forms disabled until a command settles and reports failures inline', async () => {
-    const { user, command } = mount(); await loaded(); let reject!: (error: unknown) => void; command.mockImplementationOnce(() => new Promise((_resolve, failure) => { reject = failure; })); await user.click(screen.getByRole('button', { name: 'New task' })); await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Pending'); await user.click(screen.getByRole('button', { name: 'Create task' })); expect((screen.getByRole('button', { name: 'Creating…' }) as HTMLButtonElement).disabled).toBe(true); expect((screen.getByRole('button', { name: 'Close New task' }) as HTMLButtonElement).disabled).toBe(true); await act(async () => { reject({ code: 'POLICY_DENIED', message: 'The destination is not permitted.' }); }); expect(await screen.findByText('The destination is not permitted.')).toBeTruthy(); expect((screen.getByRole('button', { name: 'Create task' }) as HTMLButtonElement).disabled).toBe(false);
+    const { user, command } = mount(); await loaded(); let reject!: (error: unknown) => void; command.mockImplementationOnce(() => new Promise((_resolve, failure) => { reject = failure; })); await user.click(screen.getByRole('button', { name: 'New task' })); await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Pending'); await user.selectOptions(screen.getByRole('combobox', { name: 'Project' }), 'p1'); await user.click(screen.getByRole('button', { name: 'Create task' })); expect((screen.getByRole('button', { name: 'Creating…' }) as HTMLButtonElement).disabled).toBe(true); expect((screen.getByRole('button', { name: 'Close New task' }) as HTMLButtonElement).disabled).toBe(true); await act(async () => { reject({ code: 'POLICY_DENIED', message: 'The destination is not permitted.' }); }); expect(await screen.findByText('The destination is not permitted.')).toBeTruthy(); expect((screen.getByRole('button', { name: 'Create task' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('keeps styling scoped away from native chat controls and renders groups once', () => {

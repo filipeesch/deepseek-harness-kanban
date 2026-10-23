@@ -48,6 +48,7 @@ export type Command =
   | ({ type: 'task.create' } & NewTask)
   | { type: 'task.edit'; taskId: string; title?: string; description?: string; expectedRevision?: number }
   | { type: 'task.move'; taskId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; newConversation?: boolean; worktree?: CreateWorktree; expectedInstruction?: string; beforeTaskId?: string | null }
+  | { type: 'task.runInstruction'; taskId: string; columnId: string; expectedInstruction: string }
   | { type: 'conversation.create'; taskId: string }
   | { type: 'conversation.close' | 'conversation.reopen'; taskId: string; sessionId: string }
   | { type: 'task.delete'; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; requireIdle?: boolean }

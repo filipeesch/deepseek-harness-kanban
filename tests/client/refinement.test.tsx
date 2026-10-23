@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { BoardView } from '../../src/client/board.js';
 import { fixture, fakeApi } from './helpers.js';
@@ -45,6 +45,17 @@ describe('refined board interactions', () => {
     delete (document as unknown as { elementFromPoint?: unknown }).elementFromPoint;
     await waitFor(() => expect(mock.command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'doing', mode: 'move' }));
     expect(document.querySelector('.kb-drag-ghost')).toBeNull();
+  });
+
+  it('does not prevent a plain card click before drag activation', async () => {
+    render(<BoardView api={fakeApi().api} renderConversation={native} />); await loaded();
+    const card = screen.getByRole('button', { name: 'Open task Alpha task' });
+    const down = createEvent.pointerDown(card, { button: 0, clientX: 10, clientY: 10, pointerId: 1 });
+    fireEvent(card, down);
+    expect(down.defaultPrevented).toBe(false);
+    fireEvent.pointerUp(document, { clientX: 10, clientY: 10, pointerId: 1 });
+    fireEvent.click(card);
+    expect(await screen.findByRole('button', { name: 'Close task details' })).toBeTruthy();
   });
 
   it('uses native session titles and renames through the native session face', async () => {
