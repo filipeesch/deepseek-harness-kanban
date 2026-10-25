@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { BoardView } from '../../src/client/board.js';
-import { fixture, fakeApi } from './helpers.js';
+import { fixture, fakeApi, restrictedFixture } from './helpers.js';
 import type { SessionTitles } from '../../src/client/drawer.js';
 
 afterEach(cleanup);
@@ -45,6 +45,45 @@ describe('refined board interactions', () => {
     delete (document as unknown as { elementFromPoint?: unknown }).elementFromPoint;
     await waitFor(() => expect(mock.command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'doing', mode: 'move' }));
     expect(document.querySelector('.kb-drag-ghost')).toBeNull();
+  });
+
+  it('warns on a restricted hover and cancels without a command', async () => {
+    const initial = restrictedFixture();
+    const mock = fakeApi(initial); const user = userEvent.setup(); render(<BoardView api={mock.api} renderConversation={native} />); await loaded();
+    const card = screen.getByRole('button', { name: 'Open task Alpha task' });
+    const blocked = screen.getByRole('region', { name: 'Blocked column' });
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => blocked });
+    fireEvent.pointerDown(card, { button: 0, clientX: 10, clientY: 10, pointerId: 1 });
+    fireEvent.pointerMove(document, { clientX: 20, clientY: 20, pointerId: 1 });
+    expect(blocked.className).toContain('kb-drop-restricted');
+    expect(blocked.className).not.toContain('kb-drop-disabled');
+    expect(document.querySelector<HTMLElement>('[data-column-id="doing"]')!.className).not.toContain('kb-drop-restricted');
+    expect(blocked.querySelector('.kb-drop-indicator-restricted')).toBeTruthy();
+    fireEvent.pointerUp(document, { clientX: 20, clientY: 20, pointerId: 1 });
+    delete (document as unknown as { elementFromPoint?: unknown }).elementFromPoint;
+    const dialog = await screen.findByRole('dialog', { name: 'Move to Blocked?' });
+    expect(mock.command).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(blocked.className).not.toContain('kb-drop-restricted');
+    expect(mock.command).not.toHaveBeenCalled();
+  });
+
+  it('confirms a restricted drop with the override flag', async () => {
+    const initial = restrictedFixture();
+    const mock = fakeApi(initial); const user = userEvent.setup(); render(<BoardView api={mock.api} renderConversation={native} />); await loaded();
+    const card = screen.getByRole('button', { name: 'Open task Alpha task' });
+    const blocked = screen.getByRole('region', { name: 'Blocked column' });
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => blocked });
+    fireEvent.pointerDown(card, { button: 0, clientX: 10, clientY: 10, pointerId: 1 });
+    fireEvent.pointerMove(document, { clientX: 20, clientY: 20, pointerId: 1 });
+    fireEvent.pointerUp(document, { clientX: 20, clientY: 20, pointerId: 1 });
+    delete (document as unknown as { elementFromPoint?: unknown }).elementFromPoint;
+    const dialog = await screen.findByRole('dialog', { name: 'Move to Blocked?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Move anyway' }));
+    await waitFor(() => expect(mock.command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'blocked', mode: 'move', overrideTransition: true }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(mock.get().state.tasks[0]!.columnId).toBe('blocked');
   });
 
   it('does not prevent a plain card click before drag activation', async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { canTransition, DEFAULT_WORKFLOW_YAML, parseWorkflow } from '../../src/domain/workflow.js';
+import { DEFAULT_WORKFLOW_YAML, parseWorkflow } from '../../src/domain/workflow.js';
+import { canTransition } from '../../src/domain/transitions.js';
 
 const minimal = 'columns:\n  - id: todo\n    label: To do\n  - id: done\n    label: Done\n';
 

@@ -20,7 +20,7 @@ export interface ContextOperation {
   archivedSessionIds: string[]; gitCompleted: boolean; error?: Problem; createdAt: string;
   createAttempt?: { operationId: string; path: string; gitRootPath: string; branchName: string; mode: 'new' | 'existing'; absentBefore: true };
 }
-export interface PendingTransition { id: string; fromColumnId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; text?: string; beforeTaskId?: string | null; worktreeRequest?: CreateWorktree; status: 'waiting' | 'sending' | 'failed'; error?: Problem }
+export interface PendingTransition { id: string; fromColumnId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; text?: string; beforeTaskId?: string | null; worktreeRequest?: CreateWorktree; transitionOverride?: boolean; status: 'waiting' | 'sending' | 'failed'; error?: Problem }
 export interface Task {
   id: string; projectId: string; title: string; description: string; columnId: string; position: number;
   sessionIds: string[]; closedSessionIds: string[]; effectiveCwd: string;
@@ -76,7 +76,7 @@ export type Command =
   | { type: 'settings.save'; settings: BoardSettings; expectedRevision?: number }
   | ({ type: 'task.create'; hubId?: string } & NewTask)
   | { type: 'task.edit'; hubId?: string; taskId: string; title?: string; description?: string; expectedRevision?: number }
-  | { type: 'task.move'; hubId?: string; taskId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; newConversation?: boolean; worktree?: CreateWorktree; expectedInstruction?: string; beforeTaskId?: string | null }
+  | { type: 'task.move'; hubId?: string; taskId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; newConversation?: boolean; worktree?: CreateWorktree; expectedInstruction?: string; beforeTaskId?: string | null; overrideTransition?: boolean }
   | { type: 'task.runInstruction'; hubId?: string; taskId: string; columnId: string; expectedInstruction: string }
   | { type: 'conversation.create'; hubId?: string; taskId: string }
   | { type: 'conversation.close' | 'conversation.reopen'; hubId?: string; taskId: string; sessionId: string }

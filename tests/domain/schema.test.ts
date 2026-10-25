@@ -82,6 +82,20 @@ describe('persisted board schema', () => {
     expect(BoardStateSchema.safeParse(state).success).toBe(false);
   });
 
+  it('preserves optional transition override consent on pending transitions', () => {
+    const withOverride = populatedState();
+    withOverride.tasks[0]!.pendingTransition = { id: 'transition-override', fromColumnId: 'backlog', columnId: 'in_progress', mode: 'move', status: 'waiting', transitionOverride: true };
+    expect(BoardStateSchema.parse(withOverride).tasks[0]!.pendingTransition).toEqual(withOverride.tasks[0]!.pendingTransition);
+
+    const legacy = populatedState();
+    legacy.tasks[0]!.pendingTransition = { id: 'transition-legacy', fromColumnId: 'backlog', columnId: 'in_progress', mode: 'move', status: 'waiting' };
+    expect(BoardStateSchema.safeParse(legacy).success).toBe(true);
+
+    const unknown = populatedState();
+    unknown.tasks[0]!.pendingTransition = { id: 'transition-unknown', fromColumnId: 'backlog', columnId: 'in_progress', mode: 'move', status: 'waiting', override: true } as never;
+    expect(BoardStateSchema.safeParse(unknown).success).toBe(false);
+  });
+
   it('accepts optional board settings and a stored board without them', () => {
     expect(BoardStateSchema.safeParse(initialState()).success).toBe(true);
     const withBase = initialState();

@@ -41,7 +41,7 @@ const operation = z.strictObject({
 });
 const pendingTransition = z.strictObject({
   id, fromColumnId: id, columnId: id, mode: z.enum(['move', 'run']), sessionId: id.optional(), text: z.string().optional(), beforeTaskId: id.nullable().optional(),
-  worktreeRequest: createWorktree.optional(), status: z.enum(['waiting', 'sending', 'failed']), error: problem.optional(),
+  worktreeRequest: createWorktree.optional(), transitionOverride: z.boolean().optional(), status: z.enum(['waiting', 'sending', 'failed']), error: problem.optional(),
 });
 const task = z.strictObject({
   id, projectId: id, title: nonempty, description: z.string(), columnId: id, position: z.number().finite(),

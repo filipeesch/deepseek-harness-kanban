@@ -28,7 +28,7 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('settings.save'),settings:boardSettings,expectedRevision:revision}).strict(),
  z.object({type:z.literal('task.create'),hubId,boardId,projectId:id,title:z.string().min(1),description:z.string()}).strict(),
  z.object({type:z.literal('task.edit'),hubId,taskId:id,title:z.string().optional(),description:z.string().optional(),expectedRevision:revision}).strict(),
- z.object({type:z.literal('task.move'),hubId,taskId:id,columnId:id,mode:z.enum(['move','run']),sessionId:id.optional(),newConversation:z.boolean().optional(),worktree:z.object(tree).strict().optional(),expectedInstruction:z.string().optional(),beforeTaskId:id.nullable().optional()}).strict(),
+ z.object({type:z.literal('task.move'),hubId,taskId:id,columnId:id,mode:z.enum(['move','run']),sessionId:id.optional(),newConversation:z.boolean().optional(),worktree:z.object(tree).strict().optional(),expectedInstruction:z.string().optional(),beforeTaskId:id.nullable().optional(),overrideTransition:z.boolean().optional()}).strict(),
  z.object({type:z.literal('task.runInstruction'),hubId,taskId:id,columnId:id,expectedInstruction:z.string()}).strict(),
  z.object({type:z.literal('conversation.create'),hubId,taskId:id}).strict(),
  z.object({type:z.enum(['conversation.close','conversation.reopen']),hubId,taskId:id,sessionId:id}).strict(),

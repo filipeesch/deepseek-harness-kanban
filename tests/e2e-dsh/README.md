@@ -12,6 +12,7 @@ Run:
 ```sh
 node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness --check
 node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness
+node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness --only override
 ```
 
-The runner builds the plugin, copies the templates into the DSH web test tree, runs both scenarios with `DSH_SNAPSHOT=replay`, and removes the copied files in `finally`. The question scenario seeds `question-round.jsonl`; it does not call a model.
+The runner builds the plugin, copies the templates into the DSH web test tree, runs the selected scenarios with `DSH_SNAPSHOT=replay`, and removes the copied files in `finally`. The default run includes the board, conversation, deletion, and move-override scenarios. The question scenario seeds `question-round.jsonl`; the move-override scenario cancels and confirms a restricted drawer move without a model call or a native composer assertion. No scenario calls a real model.

@@ -107,6 +107,11 @@ describe('host command orchestration',()=>{
   const text='    Reviewed Markdown.\n';const request={type:'task.move' as const,taskId:'task-1',columnId:'plan',mode:'run' as const,sessionId:'session-1',expectedInstruction:text};
   expect(CommandSchema.parse(request)).toEqual(request);expect(CommandSchema.parse({...request,mode:'move',expectedInstruction:undefined}).type).toBe('task.move');
  });
+ it('accepts the move override wire field and rejects unknown fields',()=>{
+  const request={type:'task.move' as const,taskId:'task-1',columnId:'done',mode:'move' as const,overrideTransition:true};
+  expect(CommandSchema.parse(request)).toEqual(request);
+  expect(()=>CommandSchema.parse({...request,override:true})).toThrow();
+ });
  it.each(['missing-tree','missing-subdirectory','missing-base','native-drift','recorded-drift'] as const)('blocks execution in an unavailable or incorrect task context (%s)',async scenario=>{
   const f=await setup();const columnId=await instructed(f);const t=await task(f);const id=t.sessionIds[0]!;
   if(scenario==='missing-tree'||scenario==='missing-subdirectory'){

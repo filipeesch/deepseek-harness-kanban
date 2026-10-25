@@ -53,6 +53,19 @@ export function withLegacyView(snapshot: KanbanSnapshot): TestSnapshot {
 
 export function fixture(): TestSnapshot { return withLegacyView(rawFixture()); }
 
+export function restrictedFixture(): TestSnapshot {
+  const value = fixture();
+  const board = value.state.hubs[0]!.boards[0]!;
+  board.workflow.columns.push({ id: 'blocked', name: 'Blocked' });
+  return value;
+}
+export function restrictedInstructedFixture(): TestSnapshot {
+  const value = restrictedFixture();
+  const board = value.state.hubs[0]!.boards[0]!;
+  board.workflow.columns.find(column => column.id === 'blocked')!.onEnterPrompt = 'Blocked instruction.';
+  return value;
+}
+
 function cloneSnapshot(value: KanbanSnapshot): KanbanSnapshot {
   const normalized = withLegacyView(value);
   return structuredClone({ sequence: normalized.sequence, attention: normalized.attention, state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } }, ...(normalized.questionRounds ? { questionRounds: normalized.questionRounds } : {}), ...(normalized.clientEpoch !== undefined ? { clientEpoch: normalized.clientEpoch } : {}) });

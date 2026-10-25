@@ -7,7 +7,7 @@ import { userEvent } from '@testing-library/user-event';
 import { BoardView, columnLayout } from '../../src/client/board.js';
 import type { KanbanSnapshot, ClientApi, Command } from '../../src/shared/types.js';
 import { styles } from '../../src/client/styles.js';
-import { deferred, fakeApi, fixture } from './helpers.js';
+import { deferred, fakeApi, fixture, restrictedFixture } from './helpers.js';
 
 
 vi.mock('../../src/client/code-editor.js', async () => {
@@ -224,10 +224,72 @@ describe('workflow confirmation', () => {
     expect(command.mock.calls.some(([value]) => value.type === 'task.move' && value.mode === 'run')).toBe(false);
   });
 
-  it('omits prohibited transitions from the drawer stage control', async () => {
-    const initial = fixture(); initial.state.workflow.columns.push({ id: 'blocked', name: 'Blocked' }); const { user } = mount(initial); await openAlpha(user);
-    const select = screen.getByRole('combobox', { name: 'Move task to' });
-    expect(within(select).queryByRole('option', { name: 'Blocked' })).toBeNull();
+  it('lists the complete workflow in order and marks only restricted stages', async () => {
+    const { user } = mount(restrictedFixture()); await openAlpha(user);
+    const select = screen.getByRole('combobox', { name: 'Move task to' }) as HTMLSelectElement;
+    expect([...select.options].map(option => option.value)).toEqual(['intake', 'doing', 'review', 'blocked']);
+    expect(select.value).toBe('intake');
+    expect(select.options[3]!.className).toContain('kb-stage-option-restricted');
+    expect(select.options[3]!.disabled).toBe(false);
+    expect(select.options[3]!.getAttribute('aria-label')).toBe('Blocked, requires confirmation');
+    expect(select.options[1]!.className).not.toContain('kb-stage-option-restricted');
+    const hint = document.getElementById(select.getAttribute('aria-describedby') ?? '');
+    expect(hint?.textContent).toContain('require confirmation before moving');
+  });
+
+  it('asks for confirmation before a restricted select and cancels without a command', async () => {
+    const { user, command } = mount(restrictedFixture()); await openAlpha(user);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'blocked');
+    const dialog = await screen.findByRole('dialog', { name: 'Move to Blocked?' });
+    expect(within(dialog).getByText('Alpha task')).toBeTruthy();
+    expect(within(dialog).getByText('Delivery')).toBeTruthy();
+    expect(within(dialog).getByText(/does not allow moving this card from Intake to Blocked/)).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBe(document.activeElement);
+    expect((screen.getByRole('combobox', { name: 'Move task to' }) as HTMLSelectElement).disabled).toBe(true);
+    expect(command).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect((screen.getByRole('combobox', { name: 'Move task to' }) as HTMLSelectElement).value).toBe('intake');
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it('moves after confirming a restricted stage and sends the override flag', async () => {
+    const { user, command, get } = mount(restrictedFixture()); await openAlpha(user);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'blocked');
+    const dialog = await screen.findByRole('dialog', { name: 'Move to Blocked?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Move anyway' }));
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'blocked', mode: 'move', overrideTransition: true }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(get().state.tasks[0]!.columnId).toBe('blocked');
+    expect(command.mock.calls.some(([value]) => value.type === 'task.runInstruction')).toBe(false);
+  });
+
+  it('keeps the confirmation open on host rejection and retries', async () => {
+    const { user, command } = mount(restrictedFixture()); await openAlpha(user);
+    command.mockRejectedValueOnce({ code: 'TASK_BUSY', message: 'The task is busy.' });
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'blocked');
+    const dialog = await screen.findByRole('dialog', { name: 'Move to Blocked?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Move anyway' }));
+    expect(await screen.findByText('The task is busy.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(command).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('reports a stale source and closes without a pointless retry', async () => {
+    const { user, command, publish, get } = mount(restrictedFixture()); await openAlpha(user);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'blocked');
+    await screen.findByRole('dialog', { name: 'Move to Blocked?' });
+    const next = get(); next.state.tasks[0]!.columnId = 'doing'; next.sequence += 1;
+    act(() => { publish(next); });
+    await user.click(screen.getByRole('button', { name: 'Move anyway' }));
+    expect(await screen.findByText(/moved to another stage while this confirmation was open/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy();
+    expect(command).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 });
 

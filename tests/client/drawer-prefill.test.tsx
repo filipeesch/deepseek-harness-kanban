@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { BoardView } from '../../src/client/board.js';
 import type { DraftResult, InstructionDraftPort } from '../../src/client/instruction-draft.js';
-import { fakeApi, fixture } from './helpers.js';
+import { fakeApi, fixture, restrictedInstructedFixture } from './helpers.js';
 
 afterEach(cleanup);
 function fakePort() {
@@ -101,5 +101,36 @@ describe('drawer stage prefill', () => {
     await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'doing', mode: 'move' }));
     expect(prepare).not.toHaveBeenCalled();
     expect(screen.queryByText(/Instruction inserted/)).toBeNull();
+  });
+
+  it('preserves an existing draft after a confirmed restricted instructed move', async () => {
+    const { port, prepare } = fakePort();
+    prepare.mockResolvedValueOnce('preserved');
+    const { user } = mount(port, restrictedInstructedFixture()); await openAlpha(user);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'blocked');
+    const dialog = await screen.findByRole('dialog', { name: 'Move to Blocked?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Move anyway' }));
+    expect(await screen.findByText(/composer already has unsent text or attachments/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Replace draft' })).toBeTruthy();
+  });
+
+  it('prefills only after confirming a restricted instructed move', async () => {
+    const { port, prepare } = fakePort();
+    const { user, command } = mount(port, restrictedInstructedFixture()); await openAlpha(user);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'blocked');
+    const dialog = await screen.findByRole('dialog', { name: 'Move to Blocked?' });
+    expect(prepare).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(prepare).not.toHaveBeenCalled();
+    expect(command).not.toHaveBeenCalled();
+    expect((screen.getByRole('combobox', { name: 'Move task to' }) as HTMLSelectElement).value).toBe('intake');
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'blocked');
+    const confirmed = await screen.findByRole('dialog', { name: 'Move to Blocked?' });
+    await user.click(within(confirmed).getByRole('button', { name: 'Move anyway' }));
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'blocked', mode: 'move', overrideTransition: true }));
+    await waitFor(() => expect(prepare).toHaveBeenCalledWith('s1', 'Blocked instruction.', expect.any(AbortSignal)));
+    expect(screen.getByRole('tab', { name: 'Conversations' }).getAttribute('aria-selected')).toBe('true');
   });
 });

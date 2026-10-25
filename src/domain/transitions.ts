@@ -1,15 +1,27 @@
 import type { Column, Workflow } from '../shared/types.js';
 
-/** Columns that are valid destinations from `from`, including the current column for reordering. */
-export function permittedDestinations(workflow: Workflow, from: string): Column[] {
+/** How a move from one existing stage to another relates to the workflow rule. */
+export type TransitionAccess = 'reorder' | 'allowed' | 'restricted';
+
+export interface TransitionDestination {
+  column: Column;
+  access: TransitionAccess | null;
+}
+
+/** Classifies a move between existing stages without applying any policy beyond the workflow. */
+export function transitionAccess(workflow: Workflow, from: string, to: string): TransitionAccess | null {
   const source = workflow.columns.find(column => column.id === from);
-  if (!source) return [...workflow.columns];
-  return workflow.columns.filter(column => column.id === from || source.allowedTransitions === undefined || source.allowedTransitions.includes(column.id));
+  if (!source || !workflow.columns.some(column => column.id === to)) return null;
+  if (from === to) return 'reorder';
+  return source.allowedTransitions === undefined || source.allowedTransitions.includes(to) ? 'allowed' : 'restricted';
+}
+
+/** Every workflow stage in workflow order, paired with its access from `from`. */
+export function transitionDestinations(workflow: Workflow, from: string): TransitionDestination[] {
+  return workflow.columns.map(column => ({ column, access: transitionAccess(workflow, from, column.id) }));
 }
 
 /** A transition enters a different existing stage; same-stage ordering is separate. */
 export function canTransition(workflow: Workflow, from: string, to: string): boolean {
-  const source = workflow.columns.find(column => column.id === from);
-  if (!source || from === to || !workflow.columns.some(column => column.id === to)) return false;
-  return source.allowedTransitions === undefined || source.allowedTransitions.includes(to);
+  return transitionAccess(workflow, from, to) === 'allowed';
 }

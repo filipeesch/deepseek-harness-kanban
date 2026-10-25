@@ -120,6 +120,3 @@ export function parseWorkflow(yaml: string): Workflow {
   if (groups.some(group => columnIds.has(group.id))) invalid('Group IDs must not collide with column IDs.');
   return { name, initialColumnId, columns, groups };
 }
-
-/** A transition enters a different existing stage; same-stage ordering is separate. */
-export { canTransition, permittedDestinations } from './transitions.js';

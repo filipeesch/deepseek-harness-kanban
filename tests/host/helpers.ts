@@ -5,6 +5,24 @@ import { KanbanApp } from '../../src/host/app.js';
 import type { BoardState, HubState, KanbanMeta, SessionFacts, Project, CreateWorktree } from '../../src/shared/types.js';
 import type { HubStorage, SessionPort, GitPort, GitTree, WorkspacePort, WorkspaceInfo } from '../../src/shared/ports.js';
 import { KanbanError } from '../../src/shared/errors.js';
+
+export const RESTRICTED_WORKFLOW = [
+  'name: Restricted Flow',
+  'initial_column: backlog',
+  'columns:',
+  '  - id: backlog',
+  '    label: Backlog',
+  '    allowed_transitions: [plan]',
+  '  - id: plan',
+  '    label: Plan',
+  '  - id: done',
+  '    label: Done',
+  '  - id: review',
+  '    label: Review',
+  '    on_enter_prompt: |',
+  '      Review carefully.',
+  '',
+].join('\n');
 export class MemoryHubStorage implements HubStorage {
  hubs=new Map<string,HubState>(); meta:KanbanMeta={settingsRevision:0}; failSave=false; failLoad=false; failDelete=false;
  async loadAll(){if(this.failLoad)throw new Error('Load failed.');return {hubs:[...this.hubs.values()].map(value=>structuredClone(value)),meta:structuredClone(this.meta)};}

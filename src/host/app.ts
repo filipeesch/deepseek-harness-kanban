@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { canTransition } from '../domain/workflow.js';
+import { canTransition, transitionAccess } from '../domain/transitions.js';
 import type { BoardSettings, Command, HubState, HubTask, KanbanSnapshot, NewTask, PendingTransition, Project, ProjectInput, QuestionRound } from '../shared/types.js';
 import type { GitPort, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionStore } from './question-storage.js';
@@ -289,14 +289,15 @@ export class KanbanApp {
   return actual;
  }
  private async move(command:Extract<Command,{type:'task.move'}>):Promise<void>{
-  this.assertContext(command.taskId);const located=this.locatedTask(command.taskId);const store=this.hubs.hub(located.hubId);const state=store.snapshot();const task=located.task;const board=state.boards.find(b=>b.id===task.boardId);invariant(board,'BOARD_NOT_FOUND','The task board does not exist.');const column=board.workflow.columns.find(c=>c.id===command.columnId);
+  this.assertContext(command.taskId);invariant(command.overrideTransition!==true||command.mode==='move','INVALID_INPUT','Transition overrides are only available for move-only transitions.');const located=this.locatedTask(command.taskId);const store=this.hubs.hub(located.hubId);const state=store.snapshot();const task=located.task;const board=state.boards.find(b=>b.id===task.boardId);invariant(board,'BOARD_NOT_FOUND','The task board does not exist.');const column=board.workflow.columns.find(c=>c.id===command.columnId);
   const sameColumn=task.columnId===column?.id;
   const approvedInstruction=command.mode==='run'?this.requireReviewedInstruction(column?.onEnterPrompt,command.expectedInstruction):undefined;
   invariant(!task.pendingTransition,'TASK_BUSY','Resolve the already confirmed transition first.');
   if(command.worktree)invariant(!task.worktree,'WORKTREE_EXISTS','Manage the existing worktree in Git rather than replacing it through a transition.');
   invariant(column,'INVALID_TARGET','The destination stage does not exist.');
+  const access=transitionAccess(board.workflow,task.columnId,column.id);
   if(sameColumn)invariant(command.mode==='move'&&!command.worktree,'INVALID_TARGET','A same-stage reorder is a move-only operation.');
-  else invariant(canTransition(board.workflow,task.columnId,column.id),'TRANSITION_NOT_ALLOWED','This workflow transition is not allowed.');
+  else invariant(access==='allowed'||(access==='restricted'&&command.overrideTransition===true),'TRANSITION_NOT_ALLOWED',access==='restricted'?'This workflow transition requires explicit confirmation.':'This workflow transition is not allowed.');
   invariant(!(command.sessionId&&command.newConversation),'INVALID_TARGET','Choose one existing conversation or a new conversation.');
   if(command.beforeTaskId!==undefined&&command.beforeTaskId!==null){
    const anchor=state.tasks.find(candidate=>candidate.id===command.beforeTaskId);
@@ -307,7 +308,7 @@ export class KanbanApp {
    if(command.newConversation)sessionId=await this.createConversationNow(task.id);
    invariant(sessionId&&store.requireTask(task.id).sessionIds.includes(sessionId),'INVALID_TARGET','Select a conversation belonging to this task.');
   }
-  const pending:PendingTransition={id:randomUUID(),fromColumnId:task.columnId,columnId:column.id,mode:command.mode,status:'waiting',...(sessionId?{sessionId}:{}),...(command.beforeTaskId!==undefined?{beforeTaskId:command.beforeTaskId}:{}),...(command.worktree?{worktreeRequest:structuredClone(command.worktree)}:{}),...(command.mode==='run'?{text:approvedInstruction as string}: {})};
+  const pending:PendingTransition={id:randomUUID(),fromColumnId:task.columnId,columnId:column.id,mode:command.mode,status:'waiting',...(access==='restricted'&&command.overrideTransition===true?{transitionOverride:true}:{}),...(sessionId?{sessionId}:{}),...(command.beforeTaskId!==undefined?{beforeTaskId:command.beforeTaskId}:{}),...(command.worktree?{worktreeRequest:structuredClone(command.worktree)}:{}),...(command.mode==='run'?{text:approvedInstruction as string}: {})};
   await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(!t.operation&&!t.pendingTransition&&t.columnId===task.columnId,'REVISION_CONFLICT','Task changed before the transition could be admitted.');t.pendingTransition=pending;});
   if(command.worktree){
    try{await this.worktrees.request(task.id,{kind:'create',...command.worktree});}
@@ -338,7 +339,7 @@ export class KanbanApp {
   if(this.disposed)return;if(this.driving){this.driveAgain=true;return;}this.driving=true;
   try{do{this.driveAgain=false;for(const located of this.locator.all()){const task=located.task;const pending=task.pendingTransition;if(!pending||pending.status!=='waiting'||task.operation||(pending.worktreeRequest&&task.worktree?.status!=='ready'))continue;const store=this.hubs.hub(located.hubId);
    try{
-    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');operations.placeTask(d,t.id,pending.columnId,pending.beforeTaskId??null,Date.now());if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});
+    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');operations.placeTask(d,t.id,pending.columnId,pending.beforeTaskId??null,Date.now());if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});
     if(pending.mode==='run'){
      invariant(pending.sessionId&&pending.text,'INVALID_TARGET','Confirmed execution is missing its target or instruction.');
      await this.assertExecutionContext(pending.sessionId);

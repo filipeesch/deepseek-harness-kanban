@@ -8,7 +8,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { attention?: boolean; hubs?: number }
+export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -33,7 +33,7 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
   const hub: HubState = {
     id: 'hub', name: 'Harness Hub', revision: 1,
     projects: [{ id: 'p', name: 'Project', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' }],
-    boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(), workflow: { name: 'Harness flow', initialColumnId: 'explore', columns: [{ id: 'explore', name: 'Explore' }, { id: 'propose', name: 'Propose' }, { id: 'apply', name: 'Apply' }], groups: [{ id: 'planning', name: 'Planning', columnIds: ['explore', 'propose'] }] }, createdAt: now, updatedAt: now }],
+    boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(options.restricted), workflow: { name: 'Harness flow', initialColumnId: 'explore', columns: [{ id: 'explore', name: 'Explore', ...(options.restricted ? { allowedTransitions: ['propose'] } : {}) }, { id: 'propose', name: 'Propose' }, { id: 'apply', name: 'Apply' }], groups: [{ id: 'planning', name: 'Planning', columnIds: ['explore', 'propose'] }] }, createdAt: now, updatedAt: now }],
     tasks, notes: [], createdAt: now, updatedAt: now,
   };
   const settings = { revision: 1, worktreeBasePath: '/worktrees' };
@@ -51,6 +51,7 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
       let receipt: KanbanSnapshot['commandReceipt'];
       if (command.type === 'board.workflow.save') { const hub = value.state.hubs.find(item => item.id === command.hubId); const board = hub?.boards.find(item => item.id === command.boardId); if (board) { board.workflowYaml = command.yaml; if (hub) hub.revision += 1; } }
       if (command.type === 'workflow.save') { firstBoard.workflowYaml = command.yaml; firstHub.revision += 1; }
+      if (command.type === 'task.move') { const hub = command.hubId ? value.state.hubs.find(item => item.id === command.hubId) ?? firstHub : firstHub; const task = hub.tasks.find(item => item.id === command.taskId); if (task) task.columnId = command.columnId; }
       if (command.type === 'worktree.create') { const task = firstHub.tasks.find(item => item.id === command.taskId); if (task) { task.worktree = { path: command.path, branch: command.branchName, owned: true, status: 'ready' }; task.effectiveCwd = command.path; } }
       if (command.type === 'board.create') { const hub = value.state.hubs.find(item => item.id === command.hubId); if (hub) { const board = { id: 'board-' + (commands.length + 1), name: command.name, workflowYaml: workflowYaml(), workflow: structuredClone(firstBoard.workflow), createdAt: now, updatedAt: now }; hub.boards.push(board); receipt = { kind: 'board', id: board.id }; } }
       if (command.type === 'hub.create') { const created: HubState = { id: 'hub-' + (commands.length + 1), name: command.name, revision: 0, projects: [], boards: [], tasks: [], notes: [], createdAt: now, updatedAt: now }; value.state.hubs.push(created); receipt = { kind: 'hub', id: created.id }; }
@@ -65,8 +66,8 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
   return { api, snapshot: () => withLegacy(clone(value)), commands: () => structuredClone(commands) };
 }
 
-export function workflowYaml(): string {
-  return ['name: Harness flow', 'initial_column: explore', 'columns:', '  - id: explore', '    label: Explore', '  - id: propose', '    label: Propose', '  - id: apply', '    label: Apply', 'groups:', '  - id: planning', '    label: Planning', '    columns: [explore, propose]', ''].join(String.fromCharCode(10));
+export function workflowYaml(restricted = false): string {
+  return ['name: Harness flow', 'initial_column: explore', 'columns:', '  - id: explore', '    label: Explore', ...(restricted ? ['    allowed_transitions: [propose]'] : []), '  - id: propose', '    label: Propose', '  - id: apply', '    label: Apply', 'groups:', '  - id: planning', '    label: Planning', '    columns: [explore, propose]', ''].join(String.fromCharCode(10));
 }
 
 function clone(value: KanbanSnapshot): KanbanSnapshot { const normalized = withLegacy(value); return structuredClone({ sequence: normalized.sequence, attention: normalized.attention, state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } } }); }

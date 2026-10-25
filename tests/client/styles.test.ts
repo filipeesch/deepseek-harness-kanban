@@ -21,6 +21,10 @@ describe('board and editor style contracts', () => {
     for (const value of ['.kb-working{', '.kb-working-dot', '.kb-background{', '.kb-background:focus-visible', '.kb-task-background', '.kb-card-meta', '.kb-card-signals', '.kb-card[data-working=true]', '@keyframes kb-working-pulse', '--dsw-alias-label-deep-diving']) expect(styles).toContain(value);
     expect(styles).not.toContain('.kb-running');
   });
+  it('defines the restricted-stage and override surface contract', () => {
+    for (const value of ['.kb-stage-option-restricted{', '.kb-drop-restricted{', '.kb-drop-indicator-restricted{', '.kb-transition-dialog{', '.kb-transition-identity{']) expect(styles).toContain(value);
+    expect(styles).not.toContain('.kb-drop-disabled');
+  });
 });
 
 describe('destructive and operation surfaces', () => {
