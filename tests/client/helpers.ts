@@ -1,6 +1,7 @@
 import { vi } from 'vitest';
 import type { BoardState, ClientApi, Command, HubState, HubTask, KanbanSnapshot, KanbanState } from '../../src/shared/types.js';
 import { taskTitleSlug, worktreePathForBranch } from '../../src/shared/worktree-name.js';
+import { applyInitialEntry, applyMove, applyRunInstruction, createEnteredAtSource } from '../support/in-memory-board.js';
 
 const FIXTURE_WORKFLOW_YAML = ['name: Delivery', 'initial_column: intake', 'columns:', '  - id: intake', '    label: Intake', '    allowed_transitions: [doing, review]', '  - id: doing', '    label: Doing', '  - id: review', '    label: Review', '    on_enter_prompt: |', '      Review **carefully**.', 'groups:', '  - id: plan', '    label: Planning', '    columns: [intake, review]', ''].join(String.fromCharCode(10));
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
@@ -53,6 +54,12 @@ export function withLegacyView(snapshot: KanbanSnapshot): TestSnapshot {
 
 export function fixture(): TestSnapshot { return withLegacyView(rawFixture()); }
 
+/** A second instructed destination for replacement tests; kept out of the base fixture. */
+export function fixtureWithPlan(): TestSnapshot {
+  const value = fixture();
+  value.state.hubs[0]!.boards[0]!.workflow.columns.push({ id: 'plan', name: 'Plan', onEnterPrompt: 'Plan this task.' });
+  return value;
+}
 export function restrictedFixture(): TestSnapshot {
   const value = fixture();
   const board = value.state.hubs[0]!.boards[0]!;
@@ -73,6 +80,7 @@ function cloneSnapshot(value: KanbanSnapshot): KanbanSnapshot {
 
 export function fakeApi(initial: TestSnapshot = fixture()) {
   let value = withLegacyView(cloneSnapshot(initial));
+  const nextEnteredAt = createEnteredAtSource();
   delete (value as { commandReceipt?: unknown }).commandReceipt;
   let next = 3; const listeners = new Set<(snapshot: TestSnapshot) => void>();
   const publish = (snapshot?: KanbanSnapshot) => { if (snapshot) value = withLegacyView(cloneSnapshot(snapshot)); else { value.sequence++; value.state.revision++; } const result = withLegacyView(cloneSnapshot(value)); for (const listener of listeners) listener(result); return result; };
@@ -87,10 +95,10 @@ export function fakeApi(initial: TestSnapshot = fixture()) {
       case 'board.rename': { const hub = value.state.hubs.find(item => item.id === input.hubId); const board = hub?.boards.find(item => item.id === input.boardId); if (board) board.name = input.name; break; }
       case 'board.delete': { const hub = value.state.hubs.find(item => item.id === input.hubId); if (hub) hub.boards = hub.boards.filter(item => item.id !== input.boardId); break; }
       case 'board.workflow.save': { const hub = value.state.hubs.find(item => item.id === input.hubId); const board = hub?.boards.find(item => item.id === input.boardId); if (board) board.workflowYaml = input.yaml; break; }
-      case 'task.create': { const hub = value.state.hubs[0]!; const board = hub.boards.find(item => item.id === (input.boardId ?? hub.boards[0]!.id))!; const id = 't' + next; const created = { ...task(id, input.title, input.projectId, board.workflow.initialColumnId), description: input.description, sessionIds: ['created-' + next++] }; const initial = board.workflow.columns.find(column => column.id === created.columnId); if (initial?.onEnterPrompt?.trim()) created.instructionPending = { columnId: initial.id, enteredAt: Date.now() }; hub.tasks.push(created); receipt = { kind: 'task', id }; break; }
+      case 'task.create': { const hub = value.state.hubs[0]!; const board = hub.boards.find(item => item.id === (input.boardId ?? hub.boards[0]!.id))!; const id = 't' + next; const created = { ...task(id, input.title, input.projectId, board.workflow.initialColumnId), boardId: board.id, description: input.description, sessionIds: ['created-' + next++] }; const view: BoardState = { schemaVersion: 2, revision: hub.revision, workflowYaml: board.workflowYaml, workflow: board.workflow, projects: hub.projects, tasks: hub.tasks, notes: hub.notes }; applyInitialEntry(view, created, nextEnteredAt); hub.tasks.push(created); receipt = { kind: 'task', id }; break; }
       case 'task.edit': if (current) { if (input.title !== undefined) current.title = input.title; if (input.description !== undefined) current.description = input.description; } break;
-      case 'task.move': if (current) { const previous = current.columnId; const board = value.state.hubs[0]!.boards.find(item => item.id === current.boardId)!; current.columnId = input.columnId; if (previous !== input.columnId) { const destination = board.workflow.columns.find(column => column.id === input.columnId); if (destination?.onEnterPrompt?.trim()) current.instructionPending = { columnId: input.columnId, enteredAt: Date.now() }; else delete current.instructionPending; } if (input.newConversation) current.sessionIds.push('s' + next++); if (input.worktree) { current.worktree = { path: input.worktree.path, branch: input.worktree.branchName, status: 'ready', owned: true }; current.effectiveCwd = input.worktree.path + (current.projectId === 'p1' ? '/apps/api' : ''); } } break;
-      case 'task.runInstruction': if (current) delete current.instructionPending; break;
+      case 'task.move': if (current) { const hub = value.state.hubs.find(item => item.tasks.some(task => task.id === current.id)); const board = hub?.boards.find(item => item.id === current.boardId); if (hub && board) applyMove({ schemaVersion: 2, revision: hub.revision, workflowYaml: board.workflowYaml, workflow: board.workflow, projects: hub.projects, tasks: hub.tasks, notes: hub.notes }, input.taskId, input.columnId, input.beforeTaskId, nextEnteredAt); } break;
+      case 'task.runInstruction': if (current) { const hub = value.state.hubs.find(item => item.tasks.some(task => task.id === current.id)); const board = hub?.boards.find(item => item.id === current.boardId); if (hub && board) { const result = applyRunInstruction({ schemaVersion: 2, revision: hub.revision, workflowYaml: board.workflowYaml, workflow: board.workflow, projects: hub.projects, tasks: hub.tasks, notes: hub.notes }, input); if (!result.ok) throw { code: result.code, message: result.message }; } } break;
       case 'conversation.create': if (current) { const id = 's' + next++; current.sessionIds.push(id); receipt = { kind: 'conversation', id }; } break;
       case 'conversation.close': current?.closedSessionIds.push(input.sessionId); break;
       case 'conversation.reopen': if (current) current.closedSessionIds = current.closedSessionIds.filter(id => id !== input.sessionId); break;

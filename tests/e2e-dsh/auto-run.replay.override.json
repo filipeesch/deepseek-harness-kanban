@@ -1,0 +1,22 @@
+[
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "text" },
+      { "type": "text-delta", "index": 0, "text": "Automatic instruction received." },
+      { "type": "block-end", "index": 0, "block": { "type": "text", "text": "Automatic instruction received." } },
+      { "type": "usage", "usage": { "inputTokens": 64, "outputTokens": 6, "totalTokens": 70 } },
+      { "type": "finish", "reason": { "kind": "stop" } }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "text" },
+      { "type": "text-delta", "index": 0, "text": "Draft preserved while the instruction ran." },
+      { "type": "block-end", "index": 0, "block": { "type": "text", "text": "Draft preserved while the instruction ran." } },
+      { "type": "usage", "usage": { "inputTokens": 64, "outputTokens": 8, "totalTokens": 72 } },
+      { "type": "finish", "reason": { "kind": "stop" } }
+    ]
+  }
+]

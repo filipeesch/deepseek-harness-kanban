@@ -1,5 +1,6 @@
 import type { BoardState, ClientApi, Command, HubState, HubTask, KanbanSnapshot, KanbanState } from '../../src/shared/types.js';
 import { taskTitleSlug, worktreePathForBranch } from '../../src/shared/worktree-name.js';
+import { applyMove, applyRunInstruction, createEnteredAtSource } from '../support/in-memory-board.js';
 
 export interface HarnessApi {
   api: ClientApi;
@@ -8,7 +9,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean }
+export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -17,6 +18,7 @@ function task(id: string, title: string, columnId: string, position: number): Hu
 }
 
 export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
+  const nextEnteredAt = createEnteredAtSource();
   const tasks: HubTask[] = [
     ...Array.from({ length: 12 }, (_, index) => task('long-' + index, 'Long column task ' + index, 'explore', index)),
     task('short', 'Short task', 'propose', 40),
@@ -33,7 +35,7 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
   const hub: HubState = {
     id: 'hub', name: 'Harness Hub', revision: 1,
     projects: [{ id: 'p', name: 'Project', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' }],
-    boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(options.restricted), workflow: { name: 'Harness flow', initialColumnId: 'explore', columns: [{ id: 'explore', name: 'Explore', ...(options.restricted ? { allowedTransitions: ['propose'] } : {}) }, { id: 'propose', name: 'Propose' }, { id: 'apply', name: 'Apply' }], groups: [{ id: 'planning', name: 'Planning', columnIds: ['explore', 'propose'] }] }, createdAt: now, updatedAt: now }],
+    boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(options.restricted), workflow: { name: 'Harness flow', initialColumnId: 'explore', columns: [{ id: 'explore', name: 'Explore', ...(options.restricted ? { allowedTransitions: ['propose'] } : {}) }, { id: 'propose', name: 'Propose', ...(options.restricted ? {} : { onEnterPrompt: 'Plan this task.' }) }, { id: 'apply', name: 'Apply' }], groups: [{ id: 'planning', name: 'Planning', columnIds: ['explore', 'propose'] }] }, createdAt: now, updatedAt: now }],
     tasks, notes: [], createdAt: now, updatedAt: now,
   };
   const settings = { revision: 1, worktreeBasePath: '/worktrees' };
@@ -42,7 +44,8 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
   if ((options.hubs ?? 1) > 1) value.state.hubs.push({ id: 'hub-2', name: 'Second Hub', revision: 0, projects: [], boards: [], tasks: [], notes: [], createdAt: now, updatedAt: now });
   const listeners = new Set<(snapshot: TestSnapshot) => void>();
   const commands: Command[] = [];
-  const publish = () => { value = withLegacy(clone(value)); value.sequence++; for (const listener of listeners) listener(withLegacy(clone(value))); return withLegacy(clone(value)); };
+  if (options.persist) { try { const stored = sessionStorage.getItem('dsh-kanban.harness'); if (stored) value = withLegacy(JSON.parse(stored) as KanbanSnapshot); } catch { /* storage is optional */ } }
+  const publish = () => { value = withLegacy(clone(value)); value.sequence++; if (options.persist) { try { sessionStorage.setItem('dsh-kanban.harness', JSON.stringify(value)); } catch { /* storage is optional */ } } const copy = withLegacy(clone(value)); for (const listener of listeners) listener(copy); return withLegacy(clone(value)); };
   const api: ClientApi = {
     snapshot: async () => withLegacy(clone(value)),
     command: async (command: Command) => {
@@ -51,7 +54,22 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
       let receipt: KanbanSnapshot['commandReceipt'];
       if (command.type === 'board.workflow.save') { const hub = value.state.hubs.find(item => item.id === command.hubId); const board = hub?.boards.find(item => item.id === command.boardId); if (board) { board.workflowYaml = command.yaml; if (hub) hub.revision += 1; } }
       if (command.type === 'workflow.save') { firstBoard.workflowYaml = command.yaml; firstHub.revision += 1; }
-      if (command.type === 'task.move') { const hub = command.hubId ? value.state.hubs.find(item => item.id === command.hubId) ?? firstHub : firstHub; const task = hub.tasks.find(item => item.id === command.taskId); if (task) task.columnId = command.columnId; }
+      if (command.type === 'task.move') {
+        const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);
+        const hub = task ? value.state.hubs.find(item => item.tasks.some(candidate => candidate.id === task.id)) : undefined;
+        const board = task && hub ? hub.boards.find(item => item.id === task.boardId) : undefined;
+        if (task && hub && board) applyMove({ schemaVersion: 2, revision: hub.revision, workflowYaml: board.workflowYaml, workflow: board.workflow, projects: hub.projects, tasks: hub.tasks, notes: hub.notes }, command.taskId, command.columnId, command.beforeTaskId, nextEnteredAt);
+      }
+      if (command.type === 'task.runInstruction') {
+        if (options.runFailure) throw { code: 'SEND_FAILED', message: 'The instruction could not be sent.' };
+        const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);
+        const hub = task ? value.state.hubs.find(item => item.tasks.some(candidate => candidate.id === task.id)) : undefined;
+        const board = task && hub ? hub.boards.find(item => item.id === task.boardId) : undefined;
+        if (task && hub && board) {
+          const result = applyRunInstruction({ schemaVersion: 2, revision: hub.revision, workflowYaml: board.workflowYaml, workflow: board.workflow, projects: hub.projects, tasks: hub.tasks, notes: hub.notes }, command);
+          if (!result.ok) throw { code: result.code, message: result.message };
+        }
+      }
       if (command.type === 'worktree.create') { const task = firstHub.tasks.find(item => item.id === command.taskId); if (task) { task.worktree = { path: command.path, branch: command.branchName, owned: true, status: 'ready' }; task.effectiveCwd = command.path; } }
       if (command.type === 'board.create') { const hub = value.state.hubs.find(item => item.id === command.hubId); if (hub) { const board = { id: 'board-' + (commands.length + 1), name: command.name, workflowYaml: workflowYaml(), workflow: structuredClone(firstBoard.workflow), createdAt: now, updatedAt: now }; hub.boards.push(board); receipt = { kind: 'board', id: board.id }; } }
       if (command.type === 'hub.create') { const created: HubState = { id: 'hub-' + (commands.length + 1), name: command.name, revision: 0, projects: [], boards: [], tasks: [], notes: [], createdAt: now, updatedAt: now }; value.state.hubs.push(created); receipt = { kind: 'hub', id: created.id }; }
@@ -67,7 +85,7 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
 }
 
 export function workflowYaml(restricted = false): string {
-  return ['name: Harness flow', 'initial_column: explore', 'columns:', '  - id: explore', '    label: Explore', ...(restricted ? ['    allowed_transitions: [propose]'] : []), '  - id: propose', '    label: Propose', '  - id: apply', '    label: Apply', 'groups:', '  - id: planning', '    label: Planning', '    columns: [explore, propose]', ''].join(String.fromCharCode(10));
+  return ['name: Harness flow', 'initial_column: explore', 'columns:', '  - id: explore', '    label: Explore', ...(restricted ? ['    allowed_transitions: [propose]'] : []), '  - id: propose', '    label: Propose', ...(restricted ? [] : ['    on_enter_prompt: |', '      Plan this task.']), '  - id: apply', '    label: Apply', 'groups:', '  - id: planning', '    label: Planning', '    columns: [explore, propose]', ''].join(String.fromCharCode(10));
 }
 
 function clone(value: KanbanSnapshot): KanbanSnapshot { const normalized = withLegacy(value); return structuredClone({ sequence: normalized.sequence, attention: normalized.attention, state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } } }); }

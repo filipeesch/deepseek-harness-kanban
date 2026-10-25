@@ -6,6 +6,7 @@ import { DATA_VERSION } from '../shared/types.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 import { BoardStateSchema, initialState } from './schema.js';
 import { parseWorkflow } from './workflow.js';
+import { entryInstruction, nextEnteredAt } from './stage-entry.js';
 import { assertId, assertRevision, isAbsolutePath } from './validation.js';
 
 export interface NoteInput { id?: string; content: string; tags?: string[] }
@@ -247,10 +248,11 @@ export class BoardStore {
       }
       const timestamp = new Date().toISOString();
       const initialColumn = state.workflow.columns.find(column => column.id === state.workflow.initialColumnId);
+      const initialInstruction = entryInstruction(initialColumn);
       const task: Task = {
         id: nextId(state.tasks), projectId: project.id, title: value.title.trim(), description: value.description,
         columnId: state.workflow.initialColumnId, position, sessionIds: [sessionId], closedSessionIds: [], effectiveCwd: project.projectPath,
-        worktree: null, operation: null, ...(initialColumn?.onEnterPrompt?.trim() ? { instructionPending: { columnId: initialColumn.id, enteredAt: Date.now() } } : {}), createdAt: timestamp, updatedAt: timestamp,
+        worktree: null, operation: null, ...(initialInstruction !== undefined ? { instructionPending: { columnId: initialColumn!.id, enteredAt: nextEnteredAt() } } : {}), createdAt: timestamp, updatedAt: timestamp,
       };
       state.tasks.push(task);
       return task;

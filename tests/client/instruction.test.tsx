@@ -19,7 +19,7 @@ describe('card instruction action', () => {
   it('sends the current stage instruction without moving the task', async () => {
     const { user, command, get } = mount(inReview()); await loaded();
     await user.click(screen.getByRole('button', { name: 'Run Review instruction' }));
-    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.runInstruction', taskId: 't1', columnId: 'review', expectedInstruction: 'Review **carefully**.' }));
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.runInstruction', taskId: 't1', columnId: 'review', expectedEnteredAt: 1, expectedInstruction: 'Review **carefully**.' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Run Review instruction' })).toBeNull());
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Move and run' })).toBeNull();
@@ -62,7 +62,7 @@ describe('card instruction action', () => {
     expect((button as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('the card action error does not carry over to a newly selected instructed stage', async () => {
+  it('replaces a failed action record with the next instructed entry', async () => {
     const initial = inReview();
     initial.state.workflow.columns.push({ id: 'plan', name: 'Plan', onEnterPrompt: 'Plan this.' });
     const { user, command } = mount(initial); await loaded();
@@ -71,17 +71,17 @@ describe('card instruction action', () => {
     expect(await screen.findByText('The instruction could not be admitted.')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Open task Alpha task' }));
     await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'plan');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Run Plan instruction' })).toBeTruthy());
-    await user.click(screen.getByRole('button', { name: 'Close task details' }));
+    await waitFor(() => expect(document.querySelector('.kb-card-countdown')).toBeTruthy());
     expect(screen.queryByText('The instruction could not be admitted.')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Run Plan instruction' })).toBeTruthy();
+    await user.click(document.querySelector('.kb-card-countdown') as HTMLElement);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Run Plan instruction' })).toBeTruthy());
   });
 
   it('opens the drawer from the card button but not from the card action', async () => {
     const { user, command } = mount(inReview()); await loaded();
     const action = screen.getByRole('button', { name: 'Run Review instruction' });
     action.focus(); await user.keyboard('{Enter}');
-    await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'task.runInstruction' })));
+    await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'task.runInstruction', expectedEnteredAt: 1 })));
     expect(screen.queryByRole('button', { name: 'Close task details' })).toBeNull();
 
     const open = screen.getByRole('button', { name: 'Open task Alpha task' }); open.focus(); await user.keyboard('{Enter}');

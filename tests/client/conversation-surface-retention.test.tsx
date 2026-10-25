@@ -20,8 +20,6 @@ function harness() {
   const services: ConversationSurfaceServices = {
     sessions: { refresh, retain },
     claimComposer,
-    draftBinding: () => ({ requestDraftInitialization: () => 'applied', focus: () => {}, attachmentIds: () => [], removeAttachment: () => false }),
-    attachDraft: () => () => {},
     lifetime: new AbortController().signal,
     hold, release,
   };

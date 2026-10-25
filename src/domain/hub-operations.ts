@@ -3,6 +3,7 @@ import type { Board, BoardSettings, HubState, HubTask, Note, Project, ProjectInp
 import { assertId, isAbsolutePath } from './validation.js';
 import { createBoard } from './hub-schema.js';
 import { parseWorkflow } from './workflow.js';
+import { entryInstruction, nextEnteredAt } from './stage-entry.js';
 
 export interface NoteInput { id?: string; content: string; tags?: string[] }
 export interface TaskTextPatch { title?: string; description?: string }
@@ -185,7 +186,7 @@ export function createTask(hub: HubState, input: { boardId: string; projectId: s
     id: nextId(hub.tasks, deps.id), boardId: board.id, projectId: project.id, title: value.title.trim(), description: value.description,
     columnId: board.workflow.initialColumnId, position, sessionIds: [sessionId], closedSessionIds: [], effectiveCwd: project.projectPath,
     worktree: null, operation: null,
-    ...(initialColumn?.onEnterPrompt?.trim() ? { instructionPending: { columnId: initialColumn.id, enteredAt: Date.parse(at) } } : {}),
+    ...(entryInstruction(initialColumn) !== undefined ? { instructionPending: { columnId: initialColumn!.id, enteredAt: nextEnteredAt(Date.parse(at)) } } : {}),
     createdAt: at, updatedAt: at,
   };
   hub.tasks.push(task);
@@ -272,7 +273,7 @@ export function placeTask(hub: HubState, taskId: string, columnId: string, befor
   task.columnId = columnId;
   if (sourceColumnId !== columnId) {
     const destinationColumn = board.workflow.columns.find(value => value.id === columnId);
-    if (destinationColumn?.onEnterPrompt?.trim()) task.instructionPending = { columnId, enteredAt };
+    if (entryInstruction(destinationColumn) !== undefined) task.instructionPending = { columnId, enteredAt };
     else delete task.instructionPending;
   }
   destination.splice(index, 0, task);

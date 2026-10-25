@@ -6,8 +6,9 @@ import { TaskDrawer, type SessionTitles } from './drawer.js';
 import type { ConversationLineagePort, DrawerSubagentAddress } from './conversation-navigation.js';
 import { TaskActivity } from './activity.js';
 import { transitionAccess } from '../domain/transitions.js';
-import { RunInstructionButton } from './run-instruction.js';
-import type { InstructionDraftPort } from './instruction-draft.js';
+import { entryInstruction, hasUnresolvedEntry } from '../domain/stage-entry.js';
+import { AutoRunController } from './auto-run.js';
+import { CardInstructionAction } from './auto-run-view.js';
 import { ACTIVE_HUB_KEY, allTasks, boardView, normalizeSnapshot, readBoardPreferences, readStorage, scopeAttention, scopedCommand, writeBoardPreference, writeStorage } from './hub-view.js';
 import { CreateBoardDialog, CreateHubDialog } from './create-dialogs.js';
 import { asProblem, ErrorNotice, type RunCommand } from './ui.js';
@@ -21,7 +22,7 @@ import { createBoardPageState, taskPageState, usePageField, type BoardPageState 
 export { createBoardPageState } from './page-state.js';
 export type { BoardPageState } from './page-state.js';
 
-export interface BoardViewProps { api: ClientApi; renderConversation: (id: string, target?: DrawerSubagentAddress) => ReactNode; pageState?: BoardPageState; sessionTitles?: SessionTitles; pickDirectory?: () => Promise<string | null>; draftPort?: InstructionDraftPort; lineage?: ConversationLineagePort }
+export interface BoardViewProps { api: ClientApi; renderConversation: (id: string, target?: DrawerSubagentAddress) => ReactNode; pageState?: BoardPageState; sessionTitles?: SessionTitles; pickDirectory?: () => Promise<string | null>; autoRun?: AutoRunController; onRunReady?: (run: RunCommand) => void; lineage?: ConversationLineagePort }
 
 export function columnLayout(workflow: Workflow): Array<{ key: string; group?: ColumnGroup; columns: Column[] }> {
   const result: Array<{ key: string; group?: ColumnGroup; columns: Column[] }> = []; const seen = new Set<string>();
@@ -35,7 +36,7 @@ export function columnLayout(workflow: Workflow): Array<{ key: string; group?: C
   return result;
 }
 
-export function BoardView({ api, renderConversation, pageState, sessionTitles, pickDirectory, draftPort, lineage }: BoardViewProps) {
+export function BoardView({ api, renderConversation, pageState, sessionTitles, pickDirectory, autoRun: providedAutoRun, onRunReady, lineage }: BoardViewProps) {
   const [localPageState] = useState(createBoardPageState); const preferences = pageState ?? localPageState;
   const [snapshot, setSnapshot] = useState<KanbanSnapshot | null>(null); const latest = useRef<KanbanSnapshot | null>(null); const live = useRef(false); const currentApi = useRef(api); currentApi.current = api;
   const [loadError, setLoadError] = useState<Problem | null>(null); const [loadAttempt, setLoadAttempt] = useState(0); const [pending, setPending] = useState(0);
@@ -90,7 +91,24 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
   }, [api, accept, activeHub?.id, activeBoard?.id, snapshot?.state.hubs.length, activeHub?.boards.length]);
 
   const selected = state?.tasks.find(task => task.id === selectedId);
-  const moveRequest = useMoveRequest({ state: state ?? null, run, onImmediateError: error => setActionError(asProblem(error)) });
+  const runRef = useRef(run); runRef.current = run;
+  const [fallbackAutoRun] = useState(() => new AutoRunController({ run: command => runRef.current(command) }));
+  const autoRun = providedAutoRun ?? fallbackAutoRun;
+  useEffect(() => { onRunReady?.(run); }, [onRunReady, run]);
+  useEffect(() => { if (providedAutoRun) return; return () => fallbackAutoRun.dispose(); }, [providedAutoRun, fallbackAutoRun]);
+  useEffect(() => { if (state) autoRun.reconcile(state.tasks); }, [state, autoRun]);
+  function armAfterMove(result: KanbanSnapshot, task: Task, column: Column): void {
+    if (task.columnId === column.id) return;
+    const normalized = normalizeSnapshot(result);
+    const moved = normalized.state.hubs.flatMap(hub => hub.tasks).find(value => value.id === task.id);
+    const movedBoard = moved ? normalized.state.hubs.flatMap(hub => hub.boards).find(value => value.id === moved.boardId) : undefined;
+    const destination = movedBoard?.workflow.columns.find(value => value.id === column.id);
+    const instruction = entryInstruction(destination);
+    if (moved && destination && instruction !== undefined && hasUnresolvedEntry(moved, destination.id)) {
+      autoRun.arm({ taskId: moved.id, columnId: destination.id, enteredAt: moved.instructionPending!.enteredAt, instruction });
+    }
+  }
+  const moveRequest = useMoveRequest({ state: state ?? null, run, onImmediateError: error => setActionError(asProblem(error)), onMoved: armAfterMove });
   const { optimistic, confirmation, pending: movePending, error: moveError, canRetry, confirm: confirmMove, cancel: cancelMove } = moveRequest;
   useEffect(() => {
     if (!destruction) return;
@@ -280,7 +298,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
           </span>
         </span>
       </button>
-      <div className="kb-attention">{!selectionMode && <RunInstructionButton key={column.id} task={task} column={column} run={run} />}</div>
+      <div className="kb-attention">{!selectionMode && <CardInstructionAction key={column.id} task={task} column={column} controller={autoRun} />}</div>
       {task.operation && <p className="kb-hint">Operation: {task.operation.phase}</p>}{task.pendingTransition && <p className="kb-hint">Confirmed action: {task.pendingTransition.status}</p>}
     </article>;
   }
@@ -323,7 +341,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
     {state && <><div className="kb-page-body" ref={boardBody} onPointerDown={onBoardPointerDown}>{state.projects.length === 0 && <div className="kb-empty"><h2>Add your first project</h2><p>Register a project path and Git root to create tasks.</p><button type="button" className="kb-button kb-primary" onClick={() => setConfiguration('Projects')}>Configure projects</button></div>}
       <div className="kb-columns" aria-label="Workflow columns">{columnLayout(state.workflow).map(slot => <section key={slot.key} className={'kb-column-slot ' + (slot.group ? 'kb-column-group' : '')} aria-label={slot.group?.name}>{slot.group && <h2 className="kb-group-heading">{slot.group.name}</h2>}{slot.columns.map(column => { const tasks = tasksForColumn(column.id); const restricted = Boolean(drag && drag.overColumnId === column.id && transitionAccess(state.workflow, drag.sourceColumnId, column.id) === 'restricted');
         return <section className={'kb-column' + (restricted ? ' kb-drop-restricted' : '')} key={column.id} aria-label={column.name + ' column'} data-column-id={column.id}><header className="kb-column-header"><h2>{column.name}</h2><span aria-label={tasks.length + ' tasks'}>{tasks.length}</span></header>{column.id === state.workflow.initialColumnId && renderNewTaskButton(column)}<div className="kb-card-list">{tasks.map(task => renderCard(task, column))}{drag?.overColumnId === column.id && <div className={'kb-drop-indicator' + (restricted ? ' kb-drop-indicator-restricted' : '')} style={{ top: drag.indicatorY }} aria-hidden="true" />}{tasks.length === 0 && <p className="kb-empty-column">No matching tasks</p>}</div></section>; })}</section>)}</div></div>
-      {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} sessionTitles={sessionTitles} entering={drawerEntering} closing={drawerClosing} draftPort={draftPort} lineage={lineage} />}
+      {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} sessionTitles={sessionTitles} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} lineage={lineage} />}
 
     {newTask && state && <NewTaskDialog state={state} run={run} onClose={() => setNewTask(false)} onCreated={openTask} />}
     {destruction && (() => {

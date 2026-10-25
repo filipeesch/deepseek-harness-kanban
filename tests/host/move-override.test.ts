@@ -28,16 +28,9 @@ describe('restricted move admission', () => {
   it('rejects a restricted move without explicit consent and changes nothing', async () => {
     const f = await setup(); const task = await createTask(f);
     const before = f.store.snapshot();
-    await expect(f.app.command({ type: 'task.move', taskId: task.id, columnId: 'done', mode: 'move' })).rejects.toMatchObject({ code: 'TRANSITION_NOT_ALLOWED' });
+    await expect(f.app.command({ type: 'task.move', taskId: task.id, columnId: 'done' })).rejects.toMatchObject({ code: 'TRANSITION_NOT_ALLOWED' });
     expect(f.store.snapshot()).toEqual(before);
     expect(f.sessions.sent).toEqual([]);
-  });
-
-  it('does not apply the override flag to legacy run-mode transitions', async () => {
-    const f = await setup(); const task = await createTask(f);
-    await expect(f.app.command({ type: 'task.move', taskId: task.id, columnId: 'review', mode: 'run', expectedInstruction: 'Review carefully.', overrideTransition: true })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
-    expect(f.store.requireTask(task.id).columnId).toBe('backlog');
-    expect(f.store.requireTask(task.id).pendingTransition).toBeUndefined();
   });
 
   it('admits a confirmed restricted move and persists the consent on the pending transition', async () => {
@@ -45,7 +38,7 @@ describe('restricted move admission', () => {
     const workflow = f.store.snapshot().workflow;
     const capture = pendingFlags(f, task.id);
     try {
-      await f.app.command({ type: 'task.move', taskId: task.id, columnId: 'done', mode: 'move', overrideTransition: true });
+      await f.app.command({ type: 'task.move', taskId: task.id, columnId: 'done', overrideTransition: true });
     } finally {
       capture.stop();
     }
@@ -60,7 +53,7 @@ describe('restricted move admission', () => {
     const f = await setup(); const first = await createTask(f, 'First task'); const second = await createTask(f, 'Second task');
     const allowedCapture = pendingFlags(f, first.id);
     try {
-      await f.app.command({ type: 'task.move', taskId: first.id, columnId: 'plan', mode: 'move', overrideTransition: true });
+      await f.app.command({ type: 'task.move', taskId: first.id, columnId: 'plan', overrideTransition: true });
     } finally {
       allowedCapture.stop();
     }
@@ -69,7 +62,7 @@ describe('restricted move admission', () => {
 
     const reorderCapture = pendingFlags(f, second.id);
     try {
-      await f.app.command({ type: 'task.move', taskId: second.id, columnId: 'backlog', mode: 'move', beforeTaskId: null, overrideTransition: true });
+      await f.app.command({ type: 'task.move', taskId: second.id, columnId: 'backlog', beforeTaskId: null, overrideTransition: true });
     } finally {
       reorderCapture.stop();
     }
@@ -79,7 +72,7 @@ describe('restricted move admission', () => {
 
   it('moves into an instructed restricted stage without sending an agent instruction', async () => {
     const f = await setup(); const task = await createTask(f);
-    await f.app.command({ type: 'task.move', taskId: task.id, columnId: 'review', mode: 'move', overrideTransition: true });
+    await f.app.command({ type: 'task.move', taskId: task.id, columnId: 'review', overrideTransition: true });
     const current = f.store.requireTask(task.id);
     expect(current.columnId).toBe('review');
     expect(current.instructionPending?.columnId).toBe('review');
@@ -89,7 +82,7 @@ describe('restricted move admission', () => {
   it('does not bypass a busy task', async () => {
     const f = await setup(); const task = await createTask(f);
     await f.store.transact(state => { state.tasks[0]!.operation = { id: 'operation', request: { kind: 'return' }, phase: 'waiting', previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false, createdAt: '2026-10-21T10:00:00.000Z' }; });
-    await expect(f.app.command({ type: 'task.move', taskId: task.id, columnId: 'done', mode: 'move', overrideTransition: true })).rejects.toMatchObject({ code: 'CONTEXT_OPERATION_PENDING' });
+    await expect(f.app.command({ type: 'task.move', taskId: task.id, columnId: 'done', overrideTransition: true })).rejects.toMatchObject({ code: 'CONTEXT_OPERATION_PENDING' });
     expect(f.store.requireTask(task.id).columnId).toBe('backlog');
   });
 });
@@ -144,7 +137,7 @@ describe('pending override completion', () => {
       state.tasks.find(value => value.id === first.id)!.position = 0;
       state.tasks.find(value => value.id === second.id)!.position = 1;
     });
-    await f.app.command({ type: 'task.move', taskId: moving.id, columnId: 'done', mode: 'move', beforeTaskId: second.id, overrideTransition: true });
+    await f.app.command({ type: 'task.move', taskId: moving.id, columnId: 'done', beforeTaskId: second.id, overrideTransition: true });
     const done = f.store.snapshot().tasks.filter(task => task.columnId === 'done').sort((left, right) => left.position - right.position);
     expect(done.map(task => task.id)).toEqual([first.id, moving.id, second.id]);
   });

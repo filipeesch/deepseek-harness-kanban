@@ -9,7 +9,7 @@ import { createHarnessApi, type TestSnapshot } from './fake-api.js';
 import { themeFixture } from './theme-fixture.js';
 
 const scenario = new URLSearchParams(window.location.search).get('scenario') ?? 'board';
-const harness = createHarnessApi({ attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs', hubs: scenario === 'hubs' ? 2 : 1, restricted: scenario === 'move' });
+const harness = createHarnessApi({ attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs', hubs: scenario === 'hubs' ? 2 : 1, restricted: scenario === 'move', persist: scenario === 'board' });
 (window as unknown as { __harness: unknown }).__harness = { commands: harness.commands, snapshot: harness.snapshot };
 
 function WorkflowScenario() {

@@ -211,18 +211,18 @@ describe('workflow confirmation', () => {
   it('moves immediately to an uninstructed stage without a worktree prompt', async () => {
     const { user, command } = mount(); await openAlpha(user);
     await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'doing');
-    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'doing', mode: 'move' }));
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'doing' }));
     expect(screen.queryByText('Worktree is optional')).toBeNull();
   });
 
   it('moves immediately to an instructed stage without opening a dialog', async () => {
     const { user, command } = mount(); await openAlpha(user);
     await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
-    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'review', mode: 'move' }));
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'review' }));
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Move and run' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Move only' })).toBeNull();
-    expect(command.mock.calls.some(([value]) => value.type === 'task.move' && value.mode === 'run')).toBe(false);
+    expect(command.mock.calls.every(([value]) => value.type !== 'task.runInstruction')).toBe(true);
   });
 
   it('lists the complete workflow in order and marks only restricted stages', async () => {
@@ -259,7 +259,7 @@ describe('workflow confirmation', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'blocked');
     const dialog = await screen.findByRole('dialog', { name: 'Move to Blocked?' });
     await user.click(within(dialog).getByRole('button', { name: 'Move anyway' }));
-    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'blocked', mode: 'move', overrideTransition: true }));
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'blocked', overrideTransition: true }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(get().state.tasks[0]!.columnId).toBe('blocked');
     expect(command.mock.calls.some(([value]) => value.type === 'task.runInstruction')).toBe(false);

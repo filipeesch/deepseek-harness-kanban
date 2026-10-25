@@ -56,10 +56,10 @@ describe('delete-only lifecycle and placement', () => {
     const a = await f.app.createTask({ projectId: f.project.id, title: 'A', description: '' });
     const b = await f.app.createTask({ projectId: f.project.id, title: 'B', description: '' });
     const c = await f.app.createTask({ projectId: f.project.id, title: 'C', description: '' });
-    await f.app.command({ type: 'task.move', taskId: c.id, columnId: 'backlog', mode: 'move', beforeTaskId: a.id });
+    await f.app.command({ type: 'task.move', taskId: c.id, columnId: 'backlog', beforeTaskId: a.id });
     const order = f.store.snapshot().tasks.filter(task => task.columnId === 'backlog').sort((left, right) => left.position - right.position).map(task => task.title);
     expect(order).toEqual(['B', 'C', 'A']);
-    await expect(f.app.command({ type: 'task.move', taskId: c.id, columnId: 'backlog', mode: 'move', beforeTaskId: 'missing-task' })).rejects.toMatchObject({ code: 'INVALID_TARGET' });
+    await expect(f.app.command({ type: 'task.move', taskId: c.id, columnId: 'backlog', beforeTaskId: 'missing-task' })).rejects.toMatchObject({ code: 'INVALID_TARGET' });
     expect(f.store.requireTask(c.id).position).toBe(1);
     expect(b.id).not.toBe(a.id);
   });

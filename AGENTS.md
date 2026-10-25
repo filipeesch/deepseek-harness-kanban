@@ -43,10 +43,12 @@ replace the existing GUI.
 5. Exercise the smoke checklist:
    - New task starts with an empty, required project select, including with a
      project filter active.
-   - A drawer stage change to an instructed stage moves immediately, switches to
-     **Conversations**, and inserts only the instruction into the composer.
-   - Existing composer text/attachments are preserved; **Replace draft** replaces
-     both and focuses the composer.
+   - A drawer stage change to an instructed stage moves immediately, stays in the
+     current section, and shows the cancelable five-second countdown; **Cancel**
+     leaves the move in place and restores the card play action.
+   - The card and drawer countdowns both cancel; a reload during the window sends
+     nothing and restores the play action.
+   - Unsent composer text/attachments are untouched by the timed send.
    - The card play action sends the stage instruction without a dialog, leaves
      the stage and position unchanged, and disappears after a prompt is sent.
    - The play action is hidden without an unresolved instructed-stage entry.
@@ -74,7 +76,7 @@ model-facing record. Do not expect a separate overlay in the Kanban
 
 - Do not run acceptance or appearance checks against the developer's running DSH application, personal `$DSH_HOME`, or installed profile. Validation must leave the developer's environment untouched.
 - Use the plugin-owned isolated lanes instead. `pnpm test:browser` renders the real client components with the host theme fixture (`tests/browser/theme-fixture.ts`), emulates `prefers-color-scheme`, asserts the rendered host tokens and contrast, and writes screenshots under `.verification/`.
-- The real-composition lane boots `launchWebScaffold`, which creates a temporary `$DSH_HOME`, an isolated profile, and a temporary workspace: `node scripts/e2e-dsh.mjs --checkout <pinned-dsh-checkout> [--check] [--only board|conversation|deletion|native-drawer]`. It requires every workspace package and dependency of the pinned checkout to be installed and built; never substitute the developer's profile.
+- The real-composition lane boots `launchWebScaffold`, which creates a temporary `$DSH_HOME`, an isolated profile, and a temporary workspace: `node scripts/e2e-dsh.mjs --checkout <pinned-dsh-checkout> [--check] [--only board|conversation|deletion|hubs|override|native-drawer|auto-run]`. It requires every workspace package and dependency of the pinned checkout to be installed and built; never substitute the developer's profile.
 - Keep model traffic deterministic. The lane runs with `DSH_SNAPSHOT=replay` and either a committed session fixture or a hand-authored `tests/e2e-dsh/**/replay.override.json`. Never call a real model in acceptance checks, and never record against a personal profile.
 - For appearance evidence, switch `page.emulateMedia({ colorScheme: 'light' | 'dark' })`, confirm the host `data-ds-dark-theme` state, assert the host theme tokens and contrast that the plugin actually renders, and store screenshots under `.verification/`.
 - Keep the fast gates separate from the isolated lane: `pnpm check` covers host/client typechecks, vitest, and the build; `pnpm test:browser` covers the plugin-owned Playwright harness.

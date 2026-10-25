@@ -1,6 +1,9 @@
 import React, { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { KanbanSnapshot, Command, Problem } from '../shared/types.js';
+import { asProblem } from './problem.js';
+
+export { asProblem };
 
 export type RunCommand = (command: Command) => Promise<KanbanSnapshot>;
 
@@ -8,15 +11,6 @@ export type RunCommand = (command: Command) => Promise<KanbanSnapshot>;
 export function creationReceiptId(snapshot: KanbanSnapshot, kind: NonNullable<KanbanSnapshot['commandReceipt']>['kind']): string | undefined {
   const receipt = snapshot.commandReceipt;
   return receipt?.kind === kind && typeof receipt.id === 'string' && receipt.id.trim() ? receipt.id : undefined;
-}
-
-export function asProblem(error: unknown): Problem {
-  if (error && typeof error === 'object') {
-    const value = error as { code?: unknown; message?: unknown; details?: unknown; error?: unknown };
-    if (value.error && typeof value.error === 'object') return asProblem(value.error);
-    return { code: typeof value.code === 'string' ? value.code : 'CLIENT_ERROR', message: typeof value.message === 'string' ? value.message : 'The operation could not be completed.', ...(value.details && typeof value.details === 'object' ? { details: value.details as Record<string, unknown> } : {}) };
-  }
-  return { code: 'CLIENT_ERROR', message: typeof error === 'string' ? error : 'The operation could not be completed.' };
 }
 
 export function ErrorNotice({ problem }: { problem: Problem | null }) {

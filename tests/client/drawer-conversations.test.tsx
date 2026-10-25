@@ -4,19 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { TaskDrawer } from '../../src/client/drawer.js';
 import { createTaskPageState } from '../../src/client/page-state.js';
-import type { DraftResult, InstructionDraftPort } from '../../src/client/instruction-draft.js';
 import type { DrawerSubagentAddress } from '../../src/client/conversation-navigation.js';
 import { fakeApi, fixture } from './helpers.js';
 
 afterEach(cleanup);
 const child: DrawerSubagentAddress = { parentSessionId: 's1', childSessionId: 'child-1', mode: 'continuable' };
-function draft() {
-  const prepare = vi.fn(async (): Promise<DraftResult> => 'applied');
-  const replace = vi.fn(async (): Promise<DraftResult> => 'applied');
-  const port: InstructionDraftPort = { prepare, replace, attach: () => () => {} };
-  return { port, prepare, replace };
-}
-function mount(options: { initialPeek?: DrawerSubagentAddress; draftPort?: InstructionDraftPort; onPeek?: (target: DrawerSubagentAddress | null) => void; onMove?: () => Promise<boolean> } = {}) {
+function mount(options: { initialPeek?: DrawerSubagentAddress; onPeek?: (target: DrawerSubagentAddress | null) => void; onMove?: () => Promise<boolean> } = {}) {
   const data = fixture(); const mock = fakeApi(data); const renderConversation = vi.fn((id: string, target?: DrawerSubagentAddress) => <div data-testid={'native-' + id} data-target={target?.childSessionId} />);
   const onPeek = options.onPeek ?? vi.fn();
   function Harness() {
@@ -34,7 +27,6 @@ function mount(options: { initialPeek?: DrawerSubagentAddress; draftPort?: Instr
       viewState={createTaskPageState()}
       peek={peek}
       onPeek={update}
-      {...(options.draftPort === undefined ? {} : { draftPort: options.draftPort })}
     />;
   }
   const view = render(<Harness />);
@@ -108,15 +100,5 @@ describe('drawer conversation peek', () => {
     await screen.findByRole('tab', { name: 'Agent 1' });
     fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
     await waitFor(() => expect(onPeek).toHaveBeenCalledWith(null));
-  });
-
-  it('clears the peek before a stage instruction targets the active root composer', async () => {
-    const { prepare, port } = draft(); const onPeek = vi.fn();
-    mount({ initialPeek: child, draftPort: port, onPeek });
-    await screen.findByRole('tab', { name: 'Agent 1' });
-    await waitFor(() => expect(screen.getByRole('tab', { name: 'Agent 1' }).getAttribute('aria-selected')).toBe('true'));
-    fireEvent.change(screen.getByRole('combobox', { name: 'Move task to' }), { target: { value: 'review' } });
-    await waitFor(() => expect(onPeek).toHaveBeenCalledWith(null));
-    await waitFor(() => expect(prepare).toHaveBeenCalledWith('s1', 'Review **carefully**.', expect.any(AbortSignal)));
   });
 });

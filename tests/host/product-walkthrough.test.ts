@@ -142,7 +142,7 @@ describe('bounded integrated product walkthrough', () => {
     expect(f.project.projectPath).not.toBe(f.project.gitRootPath);
     const t = await f.task();
     expect(f.app.store.requireTask(t.id).columnId).toBe('backlog');
-    await f.app.command({ type: 'task.move', taskId: t.id, columnId: 'plan', mode: 'move' });
+    await f.app.command({ type: 'task.move', taskId: t.id, columnId: 'plan' });
     await f.tool('edit_card', { task_id: t.id, title: 'Edited in Plan', description: 'Approved **product** description' }, t.a);
     const note = await addSharedNote(f, t);
     const question = productToolDefinitions(f.app).find(definition => definition.name === 'decision_request')!;
@@ -151,25 +151,20 @@ describe('bounded integrated product walkthrough', () => {
     expect(run.deferContext).not.toHaveBeenCalled(); expect(run.concludeTurn).not.toHaveBeenCalled();
     expect(f.sessions.sent).toEqual([]);
     const histories = [...f.sessions.histories];
-    f.sessions.busy.add(t.a);
-    await f.app.command({ type: 'task.move', taskId: t.id, columnId: 'in_progress', mode: 'run', sessionId: t.b, expectedInstruction: approvedInstruction, worktree: { mode: 'new', path: f.tree, branchName: 'task/product-walkthrough', sourceBranch: 'main' } });
-    expect(f.app.store.requireTask(t.id).operation?.phase).toBe('waiting');
-    expect(f.app.store.requireTask(t.id).columnId).toBe('plan');
-    expect(f.sessions.switches).toEqual([]);
-    expect(f.sessions.dirs.get(t.a)).toBe(f.project.projectPath);
-    expect(f.sessions.dirs.get(t.b)).toBe(f.project.projectPath);
-    await expect(stat(f.tree)).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(f.sessions.sent).toEqual([]);
-    f.sessions.busy.delete(t.a);
+    await f.app.command({ type: 'worktree.create', taskId: t.id, mode: 'new', path: f.tree, branchName: 'task/product-walkthrough', sourceBranch: 'main' });
     await waitForReady(f, t.id);
-    await expect.poll(() => f.sessions.sent.length, { timeout: 5000 }).toBe(1);
     const targetDirectory = path.join(f.tree, 'packages', 'api');
     expect(f.sessions.dirs.get(t.a)).toBe(targetDirectory);
     expect(f.sessions.dirs.get(t.b)).toBe(targetDirectory);
-    expect(f.app.store.requireTask(t.id)).toMatchObject({ sessionIds: [t.a, t.b], columnId: 'in_progress', effectiveCwd: targetDirectory });
-    expect(f.sessions.sent[0]).toMatchObject({ id: t.b });
+    expect(f.sessions.sent).toEqual([]);
+    await f.app.command({ type: 'task.move', taskId: t.id, columnId: 'in_progress' });
+    const marker = f.app.store.requireTask(t.id).instructionPending!;
+    await f.app.command({ type: 'task.runInstruction', taskId: t.id, columnId: 'in_progress', expectedEnteredAt: marker.enteredAt, expectedInstruction: approvedInstruction });
+    expect(f.sessions.sent).toHaveLength(1);
+    expect(f.sessions.sent[0]).toMatchObject({ id: t.a });
     expect(f.sessions.sent[0]!.text).toBe(approvedInstruction);
-    expect(f.sessions.sent.some(value => value.id === t.a)).toBe(false);
+    expect(f.sessions.sent.some(value => value.id === t.b)).toBe(false);
+    expect(f.app.store.requireTask(t.id)).toMatchObject({ sessionIds: [t.a, t.b], columnId: 'in_progress', effectiveCwd: targetDirectory });
     expect([...f.sessions.histories]).toEqual(histories);
     const c = await f.app.createConversation(t.id);
     expect([t.a, t.b]).not.toContain(c);
@@ -213,28 +208,6 @@ describe('bounded integrated product walkthrough', () => {
     expect((await gitOk(f.project.gitRootPath, ['branch', '--show-current'])).trim()).toBe('main');
     f.noNativeDestruction();
   }, 20000);
-
-  // PW02 maps product tasks 3.2, 4.3/4.6, 5.4, 9.4: deferred delegation cancellation has no execution or isolation effect.
-  it('PW02 cancels approved-but-waiting delegation without moving, creating a checkout, or messaging a tab', async () => {
-    const f = await setup(); const t = await f.task(); const note = await addSharedNote(f, t);
-    const histories = [...f.sessions.histories]; f.sessions.busy.add(t.a);
-    await f.app.command({ type: 'task.move', taskId: t.id, columnId: 'in_progress', mode: 'run', sessionId: t.b, expectedInstruction: approvedInstruction, worktree: { mode: 'new', path: f.tree, branchName: 'task/cancelled-product', sourceBranch: 'main' } });
-    expect(f.app.store.requireTask(t.id).pendingTransition?.status).toBe('waiting');
-    await f.app.command({ type: 'operation.return', taskId: t.id });
-    expect(f.app.store.requireTask(t.id).pendingTransition).toBeUndefined();
-    expect(f.app.store.requireTask(t.id).operation?.phase).toBe('waiting');
-    expect(f.sessions.sent).toEqual([]); expect(f.sessions.switches).toEqual([]);
-    f.sessions.busy.delete(t.a); f.app.activityChanged();
-    await expect.poll(() => f.app.store.requireTask(t.id).operation, { timeout: 5000 }).toBeNull();
-    expect(f.app.store.requireTask(t.id)).toMatchObject({ columnId: 'backlog', sessionIds: [t.a, t.b], worktree: null, effectiveCwd: f.project.projectPath });
-    expect(f.sessions.dirs.get(t.a)).toBe(f.project.projectPath); expect(f.sessions.dirs.get(t.b)).toBe(f.project.projectPath);
-    expect(f.sessions.sent).toEqual([]); expect(f.sessions.archived).toEqual([]); expect([...f.sessions.histories]).toEqual(histories);
-    expect(f.app.store.snapshot().notes).toEqual([note]);
-    await expect(stat(f.tree)).rejects.toMatchObject({ code: 'ENOENT' });
-    expect((await gitOk(f.project.gitRootPath, ['branch', '--list', 'task/cancelled-product'])).trim()).toBe('');
-    expect(f.executor.calls.some(args => args.includes('worktree') && args.includes('add'))).toBe(false);
-    f.noNativeDestruction();
-  }, 15000);
 
   // PW03 maps product tasks 4.7, 6.4, 8.4, 9.4: removing only isolation retains the task and shared notes.
   it('PW03 declines dirty worktree removal, then discards explicitly while preserving task, notes, branch, and histories', async () => {

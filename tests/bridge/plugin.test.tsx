@@ -213,17 +213,48 @@ describe('public SDK plugin binding contracts', () => {
     expect(screen.queryByTestId('provided-session')).toBeNull(); expect(f.nativeSelect).not.toHaveBeenCalled();
     rendered.unmount(); expect(f.refresh).toHaveBeenCalledTimes(2);
   });
-  it('binds the drawer prefill to the retained conversation draft API', async () => {
+  it('keeps a drawer stage change out of the native composer', async () => {
     const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;
     const provider = ({ children }: { children: ReactNode }) => <div data-testid="retained-body">{children}</div>;
     render(<Main usePanelInfo={(select: (value: { activePanelId: string | null }) => unknown) => select({ activePanelId: 'kanban' })} SessionProvider={provider} renderSlot={() => <div>Native slot body</div>} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Open task Native task' }));
     await screen.findByTestId('retained-body');
     fireEvent.change(screen.getByRole('combobox', { name: 'Move task to' }), { target: { value: 'review' } });
-    await waitFor(() => expect(f.requestDraftInitialization).toHaveBeenCalledWith(expect.anything(), { prompt: 'Review **carefully**.' }));
-    await screen.findByText("Instruction inserted into Agent 1's composer.");
-    expect(f.focus).toHaveBeenCalledOnce();
-    expect(f.remote.command.mock.calls.every(([value]) => value.type === 'task.move')).toBe(true);
+    await waitFor(() => expect(f.remote.command).toHaveBeenCalledWith({ type: 'task.move', taskId: 'task', columnId: 'review' }));
+    expect(f.requestDraftInitialization).not.toHaveBeenCalled();
+    expect(f.focus).not.toHaveBeenCalled();
+  });
+  it('keeps an armed countdown running when the Kanban panel is hidden', async () => {
+    const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;
+    const initial = (await f.remote.snapshot() as unknown as { value: { value: KanbanSnapshot } }).value.value;
+    const moved = structuredClone(initial);
+    const task = moved.state.hubs[0]!.tasks[0]!;
+    task.columnId = 'review';
+    task.instructionPending = { columnId: 'review', enteredAt: 42 };
+    moved.sequence += 1;
+    const cleared = structuredClone(moved);
+    delete cleared.state.hubs[0]!.tasks[0]!.instructionPending;
+    cleared.sequence += 1;
+    f.remote.command.mockImplementation(async (request: { type: string }) => ({ ok: true, value: { ok: true, value: request.type === 'task.runInstruction' ? cleared : moved } }));
+    const provider = ({ children }: { children: ReactNode }) => <div>{children}</div>;
+    const active = (select: (value: { activePanelId: string | null }) => unknown) => select({ activePanelId: 'kanban' });
+    const inactive = (select: (value: { activePanelId: string | null }) => unknown) => select({ activePanelId: null });
+    const view = render(<Main usePanelInfo={active} SessionProvider={provider} renderSlot={() => <div>Native slot body</div>} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open task Native task' }));
+    await screen.findByRole('combobox', { name: 'Move task to' });
+    vi.useFakeTimers();
+    try {
+      fireEvent.change(screen.getByRole('combobox', { name: 'Move task to' }), { target: { value: 'review' } });
+      await act(async () => { for (let index = 0; index < 30; index += 1) await Promise.resolve(); });
+      expect(document.querySelector('.kb-card-countdown')).toBeTruthy();
+      view.rerender(<Main usePanelInfo={inactive} SessionProvider={provider} renderSlot={() => <div>Native slot body</div>} />);
+      await act(async () => { for (let index = 0; index < 10; index += 1) await Promise.resolve(); });
+      expect(screen.queryByText('Kanban')).toBeNull();
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      await act(async () => { for (let index = 0; index < 20; index += 1) await Promise.resolve(); });
+      const run = f.remote.command.mock.calls.map(([request]) => request).find(request => request?.type === 'task.runInstruction');
+      expect(run).toMatchObject({ type: 'task.runInstruction', taskId: 'task', columnId: 'review', expectedEnteredAt: 42, expectedInstruction: 'Review **carefully**.' });
+    } finally { vi.useRealTimers(); }
   });
   it('preserves filters and selected task across native page switches while releasing the composer', async () => {
     const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;

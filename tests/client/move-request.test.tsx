@@ -52,7 +52,7 @@ describe('useMoveRequest', () => {
     await act(async () => { moved = await result.current.move(state.tasks[0]!, column(state, 'doing')); });
     expect(moved).toBe(true);
     expect(run).toHaveBeenCalledOnce();
-    expect(run).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'doing', mode: 'move' });
+    expect(run).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'doing' });
     expect(result.current.confirmation).toBeNull();
     expect(result.current.optimistic).toBeNull();
   });
@@ -63,7 +63,7 @@ describe('useMoveRequest', () => {
     let moved = false;
     await act(async () => { moved = await result.current.move(state.tasks[0]!, column(state, 'intake'), null); });
     expect(moved).toBe(true);
-    expect(run).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'intake', mode: 'move' });
+    expect(run).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'intake' });
   });
 
   it('opens a confirmation for a restricted move without running a command', async () => {
@@ -89,7 +89,7 @@ describe('useMoveRequest', () => {
     await waitFor(() => expect(result.current.confirmation).not.toBeNull());
     await act(async () => { await result.current.confirm(); });
     await expect(pending).resolves.toBe(true);
-    expect(run).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'blocked', mode: 'move', overrideTransition: true });
+    expect(run).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'blocked', overrideTransition: true });
     expect(result.current.confirmation).toBeNull();
     expect(result.current.optimistic).toBeNull();
   });
@@ -156,7 +156,7 @@ describe('useMoveRequest', () => {
     rerender({ state: allowed });
     await act(async () => { await result.current.confirm(); });
     await expect(pending).resolves.toBe(true);
-    expect(run).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'blocked', mode: 'move' });
+    expect(run).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'blocked' });
   });
 
   it('reports a busy task immediately instead of opening a confirmation', async () => {
@@ -223,7 +223,7 @@ describe('useMoveRequest', () => {
     await waitFor(() => expect(result.current.confirmation).not.toBeNull());
     await act(async () => { await result.current.confirm(); });
     await expect(pending).resolves.toBe(true);
-    expect(run).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'blocked', mode: 'move', beforeTaskId: anchor.id, overrideTransition: true });
+    expect(run).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'blocked', beforeTaskId: anchor.id, overrideTransition: true });
   });
 
   it('does not offer a retry when the confirmed drop anchor moved', async () => {

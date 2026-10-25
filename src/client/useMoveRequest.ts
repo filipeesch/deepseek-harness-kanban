@@ -19,6 +19,7 @@ export interface MoveRequestOptions {
   state: BoardState | null;
   run: (command: Command) => Promise<KanbanSnapshot>;
   onImmediateError: (error: unknown) => void;
+  onMoved?: (result: KanbanSnapshot, task: Task, column: Column) => void;
 }
 
 export interface MoveRequest {
@@ -54,10 +55,11 @@ function staleConfirmation(request: PendingConfirmation, state: BoardState | nul
 }
 
 /** Classifies moves, applies allowed and reorder requests, and owns the restricted-move confirmation lifecycle. */
-export function useMoveRequest({ state, run, onImmediateError }: MoveRequestOptions): MoveRequest {
+export function useMoveRequest({ state, run, onImmediateError, onMoved }: MoveRequestOptions): MoveRequest {
   const stateRef = useRef(state); stateRef.current = state;
   const runRef = useRef(run); runRef.current = run;
   const errorRef = useRef(onImmediateError); errorRef.current = onImmediateError;
+  const onMovedRef = useRef(onMoved); onMovedRef.current = onMoved;
   const alive = useRef(true);
   const submitting = useRef(false);
   const pendingRequest = useRef<PendingConfirmation | null>(null);
@@ -93,11 +95,12 @@ export function useMoveRequest({ state, run, onImmediateError }: MoveRequestOpti
   const apply = useCallback(async (task: Task, column: Column, beforeTaskId: string | null, override: boolean): Promise<boolean> => {
     setOptimistic({ taskId: task.id, columnId: column.id, beforeTaskId });
     try {
-      await runRef.current({
-        type: 'task.move', taskId: task.id, columnId: column.id, mode: 'move',
+      const result = await runRef.current({
+        type: 'task.move', taskId: task.id, columnId: column.id,
         ...(beforeTaskId !== null ? { beforeTaskId } : {}),
         ...(override ? { overrideTransition: true } : {}),
       });
+      try { onMovedRef.current?.(result, task, column); } catch { /* arming is best effort after a committed move */ }
       return true;
     } finally {
       if (alive.current) setOptimistic(null);

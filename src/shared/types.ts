@@ -76,8 +76,8 @@ export type Command =
   | { type: 'settings.save'; settings: BoardSettings; expectedRevision?: number }
   | ({ type: 'task.create'; hubId?: string } & NewTask)
   | { type: 'task.edit'; hubId?: string; taskId: string; title?: string; description?: string; expectedRevision?: number }
-  | { type: 'task.move'; hubId?: string; taskId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; newConversation?: boolean; worktree?: CreateWorktree; expectedInstruction?: string; beforeTaskId?: string | null; overrideTransition?: boolean }
-  | { type: 'task.runInstruction'; hubId?: string; taskId: string; columnId: string; expectedInstruction: string }
+  | { type: 'task.move'; hubId?: string; taskId: string; columnId: string; beforeTaskId?: string | null; overrideTransition?: boolean }
+  | { type: 'task.runInstruction'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction: string }
   | { type: 'conversation.create'; hubId?: string; taskId: string }
   | { type: 'conversation.close' | 'conversation.reopen'; hubId?: string; taskId: string; sessionId: string }
   | { type: 'task.delete'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; requireIdle?: boolean }

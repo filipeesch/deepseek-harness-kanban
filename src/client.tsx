@@ -5,7 +5,6 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client';
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client';
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client';
 import type {} from '@deepseek-ai/dsh-client-ui-session/client';
-import type { DraftAttachmentId } from '@deepseek-ai/dsh-client-ui-conversation/client';
 import type { ChatNode, ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client';
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client';
 import type {} from '@deepseek-ai/dsh-client-locale/client';
@@ -14,7 +13,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import { TYPERT_REMOTE } from './remote.js';
 import { ClientBridge } from './client-bridge.js';
 import { BoardView, createBoardPageState, type BoardPageState } from './client/board.js';
-import { InstructionDraftPortImpl, type InstructionDraftBinding } from './client/instruction-draft.js';
+import { AutoRunController } from './client/auto-run.js';
 import { QuestionForm } from './questions/QuestionForm.js';
 import { NativeSessionHeader } from './client/native-session-header.js';
 import { EmbeddedConversationBody, RetainedConversation, type ConversationSurfaceOwner, type ConversationSurfaceServices } from './client/conversation-surface.js';
@@ -22,6 +21,7 @@ import type { NativeLocaleSource, NativeSlotSource, NativeSnapshotSource } from 
 import { createModePortSource } from './client/mode-port.js';
 import { TASK_CONTEXT_NODE_KIND, TaskContextNodeView, taskContextDefinition } from './client/task-context-node.js';
 import { useConversationNavigation, isOwnedSubagent, type ConversationLineagePort } from './client/conversation-navigation.js';
+import type { RunCommand } from './client/ui.js';
 import type { ClientApi } from './shared/types.js';
 
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
@@ -92,7 +92,11 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   const lifetime = new AbortController();
   const held = new Set<SessionReference>();
   const bridge = new ClientBridge(ctx.remote, ctx.uiSession.sessionStatus);
-  const draftPort = new InstructionDraftPortImpl();
+  let autoRunRunner: RunCommand | null = null;
+  const autoRun = new AutoRunController({ run: command => {
+    if (autoRunRunner === null) return Promise.reject({ code: 'CLIENT_UNAVAILABLE', message: 'The Kanban board is not available.' });
+    return autoRunRunner(command);
+  } });
   const scopedSessions = ctx.sessions;
   const modePortSource = createModePortSource(agentPresetsNamespace(ctx), { developerTools: () => developerToolsEnabled(ctx) });
   let modeInjection: ReturnType<Context['inject']> | undefined;
@@ -160,25 +164,14 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       t={props.t}
     />;
   }
-  function draftBinding(reference: SessionReference): InstructionDraftBinding {
-    const input = () => ctx.conversation.input.for(reference.binding.ctx);
-    return {
-      requestDraftInitialization: options => ctx.conversation.input.requestDraftInitialization(reference.binding, options),
-      focus: () => { try { input().focus(); } catch { /* focus is best effort */ } },
-      attachmentIds: () => { try { return input().state.getSnapshot().attachmentIds; } catch { return []; } },
-      removeAttachment: id => { try { return input().removeAttachment(id as DraftAttachmentId); } catch { return false; } },
-    };
-  }
-  function BoardPage(props: MainProps & { api: ClientApi }) {
+  function BoardPage(props: MainProps & { api: ClientApi; autoRun: AutoRunController; onRunReady: (run: RunCommand) => void }) {
     const surfaceServices = useMemo<ConversationSurfaceServices>(() => ({
       sessions: scopedSessions,
       claimComposer: sessionId => bridge.claimComposer(sessionId) ?? null,
-      draftBinding: reference => draftBinding(reference),
-      attachDraft: (sessionId, binding) => draftPort.attach(sessionId, binding),
       lifetime: lifetime.signal,
       hold: reference => { held.add(reference); },
       release: reference => { if (held.delete(reference)) reference.release(); },
-    }), [scopedSessions, bridge, draftPort]);
+    }), [scopedSessions, bridge]);
     const surfaceOwner = useMemo<ConversationSurfaceOwner>(() => ({
       SessionProvider: props.SessionProvider,
       renderSlot: (key, owner) => props.renderSlot(key, owner as never),
@@ -201,7 +194,8 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       pageState={pageState}
       sessionTitles={sessionTitles}
       pickDirectory={pickDirectory}
-      draftPort={draftPort}
+      autoRun={props.autoRun}
+      onRunReady={props.onRunReady}
       lineage={lineage}
       renderConversation={(id, target) => <RetainedConversation
         key={target?.childSessionId ?? id}
@@ -215,7 +209,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   function Main(props: MainProps) {
     const active = props.usePanelInfo(value => value.activePanelId === 'kanban');
     if (!active) return null; // A hidden cached page must not leave another copy of a composer mounted.
-    return <><style>{clientCss}</style><FeedStatus /><BoardPage {...props} api={bridge.api} /></>;
+    return <><style>{clientCss}</style><FeedStatus /><BoardPage {...props} api={bridge.api} autoRun={autoRun} onRunReady={runner => { autoRunRunner = runner; }} /></>;
   }
   function Dock(props: PropsRuntime<'conversation.input.dock'>) {
     const view = useSyncExternalStore(bridge.questionsView.subscribe, bridge.questionsView.getSnapshot, bridge.questionsView.getSnapshot);
@@ -252,10 +246,13 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'kanban-decision-questions', order: 20 }, Dock));
   ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: 'decision_request' }, HiddenDecisionRow));
   bridge.start();
+  let unsubscribeAutoRun = () => {};
+  try { unsubscribeAutoRun = bridge.api.subscribe(snapshot => autoRun.reconcile(snapshot.state.hubs.flatMap(hub => hub.tasks))); } catch { /* BoardView reports feed errors. */ }
   return async () => {
+    lifetime.abort(); autoRun.dispose(); unsubscribeAutoRun();
     offTaskContext();
     try { await modeInjection?.dispose(); } catch { /* the optional namespace fiber is best effort */ }
-    lifetime.abort(); for (const reference of held) reference.release(); held.clear();
+    for (const reference of held) reference.release(); held.clear();
     await bridge.dispose();
   };
 }

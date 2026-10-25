@@ -43,7 +43,7 @@ describe('refined board interactions', () => {
     expect(document.querySelector('.kb-drag-ghost')).toBeTruthy();
     fireEvent.pointerUp(document, { clientX: 20, clientY: 20, pointerId: 1 });
     delete (document as unknown as { elementFromPoint?: unknown }).elementFromPoint;
-    await waitFor(() => expect(mock.command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'doing', mode: 'move' }));
+    await waitFor(() => expect(mock.command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'doing' }));
     expect(document.querySelector('.kb-drag-ghost')).toBeNull();
   });
 
@@ -81,7 +81,7 @@ describe('refined board interactions', () => {
     delete (document as unknown as { elementFromPoint?: unknown }).elementFromPoint;
     const dialog = await screen.findByRole('dialog', { name: 'Move to Blocked?' });
     await user.click(within(dialog).getByRole('button', { name: 'Move anyway' }));
-    await waitFor(() => expect(mock.command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'blocked', mode: 'move', overrideTransition: true }));
+    await waitFor(() => expect(mock.command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'blocked', overrideTransition: true }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(mock.get().state.tasks[0]!.columnId).toBe('blocked');
   });

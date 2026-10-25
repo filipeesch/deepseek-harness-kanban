@@ -2,7 +2,6 @@ import React, { useEffect, useState, type ComponentType, type ReactNode } from '
 import type { ISessions, SessionReference, SessionTarget } from '@deepseek-ai/dsh-api-session-controller/client';
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import type { ConversationViewsProps } from '@deepseek-ai/dsh-client-ui-conversation/client';
-import type { InstructionDraftBinding } from './instruction-draft.js';
 import type { DrawerSubagentAddress } from './conversation-navigation.js';
 
 /** The small owner share the retained surface needs from the Main slot. */
@@ -15,8 +14,6 @@ export interface ConversationSurfaceOwner {
 export interface ConversationSurfaceServices {
   sessions: Pick<ISessions, 'refresh' | 'retain'>;
   claimComposer(sessionId: string): (() => void) | null;
-  draftBinding(reference: SessionReference): InstructionDraftBinding;
-  attachDraft(sessionId: string, binding: InstructionDraftBinding): () => void;
   lifetime: AbortSignal;
   hold(reference: SessionReference): void;
   release(reference: SessionReference): void;
@@ -54,8 +51,8 @@ export function EmbeddedConversationBody({ sessionId, useSession, renderFactoryS
 }
 
 /**
- * Retain one native session (or subagent address), bind the draft/composer
- * ownership, and render the hosted header above the public content factory.
+ * Retain one native session (or subagent address), claim composer ownership,
+ * and render the hosted header above the public content factory.
  */
 export function RetainedConversation({ id, target, owner, services }: {
   id: string;
@@ -68,10 +65,6 @@ export function RetainedConversation({ id, target, owner, services }: {
   const [attempt, setAttempt] = useState(0);
   const sessionId = target?.childSessionId ?? id;
   const targetKey = target === undefined ? id : target.parentSessionId + ':' + target.childSessionId + ':' + target.mode;
-  useEffect(() => {
-    if (!reference) return;
-    return services.attachDraft(sessionId, services.draftBinding(reference));
-  }, [reference, sessionId, services]);
   useEffect(() => {
     let active = true; let retained: SessionReference | undefined;
     const cancellation = new AbortController();
