@@ -11,9 +11,11 @@ import { AutoRunController } from './auto-run.js';
 import { CardInstructionAction } from './auto-run-view.js';
 import { ACTIVE_HUB_KEY, allTasks, boardView, normalizeSnapshot, readBoardPreferences, readStorage, scopeAttention, scopedCommand, writeBoardPreference, writeStorage } from './hub-view.js';
 import { CreateBoardDialog, CreateHubDialog } from './create-dialogs.js';
-import { asProblem, ErrorNotice, type RunCommand } from './ui.js';
+import { asProblem, type RunCommand } from './ui.js';
+import { adviseCommandFailure } from './command-failure.js';
+import { BoardNotices } from './board-notices.js';
 import { styles } from './styles.js';
-import { BulkDeleteDialog, BulkResultDialog, DeleteTaskDialog, DiscardDialog, type BulkDeletionResult, type BulkProgress, type DestructiveCommand, type DestructiveRequest } from './destructive-dialogs.js';
+import { BulkDeleteDialog, BulkResultDialog, DeleteTaskDialog, DiscardDialog, type BulkDeletionResult, type BulkProgress, type DestructiveRequest } from './destructive-dialogs.js';
 import { CheckSquareIcon, PlusIcon, SettingsIcon, TrashIcon } from './icons.js';
 import { useCardDrag } from './useCardDrag.js';
 import { useMoveRequest } from './useMoveRequest.js';
@@ -39,7 +41,7 @@ export function columnLayout(workflow: Workflow): Array<{ key: string; group?: C
 export function BoardView({ api, renderConversation, pageState, sessionTitles, pickDirectory, autoRun: providedAutoRun, onRunReady, lineage }: BoardViewProps) {
   const [localPageState] = useState(createBoardPageState); const preferences = pageState ?? localPageState;
   const [snapshot, setSnapshot] = useState<KanbanSnapshot | null>(null); const latest = useRef<KanbanSnapshot | null>(null); const live = useRef(false); const currentApi = useRef(api); currentApi.current = api;
-  const [loadError, setLoadError] = useState<Problem | null>(null); const [loadAttempt, setLoadAttempt] = useState(0); const [pending, setPending] = useState(0);
+  const [loadError, setLoadError] = useState<Problem | null>(null); const [loadAttempt, setLoadAttempt] = useState(0);
   const [search, setSearch] = usePageField(preferences, 'search'); const [projectFilter, setProjectFilter] = usePageField(preferences, 'projectFilter'); const [selectedId, setSelectedId] = usePageField(preferences, 'selectedTaskId');
   const [newTask, setNewTask] = useState(false); const [newHub, setNewHub] = useState(false); const [newBoard, setNewBoard] = useState(false); const [configuration, setConfiguration] = useState<string | null>(null);
   const [destruction, setDestruction] = useState<DestructiveRequest | null>(null); const [destructionStarted, setDestructionStarted] = useState(false); const [discard, setDiscard] = useState<DestructiveRequest | null>(null); const [destructionError, setDestructionError] = useState<Problem | null>(null); const [destructionPending, setDestructionPending] = useState(false); const [actionError, setActionError] = useState<Problem | null>(null);
@@ -71,23 +73,16 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
   useEffect(() => { if (snapshot && activeHub && activeHub.id !== activeHubId) { setActiveHubIdState(activeHub.id); writeStorage(ACTIVE_HUB_KEY, activeHub.id); } }, [snapshot, activeHub, activeHubId]);
   useEffect(() => { setSelectionMode(false); setSelectedIds(new Set()); }, [search, projectFilter]);
   const run = useCallback(async (command: Command, allowDiscard = true): Promise<KanbanSnapshot> => {
-    setPending(value => value + 1);
     const scoped = scopedCommand(command, activeHub?.id, activeBoard?.id, (snapshot?.state.hubs.length ?? 1) > 1, (activeHub?.boards.length ?? 1) > 1);
     const invokedTask = 'taskId' in scoped ? latest.current ? allTasks(latest.current).find(value => value.id === scoped.taskId) : undefined : undefined;
     const priorOperation = invokedTask?.operation;
     try { const result = await api.command(scoped); if (currentApi.current === api) accept(result); return result; }
     catch (error) {
-      const problem = asProblem(error); const task = invokedTask;
-      let original: DestructiveCommand | undefined;
-      if ((scoped.type === 'task.delete' || scoped.type === 'worktree.remove') && !scoped.discardChanges) original = scoped;
-      else if (scoped.type === 'operation.retry' && task && priorOperation && (priorOperation.request.kind === 'remove' || priorOperation.request.kind === 'delete') && !priorOperation.request.discardChanges) {
-        const capturedPath = priorOperation.request.expectedWorktreePath !== undefined ? priorOperation.request.expectedWorktreePath : priorOperation.targetPath;
-        if (capturedPath !== undefined) original = { type: priorOperation.request.kind === 'delete' ? 'task.delete' : 'worktree.remove', taskId: task.id, confirmed: true, expectedWorktreePath: capturedPath };
-        else setActionError({ code: 'CONFIRMATION_REQUIRED', message: 'The original removal target is unavailable. Return to base and review a new removal confirmation.' });
-      }
-      if (allowDiscard && problem.code === 'DISCARD_REQUIRED' && original && task) setDiscard({ command: original, taskId: task.id, title: task.title, path: original.expectedWorktreePath ?? task.worktree?.path ?? null, expectedWorktreePath: original.expectedWorktreePath ?? task.worktree?.path ?? null, branch: task.worktree?.branch ?? null, owned: task.worktree?.owned, error: problem });
+      const advice = adviseCommandFailure({ command: scoped, problem: asProblem(error), task: invokedTask, priorOperation: priorOperation ?? undefined, allowDiscard });
+      if (advice.notice) setActionError(advice.notice);
+      if (advice.discard) setDiscard(advice.discard);
       throw error;
-    } finally { if (live.current) setPending(value => Math.max(0, value - 1)); }
+    }
   }, [api, accept, activeHub?.id, activeBoard?.id, snapshot?.state.hubs.length, activeHub?.boards.length]);
 
   const selected = state?.tasks.find(task => task.id === selectedId);
@@ -337,7 +332,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
     </nav>
   </header>
     {configuration && <Configuration key={configuration} state={state ?? null} hub={activeHub ?? null} board={activeBoard ?? null} hubCount={snapshot?.state.hubs.length ?? 1} settings={snapshot?.state.settings} settingsRevision={snapshot?.state.settings?.revision ?? 0} run={run} api={api} pickDirectory={pickDirectory} initial={configuration} onClose={() => setConfiguration(null)} onHubDeleted={() => { setConfiguration(null); setActiveHubIdState(null); writeStorage(ACTIVE_HUB_KEY, null); }} onBoardDeleted={() => { setConfiguration(null); }} onBoardCreated={id => { selectBoard(activeHub!.id, id); setConfiguration(null); }} />}
-    <ErrorNotice problem={loadError} />{loadError && <button type="button" className="kb-button" onClick={() => setLoadAttempt(value => value + 1)}>Retry loading board</button>}<ErrorNotice problem={actionError} />{pending > 0 && <p className="kb-save-status" role="status">Saving change…</p>}{!snapshot && !loadError && <p className="kb-empty" role="status">Loading Kanban…</p>}{snapshot && !activeHub && <div className="kb-empty"><h2>No Hub available</h2><p>Create a Hub to continue.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewHub(true)}>Create Hub</button></div>}{snapshot && activeHub && !activeBoard && <div className="kb-empty"><h2>Create your first board</h2><p>Boards hold a workflow and their tasks inside this Hub.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewBoard(true)}>Create board</button></div>}
+    <BoardNotices loadError={loadError} actionError={actionError} onRetryLoad={() => setLoadAttempt(value => value + 1)} />{!snapshot && !loadError && <p className="kb-empty" role="status">Loading Kanban…</p>}{snapshot && !activeHub && <div className="kb-empty"><h2>No Hub available</h2><p>Create a Hub to continue.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewHub(true)}>Create Hub</button></div>}{snapshot && activeHub && !activeBoard && <div className="kb-empty"><h2>Create your first board</h2><p>Boards hold a workflow and their tasks inside this Hub.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewBoard(true)}>Create board</button></div>}
     {state && <><div className="kb-page-body" ref={boardBody} onPointerDown={onBoardPointerDown}>{state.projects.length === 0 && <div className="kb-empty"><h2>Add your first project</h2><p>Register a project path and Git root to create tasks.</p><button type="button" className="kb-button kb-primary" onClick={() => setConfiguration('Projects')}>Configure projects</button></div>}
       <div className="kb-columns" aria-label="Workflow columns">{columnLayout(state.workflow).map(slot => <section key={slot.key} className={'kb-column-slot ' + (slot.group ? 'kb-column-group' : '')} aria-label={slot.group?.name}>{slot.group && <h2 className="kb-group-heading">{slot.group.name}</h2>}{slot.columns.map(column => { const tasks = tasksForColumn(column.id); const restricted = Boolean(drag && drag.overColumnId === column.id && transitionAccess(state.workflow, drag.sourceColumnId, column.id) === 'restricted');
         return <section className={'kb-column' + (restricted ? ' kb-drop-restricted' : '')} key={column.id} aria-label={column.name + ' column'} data-column-id={column.id}><header className="kb-column-header"><h2>{column.name}</h2><span aria-label={tasks.length + ' tasks'}>{tasks.length}</span></header>{column.id === state.workflow.initialColumnId && renderNewTaskButton(column)}<div className="kb-card-list">{tasks.map(task => renderCard(task, column))}{drag?.overColumnId === column.id && <div className={'kb-drop-indicator' + (restricted ? ' kb-drop-indicator-restricted' : '')} style={{ top: drag.indicatorY }} aria-hidden="true" />}{tasks.length === 0 && <p className="kb-empty-column">No matching tasks</p>}</div></section>; })}</section>)}</div></div>
