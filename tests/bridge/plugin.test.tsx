@@ -25,6 +25,9 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
   const mount = vi.fn(async () => { await mounting; mounted = true; return unmount; });
   const entries = new Map<string, Entry>();
   const nativeActions: StoredEntry[] = [];
+  const nativeSlots = new Map<string, StoredEntry[]>();
+  const taskContextRegistrations: unknown[] = [];
+  const taskContextDisposer = vi.fn();
   const send = vi.fn().mockResolvedValue(undefined); const scope = vi.fn(() => ({ get: vi.fn(() => ({ send })) }));
   const references: SessionReference[] = [];
   const contextWindow = {
@@ -32,8 +35,20 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
     hasMore: false, revision: 1, change: { kind: 'replace', entries: [] },
   };
   const eventSource = { getSnapshot: () => contextWindow, subscribe: () => () => {} };
-  const retain = vi.fn((id: string, options: { source: string; signal: AbortSignal }) => {
-    const reference = { sessionId: id, binding: { ctx: {}, eventSource }, ready: Promise.resolve({}), release: vi.fn(), [Symbol.dispose]() {} } as unknown as SessionReference;
+  const sessionState = {
+    ids: ['a', 'b'], phase: 'ready', projectionsBySession: {},
+    byId: {
+      a: { id: 'a', displayTitle: 'Agent 1', running: false, blank: false, retainedBy: {}, updatedAt: 0 },
+      b: { id: 'b', displayTitle: 'Agent 2', running: false, blank: false, retainedBy: {}, updatedAt: 0 },
+    },
+  };
+  const list = { getSnapshot: () => sessionState, subscribe: () => () => {} };
+  const subagentAddress = vi.fn((sessionId: string) => sessionId === 'child'
+    ? { parentSessionId: 'a', childSessionId: 'child', mode: 'continuable' }
+    : undefined);
+  const retain = vi.fn((target: string | { childSessionId: string }, options: { source: string; signal: AbortSignal }) => {
+    const sessionId = typeof target === 'string' ? target : target.childSessionId;
+    const reference = { sessionId, binding: { ctx: {}, eventSource }, ready: Promise.resolve({}), release: vi.fn(), [Symbol.dispose]() {} } as unknown as SessionReference;
     references.push(reference); expect(options.source).toBe('kanbanTaskDrawer'); return reference;
   });
   const requestDraftInitialization = vi.fn().mockReturnValue('applied');
@@ -47,6 +62,10 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
   };
   const refresh = vi.fn().mockResolvedValue(undefined);
   const nativeSelect = vi.fn();
+  const agentPresets = {
+    list: vi.fn(async () => ({ ok: true, value: { presets: [{ id: 'standard', name: 'Standard', isDefault: true }, { id: 'ptc', name: 'PTC' }] } })),
+    select: vi.fn(async () => ({ ok: true, value: {} })),
+  };
   const remote = {
     snapshot: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot(rounds) } }),
     command: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot(rounds) } }),
@@ -54,6 +73,7 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
     inferProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { projectPath: '/repo', gitRootPath: '/repo' } } }),
     questions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: rounds } }),
     dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
+    agentPresets,
     follow(signal?: AbortSignal): RemoteStreamHandle<KanbanSnapshot, never> {
       return {
         async *[Symbol.asyncIterator]() { if (!signal?.aborted) await new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once: true })); },
@@ -61,9 +81,15 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
       };
     },
   };
+  const uiConversation = {
+    events: {
+      register: vi.fn((definition: unknown) => { taskContextRegistrations.push(definition); return taskContextDisposer; }),
+    },
+  };
   const ctx = {
     remote: {
       $mount: mount,
+      agentPresets,
       get kanban() { throw new Error(mounted ? 'Namespace used without injection' : 'Namespace used before mount'); },
       $stream<Item>(options: RemoteStreamOptions<Item>) { return new RemoteStream({ generation: { getSnapshot: () => ({ id: 1, host: { home: '/home' } }), subscribe: () => () => {} } }, options); },
     },
@@ -77,114 +103,55 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
     slots: {
       inject(_name: string, register: () => void) { register(); return () => {}; },
       register(options: Record<string, unknown>, Component: ComponentType<Record<string, unknown>>) { entries.set(String(options.name) + ':' + String(options.key ?? options.id ?? ''), { options, Component }); return () => {}; },
-      entriesOfSlot: vi.fn(() => nativeActions),
+      entriesOfSlot: vi.fn((key: string) => nativeSlots.get(key) ?? (key === 'conversation.session.header.actions' ? nativeActions : [])),
       subscribe: vi.fn(() => () => {}),
     },
-    sessions: { refresh, retain, scope },
+    sessions: { refresh, retain, scope, list, subagentAddress },
     conversation,
+    uiConversation,
     uiSession: { sessionStatus: { getSnapshot: () => new Map(), subscribe: () => () => {} } },
     layout: { selectPanel: nativeSelect },
     locale: { bind: vi.fn((namespace: string) => (key: string) => namespace + ':' + key), getSnapshot: () => ({ active: 'en', locales: [], revision: 0 }), subscribe: () => () => {} },
     get mainView() { throw new Error('Global main session access is forbidden'); },
     get userQuestions() { throw new Error('Native question lifecycle access is forbidden'); },
   } as unknown as Context;
-  return { ctx, entries, nativeActions, mount, unmount, openMount: () => openMount(), remote, send, scope, retain, refresh, references, nativeSelect, requestDraftInitialization, focus };
+  return { ctx, entries, nativeActions, nativeSlots, mount, unmount, openMount: () => openMount(), remote, send, scope, retain, refresh, references, nativeSelect, requestDraftInitialization, focus, agentPresets, uiConversation, sessionState, list, subagentAddress, taskContextRegistrations, taskContextDisposer };
 }
 async function installed(rounds?: QuestionRound[]) {
   const f = fixture(false, rounds); const dispose = await apply(f.ctx); disposers.push(dispose); return f;
 }
 
 describe('public SDK plugin binding contracts', () => {
-  it('renders the status slot before the conversation content inside the retained provider', async () => {
+  it('registers and disposes the task-context Chat Definition with the client conversation service', async () => {
+    const f = fixture(); const dispose = await apply(f.ctx);
+    expect(f.uiConversation.events.register).toHaveBeenCalledOnce();
+    expect(f.taskContextRegistrations[0]).toMatchObject({ kind: 'kanban-task-context', target: 'chat' });
+    await dispose();
+    expect(f.taskContextDisposer).toHaveBeenCalledOnce();
+  });
+
+  it('renders the native session header before the conversation content inside the retained provider', async () => {
     const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;
     const provider = ({ children }: { children: ReactNode }) => <div data-testid="frame-provider">{children}</div>;
     const renderSlot = vi.fn((name: string) => <div data-testid={'slot-' + name} />);
     render(<Main usePanelInfo={(select: (info: { activePanelId: string }) => unknown) => select({ activePanelId: 'kanban' })} SessionProvider={provider} renderSlot={renderSlot} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Open task Native task' }));
     const providerNode = await screen.findByTestId('frame-provider');
-    const status = within(providerNode).getByTestId('slot-kanban.session.status');
+    const header = within(providerNode).getByTestId('slot-kanban.session.header');
     const conversation = within(providerNode).getByTestId('slot-kanban.conversation');
-    expect(status.compareDocumentPosition(conversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(renderSlot).toHaveBeenCalledWith('kanban.session.status', {});
+    expect(header.compareDocumentPosition(conversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(renderSlot).toHaveBeenCalledWith('kanban.session.header', {});
     expect(renderSlot).toHaveBeenCalledWith('kanban.conversation', {});
-  });
-
-  it('hosts the pinned native action entries in the status slot and hides while the session is not open', async () => {
-    const f = await installed();
-    const probe = ({ sessionId, t }: Record<string, unknown>) => <span data-testid="native-action">{String(sessionId)}:{(t as (key: string) => string)('mode')}</span>;
-    const action = { component: probe, options: { id: 'agent-preset', order: -10 }, locale: 'settings.agentPreset', inject: vi.fn(() => ({})) } as unknown as StoredEntry;
-    f.nativeActions.push(action);
-    const Status = f.entries.get('kanban.session.status:')!.Component as ComponentType<Record<string, unknown>>;
-    const open = (select: (value: { openState: string; blank: boolean }) => unknown) => select({ openState: 'open', blank: false });
-    const loading = (select: (value: { openState: string; blank: boolean }) => unknown) => select({ openState: 'loading', blank: true });
-    const sessions = (select: (value: { byId: Record<string, { origin: string }> }) => unknown) => select({ byId: { a: { origin: 'root' } } });
-    const status = (select: (value: Map<string, unknown>) => unknown) => select(new Map());
-    const first = render(<Status sessionId="a" useSession={open} useSessions={sessions} useSessionStatus={status} />);
-    expect((await screen.findByTestId('native-action')).textContent).toBe('a:settings.agentPreset:mode');
-    expect(screen.getByRole('group', { name: 'Conversation status' })).toBeTruthy();
-    expect(action.inject).toHaveBeenCalledWith('a');
-    expect(f.ctx.locale.bind).toHaveBeenCalledWith('settings.agentPreset');
-    first.unmount();
-    render(<Status sessionId="a" useSession={loading} useSessions={sessions} useSessionStatus={status} />);
-    expect(screen.queryByTestId('native-action')).toBeNull();
-    expect(screen.queryByRole('group', { name: 'Conversation status' })).toBeNull();
-  });
-
-  it('refreshes the status row when a native action entry registers later', async () => {
-    const f = await installed();
-    let listener: (() => void) | undefined;
-    f.ctx.slots.subscribe = vi.fn((_key: string, next: () => void) => { listener = next; return () => { listener = undefined; }; });
-    const probe = ({ t }: Record<string, unknown>) => <span data-testid="late-action">{(t as (key: string) => string)('mode')}</span>;
-    const Status = f.entries.get('kanban.session.status:')!.Component as ComponentType<Record<string, unknown>>;
-    const view = render(<Status sessionId="a" useSession={(select: (value: { openState: string; blank: boolean }) => unknown) => select({ openState: 'open', blank: false })} useSessions={(select: (value: { byId: Record<string, unknown> }) => unknown) => select({ byId: {} })} useSessionStatus={(select: (value: Map<string, unknown>) => unknown) => select(new Map())} />);
-    expect(view.container.querySelector('[data-testid="late-action"]')).toBeNull();
-    expect(f.ctx.slots.subscribe).toHaveBeenCalledWith('conversation.session.header.actions', expect.any(Function));
-    f.nativeActions.push({ component: probe, options: { id: 'agent-preset', order: -10 }, locale: 'settings.agentPreset', inject: () => ({}) } as unknown as StoredEntry);
-    act(() => listener?.());
-    expect((await screen.findByTestId('late-action')).textContent).toBe('settings.agentPreset:mode');
-  });
-
-  it('refreshes the native action labels when the locale revision changes', async () => {
-    const f = await installed();
-    let revision = 0; let language = 'en'; const listeners = new Set<() => void>();
-    const locale = f.ctx.locale as unknown as { getSnapshot: () => { active: string; locales: unknown[]; revision: number }; subscribe: (listener: () => void) => () => void; bind: (namespace: string) => (key: string) => string };
-    locale.getSnapshot = () => ({ active: language, locales: [], revision });
-    locale.subscribe = listener => { listeners.add(listener); return () => { listeners.delete(listener); }; };
-    locale.bind = (namespace: string) => (key: string) => namespace + ':' + key + ':' + language;
-    const probe = ({ t }: Record<string, unknown>) => <span data-testid="locale-action">{(t as (key: string) => string)('mode')}</span>;
-    f.nativeActions.push({ component: probe, options: { id: 'agent-preset', order: -10 }, locale: 'settings.agentPreset', inject: () => ({}) } as unknown as StoredEntry);
-    const Status = f.entries.get('kanban.session.status:')!.Component as ComponentType<Record<string, unknown>>;
-    render(<Status sessionId="a" useSession={(select: (value: { openState: string; blank: boolean }) => unknown) => select({ openState: 'open', blank: false })} useSessions={(select: (value: { byId: Record<string, unknown> }) => unknown) => select({ byId: {} })} useSessionStatus={(select: (value: Map<string, unknown>) => unknown) => select(new Map())} />);
-    expect((await screen.findByTestId('locale-action')).textContent).toBe('settings.agentPreset:mode:en');
-    act(() => { language = 'pt'; revision += 1; for (const listener of listeners) listener(); });
-    await waitFor(() => expect(screen.getByTestId('locale-action').textContent).toBe('settings.agentPreset:mode:pt'));
-  });
-
-  it('unmounts the status slot when Git or Notes replaces Conversations', async () => {
-    const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;
-    let mounts = 0; let unmounts = 0;
-    function Probe() { useEffect(() => { mounts += 1; return () => { unmounts += 1; }; }, []); return <div data-testid="status-probe" />; }
-    const renderSlot = (key: string) => key === 'kanban.session.status' ? <Probe /> : <div>Native slot body</div>;
-    render(<Main usePanelInfo={(select: (info: { activePanelId: string }) => unknown) => select({ activePanelId: 'kanban' })} SessionProvider={({ children }: { children: ReactNode }) => <div>{children}</div>} renderSlot={renderSlot} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Open task Native task' }));
-    await screen.findByTestId('status-probe');
-    for (const section of ['Git', 'Notes']) {
-      fireEvent.click(screen.getByRole('tab', { name: 'Conversations' }));
-      await screen.findByTestId('status-probe');
-      fireEvent.click(screen.getByRole('tab', { name: section }));
-      await waitFor(() => expect(screen.queryByTestId('status-probe')).toBeNull());
-    }
-    expect(mounts).toBe(2);
-    expect(unmounts).toBe(2);
   });
 
   it('awaits the strict namespace mount, then registers additive native slots without startup navigation', async () => {
     const f = fixture(true); const pending = apply(f.ctx);
     expect(f.mount).toHaveBeenCalledWith(TYPERT_REMOTE); expect(f.entries.size).toBe(0);
     f.openMount(); const dispose = await pending; disposers.push(dispose);
-    expect(inject).toContain('remote'); expect(inject).not.toContain('remote.kanban');
-    expect([...f.entries.keys()]).toEqual(['main:kanban', 'kanban.conversation:', 'kanban.session.status:', 'sidebar.panellist:kanban', 'conversation.input.dock:kanban-decision-questions', 'tool.call.toolview:decision_request']);
-    expect(f.entries.get('main:kanban')?.options.children).toEqual({ 'kanban.conversation': { kind: 'single', scope: 'session' }, 'kanban.session.status': { kind: 'single', scope: 'session' } });
+    expect(inject).toContain('remote'); expect(inject).toContain('uiConversation'); expect(inject).not.toContain('remote.kanban');
+    expect([...f.entries.keys()]).toEqual(['main:kanban', 'kanban.conversation:', 'kanban.session.header:', 'conversation.chat.node:kanban-task-context', 'sidebar.panellist:kanban', 'conversation.input.dock:kanban-decision-questions', 'tool.call.toolview:decision_request']);
+    expect(f.entries.get('main:kanban')?.options.children).toEqual({ 'kanban.conversation': { kind: 'single', scope: 'session' }, 'kanban.session.header': { kind: 'single', scope: 'session' } });
+    expect(f.uiConversation.events.register).toHaveBeenCalledOnce();
     expect(f.entries.get('sidebar.panellist:kanban')?.options).toMatchObject({ label: 'Kanban', order: 80 });
     expect(f.nativeSelect).not.toHaveBeenCalled(); await dispose(); expect(f.unmount).toHaveBeenCalledOnce();
   });
@@ -228,21 +195,21 @@ describe('public SDK plugin binding contracts', () => {
   it('owns native reference/provider binding, switches A/B by explicit reference, and releases on Info/unmount', async () => {
     const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;
     const provider = vi.fn(({ session, children }: { session: SessionReference; children: ReactNode }) => <div data-testid="provided-session" data-session={session.sessionId}>{children}</div>);
-    const statusMounts = vi.fn(); const statusUnmounts = vi.fn();
-    function StatusProbe() { useEffect(() => { statusMounts(); return () => statusUnmounts(); }, []); return <div>Native status slot</div>; }
-    const renderSlot = vi.fn((key: string) => key === 'kanban.session.status' ? <StatusProbe /> : <div>Native slot body</div>);
+    const headerMounts = vi.fn(); const headerUnmounts = vi.fn();
+    function HeaderProbe() { useEffect(() => { headerMounts(); return () => headerUnmounts(); }, []); return <div>Native header slot</div>; }
+    const renderSlot = vi.fn((key: string) => key === 'kanban.session.header' ? <HeaderProbe /> : <div>Native slot body</div>);
     const rendered = render(<Main usePanelInfo={(select: (info: { activePanelId: string }) => unknown) => select({ activePanelId: 'kanban' })} SessionProvider={provider} renderSlot={renderSlot} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Open task Native task' }));
     await waitFor(() => expect(screen.getByTestId('provided-session').getAttribute('data-session')).toBe('a'));
-    expect(f.retain.mock.calls[0]?.[0]).toBe('a'); expect(renderSlot).toHaveBeenCalledWith('kanban.conversation', {}); expect(renderSlot).toHaveBeenCalledWith('kanban.session.status', {});
-    expect(statusMounts).toHaveBeenCalledTimes(1);
+    expect(f.retain.mock.calls[0]?.[0]).toBe('a'); expect(renderSlot).toHaveBeenCalledWith('kanban.conversation', {}); expect(renderSlot).toHaveBeenCalledWith('kanban.session.header', {});
+    expect(headerMounts).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('tab', { name: 'Agent 2' }));
     await waitFor(() => expect(screen.getByTestId('provided-session').getAttribute('data-session')).toBe('b'));
-    expect(statusMounts).toHaveBeenCalledTimes(2); expect(statusUnmounts).toHaveBeenCalledTimes(1);
+    expect(headerMounts).toHaveBeenCalledTimes(2); expect(headerUnmounts).toHaveBeenCalledTimes(1);
     expect(f.references[0]?.release).toHaveBeenCalled();
     fireEvent.click(screen.getByRole('tab', { name: 'Info' }));
     await waitFor(() => expect(f.references[1]?.release).toHaveBeenCalled());
-    expect(statusMounts).toHaveBeenCalledTimes(2); expect(statusUnmounts).toHaveBeenCalledTimes(2);
+    expect(headerMounts).toHaveBeenCalledTimes(2); expect(headerUnmounts).toHaveBeenCalledTimes(2);
     expect(screen.queryByTestId('provided-session')).toBeNull(); expect(f.nativeSelect).not.toHaveBeenCalled();
     rendered.unmount(); expect(f.refresh).toHaveBeenCalledTimes(2);
   });
@@ -252,9 +219,6 @@ describe('public SDK plugin binding contracts', () => {
     render(<Main usePanelInfo={(select: (value: { activePanelId: string | null }) => unknown) => select({ activePanelId: 'kanban' })} SessionProvider={provider} renderSlot={() => <div>Native slot body</div>} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Open task Native task' }));
     await screen.findByTestId('retained-body');
-    const context = screen.getByRole('note', { name: 'Task context' });
-    fireEvent.click(within(context).getByRole('button', { name: /Task context/ }));
-    expect(within(context).getByText('Task: Native task (task-1)')).toBeTruthy();
     fireEvent.change(screen.getByRole('combobox', { name: 'Move task to' }), { target: { value: 'review' } });
     await waitFor(() => expect(f.requestDraftInitialization).toHaveBeenCalledWith(expect.anything(), { prompt: 'Review **carefully**.' }));
     await screen.findByText("Instruction inserted into Agent 1's composer.");

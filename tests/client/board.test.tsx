@@ -41,10 +41,11 @@ describe('native overlay protection', () => {
 });
 
 describe('board header layout', () => {
-  it('defines the status row container and hides it when empty', () => {
+  it('defines the fallback native-action row and the native header wrapper', () => {
     expect(styles).toContain('.dsh-kanban .kb-conversation-status{');
     expect(styles).toContain('container-type:inline-size');
     expect(styles).toContain('.dsh-kanban .kb-conversation-status:empty{display:none}');
+    expect(styles).toContain('.dsh-kanban .kb-native-session-header{');
   });
 
   it('reserves the host frame leading clearance for the collapsed sidebar', () => {
@@ -148,7 +149,7 @@ describe('scoped Kanban page', () => {
     await user.click(screen.getByRole('button', { name: 'New conversation' })); await screen.findByTestId('native-s3');
     await user.click(screen.getByRole('button', { name: 'Close Agent 3' })); expect(screen.queryByTestId('native-s3')).toBeNull();
     await user.click(screen.getByText('Closed conversations (1)')); await user.click(screen.getByRole('button', { name: 'Reopen Agent 3' })); await screen.findByTestId('native-s3');
-    expect(command).toHaveBeenCalledWith({ type: 'conversation.create', taskId: 't1' }); expect(command).toHaveBeenCalledWith({ type: 'conversation.close', taskId: 't1', sessionId: 's3' }); expect(command).toHaveBeenCalledWith({ type: 'conversation.reopen', taskId: 't1', sessionId: 's3' }); expect(renderer).toHaveBeenCalledWith('s2');
+    expect(command).toHaveBeenCalledWith({ type: 'conversation.create', taskId: 't1' }); expect(command).toHaveBeenCalledWith({ type: 'conversation.close', taskId: 't1', sessionId: 's3' }); expect(command).toHaveBeenCalledWith({ type: 'conversation.reopen', taskId: 't1', sessionId: 's3' }); expect(renderer).toHaveBeenCalledWith('s2', undefined);
   });
 
   it('dismisses the missing-tree notice without filesystem or directory commands', async () => {

@@ -27,6 +27,14 @@ describe('board and editor style contracts', () => {
   });
 });
 
+  it('hosts the native session header and removes the task-context overlay layout', () => {
+    expect(styles).toContain('.dsh-kanban .kb-native-session-header{');
+    expect(styles).toContain('--dsh-frame-leading-clearance:0px');
+    expect(styles).toContain('.dsh-kanban .kb-task-context-fallback{');
+    expect(styles).not.toContain('.kb-native-conversation>.kb-task-context{position:absolute');
+    expect(styles).not.toContain('[data-conversation-content]>div>div:last-child');
+  });
+
 describe('destructive and operation surfaces', () => {
   it('defines the status stack, consequence list, and problem disclosure', () => {
     for (const selector of ['.kb-status-stack', '.kb-operation-failed', '.kb-operation-facts', '.kb-destructive-dialog', '.kb-consequence-list', '.kb-problem-details', '.kb-problem-facts']) expect(styles).toContain(selector);

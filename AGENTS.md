@@ -52,29 +52,29 @@ replace the existing GUI.
    - The play action is hidden without an unresolved instructed-stage entry.
    - A later instruction does not add another task-context message.
    - A new conversation receives its own first-turn context, visible as the
-     plugin task-context row in the Kanban **Conversations** panel.
+     inline native task-context row in the drawer and ordinary native Chat.
 
 6. The isolated instance has no model credentials. A send fails after the
    pre-step with `MISSING_CREDENTIAL`; this is acceptable for UI and context-log
    checks, but not for model execution. Verify context injection in the isolated
-   session log under `$SMOKE_HOME/sessions` and in the plugin task-context row.
+   session log under `$SMOKE_HOME/sessions` and in the inline native task-context row.
 
 7. Capture screenshots and a short report under `.verification/`; never include
    tokens, credentials, or owner data. Stop the background job and remove
    `$SMOKE_HOME` when finished.
 
-The current native Chat hides ordinary context nodes (`isVisibleChatNode` only
-retains context with tool changes). The plugin therefore renders the visible
-task-context row in the Kanban **Conversations** panel from the retained session
-event window. The native `kanban-task` message remains the model-facing record;
-the plugin row is the acceptance surface. Do not expect or claim a native Chat
-row for this message.
+The plugin claims the plugin-owned `kanban-task` message with an exclusive
+visible Chat Definition and delegates rendering to the host's context-row
+component. The row is therefore part of the native chat flow in both the drawer
+and ordinary native Chat; the native `kanban-task` message remains the
+model-facing record. Do not expect a separate overlay in the Kanban
+**Conversations** panel.
 
 ## Validation
 
 - Do not run acceptance or appearance checks against the developer's running DSH application, personal `$DSH_HOME`, or installed profile. Validation must leave the developer's environment untouched.
 - Use the plugin-owned isolated lanes instead. `pnpm test:browser` renders the real client components with the host theme fixture (`tests/browser/theme-fixture.ts`), emulates `prefers-color-scheme`, asserts the rendered host tokens and contrast, and writes screenshots under `.verification/`.
-- The real-composition lane boots `launchWebScaffold`, which creates a temporary `$DSH_HOME`, an isolated profile, and a temporary workspace: `node scripts/e2e-dsh.mjs --checkout <pinned-dsh-checkout> [--check] [--only board|conversation]`. It requires every workspace package and dependency of the pinned checkout to be installed and built; never substitute the developer's profile.
+- The real-composition lane boots `launchWebScaffold`, which creates a temporary `$DSH_HOME`, an isolated profile, and a temporary workspace: `node scripts/e2e-dsh.mjs --checkout <pinned-dsh-checkout> [--check] [--only board|conversation|deletion|native-drawer]`. It requires every workspace package and dependency of the pinned checkout to be installed and built; never substitute the developer's profile.
 - Keep model traffic deterministic. The lane runs with `DSH_SNAPSHOT=replay` and either a committed session fixture or a hand-authored `tests/e2e-dsh/**/replay.override.json`. Never call a real model in acceptance checks, and never record against a personal profile.
 - For appearance evidence, switch `page.emulateMedia({ colorScheme: 'light' | 'dark' })`, confirm the host `data-ds-dark-theme` state, assert the host theme tokens and contrast that the plugin actually renders, and store screenshots under `.verification/`.
 - Keep the fast gates separate from the isolated lane: `pnpm check` covers host/client typechecks, vitest, and the build; `pnpm test:browser` covers the plugin-owned Playwright harness.

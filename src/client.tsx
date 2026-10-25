@@ -1,12 +1,12 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { Context } from '@deepseek-ai/cordis';
-import type { ISessions, SessionEventSource, SessionEventWindow, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client';
+import type { ISessions, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client';
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client';
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client';
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client';
 import type {} from '@deepseek-ai/dsh-client-ui-session/client';
-import type { ConversationViewsProps, DraftAttachmentId } from '@deepseek-ai/dsh-client-ui-conversation/client';
-import type {} from '@deepseek-ai/dsh-client-ui-chat/client';
+import type { DraftAttachmentId } from '@deepseek-ai/dsh-client-ui-conversation/client';
+import type { ChatNode, ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client';
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client';
 import type {} from '@deepseek-ai/dsh-client-locale/client';
 import type { PropsRuntime, PropsRenderSlots, PropsRenderFactories } from '@deepseek-ai/dsh-client-ui-slots';
@@ -14,9 +14,14 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import { TYPERT_REMOTE } from './remote.js';
 import { ClientBridge } from './client-bridge.js';
 import { BoardView, createBoardPageState, type BoardPageState } from './client/board.js';
-import { NativeSessionActions } from './client/native-session-actions.js';
 import { InstructionDraftPortImpl, type InstructionDraftBinding } from './client/instruction-draft.js';
 import { QuestionForm } from './questions/QuestionForm.js';
+import { NativeSessionHeader } from './client/native-session-header.js';
+import { EmbeddedConversationBody, RetainedConversation, type ConversationSurfaceOwner, type ConversationSurfaceServices } from './client/conversation-surface.js';
+import type { NativeLocaleSource, NativeSlotSource, NativeSnapshotSource } from './client/native-slot-host.js';
+import { createModePortSource } from './client/mode-port.js';
+import { TASK_CONTEXT_NODE_KIND, TaskContextNodeView, taskContextDefinition } from './client/task-context-node.js';
+import { useConversationNavigation, isOwnedSubagent, type ConversationLineagePort } from './client/conversation-navigation.js';
 import type { ClientApi } from './shared/types.js';
 
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
@@ -25,86 +30,44 @@ declare module '@deepseek-ai/dsh-api-session-controller/client' {
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
     'kanban.conversation': { kind: 'single'; scope: 'session' };
-    'kanban.session.status': { kind: 'single'; scope: 'session' };
+    'kanban.session.header': { kind: 'single'; scope: 'session' };
   }
 }
 type ClientContext = Omit<Context, 'sessions'> & { sessions: ISessions };
-type MainProps = PropsRuntime<'main'> & PropsRenderSlots<'kanban.conversation' | 'kanban.session.status'>;
+type MainProps = PropsRuntime<'main'> & PropsRenderSlots<'kanban.conversation' | 'kanban.session.header'>;
 type EmbeddedProps = PropsRuntime<'kanban.conversation'> & PropsRenderFactories;
-type SessionStatusProps = PropsRuntime<'kanban.session.status'> & PropsRenderFactories;
+type SessionHeaderProps = PropsRuntime<'kanban.session.header'> & PropsRenderFactories;
 export const name = 'kanban-client';
 // Service keys, not package names. Mount our own namespace before any access to remote.kanban.
-export const inject = ['remote', 'slots', 'sessions', 'uiSession', 'conversation', 'layout', 'locale'];
+export const inject = ['remote', 'slots', 'sessions', 'uiSession', 'conversation', 'layout', 'locale', 'uiConversation'];
 const clientCss = '.kanban-native-state{padding:16px;color:inherit}.kanban-feed-error{padding:8px 16px;color:var(--dsw-alias-state-error-primary,crimson);border-bottom:1px solid var(--dsw-alias-border-l2)}';
 
-/** Read the first durable plugin-owned task-context message from a retained event window. */
-export function taskContextText(window: SessionEventWindow): string | null {
-  for (const entry of window.entries) {
-    if (entry.type !== 'event' || entry.event.type !== 'user/message') continue;
-    if ((entry.event.data.source as { kind?: string }).kind !== 'kanban-task') continue;
-    return entry.event.data.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n');
-  }
-  return null;
+function developerToolsSource(ctx: Context): NativeSnapshotSource | undefined {
+  try {
+    const forms = ctx.get('configForms') as { developerTools?: { enabled?: NativeSnapshotSource } } | undefined;
+    return forms?.developerTools?.enabled;
+  } catch { return undefined; }
 }
 
-/** Render the task context at the start of the native transcript, scrolling with it. */
-function KanbanTaskContextRow({ source, hostRef }: { source: SessionEventSource; hostRef: React.RefObject<HTMLDivElement | null> }) {
-  const subscribe = useCallback((listener: () => void) => source.subscribe(listener), [source]);
-  const getSnapshot = useCallback(() => source.getSnapshot(), [source]);
-  const events = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  const [open, setOpen] = useState(false);
-  const rowRef = useRef<HTMLDivElement>(null);
-  const text = taskContextText(events);
+function developerToolsEnabled(ctx: Context): boolean {
+  try { return developerToolsSource(ctx)?.getSnapshot() === false ? false : true; } catch { return true; }
+}
 
-  useLayoutEffect(() => {
-    const host = hostRef.current; const row = rowRef.current;
-    if (!host || !row || text === null) return;
-    let flow: HTMLElement | null = null; let scroll: HTMLElement | null = null;
-    let basePadding = 0; let originalPadding = ''; let resize: ResizeObserver | null = null; let observer: MutationObserver | null = null;
-    const findScroll = (element: HTMLElement): HTMLElement => {
-      let parent = element.parentElement;
-      while (parent && parent !== host) {
-        if (/(auto|scroll)/.test(getComputedStyle(parent).overflowY)) return parent;
-        parent = parent.parentElement;
-      }
-      return element.parentElement ?? host;
-    };
-    const update = () => {
-      if (!flow || !scroll) return;
-      const height = row.getBoundingClientRect().height;
-      flow.style.paddingTop = (basePadding + height + 8) + 'px';
-      const hostRect = host.getBoundingClientRect(); const scrollRect = scroll.getBoundingClientRect();
-      row.style.top = (scrollRect.top - hostRect.top) + 'px';
-      row.style.transform = 'translateY(' + (-scroll.scrollTop) + 'px)';
-    };
-    const attach = (): boolean => {
-      flow = host.querySelector<HTMLElement>('[data-chat-flow]');
-      if (!flow) return false;
-      scroll = findScroll(flow);
-      originalPadding = flow.style.paddingTop;
-      basePadding = parseFloat(getComputedStyle(flow).paddingTop) || 0;
-      scroll.addEventListener('scroll', update, { passive: true });
-      if (typeof ResizeObserver !== 'undefined') { resize = new ResizeObserver(update); resize.observe(host); resize.observe(row); }
-      update();
-      return true;
-    };
-    if (!attach() && typeof MutationObserver !== 'undefined') {
-      observer = new MutationObserver(() => { if (attach()) { observer?.disconnect(); observer = null; } });
-      observer.observe(host, { childList: true, subtree: true });
-    }
-    return () => {
-      observer?.disconnect(); resize?.disconnect();
-      if (scroll) scroll.removeEventListener('scroll', update);
-      if (flow) flow.style.paddingTop = originalPadding;
-      row.style.top = ''; row.style.transform = '';
-    };
-  }, [hostRef, open, text]);
+function agentPresetsNamespace(ctx: Context): unknown {
+  try {
+    const service = ctx.get('remote.agentPresets');
+    if (service !== undefined) return service;
+  } catch { /* optional namespace */ }
+  try { return (ctx as unknown as { remote?: { agentPresets?: unknown } }).remote?.agentPresets; } catch { return undefined; }
+}
 
-  if (text === null) return null;
-  return <div ref={rowRef} className="kb-task-context" role="note" aria-label="Task context">
-    <button type="button" className="kb-task-context-toggle" aria-expanded={open} onClick={() => setOpen(value => !value)}><span aria-hidden="true">{open ? '▾' : '▸'}</span> Task context <span className="kb-task-context-source">kanban-task</span></button>
-    {open && <pre className="kb-task-context-body">{text}</pre>}
-  </div>;
+function sessionRows(sessions: ISessions): Parameters<typeof isOwnedSubagent>[0] {
+  const list = sessions.list?.getSnapshot();
+  const byId = Object.fromEntries(Object.entries(list?.byId ?? {}).map(([id, row]) => [id, row === undefined ? undefined : {
+    ...(row.origin === 'subagent' ? { origin: 'subagent' as const } : {}),
+    ...(row.parentId === undefined ? {} : { parentId: String(row.parentId) }),
+  }]));
+  return { byId };
 }
 
 /** Real client plugin: no replacement server, global Session selection, or native acknowledgement writes. */
@@ -131,6 +94,29 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   const bridge = new ClientBridge(ctx.remote, ctx.uiSession.sessionStatus);
   const draftPort = new InstructionDraftPortImpl();
   const scopedSessions = ctx.sessions;
+  const modePortSource = createModePortSource(agentPresetsNamespace(ctx), { developerTools: () => developerToolsEnabled(ctx) });
+  let modeInjection: ReturnType<Context['inject']> | undefined;
+  try {
+    modeInjection = ctx.inject(['remote.agentPresets'], scoped => {
+      let namespace: unknown;
+      try { namespace = scoped.get('remote.agentPresets'); } catch { namespace = undefined; }
+      if (namespace === undefined) namespace = (scoped as unknown as { remote?: { agentPresets?: unknown } }).remote?.agentPresets;
+      modePortSource.set(namespace);
+      return () => modePortSource.set(undefined);
+    });
+  } catch { modeInjection = undefined; }
+  if (modeInjection !== undefined) void Promise.resolve(modeInjection).catch(() => undefined);
+  const lineage: ConversationLineagePort = {
+    subagentAddress: sessionId => {
+      const address = scopedSessions.subagentAddress(sessionId as SessionId);
+      return address === undefined ? undefined : {
+        parentSessionId: String(address.parentSessionId),
+        childSessionId: String(address.childSessionId),
+        mode: address.mode,
+      };
+    },
+    isOwnedDescendant: (roots, sessionId) => isOwnedSubagent(sessionRows(scopedSessions), roots, sessionId),
+  };
   const pickDirectory = async (): Promise<string | null> => {
     const workspace = ctx.get('uiWorkspace') as { pickDirectory?: () => Promise<string | null> } | undefined;
     return workspace?.pickDirectory ? await workspace.pickDirectory() : null;
@@ -143,38 +129,36 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     if (!status.error) return null;
     return <div className="kanban-feed-error" role="alert">Kanban updates are unavailable: {status.error.message} <button type="button" onClick={() => bridge.retry()}>Retry updates</button></div>;
   }
-  function FixedChat(props: ConversationViewsProps) {
-    return props.renderSlot('conversation.session', { view: 'chat' });
-  }
+  const viewSession = (sessionId: string) => bridge.viewSession(sessionId);
   function EmbeddedBody(props: EmbeddedProps) {
-    const session = props.useSession(value => value);
-    useEffect(() => {
-      let release: (() => void) | undefined;
-      const sync = () => {
-        release?.(); release = undefined;
-        if (document.visibilityState !== 'hidden') release = bridge.viewSession(props.sessionId);
-      };
-      sync(); document.addEventListener('visibilitychange', sync);
-      return () => { document.removeEventListener('visibilitychange', sync); release?.(); };
-    }, [props.sessionId]);
-    if (session.openState === 'error') return <div className="kanban-native-state" role="alert">Native conversation could not open: {session.openError?.message ?? 'Unknown error'}. Close and reopen this tab to retry.</div>;
-    // A task already owns an explicit session and cwd; the main-workspace hero would disable its composer.
-    return props.renderFactorySlot('conversation.content', {
-      variant: 'embedded', phase: session.openState !== 'open' ? 'settling' : 'active', hero: false,
-    }, { slots: { views: FixedChat } });
+    return <EmbeddedConversationBody
+      sessionId={props.sessionId}
+      useSession={props.useSession as never}
+      renderFactorySlot={props.renderFactorySlot as never}
+      viewSession={viewSession}
+    />;
   }
-  function SessionStatus(props: SessionStatusProps) {
-    const open = props.useSession(value => value.openState === 'open');
-    const subscribeLocale = useCallback((listener: () => void) => ctx.locale.subscribe(listener), []);
-    useSyncExternalStore(subscribeLocale, () => ctx.locale.getSnapshot().revision, () => 0);
-    const [, setEntriesRevision] = useState(0);
-    useEffect(() => ctx.slots.subscribe('conversation.session.header.actions', () => setEntriesRevision(value => value + 1)), []);
-    if (!open) return null;
-    const entries = ctx.slots.entriesOfSlot('conversation.session.header.actions');
-    const translate = (namespace: string) => ctx.locale.bind(namespace);
-    return <div className="kb-conversation-status" data-conversation-status="" role="group" aria-label="Conversation status">
-      <NativeSessionActions entries={entries} translate={translate} standard={props as unknown as Record<string, unknown>} />
-    </div>;
+  function SessionHeader(props: SessionHeaderProps) {
+    const navigation = useConversationNavigation();
+    const modePort = useSyncExternalStore(modePortSource.subscribe, modePortSource.getSnapshot, modePortSource.getSnapshot);
+    const developerTools = developerToolsSource(ctx);
+    const renderFactorySlot = (props as unknown as PropsRenderFactories).renderFactorySlot;
+    return <NativeSessionHeader
+      slots={ctx.slots as unknown as NativeSlotSource}
+      locale={ctx.locale as unknown as NativeLocaleSource}
+      standard={props as unknown as Record<string, unknown>}
+      navigation={navigation}
+      modePort={modePort}
+      {...(developerTools === undefined ? {} : { developerTools })}
+      {...(renderFactorySlot === undefined ? {} : { renderFactorySlot })}
+    />;
+  }
+  function TaskContextChatNode(props: ChatNodeViewProps<'kanban-task-context'>) {
+    return <TaskContextNodeView
+      node={props.node}
+      slots={ctx.slots as unknown as NativeSlotSource}
+      t={props.t}
+    />;
   }
   function draftBinding(reference: SessionReference): InstructionDraftBinding {
     const input = () => ctx.conversation.input.for(reference.binding.ctx);
@@ -185,48 +169,20 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       removeAttachment: id => { try { return input().removeAttachment(id as DraftAttachmentId); } catch { return false; } },
     };
   }
-  function RetainedConversation({ id, owner, draftPort }: { id: string; owner: MainProps; draftPort: InstructionDraftPortImpl }) {
-    const [reference, setReference] = useState<SessionReference | null>(null);
-    const [error, setError] = useState<string | null>(null);
-    const [attempt, setAttempt] = useState(0);
-    const conversationHost = useRef<HTMLDivElement>(null);
-    useEffect(() => {
-      if (!reference) return;
-      return draftPort.attach(id, draftBinding(reference));
-    }, [reference, id, draftPort]);
-    useEffect(() => {
-      let active = true; let retained: SessionReference | undefined;
-      const cancellation = new AbortController();
-      const signal = AbortSignal.any([cancellation.signal, lifetime.signal]);
-      const releaseComposer = bridge.claimComposer(id);
-      setReference(null); setError(null);
-      if (!releaseComposer) { setError('This conversation already has an active Kanban composer. Close the other view first.'); return; }
-      void (async () => {
-        // Fresh host task sessions must first join the native Client catalog; this changes no selection.
-        await scopedSessions.refresh(); signal.throwIfAborted();
-        retained = scopedSessions.retain(id as SessionId, { source: 'kanbanTaskDrawer', signal });
-        held.add(retained); await retained.ready; signal.throwIfAborted();
-        if (active) setReference(retained);
-      })().catch((failure: unknown) => {
-        if (active && !signal.aborted) setError(failure instanceof Error ? failure.message : String(failure));
-        if (retained) { held.delete(retained); retained.release(); retained = undefined; }
-      });
-      return () => { active = false; cancellation.abort(); if (retained) { held.delete(retained); retained.release(); } releaseComposer(); };
-    }, [id, attempt]);
-    if (error) return <div className="kanban-native-state" role="alert">{error} <button type="button" onClick={() => setAttempt(value => value + 1)}>Retry conversation</button></div>;
-    if (!reference) return <div className="kanban-native-state" role="status">Opening native conversation…</div>;
-    const Provider = owner.SessionProvider;
-    return <Provider session={reference}>
-      <div className="kb-session-frame">
-        {owner.renderSlot('kanban.session.status', {})}
-        <div className="kb-native-conversation" ref={conversationHost}>
-          {owner.renderSlot('kanban.conversation', {})}
-          <KanbanTaskContextRow source={reference.binding.eventSource} hostRef={conversationHost} />
-        </div>
-      </div>
-    </Provider>;
-  }
   function BoardPage(props: MainProps & { api: ClientApi }) {
+    const surfaceServices = useMemo<ConversationSurfaceServices>(() => ({
+      sessions: scopedSessions,
+      claimComposer: sessionId => bridge.claimComposer(sessionId) ?? null,
+      draftBinding: reference => draftBinding(reference),
+      attachDraft: (sessionId, binding) => draftPort.attach(sessionId, binding),
+      lifetime: lifetime.signal,
+      hold: reference => { held.add(reference); },
+      release: reference => { if (held.delete(reference)) reference.release(); },
+    }), [scopedSessions, bridge, draftPort]);
+    const surfaceOwner = useMemo<ConversationSurfaceOwner>(() => ({
+      SessionProvider: props.SessionProvider,
+      renderSlot: (key, owner) => props.renderSlot(key, owner as never),
+    }), [props.SessionProvider, props.renderSlot]);
     const sessionListSource = scopedSessions.list ?? emptySessionList;
     const subscribeSessionList = useCallback((listener: () => void) => sessionListSource.subscribe(listener), [sessionListSource]);
     const getSessionList = useCallback(() => sessionListSource.getSnapshot(), [sessionListSource]);
@@ -240,7 +196,21 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
         if (!result.ok) throw new Error(result.error.message);
       },
     };
-    return <BoardView api={props.api} pageState={pageState} sessionTitles={sessionTitles} pickDirectory={pickDirectory} draftPort={draftPort} renderConversation={(id) => <RetainedConversation key={id} id={id} owner={props} draftPort={draftPort} />} />;
+    return <BoardView
+      api={props.api}
+      pageState={pageState}
+      sessionTitles={sessionTitles}
+      pickDirectory={pickDirectory}
+      draftPort={draftPort}
+      lineage={lineage}
+      renderConversation={(id, target) => <RetainedConversation
+        key={target?.childSessionId ?? id}
+        id={id}
+        {...(target === undefined ? {} : { target })}
+        owner={surfaceOwner}
+        services={surfaceServices}
+      />}
+    />;
   }
   function Main(props: MainProps) {
     const active = props.usePanelInfo(value => value.activePanelId === 'kanban');
@@ -273,14 +243,18 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   function HiddenDecisionRow() { return null; }
   function BoardIcon() { return <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor"><rect x="2" y="3" width="16" height="14" rx="2" /><path d="M7 3v14M13 3v14M4 7h1M9 7h2M15 7h1M4 10h1M9 10h2" /></svg>; }
 
-  ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'kanban', children: { 'kanban.conversation': { kind: 'single', scope: 'session' }, 'kanban.session.status': { kind: 'single', scope: 'session' } } }, Main));
+  const offTaskContext = ctx.uiConversation.events.register(taskContextDefinition);
+  ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'kanban', children: { 'kanban.conversation': { kind: 'single', scope: 'session' }, 'kanban.session.header': { kind: 'single', scope: 'session' } } }, Main));
   ctx.slots.inject('kanban.conversation', () => ctx.slots.register({ name: 'kanban.conversation' }, EmbeddedBody));
-  ctx.slots.inject('kanban.session.status', () => ctx.slots.register({ name: 'kanban.session.status' }, SessionStatus));
+  ctx.slots.inject('kanban.session.header', () => ctx.slots.register({ name: 'kanban.session.header' }, SessionHeader));
+  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: TASK_CONTEXT_NODE_KIND, locale: 'chat', inject: () => ({}) }, TaskContextChatNode));
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: 'kanban', order: 80, label: 'Kanban' }, BoardIcon));
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'kanban-decision-questions', order: 20 }, Dock));
   ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: 'decision_request' }, HiddenDecisionRow));
   bridge.start();
   return async () => {
+    offTaskContext();
+    try { await modeInjection?.dispose(); } catch { /* the optional namespace fiber is best effort */ }
     lifetime.abort(); for (const reference of held) reference.release(); held.clear();
     await bridge.dispose();
   };

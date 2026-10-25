@@ -14,7 +14,7 @@ if (args.includes('--only') && only === undefined) {
   process.exit(2);
 }
 if (!checkoutArg) {
-  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only board|conversation|deletion|hubs|override]');
+  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only board|conversation|deletion|hubs|override|native-drawer]');
   process.exit(2);
 }
 const checkout = resolve(checkoutArg);
@@ -25,6 +25,7 @@ function verify() {
   if (tag !== 'dsh-v0.2.1-rc.2') fail('expected DSH dsh-v0.2.1-rc.2, found ' + tag);
   for (const path of ['apps/web/dist/index.html', 'packages/bundle/web-app/lib']) if (!existsSync(join(checkout, path))) fail('missing built DSH artifact ' + path + '; install and run `pnpm run build` in the DSH checkout');
   if (!existsSync(join(root, 'tests/e2e-dsh/question-round.jsonl'))) fail('missing question fixture');
+  if (!existsSync(join(root, 'tests/e2e-dsh/task-context.jsonl'))) fail('missing task-context fixture');
   console.log('e2e-dsh prerequisites: ' + checkout + ' (' + tag + ')');
 }
 verify();
@@ -36,6 +37,7 @@ const scenarioTemplates = new Map([
   ['deletion', ['kanban-deletion.e2e.template.ts', 'kanban-deletion.e2e.ts']],
   ['hubs', ['kanban-hubs.e2e.template.ts', 'kanban-hubs.e2e.ts']],
   ['override', ['kanban-move-override.e2e.template.ts', 'kanban-move-override.e2e.ts']],
+  ['native-drawer', ['kanban-native-drawer.e2e.template.ts', 'kanban-native-drawer.e2e.ts']],
 ]);
 if (only !== undefined && !scenarioTemplates.has(only)) fail('unknown --only value: ' + only);
 const scenarios = only === undefined ? [...scenarioTemplates.values()] : [scenarioTemplates.get(only)];
@@ -49,7 +51,7 @@ try {
   }
   execFileSync(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', '--config', 'vitest.web.config.ts', ...copied.map(file => file.slice(checkout.length + 1))], {
     cwd: checkout, stdio: 'inherit',
-    env: { ...process.env, DSH_SNAPSHOT: 'replay', KANBAN_ROOT: root, KANBAN_QUESTION_FIXTURE: join(root, 'tests/e2e-dsh/question-round.jsonl') },
+    env: { ...process.env, DSH_SNAPSHOT: 'replay', KANBAN_ROOT: root, KANBAN_QUESTION_FIXTURE: join(root, 'tests/e2e-dsh/question-round.jsonl'), KANBAN_TASK_CONTEXT_FIXTURE: join(root, 'tests/e2e-dsh/task-context.jsonl') },
   });
 } finally {
   for (const file of copied) rmSync(file, { force: true });

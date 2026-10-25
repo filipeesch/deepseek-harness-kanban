@@ -7,11 +7,15 @@ export type NativeActionTranslate = (key: string, params?: Record<string, unknow
 /** A native snapshot source exposed by an entry's inject face. */
 interface SnapshotSource { getSnapshot(): unknown; subscribe(listener: () => void): () => void }
 
+export type NativeActionOverride = (entry: StoredEntry, face: Record<string, unknown>) => Record<string, unknown>;
+
 export interface NativeSessionActionsProps {
   entries: readonly StoredEntry[];
   translate: (namespace: string) => NativeActionTranslate;
   /** Session standard props forwarded to every native action component. */
   standard: Record<string, unknown>;
+  /** Redirect native callbacks (for example, keep subagent navigation in the drawer). */
+  overrideFace?: NativeActionOverride;
 }
 
 const NATIVE_STATUS_IDS = new Set(['agent-preset', 'subagent-catalog', 'job-list']);
@@ -61,16 +65,20 @@ interface NativeActionProps {
   entry: StoredEntry;
   standard: Record<string, unknown>;
   translate: NativeSessionActionsProps['translate'];
+  overrideFace?: NativeActionOverride;
 }
 
-function NativeActionBody({ entry, standard, translate }: NativeActionProps) {
+function NativeActionBody({ entry, standard, translate, overrideFace }: NativeActionProps) {
   const sessionId = standard.sessionId;
   const face = useMemo(() => {
+    let injected: Record<string, unknown> = {};
     try {
       const inject = entry.inject as ((...args: unknown[]) => Record<string, unknown>) | undefined;
-      return inject?.(sessionId) ?? {};
-    } catch { return {}; }
-  }, [entry, sessionId]);
+      injected = inject?.(sessionId) ?? {};
+    } catch { injected = {}; }
+    if (overrideFace === undefined) return injected;
+    try { return overrideFace(entry, injected); } catch { return injected; }
+  }, [entry, sessionId, overrideFace]);
   const { hooks: rawHooks, ...actions } = face;
   const hookProps = useMemo(() => {
     const hooks = (rawHooks ?? {}) as Record<string, SnapshotSource>;
@@ -90,8 +98,8 @@ function NativeAction(props: NativeActionProps) {
  * The entry component, inject face, and locale are private host contracts; this is intentionally
  * contained to the pinned DSH release and must hide, not fake, an unavailable action.
  */
-export function NativeSessionActions({ entries, translate, standard }: NativeSessionActionsProps) {
+export function NativeSessionActions({ entries, translate, standard, overrideFace }: NativeSessionActionsProps) {
   const actions = nativeStatusActions(entries);
   if (actions.length === 0) return null;
-  return <>{actions.map((entry, index) => <NativeAction key={String(entry.options.id ?? index) + ':' + actionIdentity(entry) + ':' + String(standard.sessionId)} entry={entry} standard={standard} translate={translate} />)}</>;
+  return <>{actions.map((entry, index) => <NativeAction key={String(entry.options.id ?? index) + ':' + actionIdentity(entry) + ':' + String(standard.sessionId)} entry={entry} standard={standard} translate={translate} {...(overrideFace === undefined ? {} : { overrideFace })} />)}</>;
 }

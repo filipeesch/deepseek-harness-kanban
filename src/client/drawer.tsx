@@ -1,33 +1,49 @@
-import React, { Component, useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { EMPTY_ATTENTION, type Attention, type BoardState, type ClientApi, type Column, type Problem, type Task } from '../shared/types.js';
+import React, { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { EMPTY_ATTENTION, type Attention, type BoardState, type ClientApi, type Column, type Task } from '../shared/types.js';
 import { InfoPanel, NotesPanel } from './forms.js';
 import { GitPanel, PendingTransitionStatus } from './git.js';
 import { OperationStatus } from './operation-status.js';
 import { WorktreeNotice } from './worktree-notice.js';
 import { useWorktreeDraft } from './worktree-draft.js';
-import { creationReceiptId, ErrorNotice, Tabs, useAction, type RunCommand } from './ui.js';
+import { Tabs, type RunCommand } from './ui.js';
 import { CloseIcon, TrashIcon } from './icons.js';
-import { createTaskPageState, resolveActiveConversation, usePageField, type DrawerSection, type TaskPageState } from './page-state.js';
+import { createTaskPageState, usePageField, type DrawerSection, type TaskPageState } from './page-state.js';
 import { TaskActivity } from './activity.js';
 import { transitionDestinations } from '../domain/transitions.js';
 import type { DraftResult, InstructionDraftPort } from './instruction-draft.js';
+import { DrawerConversations, conversationLabel, type SessionTitles } from './drawer-conversations.js';
+import type { ConversationLineagePort, DrawerSubagentAddress } from './conversation-navigation.js';
 
-export interface SessionTitles { title(sessionId: string): string | undefined; rename(sessionId: string, title: string): Promise<void> }
-export function conversationLabel(task: Task, sessionId: string, titles?: SessionTitles): string {
-  return titles?.title(sessionId)?.trim() || 'Agent ' + (task.sessionIds.indexOf(sessionId) + 1);
-}
+export { conversationLabel } from './drawer-conversations.js';
+export type { SessionTitles } from './drawer-conversations.js';
 
 interface PrefillStatus { status: 'pending' | DraftResult; sessionId: string | null; column: Column; message?: string }
-interface DrawerProps { task: Task; attention?: Attention; state: BoardState; api: ClientApi; run: RunCommand; renderConversation: (id: string) => ReactNode; onClose: () => void; onMove: (task: Task, column: Column, beforeTaskId?: string | null) => Promise<boolean>; onDanger: (task: Task, type: 'task.delete' | 'worktree.remove') => void; viewState?: TaskPageState; sessionTitles?: SessionTitles; draftPort?: InstructionDraftPort; entering?: boolean; closing?: boolean }
+interface DrawerProps {
+  task: Task; attention?: Attention; state: BoardState; api: ClientApi; run: RunCommand;
+  renderConversation: (id: string, target?: DrawerSubagentAddress) => ReactNode;
+  onClose: () => void;
+  onMove: (task: Task, column: Column, beforeTaskId?: string | null) => Promise<boolean>;
+  onDanger: (task: Task, type: 'task.delete' | 'worktree.remove') => void;
+  viewState?: TaskPageState; sessionTitles?: SessionTitles; draftPort?: InstructionDraftPort;
+  lineage?: ConversationLineagePort;
+  /** Controlled investigation target; omitted keeps the drawer's transient local state. */
+  peek?: DrawerSubagentAddress | null;
+  onPeek?: (target: DrawerSubagentAddress | null) => void;
+  entering?: boolean; closing?: boolean;
+}
 
 const DRAWER_WIDTH_KEY = 'dsh-kanban.drawer.width';
 const DRAWER_DEFAULT_WIDTH = 620;
 function clampWidth(value: number): number { const max = Math.max(360, (typeof window === 'undefined' ? 1200 : window.innerWidth) * 0.9); return Math.min(Math.max(value, 360), max); }
 function storedWidth(): number { try { const value = Number(window.localStorage.getItem(DRAWER_WIDTH_KEY)); if (Number.isFinite(value) && value > 0) return clampWidth(value === 560 ? DRAWER_DEFAULT_WIDTH : value); } catch { /* storage is optional */ } return clampWidth(DRAWER_DEFAULT_WIDTH); }
 
-export function TaskDrawer({ task, attention = EMPTY_ATTENTION, state, api, run, renderConversation, onClose, onMove, onDanger, viewState, sessionTitles, draftPort, entering = false, closing = false }: DrawerProps) {
+export function TaskDrawer({ task, attention = EMPTY_ATTENTION, state, api, run, renderConversation, onClose, onMove, onDanger, viewState, sessionTitles, draftPort, lineage, peek: controlledPeek, onPeek, entering = false, closing = false }: DrawerProps) {
   const [localViewState] = useState(createTaskPageState); const preferences = viewState ?? localViewState;
   const [section, setSection] = usePageField(preferences, 'section'); const [dismissed, setDismissed] = useState(false); const id = useId(); const close = useRef<HTMLButtonElement>(null);
+  const [localPeek, setLocalPeek] = useState<DrawerSubagentAddress | null>(null);
+  const peek = controlledPeek === undefined ? localPeek : controlledPeek;
+  const setPeek = onPeek ?? setLocalPeek;
+  const taskId = useRef(task.id);
   const [width, setWidth] = useState(storedWidth); const widthRef = useRef(width); widthRef.current = width;
   const aside = useRef<HTMLElement>(null);
   const [movingTo, setMovingTo] = useState<string | null>(null); const [prefill, setPrefill] = useState<PrefillStatus | null>(null); const prefillAbort = useRef<AbortController | null>(null); const prefillTimer = useRef<number | null>(null); const alive = useRef(true);
@@ -42,6 +58,12 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, state, api, run,
   }, []);
   useEffect(() => { const element = aside.current; if (!element) return; if (closing) element.setAttribute('inert', ''); else element.removeAttribute('inert'); return () => element.removeAttribute('inert'); }, [closing]);
   useEffect(() => { setDismissed(false); }, [task.worktree?.path]);
+  useEffect(() => { if (closing || section !== 'Conversations') setPeek(null); }, [closing, section]);
+  useEffect(() => {
+    if (taskId.current === task.id) return;
+    taskId.current = task.id;
+    setPeek(null);
+  }, [task.id, setPeek]);
   const project = state.projects.find(value => value.id === task.projectId); const blocked = Boolean(task.operation || task.pendingTransition);
   const destinations = transitionDestinations(state.workflow, task.columnId);
   const worktreeDraft = useWorktreeDraft({ api, task, project, basePath: state.settings?.worktreeBasePath, enabled: !task.worktree && (section === 'Conversations' || section === 'Git') });
@@ -59,6 +81,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, state, api, run,
     if (!moved || !alive.current || controller.signal.aborted) return;
     const instruction = column.onEnterPrompt ?? '';
     if (!instruction.trim()) return;
+    setPeek(null);
     if (preferences.conversationSelectionRequired) {
       setPrefill({ status: 'unavailable', sessionId: null, column, message: 'Select a conversation tab before inserting the instruction.' });
       return;
@@ -128,83 +151,10 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, state, api, run,
     <div className="kb-drawer-toolbar"><Tabs label="Task sections" values={['Conversations', 'Info', 'Git', 'Notes']} selected={section} onSelect={value => setSection(value as DrawerSection)} id={id} /><label className="kb-stage-compact"><span className="kb-sr">Move task to</span><select className="kb-input kb-stage-select" aria-label="Move task to" aria-describedby={id + '-stage-hint'} value={movingTo ?? task.columnId} disabled={blocked || movingTo !== null} onChange={event => { const column = state.workflow.columns.find(value => value.id === event.target.value); if (column && column.id !== task.columnId) void moveTo(column); }}>{destinations.map(({ column, access }) => <option key={column.id} value={column.id} className={access === 'restricted' ? 'kb-stage-option-restricted' : undefined} aria-label={access === 'restricted' ? column.name + ', requires confirmation' : undefined}>{column.name}</option>)}</select></label><span className="kb-sr" id={id + '-stage-hint'}>Stages that this workflow does not permit require confirmation before moving.</span></div>
     {prefill && <div className={'kb-prefill kb-prefill-' + prefill.status} role="status"><p>{prefillText(prefill)}</p>{prefill.status === 'preserved' && <button type="button" className="kb-button" onClick={() => void replaceDraft()}>Replace draft</button>}</div>}
     <section className={'kb-drawer-panel ' + (section === 'Conversations' ? 'kb-chat-panel' : '')} role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>
-      {section === 'Conversations' && <>{!task.worktree && !dismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} onDismiss={() => setDismissed(true)} />}<Conversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} /></>}
+      {section === 'Conversations' && <>{!task.worktree && !dismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} onDismiss={() => setDismissed(true)} />}<DrawerConversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} peek={peek} onPeek={setPeek} lineage={lineage} /></>}
       {section === 'Info' && <InfoPanel task={task} state={state} run={run} viewState={preferences} />}
       {section === 'Git' && <GitPanel task={task} project={project} api={api} run={run} worktreeBasePath={state.settings?.worktreeBasePath} draft={worktreeDraft} />}
       {section === 'Notes' && <NotesPanel task={task} state={state} run={run} viewState={preferences} />}
     </section>
   </aside>;
-}
-
-function Conversations({ task, run, renderConversation, viewState, sessionTitles }: { task: Task; run: RunCommand; renderConversation: (id: string) => ReactNode; viewState: TaskPageState; sessionTitles?: SessionTitles }) {
-  const open = task.sessionIds.filter(id => !task.closedSessionIds.includes(id)); const openKey = JSON.stringify(open); const [selected, setSelected] = usePageField(viewState, 'conversationId'); const [selectionRequired, setSelectionRequired] = usePageField(viewState, 'conversationSelectionRequired'); const action = useAction(run); const id = useId();
-  const [creationPending, setCreationPending] = useState(false); const [creationError, setCreationError] = useState<Problem | null>(null);
-  const [renaming, setRenaming] = useState<{ sessionId: string; value: string } | null>(null); const [renameError, setRenameError] = useState<Problem | null>(null);
-  const canSelectDefault = !creationPending && !creationError && !selectionRequired;
-  useEffect(() => { if (canSelectDefault && (selected === null || !open.includes(selected))) setSelected(open[0] ?? null); }, [openKey, selected, setSelected, canSelectDefault]);
-  const active = resolveActiveConversation(task.sessionIds, task.closedSessionIds, selected, canSelectDefault) ?? undefined;
-  function chooseConversation(sessionId: string) { setSelected(sessionId); setSelectionRequired(false); setCreationError(null); }
-  const label = (sessionId: string) => conversationLabel(task, sessionId, sessionTitles);
-  async function createConversation() {
-    if (creationPending || creationError || selectionRequired) return;
-    setCreationPending(true);
-    try {
-      const result = await action.execute({ type: 'conversation.create', taskId: task.id });
-      if (!result) return;
-      const sessionId = creationReceiptId(result, 'conversation');
-      const createdTask = result.state.hubs.flatMap(hub => hub.tasks).find(value => value.id === task.id);
-      if (!sessionId || !createdTask?.sessionIds.includes(sessionId) || createdTask.closedSessionIds.includes(sessionId)) {
-        setSelectionRequired(true);
-        setCreationError({ code: !sessionId ? 'CREATION_RECEIPT_REQUIRED' : 'CREATED_CONVERSATION_UNAVAILABLE', message: 'The saved conversation could not be identified safely from its exact creation receipt. Select a tab explicitly or refresh the application before creating another conversation.' });
-        return;
-      }
-      chooseConversation(sessionId);
-    } finally { setCreationPending(false); }
-  }
-  function beginRename(sessionId: string) { if (!sessionTitles) return; const labelValue = sessionTitles.title(sessionId) ?? ''; setRenaming({ sessionId, value: labelValue }); setRenameError(null); }
-  async function commitRename() {
-    if (!renaming || !sessionTitles) return;
-    const value = renaming.value.trim(); const sessionId = renaming.sessionId; setRenaming(null);
-    if (!value || value === sessionTitles.title(sessionId)) return;
-    try { await sessionTitles.rename(sessionId, value); }
-    catch (error) { setRenameError({ code: 'RENAME_FAILED', message: error instanceof Error ? error.message : 'The conversation title could not be renamed.' }); }
-  }
-  function closeConversation() { if (active) void action.execute({ type: 'conversation.close', taskId: task.id, sessionId: active }); }
-  return <div className="kb-conversations"><ConversationTabs
-    open={open} active={active} id={id} label={label} sessionTitles={sessionTitles}
-    renaming={renaming} setRenaming={setRenaming} chooseConversation={chooseConversation}
-    beginRename={beginRename} commitRename={commitRename} createConversation={createConversation}
-    closeConversation={closeConversation} creating={creationPending}
-    createBlocked={Boolean(creationError || selectionRequired)} busy={Boolean(task.operation || task.pendingTransition)}
-    actionPending={action.pending} /><ErrorNotice problem={action.error} /><ErrorNotice problem={renameError} /><ErrorNotice problem={creationError ?? (selectionRequired ? { code: 'CREATION_RECEIPT_REQUIRED', message: 'Select a conversation tab explicitly or refresh the application before creating another conversation.' } : null)} />
-    {task.closedSessionIds.length > 0 && <details className="kb-closed"><summary>Closed conversations ({task.closedSessionIds.length})</summary><div className="kb-actions">{task.closedSessionIds.map(sessionId => <button key={sessionId} type="button" className="kb-button" disabled={action.pending} onClick={async () => { const result = await action.execute({ type: 'conversation.reopen', taskId: task.id, sessionId }); if (result) chooseConversation(sessionId); }}>Reopen {label(sessionId)}</button>)}</div><p className="kb-hint">Closing a tab preserves its conversation and history.</p></details>}
-    {active ? <ConversationBody active={active} id={id} renderConversation={renderConversation} /> : <p className="kb-empty">{creationPending ? 'Resolving the newly created conversation…' : selectionRequired ? 'Select a conversation tab explicitly before continuing.' : 'All conversation tabs are closed. Reopen an existing conversation or use + to add one.'}</p>}
-  </div>;
-}
-
-interface ConversationTabsProps {
-  open: readonly string[]; active?: string; id: string; label: (sessionId: string) => string; sessionTitles?: SessionTitles;
-  renaming: { sessionId: string; value: string } | null;
-  setRenaming: (value: { sessionId: string; value: string } | null) => void;
-  chooseConversation: (sessionId: string) => void; beginRename: (sessionId: string) => void; commitRename: () => Promise<void>;
-  createConversation: () => void; closeConversation: () => void;
-  creating: boolean; createBlocked: boolean; busy: boolean; actionPending: boolean;
-}
-
-function ConversationTabs({ open, active, id, label, sessionTitles, renaming, setRenaming, chooseConversation, beginRename, commitRename, createConversation, closeConversation, creating, createBlocked, busy, actionPending }: ConversationTabsProps) {
-  return <div className="kb-session-toolbar"><div className="kb-tabs kb-agent-tabs" role="tablist" aria-label="Agent conversations">{open.map((sessionId, index) => renaming?.sessionId === sessionId
-    ? <input key={sessionId} className="kb-input kb-tab-input" autoFocus aria-label={'Rename ' + label(sessionId)} value={renaming.value} onChange={event => setRenaming({ sessionId, value: event.target.value })} onBlur={() => void commitRename()} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void commitRename(); } if (event.key === 'Escape') { event.preventDefault(); setRenaming(null); } }} />
-    : <button type="button" key={sessionId} className="kb-tab" id={id + '-tab-' + sessionId} role="tab" aria-selected={active === sessionId} aria-controls={id + '-conversation'} tabIndex={active === sessionId ? 0 : -1} title={sessionTitles?.title(sessionId) ?? sessionId} onClick={() => chooseConversation(sessionId)} onDoubleClick={() => beginRename(sessionId)} onContextMenu={event => { if (!sessionTitles) return; event.preventDefault(); beginRename(sessionId); }} onKeyDown={event => { let next = index; if (event.key === 'ArrowRight') next = (index + 1) % open.length; else if (event.key === 'ArrowLeft') next = (index + open.length - 1) % open.length; else if (event.key === 'Home') next = 0; else if (event.key === 'End') next = open.length - 1; else return; event.preventDefault(); const value = open[next]; if (value) { chooseConversation(value); document.getElementById(id + '-tab-' + value)?.focus(); } }}>{label(sessionId)}</button>)}</div>
-    <button type="button" className="kb-button kb-icon-button" aria-label="New conversation" title="New conversation" disabled={actionPending || creating || createBlocked || busy} onClick={createConversation}><span aria-hidden="true">+</span></button>
-    {active && <button type="button" className="kb-button kb-icon-button" aria-label={'Close ' + label(active)} title={'Close ' + label(active)} disabled={actionPending} onClick={closeConversation}><CloseIcon size={14} /></button>}
-  </div>;
-}
-
-function ConversationBody({ active, id, renderConversation }: { active: string; id: string; renderConversation: (id: string) => ReactNode }) {
-  return <div className="kb-conversation-panel" role="tabpanel" id={id + '-conversation'} aria-labelledby={id + '-tab-' + active}><NativeBoundary key={active}>{renderConversation(active)}</NativeBoundary></div>;
-}
-class NativeBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
-  state: { error: string | null } = { error: null };
-  static getDerivedStateFromError(error: unknown) { return { error: error instanceof Error ? error.message : 'Native conversation rendering failed.' }; }
-  render() { return this.state.error ? <div role="alert" className="kb-error"><strong>Native conversation unavailable</strong><p>{this.state.error}</p><button type="button" className="kb-button" onClick={() => this.setState({ error: null })}>Retry native view</button></div> : this.props.children; }
 }
