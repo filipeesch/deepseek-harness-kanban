@@ -18,6 +18,22 @@ function WorkflowScenario() {
   return <Configuration state={snapshot.state} hub={snapshot.state.hubs[0]!} board={snapshot.state.hubs[0]!.boards[0]!} hubCount={1} settings={snapshot.state.settings} settingsRevision={snapshot.state.settings.revision} run={run} api={harness.api} initial="Board" onClose={() => {}} />;
 }
 
+function NativeComposerScenario() {
+  return <div className="dsh-kanban" style={{ height: 600 }}>
+    <div className="kb-session-frame" style={{ height: '100%' }}>
+      <div className="kb-native-session-header" style={{ height: 52 }}>header</div>
+      <div className="kb-native-conversation">
+        <div data-conversation-content="" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+          <div data-conversation-scroll="" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflowY: 'auto' }}>
+            <div data-conversation-session="" style={{ flex: '1 0 auto', minHeight: 0 }} />
+            <div data-composer-seat="" style={{ flex: 'none', height: 80 }}>composer</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
 const round: QuestionRound = {
   id: 'round-1', sessionId: 'session-1', turnId: '1', complete: true, answered: false,
   pages: [{ callId: 'call-1', sequence: 0, page: { question: 'Which **storage** should we use?', type: 'exclusive', options: [{ title: 'Local', description: 'Keep it local.' }, { title: 'Remote', description: 'Use a service.' }] } }],
@@ -41,6 +57,7 @@ function App() {
   if (scenario === 'hubs') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;
   if (scenario === 'appearance') return <><style>{themeFixture}</style><ThemeSync /><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></>;
   if (scenario === 'move') return <><style>{themeFixture}</style><ThemeSync /><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></>;
+  if (scenario === 'native-composer') return <><style>{styles}</style><NativeComposerScenario /></>;
   if (scenario === 'workflow') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario /></div></>;
   if (scenario === 'question') return <><style>{styles}</style><div className="dsh-kanban"><QuestionScenario /></div></>;
   return <BoardView api={harness.api} renderConversation={id => <div data-native={id} />} />;

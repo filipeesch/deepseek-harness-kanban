@@ -29,6 +29,7 @@ describe('board and editor style contracts', () => {
 
   it('hosts the native session header and removes the task-context overlay layout', () => {
     expect(styles).toContain('.dsh-kanban .kb-native-session-header{');
+    expect(styles).toContain('.dsh-kanban .kb-native-conversation [data-conversation-scroll]>[data-composer-seat]{margin-top:auto}');
     expect(styles).toContain('--dsh-frame-leading-clearance:0px');
     expect(styles).toContain('.dsh-kanban .kb-task-context-fallback{');
     expect(styles).not.toContain('.kb-native-conversation>.kb-task-context{position:absolute');
