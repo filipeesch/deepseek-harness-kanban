@@ -152,7 +152,7 @@ function Conversations({ task, run, renderConversation, viewState, sessionTitles
       const result = await action.execute({ type: 'conversation.create', taskId: task.id });
       if (!result) return;
       const sessionId = creationReceiptId(result, 'conversation');
-      const createdTask = result.state.tasks.find(value => value.id === task.id);
+      const createdTask = result.state.hubs.flatMap(hub => hub.tasks).find(value => value.id === task.id);
       if (!sessionId || !createdTask?.sessionIds.includes(sessionId) || createdTask.closedSessionIds.includes(sessionId)) {
         setSelectionRequired(true);
         setCreationError({ code: !sessionId ? 'CREATION_RECEIPT_REQUIRED' : 'CREATED_CONVERSATION_UNAVAILABLE', message: 'The saved conversation could not be identified safely from its exact creation receipt. Select a tab explicitly or refresh the application before creating another conversation.' });

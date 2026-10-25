@@ -2,23 +2,24 @@ import { randomUUID } from 'node:crypto';
 import { lstat, stat } from 'node:fs/promises';
 import { KanbanError, problem } from '../shared/errors.js';
 import type { GitPort, GitTree, SessionPort } from '../shared/ports.js';
-import type { BoardState, ContextOperation, OperationRequest, Project, Task } from '../shared/types.js';
+import type { ContextOperation, HubState, OperationRequest, Project, Task } from '../shared/types.js';
 import { canonicalPath } from './git.js';
 import { WorktreeSharingGuard } from './worktree-sharing.js';
 
 export interface WorktreeStore {
-  snapshot(): BoardState;
-  transact(change: (draft: BoardState) => void): Promise<unknown>;
+  locate(taskId: string): { hubId: string; hub: HubState; task: Task; project: Project };
+  transactTask<T>(taskId: string, change: (draft: HubState) => T): Promise<T>;
+  allTasks(): Task[];
 }
 export interface WorktreeCoordinatorOptions { signal?: AbortSignal; id?: () => string; now?: () => string; onTaskDeleted?: (task: Task, project: Project) => Promise<void>; sharing?: WorktreeSharingGuard }
 type CreateAttempt = NonNullable<ContextOperation['createAttempt']>;
 
-function requireTask(state: BoardState, id: string): Task {
+function requireTask(state: HubState, id: string): Task {
   const task = state.tasks.find(item => item.id === id);
   if (!task) throw new KanbanError('TASK_NOT_FOUND', 'The task does not exist.', { taskId: id });
   return task;
 }
-function requireProject(state: BoardState, id: string): Project {
+function requireProject(state: HubState, id: string): Project {
   const project = state.projects.find(item => item.id === id);
   if (!project) throw new KanbanError('PROJECT_NOT_FOUND', 'The task project does not exist.', { projectId: id });
   return project;
@@ -82,14 +83,13 @@ export class WorktreeCoordinator {
     return result;
   }
 
-  private read(taskId: string): { task: Task; project: Project } {
-    const state = this.store.snapshot();
-    const task = requireTask(state, taskId);
-    return { task, project: requireProject(state, task.projectId) };
+  private read(taskId: string): { task: Task; project: Project; hub: HubState } {
+    const located = this.store.locate(taskId);
+    return { task: located.task, project: located.project, hub: located.hub };
   }
 
   private async update(taskId: string, operationId: string, change: (task: Task, operation: ContextOperation) => void): Promise<void> {
-    await this.store.transact(state => {
+    await this.store.transactTask(taskId, state => {
       const task = requireTask(state, taskId);
       if (task.operation?.id !== operationId) throw new KanbanError('OPERATION_CHANGED', 'The operation changed while it was being coordinated.');
       change(task, task.operation);
@@ -104,8 +104,9 @@ export class WorktreeCoordinator {
     return true;
   }
 
-  async request(taskId: string, request: OperationRequest): Promise<BoardState> {
+  async request(taskId: string, request: OperationRequest): Promise<HubState> {
     if (request.kind === 'return') return this.returnToBase(taskId);
+    const before = this.read(taskId).hub;
     return this.serial(taskId, async () => {
       this.assertOpen();
       if (!['create', 'attach', 'remove', 'delete'].includes(request.kind)) throw new KanbanError('INVALID_OPERATION', 'Unsupported worktree operation.');
@@ -126,22 +127,26 @@ export class WorktreeCoordinator {
         await this.start(taskId, normalized);
       }
       await this.drive(taskId);
-      return this.store.snapshot();
+      return this.hubAfter(taskId, before);
     });
   }
 
-  async retry(taskId: string): Promise<BoardState> {
+  private hubAfter(taskId: string, fallback: HubState): HubState { try { return this.store.locate(taskId).hub; } catch { return fallback; } }
+
+  async retry(taskId: string): Promise<HubState> {
+    const before = this.read(taskId).hub;
     return this.serial(taskId, async () => {
       this.assertOpen();
       const { task } = this.read(taskId);
       if (!task.operation) throw new KanbanError('NO_OPERATION', 'There is no operation to retry.');
       await this.update(taskId, task.operation.id, (_task, operation) => { if (operation.phase === 'failed') operation.phase = 'waiting'; });
       await this.drive(taskId);
-      return this.store.snapshot();
+      return this.hubAfter(taskId, before);
     });
   }
 
-  async returnToBase(taskId: string): Promise<BoardState> {
+  async returnToBase(taskId: string): Promise<HubState> {
+    const before = this.read(taskId).hub;
     return this.serial(taskId, async () => {
       this.assertOpen();
       const { task, project } = this.read(taskId);
@@ -175,7 +180,7 @@ export class WorktreeCoordinator {
       }
       await this.start(taskId, { kind: 'return' });
       await this.drive(taskId);
-      return this.store.snapshot();
+      return this.hubAfter(taskId, before);
     });
   }
 
@@ -186,7 +191,7 @@ export class WorktreeCoordinator {
     this.resumed = (async () => {
       do {
         this.resumeAgain = false;
-        const tasks = this.store.snapshot().tasks.filter(task => task.operation && task.operation.phase !== 'failed');
+        const tasks = this.store.allTasks().filter(task => task.operation && task.operation.phase !== 'failed');
         // Each failure remains on its own task; one failing task must not starve others.
         await Promise.all(tasks.map(task => this.serial(task.id, () => this.drive(task.id)).catch(() => {})));
       } while (this.resumeAgain && !this.disposed && !this.signal.aborted);
@@ -209,7 +214,7 @@ export class WorktreeCoordinator {
     const rawTarget = request.kind === 'create' || request.kind === 'attach' ? request.path : prior.worktree?.path;
     const targetPath = rawTarget ? await canonicalPath(rawTarget, true) : undefined;
     if ((request.kind === 'remove' || request.kind === 'delete') && request.expectedWorktreePath !== undefined && request.expectedWorktreePath !== (targetPath ?? null)) throw new KanbanError('WORKTREE_CHANGED', 'The worktree changed before the confirmed operation could be recorded.');
-    await this.store.transact(state => {
+    await this.store.transactTask(taskId, state => {
       const task = requireTask(state, taskId);
       if (task.projectId !== prior.projectId || task.worktree?.path !== prior.worktree?.path) throw new KanbanError('OPERATION_TARGET_CHANGED', 'The task context changed before the operation was recorded.');
       task.operation = {
@@ -385,14 +390,14 @@ export class WorktreeCoordinator {
       }
       this.assertOpen();
       const deleted = this.read(taskId);
-      await this.store.transact(state => {
+      await this.store.transactTask(taskId, state => {
         if (requireTask(state, taskId).operation?.id !== operationId) throw new KanbanError('OPERATION_CHANGED', 'The deletion operation changed.');
         state.notes = state.notes.filter(note => note.taskId !== taskId);
         state.tasks = state.tasks.filter(item => item.id !== taskId);
       });
       try { await this.onTaskDeleted?.(deleted.task, deleted.project); } catch { /* cleanup is reported by the callback owner */ }
     } catch (error) {
-      const current = this.store.snapshot().tasks.find(task => task.id === taskId);
+      const current = this.store.locate(taskId).task;
       if (current?.operation?.id === operationId) {
         const failure = problem(error);
         const recorded = current.operation.createAttempt;

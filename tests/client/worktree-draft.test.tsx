@@ -58,7 +58,7 @@ describe('useWorktreeDraft', () => {
   });
 });
 
-function NoticeHarness({ api, run, basePath = '/worktrees', disabled = false, onReview = vi.fn() }: { api: ClientApi; run: (command: import('../../src/shared/types.js').Command) => Promise<import('../../src/shared/types.js').BoardSnapshot>; basePath?: string; disabled?: boolean; onReview?: () => void }) {
+function NoticeHarness({ api, run, basePath = '/worktrees', disabled = false, onReview = vi.fn() }: { api: ClientApi; run: (command: import('../../src/shared/types.js').Command) => Promise<import('../../src/shared/types.js').KanbanSnapshot>; basePath?: string; disabled?: boolean; onReview?: () => void }) {
   const draft = useWorktreeDraft({ api, task, project, basePath, enabled: true });
   return <><button type="button" onClick={() => draft.assign({ ...draft.value, branchName: 'edited-branch' })}>Edit draft</button><WorktreeNotice task={task} project={project} draft={draft} run={run} disabled={disabled} onReview={onReview} onDismiss={vi.fn()} /></>;
 }

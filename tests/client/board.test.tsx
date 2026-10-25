@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { BoardView, columnLayout } from '../../src/client/board.js';
-import type { BoardSnapshot, ClientApi, Command } from '../../src/shared/types.js';
+import type { KanbanSnapshot, ClientApi, Command } from '../../src/shared/types.js';
 import { styles } from '../../src/client/styles.js';
 import { deferred, fakeApi, fixture } from './helpers.js';
 
@@ -166,7 +166,7 @@ describe('scoped Kanban page', () => {
     const { user, command } = mount(); await loaded(); await user.click(screen.getByRole('button', { name: 'Configuration' })); await user.click(screen.getByRole('tab', { name: 'Projects' }));
     await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Worker'); await user.type(screen.getByRole('textbox', { name: 'Project path' }), '/mono/apps/worker'); await user.type(screen.getByRole('textbox', { name: 'Git root' }), '/mono'); await user.click(screen.getByRole('button', { name: 'Save project' }));
     await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'project.save', project: { name: 'Worker', projectPath: '/mono/apps/worker', gitRootPath: '/mono' } })));
-    await user.click(screen.getByRole('tab', { name: 'Workflow' })); const yaml = screen.getByRole('textbox', { name: 'Workflow YAML' }); await user.clear(yaml); await user.type(yaml, 'name: Host Reject' + String.fromCharCode(10) + 'initial_column: one' + String.fromCharCode(10) + 'columns:' + String.fromCharCode(10) + '  - id: one' + String.fromCharCode(10) + '    label: One'); command.mockRejectedValueOnce({ code: 'INVALID_WORKFLOW', message: 'Column is missing.' }); const save = screen.getByRole('button', { name: 'Save workflow' }) as HTMLButtonElement; await waitFor(() => expect(save.disabled).toBe(false)); await user.click(save); expect(await screen.findByRole('alert')).toBeTruthy(); expect(screen.getByText('Column is missing.')).toBeTruthy();
+    await user.click(screen.getByRole('tab', { name: 'Board' })); const yaml = screen.getByRole('textbox', { name: 'Workflow YAML' }); await user.clear(yaml); await user.type(yaml, 'name: Host Reject' + String.fromCharCode(10) + 'initial_column: one' + String.fromCharCode(10) + 'columns:' + String.fromCharCode(10) + '  - id: one' + String.fromCharCode(10) + '    label: One'); command.mockRejectedValueOnce({ code: 'INVALID_WORKFLOW', message: 'Column is missing.' }); const save = screen.getByRole('button', { name: 'Save workflow' }) as HTMLButtonElement; await waitFor(() => expect(save.disabled).toBe(false)); await user.click(save); expect(await screen.findByRole('alert')).toBeTruthy(); expect(screen.getByText('Column is missing.')).toBeTruthy();
   });
 
   it('edits a newly saved project rather than creating it again', async () => {
@@ -305,7 +305,7 @@ describe('Git controls and destructive actions', () => {
 
   it('keeps the delete confirmation busy and dismissable only after the command settles', async () => {
     const { user, command, get, publish } = mount(); await openAlpha(user);
-    const gate = deferred<BoardSnapshot>();
+    const gate = deferred<KanbanSnapshot>();
     command.mockImplementationOnce(() => gate.promise);
     await user.click(screen.getByRole('button', { name: 'Delete task' }));
     const dialog = screen.getByRole('dialog', { name: 'Delete task' });
@@ -325,7 +325,7 @@ describe('Git controls and destructive actions', () => {
     await user.click(screen.getByRole('checkbox', { name: 'Select Beta task' }));
     await user.click(screen.getByRole('button', { name: 'Delete 2' }));
     const dialog = screen.getByRole('dialog', { name: 'Delete selected tasks' });
-    const gate = deferred<BoardSnapshot>();
+    const gate = deferred<KanbanSnapshot>();
     command.mockImplementationOnce(() => gate.promise);
     command.mockRejectedValueOnce({ code: 'TASK_BUSY', message: 'Wait for Beta.' });
     await user.click(within(dialog).getByRole('button', { name: 'Delete selected' }));
@@ -342,7 +342,7 @@ describe('Git controls and destructive actions', () => {
     const { user, command, get, publish } = mount(); await openAlpha(user);
     const operation = { id: 'op', request: { kind: 'delete' as const, discardChanges: false, expectedWorktreePath: null }, phase: 'waiting' as const, targetPath: undefined, previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false, createdAt: 'now' };
     const initial = get();
-    const waiting = { ...initial, sequence: initial.sequence + 1, state: { ...initial.state, tasks: initial.state.tasks.map(task => task.id === 't1' ? { ...task, operation } : task) } };
+    const waiting = { ...initial, sequence: initial.sequence + 1, state: { ...initial.state, tasks: initial.state.tasks.map(task => task.id === 't1' ? { ...task, operation } : task) } as typeof initial.state };
     command.mockResolvedValueOnce(waiting);
     await user.click(screen.getByRole('button', { name: 'Delete task' }));
     const dialog = screen.getByRole('dialog', { name: 'Delete task' });
@@ -350,7 +350,7 @@ describe('Git controls and destructive actions', () => {
     expect(await within(dialog).findByRole('button', { name: 'Retry deletion' })).toBeTruthy();
     expect(within(dialog).queryByRole('button', { name: 'Delete task' })).toBeNull();
     const failedTask = { ...waiting.state.tasks.find(task => task.id === 't1')!, operation: { ...operation, phase: 'failed' as const, error: { code: 'SHARED_WORKTREE', message: 'Another DSH conversation is using this checkout.', details: { sessionId: 'child' } } } };
-    act(() => { publish({ ...waiting, sequence: waiting.sequence + 1, state: { ...waiting.state, tasks: waiting.state.tasks.map(task => task.id === 't1' ? failedTask : task) } }); });
+    act(() => { publish({ ...waiting, sequence: waiting.sequence + 1, state: { ...waiting.state, tasks: waiting.state.tasks.map(task => task.id === 't1' ? failedTask : task) } as typeof waiting.state }); });
     expect(within(dialog).getByRole('button', { name: 'Retry deletion' })).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Return chats to project' })).toBeTruthy();
     expect(within(dialog).getByText('Another DSH conversation is using this checkout.')).toBeTruthy();
@@ -398,7 +398,7 @@ describe('accessibility, pending, subscriptions and errors', () => {
   });
 
   it('does not replace a newer subscribed snapshot with a late initial snapshot', async () => {
-    const mock = fakeApi(); let resolve!: (value: BoardSnapshot) => void; vi.mocked(mock.api.snapshot).mockImplementationOnce(() => new Promise(done => { resolve = done; })); render(<BoardView api={mock.api} renderConversation={() => null} />); const fresh = fixture(); fresh.sequence = 4; fresh.state.tasks[0]!.title = 'Latest task'; act(() => { mock.publish(fresh); }); await screen.findByRole('button', { name: 'Open task Latest task' }); await act(async () => { resolve(fixture()); }); expect(screen.getByRole('button', { name: 'Open task Latest task' })).toBeTruthy(); expect(screen.queryByRole('button', { name: 'Open task Alpha task' })).toBeNull();
+    const mock = fakeApi(); let resolve!: (value: KanbanSnapshot) => void; vi.mocked(mock.api.snapshot).mockImplementationOnce(() => new Promise(done => { resolve = done; })); render(<BoardView api={mock.api} renderConversation={() => null} />); const fresh = fixture(); fresh.sequence = 4; fresh.state.tasks[0]!.title = 'Latest task'; act(() => { mock.publish(fresh); }); await screen.findByRole('button', { name: 'Open task Latest task' }); await act(async () => { resolve(fixture()); }); expect(screen.getByRole('button', { name: 'Open task Latest task' })).toBeTruthy(); expect(screen.queryByRole('button', { name: 'Open task Alpha task' })).toBeNull();
   });
 
   it('keeps pending forms disabled until a command settles and reports failures inline', async () => {

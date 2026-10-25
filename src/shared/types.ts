@@ -34,44 +34,66 @@ export interface Task {
 }
 export interface Note { id: string; taskId: string; content: string; createdAt: string; updatedAt: string; tags?: string[] }
 export interface BoardSettings { worktreeBasePath?: string }
+export interface Board { id: string; name: string; workflowYaml: string; workflow: Workflow; createdAt: string; updatedAt: string }
+/** A task that belongs to a board. The legacy BoardState keeps plain Task for migration compatibility. */
+export interface HubTask extends Task { boardId: string }
+export interface HubState {
+  id: string; name: string; revision: number;
+  projects: Project[]; boards: Board[]; tasks: HubTask[]; notes: Note[];
+  createdAt: string; updatedAt: string;
+}
+export interface KanbanSettings { revision: number; worktreeBasePath?: string }
+/** Global metadata stored beside the Hub records. */
+export interface KanbanMeta { initializedAt?: string; settingsRevision: number; worktreeBasePath?: string }
+export interface KanbanState { hubs: HubState[]; settings: KanbanSettings }
+/** Legacy single-board state, read only by the migration path. */
 export interface BoardState { schemaVersion: 2; revision: number; workflowYaml: string; workflow: Workflow; projects: Project[]; tasks: Task[]; notes: Note[]; settings?: BoardSettings }
 export type BackgroundKind = 'job' | 'subagent' | 'schedule';
 /** One unsettled non-turn activity owned by a task conversation. */
 export interface BackgroundActivity { kind: BackgroundKind; label: string }
 /** One conversation's native execution facts as the host owns them. */
 export interface SessionFacts { turn: boolean; background: BackgroundActivity[]; awaitingReply: boolean; failed: boolean }
+/** One conversation's native execution facts as the host owns them. */
 export interface Attention { running: boolean; background: BackgroundActivity[]; unread: boolean; awaitingReply: boolean; failed: boolean }
 /** Transient identity of the entity created by this exact command, never persisted. */
-export interface CommandReceipt { kind: 'project' | 'task' | 'conversation' | 'note'; id: string }
-export interface BoardSnapshot { commandReceipt?: CommandReceipt; state: BoardState; attention: Record<string, Attention>; sequence: number; clientEpoch?: number; questionRounds?: QuestionRound[] }
+export interface CommandReceipt { kind: 'hub' | 'board' | 'project' | 'task' | 'conversation' | 'note'; id: string }
+export interface KanbanSnapshot { commandReceipt?: CommandReceipt; state: KanbanState; attention: Record<string, Attention>; sequence: number; clientEpoch?: number; questionRounds?: QuestionRound[] }
 export const EMPTY_ATTENTION: Attention = { running: false, background: [], unread: false, awaitingReply: false, failed: false };
 export interface ProjectInput { id?: string; name: string; projectPath: string; gitRootPath: string; defaultBranch?: string }
-export interface NewTask { projectId: string; title: string; description: string }
+export interface NewTask { projectId: string; title: string; description: string; boardId?: string }
 export type Command =
-  | { type: 'project.save'; project: ProjectInput; expectedRevision?: number }
-  | { type: 'project.delete'; projectId: string; confirmed: boolean; expectedRevision?: number }
-  | { type: 'workflow.save'; yaml: string; expectedRevision?: number }
+  | { type: 'hub.create'; name: string }
+  | { type: 'hub.rename'; hubId: string; name: string; expectedRevision?: number }
+  | { type: 'hub.delete'; hubId: string; confirmed: boolean }
+  | { type: 'board.create'; hubId: string; name: string }
+  | { type: 'board.rename'; hubId: string; boardId: string; name: string; expectedRevision?: number }
+  | { type: 'board.delete'; hubId: string; boardId: string; confirmed: boolean; expectedRevision?: number }
+  | { type: 'board.workflow.save'; hubId: string; boardId: string; yaml: string; expectedRevision?: number }
+  | { type: 'project.save'; hubId?: string; project: ProjectInput; expectedRevision?: number }
+  | { type: 'project.delete'; hubId?: string; projectId: string; confirmed: boolean; expectedRevision?: number }
+  /** @deprecated Saves the first board's workflow; the UI uses board.workflow.save. Kept for single-board callers. */
+  | { type: 'workflow.save'; hubId?: string; yaml: string; expectedRevision?: number }
   | { type: 'settings.save'; settings: BoardSettings; expectedRevision?: number }
-  | ({ type: 'task.create' } & NewTask)
-  | { type: 'task.edit'; taskId: string; title?: string; description?: string; expectedRevision?: number }
-  | { type: 'task.move'; taskId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; newConversation?: boolean; worktree?: CreateWorktree; expectedInstruction?: string; beforeTaskId?: string | null }
-  | { type: 'task.runInstruction'; taskId: string; columnId: string; expectedInstruction: string }
-  | { type: 'conversation.create'; taskId: string }
-  | { type: 'conversation.close' | 'conversation.reopen'; taskId: string; sessionId: string }
-  | { type: 'task.delete'; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; requireIdle?: boolean }
-  | ({ type: 'worktree.create'; taskId: string } & CreateWorktree)
-  | { type: 'worktree.attach'; taskId: string; path: string }
-  | { type: 'worktree.remove'; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean }
-  | { type: 'operation.retry' | 'operation.return'; taskId: string }
-  | { type: 'note.save'; taskId: string; noteId?: string; content: string; tags?: string[] };
+  | ({ type: 'task.create'; hubId?: string } & NewTask)
+  | { type: 'task.edit'; hubId?: string; taskId: string; title?: string; description?: string; expectedRevision?: number }
+  | { type: 'task.move'; hubId?: string; taskId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; newConversation?: boolean; worktree?: CreateWorktree; expectedInstruction?: string; beforeTaskId?: string | null }
+  | { type: 'task.runInstruction'; hubId?: string; taskId: string; columnId: string; expectedInstruction: string }
+  | { type: 'conversation.create'; hubId?: string; taskId: string }
+  | { type: 'conversation.close' | 'conversation.reopen'; hubId?: string; taskId: string; sessionId: string }
+  | { type: 'task.delete'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; requireIdle?: boolean }
+  | ({ type: 'worktree.create'; hubId?: string; taskId: string } & CreateWorktree)
+  | { type: 'worktree.attach'; hubId?: string; taskId: string; path: string }
+  | { type: 'worktree.remove'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean }
+  | { type: 'operation.retry' | 'operation.return'; hubId?: string; taskId: string }
+  | { type: 'note.save'; hubId?: string; taskId: string; noteId?: string; content: string; tags?: string[] };
 export type Outcome<T> = { ok: true; value: T } | { ok: false; error: Problem };
 export interface ClientApi {
-  snapshot(): Promise<BoardSnapshot>;
-  command(command: Command): Promise<BoardSnapshot>;
+  snapshot(): Promise<KanbanSnapshot>;
+  command(command: Command): Promise<KanbanSnapshot>;
   branches(taskId: string): Promise<string[]>;
   worktreeDefault(taskId: string): Promise<{ branchName: string; path: string }>;
   inferProject(path: string): Promise<{ projectPath: string; gitRootPath: string }>;
-  subscribe(listener: (snapshot: BoardSnapshot) => void): () => void;
+  subscribe(listener: (snapshot: KanbanSnapshot) => void): () => void;
 }
 export interface QuestionOption { title: string; description: string }
 export interface QuestionPage {

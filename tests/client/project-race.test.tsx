@@ -4,13 +4,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { BoardView } from '../../src/client/board.js';
-import type { BoardSnapshot } from '../../src/shared/types.js';
+import type { KanbanSnapshot } from '../../src/shared/types.js';
 import { fakeApi, fixture } from './helpers.js';
 
 afterEach(cleanup);
 
 async function startProjectSave() {
-  const mock = fakeApi(); let resolve!: (result: BoardSnapshot) => void; let reject!: (error: unknown) => void;
+  const mock = fakeApi(); let resolve!: (result: KanbanSnapshot) => void; let reject!: (error: unknown) => void;
   mock.command.mockImplementationOnce(() => new Promise((done, fail) => { resolve = done; reject = fail; }));
   const user = userEvent.setup(); render(<BoardView api={mock.api} renderConversation={id => <span>{id}</span>} />);
   await screen.findByRole('button', { name: 'Open task Alpha task' }); await user.click(screen.getByRole('button', { name: 'Configuration' })); await user.click(screen.getByRole('tab', { name: 'Projects' }));
@@ -19,7 +19,7 @@ async function startProjectSave() {
   return { ...mock, user, resolve, reject };
 }
 
-function createdX(receipt = true): BoardSnapshot {
+function createdX(receipt = true): KanbanSnapshot {
   const result = fixture(); result.sequence = 2; result.state.revision = 2; result.state.projects.push({ id: 'created-x', name: 'Created X', projectPath: '/projects/x', gitRootPath: '/projects' });
   if (receipt) result.commandReceipt = { kind: 'project', id: 'created-x' };
   return result;
@@ -90,7 +90,7 @@ describe('project draft lifetime during save', () => {
   });
 
   it('also locks project selection during an existing-project edit that has no creation receipt', async () => {
-    const mock = fakeApi(); let resolve!: (value: BoardSnapshot) => void; mock.command.mockImplementationOnce(() => new Promise(done => { resolve = done; })); const user = userEvent.setup();
+    const mock = fakeApi(); let resolve!: (value: KanbanSnapshot) => void; mock.command.mockImplementationOnce(() => new Promise(done => { resolve = done; })); const user = userEvent.setup();
     render(<BoardView api={mock.api} renderConversation={id => <span>{id}</span>} />); await screen.findByRole('button', { name: 'Open task Alpha task' }); await user.click(screen.getByRole('button', { name: 'Configuration' })); await user.click(screen.getByRole('tab', { name: 'Projects' })); await user.click(screen.getByRole('button', { name: 'Edit project API' })); await user.clear(screen.getByRole('textbox', { name: 'Project name' })); await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Edited API'); await user.click(screen.getByRole('button', { name: 'Save project' }));
     await user.click(screen.getByRole('button', { name: 'Edit project Web' })); await user.click(screen.getByRole('button', { name: 'New project' }));
     expect((screen.getByRole('textbox', { name: 'Project name' }) as HTMLInputElement).value).toBe('Edited API');

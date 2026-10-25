@@ -167,7 +167,7 @@ describe('native conversations', () => {
     f.ensure.mockImplementation(async () => { f.getDirectory.mockReturnValue(root); return root; });
     await f.ctx.workingDirectory.ensure(f.agent); // Simulate the published assembly hook's native recovery before pre-step.
     const events = new Context(); const model = vi.fn();
-    const dispose = registerTaskExecutionGuards(events, { snapshot: () => ({ tasks: [{ sessionIds: ['a'] }] } as unknown as BoardState) }, { assertExecutionContext: id => f.sessions.validateDirectory(id, expected) });
+    const dispose = registerTaskExecutionGuards(events, { bySession: (id: string) => id === 'a' ? { task: { sessionIds: ['a'] } } : undefined } as never, { assertExecutionContext: id => f.sessions.validateDirectory(id, expected) });
     try {
       await expect(events.waterfall('agent/pre-step', { agent: f.agent, turn: 1, step: 1, signal: new AbortController().signal, messages: [] }, async () => { model(); return { kind: 'enter' as const, messages: [] }; })).rejects.toMatchObject({ code: 'SESSION_CONTEXT_UNAVAILABLE' });
       expect(model).not.toHaveBeenCalled(); expect(f.prompt).not.toHaveBeenCalled(); expect(await f.sessions.directory('a')).toBe(root);
@@ -176,7 +176,7 @@ describe('native conversations', () => {
   it('blocks the real native adapter after downstream request middleware commits native directory drift', async () => {
     const f = fixture(); const expected = join(root, 'ready-tree', 'api'); await mkdir(expected, { recursive: true }); await f.sessions.setDirectory('a', expected);
     const events = new Context(); const model = vi.fn();
-    const dispose = registerTaskExecutionGuards(events, { snapshot: () => ({ tasks: [{ sessionIds: ['a'] }] } as unknown as BoardState) }, { assertExecutionContext: id => f.sessions.validateDirectory(id, expected) });
+    const dispose = registerTaskExecutionGuards(events, { bySession: (id: string) => id === 'a' ? { task: { sessionIds: ['a'] } } : undefined } as never, { assertExecutionContext: id => f.sessions.validateDirectory(id, expected) });
     events.on('agent/request', async (_payload, next) => { const config = await next(); await f.ctx.workingDirectory.set(f.agent, root); return config; });
     const config = { provider: 'test', model: 'test' } as Parameters<Context['llm']['prepareCall']>[0];
     try {

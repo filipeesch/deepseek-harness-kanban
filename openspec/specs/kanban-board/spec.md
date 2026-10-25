@@ -2,24 +2,17 @@
 
 ## Purpose
 
-Provide a single global Kanban board for managing tasks across projects, with configurable workflow stages, explicit execution choices, and independent task activity and attention information.
+Provide Hub-scoped Kanban boards for managing tasks across projects, each board with its own configurable workflow stages, explicit execution choices, and independent task activity and attention information.
 
-Reference note: Railyin's [board view](<https://github.com/filipeesch/railyin/blob/a25520f4c5a91c24b359fce34ce9f553b9d6823c/src/mainview/views/BoardView.vue#L4-L145>) and [task card](<https://github.com/filipeesch/railyin/blob/a25520f4c5a91c24b359fce34ce9f553b9d6823c/src/mainview/components/TaskCard.vue#L1-L79>) provide observed UX evidence. This specification intentionally changes the reference's multiple-board, WIP, editing, and attention behavior.
+Reference note: Railyin's [board view](<https://github.com/filipeesch/railyin/blob/a25520f4c5a91c24b359fce34ce9f553b9d6823c/src/mainview/views/BoardView.vue#L4-L145>) and [task card](<https://github.com/filipeesch/railyin/blob/a25520f4c5a91c24b359fce34ce9f553b9d6823c/src/mainview/components/TaskCard.vue#L1-L79>) provide observed UX evidence. This specification intentionally changes the reference's WIP, editing, workflow-template, and attention behavior.
 
 ## Requirements
 
-### Requirement: One global multi-project board
-The product SHALL provide one global board whose tasks can belong to different registered projects. This scope SHALL NOT provide creation or selection of multiple boards.
-
-#### Scenario: View tasks from different projects together
-- **WHEN** tasks for different registered projects exist
-- **THEN** the same global board displays those tasks in their workflow stages with their project association
-
 ### Requirement: Initial workflow without automatic instructions
-The initial workflow SHALL contain Backlog, Plan, In Progress, In Review, and Done in that order. Backlog SHALL be the initial stage of this default workflow. No stage SHALL have an entry instruction enabled by default.
+Each board SHALL start with a default workflow containing Backlog, Plan, In Progress, In Review, and Done in that order. Backlog SHALL be the initial stage of this default workflow. No stage SHALL have an entry instruction enabled by default. Editing one board's workflow SHALL NOT change another board's workflow.
 
 #### Scenario: Use the initial workflow
-- **WHEN** the board is initialized without a user-customized workflow
+- **WHEN** a board is created without a user-customized workflow
 - **THEN** its stages are Backlog, Plan, In Progress, In Review, and Done in that order
 - **AND** new tasks use Backlog as the initial stage
 
@@ -27,15 +20,19 @@ The initial workflow SHALL contain Backlog, Plan, In Progress, In Review, and Do
 - **WHEN** a user moves a task to another stage of the unmodified default workflow
 - **THEN** no agent execution is initiated by a default entry instruction
 
+#### Scenario: Do not share workflow edits across boards
+- **WHEN** the user saves a customized workflow for one board
+- **THEN** every other board keeps its own saved workflow
+
 ### Requirement: YAML workflow configuration
-The board SHALL support workflow configuration in YAML, including the initial stage, grouped columns, allowed transitions, and optional stage entry instructions. It SHALL honor configured transition restrictions and column grouping. This version SHALL NOT implement WIP limits.
+Each board SHALL support its own workflow configuration in YAML, including the initial stage, grouped columns, allowed transitions, and optional stage entry instructions. The active board's workflow SHALL be used for rendering, transitions, and task creation. The product SHALL honor configured transition restrictions and column grouping. This version SHALL NOT implement WIP limits and SHALL NOT introduce reusable workflow templates.
 
 #### Scenario: Render a configured column group
-- **WHEN** the workflow configuration groups multiple stages together
+- **WHEN** the active board's workflow groups multiple stages together
 - **THEN** the board presents those stages as a group while retaining each stage as a distinct task destination
 
 #### Scenario: Reject a prohibited transition
-- **WHEN** a user requests a move that the workflow's allowed transitions prohibit
+- **WHEN** a user requests a move that the active board's workflow does not permit from its current stage
 - **THEN** the task remains in its current stage
 - **AND** the prohibited move does not initiate an agent execution
 
@@ -43,23 +40,35 @@ The board SHALL support workflow configuration in YAML, including the initial st
 - **WHEN** a user makes an otherwise permitted move into a stage that already contains tasks
 - **THEN** the board does not reject the move because of a WIP capacity limit
 
+#### Scenario: Validate against the active board's workflow
+- **WHEN** the user edits the workflow of the active board
+- **THEN** the editor validates that board's YAML
+- **AND** no other board's workflow is read or replaced
+
 ### Requirement: Top-level task creation
-The board SHALL provide one New task action at the top of the workflow's configured initial column. It SHALL collect a title, description, and project. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. Saving a new task SHALL place it in the configured initial stage without initiating an agent execution. The board header SHALL NOT provide a separate New task action.
+The active board SHALL provide one New task action at the top of its workflow's configured initial column. It SHALL collect a title, description, and project from the active Hub's project registry. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. Saving a new task SHALL place it in the active board's configured initial stage without initiating an agent execution. The board header SHALL NOT provide a separate New task action.
 
 #### Scenario: Open task creation from the board
-- **WHEN** the user selects the New task action at the top of the configured initial column
+- **WHEN** the user selects the New task action at the top of the active board's configured initial column
 - **THEN** the creation experience provides title, description, and project inputs without asking the user to choose a stage
 - **AND** the project input is unselected
+- **AND** the project list contains only projects owned by the active Hub
 
 #### Scenario: Create into a customized initial stage
-- **WHEN** the user saves a new task and the workflow has a configured initial stage
+- **WHEN** the user saves a new task and the active board's workflow has a configured initial stage
 - **THEN** the task is created in that stage with the supplied title, description, and project
+- **AND** the task belongs to the active board
 - **AND** task creation does not initiate an agent execution
 
 #### Scenario: Require an explicit project choice
-- **WHEN** the user opens New task with one or more registered projects and does not select a project
+- **WHEN** the user opens New task with one or more registered Hub projects and does not select a project
 - **THEN** the task cannot be created
 - **AND** no project is silently chosen from the project list or the active project filter
+
+#### Scenario: No task creation without a board
+- **WHEN** the active Hub has no boards
+- **THEN** the board surface presents the create-board empty state
+- **AND** no New task action is available
 
 ### Requirement: Edit task text at any stage
 The user SHALL be able to edit a task's title and description in any workflow stage, including after a worktree has been created. Saving those edits SHALL NOT automatically send a message to any task conversation or initiate an agent execution.
@@ -137,7 +146,7 @@ The board SHALL provide an explicit selection mode that presents a selection con
 - **THEN** the selection is cleared and normal card dragging is restored
 
 ### Requirement: Text search and project filtering
-The board SHALL support text search over task titles and descriptions and filtering by project, separately and together. This scope SHALL NOT add activity or worktree-status filters.
+The active board SHALL support text search over its task titles and descriptions and filtering by project, separately and together. The project filter SHALL list the projects owned by the active Hub. This scope SHALL NOT add activity or worktree-status filters.
 
 #### Scenario: Find a task by its title or description
 - **WHEN** the user searches for text that matches a task's title or description
@@ -150,6 +159,11 @@ The board SHALL support text search over task titles and descriptions and filter
 #### Scenario: Combine search and project filtering
 - **WHEN** the user applies text search and a project filter together
 - **THEN** the displayed tasks satisfy both the text search and the selected project filter
+
+#### Scenario: Keep the filter inside the active board
+- **WHEN** the user changes from one board to another
+- **THEN** the project filter options are limited to the active Hub's projects
+- **AND** tasks from the previous board are not shown
 
 ### Requirement: Execution activity is independent of workflow and attention
 The board SHALL represent task execution state independently of the task's workflow stage and of its unread, awaiting-reply, and failure attention indicators. Execution state SHALL consist of two distinct facts. Turn execution SHALL mean that at least one of the task's conversations is running an assistant turn. Background activity SHALL mean that the task owns unsettled work other than a turn, such as jobs, subagents, or schedules. Both facts SHALL aggregate across all of the task's conversations rather than only the currently selected conversation. Completing or failing an execution SHALL NOT, by itself, redefine the task's workflow stage. A task SHALL be presented as running a turn only while an assistant turn is active; background work that outlives the turn SHALL be presented as background activity instead.
@@ -183,7 +197,6 @@ The board SHALL aggregate attention information across all conversations belongi
 - **THEN** blue, orange, and red attention indicators are all represented together
 - **AND** the turn execution state and the background activity count are represented separately from those attention indicators
 
-
 ### Requirement: Truthful and self-healing turn execution state
 The board SHALL stop presenting a task's turn execution state when the assistant turn ends, without requiring another session event, a reload, or any user action. The board SHALL NOT present a turn as running when no task conversation is running an assistant turn. When an activity update is missed or a transient read fails, the board SHALL recover the correct execution state within at most two seconds. Background activity SHALL NOT be presented as a running turn.
 
@@ -198,7 +211,6 @@ The board SHALL stop presenting a task's turn execution state when the assistant
 #### Scenario: Background work never reads as a turn
 - **WHEN** the only active work for a task is a job, subagent, or schedule
 - **THEN** the task is not presented as running a turn
-
 
 ### Requirement: Visible execution state on task cards
 A task card SHALL present turn execution through a visible working indicator and a distinct card accent rather than a text label alone. The indicator SHALL remain legible in the host's light and dark appearances and SHALL follow the host theme. The working state SHALL be announced to assistive technology when it begins, and periodic animation updates SHALL NOT be announced. The card SHALL follow the host's reduced-motion preference by keeping the indicator and accent visible without animation. When the task owns background activity, the card SHALL present a separate background indicator that shows the number of unsettled activities and makes their labels available on hover and to assistive technology. The background indicator SHALL be visually quieter than the working indicator, and it SHALL be present on its own when no turn is running.
@@ -248,12 +260,12 @@ The board SHALL follow the host application's light and dark appearance for its 
 - **THEN** primary-action fills and board accents do not use the browser selection highlight color or its matching foreground color
 
 ### Requirement: General board configuration with worktree base path
-The board configuration experience SHALL include a General section that is presented first and opened by default. The General section SHALL provide an optional worktree base path used as the parent directory for future task worktree destinations. A non-empty worktree base path SHALL be an absolute path; saving SHALL require it to resolve to an existing directory and SHALL retain that canonical directory. Saving an empty worktree base path SHALL remove the configured value. Changing or clearing the worktree base path SHALL NOT move, remove, or rename any existing worktree or branch.
+The Kanban configuration experience SHALL include a General section that is presented first and opened by default. The General section SHALL provide an optional worktree base path used as the parent directory for future task worktree destinations across all Hubs and boards. A non-empty worktree base path SHALL be an absolute path; saving SHALL require it to resolve to an existing directory and SHALL retain that canonical directory. Saving an empty worktree base path SHALL remove the configured value. Changing or clearing the worktree base path SHALL NOT move, remove, or rename any existing worktree or branch.
 
 #### Scenario: Save a worktree base path
 - **WHEN** the user saves an existing absolute directory as the worktree base path
-- **THEN** the canonical directory is retained as the board's worktree base path
-- **AND** future task worktree destinations use it as their default parent
+- **THEN** the canonical directory is retained as the global worktree base path
+- **AND** future task worktree destinations across every Hub and board use it as their default parent
 
 #### Scenario: Reject a non-existent worktree base path
 - **WHEN** the user saves a worktree base path that does not resolve to an existing directory
@@ -261,8 +273,8 @@ The board configuration experience SHALL include a General section that is prese
 
 #### Scenario: Clear the worktree base path
 - **WHEN** the user saves the General section with an empty worktree base path
-- **THEN** the board has no configured worktree base path
-- **AND** task worktree destinations are not derived from a board base path
+- **THEN** the installation has no configured worktree base path
+- **AND** task worktree destinations are not derived from a configured base path
 
 #### Scenario: Existing worktrees survive a base path change
 - **WHEN** the user changes or clears the worktree base path while tasks have existing worktrees
@@ -353,11 +365,11 @@ Moving a task, including into a stage with an entry instruction, SHALL update it
 - **AND** the stage run action is available on the card
 
 ### Requirement: Rich workflow YAML editing
-The Workflow configuration SHALL present YAML in a code-editor surface rather than a plain textarea. The surface SHALL provide YAML syntax highlighting, line numbers, folding, search, and a vertically resizable editing area, and it SHALL preserve the text and comments entered by the user without reformatting.
+The Board configuration SHALL present the active board's workflow YAML in a code-editor surface rather than a plain textarea. The surface SHALL provide YAML syntax highlighting, line numbers, folding, search, and a vertically resizable editing area, and it SHALL preserve the text and comments entered by the user without reformatting.
 
 #### Scenario: Edit workflow YAML with code-editor assistance
-- **WHEN** the user opens Configuration → Workflow
-- **THEN** the YAML is shown with syntax highlighting and line numbers in a resizable editor
+- **WHEN** the user opens Configuration → Board
+- **THEN** the active board's YAML is shown with syntax highlighting and line numbers in a resizable editor
 - **AND** the user can fold sections and search within the document
 
 #### Scenario: Preserve authored text
@@ -365,7 +377,7 @@ The Workflow configuration SHALL present YAML in a code-editor surface rather th
 - **THEN** the stored YAML matches the editor text without normalization or reformatting
 
 ### Requirement: Expanded workflow editing area
-The Workflow section SHALL use a larger Configuration surface than the other sections, and the editor SHALL support vertical resizing and a maximize action that expands the editing area without closing Configuration.
+The Board section SHALL use a larger Configuration surface than the other sections, and the editor SHALL support vertical resizing and a maximize action that expands the editing area without closing Configuration.
 
 #### Scenario: Maximize the workflow editor
 - **WHEN** the user activates the editor's maximize action
@@ -377,7 +389,7 @@ The Workflow section SHALL use a larger Configuration surface than the other sec
 - **THEN** the editing area grows or shrinks without changing the YAML or closing the dialog
 
 ### Requirement: Live workflow diagnostics and guarded save
-The Workflow section SHALL validate the YAML locally while the user edits, using the same accepted workflow semantics as the host save path. Syntax problems SHALL be shown at their document positions, schema problems SHALL be shown inline or in an issue summary, and Save SHALL remain disabled while the current text is invalid or validation is pending.
+The Board section SHALL validate the active board's YAML locally while the user edits, using the same accepted workflow semantics as the host save path. Syntax problems SHALL be shown at their document positions, schema problems SHALL be shown inline or in an issue summary, and Save SHALL remain disabled while the current text is invalid or validation is pending.
 
 #### Scenario: Syntax error blocks saving
 - **WHEN** the editor contains invalid YAML syntax
@@ -391,14 +403,14 @@ The Workflow section SHALL validate the YAML locally while the user edits, using
 #### Scenario: Host-only rejection remains visible
 - **WHEN** a locally valid workflow is rejected by the host for an orphaned column or revision conflict
 - **THEN** the host error remains visible after the save attempt
-- **AND** the last valid workflow is not replaced
+- **AND** the active board's last valid workflow is not replaced
 
 ### Requirement: Workflow draft preservation
-The Workflow draft SHALL survive switching between Configuration tabs. Closing Configuration with unsaved changes, or replacing the draft with Reload, SHALL require explicit confirmation; canceling SHALL keep the draft and the dialog open.
+The active board's Workflow draft SHALL survive switching between Configuration tabs. Closing Configuration with unsaved changes, or replacing the draft with Reload, SHALL require explicit confirmation; canceling SHALL keep the draft and the dialog open.
 
 #### Scenario: Switch tabs without losing the draft
-- **WHEN** the user edits the workflow, switches to another Configuration tab, and returns to Workflow
-- **THEN** the edited YAML is still present
+- **WHEN** the user edits the workflow, switches to another Configuration tab, and returns to Board
+- **THEN** the edited YAML is still present for the same board
 
 #### Scenario: Confirm before closing
 - **WHEN** the user attempts to close Configuration while the workflow draft differs from the saved workflow
@@ -473,3 +485,76 @@ When the host sidebar is fully collapsed on macOS, the Kanban board header SHALL
 #### Scenario: Wrap at a narrow width
 - **WHEN** the board header is narrower than its title, subtitle, and toolbar together
 - **THEN** the header content wraps or reflows without clipping or overlapping the window chrome
+
+### Requirement: Multiple boards within a Hub
+The product SHALL provide multiple boards inside each Hub. A board SHALL have a required nonempty name and its own workflow. Board names SHALL be unique after trimming, compared case-insensitively within the Hub. The board tabs SHALL list only the boards of the active Hub.
+
+#### Scenario: Show the boards of the active Hub
+- **WHEN** the user selects a Hub with more than one board
+- **THEN** the board tabs list those boards
+- **AND** no board from another Hub appears
+
+#### Scenario: Reject a duplicate board name
+- **WHEN** the user submits a board name that matches another board in the same Hub case-insensitively
+- **THEN** no board is created and the form reports the name conflict
+
+#### Scenario: Keep workflows independent
+- **WHEN** the user changes the workflow of one board
+- **THEN** the workflows and tasks of every other board are unchanged
+
+### Requirement: Board creation and lifecycle
+Creating a board SHALL require a name and SHALL initialize it with the default workflow. Renaming a board SHALL NOT change its tasks, workflow, conversations, or worktrees. A board SHALL be deletable only when it contains no tasks. Deleting the last board SHALL leave the Hub with no boards and SHALL present the Hub's create-board empty state. Deleting a board SHALL NOT delete its projects, project directories, worktrees, branches, native conversations, or native workspaces.
+
+#### Scenario: Create a board with the default workflow
+- **WHEN** the user creates a board with a valid name
+- **THEN** the board appears in the Hub's board tabs
+- **AND** it uses the default workflow stages
+
+#### Scenario: Rename a board
+- **WHEN** the user saves a valid new name for a board
+- **THEN** the board tab and board header show the new name
+- **AND** the board's tasks and workflow are unchanged
+
+#### Scenario: Block deletion when the board has tasks
+- **WHEN** the user attempts to delete a board that contains a task
+- **THEN** the board is not deleted and the plugin reports how many tasks block it
+
+#### Scenario: Delete the last board
+- **WHEN** the user confirms deletion of the only board in a Hub and that board has no tasks
+- **THEN** the board is removed and the Hub presents its create-board empty state
+
+### Requirement: Board selection and persistence
+The Kanban page SHALL present the boards of the active Hub as tabs below the Hub tabs. The active board SHALL be retained per Hub across reloads in browser local storage. When the remembered board no longer exists, the plugin SHALL select the first available board. Switching boards SHALL reset board-scoped search, project filter, selection mode, and the open task drawer. Switching boards SHALL NOT stop, move, or otherwise affect task execution.
+
+#### Scenario: Restore the active board after reload
+- **WHEN** the user reloads the page after selecting a board
+- **THEN** the same board is active if it still exists in the same Hub
+
+#### Scenario: Fall back from a deleted board
+- **WHEN** the remembered board no longer exists in the active Hub
+- **THEN** the first available board becomes active
+- **AND** the page does not render an empty or stale board tab
+
+#### Scenario: Reset board-scoped UI on switch
+- **WHEN** the user switches from one board to another
+- **THEN** the new board starts without the previous board's search, project filter, selection, or open task drawer
+- **AND** running tasks continue unaffected
+
+### Requirement: Board attention aggregation
+The board tab SHALL present aggregated attention for all tasks on that board. The aggregation SHALL include unread activity and active execution. The aggregation SHALL clear when no task on the board has those facts. Attention on a board that is not active SHALL remain visible on its tab.
+
+#### Scenario: Aggregate unread activity on the board tab
+- **WHEN** a task on a board has unread activity
+- **THEN** that board's tab presents an unread indicator
+
+#### Scenario: Aggregate execution on the board tab
+- **WHEN** a task on a board is running a turn or owns background activity
+- **THEN** that board's tab presents an execution indicator
+
+#### Scenario: Clear the board indicator
+- **WHEN** no task on the board has unread activity or active execution
+- **THEN** the board tab presents neither indicator
+
+#### Scenario: Show attention for an inactive board
+- **WHEN** a task on a board in the active Hub gains unread activity or starts running while another board is active
+- **THEN** the inactive board's tab presents the corresponding indicator

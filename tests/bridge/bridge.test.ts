@@ -6,7 +6,7 @@ import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots';
 import type { SessionStatus, SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client';
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import { ClientBridge, unwrap, type BridgeRemote } from '../../src/client-bridge.js';
-import type { BoardSnapshot, QuestionRound, Task } from '../../src/shared/types.js';
+import type { HubTask, KanbanSnapshot, QuestionRound } from '../../src/shared/types.js';
 function source<T>(initial: T) {
   let value = initial; const listeners = new Set<() => void>();
   const observable: HostObservable<T> = { getSnapshot: () => value, subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
@@ -29,9 +29,10 @@ class Feed<T> implements RemoteStreamHandle<T, never>, AsyncIterator<T> {
   return(): Promise<IteratorResult<T>> { this.dispose(); return Promise.resolve({ done: true, value: undefined }); }
   [Symbol.asyncIterator](): AsyncIterator<T> { return this; }
 }
-const task = (id: string, sessionIds: string[]): Task => ({ id, projectId: 'p', title: id, description: '', columnId: 'backlog', position: 0, sessionIds, closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' });
-function snapshot(sequence = 1, questionRounds?: QuestionRound[]): BoardSnapshot {
-  return { sequence, state: { schemaVersion: 2, revision: sequence, workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, projects: [], tasks: [task('t1', ['a', 'b']), task('t2', ['c'])], notes: [] }, attention: {}, ...(questionRounds ? { questionRounds } : {}) };
+const task = (id: string, sessionIds: string[]): HubTask => ({ id, boardId: 'board', projectId: 'p', title: id, description: '', columnId: 'backlog', position: 0, sessionIds, closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' });
+function snapshot(sequence = 1, questionRounds?: QuestionRound[]): KanbanSnapshot {
+  const now = '2026-10-21T00:00:00Z';
+  return { sequence, state: { hubs: [{ id: 'hub', name: 'Hub', revision: sequence, projects: [], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: now, updatedAt: now }], tasks: [task('t1', ['a', 'b']), task('t2', ['c'])], notes: [], createdAt: now, updatedAt: now }], settings: { revision: 0 } }, attention: {}, ...(questionRounds ? { questionRounds } : {}) };
 }
 const round = (answered = false): QuestionRound => ({ id: 'round', sessionId: 'a', turnId: 'turn', pages: [{ callId: 'call', sequence: 1, page: { type: 'freetext', question: 'Which approach?' } }], complete: true, answered });
 const alive = new Set<ClientBridge>();
@@ -39,7 +40,7 @@ afterEach(async () => { await Promise.all([...alive].map(bridge => bridge.dispos
 function fixture() {
   const status = source<SessionStatusSnapshot>(new Map());
   const generation = source<ConnectionGeneration | undefined>({ id: 1, host: { home: '/home' } });
-  const feeds: Feed<BoardSnapshot>[] = [];
+  const feeds: Feed<KanbanSnapshot>[] = [];
   const remote: BridgeRemote = {
     kanban: {
       snapshot: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot() } }),
@@ -49,7 +50,7 @@ function fixture() {
       inferProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { projectPath: '/repo/apps/web', gitRootPath: '/repo' } } }),
       questions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [round()] } }),
       dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
-      follow: vi.fn((signal?: AbortSignal) => { const feed = new Feed<BoardSnapshot>(); feeds.push(feed); signal?.addEventListener('abort', () => feed.dispose(), { once: true }); return feed; }),
+      follow: vi.fn((signal?: AbortSignal) => { const feed = new Feed<KanbanSnapshot>(); feeds.push(feed); signal?.addEventListener('abort', () => feed.dispose(), { once: true }); return feed; }),
     },
     $stream<Item>(options: RemoteStreamOptions<Item>) { return new RemoteStream({ generation: generation.observable }, options); },
   };
@@ -140,13 +141,13 @@ describe('real native stream bridge', () => {
   });
   it('gates only new rich-form submissions during active migration, not waiting or failed recovery', async () => {
     const f = fixture(); const current = snapshot();
-    current.state.tasks[0]!.operation = { id: 'operation', request: { kind: 'return' }, phase: 'waiting', previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false, createdAt: '' };
+    current.state.hubs[0]!.tasks[0]!.operation = { id: 'operation', request: { kind: 'return' }, phase: 'waiting', previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false, createdAt: '' };
     vi.mocked(f.remote.kanban.snapshot).mockResolvedValue({ ok: true, value: { ok: true, value: current } });
     await f.bridge.api.snapshot(); expect(() => f.bridge.assertSubmissionAllowed('a')).not.toThrow();
-    current.state.tasks[0]!.operation.phase = 'switching';
+    current.state.hubs[0]!.tasks[0]!.operation.phase = 'switching';
     expect(() => f.bridge.assertSubmissionAllowed('a')).toThrow('switching project context');
     expect(() => f.bridge.assertSubmissionAllowed('c')).not.toThrow();
-    current.state.tasks[0]!.operation.phase = 'failed'; expect(() => f.bridge.assertSubmissionAllowed('a')).not.toThrow();
+    current.state.hubs[0]!.tasks[0]!.operation.phase = 'failed'; expect(() => f.bridge.assertSubmissionAllowed('a')).not.toThrow();
   });
   it('keeps clientApi identity and methods stable while native attention changes', async () => {
     const f = fixture(); const api = f.bridge.api; const notify = vi.fn(); api.subscribe(notify);

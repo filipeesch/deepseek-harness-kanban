@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import type { BoardSnapshot, BoardState } from '../shared/types.js';
+import type { KanbanSnapshot, BoardState } from '../shared/types.js';
 import { CodeEditor } from './code-editor.js';
 import { analyzeWorkflow } from './workflow-diagnostics.js';
 import { ErrorNotice, useAction, type RunCommand } from './ui.js';
@@ -10,7 +10,7 @@ export interface WorkflowEditorProps {
   yaml: string;
   baseRevision: number;
   onYamlChange: (yaml: string) => void;
-  onSaved: (snapshot: BoardSnapshot) => void;
+  onSaved: (snapshot: KanbanSnapshot) => void;
   onReload: () => void;
 }
 
@@ -48,7 +48,7 @@ export function WorkflowEditor({ state, run, yaml, baseRevision, onYamlChange, o
     const result = await action.execute({ type: 'workflow.save', yaml, expectedRevision: baseRevision });
     if (!result) return;
     setSaved(true);
-    setAnalysis(analyzeWorkflow(result.state.workflowYaml));
+    setAnalysis(analyzeWorkflow(yaml));
     onSaved(result);
   }
   function reload() {

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BoardStore } from '../../src/domain/store.js';
+import { HubRepository } from '../../src/host/hub-repository.js';
 import { KanbanApp } from '../../src/host/app.js';
 import type { Attention, SessionFacts } from '../../src/shared/types.js';
-import { MemoryStorage, TestGit, TestSessions } from './helpers.js';
+import { MemoryHubStorage, TestGit, TestSessions } from './helpers.js';
 
 // Actual app/store and public memory ports only: no host runtime, filesystem, jobs or models.
 const apps: KanbanApp[] = [];
@@ -14,18 +14,19 @@ afterEach(async () => {
 
 async function fixture() {
   vi.useFakeTimers();
-  const store = await BoardStore.open(new MemoryStorage());
+  const hubs = await HubRepository.open(new MemoryHubStorage());
+  const store = hubs.defaultHub();
   const project = await store.saveProject({ name: 'Memory project', projectPath: '/memory/repo/app', gitRootPath: '/memory/repo' });
   const sessions = new TestSessions();
   const report = vi.fn();
-  const app = new KanbanApp(store, sessions, new TestGit(), { report });
+  const app = new KanbanApp(hubs, sessions, new TestGit(), { report });
   apps.push(app);
   const task = await app.createTask({ projectId: project.id, title: 'Attention fixture', description: '' });
   const sessionId = task.sessionIds[0]!;
   const facts = vi.spyOn(sessions, 'facts');
   const notify = vi.fn();
   app.subscribe(notify);
-  return { app, store, sessions, task, sessionId, facts, notify, report };
+  return { app, hubs, store, sessions, task, sessionId, facts, notify, report };
 }
 
 const idleFacts: SessionFacts = { turn: false, background: [], awaitingReply: false, failed: false };

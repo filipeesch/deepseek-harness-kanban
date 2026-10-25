@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Provide a task-centered drawer that contains continuous native DSH conversations while keeping every conversation aligned with the task's effective project directory.
+Provide a task-centered drawer that contains continuous native DSH conversations while keeping every conversation aligned with the task's effective project directory and aware of its Hub and board context.
 
 ## Requirements
 
@@ -28,7 +28,6 @@ Opening a task card SHALL display a task drawer with a header showing the task t
 #### Scenario: Execution status clears when the turn ends
 - **WHEN** the task's assistant turn ends while the drawer is open
 - **THEN** the drawer header stops presenting the turn execution status without a reload
-
 
 ### Requirement: Drawer execution status detail
 The drawer header SHALL present the task's turn execution status with the same meaning as the board card, including the background activity detail when the task owns unsettled background work. That background detail SHALL name the task's unsettled activities and SHALL stop being presented when no background activity remains. The background detail SHALL be visually secondary to the turn execution status.
@@ -157,11 +156,12 @@ The plugin SHALL NOT add dedicated task-card-to-main-chat or main-chat-to-task-c
 - **THEN** native chat navigation remains available and this capability does not disable approved board tools or structured question forms there
 
 ### Requirement: First-turn task context
-The plugin SHALL inject a native task-context message into the first model step of a task conversation before the first user message. The context SHALL contain the task title, task identifier, description, and workflow stage at first contact. The message SHALL be a native context message with a plugin-owned source, SHALL NOT be a user-authored chat message, and SHALL NOT start a turn. It SHALL appear as a context row in the conversation. The context SHALL be injected at most once per conversation; later turns and stage instructions SHALL NOT repeat it. Each new conversation SHALL receive its own first-turn context. A conversation with existing user messages SHALL NOT receive a new first-turn context, and conversations whose first message predates this behavior SHALL NOT be backfilled.
+The plugin SHALL inject a native task-context message into the first model step of a task conversation before the first user message. The context SHALL contain the task title, task identifier, description, workflow stage at first contact, the owning Hub name, and the owning board name. The message SHALL be a native context message with a plugin-owned source, SHALL NOT be a user-authored chat message, and SHALL NOT start a turn. It SHALL appear as a context row in the conversation. The context SHALL be injected at most once per conversation; later turns and stage instructions SHALL NOT repeat it. Each new conversation SHALL receive its own first-turn context. A conversation with existing user messages SHALL NOT receive a new first-turn context, and conversations whose first message predates this behavior SHALL NOT be backfilled.
 
 #### Scenario: First question in the initial column
 - **WHEN** the user sends the first message in a task conversation while the task is in the initial stage
 - **THEN** the first model request contains the injected task-context message before the user's message
+- **AND** the context identifies the task's Hub and board
 - **AND** the conversation shows the context row
 - **AND** the user's message contains only the text the user sent
 - **AND** the task-context message does not start a turn
@@ -171,6 +171,11 @@ The plugin SHALL inject a native task-context message into the first model step 
 - **THEN** the first model request contains the injected task-context message before the instruction
 - **AND** the instruction message contains only the stage instruction
 - **AND** the context row is visible in the conversation
+
+#### Scenario: Use the task's board context
+- **WHEN** an agent reads the first-turn task context
+- **THEN** it can identify the task's board and Hub without inferring them from the native workspace
+- **AND** board-scoped tools can resolve the task's board from the conversation
 
 #### Scenario: Later stage instruction
 - **WHEN** the user runs or sends a stage instruction after the conversation's first message

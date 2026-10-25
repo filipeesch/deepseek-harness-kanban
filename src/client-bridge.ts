@@ -3,14 +3,15 @@ import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots';
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client';
 import type { KanbanRemote } from './remote.js';
-import type { BoardSnapshot, ClientApi, Command, Outcome, Problem, QuestionRound } from './shared/types.js';
+import type { ClientApi, Command, KanbanSnapshot, Outcome, Problem, QuestionRound, Task } from './shared/types.js';
 import { projectTaskAttention, ReminderTracker } from './client/attention.js';
 
 export interface BridgeStatus { error: Problem | null; connected: boolean }
 export interface QuestionView { rounds: readonly QuestionRound[]; errors: ReadonlyMap<string, Problem> }
 export type BridgeRemote = Pick<ClientRemote, '$stream'> & { kanban: KanbanRemote };
-type Baseline = { kind: 'baseline'; snapshot: BoardSnapshot };
-type Update = { kind: 'update'; snapshot: BoardSnapshot };
+type Baseline = { kind: 'baseline'; snapshot: KanbanSnapshot };
+function allTasks(snapshot: KanbanSnapshot): Task[] { return snapshot.state.hubs.flatMap(hub => hub.tasks); }
+type Update = { kind: 'update'; snapshot: KanbanSnapshot };
 function problem(error: unknown): Problem {
   if (typeof error === 'object' && error !== null && 'message' in error) {
     return { code: 'code' in error && typeof error.code === 'string' ? error.code : 'CLIENT_ERROR', message: String(error.message) };
@@ -35,9 +36,9 @@ export class ClientBridge {
   readonly status = this.health.source;
   private readonly questionState = observable<QuestionView>({ rounds: [], errors: new Map() });
   readonly questionsView = this.questionState.source;
-  private readonly snapshots = new Set<(snapshot: BoardSnapshot) => void>();
-  private host: BoardSnapshot | undefined;
-  private merged: BoardSnapshot | undefined;
+  private readonly snapshots = new Set<(snapshot: KanbanSnapshot) => void>();
+  private host: KanbanSnapshot | undefined;
+  private merged: KanbanSnapshot | undefined;
   private clientEpoch = 0;
   private rounds: readonly QuestionRound[] = [];
   private readonly prepared = new Map<string, Promise<readonly QuestionRound[]>>();
@@ -63,7 +64,7 @@ export class ClientBridge {
       subscribe: (listener) => { this.snapshots.add(listener); return () => this.snapshots.delete(listener); },
     };
   }
-  private async unarySnapshot(request: () => Promise<RemoteResult<Outcome<BoardSnapshot>>>): Promise<BoardSnapshot> {
+  private async unarySnapshot(request: () => Promise<RemoteResult<Outcome<KanbanSnapshot>>>): Promise<KanbanSnapshot> {
     const epoch = this.clientEpoch;
     try {
       const response = unwrap(await request());
@@ -109,7 +110,7 @@ export class ClientBridge {
     })().catch(error => this.fail(error)).finally(() => { this.restarting = undefined; });
   }
   private fail(error: unknown): void { if (!this.disposed) this.health.set({ error: problem(error), connected: false }); }
-  private accept(snapshot: BoardSnapshot, baseline = false): void {
+  private accept(snapshot: KanbanSnapshot, baseline = false): void {
     if (this.disposed || (!baseline && this.host && snapshot.sequence < this.host.sequence)) return;
     if (baseline) { this.clientEpoch++; this.prepared.clear(); }
     this.host = snapshot;
@@ -121,9 +122,9 @@ export class ClientBridge {
   }
   private publish(): void {
     if (this.disposed || !this.host) return;
-    const attention: BoardSnapshot['attention'] = { ...this.host.attention };
+    const attention: KanbanSnapshot['attention'] = { ...this.host.attention };
     const statuses = this.nativeStatus.getSnapshot();
-    for (const task of this.host.state.tasks) {
+    for (const task of allTasks(this.host)) {
       attention[task.id] = projectTaskAttention(this.host.attention[task.id], statuses, this.reminders, task.sessionIds);
     }
     this.merged = { ...this.host, attention, questionRounds: [...this.rounds], clientEpoch: this.clientEpoch };
@@ -142,7 +143,7 @@ export class ClientBridge {
     return () => { if (active) { active = false; this.composers.delete(id); } };
   }
   assertSubmissionAllowed(id: string): void {
-    const task = this.host?.state.tasks.find(entry => entry.sessionIds.includes(id) && entry.operation && entry.operation.phase !== 'waiting' && entry.operation.phase !== 'failed');
+    const task = this.host ? allTasks(this.host).find(entry => entry.sessionIds.includes(id) && entry.operation && entry.operation.phase !== 'waiting' && entry.operation.phase !== 'failed') : undefined;
     if (task) throw Object.assign(new Error('This conversation is switching project context. Wait for the active operation before submitting an answer.'), { code: 'CONTEXT_MIGRATION_ACTIVE' });
   }
   async prepareQuestions(id: string): Promise<readonly QuestionRound[]> {

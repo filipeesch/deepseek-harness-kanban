@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { Configuration } from '../../src/client/forms.js';
-import type { BoardSnapshot, Command } from '../../src/shared/types.js';
+import type { Command, KanbanSnapshot } from '../../src/shared/types.js';
 import { fixture } from './helpers.js';
 
 vi.mock('../../src/client/code-editor.js', async () => {
@@ -17,14 +17,14 @@ vi.mock('../../src/client/code-editor.js', async () => {
 
 afterEach(cleanup);
 const valid = ['name: Delivery', 'initial_column: one', 'columns:', '  - id: one', '    label: One', '  - id: two', '    label: Two', ''].join(String.fromCharCode(10));
-function snapshotFor(yaml: string): BoardSnapshot {
+function snapshotFor(yaml: string): KanbanSnapshot {
   const base = fixture();
-  return { ...base, sequence: 2, state: { ...base.state, revision: 2, workflowYaml: yaml } };
+  return { ...base, sequence: 2, state: { ...base.state, hubs: [{ ...base.state.hubs[0]!, revision: 2, boards: [{ ...base.state.hubs[0]!.boards[0]!, workflowYaml: yaml }] }] } };
 }
-function mount(run: (command: Command) => Promise<BoardSnapshot>, onClose = vi.fn()) {
+function mount(run: (command: Command) => Promise<KanbanSnapshot>, onClose = vi.fn()) {
   const value = fixture(); value.state.workflowYaml = valid;
   const user = userEvent.setup();
-  render(<Configuration state={value.state} run={run} initial="Workflow" onClose={onClose} />);
+  render(<Configuration state={value.state} hub={value.state.hubs[0]!} board={value.state.hubs[0]!.boards[0]!} hubCount={1} settings={value.state.settings} settingsRevision={value.state.settings.revision} run={run} initial="Board" onClose={onClose} />);
   return { user, onClose, value };
 }
 const editor = () => screen.getByRole('textbox', { name: 'Workflow YAML' }) as HTMLTextAreaElement;
@@ -91,7 +91,7 @@ describe('workflow editor', () => {
     const { user } = mount(vi.fn(async (command: Command) => snapshotFor((command as Extract<Command, { type: 'workflow.save' }>).yaml)));
     await user.type(editor(), String.fromCharCode(10) + '# tab draft');
     await user.click(screen.getByRole('tab', { name: 'General' }));
-    await user.click(screen.getByRole('tab', { name: 'Workflow' }));
+    await user.click(screen.getByRole('tab', { name: 'Board' }));
     expect(editor().value).toContain('# tab draft');
   });
 });

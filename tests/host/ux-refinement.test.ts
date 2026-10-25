@@ -97,7 +97,7 @@ describe('native workspace binding', () => {
 
   it('does not create a cwd-only session when workspace creation fails', async () => {
     const f = await setup(); const broken = new TestWorkspaces(); broken.ensure = async () => { throw new Error('workspace unavailable'); };
-    const app = new (await import('../../src/host/app.js')).KanbanApp(f.store, f.sessions, f.git, {}, broken);
+    const app = new (await import('../../src/host/app.js')).KanbanApp(f.hubs, f.sessions, f.git, {}, broken);
     await expect(app.createTask({ projectId: f.project.id, title: 'No workspace', description: '' })).rejects.toThrow('workspace unavailable');
     expect(f.store.snapshot().tasks).toHaveLength(0);
   });
@@ -108,7 +108,7 @@ describe('native workspace binding', () => {
     f.sessions.dirs.set('legacy-session', f.projectPath);
     await f.store.transact(state => { const project = state.projects.find(value => value.id === f.project.id)!; delete project.workspaceId; delete project.workspaceOwned; });
     const { KanbanApp } = await import('../../src/host/app.js');
-    const app = new KanbanApp(f.store, f.sessions, f.git, {}, f.workspaces);
+    const app = new KanbanApp(f.hubs, f.sessions, f.git, {}, f.workspaces);
     await app.initialize();
     const project = f.store.requireProject(f.project.id);
     expect(project.workspaceId).toBeTruthy();

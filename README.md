@@ -1,6 +1,6 @@
 # DSH Kanban
 
-An independent host/client plugin for **DeepSeek Harness (DSH) 0.2.1-rc.2**: one multi-project Kanban board, optional Git worktrees, shared task notes, and task drawers that reuse native DSH conversations. It does not replace the DSH core, start another server, or clone the chat/agent runtime.
+An independent host/client plugin for **DeepSeek Harness (DSH) 0.2.1-rc.2**: Hub-scoped Kanban boards, per-board workflows, optional Git worktrees, shared task notes, and task drawers that reuse native DSH conversations. It does not replace the DSH core, start another server, or clone the chat/agent runtime.
 
 > **Verification boundary:** this plugin is checked through public DSH extension-point contracts, real temporary Git repositories, client integration tests, and the existing DSH GUI. Native conversation/model/scheduler engines remain DSH responsibilities. Acceptance uses a deterministic, test-only model adapter; no real-model request is part of the acceptance path. See [verification status and limitations](<docs/operations.md#verification-status>).
 
@@ -46,10 +46,14 @@ After source changes, deliberately run `pnpm run build` again, explicitly reconc
 
 The latest installation attempt initially failed fetching from the default registry; a one-shot `https://registry.npmjs.org` override succeeded without changing package-manager or DSH settings. This is observed network troubleshooting, not a requirement to change your registry. See [installation diagnostics](<docs/operations.md#installation-and-update-diagnostics>) and the optional local Inspector procedure there.
 
+## Hubs and boards
+
+A **Hub** is a logical group of projects and boards. It has a name only: no filesystem root and no native DSH workspace. Projects belong to one Hub, and every task belongs to one board and one project in that Hub. Boards are selected inside the active Hub; each board owns its own YAML workflow and uses every project of that Hub. The active Hub and the last board used per Hub are remembered in browser local storage. An installation always has at least one Hub; the last Hub cannot be deleted. Deleting a Hub is allowed only when none of its boards has a task, and it removes its empty boards and task-free project registrations without deleting project directories, worktrees, branches, native conversations, or native workspaces. The worktree base path remains global.
+
 ## First use
 
-1. Optionally open **Configuration → General** and choose an existing absolute **Worktree base path** for new task worktrees. Then open **Configuration → Projects** (or **Configure projects** on an empty board) and save a name, absolute **Project path**, separate **Git root**, and optional default branch. Saving validates existing canonical directories and containment. Repository identity is validated when a scoped Git action is requested; registration does not start a native agent or grant Git access.
-2. Select **New task** at the top of the configured initial column and supply its title, Markdown description, and registered project. The project select starts empty and must be chosen explicitly, even when a project filter is active. Saving creates a card in that initial stage and one fresh native conversation; it does **not** start an agent.
+1. The installation starts with **My Hub** and a **Kanban** board. Use the **+** beside the Hub or board tabs, or Configuration → Hub, to create another Hub or board. A new Hub starts without boards and presents **Create your first board**. Optionally open **Configuration → General** and choose an existing absolute **Worktree base path** for new task worktrees. Then open **Configuration → Projects** (or **Configure projects** on a board without projects) and save a name, absolute **Project path**, separate **Git root**, and optional default branch. Saving validates existing canonical directories and containment. Repository identity is validated when a scoped Git action is requested; registration does not start a native agent or grant Git access.
+2. Select **New task** at the top of the active board's configured initial column and supply its title, Markdown description, and registered project. The project select starts empty and must be chosen explicitly, even when a project filter is active. Saving creates a card in that initial stage on that board and one fresh native conversation; it does **not** start an agent.
 3. Open the card. Its drawer contains **Conversations / Info / Git / Notes**. Use **+** for another distinct, continuous native conversation. Closing/reopening a tab or drawer preserves its association and history.
 4. Send messages through the native composer when you want execution. **Info** shows the title and Markdown description read-only until you select **Edit**; saving never messages agents. **Notes** stores Markdown shared by every conversation of that task, not a per-chat collection. The drawer header shows the task, its project, and its current execution status, the compact toolbar shows only permitted stage transitions, and conversation tabs use the native session title.
 5. Search titles/descriptions and optionally combine that search with a project filter. Execution state is separate from workflow stage: a **Working** indicator and card accent show a running assistant turn, a separate background chip names unsettled jobs, subagents, or schedules, and blue unread, orange awaiting-reply, and red failure indicators can coexist across the task's conversations. The same execution status stays in the drawer header on every section.
@@ -62,7 +66,7 @@ When the DSH sidebar is fully collapsed on macOS, the Kanban header uses the hos
 
 ## Workflow and deliberate execution
 
-**Configuration → Workflow** edits YAML in a code editor with line numbers, YAML highlighting, folding, search, live diagnostics, vertical resize, and a maximize toggle. Save is disabled while the YAML is invalid or still checking; the host remains authoritative for orphaned columns and revision conflicts. The draft survives Configuration tab switches, and closing or reloading with unsaved changes asks first. Configuration opens on **General**; the empty-board **Configure projects** action opens **Projects**. The default is exactly five stages with **no entry instructions**:
+**Configuration → Board** edits the active board's YAML in a code editor with line numbers, YAML highlighting, folding, search, live diagnostics, vertical resize, and a maximize toggle. Save is disabled while the YAML is invalid or still checking; the host remains authoritative for orphaned columns and revision conflicts. The draft survives Configuration tab switches, and closing or reloading with unsaved changes asks first. Configuration opens on **General**; the empty-board **Configure projects** action opens **Projects**. Each new board starts with exactly five stages and **no entry instructions**:
 
 ```yaml
 name: Delivery Flow
@@ -145,12 +149,12 @@ Registered tool names are defined in [the product tool implementation](<src/host
 
 | Scope | Tools |
 | --- | --- |
-| Read board/projects/tasks | `list_boards`, `list_projects`, `get_board_summary`, `list_cards`, `get_card` |
+| Discover Hubs, boards, projects, and tasks | `list_hubs`, `list_boards`, `list_projects`, `get_board_summary`, `list_cards`, `get_card` |
 | Explicitly requested card text changes | `create_card`, `edit_card` |
 | Shared task notes | `create_note`, `list_notes`, `update_note` |
 | Optional question page | `decision_request` |
 
-Board reads/create/edit are available in ordinary chats without a task binding. Note tools need an explicit task ID there; a task conversation can resolve its own task. Board/note writes require the user's explicit request, not unsolicited internal progress tracking; there is no additional product approval modal for those requested writes, and native permissions still apply. Intent text is an agent-use rule, not a deterministic consent detector.
+Board reads/create/edit are available in ordinary chats without a task binding. The board is the discovery anchor: use `list_hubs`, then `list_boards`, then pass `board_id` to board-scoped tools. A task conversation can resolve its own board; an ordinary chat without a board receives an actionable error rather than using UI state or a default. Note tools need an explicit task ID there; a task conversation can resolve its own task. Hub and board administration is UI-only. Board/note writes require the user's explicit request, not unsolicited internal progress tracking; there is no additional product approval modal for those requested writes, and native permissions still apply. Intent text is an agent-use rule, not a deterministic consent detector.
 
 The question strip's footer has a **Dismiss** action on the left. An untouched round dismisses immediately; a populated draft asks for inline confirmation. Dismissing removes every unresolved round in that conversation, sends no chat message, and permanently hides the round from reload/replay while leaving the composer available. Future rounds still appear.
 

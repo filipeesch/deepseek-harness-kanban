@@ -1,5 +1,18 @@
-import type { BoardState, CreateWorktree, Project, SessionFacts } from './types.js';
+import type { BoardState, CreateWorktree, HubState, KanbanMeta, Project, SessionFacts } from './types.js';
 export interface StateStorage { load(): Promise<unknown | null>; save(state: BoardState): Promise<void> }
+/** Durable Hub-record storage. The adapter owns the DSH domain; the repository owns the write chain. */
+export interface HubStorage {
+  loadAll(): Promise<{ hubs: HubState[]; meta: KanbanMeta }>;
+  saveHub(state: HubState): Promise<void>;
+  deleteHub(id: string): Promise<void>;
+  saveMeta(meta: KanbanMeta): Promise<void>;
+  close(): Promise<void>;
+}
+/** Read-only access to the legacy single-board document used for one-time migration. */
+export interface LegacyStateReader {
+  read(): Promise<BoardState>;
+  close(): Promise<void>;
+}
 export interface WorkspaceInfo { id: string; path: string; title: string; sessionIds: string[] }
 export interface WorkspacePort {
   ensure(path: string, title: string): Promise<{ workspace: WorkspaceInfo; owned: boolean }>;

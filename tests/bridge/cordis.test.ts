@@ -4,12 +4,12 @@ import { Context, type Fiber } from '@deepseek-ai/cordis';
 import { TypertRegistry } from '@deepseek-ai/dsh-typert-registry';
 import * as Gateway from '@deepseek-ai/dsh-api-gateway/client';
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client';
-import type { BoardSnapshot, ClientApi } from '../../src/shared/types.js';
+import type { KanbanSnapshot, ClientApi } from '../../src/shared/types.js';
 import { TYPERT_REMOTE } from '../../src/remote.js';
 import * as KanbanClient from '../../src/client.js';
 const fibers: Fiber[] = [];
 afterEach(async () => { for (const fiber of fibers.splice(0).reverse()) await fiber.dispose(); });
-const board: BoardSnapshot = { sequence: 0, attention: {}, questionRounds: [], state: { schemaVersion: 2, revision: 0, workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, projects: [], tasks: [], notes: [] } };
+const board: KanbanSnapshot = { sequence: 0, attention: {}, questionRounds: [], state: { hubs: [{ id: 'hub', name: 'Hub', revision: 0, projects: [], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], tasks: [], notes: [], createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], settings: { revision: 0 } } };
 async function runtime() {
   const root = new Context();
   const call = vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: board } });

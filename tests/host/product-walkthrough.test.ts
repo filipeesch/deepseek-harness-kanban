@@ -3,14 +3,14 @@ import { readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools';
 import { stringify } from 'yaml';
-import { BoardStore } from '../../src/domain/store.js';
+import { HubRepository } from '../../src/host/hub-repository.js';
 import { KanbanApp } from '../../src/host/app.js';
 import { GitAdapter } from '../../src/host/git.js';
 import { productToolDefinitions } from '../../src/host/tools.js';
 import { KanbanError } from '../../src/shared/errors.js';
 import type { CommandResult } from '../../src/shared/ports.js';
 import type { Project } from '../../src/shared/types.js';
-import { MemoryStorage, TestSessions } from './helpers.js';
+import { MemoryHubStorage, TestSessions } from './helpers.js';
 import { cleanup as cleanupGit, fixture as gitFixture, gitOk, LocalExecutor } from '../worktrees/helpers.js';
 
 const approvedInstruction = '    Implement the approved product change.\n\nKeep the monorepo subdirectory.\n';
@@ -57,12 +57,12 @@ class ProductExecutor extends LocalExecutor {
 async function setup() {
   // Reuses guarded absolute temporary-root cleanup and repo-local Git config; never the user's repository.
   const files = await gitFixture();
-  const storage = new MemoryStorage();
+  const storage = new MemoryHubStorage();
   const sessions = new ProductSessions();
   sessions.dirs.set('unbound-synthetic-blank', files.project.projectPath);
   sessions.histories.set('unbound-synthetic-blank', Object.freeze([]));
   const executor = new ProductExecutor(sessions);
-  let app = new KanbanApp(await BoardStore.open(storage), sessions, new GitAdapter(executor));
+  let app = new KanbanApp(await HubRepository.open(storage), sessions, new GitAdapter(executor));
   apps.push(app);
   await app.initialize();
   await app.command({ type: 'project.save', project: files.project });
@@ -80,7 +80,12 @@ async function setup() {
   async function tool(name: string, args: Record<string, unknown>, id?: string) {
     const definition = productToolDefinitions(app).find(candidate => candidate.name === name);
     if (!definition) throw new Error('Missing product tool: ' + name);
-    return definition.execute(args, execution(id));
+    const boardId = app.store.snapshot().boards[0]!.id; const hubId = app.hubs.defaultHubId();
+    const scoped = name === 'list_hubs' ? args
+      : name === 'list_boards' ? { hub_id: hubId, ...args }
+      : ['list_projects', 'get_board_summary', 'list_cards', 'create_card'].includes(name) ? { board_id: boardId, ...args }
+      : args;
+    return definition.execute(scoped, execution(id));
   }
   async function task() {
     await tool('create_card', { project_id: files.project.id, title: 'Product walkthrough', description: '**Initial product description**' });
@@ -97,7 +102,7 @@ async function setup() {
   }
   async function reopen() {
     await app.close();
-    app = new KanbanApp(await BoardStore.open(storage), sessions, new GitAdapter(executor));
+    app = new KanbanApp(await HubRepository.open(storage), sessions, new GitAdapter(executor));
     apps.push(app);
     await app.initialize();
   }
@@ -288,15 +293,15 @@ describe('bounded integrated product walkthrough', () => {
     const b = await f.app.createTask({ projectId: 'root-project', title: 'Independent other task', description: 'Different shared-note collection' });
     expect(await f.tool('list_projects', {})).toEqual(f.app.store.snapshot().projects);
     expect(await f.tool('list_projects', {}, a.a)).toEqual(await f.tool('list_projects', {}));
-    expect(await f.tool('list_boards', {})).toEqual([{ id: 'global', name: 'Kanban' }]);
+    const boardId = f.app.store.snapshot().boards[0]!.id; const hubId = f.app.hubs.defaultHubId(); expect(await f.tool('list_boards', {})).toEqual([expect.objectContaining({ id: boardId, hubId, name: 'Kanban' })]);
     expect(await f.tool('list_boards', {}, a.b)).toEqual(await f.tool('list_boards', {}));
-    expect(await f.tool('get_board_summary', {})).toMatchObject({ id: 'global', columns: expect.arrayContaining([expect.objectContaining({ id: 'backlog', count: 2 })]) });
+    expect(await f.tool('get_board_summary', {})).toMatchObject({ id: boardId, hubId, columns: expect.arrayContaining([expect.objectContaining({ id: 'backlog', count: 2 })]) });
     expect(await f.tool('get_board_summary', {}, a.a)).toEqual(await f.tool('get_board_summary', {}));
-    expect(await f.tool('list_cards', { project_id: f.project.id, query: 'PRODUCT WALKTHROUGH', limit: 1 })).toEqual([f.app.store.requireTask(a.id)]);
-    expect(await f.tool('list_cards', { project_id: 'root-project', limit: 1 }, a.b)).toEqual([b]);
+    expect(await f.tool('list_cards', { project_id: f.project.id, query: 'PRODUCT WALKTHROUGH', limit: 1 })).toEqual([{ ...f.app.store.requireTask(a.id), hubId }]);
+    expect(await f.tool('list_cards', { project_id: 'root-project', limit: 1 }, a.b)).toEqual([{ ...b, hubId }]);
     expect(await f.tool('list_cards', { query: 'does not match', limit: 1 })).toEqual([]);
     expect(await f.tool('list_cards', {})).toHaveLength(2); expect(await f.tool('list_cards', { limit: 1 })).toHaveLength(1);
-    expect(await f.tool('get_card', { task_id: a.id })).toEqual({ task: f.app.store.requireTask(a.id), project: f.app.store.requireProject(f.project.id) });
+    expect(await f.tool('get_card', { task_id: a.id })).toEqual(expect.objectContaining({ task: f.app.store.requireTask(a.id), project: f.app.store.requireProject(f.project.id), board: expect.objectContaining({ id: boardId, name: 'Kanban' }), hub: expect.objectContaining({ id: hubId, name: 'My Hub' }) }));
     expect(await f.tool('get_card', { task_id: a.id }, a.b)).toEqual(await f.tool('get_card', { task_id: a.id }));
     expect(await f.tool('list_notes', { task_id: a.id })).toEqual([note]);
     expect(await f.tool('list_notes', {}, b.sessionIds[0]!)).toEqual([]);

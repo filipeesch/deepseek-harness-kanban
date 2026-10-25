@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { BoardView, createBoardPageState } from '../../src/client/board.js';
-import type { BoardSnapshot } from '../../src/shared/types.js';
+import type { KanbanSnapshot } from '../../src/shared/types.js';
 import { fakeApi, fixture } from './helpers.js';
 
 afterEach(cleanup);
@@ -114,7 +114,7 @@ describe('physical reconnect epoch ordering', () => {
   });
 
   it('rejects a late initial unary response from a prior epoch after receiving a new-generation event', async () => {
-    const mock = fakeApi(); let resolve!: (snapshot: BoardSnapshot) => void; vi.mocked(mock.api.snapshot).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const mock = fakeApi(); let resolve!: (snapshot: KanbanSnapshot) => void; vi.mocked(mock.api.snapshot).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
     render(<BoardView api={mock.api} renderConversation={renderNative} />);
     const fresh = fixture(); fresh.clientEpoch = 2; fresh.sequence = 0; fresh.state.tasks[0]!.title = 'Reconnect result'; act(() => { mock.publish(fresh); }); await screen.findByRole('button', { name: 'Open task Reconnect result' });
     const late = fixture(); late.clientEpoch = 1; late.sequence = 200; await act(async () => { resolve(late); });

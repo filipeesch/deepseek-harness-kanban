@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { GitExecutor, CommandResult, SessionPort } from '../../src/shared/ports.js';
-import type { BoardState, Project, SessionFacts } from '../../src/shared/types.js';
+import type { HubState, Project, SessionFacts } from '../../src/shared/types.js';
 import { KanbanError } from '../../src/shared/errors.js';
 
 const exec = promisify(execFile);
@@ -56,16 +56,30 @@ export class LocalExecutor implements GitExecutor {
 }
 export class MemoryStore {
   private chain: Promise<unknown> = Promise.resolve();
-  constructor(public state: BoardState) {}
-  snapshot(): BoardState { return structuredClone(this.state); }
-  transact(change: (draft: BoardState) => void): Promise<void> {
+  constructor(public state: HubState) {}
+  snapshot(): HubState { return structuredClone(this.state); }
+  transact(change: (draft: HubState) => void): Promise<void> {
     const result = this.chain.then(() => { const next = this.snapshot(); change(next); next.revision++; this.state = next; });
     this.chain = result.catch(() => {});
     return result;
   }
+  locate(taskId: string) {
+    const state = this.snapshot();
+    const task = state.tasks.find(value => value.id === taskId);
+    if (!task) throw new KanbanError('TASK_NOT_FOUND', 'The task does not exist.');
+    const project = state.projects.find(value => value.id === task.projectId);
+    if (!project) throw new KanbanError('PROJECT_NOT_FOUND', 'The task project does not exist.');
+    return { hubId: state.id, hub: state, task, project };
+  }
+  transactTask<T>(taskId: string, change: (draft: HubState) => T): Promise<T> {
+    let value!: T;
+    return this.transact(draft => { value = change(draft); }).then(() => value);
+  }
+  allTasks() { return this.snapshot().tasks; }
 }
-export function board(project: Project): BoardState {
-  return { schemaVersion: 2, revision: 0, projects: [project], workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, notes: [{ id: 'note', taskId: 'task', content: 'Retained note', createdAt: '', updatedAt: '' }], tasks: [{ id: 'task', projectId: project.id, title: 'Task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: project.projectPath, worktree: null, operation: null, createdAt: '', updatedAt: '' }] };
+export function board(project: Project): HubState {
+  const now = new Date().toISOString();
+  return { id: 'hub', name: 'Test Hub', revision: 0, projects: [project], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: now, updatedAt: now }], notes: [{ id: 'note', taskId: 'task', content: 'Retained note', createdAt: '', updatedAt: '' }], tasks: [{ id: 'task', boardId: 'board', projectId: project.id, title: 'Task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: project.projectPath, worktree: null, operation: null, createdAt: '', updatedAt: '' }], createdAt: now, updatedAt: now };
 }
 export class Sessions implements SessionPort {
   active = new Set<string>();

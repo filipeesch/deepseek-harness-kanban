@@ -2,17 +2,12 @@ import { lstat } from 'node:fs/promises';
 import { ownedSessionIds } from '../domain/session-lineage.js';
 import { KanbanError } from '../shared/errors.js';
 import type { SessionTopologyPort } from '../shared/ports.js';
-import type { BoardState, Task } from '../shared/types.js';
+import type { Task } from '../shared/types.js';
 import { canonicalPath, containsPath } from './git.js';
 
 export interface WorktreeOwnershipStore {
-  snapshot(): BoardState;
-}
-
-function requireTask(state: BoardState, id: string): Task {
-  const task = state.tasks.find(item => item.id === id);
-  if (!task) throw new KanbanError('TASK_NOT_FOUND', 'The task does not exist.', { taskId: id });
-  return task;
+  locate(taskId: string): { task: Task };
+  allTasks(): Task[];
 }
 
 async function exists(value: string): Promise<boolean> {
@@ -37,9 +32,8 @@ export class WorktreeSharingGuard {
     // registration without substituting a base project or Git root.
     if (!await exists(canonical)) return;
 
-    const state = this.store.snapshot();
-    const task = requireTask(state, taskId);
-    for (const other of state.tasks) {
+    const task = this.store.locate(taskId).task;
+    for (const other of this.store.allTasks()) {
       if (other.id === taskId || !other.worktree) continue;
       const otherPath = await canonicalPath(other.worktree.path, true);
       if (containsPath(canonical, otherPath) || containsPath(otherPath, canonical)) {

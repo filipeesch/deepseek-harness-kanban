@@ -4,8 +4,8 @@ import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-subagent';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { TYPERT_HOST } from './remote.js';
-import { BoardStore } from './domain/store.js';
-import { openNativeStorage } from './host/storage.js';
+import { HubRepository } from './host/hub-repository.js';
+import { openKanbanStorage } from './host/storage.js';
 import { openQuestionStorage } from './host/question-storage.js';
 import { createNativePorts } from './host/native.js';
 import { GitAdapter } from './host/git.js';
@@ -14,6 +14,7 @@ import { KanbanController } from './host/controller.js';
 import { registerProductTools } from './host/tools.js';
 import { KanbanError } from './shared/errors.js';
 import { registerTaskContextInjection } from './host/task-context.js';
+import type { TaskLocator } from './host/task-locator.js';
 
 // The optional public schedule module emits this payloadless event; listening does not require its service.
 declare module '@deepseek-ai/cordis' { interface Events { 'schedule/changed'():void } }
@@ -29,8 +30,8 @@ export function registerAttentionSignals(ctx:Context,app:Pick<KanbanApp,'session
 }
 
 /** Public native hooks, not a lease: assembly/working-directory recovery precedes both admission boundaries. */
-export function registerTaskExecutionGuards(ctx:Context,store:Pick<BoardStore,'snapshot'>,app:Pick<KanbanApp,'assertExecutionContext'>):()=>void{
- const taskFor=(id:string)=>store.snapshot().tasks.find(task=>task.sessionIds.includes(id));
+export function registerTaskExecutionGuards(ctx:Context,locator:Pick<TaskLocator,'bySession'>,app:Pick<KanbanApp,'assertExecutionContext'>):()=>void{
+ const taskFor=(id:string)=>locator.bySession(id)?.task;
  const changing=(task:ReturnType<typeof taskFor>)=>Boolean(task?.operation&&task.operation.phase!=='waiting'&&task.operation.phase!=='failed');
  const offStep=ctx.on('agent/pre-step',async(payload,next)=>{
   const task=taskFor(payload.agent.id);
@@ -53,21 +54,22 @@ export function registerTaskExecutionGuards(ctx:Context,store:Pick<BoardStore,'s
 export const name='kanban';
 export const inject=['storageDomain','sessionController','sessions','agents','workingDirectory','workspaceRegistry','sandboxPolicy','tools','typert'];
 export async function apply(ctx:Context):Promise<void>{
- const storage=await openNativeStorage(ctx);
+ const opened=await openKanbanStorage(ctx);
+ const storage={close:opened.close};
  let questions:{storage:import('./host/question-storage.js').QuestionStore;close:()=>Promise<void>};
  try{questions=await openQuestionStorage(ctx);}catch(error){await storage.close();throw error;}
  const lifetime=new AbortController();
- const native=createNativePorts(ctx);const store=await BoardStore.open(storage.storage);
+ const native=createNativePorts(ctx);const hubs=await HubRepository.open(opened.storage);
  const report=(error:unknown)=>ctx.logger.warn(error instanceof Error?error.message:String(error));
- const app=new KanbanApp(store,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await ctx.sessionController.inspect(SessionId(id),lifetime.signal)).events,questionStore:questions.storage},native.workspaces);
+ const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await ctx.sessionController.inspect(SessionId(id),lifetime.signal)).events,questionStore:questions.storage},native.workspaces);
  let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offSignals:(()=>void)|undefined;
- ctx.effect(()=>async()=>{lifetime.abort();offTools?.();offWire?.();offGuards?.();offContext?.();offSignals?.();await app.close();await storage.close();await questions.close();});
+ ctx.effect(()=>async()=>{lifetime.abort();offTools?.();offWire?.();offGuards?.();offContext?.();offSignals?.();try{await app.close();}finally{try{await hubs.close();}finally{await questions.close();}}});
  offWire=ctx.typert.register(TYPERT_HOST);
  ctx.plugin(KanbanController,app);
  offTools=registerProductTools(ctx,app);
  ctx.on('session/event',(session,event)=>{app.observe(session.id,event);});
  offSignals=registerAttentionSignals(ctx,app);
- offGuards=registerTaskExecutionGuards(ctx,store,app);
- offContext=registerTaskContextInjection(ctx,store,{report});
+ offGuards=registerTaskExecutionGuards(ctx,app.locator,app);
+ offContext=registerTaskContextInjection(ctx,app.locator,{report});
  await app.initialize();
 }

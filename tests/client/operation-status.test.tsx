@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { OperationStatus } from '../../src/client/operation-status.js';
 import type { ContextOperation } from '../../src/shared/types.js';
-import { task } from './helpers.js';
+import { fixture, task } from './helpers.js';
 
 afterEach(cleanup);
 const base = task('t1', 'Alpha task', 'p1', 'intake');
@@ -19,7 +19,7 @@ function operation(overrides: Partial<ContextOperation> = {}): ContextOperation 
 }
 
 function mount(op: ContextOperation) {
-  const run = vi.fn(async () => ({ sequence: 1, attention: {}, state: { schemaVersion: 2 as const, revision: 1, workflowYaml: '', workflow: { name: '', initialColumnId: 'intake', columns: [], groups: [] }, projects: [], tasks: [], notes: [] } }));
+  const run = vi.fn(async () => fixture());
   render(<OperationStatus task={{ ...base, operation: op }} run={run} />);
   return run;
 }

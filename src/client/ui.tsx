@@ -1,11 +1,11 @@
 import React, { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
-import type { BoardSnapshot, Command, Problem } from '../shared/types.js';
+import type { KanbanSnapshot, Command, Problem } from '../shared/types.js';
 
-export type RunCommand = (command: Command) => Promise<BoardSnapshot>;
+export type RunCommand = (command: Command) => Promise<KanbanSnapshot>;
 
 /** Entity identity belongs to the exact command response, never to a snapshot set difference. */
-export function creationReceiptId(snapshot: BoardSnapshot, kind: NonNullable<BoardSnapshot['commandReceipt']>['kind']): string | undefined {
+export function creationReceiptId(snapshot: KanbanSnapshot, kind: NonNullable<KanbanSnapshot['commandReceipt']>['kind']): string | undefined {
   const receipt = snapshot.commandReceipt;
   return receipt?.kind === kind && typeof receipt.id === 'string' && receipt.id.trim() ? receipt.id : undefined;
 }

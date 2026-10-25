@@ -3,13 +3,12 @@ import {Context} from '@deepseek-ai/cordis';
 import type {Agent} from '@deepseek-ai/dsh-agent';
 import {SessionId} from '@deepseek-ai/dsh-session';
 import {registerTaskExecutionGuards} from '../../src/index.js';
-import type {BoardState} from '../../src/shared/types.js';
 import {KanbanError} from '../../src/shared/errors.js';
 type Config=Parameters<Context['llm']['prepareCall']>[0];
 function fixture(){
   const ctx=new Context();
   const task={sessionIds:['bound'],operation:undefined as {phase:string}|undefined};
-  const store={snapshot:()=>({tasks:[task]} as unknown as BoardState)};
+  const store={bySession:(id:string)=>id==='bound'?{task}:undefined} as never;
   const directory={expected:'/ready-tree/packages/api',actual:'/ready-tree/packages/api',exists:true};
   const assertExecutionContext=vi.fn(async(id:string)=>{if(!directory.exists)throw new KanbanError('SESSION_CONTEXT_UNAVAILABLE','Expected tree disappeared.');if(id==='bound'&&directory.actual!==directory.expected)throw new KanbanError('CONTEXT_MISMATCH','Native recovery changed the directory.');});
   const dispose=registerTaskExecutionGuards(ctx,store,{assertExecutionContext});

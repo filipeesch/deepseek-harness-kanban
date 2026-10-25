@@ -4,19 +4,18 @@ import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { buildTaskContextText, registerTaskContextInjection } from '../../src/host/task-context.js';
-import type { BoardState, Task } from '../../src/shared/types.js';
+import type { Board, HubState, HubTask } from '../../src/shared/types.js';
 
-const task: Task = {
-  id: 'task-1', projectId: 'project', title: 'Alpha task', description: 'Task details', columnId: 'plan', position: 0,
+const task: HubTask = {
+  id: 'task-1', boardId: 'board', projectId: 'project', title: 'Alpha task', description: 'Task details', columnId: 'plan', position: 0,
   sessionIds: ['session-1'], closedSessionIds: [], effectiveCwd: '/repo', worktree: null, operation: null,
   createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
 };
-const state = {
-  schemaVersion: 2, revision: 1, workflowYaml: '',
-  workflow: { name: 'Delivery', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }, { id: 'plan', name: 'Plan' }], groups: [] },
-  projects: [], tasks: [task], notes: [],
-} as BoardState;
-const store = { snapshot: () => state };
+const workflow = { name: 'Delivery', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }, { id: 'plan', name: 'Plan' }], groups: [] };
+const board: Board = { id: 'board', name: 'Delivery board', workflowYaml: '', workflow, createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z' };
+const project = { id: 'project', name: 'Project', projectPath: '/repo', gitRootPath: '/repo' };
+const hub: HubState = { id: 'hub', name: 'Product Hub', revision: 1, projects: [project], boards: [board], tasks: [task], notes: [], createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z' };
+const locator = { bySession: (id: string) => id === 'session-1' ? { hubId: 'hub', hub, board, project, task } : undefined };
 const userMessage = (text: string) => createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } });
 const enter = (messages: ReturnType<typeof userMessage>[]) => async () => ({ kind: 'enter' as const, messages });
 
@@ -25,7 +24,7 @@ function setup(options: { events?: readonly unknown[]; inspect?: (id: string) =>
   let events = options.events ?? [];
   const inspect = vi.fn(options.inspect ?? (async () => ({ events })));
   const report = vi.fn();
-  const dispose = registerTaskContextInjection(ctx, store, { inspect, report });
+  const dispose = registerTaskContextInjection(ctx, locator, { inspect, report });
   const signal = new AbortController().signal;
   const step = (agent: Agent, messages: ReturnType<typeof userMessage>[]) => ctx.waterfall('agent/pre-step', { agent, turn: 1, step: 1, signal, messages }, enter(messages));
   return { ctx, inspect, report, dispose, step, setEvents: (next: readonly unknown[]) => { events = next; }, agent: { id: SessionId('session-1') } as Agent };
@@ -33,9 +32,11 @@ function setup(options: { events?: readonly unknown[]; inspect?: (id: string) =>
 
 describe('task context injection', () => {
   it('builds the task envelope with the first-contact stage', () => {
-    const text = buildTaskContextText(task, 'Plan');
+    const text = buildTaskContextText(task, 'Plan', 'Product Hub', board);
     expect(text).toContain('Alpha task (task-1)');
     expect(text).toContain('Task details');
+    expect(text).toContain('Hub: Product Hub');
+    expect(text).toContain('Board: Delivery board');
     expect(text).toContain('Workflow stage at first contact: Plan');
   });
 
@@ -107,7 +108,7 @@ describe('task context injection', () => {
   it('returns a rejected decision unchanged without inspecting history', async () => {
     const ctx = new Context();
     const inspect = vi.fn(async () => ({ events: [] }));
-    const dispose = registerTaskContextInjection(ctx, store, { inspect });
+    const dispose = registerTaskContextInjection(ctx, locator, { inspect });
     const agent = { id: SessionId('session-1') } as Agent;
     const decision = await ctx.waterfall('agent/pre-step', { agent, turn: 1, step: 1, signal: new AbortController().signal, messages: [userMessage('Hello')] }, async () => ({ kind: 'reject' as const }));
     expect(decision).toEqual({ kind: 'reject' });

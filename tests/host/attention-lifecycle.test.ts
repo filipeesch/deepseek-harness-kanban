@@ -11,6 +11,7 @@ import { initialState } from '../../src/domain/schema.js';
 import type { BoardState } from '../../src/shared/types.js';
 import type { GitPort } from '../../src/shared/ports.js';
 import { TestGit } from './helpers.js';
+import { fakeKanbanStorage } from './fake-kanban-storage.js';
 
 type Family = { kind: string; items?: Array<{ id: string; label?: string }> };
 const cleanup: Array<() => Promise<void>> = [];
@@ -39,28 +40,8 @@ async function runtime() {
   });
 
   const git = new TestGit();
-  let persisted: BoardState = initialState();
-  const questionTables = new Map<string, Map<string, unknown>>();
-  root.provide('storageDomain', {
-    open: async (spec: { name: string }) => spec.name === 'kanban'
-      ? {
-        global: { get: () => structuredClone(persisted), set: async (value: BoardState) => { persisted = structuredClone(value); } },
-        close: async () => {},
-      }
-      : {
-        table: (name: string) => {
-          const table = questionTables.get(name) ?? new Map<string, unknown>();
-          questionTables.set(name, table);
-          return {
-            get: (key: string) => table.get(key), entries: () => table.entries(), keys: () => table.keys(), size: table.size,
-            put: async (key: string, value: unknown) => { table.set(key, structuredClone(value)); },
-            delete: async (key: string) => table.delete(key),
-            update: async () => { throw new Error('unused'); },
-          };
-        },
-        close: async () => {},
-      },
-  } as never);
+  const storage = fakeKanbanStorage();
+  root.provide('storageDomain', storage.facility as never);
 
   const sessions = new Map<string, Session>();
   const directories = new Map<string, string>();

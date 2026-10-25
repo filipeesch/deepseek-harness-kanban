@@ -4,18 +4,18 @@ import { BoardView } from '../../src/client/board.js';
 import { styles } from '../../src/client/styles.js';
 import { Configuration } from '../../src/client/forms.js';
 import { QuestionForm } from '../../src/questions/QuestionForm.js';
-import type { BoardSnapshot, Command, QuestionRound } from '../../src/shared/types.js';
-import { createHarnessApi } from './fake-api.js';
+import type { Command, QuestionRound } from '../../src/shared/types.js';
+import { createHarnessApi, type TestSnapshot } from './fake-api.js';
 import { themeFixture } from './theme-fixture.js';
 
 const scenario = new URLSearchParams(window.location.search).get('scenario') ?? 'board';
-const harness = createHarnessApi({ attention: scenario === 'activity' || scenario === 'appearance' });
+const harness = createHarnessApi({ attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs', hubs: scenario === 'hubs' ? 2 : 1 });
 (window as unknown as { __harness: unknown }).__harness = { commands: harness.commands, snapshot: harness.snapshot };
 
 function WorkflowScenario() {
-  const [snapshot, setSnapshot] = useState<BoardSnapshot>(harness.snapshot());
-  const run = async (command: Command) => { const next = await harness.api.command(command); setSnapshot(next); return next; };
-  return <Configuration state={snapshot.state} run={run} api={harness.api} initial="Workflow" onClose={() => {}} />;
+  const [snapshot, setSnapshot] = useState<TestSnapshot>(harness.snapshot());
+  const run = async (command: Command) => { const next = await harness.api.command(command); setSnapshot(next as TestSnapshot); return next; };
+  return <Configuration state={snapshot.state} hub={snapshot.state.hubs[0]!} board={snapshot.state.hubs[0]!.boards[0]!} hubCount={1} settings={snapshot.state.settings} settingsRevision={snapshot.state.settings.revision} run={run} api={harness.api} initial="Board" onClose={() => {}} />;
 }
 
 const round: QuestionRound = {
@@ -38,6 +38,7 @@ function ThemeSync() {
 }
 
 function App() {
+  if (scenario === 'hubs') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;
   if (scenario === 'appearance') return <><style>{themeFixture}</style><ThemeSync /><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></>;
   if (scenario === 'workflow') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario /></div></>;
   if (scenario === 'question') return <><style>{styles}</style><div className="dsh-kanban"><QuestionScenario /></div></>;

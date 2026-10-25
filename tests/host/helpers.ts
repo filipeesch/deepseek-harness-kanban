@@ -1,11 +1,20 @@
 import { mkdtemp, mkdir, realpath, rm, stat } from 'node:fs/promises';
 import path from 'node:path';import os from 'node:os';
-import { BoardStore } from '../../src/domain/store.js';
+import { HubRepository } from '../../src/host/hub-repository.js';
 import { KanbanApp } from '../../src/host/app.js';
-import type { BoardState, SessionFacts, Project, CreateWorktree } from '../../src/shared/types.js';
-import type { StateStorage, SessionPort, GitPort, GitTree, WorkspacePort, WorkspaceInfo } from '../../src/shared/ports.js';
+import type { BoardState, HubState, KanbanMeta, SessionFacts, Project, CreateWorktree } from '../../src/shared/types.js';
+import type { HubStorage, SessionPort, GitPort, GitTree, WorkspacePort, WorkspaceInfo } from '../../src/shared/ports.js';
 import { KanbanError } from '../../src/shared/errors.js';
-export class MemoryStorage implements StateStorage {value:BoardState|null=null;async load(){return structuredClone(this.value);}async save(value:BoardState){this.value=structuredClone(value);}}
+export class MemoryHubStorage implements HubStorage {
+ hubs=new Map<string,HubState>(); meta:KanbanMeta={settingsRevision:0}; failSave=false; failLoad=false; failDelete=false;
+ async loadAll(){if(this.failLoad)throw new Error('Load failed.');return {hubs:[...this.hubs.values()].map(value=>structuredClone(value)),meta:structuredClone(this.meta)};}
+ async saveHub(value:HubState){if(this.failSave)throw new Error('Disk is full.');this.hubs.set(value.id,structuredClone(value));}
+ async deleteHub(id:string){if(this.failDelete)throw new Error('Delete failed.');this.hubs.delete(id);}
+ async saveMeta(value:KanbanMeta){if(this.failSave)throw new Error('Disk is full.');this.meta=structuredClone(value);}
+ async close(){}
+}
+/** @deprecated Use MemoryHubStorage. Kept for legacy migration tests. */
+export class MemoryStorage {value:BoardState|null=null;async load(){return structuredClone(this.value);}async save(value:BoardState){this.value=structuredClone(value);}}
 export class TestSessions implements SessionPort {
  dirs=new Map<string,string>();lineage=new Map<string,{parentSessionId?:string;origin?:'subagent'}>();workspaceIds=new Map<string,string|undefined>();busy=new Set<string>();awaiting=new Set<string>();sent:Array<{id:string;text:string;requestId?:string}>=[];archived:string[]=[];failSend=false;private count=0;private requests=new Set<string>();
  async create(cwd:string,workspaceId?:string){const id='session-'+(++this.count);this.dirs.set(id,cwd);this.workspaceIds.set(id,workspaceId);return id;}
@@ -45,4 +54,4 @@ export class TestWorkspaces implements WorkspacePort {
  get(id:string){return this.byId.get(id);}
  async delete(id:string){this.deleted.push(id);const value=this.byId.get(id);if(value)this.byPath.delete(value.path);this.byId.delete(id);}
 }
-export async function fixture(){const root=await realpath(await mkdtemp(path.join(os.tmpdir(),'dsh-kanban-host-')));const gitRoot=path.join(root,'repo');const projectPath=path.join(gitRoot,'apps','web');await mkdir(projectPath,{recursive:true});const storage=new MemoryStorage();const store=await BoardStore.open(storage);const project=await store.saveProject({name:'Web',projectPath,gitRootPath:gitRoot});const sessions=new TestSessions();const git=new TestGit();const workspaces=new TestWorkspaces();const app=new KanbanApp(store,sessions,git,{},workspaces);return {root,gitRoot,projectPath,storage,store,project,sessions,git,workspaces,app,async close(){await app.close();if(path.dirname(root)!==await realpath(os.tmpdir())||!path.basename(root).startsWith('dsh-kanban-host-')||await realpath(root)!==root)throw new Error('Unsafe test cleanup target');await rm(root,{recursive:true,force:true});}};}
+export async function fixture(){const root=await realpath(await mkdtemp(path.join(os.tmpdir(),'dsh-kanban-host-')));const gitRoot=path.join(root,'repo');const projectPath=path.join(gitRoot,'apps','web');await mkdir(projectPath,{recursive:true});const storage=new MemoryHubStorage();const hubs=await HubRepository.open(storage,{id:(()=>{let n=0;return()=>`test-${++n}`;})(),now:(()=>new Date().toISOString())});const store=hubs.defaultHub();const project=await store.saveProject({name:'Web',projectPath,gitRootPath:gitRoot});const hub=hubs.requireHub(hubs.defaultHubId());const board=hub.boards[0]!;const sessions=new TestSessions();const git=new TestGit();const workspaces=new TestWorkspaces();const app=new KanbanApp(hubs,sessions,git,{},workspaces);return {root,gitRoot,projectPath,storage,hubs,store,hub,board,project,sessions,git,workspaces,app,async close(){await app.close();if(path.dirname(root)!==await realpath(os.tmpdir())||!path.basename(root).startsWith('dsh-kanban-host-')||await realpath(root)!==root)throw new Error('Unsafe test cleanup target');await rm(root,{recursive:true,force:true});}};}

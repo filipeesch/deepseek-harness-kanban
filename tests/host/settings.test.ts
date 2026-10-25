@@ -63,7 +63,7 @@ describe('board settings command', () => {
     const f = await setup();
     const trees = path.join(f.root, 'trees');
     await mkdir(trees);
-    const revision = f.store.snapshot().revision;
+    const revision = (await f.app.snapshot()).state.settings.revision;
     await f.app.command({ type: 'settings.save', settings: { worktreeBasePath: trees }, expectedRevision: revision });
     await expect(f.app.command({ type: 'settings.save', settings: { worktreeBasePath: trees }, expectedRevision: revision })).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
     expect(f.store.snapshot().settings).toEqual({ worktreeBasePath: trees });

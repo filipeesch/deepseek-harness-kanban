@@ -4,7 +4,7 @@ import {afterEach, describe, expect, it, vi} from 'vitest';
 import {act, cleanup, render, screen, waitFor} from '@testing-library/react';
 import {userEvent} from '@testing-library/user-event';
 import {Configuration, InfoPanel, NotesPanel} from '../../src/client/forms.js';
-import type {BoardSnapshot} from '../../src/shared/types.js';
+import type {KanbanSnapshot} from '../../src/shared/types.js';
 import {fixture} from './helpers.js';
 
 vi.mock('../../src/client/code-editor.js', async () => {
@@ -16,7 +16,7 @@ vi.mock('../../src/client/code-editor.js', async () => {
 });
 
 afterEach(cleanup);
-function pending() { let resolve!: (value: BoardSnapshot) => void; let reject!: (error: unknown) => void; const run = vi.fn(() => new Promise<BoardSnapshot>((done, fail) => {resolve=done;reject=fail;})); return {run, resolve: (value:BoardSnapshot)=>resolve(value), reject:(error:unknown)=>reject(error)}; }
+function pending() { let resolve!: (value: KanbanSnapshot) => void; let reject!: (error: unknown) => void; const run = vi.fn(() => new Promise<KanbanSnapshot>((done, fail) => {resolve=done;reject=fail;})); return {run, resolve: (value:KanbanSnapshot)=>resolve(value), reject:(error:unknown)=>reject(error)}; }
 describe('editor save draft lifetime',()=>{
  it('locks task fields until a save completes and permits the next draft afterward',async()=>{
   const value=fixture(), p=pending(), user=userEvent.setup(); const view=render(<InfoPanel task={value.state.tasks[0]!} state={value.state} run={p.run}/>);
@@ -59,7 +59,7 @@ describe('editor save draft lifetime',()=>{
   await act(async()=>p.resolve(value));expect(editor.value).toBe('B NEW NOTE');expect(screen.queryByText('Note saved for all task conversations.')).toBeNull();
  });
  it('locks workflow text while its approved version is being saved',async()=>{
-  const value=fixture(),p=pending(),user=userEvent.setup();render(<Configuration state={value.state} run={p.run} onClose={()=>{}} initial="Workflow"/>);
+  const value=fixture(),p=pending(),user=userEvent.setup();render(<Configuration state={value.state} hub={value.state.hubs[0]!} board={value.state.hubs[0]!.boards[0]!} hubCount={1} settings={value.state.settings} settingsRevision={value.state.settings.revision} run={p.run} onClose={()=>{}} initial="Board"/>);
   const editor=screen.getByRole('textbox',{name:'Workflow YAML'}) as HTMLTextAreaElement;await user.click(screen.getByRole('button',{name:'Save workflow'}));
   expect(editor.disabled).toBe(true);await user.type(editor,'NEW UNSAVED YAML');expect(editor.value).toBe(value.state.workflowYaml);
   await act(async()=>p.resolve(value));await waitFor(()=>expect(editor.disabled).toBe(false));

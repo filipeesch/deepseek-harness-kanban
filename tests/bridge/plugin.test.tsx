@@ -7,14 +7,15 @@ import { RemoteStream, type RemoteStreamOptions } from '@deepseek-ai/dsh-api-gat
 import type { RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol';
 import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client';
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots';
-import type { BoardSnapshot, QuestionRound } from '../../src/shared/types.js';
+import type { KanbanSnapshot, QuestionRound } from '../../src/shared/types.js';
 import { apply, inject } from '../../src/client.js';
 import { TYPERT_REMOTE } from '../../src/remote.js';
 const disposers: Array<() => Promise<void>> = [];
 afterEach(async () => { cleanup(); for (const dispose of disposers.splice(0)) await dispose(); });
 const question: QuestionRound = { id: 'r', sessionId: 'a', turnId: 't', complete: true, answered: false, pages: [{ callId: 'call-a', sequence: 1, page: { question: 'Choose the implementation', type: 'freetext' } }] };
-function snapshot(rounds: QuestionRound[] = [question]): BoardSnapshot {
-  return { sequence: 1, attention: {}, questionRounds: rounds, state: { schemaVersion: 2, revision: 1, workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }, { id: 'review', name: 'Review', onEnterPrompt: 'Review **carefully**.' }], groups: [] }, projects: [{ id: 'p', name: 'Project', projectPath: '/project', gitRootPath: '/project' }], tasks: [{ id: 'task', projectId: 'p', title: 'Native task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' }], notes: [] } };
+function snapshot(rounds: QuestionRound[] = [question]): KanbanSnapshot {
+  const now = '2026-10-21T00:00:00Z';
+  return { sequence: 1, attention: {}, questionRounds: rounds, state: { hubs: [{ id: 'hub', name: 'Hub', revision: 1, projects: [{ id: 'p', name: 'Project', projectPath: '/project', gitRootPath: '/project' }], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }, { id: 'review', name: 'Review', onEnterPrompt: 'Review **carefully**.' }], groups: [] }, createdAt: now, updatedAt: now }], tasks: [{ id: 'task', boardId: 'board', projectId: 'p', title: 'Native task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' }], notes: [], createdAt: now, updatedAt: now }], settings: { revision: 0 } } };
 }
 type Entry = { options: Record<string, unknown>; Component: ComponentType<Record<string, unknown>> };
 function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
@@ -53,7 +54,7 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
     inferProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { projectPath: '/repo', gitRootPath: '/repo' } } }),
     questions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: rounds } }),
     dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
-    follow(signal?: AbortSignal): RemoteStreamHandle<BoardSnapshot, never> {
+    follow(signal?: AbortSignal): RemoteStreamHandle<KanbanSnapshot, never> {
       return {
         async *[Symbol.asyncIterator]() { if (!signal?.aborted) await new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once: true })); },
         send(_value: never) {}, end() {}, dispose() {},

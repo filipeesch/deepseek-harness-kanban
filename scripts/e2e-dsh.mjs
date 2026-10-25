@@ -10,7 +10,7 @@ const checkoutArg = option('--checkout') ?? process.env.DSH_CHECKOUT;
 const checkOnly = args.includes('--check');
 const only = option('--only');
 if (!checkoutArg) {
-  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only board|conversation|deletion]');
+  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only board|conversation|deletion|hubs]');
   process.exit(2);
 }
 const checkout = resolve(checkoutArg);
@@ -26,7 +26,7 @@ function verify() {
 verify();
 if (checkOnly) process.exit(0);
 execFileSync('pnpm', ['run', 'build'], { cwd: root, stdio: 'inherit' });
-const scenarios = only === 'board' ? [['kanban-board-ux.e2e.template.ts', 'kanban-board-ux.e2e.ts']] : only === 'conversation' ? [['kanban-conversation-ux.e2e.template.ts', 'kanban-conversation-ux.e2e.ts']] : only === 'deletion' ? [['kanban-deletion.e2e.template.ts', 'kanban-deletion.e2e.ts']] : [['kanban-board-ux.e2e.template.ts', 'kanban-board-ux.e2e.ts'], ['kanban-conversation-ux.e2e.template.ts', 'kanban-conversation-ux.e2e.ts'], ['kanban-deletion.e2e.template.ts', 'kanban-deletion.e2e.ts']];
+const scenarios = only === 'board' ? [['kanban-board-ux.e2e.template.ts', 'kanban-board-ux.e2e.ts']] : only === 'conversation' ? [['kanban-conversation-ux.e2e.template.ts', 'kanban-conversation-ux.e2e.ts']] : only === 'deletion' ? [['kanban-deletion.e2e.template.ts', 'kanban-deletion.e2e.ts']] : only === 'hubs' ? [['kanban-hubs.e2e.template.ts', 'kanban-hubs.e2e.ts']] : [['kanban-board-ux.e2e.template.ts', 'kanban-board-ux.e2e.ts'], ['kanban-conversation-ux.e2e.template.ts', 'kanban-conversation-ux.e2e.ts'], ['kanban-deletion.e2e.template.ts', 'kanban-deletion.e2e.ts'], ['kanban-hubs.e2e.template.ts', 'kanban-hubs.e2e.ts']];
 const copied = [];
 try {
   for (const [template, target] of scenarios) {

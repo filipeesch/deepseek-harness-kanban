@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-10-23
+goal: Introduce Hubs as the logical segregation boundary for projects, boards,
+  and workflows without changing native DSH workspace semantics.

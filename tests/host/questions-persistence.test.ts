@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from '@deepseek-ai/cordis';
-import { BoardStore } from '../../src/domain/store.js';
+import { HubRepository } from '../../src/host/hub-repository.js';
 import { KanbanApp } from '../../src/host/app.js';
 import { openQuestionStorage, type QuestionStore } from '../../src/host/question-storage.js';
 import { QuestionIndex, type QuestionSessionRecord } from '../../src/questions/indexer.js';
-import { MemoryStorage, TestGit, TestSessions } from './helpers.js';
+import { MemoryHubStorage, TestGit, TestSessions } from './helpers.js';
 import { call, end, human, result } from '../questions/fixtures.js';
 
 afterEach(() => { vi.useRealTimers(); });
@@ -44,7 +44,7 @@ function fakeFacility() {
   };
 }
 async function appWith(store: QuestionStore | undefined, options: { report?: (error: unknown) => void; history?: () => Promise<readonly unknown[]> } = {}) {
-  return new KanbanApp(await BoardStore.open(new MemoryStorage()), new TestSessions(), new TestGit(), {
+  return new KanbanApp(await HubRepository.open(new MemoryHubStorage()), new TestSessions(), new TestGit(), {
     history: options.history ?? (async () => []),
     questionStore: store,
     ...(options.report ? { report: options.report } : {}),
