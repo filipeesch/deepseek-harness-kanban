@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { Configuration } from '../../src/client/forms.js';
+import { Configuration } from '../../src/client/settings/configuration.js';
 import type { Command, KanbanSnapshot } from '../../src/shared/types.js';
 import { fixture } from './helpers.js';
 

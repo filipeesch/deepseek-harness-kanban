@@ -60,10 +60,13 @@ async function createProjectAndTask(page: Awaited<ReturnType<typeof newEnglishPa
   await page.getByRole('button', { name: 'Kanban', exact: true }).click();
   await page.getByRole('button', { name: 'Configuration' }).click();
   await page.getByRole('tab', { name: 'Projects' }).click();
-  await page.getByRole('textbox', { name: 'Project name' }).fill('Harness');
-  await page.getByRole('textbox', { name: 'Project path' }).fill(scaffold.workspaceCwd);
-  await page.getByRole('textbox', { name: 'Git root' }).fill(scaffold.workspaceCwd);
-  await page.getByRole('button', { name: 'Save project' }).click();
+  await page.getByRole('button', { name: 'New project' }).click();
+  const projectDialog = page.getByRole('dialog', { name: 'New project' });
+  await projectDialog.getByRole('textbox', { name: 'Project name' }).fill('Harness');
+  await projectDialog.getByRole('textbox', { name: 'Project path' }).fill(scaffold.workspaceCwd);
+  await projectDialog.getByRole('textbox', { name: 'Project path' }).press('Tab');
+  await expect(projectDialog.getByText('No Git repository found')).toBeVisible();
+  await projectDialog.getByRole('button', { name: 'Save project' }).click();
   await expect(page.getByText('Project saved.')).toBeVisible();
   await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
   await page.getByRole('button', { name: 'New task' }).first().click();

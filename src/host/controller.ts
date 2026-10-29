@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis';
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
-import type { Command, KanbanSnapshot, Outcome, QuestionRound } from '../shared/types.js';
+import type { Command, KanbanSnapshot, Outcome, ProjectLocation, QuestionRound } from '../shared/types.js';
 import { problem, KanbanError } from '../shared/errors.js';
 import type { KanbanApp } from './app.js';
 export class KanbanController extends TypertRemoteService {
@@ -11,7 +11,7 @@ export class KanbanController extends TypertRemoteService {
  @Remote async command(request:Command):Promise<Outcome<KanbanSnapshot>>{return this.attempt(()=>this.app.command(request));}
  @Remote async branches(request:{taskId:string}):Promise<Outcome<string[]>>{return this.attempt(()=>this.app.branches(request.taskId));}
  @Remote async worktreeDefault(request:{taskId:string}):Promise<Outcome<{branchName:string;path:string}>>{return this.attempt(()=>this.app.worktreeDefault(request.taskId));}
- @Remote async inferProject(request:{path:string}):Promise<Outcome<{projectPath:string;gitRootPath:string}>>{return this.attempt(()=>this.app.inferProject(request.path));}
+ @Remote async detectProject(request:{path:string}):Promise<Outcome<ProjectLocation>>{return this.attempt(()=>this.app.detectProject(request.path));}
  @Remote async questions(request:{sessionId:string}):Promise<Outcome<QuestionRound[]>>{return this.attempt(()=>this.app.rounds(request.sessionId));}
  @Remote async dismissQuestions(request:{sessionId:string;roundId:string}):Promise<Outcome<QuestionRound[]>>{return this.attempt(()=>this.app.dismissQuestions(request.sessionId,request.roundId));}
  @Remote({mode:'stream'}) async *follow(signal:AbortSignal):AsyncGenerator<KanbanSnapshot>{

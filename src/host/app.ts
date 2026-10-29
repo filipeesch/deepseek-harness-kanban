@@ -3,13 +3,15 @@ import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { canTransition, transitionAccess } from '../domain/transitions.js';
 import { entryInstruction, nextEnteredAt } from '../domain/stage-entry.js';
-import type { BoardSettings, Command, HubState, HubTask, KanbanSnapshot, NewTask, PendingTransition, Project, ProjectInput, QuestionRound } from '../shared/types.js';
-import type { GitPort, SessionPort, WorkspacePort } from '../shared/ports.js';
+import type { BoardSettings, Command, HubState, HubTask, KanbanSnapshot, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound } from '../shared/types.js';
+import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionStore } from './question-storage.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
 import { WorktreeCoordinator } from './worktrees.js';
 import { AttentionCoordinator } from './attention.js';
 import { isAbsolutePath } from '../domain/validation.js';
+import { isGitProject, requireGitProject } from '../shared/project.js';
+import { containsPath } from './git.js';
 import { taskTitleSlug, worktreePathForBranch } from '../shared/worktree-name.js';
 import { ownedSessionIds } from '../domain/session-lineage.js';
 import { HubRepository, HubStore } from './hub-repository.js';
@@ -27,7 +29,7 @@ function userPromptTime(event:unknown):number|undefined{
  const time=(event as {time?:unknown}).time;
  return typeof time==='number'&&Number.isFinite(time)?time:Date.now();
 }
-export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore }
+export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore; probe?:ProjectProbe }
 /** Coordinates Hub-scoped commands while the host continues to own sessions and execution. */
 export class KanbanApp {
  readonly questions=new QuestionIndex();
@@ -142,10 +144,10 @@ export class KanbanApp {
   const attention=await this.attention.project(this.locator.all().map(located=>({id:located.task.id,sessionIds:located.task.sessionIds})));
   return {state,attention,sequence,questionRounds};
  }
- async branches(taskId:string):Promise<string[]>{const located=this.locatedTask(taskId);return this.git.branches(located.project,located.task.sessionIds);}
+ async branches(taskId:string):Promise<string[]>{const located=this.locatedTask(taskId);return this.git.branches(requireGitProject(located.project),located.task.sessionIds);}
  async worktreeDefault(taskId:string):Promise<{branchName:string;path:string}>{
-  const located=this.locatedTask(taskId);const state=this.hubs.snapshot();const basePath=state.settings.worktreeBasePath;const slug=taskTitleSlug(located.task.title);
-  const branches=await this.git.branches(located.project,located.task.sessionIds);const occupied=new Set<string>();
+  const located=this.locatedTask(taskId);const project=requireGitProject(located.project);const state=this.hubs.snapshot();const basePath=state.settings.worktreeBasePath;const slug=taskTitleSlug(located.task.title);
+  const branches=await this.git.branches(project,located.task.sessionIds);const occupied=new Set<string>();
   for(const other of this.locator.all().map(value=>value.task)){if(other.worktree?.path)occupied.add(other.worktree.path);for(const entry of other.unclaimedWorktrees??[])occupied.add(entry.path);const attempt=other.operation?.createAttempt;if(attempt?.path)occupied.add(attempt.path);const pending=other.pendingTransition?.worktreeRequest;if(pending?.path)occupied.add(pending.path);}
   for(let index=1;index<=100;index++){
    const branchName=index===1?slug:slug+'-'+index;if(branches.includes(branchName))continue;if(!basePath)return {branchName,path:''};
@@ -154,12 +156,22 @@ export class KanbanApp {
   }
   throw new KanbanError('WORKTREE_NAME_UNAVAILABLE','Could not derive an available worktree name from the task title.');
  }
- async inferProject(pathValue:string):Promise<{projectPath:string;gitRootPath:string}>{return this.git.discover(pathValue);}
+ async detectProject(pathValue:string):Promise<ProjectLocation>{const probe=this.options.probe;invariant(probe,'PROJECT_PROBE_UNAVAILABLE','Project detection is unavailable in this host.');return probe.inspect(pathValue);}
  async assertExecutionContext(sessionId:string):Promise<void>{
   const located=this.locator.bySession(sessionId);if(!located)return;const task=located.task;const project=located.project;
+  if(!isGitProject(project)){
+   // Without a Git root the recorded directory cannot be re-derived; it must still be the project path or its retained checkout.
+   const expected=task.effectiveCwd;
+   invariant(expected===project.projectPath||(task.worktree!==null&&containsPath(task.worktree.path,expected)),'CONTEXT_MISMATCH','The active task directory is neither its configured project nor its retained checkout. Restore the expected context before running.');
+   await this.sessions.validateDirectory(sessionId,expected);
+   const latest=this.locator.bySession(sessionId);
+   invariant(latest&&latest.hubId===located.hubId&&latest.task.projectId===task.projectId&&latest.project.projectPath===project.projectPath&&latest.task.sessionIds.includes(sessionId)&&latest.task.effectiveCwd===expected,'CONTEXT_CHANGED','The task context changed while execution was being validated. Review its directory before retrying.');
+   return;
+  }
+  const gitProject=requireGitProject(project);
   const atBase=task.effectiveCwd===project.projectPath;const root=!atBase&&task.worktree?.status==='ready'?task.worktree.path:undefined;
   invariant(atBase||root!==undefined,'CONTEXT_MISMATCH','The active task directory is neither its configured project nor a ready worktree. Restore the expected context before running.');
-  const expected=await this.git.projectDirectory(project,root);
+  const expected=await this.git.projectDirectory(gitProject,root);
   invariant(expected===task.effectiveCwd,'CONTEXT_MISMATCH','The recorded task directory no longer matches its active project or worktree. Restore the expected context before running.');
   await this.sessions.validateDirectory(sessionId,expected);
   const latest=this.locator.bySession(sessionId);
@@ -175,10 +187,20 @@ export class KanbanApp {
   return this.hubs.saveSettings({worktreeBasePath:resolved},expectedRevision);
  }
  private async project(input:ProjectInput):Promise<ProjectInput>{
-  const projectPath=await realpath(input.projectPath);const gitRootPath=await realpath(input.gitRootPath);
-  invariant((await stat(projectPath)).isDirectory()&&(await stat(gitRootPath)).isDirectory(),'INVALID_PROJECT_PATH','Project and Git root must be existing directories.');
+  const projectPath=await realpath(input.projectPath);
+  invariant((await stat(projectPath)).isDirectory(),'INVALID_PROJECT_PATH','The project path must be an existing directory.');
+  invariant(input.gitRootPath===undefined||typeof input.gitRootPath==='string','INVALID_INPUT','Git root must be text.');
+  const requestedGitRoot=typeof input.gitRootPath==='string'&&input.gitRootPath.trim()?input.gitRootPath.trim():undefined;
+  if(requestedGitRoot===undefined){const {gitRootPath:_gitRootPath,...rest}=input;return {...rest,projectPath};}
+  const gitRootPath=await realpath(requestedGitRoot);
+  invariant((await stat(gitRootPath)).isDirectory(),'INVALID_PROJECT_PATH','The Git root must be an existing directory.');
   const relative=path.relative(gitRootPath,projectPath);
-  invariant(relative!== '..'&&!relative.startsWith('..'+path.sep)&&!path.isAbsolute(relative),'INVALID_PROJECT_PATH','Project path must be inside its configured Git root.');
+  invariant(relative===''||(!relative.startsWith('..'+path.sep)&&relative!=='..'&&!path.isAbsolute(relative)),'INVALID_PROJECT_PATH','Project path must be inside its configured Git root.');
+  const probe=this.options.probe;
+  invariant(probe,'PROJECT_PROBE_UNAVAILABLE','Project detection is unavailable in this host.');
+  const location=await probe.inspect(projectPath);
+  if(location.kind!=='git')throw new KanbanError('INVALID_GIT_ROOT','The project path is not inside a Git repository.',{path:projectPath});
+  if(location.gitRootPath!==gitRootPath)throw new KanbanError('INVALID_GIT_ROOT','The Git root must be the repository top-level directory.',{configured:gitRootPath,actual:location.gitRootPath});
   return {...input,projectPath,gitRootPath};
  }
  private async ensureProjectWorkspace(hubId:string,project:Project):Promise<string|undefined>{
@@ -282,7 +304,7 @@ export class KanbanApp {
   invariant(!task.operation,'CONTEXT_OPERATION_PENDING','Resolve the existing context operation before deleting this task.');
   invariant(!task.pendingTransition,'TASK_BUSY','Resolve the confirmed workflow action before deleting this task.');
   invariant((await Promise.all(task.sessionIds.map(id=>this.sessions.isIdle(id)))).every(Boolean),'TASK_BUSY','Wait for every conversation to become idle before deleting this task.');
-  if(task.worktree){const tree=await this.git.inspect(located.project,task.worktree.path,task.sessionIds);if(tree.dirty)throw new KanbanError('DISCARD_REQUIRED','Confirm discarding local worktree changes before deleting this task.',{path:tree.path});}
+  if(task.worktree&&isGitProject(located.project)){const tree=await this.git.inspect(requireGitProject(located.project),task.worktree.path,task.sessionIds);if(tree.dirty)throw new KanbanError('DISCARD_REQUIRED','Confirm discarding local worktree changes before deleting this task.',{path:tree.path});}
  }
  private async clearPending(taskId:string):Promise<void>{const located=this.locatedTask(taskId);const task=located.task;invariant(task.pendingTransition?.status!=='sending','EXECUTION_ADMISSION_PENDING','Wait until native prompt admission completes.');if(task.pendingTransition)await this.hubs.hub(located.hubId).transact(d=>{delete d.tasks.find(t=>t.id===taskId)!.pendingTransition;});}
  private requireReviewedInstruction(actual:string|undefined,expected:string|undefined):string{

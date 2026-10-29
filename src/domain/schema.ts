@@ -16,7 +16,9 @@ const workflow = z.strictObject({
   name: nonempty, initialColumnId: id, columns: z.array(column).min(1), groups: z.array(group),
 });
 const project = z.strictObject({
-  id, name: nonempty, projectPath: absolutePath, gitRootPath: absolutePath, defaultBranch: nonempty.optional(), workspaceId: id.optional(), workspaceOwned: z.boolean().optional(),
+  id, name: nonempty, projectPath: absolutePath, gitRootPath: absolutePath.optional(), defaultBranch: nonempty.optional(), workspaceId: id.optional(), workspaceOwned: z.boolean().optional(),
+}).superRefine((value, context) => {
+  if (value.defaultBranch !== undefined && value.gitRootPath === undefined) context.addIssue({ code: 'custom', path: ['defaultBranch'], message: 'A default branch requires a Git root.' });
 });
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 const jsonValue: z.ZodType<JsonValue> = z.lazy(() => z.union([

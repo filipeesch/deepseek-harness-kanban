@@ -165,13 +165,14 @@ describe('scoped Kanban page', () => {
 
   it('configures projects and YAML inside Kanban and reports host errors', async () => {
     const { user, command } = mount(); await loaded(); await user.click(screen.getByRole('button', { name: 'Configuration' })); await user.click(screen.getByRole('tab', { name: 'Projects' }));
+    await user.click(screen.getByRole('button', { name: 'New project' }));
     await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Worker'); await user.type(screen.getByRole('textbox', { name: 'Project path' }), '/mono/apps/worker'); await user.type(screen.getByRole('textbox', { name: 'Git root' }), '/mono'); await user.click(screen.getByRole('button', { name: 'Save project' }));
     await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'project.save', project: { name: 'Worker', projectPath: '/mono/apps/worker', gitRootPath: '/mono' } })));
     await user.click(screen.getByRole('tab', { name: 'Board' })); const yaml = screen.getByRole('textbox', { name: 'Workflow YAML' }); await user.clear(yaml); await user.type(yaml, 'name: Host Reject' + String.fromCharCode(10) + 'initial_column: one' + String.fromCharCode(10) + 'columns:' + String.fromCharCode(10) + '  - id: one' + String.fromCharCode(10) + '    label: One'); command.mockRejectedValueOnce({ code: 'INVALID_WORKFLOW', message: 'Column is missing.' }); const save = screen.getByRole('button', { name: 'Save workflow' }) as HTMLButtonElement; await waitFor(() => expect(save.disabled).toBe(false)); await user.click(save); expect(await screen.findByRole('alert')).toBeTruthy(); expect(screen.getByText('Column is missing.')).toBeTruthy();
   });
 
   it('edits a newly saved project rather than creating it again', async () => {
-    const { user, command } = mount(); await loaded(); await user.click(screen.getByRole('button', { name: 'Configuration' })); await user.click(screen.getByRole('tab', { name: 'Projects' })); await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Worker'); await user.type(screen.getByRole('textbox', { name: 'Project path' }), '/mono/apps/worker'); await user.type(screen.getByRole('textbox', { name: 'Git root' }), '/mono'); await user.click(screen.getByRole('button', { name: 'Save project' })); await screen.findByText('Project saved.'); await user.clear(screen.getByRole('textbox', { name: 'Project name' })); await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Updated Worker'); await user.click(screen.getByRole('button', { name: 'Save project' })); await waitFor(() => expect(command).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'project.save', project: { id: 'p3', name: 'Updated Worker', projectPath: '/mono/apps/worker', gitRootPath: '/mono' } })));
+    const { user, command } = mount(); await loaded(); await user.click(screen.getByRole('button', { name: 'Configuration' })); await user.click(screen.getByRole('tab', { name: 'Projects' })); await user.click(screen.getByRole('button', { name: 'New project' })); await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Worker'); await user.type(screen.getByRole('textbox', { name: 'Project path' }), '/mono/apps/worker'); await user.type(screen.getByRole('textbox', { name: 'Git root' }), '/mono'); await user.click(screen.getByRole('button', { name: 'Save project' })); await screen.findByText('Project saved.'); await user.click(screen.getByRole('button', { name: 'Edit project Worker' })); await user.clear(screen.getByRole('textbox', { name: 'Project name' })); await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Updated Worker'); await user.click(screen.getByRole('button', { name: 'Save project' })); await waitFor(() => expect(command).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'project.save', project: { id: 'p3', name: 'Updated Worker', projectPath: '/mono/apps/worker', gitRootPath: '/mono' } })));
   });
 
   it('opens General first and saves or clears the worktree base path', async () => {
@@ -193,7 +194,7 @@ describe('scoped Kanban page', () => {
 
   it('browses for the worktree base path and reports a validation error', async () => {
     const mock = fakeApi(); const pick = vi.fn(async () => '/picked/trees');
-    const user = userEvent.setup(); render(<BoardView api={mock.api} pickDirectory={pick} renderConversation={() => null} />);
+    const user = userEvent.setup(); render(<BoardView api={mock.api} picker={{ pick }} renderConversation={() => null} />);
     await loaded(); await user.click(screen.getByRole('button', { name: 'Configuration' }));
     await user.click(screen.getByRole('button', { name: 'Browse for worktree base path' }));
     await waitFor(() => expect((screen.getByRole('textbox', { name: 'Worktree base path' }) as HTMLInputElement).value).toBe('/picked/trees'));

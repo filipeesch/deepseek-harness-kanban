@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { GitExecutor, CommandResult, SessionPort } from '../../src/shared/ports.js';
-import type { HubState, Project, SessionFacts } from '../../src/shared/types.js';
+import type { GitProject, HubState, Project, SessionFacts } from '../../src/shared/types.js';
 import { KanbanError } from '../../src/shared/errors.js';
 
 const exec = promisify(execFile);
@@ -15,7 +15,7 @@ export async function git(cwd: string, args: string[], signal?: AbortSignal): Pr
   catch (error) { const value = error as Error & { code?: number; stdout?: string; stderr?: string }; if (typeof value.code !== 'number') throw error; return { exitCode: value.code, stdout: value.stdout ?? '', stderr: value.stderr ?? '' }; }
 }
 export async function gitOk(cwd: string, args: string[]): Promise<string> { const result = await git(cwd, args); if (result.exitCode !== 0) throw new Error(result.stderr); return result.stdout; }
-export async function fixture(): Promise<{ root: string; project: Project; tree: string }> {
+export async function fixture(): Promise<{ root: string; project: GitProject; tree: string }> {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), prefix)));
   cleanupRoots.add(root);
   const repo = path.join(root, 'repo');
@@ -45,11 +45,11 @@ export class LocalExecutor implements GitExecutor {
   policies: Array<{ paths: string[]; ids: string[]; write: boolean }> = [];
   deny: ((paths: string[], write: boolean) => boolean) | undefined;
   fail: ((args: string[]) => CommandResult | undefined) | undefined;
-  async run(project: Project, args: string[], _ids: string[], signal?: AbortSignal): Promise<CommandResult> {
+  async run(project: GitProject, args: string[], _ids: string[], signal?: AbortSignal): Promise<CommandResult> {
     this.calls.push([...args]);
     return this.fail?.(args) ?? git(project.gitRootPath, args, signal);
   }
-  async assertPolicy(_project: Project, paths: string[], ids: string[], write: boolean): Promise<void> {
+  async assertPolicy(_project: GitProject, paths: string[], ids: string[], write: boolean): Promise<void> {
     this.policies.push({ paths, ids, write });
     if (this.deny?.(paths, write)) throw new KanbanError('FS_SANDBOX_DENIED', 'Injected sandbox denial.');
   }

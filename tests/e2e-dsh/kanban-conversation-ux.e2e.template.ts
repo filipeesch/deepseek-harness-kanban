@@ -33,11 +33,13 @@ it('quick-creates a real worktree and dismisses a seeded question round durably'
   await page.getByRole('textbox', { name: 'Worktree base path' }).fill(basePath);
   await page.getByRole('button', { name: 'Save settings' }).click();
   await page.getByRole('tab', { name: 'Projects' }).click();
-  await page.getByRole('textbox', { name: 'Project name' }).fill('Harness');
-  await page.getByRole('textbox', { name: 'Project path' }).fill(repository);
-  await page.getByRole('textbox', { name: 'Git root' }).fill(repository);
-  await page.getByRole('textbox', { name: 'Default branch (optional)' }).fill('main');
-  await page.getByRole('button', { name: 'Save project' }).click();
+  await page.getByRole('button', { name: 'New project' }).click();
+  const projectDialog = page.getByRole('dialog', { name: 'New project' });
+  await projectDialog.getByRole('textbox', { name: 'Project name' }).fill('Harness');
+  await projectDialog.getByRole('textbox', { name: 'Project path' }).fill(repository);
+  await projectDialog.getByRole('textbox', { name: 'Project path' }).press('Tab');
+  await expect(projectDialog.getByText('Git repository')).toBeVisible();
+  await projectDialog.getByRole('button', { name: 'Save project' }).click();
   await expect(page.getByText('Project saved.')).toBeVisible();
   await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
   await page.getByRole('button', { name: 'New task' }).first().click();

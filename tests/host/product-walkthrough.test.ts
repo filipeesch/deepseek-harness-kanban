@@ -7,9 +7,10 @@ import { HubRepository } from '../../src/host/hub-repository.js';
 import { KanbanApp } from '../../src/host/app.js';
 import { GitAdapter } from '../../src/host/git.js';
 import { productToolDefinitions } from '../../src/host/tools.js';
+import { createHostProjectProbe } from '../../src/host/project-probe.js';
 import { KanbanError } from '../../src/shared/errors.js';
 import type { CommandResult } from '../../src/shared/ports.js';
-import type { Project } from '../../src/shared/types.js';
+import type { GitProject, Project } from '../../src/shared/types.js';
 import { MemoryHubStorage, TestSessions } from './helpers.js';
 import { cleanup as cleanupGit, fixture as gitFixture, gitOk, LocalExecutor } from '../worktrees/helpers.js';
 
@@ -45,7 +46,7 @@ class ProductSessions extends TestSessions {
 class ProductExecutor extends LocalExecutor {
   readonly removals: Array<{ directories: Array<[string, string]>; archived: string[] }> = [];
   constructor(private readonly sessions: ProductSessions) { super(); }
-  override async run(project: Project, args: string[], ids: string[], signal?: AbortSignal): Promise<CommandResult> {
+  override async run(project: GitProject, args: string[], ids: string[], signal?: AbortSignal): Promise<CommandResult> {
     if (args.includes('worktree') && args.includes('remove')) {
       // Capture state before the real Git command, not after cleanup has succeeded.
       this.removals.push({ directories: ids.map(id => [id, this.sessions.dirs.get(id)!]), archived: [...this.sessions.archived] });
@@ -62,7 +63,7 @@ async function setup() {
   sessions.dirs.set('unbound-synthetic-blank', files.project.projectPath);
   sessions.histories.set('unbound-synthetic-blank', Object.freeze([]));
   const executor = new ProductExecutor(sessions);
-  let app = new KanbanApp(await HubRepository.open(storage), sessions, new GitAdapter(executor));
+  let app = new KanbanApp(await HubRepository.open(storage), sessions, new GitAdapter(executor), { probe: createHostProjectProbe() });
   apps.push(app);
   await app.initialize();
   await app.command({ type: 'project.save', project: files.project });
@@ -102,7 +103,7 @@ async function setup() {
   }
   async function reopen() {
     await app.close();
-    app = new KanbanApp(await HubRepository.open(storage), sessions, new GitAdapter(executor));
+    app = new KanbanApp(await HubRepository.open(storage), sessions, new GitAdapter(executor), { probe: createHostProjectProbe() });
     apps.push(app);
     await app.initialize();
   }

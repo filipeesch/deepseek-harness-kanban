@@ -44,10 +44,13 @@ it('runs an instructed move after five seconds, cancels, survives reload, and pr
 
   await page.getByRole('button', { name: 'Configuration' }).click();
   await page.getByRole('tab', { name: 'Projects' }).click();
-  await page.getByRole('textbox', { name: 'Project name' }).fill('Auto run');
-  await page.getByRole('textbox', { name: 'Project path' }).fill(projectPath);
-  await page.getByRole('textbox', { name: 'Git root' }).fill(projectPath);
-  await page.getByRole('button', { name: 'Save project' }).click();
+  await page.getByRole('button', { name: 'New project' }).click();
+  const projectDialog = page.getByRole('dialog', { name: 'New project' });
+  await projectDialog.getByRole('textbox', { name: 'Project name' }).fill('Auto run');
+  await projectDialog.getByRole('textbox', { name: 'Project path' }).fill(projectPath);
+  await projectDialog.getByRole('textbox', { name: 'Project path' }).press('Tab');
+  await expect(projectDialog.getByText('No Git repository found')).toBeVisible();
+  await projectDialog.getByRole('button', { name: 'Save project' }).click();
   await expect(page.getByText('Project saved.')).toBeVisible();
 
   await page.getByRole('tab', { name: 'Workflow' }).click();

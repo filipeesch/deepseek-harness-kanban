@@ -121,7 +121,7 @@ export function fakeApi(initial: TestSnapshot = fixture()) {
     const branchName = task ? taskTitleSlug(task.title) : 'task';
     return { branchName, path: worktreePathForBranch(value.state.settings.worktreeBasePath, branchName) };
   });
-  const api: ClientApi = { snapshot: vi.fn(async () => withLegacyView(cloneSnapshot(value))), command, branches: vi.fn(async () => ['main', 'feature']), worktreeDefault, inferProject: vi.fn(async (pathValue: string) => ({ projectPath: pathValue, gitRootPath: pathValue })), subscribe: vi.fn(listener => { const wrapped = (snapshot: KanbanSnapshot) => listener(snapshot); listeners.add(wrapped as (snapshot: TestSnapshot) => void); return () => listeners.delete(wrapped as (snapshot: TestSnapshot) => void); }) };
+  const api: ClientApi = { snapshot: vi.fn(async () => withLegacyView(cloneSnapshot(value))), command, branches: vi.fn(async () => ['main', 'feature']), worktreeDefault, detectProject: vi.fn(async (pathValue: string) => ({ kind: 'folder' as const, projectPath: pathValue })), subscribe: vi.fn(listener => { const wrapped = (snapshot: KanbanSnapshot) => listener(snapshot); listeners.add(wrapped as (snapshot: TestSnapshot) => void); return () => listeners.delete(wrapped as (snapshot: TestSnapshot) => void); }) };
   return { api, command, publish: (snapshot?: KanbanSnapshot) => publish(snapshot), get: () => withLegacyView(cloneSnapshot(value)), listeners };
 }
 

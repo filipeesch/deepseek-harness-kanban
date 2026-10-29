@@ -2,7 +2,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
-import { Configuration } from '../../src/client/forms.js';
+import { Configuration } from '../../src/client/settings/configuration.js';
 import { boardView } from '../../src/client/hub-view.js';
 import type { HubState, KanbanSettings } from '../../src/shared/types.js';
 import { fixture, task } from './helpers.js';

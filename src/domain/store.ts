@@ -8,6 +8,7 @@ import { BoardStateSchema, initialState } from './schema.js';
 import { parseWorkflow } from './workflow.js';
 import { entryInstruction, nextEnteredAt } from './stage-entry.js';
 import { assertId, assertRevision, isAbsolutePath } from './validation.js';
+import { assertProjectConversion, buildProject } from './project-registration.js';
 
 export interface NoteInput { id?: string; content: string; tags?: string[] }
 export interface TaskTextPatch { title?: string; description?: string }
@@ -172,14 +173,8 @@ export class BoardStore {
     return this.transact(state => {
       const projectId = value.id ?? nextId(state.projects);
       const current = state.projects.find(project => project.id === projectId);
-      if (current && (current.projectPath !== value.projectPath || current.gitRootPath !== value.gitRootPath)) {
-        invariant(!state.tasks.some(task => task.projectId === projectId), 'PROJECT_IN_USE', 'Project paths cannot change while tasks reference the project.');
-      }
-      const project: Project = { id: projectId, name: value.name.trim(), projectPath: value.projectPath, gitRootPath: value.gitRootPath, ...(current?.workspaceId ? { workspaceId: current.workspaceId } : {}), ...(current?.workspaceOwned !== undefined ? { workspaceOwned: current.workspaceOwned } : {}) };
-      if (value.defaultBranch !== undefined) {
-        invariant(typeof value.defaultBranch === 'string', 'INVALID_INPUT', 'Default branch must be text.');
-        if (value.defaultBranch.trim()) project.defaultBranch = value.defaultBranch.trim();
-      }
+      assertProjectConversion(state, projectId, value);
+      const project = buildProject(projectId, value, current);
       if (current) state.projects[state.projects.indexOf(current)] = project;
       else state.projects.push(project);
       return project;

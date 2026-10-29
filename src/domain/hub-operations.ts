@@ -4,6 +4,7 @@ import { assertId, isAbsolutePath } from './validation.js';
 import { createBoard } from './hub-schema.js';
 import { parseWorkflow } from './workflow.js';
 import { entryInstruction, nextEnteredAt } from './stage-entry.js';
+import { assertProjectConversion, buildProject } from './project-registration.js';
 
 export interface NoteInput { id?: string; content: string; tags?: string[] }
 export interface TaskTextPatch { title?: string; description?: string }
@@ -117,18 +118,8 @@ export function saveProject(hub: HubState, input: ProjectInput, deps: OperationD
   if (value.id !== undefined) assertId(value.id, 'Project ID');
   const projectId = value.id ?? nextId(hub.projects, deps.id);
   const current = hub.projects.find(project => project.id === projectId);
-  if (current && (current.projectPath !== value.projectPath || current.gitRootPath !== value.gitRootPath)) {
-    invariant(!hub.tasks.some(task => task.projectId === projectId), 'PROJECT_IN_USE', 'Project paths cannot change while tasks reference the project.');
-  }
-  const project: Project = {
-    id: projectId, name: value.name.trim(), projectPath: value.projectPath, gitRootPath: value.gitRootPath,
-    ...(current?.workspaceId ? { workspaceId: current.workspaceId } : {}),
-    ...(current?.workspaceOwned !== undefined ? { workspaceOwned: current.workspaceOwned } : {}),
-  };
-  if (value.defaultBranch !== undefined) {
-    invariant(typeof value.defaultBranch === 'string', 'INVALID_INPUT', 'Default branch must be text.');
-    if (value.defaultBranch.trim()) project.defaultBranch = value.defaultBranch.trim();
-  }
+  assertProjectConversion(hub, projectId, value);
+  const project = buildProject(projectId, value, current);
   if (current) hub.projects[hub.projects.indexOf(current)] = project;
   else hub.projects.push(project);
   hub.updatedAt = timestamp(deps);

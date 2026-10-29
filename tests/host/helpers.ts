@@ -2,8 +2,8 @@ import { mkdtemp, mkdir, realpath, rm, stat } from 'node:fs/promises';
 import path from 'node:path';import os from 'node:os';
 import { HubRepository } from '../../src/host/hub-repository.js';
 import { KanbanApp } from '../../src/host/app.js';
-import type { BoardState, HubState, KanbanMeta, SessionFacts, Project, CreateWorktree } from '../../src/shared/types.js';
-import type { HubStorage, SessionPort, GitPort, GitTree, WorkspacePort, WorkspaceInfo } from '../../src/shared/ports.js';
+import type { BoardState, GitProject, HubState, KanbanMeta, ProjectLocation, SessionFacts, Project, CreateWorktree } from '../../src/shared/types.js';
+import type { HubStorage, SessionPort, GitPort, GitTree, WorkspacePort, WorkspaceInfo, ProjectProbe } from '../../src/shared/ports.js';
 import { KanbanError } from '../../src/shared/errors.js';
 
 export const RESTRICTED_WORKFLOW = [
@@ -59,12 +59,15 @@ function inside(root:string,candidate:string):boolean{const part=path.relative(r
 export class TestGit implements GitPort {
  trees=new Map<string,GitTree>();created=0;removed:string[]=[];branchNames=['main','feature'];
  async branches(){return [...this.branchNames];}
- async projectDirectory(project:Project,root?:string){return root?path.join(root,path.relative(project.gitRootPath,project.projectPath)):project.projectPath;}
- async inspect(_project:Project,root:string){const tree=this.trees.get(root);if(!tree)throw new KanbanError('NOT_WORKTREE','Not a test worktree.');return {...tree};}
- async create(project:Project,request:CreateWorktree){this.created++;await mkdir(await this.projectDirectory(project,request.path),{recursive:true});const tree={path:request.path,branch:request.branchName,dirty:false,commonDirectory:path.join(project.gitRootPath,'.git')};this.trees.set(request.path,tree);return tree;}
- async remove(_project:Project,root:string,discard:boolean){const tree=this.trees.get(root);if(tree?.dirty&&!discard)throw new KanbanError('DISCARD_REQUIRED','Confirm discard.',{path:root});this.trees.delete(root);this.removed.push(root);}
+ async projectDirectory(project:GitProject,root?:string){return root?path.join(root,path.relative(project.gitRootPath,project.projectPath)):project.projectPath;}
+ async inspect(_project:GitProject,root:string){const tree=this.trees.get(root);if(!tree)throw new KanbanError('NOT_WORKTREE','Not a test worktree.');return {...tree};}
+ async create(project:GitProject,request:CreateWorktree){this.created++;await mkdir(await this.projectDirectory(project,request.path),{recursive:true});const tree={path:request.path,branch:request.branchName,dirty:false,commonDirectory:path.join(project.gitRootPath,'.git')};this.trees.set(request.path,tree);return tree;}
+ async remove(_project:GitProject,root:string,discard:boolean){const tree=this.trees.get(root);if(tree?.dirty&&!discard)throw new KanbanError('DISCARD_REQUIRED','Confirm discard.',{path:root});this.trees.delete(root);this.removed.push(root);}
  async assertPolicy(){}
- async discover(value:string){return {projectPath:value,gitRootPath:value};}
+}
+export class TestProjectProbe implements ProjectProbe {
+ locations=new Map<string,ProjectLocation>();
+ async inspect(pathValue:string):Promise<ProjectLocation>{return this.locations.get(pathValue)??{kind:'folder',projectPath:pathValue};}
 }
 export class TestWorkspaces implements WorkspacePort {
  byPath=new Map<string,WorkspaceInfo>();byId=new Map<string,WorkspaceInfo>();deleted:string[]=[];private count=0;
@@ -72,4 +75,4 @@ export class TestWorkspaces implements WorkspacePort {
  get(id:string){return this.byId.get(id);}
  async delete(id:string){this.deleted.push(id);const value=this.byId.get(id);if(value)this.byPath.delete(value.path);this.byId.delete(id);}
 }
-export async function fixture(){const root=await realpath(await mkdtemp(path.join(os.tmpdir(),'dsh-kanban-host-')));const gitRoot=path.join(root,'repo');const projectPath=path.join(gitRoot,'apps','web');await mkdir(projectPath,{recursive:true});const storage=new MemoryHubStorage();const hubs=await HubRepository.open(storage,{id:(()=>{let n=0;return()=>`test-${++n}`;})(),now:(()=>new Date().toISOString())});const store=hubs.defaultHub();const project=await store.saveProject({name:'Web',projectPath,gitRootPath:gitRoot});const hub=hubs.requireHub(hubs.defaultHubId());const board=hub.boards[0]!;const sessions=new TestSessions();const git=new TestGit();const workspaces=new TestWorkspaces();const app=new KanbanApp(hubs,sessions,git,{},workspaces);return {root,gitRoot,projectPath,storage,hubs,store,hub,board,project,sessions,git,workspaces,app,async close(){await app.close();if(path.dirname(root)!==await realpath(os.tmpdir())||!path.basename(root).startsWith('dsh-kanban-host-')||await realpath(root)!==root)throw new Error('Unsafe test cleanup target');await rm(root,{recursive:true,force:true});}};}
+export async function fixture(){const root=await realpath(await mkdtemp(path.join(os.tmpdir(),'dsh-kanban-host-')));const gitRoot=path.join(root,'repo');const projectPath=path.join(gitRoot,'apps','web');await mkdir(projectPath,{recursive:true});const storage=new MemoryHubStorage();const hubs=await HubRepository.open(storage,{id:(()=>{let n=0;return()=>`test-${++n}`;})(),now:(()=>new Date().toISOString())});const store=hubs.defaultHub();const project=await store.saveProject({name:'Web',projectPath,gitRootPath:gitRoot}) as GitProject;const hub=hubs.requireHub(hubs.defaultHubId());const board=hub.boards[0]!;const sessions=new TestSessions();const git=new TestGit();const workspaces=new TestWorkspaces();const probe=new TestProjectProbe();probe.locations.set(projectPath,{kind:'git',projectPath,gitRootPath:gitRoot,defaultBranch:'main'});probe.locations.set(gitRoot,{kind:'git',projectPath:gitRoot,gitRootPath:gitRoot,defaultBranch:'main'});const app=new KanbanApp(hubs,sessions,git,{probe},workspaces);return {root,gitRoot,projectPath,storage,hubs,store,hub,board,project,sessions,git,workspaces,probe,app,async close(){await app.close();if(path.dirname(root)!==await realpath(os.tmpdir())||!path.basename(root).startsWith('dsh-kanban-host-')||await realpath(root)!==root)throw new Error('Unsafe test cleanup target');await rm(root,{recursive:true,force:true});}};}

@@ -9,7 +9,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { spawn } from 'node:child_process';
 import { createNativePorts } from '../../src/host/native.js';
-import type { Project, BoardState } from '../../src/shared/types.js';
+import type { GitProject, Project, BoardState } from '../../src/shared/types.js';
 import { registerTaskExecutionGuards } from '../../src/index.js';
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
@@ -18,7 +18,7 @@ type Inspection = Awaited<ReturnType<Context['sessionController']['inspect']>>;
 type Projection = Awaited<ReturnType<Context['sessionController']['projections']>>;
 const fixturesRoot = resolve('tests/native');
 let root: string;
-let project: Project;
+let project: GitProject;
 
 class Child extends EventEmitter {
   stdout = new PassThrough();

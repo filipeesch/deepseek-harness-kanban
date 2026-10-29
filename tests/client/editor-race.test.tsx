@@ -3,7 +3,8 @@ import React from 'react';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {act, cleanup, render, screen, waitFor} from '@testing-library/react';
 import {userEvent} from '@testing-library/user-event';
-import {Configuration, InfoPanel, NotesPanel} from '../../src/client/forms.js';
+import {Configuration} from '../../src/client/settings/configuration.js';
+import {InfoPanel, NotesPanel} from '../../src/client/forms.js';
 import type {KanbanSnapshot} from '../../src/shared/types.js';
 import {fixture} from './helpers.js';
 

@@ -38,7 +38,7 @@ function fixture() {
       command: vi.fn().mockResolvedValue(success(snapshot(7, 'Before restart'))),
       branches: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
       worktreeDefault: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { branchName: 'task', path: '' } } }),
-      inferProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { projectPath: '/repo', gitRootPath: '/repo' } } }),
+      detectProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { kind: 'git', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' } } }),
       questions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
       dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
       follow: (signal?: AbortSignal) => { const feed = new Feed(); feeds.push(feed); signal?.addEventListener('abort', () => feed.dispose(), { once: true }); return feed; },

@@ -2,7 +2,7 @@ import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { KanbanError } from '../shared/errors.js';
 import type { GitExecutor, GitPort, GitTree } from '../shared/ports.js';
-import type { CreateWorktree, Project } from '../shared/types.js';
+import type { CreateWorktree, GitProject } from '../shared/types.js';
 
 /** Resolve aliases, including the existing parent of a not-yet-created path. */
 export async function canonicalPath(value: string, allowMissing = false): Promise<string> {
@@ -44,19 +44,19 @@ function supportedBranchName(value: string): boolean {
 export class GitAdapter implements GitPort {
   constructor(private readonly executor: GitExecutor) {}
 
-  async assertPolicy(project: Project, paths: string[], sessionIds: string[], write: boolean): Promise<void> {
+  async assertPolicy(project: GitProject, paths: string[], sessionIds: string[], write: boolean): Promise<void> {
     const canonical = await Promise.all(paths.map(value => canonicalPath(value, true)));
     await this.executor.assertPolicy(project, [...new Set(canonical)], sessionIds, write);
   }
 
-  private async checked(project: Project, args: string[], sessions: string[], signal?: AbortSignal): Promise<string> {
+  private async checked(project: GitProject, args: string[], sessions: string[], signal?: AbortSignal): Promise<string> {
     signal?.throwIfAborted();
     const result = await this.executor.run(project, args, sessions, signal);
     if (result.exitCode !== 0) throw new KanbanError('GIT_FAILED', 'Git operation failed: ' + (result.stderr.trim() || result.stdout.trim() || 'exit ' + result.exitCode), { args, exitCode: result.exitCode, stderr: result.stderr });
     return result.stdout;
   }
 
-  private async roots(project: Project, sessions: string[]): Promise<{ root: string; projectPath: string; common: string }> {
+  private async roots(project: GitProject, sessions: string[]): Promise<{ root: string; projectPath: string; common: string }> {
     const root = await directory(project.gitRootPath);
     const projectPath = await directory(project.projectPath);
     if (!containsPath(root, projectPath)) throw new KanbanError('PROJECT_OUTSIDE_GIT_ROOT', 'The project must be inside its configured Git root.');
@@ -68,7 +68,7 @@ export class GitAdapter implements GitPort {
     return { root, projectPath, common };
   }
 
-  private async commonDirectory(project: Project, root: string, sessions: string[]): Promise<string> {
+  private async commonDirectory(project: GitProject, root: string, sessions: string[]): Promise<string> {
     const output = (await this.checked(project, ['-C', root, 'rev-parse', '--git-common-dir'], sessions)).trim();
     if (!output) throw new KanbanError('INVALID_GIT_OUTPUT', 'Git did not return a common directory.');
     return directory(path.resolve(root, output));
@@ -80,7 +80,7 @@ export class GitAdapter implements GitPort {
     }
   }
 
-  private async registered(project: Project, root: string, sessions: string[]): Promise<RegisteredTree[]> {
+  private async registered(project: GitProject, root: string, sessions: string[]): Promise<RegisteredTree[]> {
     const output = await this.checked(project, ['-C', root, 'worktree', 'list', '--porcelain', '-z'], sessions);
     const records: RegisteredTree[] = [];
     let record: RegisteredTree | undefined;
@@ -92,7 +92,7 @@ export class GitAdapter implements GitPort {
     return records;
   }
 
-  async projectDirectory(project: Project, worktreeRoot?: string): Promise<string> {
+  async projectDirectory(project: GitProject, worktreeRoot?: string): Promise<string> {
     const root = await directory(project.gitRootPath);
     const base = await directory(project.projectPath);
     if (!containsPath(root, base)) throw new KanbanError('PROJECT_OUTSIDE_GIT_ROOT', 'The project path escapes its Git root.');
@@ -103,25 +103,13 @@ export class GitAdapter implements GitPort {
     return target;
   }
 
-  /** Resolve a picked directory and its Git checkout root without registering a project. */
-  async discover(value: string): Promise<{ projectPath: string; gitRootPath: string }> {
-    const projectPath = await directory(value);
-    const placeholder: Project = { id: 'discover', name: 'discover', projectPath, gitRootPath: projectPath };
-    const result = await this.executor.run(placeholder, ['-C', projectPath, 'rev-parse', '--show-toplevel'], [], AbortSignal.timeout(10_000));
-    const output = result.stdout.trim();
-    if (result.exitCode !== 0 || !output) return { projectPath, gitRootPath: projectPath };
-    const gitRootPath = await directory(output);
-    if (!containsPath(gitRootPath, projectPath)) throw new KanbanError('PROJECT_OUTSIDE_GIT_ROOT', 'The selected project must be inside its Git root.', { projectPath, gitRootPath });
-    return { projectPath, gitRootPath };
-  }
-
-  async branches(project: Project, sessionIds: string[]): Promise<string[]> {
+  async branches(project: GitProject, sessionIds: string[]): Promise<string[]> {
     const { root } = await this.roots(project, sessionIds);
     const output = await this.checked(project, ['-C', root, 'for-each-ref', '--format=%(refname:strip=2)', 'refs/heads'], sessionIds);
     return [...new Set(output.split('\n').map(value => value.trim()).filter(value => value && supportedBranchName(value)))].sort();
   }
 
-  async inspect(project: Project, value: string, sessionIds: string[]): Promise<GitTree> {
+  async inspect(project: GitProject, value: string, sessionIds: string[]): Promise<GitTree> {
     const { root, projectPath, common } = await this.roots(project, sessionIds);
     const target = await directory(value);
     this.assertTarget(root, projectPath, target, common);
@@ -137,7 +125,7 @@ export class GitAdapter implements GitPort {
     return { path: target, branch, dirty, commonDirectory: common };
   }
 
-  async create(project: Project, request: CreateWorktree, sessionIds: string[], signal?: AbortSignal): Promise<GitTree> {
+  async create(project: GitProject, request: CreateWorktree, sessionIds: string[], signal?: AbortSignal): Promise<GitTree> {
     const { root, projectPath, common } = await this.roots(project, sessionIds);
     const target = await canonicalPath(request.path, true);
     this.assertTarget(root, projectPath, target, common);
@@ -164,7 +152,7 @@ export class GitAdapter implements GitPort {
     return this.inspect(project, target, sessionIds);
   }
 
-  async remove(project: Project, value: string, discardChanges: boolean, sessionIds: string[], signal?: AbortSignal): Promise<void> {
+  async remove(project: GitProject, value: string, discardChanges: boolean, sessionIds: string[], signal?: AbortSignal): Promise<void> {
     const { root, projectPath, common } = await this.roots(project, sessionIds);
     const target = await canonicalPath(value, true);
     this.assertTarget(root, projectPath, target, common);

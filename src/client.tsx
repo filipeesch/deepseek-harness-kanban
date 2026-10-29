@@ -12,6 +12,7 @@ import type { PropsRuntime, PropsRenderSlots, PropsRenderFactories } from '@deep
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import { TYPERT_REMOTE } from './remote.js';
 import { ClientBridge } from './client-bridge.js';
+import { createDirectoryPicker } from './client/directory-picker.js';
 import { BoardView, createBoardPageState, type BoardPageState } from './client/board.js';
 import { AutoRunController } from './client/auto-run.js';
 import { QuestionForm } from './questions/QuestionForm.js';
@@ -41,6 +42,18 @@ export const name = 'kanban-client';
 // Service keys, not package names. Mount our own namespace before any access to remote.kanban.
 export const inject = ['remote', 'slots', 'sessions', 'uiSession', 'conversation', 'layout', 'locale', 'uiConversation'];
 const clientCss = '.kanban-native-state{padding:16px;color:inherit}.kanban-feed-error{padding:8px 16px;color:var(--dsw-alias-state-error-primary,crimson);border-bottom:1px solid var(--dsw-alias-border-l2)}';
+
+
+/** Sources are optional: a test context may expose no workspace service at all. */
+function directoryPickerSources(ctx: Context): { desktop?: () => Promise<string | null>; host?: () => Promise<string | null> } {
+  const desktop = (globalThis as { __DSH_DIRECTORY_PICKER__?: { pick?: () => Promise<string | null> } }).__DSH_DIRECTORY_PICKER__;
+  let workspace: { pickDirectory?: () => Promise<string | null> } | undefined;
+  try { workspace = (ctx as { get?: (key: string) => unknown }).get?.('uiWorkspace') as typeof workspace; } catch { workspace = undefined; }
+  return {
+    ...(desktop?.pick === undefined ? {} : { desktop: () => desktop.pick!() }),
+    ...(workspace?.pickDirectory === undefined ? {} : { host: () => workspace!.pickDirectory!() }),
+  };
+}
 
 function developerToolsSource(ctx: Context): NativeSnapshotSource | undefined {
   try {
@@ -121,10 +134,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     },
     isOwnedDescendant: (roots, sessionId) => isOwnedSubagent(sessionRows(scopedSessions), roots, sessionId),
   };
-  const pickDirectory = async (): Promise<string | null> => {
-    const workspace = ctx.get('uiWorkspace') as { pickDirectory?: () => Promise<string | null> } | undefined;
-    return workspace?.pickDirectory ? await workspace.pickDirectory() : null;
-  };
+  const picker = createDirectoryPicker(directoryPickerSources(ctx));
   const emptySessionState = { ids: [], byId: {}, phase: 'ready' as const, projectionsBySession: {} };
   const emptySessionList = { subscribe: () => () => {}, getSnapshot: () => emptySessionState };
 
@@ -193,7 +203,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       api={props.api}
       pageState={pageState}
       sessionTitles={sessionTitles}
-      pickDirectory={pickDirectory}
+      picker={picker}
       autoRun={props.autoRun}
       onRunReady={props.onRunReady}
       lineage={lineage}

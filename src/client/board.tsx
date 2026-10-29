@@ -1,7 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Board, ClientApi, Column, ColumnGroup, Command, HubState, KanbanSnapshot, Problem, Task, Workflow } from '../shared/types.js';
 import { EMPTY_ATTENTION } from '../shared/types.js';
-import { Configuration, NewTaskDialog } from './forms.js';
+import { isGitProject } from '../shared/project.js';
+import { NewTaskDialog } from './forms.js';
+import { Configuration } from './settings/configuration.js';
+import { DirectoryPickerProvider } from './services.js';
+import type { DirectoryPickerPort } from './directory-picker.js';
 import { TaskDrawer, type SessionTitles } from './drawer.js';
 import type { ConversationLineagePort, DrawerSubagentAddress } from './conversation-navigation.js';
 import { TaskActivity } from './activity.js';
@@ -24,7 +28,7 @@ import { createBoardPageState, taskPageState, usePageField, type BoardPageState 
 export { createBoardPageState } from './page-state.js';
 export type { BoardPageState } from './page-state.js';
 
-export interface BoardViewProps { api: ClientApi; renderConversation: (id: string, target?: DrawerSubagentAddress) => ReactNode; pageState?: BoardPageState; sessionTitles?: SessionTitles; pickDirectory?: () => Promise<string | null>; autoRun?: AutoRunController; onRunReady?: (run: RunCommand) => void; lineage?: ConversationLineagePort }
+export interface BoardViewProps { api: ClientApi; renderConversation: (id: string, target?: DrawerSubagentAddress) => ReactNode; pageState?: BoardPageState; sessionTitles?: SessionTitles; picker?: DirectoryPickerPort | null; autoRun?: AutoRunController; onRunReady?: (run: RunCommand) => void; lineage?: ConversationLineagePort }
 
 export function columnLayout(workflow: Workflow): Array<{ key: string; group?: ColumnGroup; columns: Column[] }> {
   const result: Array<{ key: string; group?: ColumnGroup; columns: Column[] }> = []; const seen = new Set<string>();
@@ -38,7 +42,7 @@ export function columnLayout(workflow: Workflow): Array<{ key: string; group?: C
   return result;
 }
 
-export function BoardView({ api, renderConversation, pageState, sessionTitles, pickDirectory, autoRun: providedAutoRun, onRunReady, lineage }: BoardViewProps) {
+export function BoardView({ api, renderConversation, pageState, sessionTitles, picker = null, autoRun: providedAutoRun, onRunReady, lineage }: BoardViewProps) {
   const [localPageState] = useState(createBoardPageState); const preferences = pageState ?? localPageState;
   const [snapshot, setSnapshot] = useState<KanbanSnapshot | null>(null); const latest = useRef<KanbanSnapshot | null>(null); const live = useRef(false); const currentApi = useRef(api); currentApi.current = api;
   const [loadError, setLoadError] = useState<Problem | null>(null); const [loadAttempt, setLoadAttempt] = useState(0);
@@ -46,6 +50,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
   const [newTask, setNewTask] = useState(false); const [newHub, setNewHub] = useState(false); const [newBoard, setNewBoard] = useState(false); const [configuration, setConfiguration] = useState<string | null>(null);
   const [destruction, setDestruction] = useState<DestructiveRequest | null>(null); const [destructionStarted, setDestructionStarted] = useState(false); const [discard, setDiscard] = useState<DestructiveRequest | null>(null); const [destructionError, setDestructionError] = useState<Problem | null>(null); const [destructionPending, setDestructionPending] = useState(false); const [actionError, setActionError] = useState<Problem | null>(null);
   const [selectionMode, setSelectionMode] = useState(false); const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [retainedCheckout, setRetainedCheckout] = useState<string | null>(null);
   const [batchConfirm, setBatchConfirm] = useState(false); const [batchPending, setBatchPending] = useState(false); const [batchTasks, setBatchTasks] = useState<Task[]>([]); const [batchProgress, setBatchProgress] = useState<BulkProgress | null>(null); const [batchResult, setBatchResult] = useState<BulkDeletionResult | null>(null);
   const [drawerEntering, setDrawerEntering] = useState(false);
   const [drawerClosing, setDrawerClosing] = useState(false);
@@ -171,11 +176,13 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
 
   function requestDanger(task: Task, type: 'task.delete' | 'worktree.remove') {
     setActionError(null); setDestructionError(null); setDestructionStarted(false);
+    const project = state?.projects.find(value => value.id === task.projectId);
     setDestruction({
       command: { type, taskId: task.id, confirmed: true, expectedWorktreePath: task.worktree?.path ?? null },
       taskId: task.id, title: task.title, path: task.worktree?.path ?? null,
       expectedWorktreePath: task.worktree?.path ?? null,
       branch: task.worktree?.branch ?? null, owned: task.worktree?.owned,
+      ...(project !== undefined && !isGitProject(project) && task.worktree !== null ? { plainCheckout: true } : {}),
     });
   }
   function runDestruction(request: DestructiveRequest, command: Command = request.command) {
@@ -191,6 +198,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
       const result = await runDestruction(request);
       const normalizedResult = normalizeSnapshot(result); const current = normalizedResult.state.hubs.flatMap(hub => hub.tasks).find(task => task.id === request.taskId);
       if (current?.operation) { setDestructionStarted(true); return; }
+      if (!current && request.command.type === 'task.delete' && request.plainCheckout === true && request.path !== null) setRetainedCheckout(request.path);
       setDestruction(null);
       if (!current && request.command.type === 'task.delete') setSelectedId(null);
     } catch (error) {
@@ -207,6 +215,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
       const result = await run({ type: 'operation.retry', taskId: request.taskId });
       const normalizedResult = normalizeSnapshot(result); const current = normalizedResult.state.hubs.flatMap(hub => hub.tasks).find(task => task.id === request.taskId);
       if (current?.operation) { setDestructionStarted(true); return; }
+      if (!current && request.command.type === 'task.delete' && request.plainCheckout === true && request.path !== null) setRetainedCheckout(request.path);
       setDestruction(null);
       if (!current && request.command.type === 'task.delete') setSelectedId(null);
     } catch (error) {
@@ -223,6 +232,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
       const result = await run({ type: 'operation.return', taskId: request.taskId });
       const normalizedResult = normalizeSnapshot(result); const current = normalizedResult.state.hubs.flatMap(hub => hub.tasks).find(task => task.id === request.taskId);
       if (current?.operation) { setDestructionStarted(true); return; }
+      if (!current && request.command.type === 'task.delete' && request.plainCheckout === true && request.path !== null) setRetainedCheckout(request.path);
       setDestruction(null);
       if (!current && request.command.type === 'task.delete') setSelectedId(null);
     }
@@ -307,7 +317,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
     requestCloseDrawer();
   }
 
-  return <section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style><header className="kb-header">
+  return <DirectoryPickerProvider picker={picker}><section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style><header className="kb-header">
     <div className="kb-heading"><div><h1>Kanban</h1><p className="kb-hint">Hubs, boards, and workflows</p></div><div className="kb-toolbar">
     {!selectionMode ? <>
       <label className="kb-field kb-search"><span className="kb-sr">Search tasks</span><input className="kb-input" type="search" aria-label="Search tasks" placeholder="Search title or description" value={search} onChange={event => setSearch(event.target.value)} /></label>
@@ -331,9 +341,9 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
       </div>}
     </nav>
   </header>
-    {configuration && <Configuration key={configuration} state={state ?? null} hub={activeHub ?? null} board={activeBoard ?? null} hubCount={snapshot?.state.hubs.length ?? 1} settings={snapshot?.state.settings} settingsRevision={snapshot?.state.settings?.revision ?? 0} run={run} api={api} pickDirectory={pickDirectory} initial={configuration} onClose={() => setConfiguration(null)} onHubDeleted={() => { setConfiguration(null); setActiveHubIdState(null); writeStorage(ACTIVE_HUB_KEY, null); }} onBoardDeleted={() => { setConfiguration(null); }} onBoardCreated={id => { selectBoard(activeHub!.id, id); setConfiguration(null); }} />}
-    <BoardNotices loadError={loadError} actionError={actionError} onRetryLoad={() => setLoadAttempt(value => value + 1)} />{!snapshot && !loadError && <p className="kb-empty" role="status">Loading Kanban…</p>}{snapshot && !activeHub && <div className="kb-empty"><h2>No Hub available</h2><p>Create a Hub to continue.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewHub(true)}>Create Hub</button></div>}{snapshot && activeHub && !activeBoard && <div className="kb-empty"><h2>Create your first board</h2><p>Boards hold a workflow and their tasks inside this Hub.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewBoard(true)}>Create board</button></div>}
-    {state && <><div className="kb-page-body" ref={boardBody} onPointerDown={onBoardPointerDown}>{state.projects.length === 0 && <div className="kb-empty"><h2>Add your first project</h2><p>Register a project path and Git root to create tasks.</p><button type="button" className="kb-button kb-primary" onClick={() => setConfiguration('Projects')}>Configure projects</button></div>}
+    {configuration && <Configuration key={configuration} state={state ?? null} hub={activeHub ?? null} board={activeBoard ?? null} hubCount={snapshot?.state.hubs.length ?? 1} settings={snapshot?.state.settings} settingsRevision={snapshot?.state.settings?.revision ?? 0} run={run} api={api} initial={configuration} onClose={() => setConfiguration(null)} onHubDeleted={() => { setConfiguration(null); setActiveHubIdState(null); writeStorage(ACTIVE_HUB_KEY, null); }} onBoardDeleted={() => { setConfiguration(null); }} onBoardCreated={id => { selectBoard(activeHub!.id, id); setConfiguration(null); }} />}
+    <BoardNotices loadError={loadError} actionError={actionError} onRetryLoad={() => setLoadAttempt(value => value + 1)} />{retainedCheckout !== null && <p className="kb-hint" role="status">Task deleted. The checkout at <code>{retainedCheckout}</code> was left on disk.<button type="button" className="kb-button" onClick={() => setRetainedCheckout(null)}>Dismiss</button></p>}{!snapshot && !loadError && <p className="kb-empty" role="status">Loading Kanban…</p>}{snapshot && !activeHub && <div className="kb-empty"><h2>No Hub available</h2><p>Create a Hub to continue.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewHub(true)}>Create Hub</button></div>}{snapshot && activeHub && !activeBoard && <div className="kb-empty"><h2>Create your first board</h2><p>Boards hold a workflow and their tasks inside this Hub.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewBoard(true)}>Create board</button></div>}
+    {state && <><div className="kb-page-body" ref={boardBody} onPointerDown={onBoardPointerDown}>{state.projects.length === 0 && <div className="kb-empty"><h2>Add your first project</h2><p>Register a project folder, and its Git root when it is a repository, to create tasks.</p><button type="button" className="kb-button kb-primary" onClick={() => setConfiguration('Projects')}>Configure projects</button></div>}
       <div className="kb-columns" aria-label="Workflow columns">{columnLayout(state.workflow).map(slot => <section key={slot.key} className={'kb-column-slot ' + (slot.group ? 'kb-column-group' : '')} aria-label={slot.group?.name}>{slot.group && <h2 className="kb-group-heading">{slot.group.name}</h2>}{slot.columns.map(column => { const tasks = tasksForColumn(column.id); const restricted = Boolean(drag && drag.overColumnId === column.id && transitionAccess(state.workflow, drag.sourceColumnId, column.id) === 'restricted');
         return <section className={'kb-column' + (restricted ? ' kb-drop-restricted' : '')} key={column.id} aria-label={column.name + ' column'} data-column-id={column.id}><header className="kb-column-header"><h2>{column.name}</h2><span aria-label={tasks.length + ' tasks'}>{tasks.length}</span></header>{column.id === state.workflow.initialColumnId && renderNewTaskButton(column)}<div className="kb-card-list">{tasks.map(task => renderCard(task, column))}{drag?.overColumnId === column.id && <div className={'kb-drop-indicator' + (restricted ? ' kb-drop-indicator-restricted' : '')} style={{ top: drag.indicatorY }} aria-hidden="true" />}{tasks.length === 0 && <p className="kb-empty-column">No matching tasks</p>}</div></section>; })}</section>)}</div></div>
       {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} sessionTitles={sessionTitles} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} lineage={lineage} />}
@@ -351,5 +361,5 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
     {newHub && <CreateHubDialog run={run} onClose={() => setNewHub(false)} onCreated={id => { setActiveHubIdState(id); writeStorage(ACTIVE_HUB_KEY, id); setNewHub(false); }} />}
     {newBoard && activeHub && <CreateBoardDialog hubId={activeHub.id} run={run} onClose={() => setNewBoard(false)} onCreated={id => { selectBoard(activeHub.id, id); setNewBoard(false); }} />}
     {confirmation && <TransitionOverrideDialog taskTitle={confirmation.taskTitle} workflowName={confirmation.workflowName} sourceName={confirmation.fromName} destinationName={confirmation.toName} pending={movePending} problem={moveError} canRetry={canRetry} onCancel={cancelMove} onConfirm={() => void confirmMove()} />}
-  </section>;
+  </section></DirectoryPickerProvider>;
 }

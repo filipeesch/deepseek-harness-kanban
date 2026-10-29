@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { lstat, stat } from 'node:fs/promises';
 import { KanbanError, problem } from '../shared/errors.js';
 import type { GitPort, GitTree, SessionPort } from '../shared/ports.js';
-import type { ContextOperation, HubState, OperationRequest, Project, Task } from '../shared/types.js';
+import type { ContextOperation, GitProject, HubState, OperationRequest, Project, Task } from '../shared/types.js';
 import { canonicalPath } from './git.js';
+import { isGitProject, requireGitProject } from '../shared/project.js';
 import { WorktreeSharingGuard } from './worktree-sharing.js';
 
 export interface WorktreeStore {
@@ -106,7 +107,11 @@ export class WorktreeCoordinator {
 
   async request(taskId: string, request: OperationRequest): Promise<HubState> {
     if (request.kind === 'return') return this.returnToBase(taskId);
-    const before = this.read(taskId).hub;
+    const current = this.read(taskId);
+    if (!isGitProject(current.project) && request.kind !== 'delete') {
+      throw new KanbanError('PROJECT_NOT_GIT', 'This project is not a Git repository; Git and worktree actions are unavailable.', { projectId: current.project.id });
+    }
+    const before = current.hub;
     return this.serial(taskId, async () => {
       this.assertOpen();
       if (!['create', 'attach', 'remove', 'delete'].includes(request.kind)) throw new KanbanError('INVALID_OPERATION', 'Unsupported worktree operation.');
@@ -150,15 +155,16 @@ export class WorktreeCoordinator {
     return this.serial(taskId, async () => {
       this.assertOpen();
       const { task, project } = this.read(taskId);
+      const gitProject = requireGitProject(project);
       const old = task.operation;
       if (old?.request.kind === 'delete' && (old.archivedSessionIds.length > 0 || old.phase === 'archiving' || old.error?.details?.failedPhase === 'archiving')) throw new KanbanError('DELETE_IN_PROGRESS', 'Retry the partially completed deletion; archived native conversations cannot be silently restored.');
       // A Git create may have succeeded immediately before a persistence failure.
       // An explicit return can abandon an unverifiable ref, never claim or delete it.
       if (old?.request.kind === 'create') {
-        const proof = await this.createProof(old, project);
+        const proof = await this.createProof(old, gitProject);
         if (proof) {
           if (!await entryExists(proof.path)) throw new KanbanError('CREATE_RECOVERY_UNVERIFIED', 'The attempted checkout is unavailable; its recovery journal has been retained.');
-          const tree = await this.git.inspect(project, proof.path, task.sessionIds);
+          const tree = await this.git.inspect(gitProject, proof.path, task.sessionIds);
           if (tree.path !== proof.path || await canonicalPath(tree.path) !== proof.path) throw new KanbanError('CREATE_RECOVERY_UNVERIFIED', 'The checkout no longer matches the canonical create target.');
           const boundPath = task.worktree?.path;
           const sameBinding = !!boundPath && await canonicalPath(boundPath, true) === tree.path;
@@ -237,7 +243,7 @@ export class WorktreeCoordinator {
     return idle;
   }
 
-  private async createProof(operation: ContextOperation, project: Project): Promise<CreateAttempt | undefined> {
+  private async createProof(operation: ContextOperation, project: GitProject): Promise<CreateAttempt | undefined> {
     const proof = operation.createAttempt;
     if (!proof) return;
     const request = operation.request;
@@ -254,8 +260,8 @@ export class WorktreeCoordinator {
     if (project.id !== expected.id || project.projectPath !== expected.projectPath || project.gitRootPath !== expected.gitRootPath) throw new KanbanError('PROJECT_CONTEXT_CHANGED', 'The project paths changed during the operation.');
   }
 
-  private async switchDirectories(taskId: string, operationId: string, target: string, write: boolean): Promise<boolean> {
-    const { task, project } = this.read(taskId);
+  private async switchDirectories(taskId: string, operationId: string, target: string, write: boolean, project: GitProject): Promise<boolean> {
+    const { task } = this.read(taskId);
     await this.git.assertPolicy(project, [target], task.sessionIds, write);
     await this.update(taskId, operationId, (_task, operation) => { operation.phase = 'switching'; operation.targetDirectory = target; });
     for (const id of task.sessionIds) {
@@ -297,25 +303,28 @@ export class WorktreeCoordinator {
       let { task, project } = this.read(taskId);
       const expectedProject = project;
       const request = op.request;
+      const gitProject = isGitProject(project) ? project : undefined;
+      if (gitProject === undefined && request.kind !== 'delete') throw new KanbanError('PROJECT_NOT_GIT', 'This project is not a Git repository; Git and worktree actions are unavailable.', { projectId: project.id });
       if ((request.kind === 'remove' || request.kind === 'delete') && !op.gitCompleted) {
         const currentTarget = task.worktree ? await canonicalPath(task.worktree.path, true) : undefined;
         if (currentTarget !== op.targetPath) throw new KanbanError('OPERATION_TARGET_CHANGED', 'The confirmed worktree target changed; it will not be removed.');
       }
-      let target: string;
+      let target: string = task.effectiveCwd;
       if (request.kind === 'create' || request.kind === 'attach') {
+        const gitRepo = requireGitProject(project);
         let tree: GitTree;
         if (request.kind === 'create') {
-          const proof = await this.createProof(op, project);
+          const proof = await this.createProof(op, gitRepo);
           if (proof || op.gitCompleted) {
             if (!proof) throw new KanbanError('CREATE_RECOVERY_UNVERIFIED', 'This create has no persisted absent-target precondition; use explicit attach instead.');
-            tree = await this.git.inspect(project, request.path, task.sessionIds);
+            tree = await this.git.inspect(gitRepo, request.path, task.sessionIds);
             this.assertRecoveredBranch(request, tree);
           } else {
             if (await entryExists(request.path)) throw new KanbanError('WORKTREE_TARGET_EXISTS', 'Create requires an absent destination. Use explicit attach for an existing checkout.', { path: request.path });
             if (await canonicalPath(request.path, true) !== request.path || op.targetPath !== request.path) throw new KanbanError('OPERATION_TARGET_CHANGED', 'The canonical create destination changed before the attempt.');
             // Validate the source repository and read policy before arming a create intent.
-            await this.git.branches(project, task.sessionIds);
-            const gitRootPath = await canonicalPath(project.gitRootPath);
+            await this.git.branches(gitRepo, task.sessionIds);
+            const gitRootPath = await canonicalPath(gitRepo.gitRootPath);
             this.assertOpen();
             this.sourceUnchanged(taskId, expectedProject);
             await this.update(taskId, operationId, (_task, operation) => {
@@ -327,28 +336,28 @@ export class WorktreeCoordinator {
             this.assertOpen();
             this.sourceUnchanged(taskId, expectedProject);
             createInvoked = true;
-            tree = await this.git.create(project, request, task.sessionIds, this.signal);
+            tree = await this.git.create(gitRepo, request, task.sessionIds, this.signal);
             this.assertRecoveredBranch(request, tree);
           }
-        } else tree = await this.git.inspect(project, request.path, task.sessionIds);
+        } else tree = await this.git.inspect(gitRepo, request.path, task.sessionIds);
         await this.update(taskId, operationId, (draft, operation) => {
           draft.worktree = { path: tree.path, branch: tree.branch, owned: request.kind === 'create' || (draft.worktree?.path === tree.path && draft.worktree.owned), status: 'preparing' };
           operation.targetPath = tree.path;
           operation.gitCompleted = true;
         });
-        target = await this.git.projectDirectory(project, tree.path);
-      } else {
-        target = await this.git.projectDirectory(project);
+        target = await this.git.projectDirectory(gitRepo, tree.path);
+      } else if (gitProject !== undefined) {
+        target = await this.git.projectDirectory(gitProject);
         if ((request.kind === 'remove' || request.kind === 'delete') && task.worktree && !op.gitCompleted) {
           await this.sharing.assertExclusive(taskId, task.worktree.path);
           if (await exists(task.worktree.path)) {
-            const tree = await this.git.inspect(project, task.worktree.path, task.sessionIds);
+            const tree = await this.git.inspect(gitProject, task.worktree.path, task.sessionIds);
             if (tree.dirty && !request.discardChanges) throw new KanbanError('DISCARD_REQUIRED', 'Explicit confirmation is required to discard local worktree changes.', { path: tree.path });
           }
         }
       }
       this.sourceUnchanged(taskId, expectedProject);
-      if (!await this.switchDirectories(taskId, operationId, target, request.kind === 'create' || request.kind === 'attach')) return;
+      if (gitProject !== undefined && !await this.switchDirectories(taskId, operationId, target, request.kind === 'create' || request.kind === 'attach', gitProject)) return;
       ({ task, project } = this.read(taskId));
       if (request.kind === 'create' || request.kind === 'attach' || request.kind === 'return') {
         await this.update(taskId, operationId, draft => {
@@ -364,7 +373,9 @@ export class WorktreeCoordinator {
       }
       if (!task.operation!.gitCompleted) {
         if (!await this.idle(taskId, operationId)) return;
-        if (task.worktree) {
+        if (gitProject === undefined) {
+          await this.update(taskId, operationId, (draft, operation) => { draft.worktree = null; operation.gitCompleted = true; });
+        } else if (task.worktree) {
           await this.sharing.assertExclusive(taskId, task.worktree.path);
           await this.update(taskId, operationId, (_task, operation) => { operation.phase = 'removing'; });
           this.assertOpen();
@@ -374,7 +385,7 @@ export class WorktreeCoordinator {
           this.sourceUnchanged(taskId, expectedProject);
           const confirmed = this.read(taskId).task.worktree;
           if (!confirmed || await canonicalPath(confirmed.path, true) !== op.targetPath) throw new KanbanError('OPERATION_TARGET_CHANGED', 'The worktree binding changed before removal.');
-          await this.git.remove(project, op.targetPath!, request.discardChanges, task.sessionIds, this.signal);
+          await this.git.remove(gitProject, op.targetPath!, request.discardChanges, task.sessionIds, this.signal);
         }
         await this.update(taskId, operationId, (draft, operation) => { draft.worktree = null; operation.gitCompleted = true; });
       }

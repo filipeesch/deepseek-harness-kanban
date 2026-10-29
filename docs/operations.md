@@ -76,7 +76,7 @@ Old reports remain time-scoped and honest. The inconclusive schedule attempt was
 
 ## Working directory and policy boundaries
 
-Keep four paths distinct: **base project path**, **Git root**, **worktree root**, and **effective agent cwd**. The effective cwd is exposed only in the Git section's secondary details; the drawer header and Info do not repeat it. For a base monorepo project `/repos/platform/services/api` in Git root `/repos/platform`, a worktree at `/worktrees/task-42` must contain `/worktrees/task-42/services/api`. A missing subdirectory is an error, not a reason to run at the checkout root.
+A project may be Git-backed or a plain folder. Keep four paths distinct for a Git-backed project: **base project path**, **Git root**, **worktree root**, and **effective agent cwd**. For a Git-backed project the effective cwd is exposed only in the Git section's secondary details; the drawer header and Info do not repeat it. A folder project has no Git section and runs at its project path or retained checkout. For a base monorepo project `/repos/platform/services/api` in Git root `/repos/platform`, a worktree at `/worktrees/task-42` must contain `/worktrees/task-42/services/api`. A missing subdirectory is an error, not a reason to run at the checkout root.
 
 New task conversations join a native workspace for their effective project or worktree path instead of being created with cwd only. The base workspace is shared; a worktree workspace belongs to its task and is removed with the task when no other session uses it. Existing conversations keep their creation-time workspace when the effective directory changes. Native `workingDirectory` changes preserve session IDs, prior histories, and immutable header cwd. The committed **effective cwd**, not the mere presence of a retained ready worktree binding, selects the active context: after an explicit return, chats and new tabs use base even if the old checkout remains bound. **Native Files and sandbox root stay at the original location**; neither a displayed cwd nor an attached checkout is an access grant.
 
@@ -130,7 +130,7 @@ For a legacy confirmed transition, an interrupted admission with `DELIVERY_UNCER
 | Action | Successful effect | Retained |
 | --- | --- | --- |
 | **Remove worktree** | Returns every retained chat to the base project, then removes only the eligible bound checkout. | Card, notes, native chats/histories, branch. |
-| **Delete task** | Returns every retained chat to the base project; removes an eligible bound checkout; removes the owned worktree workspace registration; archives native chats; finally removes card/notes. A best-effort bulk selection skips busy, operation-pending, or dirty tasks and reports them. | Native histories and Git branch. |
+| **Delete task** | Returns every retained chat to the base project; removes an eligible bound checkout; removes the owned worktree workspace registration; archives native chats; finally removes card/notes. A best-effort bulk selection skips busy, operation-pending, or dirty tasks and reports them. A plain checkout whose project has no Git root is never removed: its chats are archived in place and the result reports the retained path. | Native histories and Git branch; a plain checkout directory. |
 
 For removal or deletion:
 

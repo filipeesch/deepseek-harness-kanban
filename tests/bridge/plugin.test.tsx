@@ -70,7 +70,7 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
     snapshot: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot(rounds) } }),
     command: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot(rounds) } }),
     branches: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['main'] } }),
-    inferProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { projectPath: '/repo', gitRootPath: '/repo' } } }),
+    detectProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { kind: 'git', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' } } }),
     questions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: rounds } }),
     dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
     agentPresets,

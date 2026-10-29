@@ -72,6 +72,7 @@ describe('Hub configuration without a board', () => {
     await user.click(screen.getByRole('button', { name: 'Save settings' }));
     await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'settings.save', settings: { worktreeBasePath: '/trees' } })));
     await user.click(screen.getByRole('tab', { name: 'Projects' }));
+    await user.click(screen.getByRole('button', { name: 'New project' }));
     await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Project before board');
     await user.type(screen.getByRole('textbox', { name: 'Project path' }), '/repo');
     await user.type(screen.getByRole('textbox', { name: 'Git root' }), '/repo');

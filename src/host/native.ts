@@ -5,22 +5,18 @@ import type {} from '@deepseek-ai/dsh-working-directory';
 import type {} from '@deepseek-ai/dsh-workspace';
 import type {} from '@deepseek-ai/dsh-sandbox-policy';
 import { Session, SessionId } from '@deepseek-ai/dsh-session';
-import {
-  writableRoots, classifyRunnerFailure, matchesSignature, isRunnerSpawnFailure,
-  type SandboxExecutionPolicy, type ConfinedArgv,
-} from '@deepseek-ai/dsh-sandbox';
-import { spawn } from 'node:child_process';
+import { writableRoots, type SandboxExecutionPolicy, type ConfinedArgv } from '@deepseek-ai/dsh-sandbox';
 import { randomUUID } from 'node:crypto';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import type { GitExecutor, SessionPort, CommandResult, WorkspacePort } from '../shared/ports.js';
+import type { GitExecutor, SessionPort, CommandResult, ProjectProbe, WorkspacePort } from '../shared/ports.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 import { createNativeSessionFacts, inspectedOpenTurn, nativePending } from './native-facts.js';
+import { executeCommand } from './host-command.js';
+import { createHostProjectProbe } from './project-probe.js';
 
-const MAX_OUTPUT_BYTES = 1024 * 1024;
 const EXECUTION_TIMEOUT_MS = 60_000;
 const READ_TIMEOUT_MS = 30_000;
-const KILL_GRACE_MS = 500;
 type Inspection = Awaited<ReturnType<Context['sessionController']['inspect']>>;
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -82,7 +78,7 @@ function commonPolicy(policies: SandboxExecutionPolicy[]): SandboxExecutionPolic
 }
 
 /** Native adapters own no session history, permission grants, or replacement runtime. */
-export function createNativePorts(ctx: Context): { sessions: SessionPort; executor: GitExecutor; workspaces: WorkspacePort } {
+export function createNativePorts(ctx: Context): { sessions: SessionPort; executor: GitExecutor; workspaces: WorkspacePort; probe: ProjectProbe } {
   const inspect = (id: string, signal = AbortSignal.timeout(READ_TIMEOUT_MS)) =>
     ctx.sessionController.inspect(SessionId(id), signal);
   const projections = (id: string, signal = AbortSignal.timeout(READ_TIMEOUT_MS)) =>
@@ -331,7 +327,7 @@ export function createNativePorts(ctx: Context): { sessions: SessionPort; execut
         argv = wrapped.argv;
       }
       lifetime.throwIfAborted();
-      return execute(argv, cwd, wrapped, lifetime, timeout);
+      return executeCommand(argv, cwd, wrapped, lifetime, timeout);
     },
   };
   const workspaceInfo = (value: { id: unknown; path: string; title: string; sessionIds: readonly unknown[] }) => ({ id: String(value.id), path: value.path, title: value.title, sessionIds: value.sessionIds.map(String) });
@@ -348,71 +344,5 @@ export function createNativePorts(ctx: Context): { sessions: SessionPort; execut
     },
     async delete(id) { await ctx.workspaceRegistry.delete(id as never); },
   };
-  return { sessions, executor, workspaces };
-}
-
-/** Spawn only the exact argv returned by native confinement, with bounded output and lifetime. */
-function execute(argv: string[], cwd: string, wrapped: ConfinedArgv | undefined, signal: AbortSignal, timeout: AbortSignal): Promise<CommandResult> {
-  return new Promise((resolve, reject) => {
-    const env = { ...process.env };
-    for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key];
-    Object.assign(env, { GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' });
-    const child = spawn(argv[0]!, argv.slice(1), { cwd, env, shell: false, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    let bytes = 0;
-    let stopped: KanbanError | undefined;
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
-    const kill = (kind: NodeJS.Signals) => {
-      try {
-        if (process.platform !== 'win32' && child.pid !== undefined) process.kill(-child.pid, kind);
-        else child.kill(kind);
-      } catch (error) {
-        if (!record(error) || error.code !== 'ESRCH') child.kill(kind);
-      }
-    };
-    const stop = (error: KanbanError) => {
-      if (stopped) return;
-      stopped = error;
-      kill('SIGTERM');
-      killTimer = setTimeout(() => kill('SIGKILL'), KILL_GRACE_MS);
-      killTimer.unref();
-    };
-    const abort = () => stop(new KanbanError(timeout.aborted ? 'GIT_TIMEOUT' : 'OPERATION_CANCELLED',
-      timeout.aborted ? 'The Git operation exceeded its execution deadline.' : 'The Git operation was cancelled.'));
-    signal.addEventListener('abort', abort, { once: true });
-    if (signal.aborted) abort();
-    const collect = (target: Buffer[], chunk: Buffer) => {
-      bytes += chunk.length;
-      if (bytes > MAX_OUTPUT_BYTES) { stop(new KanbanError('GIT_OUTPUT_LIMIT', 'The Git operation exceeded its output limit.')); return; }
-      target.push(Buffer.from(chunk));
-    };
-    child.stdout.on('data', (chunk: Buffer) => collect(stdout, chunk));
-    child.stderr.on('data', (chunk: Buffer) => collect(stderr, chunk));
-    let spawnError: Error | undefined;
-    child.on('error', (error) => { spawnError = error; });
-    child.on('close', (exitCode, terminatedBy) => {
-      signal.removeEventListener('abort', abort);
-      if (killTimer) clearTimeout(killTimer);
-      if (stopped) {
-        // The runner may close before a descendant which ignored SIGTERM exits.
-        if (process.platform !== 'win32' && child.pid !== undefined) kill('SIGKILL');
-        reject(stopped); return;
-      }
-      if (spawnError) {
-        const runner = wrapped && isRunnerSpawnFailure(spawnError, argv[0], cwd);
-        reject(new KanbanError(runner ? 'SANDBOX_UNAVAILABLE' : 'GIT_SPAWN_FAILED', spawnError.message));
-        return;
-      }
-      const out = Buffer.concat(stdout).toString('utf8');
-      const err = Buffer.concat(stderr).toString('utf8');
-      if (wrapped && classifyRunnerFailure(exitCode, err, wrapped.runnerFailureRules)) {
-        reject(new KanbanError('SANDBOX_UNAVAILABLE', 'The native sandbox runner failed before Git executed.', { exitCode, stderr: err }));
-      } else if (wrapped && matchesSignature(exitCode, err, wrapped.denialSignatures)) {
-        reject(new KanbanError('SANDBOX_DENIED', 'The native sandbox denied a Git file operation.', { exitCode, stderr: err }));
-      } else if (exitCode === null) {
-        reject(new KanbanError('GIT_TERMINATED', 'Git terminated without an exit status.', { signal: terminatedBy }));
-      } else resolve({ exitCode, stdout: out, stderr: err });
-    });
-  });
+  return { sessions, executor, workspaces, probe: createHostProjectProbe() };
 }

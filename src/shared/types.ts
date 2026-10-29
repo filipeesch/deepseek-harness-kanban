@@ -1,6 +1,12 @@
 export const DATA_VERSION = 2 as const;
 export interface Problem { code: string; message: string; details?: Record<string, unknown> }
-export interface Project { id: string; name: string; projectPath: string; gitRootPath: string; defaultBranch?: string; workspaceId?: string; workspaceOwned?: boolean }
+export interface Project { id: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string; workspaceId?: string; workspaceOwned?: boolean }
+/** A project whose Git root is known; required by every Git and worktree operation. */
+export type GitProject = Project & { gitRootPath: string };
+/** Non-persistent result of inspecting a folder for project registration. */
+export type ProjectLocation =
+  | { kind: 'git'; projectPath: string; gitRootPath: string; defaultBranch?: string }
+  | { kind: 'folder'; projectPath: string };
 export interface Column { id: string; name: string; onEnterPrompt?: string; allowedTransitions?: string[] }
 export interface ColumnGroup { id: string; name: string; columnIds: string[] }
 export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[] }
@@ -59,7 +65,7 @@ export interface Attention { running: boolean; background: BackgroundActivity[];
 export interface CommandReceipt { kind: 'hub' | 'board' | 'project' | 'task' | 'conversation' | 'note'; id: string }
 export interface KanbanSnapshot { commandReceipt?: CommandReceipt; state: KanbanState; attention: Record<string, Attention>; sequence: number; clientEpoch?: number; questionRounds?: QuestionRound[] }
 export const EMPTY_ATTENTION: Attention = { running: false, background: [], unread: false, awaitingReply: false, failed: false };
-export interface ProjectInput { id?: string; name: string; projectPath: string; gitRootPath: string; defaultBranch?: string }
+export interface ProjectInput { id?: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string }
 export interface NewTask { projectId: string; title: string; description: string; boardId?: string }
 export type Command =
   | { type: 'hub.create'; name: string }
@@ -92,7 +98,7 @@ export interface ClientApi {
   command(command: Command): Promise<KanbanSnapshot>;
   branches(taskId: string): Promise<string[]>;
   worktreeDefault(taskId: string): Promise<{ branchName: string; path: string }>;
-  inferProject(path: string): Promise<{ projectPath: string; gitRootPath: string }>;
+  detectProject(path: string): Promise<ProjectLocation>;
   subscribe(listener: (snapshot: KanbanSnapshot) => void): () => void;
 }
 export interface QuestionOption { title: string; description: string }

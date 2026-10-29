@@ -1,5 +1,6 @@
 import React, { useId, useState } from 'react';
 import type { Attention, Command, Problem, Project, Task } from '../shared/types.js';
+import { isGitProject } from '../shared/project.js';
 import { describeOperation } from './operation-description.js';
 import { asProblem, Modal, ProblemNotice, type RunCommand } from './ui.js';
 
@@ -13,6 +14,8 @@ export interface DestructiveRequest {
   expectedWorktreePath: string | null;
   branch?: string | null;
   owned?: boolean;
+  /** The checkout belongs to a project that no longer has a Git root and must be retained. */
+  plainCheckout?: boolean;
   error?: Problem;
 }
 
@@ -50,6 +53,7 @@ export function DeleteTaskDialog({ request, task, project, attention, sessionTit
   const closed = task.closedSessionIds.length;
   const busy = attention.running || attention.background.length > 0;
   const unclaimed = task.unclaimedWorktrees ?? [];
+  const plainCheckout = project !== undefined && !isGitProject(project) && Boolean(request.path);
   const detached = request.branch === 'HEAD';
   const title = isDelete ? 'Delete task' : 'Remove worktree';
   return <Modal title={title} onClose={onCancel} busy={pending} initialFocus="cancel" describedBy={summaryId}>
@@ -64,11 +68,13 @@ export function DeleteTaskDialog({ request, task, project, attention, sessionTit
           <li>All conversations return to the project before worktree cleanup.</li>
         </>}
         {request.path
-          ? <li>The checkout at <code>{request.path}</code>{request.branch ? <> on branch <code>{request.branch}</code></> : null} will be removed{request.owned === false ? ' (it was attached externally)' : request.owned === true ? ' (created by Kanban)' : ''}. {isDelete ? (detached ? 'The checkout is detached; Git has no branch to preserve.' : 'The branch is kept.') : ''}</li>
+          ? plainCheckout
+            ? <li>The checkout at <code>{request.path}</code> is no longer Git-managed and will remain on disk.</li>
+            : <li>The checkout at <code>{request.path}</code>{request.branch ? <> on branch <code>{request.branch}</code></> : null} will be removed{request.owned === false ? ' (it was attached externally)' : request.owned === true ? ' (created by Kanban)' : ''}. {isDelete ? (detached ? 'The checkout is detached; Git has no branch to preserve.' : 'The branch is kept.') : ''}</li>
           : isDelete && <li>No worktree is associated, so the project folder is not removed.</li>}
         {unclaimed.length > 0 && <li><span className="kb-warning" role="note" aria-label="Unclaimed checkout deletion warning">Unclaimed checkouts remain on disk. They are not included in this deletion and require manual inspection.</span><ul className="kb-unclaimed-list">{unclaimed.map(entry => <li key={entry.path}><code>{entry.path}</code>{entry.branch ? <> on <code>{entry.branch}</code></> : null}</li>)}</ul></li>}
         {busy && <li>A conversation is running or has unsettled background work. Deletion waits until the task is idle.</li>}
-        {request.path && <li>If the worktree has local changes, a separate discard confirmation appears before removal.</li>}
+        {request.path && !plainCheckout && <li>If the worktree has local changes, a separate discard confirmation appears before removal.</li>}
       </ul>
       {description && !failed && <p className="kb-hint" role="status">{description.detail}</p>}
       {description && failed && <p className="kb-hint">{description.detail}</p>}

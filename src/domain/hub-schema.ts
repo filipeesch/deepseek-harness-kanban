@@ -17,7 +17,9 @@ const workflow = z.strictObject({
   name: nonempty, initialColumnId: id, columns: z.array(column).min(1), groups: z.array(group),
 });
 const project = z.strictObject({
-  id, name: nonempty, projectPath: absolutePath, gitRootPath: absolutePath, defaultBranch: nonempty.optional(), workspaceId: id.optional(), workspaceOwned: z.boolean().optional(),
+  id, name: nonempty, projectPath: absolutePath, gitRootPath: absolutePath.optional(), defaultBranch: nonempty.optional(), workspaceId: id.optional(), workspaceOwned: z.boolean().optional(),
+}).superRefine((value, context) => {
+  if (value.defaultBranch !== undefined && value.gitRootPath === undefined) context.addIssue({ code: 'custom', path: ['defaultBranch'], message: 'A default branch requires a Git root.' });
 });
 const problem = z.strictObject({ code: nonempty, message: z.string(), details: z.record(z.string(), z.unknown()).optional() });
 const createWorktree = z.strictObject({ mode: z.enum(['new', 'existing']), path: absolutePath, branchName: nonempty, sourceBranch: nonempty.optional() });

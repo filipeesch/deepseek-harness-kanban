@@ -1,4 +1,4 @@
-import type { BoardState, CreateWorktree, HubState, KanbanMeta, Project, SessionFacts } from './types.js';
+import type { BoardState, CreateWorktree, GitProject, HubState, KanbanMeta, ProjectLocation, SessionFacts } from './types.js';
 export interface StateStorage { load(): Promise<unknown | null>; save(state: BoardState): Promise<void> }
 /** Durable Hub-record storage. The adapter owns the DSH domain; the repository owns the write chain. */
 export interface HubStorage {
@@ -44,16 +44,19 @@ export interface SessionPort extends SessionTopologyPort {
 }
 export interface GitTree { path: string; branch: string; dirty: boolean; commonDirectory: string }
 export interface GitPort {
-  branches(project: Project, sessionIds: string[]): Promise<string[]>;
-  inspect(project: Project, path: string, sessionIds: string[]): Promise<GitTree>;
-  create(project: Project, request: CreateWorktree, sessionIds: string[], signal?: AbortSignal): Promise<GitTree>;
-  remove(project: Project, path: string, discardChanges: boolean, sessionIds: string[], signal?: AbortSignal): Promise<void>;
-  assertPolicy(project: Project, paths: string[], sessionIds: string[], write: boolean): Promise<void>;
-  projectDirectory(project: Project, worktreeRoot?: string): Promise<string>;
-  discover(path: string): Promise<{ projectPath: string; gitRootPath: string }>;
+  branches(project: GitProject, sessionIds: string[]): Promise<string[]>;
+  inspect(project: GitProject, path: string, sessionIds: string[]): Promise<GitTree>;
+  create(project: GitProject, request: CreateWorktree, sessionIds: string[], signal?: AbortSignal): Promise<GitTree>;
+  remove(project: GitProject, path: string, discardChanges: boolean, sessionIds: string[], signal?: AbortSignal): Promise<void>;
+  assertPolicy(project: GitProject, paths: string[], sessionIds: string[], write: boolean): Promise<void>;
+  projectDirectory(project: GitProject, worktreeRoot?: string): Promise<string>;
+}
+/** Non-persistent inspection of a folder for project registration. */
+export interface ProjectProbe {
+  inspect(path: string): Promise<ProjectLocation>;
 }
 export interface CommandResult { exitCode: number; stdout: string; stderr: string }
 export interface GitExecutor {
-  run(project: Project, args: string[], sessionIds: string[], signal?: AbortSignal): Promise<CommandResult>;
-  assertPolicy(project: Project, paths: string[], sessionIds: string[], write: boolean): Promise<void>;
+  run(project: GitProject, args: string[], sessionIds: string[], signal?: AbortSignal): Promise<CommandResult>;
+  assertPolicy(project: GitProject, paths: string[], sessionIds: string[], write: boolean): Promise<void>;
 }

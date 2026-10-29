@@ -9,7 +9,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean }
+export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; detect?: 'git' | 'folder' }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -78,7 +78,9 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     },
     branches: async () => ['main', 'feature'],
     worktreeDefault: async taskId => { const task = value.state.hubs[0]!.tasks.find(item => item.id === taskId); const branchName = taskTitleSlug(task?.title ?? 'task'); return { branchName, path: worktreePathForBranch(value.state.settings.worktreeBasePath, branchName) }; },
-    inferProject: async pathValue => ({ projectPath: pathValue, gitRootPath: pathValue }),
+    detectProject: async (pathValue: string) => options.detect === 'git'
+      ? { kind: 'git' as const, projectPath: pathValue, gitRootPath: '/repo', defaultBranch: 'main' }
+      : { kind: 'folder' as const, projectPath: pathValue },
     subscribe: listener => { const wrapped = (snapshot: TestSnapshot) => listener(snapshot); listeners.add(wrapped); return () => listeners.delete(wrapped); },
   };
   return { api, snapshot: () => withLegacy(clone(value)), commands: () => structuredClone(commands) };

@@ -9,7 +9,7 @@ import { board, cleanup, fixture, git, gitOk, LocalExecutor, MemoryStore, Sessio
 
 afterEach(cleanup);
 function wrapped(adapter: GitPort, overrides: Partial<GitPort>): GitPort {
-  return { branches: adapter.branches.bind(adapter), inspect: adapter.inspect.bind(adapter), create: adapter.create.bind(adapter), remove: adapter.remove.bind(adapter), assertPolicy: adapter.assertPolicy.bind(adapter), projectDirectory: adapter.projectDirectory.bind(adapter), discover: adapter.discover.bind(adapter), ...overrides };
+  return { branches: adapter.branches.bind(adapter), inspect: adapter.inspect.bind(adapter), create: adapter.create.bind(adapter), remove: adapter.remove.bind(adapter), assertPolicy: adapter.assertPolicy.bind(adapter), projectDirectory: adapter.projectDirectory.bind(adapter), ...overrides };
 }
 async function setup() {
   const f = await fixture(); const executor = new LocalExecutor(); const adapter = new GitAdapter(executor);
