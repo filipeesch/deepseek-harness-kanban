@@ -90,6 +90,24 @@ test('cancels from the card without sending', async ({ page }) => {
   await page.clock.resume();
 });
 
+test('keeps the card height stable when the countdown and the run action appear', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=board');
+  await page.waitForSelector('.kb-column');
+  const card = page.locator('[data-task-id="long-0"]');
+  const idle = await card.evaluate(element => Math.round(element.getBoundingClientRect().height));
+  await page.getByRole('button', { name: 'Open task Long column task 0', exact: true }).click();
+  await page.clock.install({ time: new Date() });
+  await page.getByRole('combobox', { name: 'Move task to' }).selectOption('propose');
+  await expect(page.locator('.kb-card-countdown')).toBeVisible();
+  const counting = await card.evaluate(element => Math.round(element.getBoundingClientRect().height));
+  await page.locator('.kb-card-countdown').click();
+  await expect(page.getByRole('button', { name: 'Run Propose instruction' })).toBeVisible();
+  const play = await card.evaluate(element => Math.round(element.getBoundingClientRect().height));
+  expect(counting, 'the countdown keeps the reserved activity line').toBe(idle);
+  expect(play, 'the run action keeps the reserved activity line').toBe(idle);
+  await page.clock.resume();
+});
+
 test('cancels from the drawer banner while staying in the current section', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=board');
   await page.waitForSelector('.kb-column');

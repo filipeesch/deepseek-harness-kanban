@@ -8,11 +8,9 @@ import { DirectoryPickerProvider } from './services.js';
 import type { DirectoryPickerPort } from './directory-picker.js';
 import { TaskDrawer, type SessionTitles } from './drawer.js';
 import type { ConversationLineagePort, DrawerSubagentAddress } from './conversation-navigation.js';
-import { TaskActivity } from './activity.js';
 import { transitionAccess } from '../domain/transitions.js';
 import { entryInstruction, hasUnresolvedEntry } from '../domain/stage-entry.js';
 import { AutoRunController } from './auto-run.js';
-import { CardInstructionAction } from './auto-run-view.js';
 import { ACTIVE_HUB_KEY, allTasks, boardView, normalizeSnapshot, readBoardPreferences, readStorage, scopeAttention, scopedCommand, writeBoardPreference, writeStorage } from './hub-view.js';
 import { CreateBoardDialog, CreateHubDialog } from './create-dialogs.js';
 import { asProblem, type RunCommand } from './ui.js';
@@ -22,6 +20,7 @@ import { styles } from './styles.js';
 import { BulkDeleteDialog, BulkResultDialog, DeleteTaskDialog, DiscardDialog, type BulkDeletionResult, type BulkProgress, type DestructiveRequest } from './destructive-dialogs.js';
 import { CheckSquareIcon, PlusIcon, SettingsIcon, TrashIcon } from './icons.js';
 import { useCardDrag } from './useCardDrag.js';
+import { TaskCard } from './task-card.js';
 import { useMoveRequest } from './useMoveRequest.js';
 import { TransitionOverrideDialog } from './transition-override-dialog.js';
 import { createBoardPageState, taskPageState, usePageField, type BoardPageState } from './page-state.js';
@@ -284,28 +283,8 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
 
   function renderCard(task: Task, column: Column) {
     const attention = snapshot?.attention[task.id] ?? EMPTY_ATTENTION;
-    const isSelected = selectedIds.has(task.id);
-    const project = state?.projects.find(project => project.id === task.projectId)?.name ?? task.projectId;
-    return <article key={task.id} className={'kb-card' + (isSelected ? ' kb-card-selected' : '') + (selectionMode ? ' kb-card-selecting' : '')} data-task-id={task.id} data-working={attention.running ? 'true' : undefined}
-      onPointerDown={event => { if (selectionMode) return; if ((event.target as Element).closest('.kb-card-run, .kb-card-signals, input, select, textarea, a')) return; begin(event, task.id, task.columnId); }}>
-      {selectionMode && <input type="checkbox" className="kb-card-check" aria-label={'Select ' + task.title} checked={isSelected} onClick={event => event.stopPropagation()} onChange={() => toggleSelect(task.id)} />}
-      <button type="button" className="kb-card-open" data-working={attention.running ? 'true' : undefined} aria-label={(selectionMode ? 'Select task ' : 'Open task ') + task.title} aria-pressed={selectionMode ? isSelected : undefined}
-        onClick={() => { if (shouldSuppressClick()) return; if (selectionMode) { toggleSelect(task.id); return; } openTask(task.id); }}>
-        <span className="kb-card-text"><strong>{task.title}</strong>
-          <span className="kb-card-meta">
-            <span className="kb-hint kb-card-project" title={project}>{project}</span>
-            <span className="kb-card-signals" role="group" aria-label={'Activity for ' + task.title}>
-              {attention.unread && <span className="kb-dot kb-blue" role="img" aria-label="Unread messages" title="Unread messages" />}
-              {attention.awaitingReply && <span className="kb-dot kb-orange" role="img" aria-label="Awaiting reply" title="Awaiting reply" />}
-              {attention.failed && <span className="kb-dot kb-red" role="img" aria-label="Agent failure" title="Agent failure" />}
-              <TaskActivity attention={attention} variant="card" label={task.title} />
-            </span>
-          </span>
-        </span>
-      </button>
-      <div className="kb-attention">{!selectionMode && <CardInstructionAction key={column.id} task={task} column={column} controller={autoRun} />}</div>
-      {task.operation && <p className="kb-hint">Operation: {task.operation.phase}</p>}{task.pendingTransition && <p className="kb-hint">Confirmed action: {task.pendingTransition.status}</p>}
-    </article>;
+    const project = state?.projects.find(value => value.id === task.projectId)?.name ?? task.projectId;
+    return <TaskCard key={task.id} task={task} column={column} projectName={project} attention={attention} selectionMode={selectionMode} selected={selectedIds.has(task.id)} autoRun={autoRun} onOpen={openTask} onToggleSelect={toggleSelect} onBeginDrag={begin} shouldSuppressClick={shouldSuppressClick} />;
   }
 
   function renderNewTaskButton(column: Column) { return <div className="kb-column-create"><button type="button" className="kb-button kb-primary" disabled={!state || state.projects.length === 0} onClick={() => setNewTask(true)} aria-label="New task"><PlusIcon size={14} /> New task</button></div>; }

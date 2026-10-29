@@ -23,54 +23,34 @@ export function backgroundDetails(items: readonly BackgroundActivity[]): string 
   return items.map(item => item.label).join(' · ');
 }
 
-/** Card chip copy; a background-only card names the state it is describing. */
-export function backgroundChipText(items: readonly BackgroundActivity[], standalone: boolean): string {
-  return (standalone ? 'Background: ' : '') + backgroundSummary(items);
+/** One background chip line: the family label alone, or the total once families mix. */
+export function backgroundIndicatorText(items: readonly BackgroundActivity[]): string {
+  if (new Set(items.map(item => item.kind)).size <= 1) return backgroundSummary(items);
+  return items.length + ' activities';
 }
 
 /** The count and the labels are both part of the indicator's accessible name. */
 export function backgroundAccessibleName(items: readonly BackgroundActivity[]): string {
   const details = backgroundDetails(items);
-  return 'Background activity: ' + backgroundSummary(items) + (details ? '. ' + details : '');
+  return 'Background activity: ' + backgroundIndicatorText(items) + (details ? '. ' + details : '');
 }
 
-function WorkingBadge({ decorative = false }: { decorative?: boolean }) {
+export function WorkingBadge({ decorative = false }: { decorative?: boolean }) {
   return <span className="kb-working" aria-hidden={decorative ? true : undefined}><span className="kb-working-dot" aria-hidden="true" />Working</span>;
 }
 
 /** Persistent live region: mounted empty while idle, its text changes once when a turn starts. */
-function WorkingAnnouncement({ running, label }: { running: boolean; label?: string }) {
+export function WorkingAnnouncement({ running, label }: { running: boolean; label?: string }) {
   return <span className="kb-sr" role="status" aria-live="polite" aria-atomic="true">{running ? 'Working' + (label ? ' on ' + label : '') : ''}</span>;
 }
 
-export interface TaskActivityProps { attention: Attention; variant: 'card' | 'drawer'; label?: string }
-
-/** The task's turn execution and background activity, shared by the card and the drawer header. */
-export function TaskActivity({ attention, variant, label }: TaskActivityProps) {
+/** The drawer header's turn execution and background labels, with no live region of its own. */
+export function TaskActivity({ attention }: { attention: Attention }) {
   const { running, background } = attention;
   const details = backgroundDetails(background);
-  if (variant === 'drawer') {
-    if (!running && background.length === 0) return null;
-    return <div className="kb-execution kb-execution-drawer">
-      {running && <WorkingBadge />}
-      {background.length > 0 && <span className="kb-task-background" title={details}>Background: {details}</span>}
-    </div>;
-  }
-  return <>
-    <WorkingAnnouncement running={running} label={label} />
-    {running && <WorkingBadge decorative />}
-    {background.length > 0 && (
-      <span
-        className="kb-background"
-        role="note"
-        tabIndex={0}
-        title={details}
-        aria-label={backgroundAccessibleName(background)}
-        onClick={event => event.stopPropagation()}
-        onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') event.stopPropagation(); }}
-      >
-        {backgroundChipText(background, false)}
-      </span>
-    )}
-  </>;
+  if (!running && background.length === 0) return null;
+  return <div className="kb-execution kb-execution-drawer">
+    {running && <WorkingBadge />}
+    {background.length > 0 && <span className="kb-task-background" title={details}>Background: {details}</span>}
+  </div>;
 }

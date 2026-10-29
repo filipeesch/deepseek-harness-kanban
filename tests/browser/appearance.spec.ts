@@ -15,6 +15,8 @@ interface Appearance {
   chip: string;
   chipContrast: number;
   drawerContrast: number;
+  pendingContrast: number;
+  dangerContrast: number;
 }
 
 /** Resolve the colors the plugin actually renders against the host theme fixture. */
@@ -62,6 +64,13 @@ function appearance(page: Page): Promise<Appearance> {
       const [backRed, backGreen, backBlue] = channels(backdrop);
       return `rgb(${Math.round(red * alpha + backRed * (1 - alpha))}, ${Math.round(green * alpha + backGreen * (1 - alpha))}, ${Math.round(blue * alpha + backBlue * (1 - alpha))})`;
     };
+    const statusContrast = (selector: string): number => {
+      const line = document.querySelector<HTMLElement>(selector);
+      if (line === null) return 0;
+      const card = line.closest('.kb-card');
+      const statusBackground = effectiveBackground(card);
+      return contrast(getComputedStyle(line).color, statusBackground);
+    };
     const working = document.querySelector<HTMLElement>('.kb-working');
     const card = document.querySelector<HTMLElement>('.kb-card[data-working=true]');
     const chip = document.querySelector<HTMLElement>('.kb-background');
@@ -84,6 +93,8 @@ function appearance(page: Page): Promise<Appearance> {
       chip: chipColor,
       chipContrast: chipColor === '' ? 0 : contrast(composite(chipColor, background, chipOpacity), background),
       drawerContrast: drawerColor === '' ? 0 : contrast(composite(drawerColor, drawerBackground, drawerOpacity), drawerBackground),
+      pendingContrast: statusContrast('.kb-card-status-line.is-pending'),
+      dangerContrast: statusContrast('.kb-card-status-line.is-danger'),
     };
   });
 }
@@ -93,12 +104,14 @@ test.beforeAll(async () => { await mkdir(OUT, { recursive: true }); });
 test('working indicator uses the host token and stays legible in both appearances', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'light' });
   await page.goto(HARNESS + '?scenario=appearance');
-  const working = page.getByRole('button', { name: 'Open task Long column task 0', exact: true });
+  const working = page.locator('[data-task-id="long-0"]');
   await expect(working.locator('.kb-working')).toBeVisible();
   const light = await appearance(page);
   expect(light.theme).toBe('light');
   expect(light.token).toBe(light.working);
   expect(light.contrast).toBeGreaterThanOrEqual(4.5);
+  expect(light.pendingContrast, 'the pending status tone is legible in light').toBeGreaterThanOrEqual(4.5);
+  expect(light.dangerContrast, 'the failure status tone is legible in light').toBeGreaterThanOrEqual(4.5);
   expect(light.shadow).toContain('inset');
   await page.screenshot({ path: path.join(OUT, 'appearance-light.png') });
 
@@ -108,6 +121,8 @@ test('working indicator uses the host token and stays legible in both appearance
   expect(dark.theme).toBe('dark');
   expect(dark.token).toBe(dark.working);
   expect(dark.contrast).toBeGreaterThanOrEqual(4.5);
+  expect(dark.pendingContrast, 'the pending status tone is legible in dark').toBeGreaterThanOrEqual(4.5);
+  expect(dark.dangerContrast, 'the failure status tone is legible in dark').toBeGreaterThanOrEqual(4.5);
   expect(dark.token).not.toBe(light.token);
   await page.screenshot({ path: path.join(OUT, 'appearance-dark.png') });
 });
@@ -133,5 +148,5 @@ test('drawer header and background detail keep the host appearance across sectio
   expect(dark.chipContrast, 'the background chip is legible').toBeGreaterThanOrEqual(4.5);
   expect(dark.drawerContrast, 'the drawer detail is legible in dark').toBeGreaterThanOrEqual(4.5);
   await page.screenshot({ path: path.join(OUT, 'appearance-drawer-dark.png') });
-  await expect(page.getByRole('button', { name: 'Open task Long column task 1', exact: true })).toContainText('1 job');
+  await expect(page.locator('[data-task-id="long-1"]')).toContainText('1 job');
 });

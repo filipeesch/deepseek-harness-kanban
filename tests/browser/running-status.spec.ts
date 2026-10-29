@@ -6,18 +6,20 @@ test('cards show working and background activity with a real pulse', async ({ pa
   await page.goto(HARNESS + '?scenario=activity');
   await page.waitForSelector('.kb-card');
 
-  const working = page.getByRole('button', { name: 'Open task Long column task 0', exact: true });
+  const working = page.locator('[data-task-id="long-0"]');
   await expect(working).toHaveAttribute('data-working', 'true');
+  await expect(working.locator('.kb-card-open')).not.toHaveAttribute('data-working');
   await expect(working.locator('.kb-working')).toHaveText(/Working/);
   await expect.poll(() => working.locator('.kb-working-dot').evaluate(element => element.getAnimations().length)).toBeGreaterThan(0);
   expect(await page.locator('.kb-card[data-working=true]').first().evaluate(element => getComputedStyle(element).boxShadow)).toContain('inset');
+  await expect(working.locator('.kb-card-activity .kb-working')).toBeVisible();
 
-  const background = page.getByRole('button', { name: 'Open task Long column task 1', exact: true });
+  const background = page.locator('[data-task-id="long-1"]');
   await expect(background).not.toHaveAttribute('data-working', 'true');
-  await expect(background.getByText('1 job')).toBeVisible();
+  await expect(background.locator('.kb-card-activity').getByText('1 job')).toBeVisible();
 
-  // The meta line keeps idle, working, and background cards at one height.
-  const heights = await page.locator('.kb-card').evaluateAll(cards => cards.slice(0, 4).map(card => Math.round(card.getBoundingClientRect().height)));
+  // The activity region is reserved, so idle, working, and background cards share one height.
+  const heights = await page.locator('.kb-card').evaluateAll(cards => cards.slice(0, 6).map(card => Math.round(card.getBoundingClientRect().height)));
   expect(new Set(heights).size, JSON.stringify(heights)).toBe(1);
   const note = background.getByRole('note');
   await expect(note).toHaveAttribute('title', 'Run tests');
@@ -25,9 +27,27 @@ test('cards show working and background activity with a real pulse', async ({ pa
   await expect(note).toBeFocused();
   await expect(note).toHaveAttribute('aria-label', 'Background activity: 1 job. Run tests');
 
-  const both = page.getByRole('button', { name: 'Open task Long column task 2', exact: true });
+  const both = page.locator('[data-task-id="long-2"]');
   await expect(both.locator('.kb-working')).toBeVisible();
   await expect(both.getByText('1 subagent')).toBeVisible();
+});
+
+test('mixed background kinds aggregate into one activity line beside the identity row', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=activity');
+  await page.waitForSelector('.kb-card');
+  const card = page.locator('[data-task-id="long-3"]');
+  const chip = card.locator('.kb-card-activity .kb-background');
+  await expect(chip).toHaveText('2 activities');
+  await expect(chip).toHaveAttribute('aria-label', 'Background activity: 2 activities. Run tests · Research');
+  await expect(chip).toHaveAttribute('title', 'Run tests · Research');
+  await expect(chip).not.toContainText('job');
+  await expect(chip).not.toContainText('subagent');
+
+  const dots = card.locator('.kb-card-context .kb-card-attention .kb-dot');
+  await expect(dots).toHaveCount(3);
+  await expect(card.locator('.kb-card-context').getByText('2 activities')).toHaveCount(0);
+  const activity = await card.locator('.kb-card-activity').evaluate(element => Math.round(element.getBoundingClientRect().height));
+  expect(activity, 'the activity region stays on one reserved line').toBe(26);
 });
 
 test('drawer header keeps the execution status across sections', async ({ page }) => {

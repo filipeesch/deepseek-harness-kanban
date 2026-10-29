@@ -24,3 +24,9 @@ export function InfoIcon({ size = 16, className }: IconProps) {
 export function PlayIcon({ size = 16, className }: IconProps) {
   return <svg {...base(size)} className={className}><path d="M8 5v14l11-7Z" fill="currentColor" stroke="none" /></svg>;
 }
+export function AlertIcon({ size = 16, className }: IconProps) {
+  return <svg {...base(size)} className={className}><path d="M12 4 2.5 20h19L12 4Z" /><path d="M12 10v4M12 17h.01" /></svg>;
+}
+export function ClockIcon({ size = 16, className }: IconProps) {
+  return <svg {...base(size)} className={className}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>;
+}

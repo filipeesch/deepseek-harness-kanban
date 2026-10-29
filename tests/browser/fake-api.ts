@@ -9,7 +9,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; detect?: 'git' | 'folder' }
+export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; detect?: 'git' | 'folder' }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -23,6 +23,7 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     ...Array.from({ length: 12 }, (_, index) => task('long-' + index, 'Long column task ' + index, 'explore', index)),
     task('short', 'Short task', 'propose', 40),
     task('other', 'Other task', 'apply', 41),
+    longTitleTask(),
     deleteTarget(),
     failedDelete(),
     failedDeleteReturn(),
@@ -31,10 +32,16 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     'long-0': { running: true, background: [], unread: false, awaitingReply: false, failed: false },
     'long-1': { running: false, background: [{ kind: 'job', label: 'Run tests' }], unread: false, awaitingReply: false, failed: false },
     'long-2': { running: true, background: [{ kind: 'subagent', label: 'Research' }], unread: false, awaitingReply: false, failed: false },
+    'long-3': { running: false, background: [{ kind: 'job', label: 'Run tests' }, { kind: 'subagent', label: 'Research' }], unread: true, awaitingReply: true, failed: true },
   } : {};
+  const shortTask = tasks.find(value => value.id === 'short')!;
+  if (options.pending) shortTask.pendingTransition = { id: 'pending-short', fromColumnId: 'propose', columnId: 'apply', mode: 'move', status: 'waiting' };
   const hub: HubState = {
     id: 'hub', name: 'Harness Hub', revision: 1,
-    projects: [{ id: 'p', name: 'Project', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' }],
+    projects: [
+      { id: 'p', name: 'Project', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' },
+      { id: 'p2', name: 'A very long project name that must truncate inside the card', projectPath: '/repo/long', gitRootPath: '/repo', defaultBranch: 'main' },
+    ],
     boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(options.restricted), workflow: { name: 'Harness flow', initialColumnId: 'explore', columns: [{ id: 'explore', name: 'Explore', ...(options.restricted ? { allowedTransitions: ['propose'] } : {}) }, { id: 'propose', name: 'Propose', ...(options.restricted ? {} : { onEnterPrompt: 'Plan this task.' }) }, { id: 'apply', name: 'Apply' }], groups: [{ id: 'planning', name: 'Planning', columnIds: ['explore', 'propose'] }] }, createdAt: now, updatedAt: now }],
     tasks, notes: [], createdAt: now, updatedAt: now,
   };
@@ -118,6 +125,9 @@ function withLegacy(snapshot: KanbanSnapshot): TestSnapshot {
   return { ...snapshot, state };
 }
 
+function longTitleTask(): HubTask {
+  return { ...task('long-title', 'A very long task title that should wrap across multiple lines in the narrow card', 'apply', 45), projectId: 'p2' };
+}
 function deleteTarget(): HubTask {
   return { ...task('delete-target', 'Delete target', 'propose', 42), sessionIds: ['s-delete-target-1', 's-delete-target-2'], effectiveCwd: '/worktrees/delete-target', worktree: { path: '/worktrees/delete-target', branch: 'delete-target', owned: true, status: 'ready' }, unclaimedWorktrees: [{ path: '/manual/delete-checkout', branch: 'manual', error: { code: 'DETACHED', message: 'Detached checkout.' } }] };
 }

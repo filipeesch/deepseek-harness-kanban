@@ -17,9 +17,16 @@ describe('board and editor style contracts', () => {
   it('defines symmetric drawer keyframes and reduced-motion handling', () => {
     for (const value of ['@keyframes kb-drawer-enter', '@keyframes kb-drawer-exit', '[data-entering=true]', '[data-closing=true]', 'prefers-reduced-motion:reduce']) expect(styles).toContain(value);
   });
-  it('defines the working and background activity contract on host tokens', () => {
-    for (const value of ['.kb-working{', '.kb-working-dot', '.kb-background{', '.kb-background:focus-visible', '.kb-task-background', '.kb-card-meta', '.kb-card-signals', '.kb-card[data-working=true]', '@keyframes kb-working-pulse', '--dsw-alias-label-deep-diving']) expect(styles).toContain(value);
+  it('defines the card regions, activity strip, and status tones on host tokens', () => {
+    for (const value of ['.kb-working{', '.kb-working-dot', '.kb-background{', '.kb-background:focus-visible', '.kb-task-background', '.kb-card-context{', '.kb-card-project{', '.kb-card-activity{', '.kb-card-status{', '.kb-card-status-line.is-danger', '.kb-card-status-line.is-pending', '.kb-card[data-working=true]', '@keyframes kb-working-pulse', '--dsw-alias-label-deep-diving']) expect(styles).toContain(value);
     expect(styles).not.toContain('.kb-running');
+    expect(styles).not.toContain('.kb-card-meta');
+    expect(styles).not.toContain('.kb-card-signals');
+  });
+  it('truncates the project label and never clamps the title', () => {
+    expect(styles).toMatch(/\.kb-card-project\{[^}]*text-overflow:ellipsis/);
+    expect(styles).toMatch(/\.kb-card-project\{[^}]*white-space:nowrap/);
+    expect(styles).not.toContain('line-clamp');
   });
   it('defines the restricted-stage and override surface contract', () => {
     for (const value of ['.kb-stage-option-restricted{', '.kb-drop-restricted{', '.kb-drop-indicator-restricted{', '.kb-transition-dialog{', '.kb-transition-identity{']) expect(styles).toContain(value);

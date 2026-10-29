@@ -121,7 +121,8 @@ describe('instructed move auto-run', () => {
     mock.command.mockRejectedValueOnce({ code: 'SEND_FAILED', message: 'The instruction could not be sent.' });
     await advance(5000);
     const failedCard = screen.getByRole('button', { name: 'Open task Alpha task' }).closest('.kb-card') as HTMLElement;
-    expect(within(failedCard).getByText('The instruction could not be sent.')).toBeTruthy();
+    const failedStatus = failedCard.querySelector('.kb-card-status') as HTMLElement;
+    expect(within(failedStatus).getByRole('alert').textContent).toBe('The instruction could not be sent.');
     expect(within(drawer()).getByText('Automatic Review instruction failed')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Run Review instruction' })).toBeTruthy();
     expect(runCalls(mock)).toHaveLength(1);
@@ -136,7 +137,8 @@ describe('instructed move auto-run', () => {
     expect(countdown()).not.toBeNull();
     await advance(5000);
     const changedCard = screen.getByRole('button', { name: 'Open task Alpha task' }).closest('.kb-card') as HTMLElement;
-    expect(within(changedCard).getByText('The workflow instruction changed. Review the current instruction before running.')).toBeTruthy();
+    const changedStatus = changedCard.querySelector('.kb-card-status') as HTMLElement;
+    expect(within(changedStatus).getByRole('alert').textContent).toBe('The workflow instruction changed. Review the current instruction before running.');
     expect(within(drawer()).getByText('Automatic Review instruction failed')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Run Review instruction' })).toBeTruthy();
     expect(runCalls(mock)).toHaveLength(1);
@@ -150,7 +152,7 @@ describe('instructed move auto-run', () => {
     await act(async () => { mock.publish(removed); }); await settle();
     await advance(5000);
     const card = screen.getByRole('button', { name: 'Open task Alpha task' }).closest('.kb-card') as HTMLElement;
-    expect(within(card).getByRole('alert').textContent).toContain('The workflow instruction changed.');
+    expect(within(card.querySelector('.kb-card-status') as HTMLElement).getByRole('alert').textContent).toContain('The workflow instruction changed.');
     expect(within(drawer()).getByRole('alert').textContent).toContain('The workflow instruction changed.');
     expect(screen.queryByRole('button', { name: 'Run Review instruction' })).toBeNull();
   });
@@ -289,7 +291,7 @@ describe('instructed move auto-run', () => {
     await act(async () => { mock.publish(busy); }); await settle();
     await advance(5000);
     const card = screen.getByRole('button', { name: 'Open task Alpha task' }).closest('.kb-card') as HTMLElement;
-    expect(within(card).getByRole('alert').textContent).toContain('Resolve the confirmed transition first.');
+    expect(within(card.querySelector('.kb-card-status') as HTMLElement).getByRole('alert').textContent).toContain('Resolve the confirmed transition first.');
     expect(within(drawer()).getByRole('alert').textContent).toContain('Resolve the confirmed transition first.');
   });
 

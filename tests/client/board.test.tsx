@@ -64,7 +64,7 @@ describe('scoped Kanban page', () => {
     expect(screen.getByRole('img', { name: 'Agent failure' })).toBeTruthy();
     expect(screen.getByText('Working')).toBeTruthy(); expect(screen.getByText('1 job')).toBeTruthy();
     expect(screen.queryByText('Running')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Open task Alpha task' }).getAttribute('data-working')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Open task Alpha task' }).closest('.kb-card')?.getAttribute('data-working')).toBe('true');
     await user.type(screen.getByRole('searchbox', { name: 'Search tasks' }), 'documentation');
     expect(screen.queryByRole('button', { name: 'Open task Alpha task' })).toBeNull(); expect(screen.getByRole('button', { name: 'Open task Beta task' })).toBeTruthy();
     await user.selectOptions(screen.getByRole('combobox', { name: 'Project filter' }), 'p1');
@@ -79,7 +79,7 @@ describe('scoped Kanban page', () => {
     act(() => { publish(next); });
     expect(screen.getByText('1 subagent')).toBeTruthy();
     expect(screen.getByTitle('Research')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Open task Beta task' }).getAttribute('data-working')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open task Beta task' }).closest('.kb-card')?.getAttribute('data-working')).toBeNull();
   });
 
   it('keeps the task execution status in the drawer header across sections', async () => {

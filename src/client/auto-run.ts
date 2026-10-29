@@ -51,6 +51,14 @@ export function runInstructionCommand(input: AutoRunInput): Extract<Command, { t
   return { type: 'task.runInstruction', taskId: input.taskId, columnId: input.columnId, expectedEnteredAt: input.enteredAt, expectedInstruction: input.instruction };
 }
 
+/** The card's fallback copy when an auto-run failure carries no message. */
+export const RUN_FAILURE_FALLBACK = 'The instruction could not be sent.';
+
+/** The entry that belongs to this column, ignoring a stale entry from another stage. */
+export function autoRunEntryForColumn(entry: AutoRunEntry | undefined, columnId: string): AutoRunEntry | undefined {
+  return entry?.columnId === columnId ? entry : undefined;
+}
+
 /** Owns the per-task countdown, the single execution path, and the failure record. */
 export class AutoRunController {
   private entries: Record<string, AutoRunEntry> = {};
