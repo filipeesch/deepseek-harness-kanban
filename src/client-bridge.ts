@@ -37,6 +37,7 @@ export class ClientBridge {
   private readonly questionState = observable<QuestionView>({ rounds: [], errors: new Map() });
   readonly questionsView = this.questionState.source;
   private readonly snapshots = new Set<(snapshot: KanbanSnapshot) => void>();
+  private readonly runningSessions = new Set<string>();
   private host: KanbanSnapshot | undefined;
   private merged: KanbanSnapshot | undefined;
   private clientEpoch = 0;
@@ -53,8 +54,13 @@ export class ClientBridge {
   readonly api: ClientApi;
   constructor(private readonly remote: BridgeRemote, private readonly nativeStatus: HostObservable<SessionStatusSnapshot>) {
     this.control = this.makeControl();
-    this.stopStatus = nativeStatus.subscribe(() => { this.reminders.sync(this.nativeStatus.getSnapshot()); this.publish(); });
     this.reminders.sync(this.nativeStatus.getSnapshot());
+    this.syncRunning(this.nativeStatus.getSnapshot());
+    this.stopStatus = nativeStatus.subscribe(() => {
+      this.reminders.sync(this.nativeStatus.getSnapshot());
+      this.publish();
+      if (this.syncRunning(this.nativeStatus.getSnapshot())) this.refreshAttention();
+    });
     this.api = {
       snapshot: () => this.unarySnapshot(() => remote.kanban.snapshot()),
       command: (command: Command) => this.unarySnapshot(() => remote.kanban.command(command)),
@@ -129,6 +135,25 @@ export class ClientBridge {
     }
     this.merged = { ...this.host, attention, questionRounds: [...this.rounds], clientEpoch: this.clientEpoch };
     for (const listener of [...this.snapshots]) { try { listener(this.merged); } catch { /* Keep sibling consumers alive. */ } }
+  }
+  /** A conversation started running: ask the host for a freshly projected attention snapshot. */
+  private refreshAttention(): void {
+    void this.unarySnapshot(() => this.remote.kanban.snapshot()).catch(() => undefined);
+  }
+  /** Track the native running sessions, returning true when any conversation starts a turn. */
+  private syncRunning(statuses: SessionStatusSnapshot): boolean {
+    let rising = false;
+    const seen = new Set<string>();
+    for (const [id, status] of statuses) {
+      const key = String(id);
+      seen.add(key);
+      if (status.running === true) {
+        if (!this.runningSessions.has(key)) rising = true;
+        this.runningSessions.add(key);
+      }
+    }
+    for (const id of [...this.runningSessions]) if (!seen.has(id)) this.runningSessions.delete(id);
+    return rising;
   }
   /** Acknowledge only the actually mounted/read drawer session, without native mainView writes. */
   viewSession(id: string): () => void {

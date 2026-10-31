@@ -7,7 +7,7 @@ export class KanbanController extends TypertRemoteService {
  constructor(ctx:Context,private readonly app:KanbanApp){super(ctx,'kanbanController',{namespace:'kanban'});}
  private owner():void{if(this.ctx.invocation&&this.ctx.invocation.peer.principal.kind!=='owner')throw new KanbanError('FORBIDDEN','Kanban access requires the native host owner.');}
  private async attempt<T>(fn:()=>Promise<T>):Promise<Outcome<T>>{try{this.owner();return {ok:true,value:await fn()};}catch(error){return {ok:false,error:problem(error)};}}
- @Remote async snapshot():Promise<Outcome<KanbanSnapshot>>{return this.attempt(()=>this.app.snapshot());}
+ @Remote async snapshot():Promise<Outcome<KanbanSnapshot>>{return this.attempt(()=>this.app.snapshot(true));}
  @Remote async command(request:Command):Promise<Outcome<KanbanSnapshot>>{return this.attempt(()=>this.app.command(request));}
  @Remote async branches(request:{taskId:string}):Promise<Outcome<string[]>>{return this.attempt(()=>this.app.branches(request.taskId));}
  @Remote async worktreeDefault(request:{taskId:string}):Promise<Outcome<{branchName:string;path:string}>>{return this.attempt(()=>this.app.worktreeDefault(request.taskId));}

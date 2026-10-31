@@ -95,6 +95,19 @@ describe('real native stream bridge', () => {
     await vi.waitFor(() => expect(accept).toHaveBeenCalled());
     expect((await f.bridge.api.snapshot()).sequence).toBe(10);
   });
+  it('asks for a fresh host snapshot when a conversation starts running', async () => {
+    const f = fixture(); const accepted = vi.fn(); f.bridge.api.subscribe(accepted); f.bridge.start();
+    await vi.waitFor(() => expect(f.feeds).toHaveLength(1));
+    const runningSnapshot = { ...snapshot(11), attention: { t1: { running: true, background: [], unread: false, awaitingReply: false, failed: false } } };
+    vi.mocked(f.remote.kanban.snapshot).mockResolvedValue({ ok: true, value: { ok: true, value: runningSnapshot } });
+    f.status.set(states([['a', native(true)]]));
+    await vi.waitFor(() => expect(f.remote.kanban.snapshot).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(accepted.mock.calls.at(-1)?.[0].attention.t1?.running).toBe(true));
+    f.status.set(states([['a', native(true, true)]]));
+    await vi.waitFor(() => expect(accepted).toHaveBeenCalled());
+    expect(f.remote.kanban.snapshot).toHaveBeenCalledTimes(1);
+  });
+
   it('returns the exact command receipt even when a newer feed model supersedes its snapshot', async () => {
     const f = fixture(); const accepted = vi.fn(); f.bridge.api.subscribe(accepted); f.bridge.start();
     await vi.waitFor(() => expect(f.feeds).toHaveLength(1)); f.feeds[0]!.push(snapshot(10));

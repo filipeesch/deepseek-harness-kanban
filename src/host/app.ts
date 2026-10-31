@@ -139,7 +139,8 @@ export class KanbanApp {
  }
  activityChanged():void{if(this.disposed)return;this.attention.touch();this.changed();}
  sessionActivity(sessionId?:string):void{if(this.disposed)return;this.attention.touch(sessionId);this.changed();}
- async snapshot():Promise<KanbanSnapshot>{
+ async snapshot(refreshAttention=false):Promise<KanbanSnapshot>{
+  if(refreshAttention){this.attention.invalidate();this.sequence++;}
   const sequence=this.sequence;const state=this.hubs.snapshot();const questionRounds=structuredClone([...this.questions.getRounds()]);
   const attention=await this.attention.project(this.locator.all().map(located=>({id:located.task.id,sessionIds:located.task.sessionIds})));
   return {state,attention,sequence,questionRounds};
