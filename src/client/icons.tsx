@@ -33,3 +33,6 @@ export function ClockIcon({ size = 16, className }: IconProps) {
 export function ReopenIcon({ size = 16, className }: IconProps) {
   return <svg {...base(size)} className={className}><path d="M5 12a7 7 0 1 0 2.1-5L4 10" /><path d="M4 4v6h6" /></svg>;
 }
+export function AutoModeIcon({ size = 16, className }: IconProps) {
+  return <svg {...base(size)} className={className}><path d="M6 6l5 6-5 6" /><path d="M13 6l5 6-5 6" /></svg>;
+}

@@ -1,5 +1,5 @@
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { Board, BoardSettings, HubState, HubTask, Note, Project, ProjectInput, Workflow } from '../shared/types.js';
+import type { AutoModePause, Board, BoardSettings, HubState, HubTask, Note, Project, ProjectInput, Workflow } from '../shared/types.js';
 import { assertId, isAbsolutePath } from './validation.js';
 import { createBoard } from './hub-schema.js';
 import { parseWorkflow } from './workflow.js';
@@ -192,6 +192,31 @@ export function dismissWorktree(hub: HubState, taskId: string, deps: OperationDe
   return task;
 }
 
+export function setAutoMode(hub: HubState, taskId: string, enabled: boolean, deps: OperationDeps): HubTask {
+  invariant(typeof enabled === 'boolean', 'INVALID_INPUT', 'Auto mode requires a boolean value.');
+  const task = requireTask(hub, taskId);
+  if (enabled) {
+    if (task.autoMode?.enabled === true && task.autoMode.pause === undefined) return task;
+    task.autoMode = { enabled: true };
+  } else {
+    if (task.autoMode === undefined) return task;
+    delete task.autoMode;
+  }
+  task.updatedAt = timestamp(deps);
+  hub.updatedAt = task.updatedAt;
+  return task;
+}
+
+export function pauseAutoMode(hub: HubState, taskId: string, pause: AutoModePause, deps: OperationDeps, expectedColumnId?: string): HubTask {
+  const task = requireTask(hub, taskId);
+  if (task.autoMode?.enabled !== true) return task;
+  if (expectedColumnId !== undefined && task.columnId !== expectedColumnId) return task;
+  task.autoMode.pause = { ...pause };
+  task.updatedAt = timestamp(deps);
+  hub.updatedAt = task.updatedAt;
+  return task;
+}
+
 export function editTask(hub: HubState, taskId: string, patch: TaskTextPatch, deps: OperationDeps): HubTask {
   const value = clone(patch);
   invariant(value && typeof value === 'object' && !Array.isArray(value), 'INVALID_INPUT', 'Task edits must be a mapping.');
@@ -269,6 +294,7 @@ export function placeTask(hub: HubState, taskId: string, columnId: string, befor
   const requestedIndex = beforeTaskId ? destination.findIndex(value => value.id === beforeTaskId) : -1;
   const index = requestedIndex >= 0 ? requestedIndex : destination.length;
   task.columnId = columnId;
+  if (task.autoMode?.pause !== undefined) delete task.autoMode.pause;
   if (sourceColumnId !== columnId) {
     const destinationColumn = board.workflow.columns.find(value => value.id === columnId);
     if (entryInstruction(destinationColumn) !== undefined) task.instructionPending = { columnId, enteredAt };

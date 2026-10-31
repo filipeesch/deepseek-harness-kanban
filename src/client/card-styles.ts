@@ -26,5 +26,15 @@ export const cardStyles = String.raw`
 .dsh-kanban .kb-card-status-line.is-danger{color:color-mix(in srgb,var(--color-destructive,#c53030) 65%,var(--dsw-alias-label-primary,CanvasText))}
 .dsh-kanban .kb-card-status-line.is-pending{color:color-mix(in srgb,var(--dsw-alias-state-business-primary,CanvasText) 70%,var(--dsw-alias-label-primary,CanvasText))}
 .dsh-kanban .kb-card[data-working=true]{box-shadow:inset 3px 0 0 var(--dsw-alias-label-deep-diving,var(--dsw-alias-state-business-primary,currentColor)),0 2px 4px #00000008}
-@media (prefers-reduced-motion: reduce){.dsh-kanban .kb-countdown-bar{display:none}}
+.dsh-kanban .kb-card-context .kb-card-project + .kb-auto-chip{margin-left:2px}
+.dsh-kanban .kb-auto-chip{display:inline-flex;align-items:center;gap:3px;flex:0 0 auto;height:18px;padding:0 6px 0 4px;border:1px solid var(--kb-line);border-radius:999px;background:var(--kb-soft);color:inherit;font:inherit;font-size:9.5px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;opacity:.72;cursor:pointer;position:relative;z-index:3}
+.dsh-kanban .kb-auto-chip svg{flex:0 0 auto}
+.dsh-kanban .kb-auto-chip:hover{opacity:1}
+.dsh-kanban .kb-auto-chip.is-on{opacity:1;border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary,#3b82f6) 55%,var(--kb-line));background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#3b82f6) 16%,var(--kb-surface))}
+.dsh-kanban .kb-auto-chip.is-paused::after{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.75}
+.dsh-kanban .kb-auto-chip.is-advancing::after{content:'';width:5px;height:5px;border-radius:50%;background:var(--dsw-alias-state-business-primary,#3b82f6);animation:kb-auto-pulse 1.2s ease-in-out infinite}
+@keyframes kb-auto-pulse{0%,100%{opacity:.35}50%{opacity:1}}
+.dsh-kanban .kb-auto-chip:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:2px}
+.dsh-kanban .kb-auto-chip:disabled{opacity:.45;cursor:default}
+@media (prefers-reduced-motion: reduce){.dsh-kanban .kb-countdown-bar{display:none}.dsh-kanban .kb-auto-chip.is-advancing::after{animation:none;opacity:1}}
 `;

@@ -39,7 +39,7 @@ export function CardInstructionAction({ task, column, controller }: { task: Task
   const playable = instruction !== undefined;
   const showButton = counting || sending || playable;
   if (!showButton) return null;
-  const blocked = Boolean(task.operation || task.pendingTransition);
+  const blocked = Boolean(task.operation || (task.pendingTransition && !(task.pendingTransition.origin === 'auto' && task.pendingTransition.status === 'failed')));
   const mode = counting ? 'counting' : sending ? 'sending' : 'play';
   const label = counting ? 'Cancel automatic ' + column.name + ' instruction' : sending ? 'Sending ' + column.name + ' instruction' : 'Run ' + column.name + ' instruction';
   const marker = task.instructionPending!;

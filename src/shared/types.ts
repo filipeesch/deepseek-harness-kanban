@@ -26,7 +26,12 @@ export interface ContextOperation {
   archivedSessionIds: string[]; gitCompleted: boolean; error?: Problem; createdAt: string;
   createAttempt?: { operationId: string; path: string; gitRootPath: string; branchName: string; mode: 'new' | 'existing'; absentBefore: true };
 }
-export interface PendingTransition { id: string; fromColumnId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; text?: string; beforeTaskId?: string | null; worktreeRequest?: CreateWorktree; transitionOverride?: boolean; status: 'waiting' | 'sending' | 'failed'; error?: Problem }
+export interface PendingTransition { id: string; fromColumnId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; text?: string; beforeTaskId?: string | null; worktreeRequest?: CreateWorktree; transitionOverride?: boolean; status: 'waiting' | 'sending' | 'failed'; error?: Problem; /** Absent means a user-confirmed transition; `auto` is a host automatic advance. */ origin?: 'auto' }
+/** Why auto mode is paused; only reasons that cannot be derived from the snapshot are recorded. */
+export type AutoModePauseReason = 'turn-error' | 'turn-blocked' | 'turn-aborted' | 'turn-max-tokens' | 'advance-failed';
+export interface AutoModePause { reason: AutoModePauseReason; at: string; message?: string }
+/** Per-task auto mode: arms the host advance on the next completed turn. */
+export interface AutoModeState { enabled: boolean; pause?: AutoModePause }
 export interface Task {
   id: string; projectId: string; title: string; description: string; columnId: string; position: number;
   sessionIds: string[]; closedSessionIds: string[]; effectiveCwd: string;
@@ -35,6 +40,8 @@ export interface Task {
   worktreeDismissed?: boolean;
   /** The current instructed-stage entry whose card action has not been satisfied by a prompt. */
   instructionPending?: { columnId: string; enteredAt: number };
+  /** Opt-in host automatic advance; absent means disabled. */
+  autoMode?: AutoModeState;
   /** Diagnostic-only checkouts left on disk; never an execution or cleanup target. */
   unclaimedWorktrees?: Array<{ path: string; branch: string; error: Problem }>;
   worktreeWorkspaceId?: string; worktreeWorkspaceOwned?: boolean;
@@ -97,6 +104,7 @@ export type Command =
   | ({ type: 'task.create'; hubId?: string } & NewTask)
   | { type: 'task.edit'; hubId?: string; taskId: string; title?: string; description?: string; expectedRevision?: number }
   | { type: 'task.move'; hubId?: string; taskId: string; columnId: string; beforeTaskId?: string | null; overrideTransition?: boolean }
+  | { type: 'task.autoMode'; hubId?: string; taskId: string; enabled: boolean }
   | { type: 'task.runInstruction'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction: string }
   | { type: 'conversation.create'; hubId?: string; taskId: string }
   | { type: 'conversation.close' | 'conversation.reopen'; hubId?: string; taskId: string; sessionId: string }
@@ -106,6 +114,7 @@ export type Command =
   | { type: 'worktree.dismiss'; hubId?: string; taskId: string }
   | { type: 'worktree.remove'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; force?: boolean }
   | { type: 'operation.retry' | 'operation.return'; hubId?: string; taskId: string }
+  | { type: 'operation.dismiss'; hubId?: string; taskId: string }
   | { type: 'note.save'; hubId?: string; taskId: string; noteId?: string; content: string; tags?: string[] };
 export type Outcome<T> = { ok: true; value: T } | { ok: false; error: Problem };
 export interface ClientApi {

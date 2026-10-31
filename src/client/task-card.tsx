@@ -4,6 +4,7 @@ import { backgroundAccessibleName, backgroundDetails, backgroundIndicatorText, W
 import { AttentionDots } from './attention-dots.js';
 import { autoRunEntryForColumn, RUN_FAILURE_FALLBACK, type AutoRunController } from './auto-run.js';
 import { CardInstructionAction, useAutoRunEntry } from './auto-run-view.js';
+import { CardAutoModeControl, type AutoModeStatus, type AutoModeView } from './auto-mode.js';
 import { AlertIcon, ClockIcon } from './icons.js';
 
 export interface TaskCardProps {
@@ -14,6 +15,9 @@ export interface TaskCardProps {
   selectionMode: boolean;
   selected: boolean;
   autoRun: AutoRunController;
+  autoMode: AutoModeView;
+  autoModePending?: boolean;
+  onToggleAutoMode: (taskId: string, enabled: boolean) => void;
   onOpen: (taskId: string) => void;
   onToggleSelect: (taskId: string) => void;
   onBeginDrag: (event: React.PointerEvent<HTMLElement>, taskId: string, columnId: string) => void;
@@ -22,8 +26,8 @@ export interface TaskCardProps {
 
 export interface CardStatusEntry { key: string; tone: 'danger' | 'pending'; label: string; alert?: boolean }
 
-/** The card's status lines, in a stable order: operation, transition, stage-instruction failure. */
-export function cardStatusEntries(task: Task, runFailure?: string): CardStatusEntry[] {
+/** The card's status lines, in a stable order: operation, transition, stage-instruction failure, auto mode. */
+export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: AutoModeStatus): CardStatusEntry[] {
   const entries: CardStatusEntry[] = [];
   if (task.operation) {
     const operation = task.operation;
@@ -41,20 +45,24 @@ export function cardStatusEntries(task: Task, runFailure?: string): CardStatusEn
       : failed ? 'Operation failed' : 'Operation: ' + operation.phase;
     entries.push({ key: 'operation', tone: failed ? 'danger' : 'pending', label });
   }
-  if (task.pendingTransition) {
+  if (task.pendingTransition && task.pendingTransition.origin !== 'auto') {
     const failed = task.pendingTransition.status === 'failed';
     entries.push({ key: 'transition', tone: failed ? 'danger' : 'pending', label: failed ? 'Confirmed action failed' : 'Confirmed action: ' + task.pendingTransition.status });
   }
   if (runFailure !== undefined) entries.push({ key: 'instruction', tone: 'danger', label: runFailure, alert: true });
+  if (autoStatus !== undefined) entries.push({ key: 'auto', tone: autoStatus.tone, label: autoStatus.label, ...(autoStatus.alert === true ? { alert: true } : {}) });
   return entries;
 }
 
-function CardContext({ taskId, title, projectName, attention, selectionMode, selected, onToggleSelect, onActivate }: {
-  taskId: string; title: string; projectName: string; attention: Attention; selectionMode: boolean; selected: boolean; onToggleSelect: (taskId: string) => void; onActivate: () => void;
+function CardContext({ taskId, title, projectName, attention, selectionMode, selected, autoMode, autoModePending, onToggleAutoMode, onToggleSelect, onActivate }: {
+  taskId: string; title: string; projectName: string; attention: Attention; selectionMode: boolean; selected: boolean;
+  autoMode: AutoModeView; autoModePending?: boolean; onToggleAutoMode: (taskId: string, enabled: boolean) => void;
+  onToggleSelect: (taskId: string) => void; onActivate: () => void;
 }) {
   return <div className="kb-card-context" onClick={onActivate}>
     {selectionMode && <input type="checkbox" className="kb-card-select" aria-label={'Select ' + title} checked={selected} onClick={event => event.stopPropagation()} onChange={() => onToggleSelect(taskId)} />}
     <span className="kb-card-project" title={projectName}>{projectName}</span>
+    {!selectionMode && <CardAutoModeControl view={autoMode} pending={autoModePending === true} onToggle={enabled => onToggleAutoMode(taskId, enabled)} />}
     <AttentionDots value={attention} label={'Attention for ' + title} />
   </div>;
 }
@@ -82,7 +90,7 @@ function CardStatus({ entries }: { entries: readonly CardStatusEntry[] }) {
 }
 
 /** One task card; every board concern arrives through props. */
-export function TaskCard({ task, column, projectName, attention, selectionMode, selected, autoRun, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick }: TaskCardProps) {
+export function TaskCard({ task, column, projectName, attention, selectionMode, selected, autoRun, autoMode, autoModePending, onToggleAutoMode, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick }: TaskCardProps) {
   const openButton = useRef<HTMLButtonElement>(null);
   const runEntry = useAutoRunEntry(autoRun, task.id);
   const currentRun = autoRunEntryForColumn(runEntry, column.id);
@@ -96,14 +104,14 @@ export function TaskCard({ task, column, projectName, attention, selectionMode, 
   return <article className={'kb-card' + (selected ? ' kb-card-selected' : '')} data-task-id={task.id} data-working={attention.running ? 'true' : undefined}
     onPointerDown={event => {
       if (selectionMode) return;
-      if ((event.target as Element).closest('.kb-card-activity, input, select, textarea, a')) return;
+      if ((event.target as Element).closest('.kb-card-activity, .kb-auto-chip, input, select, textarea, a')) return;
       onBeginDrag(event, task.id, task.columnId);
     }}>
     <button ref={openButton} type="button" className="kb-card-open" aria-label={(selectionMode ? 'Select task ' : 'Open task ') + task.title} aria-pressed={selectionMode ? selected : undefined} onClick={activate}>
       <strong>{task.title}</strong>
     </button>
-    <CardContext taskId={task.id} title={task.title} projectName={projectName} attention={attention} selectionMode={selectionMode} selected={selected} onToggleSelect={onToggleSelect} onActivate={activate} />
+    <CardContext taskId={task.id} title={task.title} projectName={projectName} attention={attention} selectionMode={selectionMode} selected={selected} autoMode={autoMode} autoModePending={autoModePending} onToggleAutoMode={onToggleAutoMode} onToggleSelect={onToggleSelect} onActivate={activate} />
     <CardActivity attention={attention} label={task.title} onActivate={activate} action={!selectionMode ? <CardInstructionAction key={column.id} task={task} column={column} controller={autoRun} /> : undefined} />
-    <CardStatus entries={cardStatusEntries(task, runFailure)} />
+    <CardStatus entries={cardStatusEntries(task, runFailure, autoMode.status)} />
   </article>;
 }

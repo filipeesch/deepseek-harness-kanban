@@ -2,8 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { canTransition, transitionAccess } from '../domain/transitions.js';
-import { entryInstruction, nextEnteredAt } from '../domain/stage-entry.js';
-import type { BoardSettings, Command, HostSnapshot, HubState, HubTask, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound } from '../shared/types.js';
+import { entryInstruction, hasUnresolvedEntry, nextEnteredAt } from '../domain/stage-entry.js';
+import { AUTO_ADVANCE_SETTLE_MS, AutoAdvanceCoordinator } from './auto-advance.js';
+import { resolveAutoAdvance, type AutoAdvancePlan } from '../domain/auto-advance.js';
+import type { AutoModePauseReason, BoardSettings, Command, HostSnapshot, HubState, HubTask, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound } from '../shared/types.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionStore } from './question-storage.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
@@ -17,6 +19,7 @@ import { containsPath } from './git.js';
 import { taskTitleSlug, worktreePathForBranch } from '../shared/worktree-name.js';
 import { ownedSessionIds } from '../domain/session-lineage.js';
 import { firstOpenSessionId } from '../shared/conversations.js';
+import { admitStageInstruction, type StageInstructionDeps } from './stage-instruction.js';
 import { requiresWorktreeDecision } from '../shared/worktree-decision.js';
 import { HubRepository, HubStore } from './hub-repository.js';
 import type { LocatedTask } from './hub-repository.js';
@@ -48,11 +51,22 @@ export class KanbanApp {
  private stateCache:HostSnapshot['state']|undefined;
  private sequence=0; private disposed=false; private driving=false; private driveAgain=false; private drivePromise:Promise<void>|undefined; private commandTail:Promise<void>=Promise.resolve();
  private readonly saveTimers=new Map<string,ReturnType<typeof setTimeout>>();
+ private readonly autoAdvance:AutoAdvanceCoordinator;
  constructor(readonly hubs:HubRepository,readonly sessions:SessionPort,readonly git:GitPort,private readonly options:AppOptions={},private readonly workspaces?:WorkspacePort){
   this.locator=new TaskLocator(hubs);
   this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,onTaskDeleted:async task=>{try{await this.cleanupWorktreeWorkspace(task as HubTask);}catch(error){this.options.report?.(error);}}});
   this.pendingWork=new PendingWorkRunner({resumeWorktrees:async()=>{await this.worktrees.resumePending();},dispatchPending:async()=>{await this.dispatchPending();},report:error=>this.options.report?.(error)});
   this.attention=new AttentionCoordinator({source:{read:id=>this.sessions.facts(id)},tasks:()=>this.locator.all().map(located=>({id:located.task.id,sessionIds:located.task.sessionIds})),pendingQuestion:id=>this.questions.pending(id),runPendingWork:async()=>{await this.pendingWork.run();},onChange:()=>this.attentionChanged(),report:error=>this.options.report?.(error)});
+  this.autoAdvance=new AutoAdvanceCoordinator({
+   locateBySession:sessionId=>{const located=this.locator.bySession(sessionId);return located?{task:located.task,board:located.board}:undefined;},
+   locate:taskId=>{const located=this.locator.byTask(taskId);return located?{task:located.task,board:located.board}:undefined;},
+   facts:async sessionId=>{const facts=await this.sessions.facts(sessionId);return facts.awaitingReply||this.questions.pending(sessionId)?{...facts,awaitingReply:true}:facts;},
+   admit:(taskId,plan)=>this.admitAutoAdvance(taskId,plan),
+   pause:(taskId,reason,message,expectedColumnId)=>this.pauseAutoMode(taskId,reason,message,expectedColumnId),
+   schedule:callback=>setTimeout(callback,AUTO_ADVANCE_SETTLE_MS),
+   cancel:handle=>clearTimeout(handle as ReturnType<typeof setTimeout>),
+   report:error=>this.options.report?.(error),
+  });
   this.disposers.push(hubs.subscribe(()=>{this.stateCache=undefined;this.markChanged();void this.dispatchPending().catch(error=>options.report?.(error));}));
  }
  /** The first/default Hub facade retained for single-Hub callers and tests. */
@@ -130,6 +144,7 @@ export class KanbanApp {
   const questionChanged=isEvent(event)&&this.questions.apply(sessionId,event);
   if(questionChanged)this.schedulePersist(sessionId);
   const taskRelevant=this.locator.hasSession(sessionId);
+  if(taskRelevant)this.autoAdvance.observe(sessionId,event);
   if(taskRelevant)this.attention.touch(sessionId);
   if(taskRelevant&&!questionChanged)this.markChanged();
  }
@@ -310,7 +325,9 @@ export class KanbanApp {
     const located=this.locatedTask(command.taskId);const store=this.hubs.hub(located.hubId);const task=located.task;if(task.operation){await this.worktrees.retry(command.taskId,{background:true});const current=store.snapshot().tasks.find(t=>t.id===command.taskId);if(current&&!current.operation&&current.pendingTransition?.worktreeRequest&&current.pendingTransition.status==='failed')await store.transact(d=>{const p=d.tasks.find(t=>t.id===command.taskId)!.pendingTransition!;p.status='waiting';delete p.error;});}else if(task.pendingTransition){await store.transact(d=>{const t=d.tasks.find(t=>t.id===command.taskId)!;if(t.pendingTransition){t.pendingTransition.status='waiting';delete t.pendingTransition.error;}});}await this.dispatchPending();break;
    }
    case 'operation.return':await this.clearPending(command.taskId);await this.worktrees.returnToBase(command.taskId);break;
+   case 'operation.dismiss':await this.dismissFailedAdvance(command.taskId);break;
    case 'task.move':await this.move(command);break;
+   case 'task.autoMode':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).setAutoMode(command.taskId,command.enabled);if(!command.enabled)this.autoAdvance.forget(command.taskId);break;}
    case 'task.runInstruction':await this.runInstruction(command);break;
   }
   await this.dispatchPending();const snapshot=await this.snapshot();return {...snapshot,...(commandReceipt?{commandReceipt}:{})};
@@ -324,9 +341,14 @@ export class KanbanApp {
   if(task.worktree&&isGitProject(located.project)){const tree=await this.git.inspect(requireGitProject(located.project),task.worktree.path,task.sessionIds);if(tree.dirty)throw new KanbanError('DISCARD_REQUIRED','Confirm discarding local worktree changes before deleting this task.',{path:tree.path});}
  }
  private async clearPending(taskId:string):Promise<void>{const located=this.locatedTask(taskId);const task=located.task;invariant(task.pendingTransition?.status!=='sending','EXECUTION_ADMISSION_PENDING','Wait until native prompt admission completes.');if(task.pendingTransition)await this.hubs.hub(located.hubId).transact(d=>{delete d.tasks.find(t=>t.id===taskId)!.pendingTransition;});}
- private requireReviewedInstruction(actual:string|undefined,expected:string|undefined):string{
-  invariant(typeof actual==='string'&&actual.trim().length>0&&typeof expected==='string'&&expected===actual,'INSTRUCTION_CHANGED','The workflow instruction changed or was not reviewed. Review the current instruction before running.');
-  return actual;
+ private stageInstructionDeps():StageInstructionDeps{
+  return {
+   locate:taskId=>{const located=this.locatedTask(taskId);return {hubId:located.hubId,task:located.task,board:located.board};},
+   transact:(hubId,change)=>this.hubs.hub(hubId).transact(change),
+   resolveSession:async task=>firstOpenSessionId(task)??await this.createConversationNow(task.id,{allowUndecided:true}),
+   assertExecutionContext:sessionId=>this.assertExecutionContext(sessionId),
+   send:(sessionId,text,requestId)=>this.sessions.send(sessionId,text,requestId),
+  };
  }
  private async move(command:Extract<Command,{type:'task.move'}>):Promise<void>{
   this.assertContext(command.taskId);const located=this.locatedTask(command.taskId);const store=this.hubs.hub(located.hubId);const state=store.snapshot();const task=located.task;const board=state.boards.find(b=>b.id===task.boardId);invariant(board,'BOARD_NOT_FOUND','The task board does not exist.');const column=board.workflow.columns.find(c=>c.id===command.columnId);
@@ -343,17 +365,51 @@ export class KanbanApp {
   await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(!t.operation&&!t.pendingTransition&&t.columnId===task.columnId,'REVISION_CONFLICT','Task changed before the transition could be admitted.');t.pendingTransition=pending;});
  }
  private async runInstruction(command:Extract<Command,{type:'task.runInstruction'}>):Promise<void>{
-  this.assertContext(command.taskId);const located=this.locatedTask(command.taskId);const store=this.hubs.hub(located.hubId);const state=store.snapshot();const task=located.task;
-  invariant(task.columnId===command.columnId,'TASK_MOVED','The task moved to another stage. Review the current stage before running its instruction.');
-  invariant(!task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');
-  const board=state.boards.find(b=>b.id===task.boardId);invariant(board,'BOARD_NOT_FOUND','The task board does not exist.');const column=board.workflow.columns.find(c=>c.id===command.columnId);
-  invariant(column,'INVALID_TARGET','The destination stage does not exist.');
-  invariant(task.instructionPending?.columnId===command.columnId&&task.instructionPending.enteredAt===command.expectedEnteredAt,'INSTRUCTION_ALREADY_RESOLVED','This stage entry was already resolved or replaced. Review the current entry before running.');
-  const instruction=this.requireReviewedInstruction(entryInstruction(column),command.expectedInstruction);
-  const sessionId=firstOpenSessionId(task)??await this.createConversationNow(task.id,{allowUndecided:true});
-  await this.assertExecutionContext(sessionId);
-  await this.sessions.send(sessionId,instruction);
-  await store.transact(d=>{const current=d.tasks.find(value=>value.id===command.taskId);if(current?.instructionPending?.columnId===command.columnId&&current.instructionPending.enteredAt===command.expectedEnteredAt)delete current.instructionPending;});
+  this.assertContext(command.taskId);
+  const pending=this.locatedTask(command.taskId).task.pendingTransition;
+  invariant(!pending||(pending.origin==='auto'&&pending.status==='failed'),'TASK_BUSY','Resolve the confirmed transition first.');
+  await admitStageInstruction(this.stageInstructionDeps(),{
+   taskId:command.taskId,columnId:command.columnId,instruction:command.expectedInstruction,reviewedInstruction:command.expectedInstruction,expectedEnteredAt:command.expectedEnteredAt,
+  });
+ }
+ private admitAutoAdvance(taskId:string,plan:AutoAdvancePlan):Promise<void>{
+  return this.serial(()=>this.admitAutoAdvanceNow(taskId,plan));
+ }
+ private async admitAutoAdvanceNow(taskId:string,plan:AutoAdvancePlan):Promise<void>{
+  const located=this.locatedTask(taskId);const task=located.task;const store=this.hubs.hub(located.hubId);const destination=plan.destination;
+  invariant(destination,'INVALID_TARGET','The automatic advance has no destination.');
+  if(task.autoMode?.enabled!==true||task.operation||task.pendingTransition||hasUnresolvedEntry(task))return;
+  if(task.columnId!==plan.fromColumnId)return;
+  invariant(resolveAutoAdvance(located.board.workflow,plan.fromColumnId).destination?.id===destination.id,'INVALID_TARGET','The automatic advance destination changed. Review the workflow before retrying.');
+  const instruction=entryInstruction(destination);
+  const sessionId=instruction!==undefined?firstOpenSessionId(task)??await this.createConversationNow(taskId,{allowUndecided:true}):undefined;
+  const latest=this.locatedTask(taskId);const current=latest.task;
+  if(current.autoMode?.enabled!==true||current.operation||current.pendingTransition||hasUnresolvedEntry(current))return;
+  if(current.columnId!==plan.fromColumnId)return;
+  invariant(resolveAutoAdvance(latest.board.workflow,plan.fromColumnId).destination?.id===destination.id,'INVALID_TARGET','The automatic advance destination changed. Review the workflow before retrying.');
+  const pending:PendingTransition={id:randomUUID(),fromColumnId:plan.fromColumnId,columnId:destination.id,mode:instruction!==undefined?'run':'move',status:'waiting',origin:'auto',...(instruction!==undefined?{text:instruction,sessionId:sessionId!}:{})};
+  await store.transact(d=>{
+   const value=d.tasks.find(candidate=>candidate.id===taskId)!;
+   invariant(value.autoMode?.enabled===true,'AUTO_MODE_DISABLED','Auto mode is no longer enabled.');
+   invariant(!value.operation&&!value.pendingTransition,'REVISION_CONFLICT','Task changed before the automatic advance could be admitted.');
+   invariant(value.columnId===plan.fromColumnId,'REVISION_CONFLICT','Task moved before the automatic advance could be admitted.');
+   const board=d.boards.find(candidate=>candidate.id===value.boardId);
+   invariant(board!==undefined&&resolveAutoAdvance(board.workflow,plan.fromColumnId).destination?.id===destination.id,'INVALID_TARGET','The automatic advance destination changed.');
+   value.pendingTransition=pending;
+   if(value.autoMode.pause!==undefined)delete value.autoMode.pause;
+  });
+  await this.dispatchPending();
+ }
+ private async dismissFailedAdvance(taskId:string):Promise<void>{
+  const located=this.locatedTask(taskId);const pending=located.task.pendingTransition;
+  invariant(!located.task.operation,'CONTEXT_OPERATION_PENDING','Resolve the context operation before dismissing an automatic advance.');
+  invariant(pending?.origin==='auto','INVALID_TARGET','Only an automatic advance can be dismissed.');
+  invariant(pending.status==='failed','TASK_BUSY','Only a failed automatic advance can be dismissed.');
+  await this.hubs.hub(located.hubId).transact(d=>{const value=d.tasks.find(candidate=>candidate.id===taskId);if(value?.pendingTransition?.origin==='auto'&&value.pendingTransition.status==='failed')delete value.pendingTransition;});
+ }
+ private async pauseAutoMode(taskId:string,reason:AutoModePauseReason,message:string|undefined,expectedColumnId:string):Promise<void>{
+  const located=this.locatedTask(taskId);
+  await this.hubs.hub(located.hubId).pauseAutoMode(taskId,{reason,at:new Date().toISOString(),...(message!==undefined?{message}:{})},expectedColumnId);
  }
  private async failPending(hubId:string,taskId:string,id:string,error:unknown):Promise<void>{await this.hubs.hub(hubId).transact(d=>{const t=d.tasks.find(t=>t.id===taskId);if(t?.pendingTransition?.id===id){t.pendingTransition.status='failed';t.pendingTransition.error=problem(error);}});}
  private dispatchPending():Promise<void>{
@@ -370,12 +426,11 @@ export class KanbanApp {
     await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');operations.placeTask(d,t.id,pending.columnId,pending.beforeTaskId??null,nextEnteredAt());if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});
     if(pending.mode==='run'){
      invariant(pending.sessionId&&pending.text,'INVALID_TARGET','Confirmed execution is missing its target or instruction.');
-     await this.assertExecutionContext(pending.sessionId);
-     await this.sessions.send(pending.sessionId,pending.text,pending.id);
+     await admitStageInstruction(this.stageInstructionDeps(),{taskId:task.id,columnId:pending.columnId,instruction:pending.text,sessionId:pending.sessionId,requestId:pending.id});
      await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id);if(t?.pendingTransition?.id===pending.id)delete t.pendingTransition;});
     }
    }catch(error){await this.failPending(located.hubId,task.id,pending.id,error);this.options.report?.(error);}
   }}while(this.driveAgain&&!this.disposed);}finally{this.driving=false;}
  }
- async close():Promise<void>{if(this.disposed)return;await this.flushQuestions();this.publisher.flush();this.disposed=true;this.publisher.dispose();this.attention.dispose();for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.worktrees.settle();}
+ async close():Promise<void>{if(this.disposed)return;await this.flushQuestions();this.publisher.flush();this.disposed=true;this.publisher.dispose();this.attention.dispose();this.autoAdvance.dispose();for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.worktrees.settle();}
 }
