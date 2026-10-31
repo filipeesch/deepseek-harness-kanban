@@ -14,6 +14,7 @@ import { TYPERT_REMOTE } from './remote.js';
 import { ClientBridge } from './client-bridge.js';
 import { createDirectoryPicker } from './client/directory-picker.js';
 import { BoardView, createBoardPageState, type BoardPageState } from './client/board.js';
+import { allTasks } from './client/hub-view.js';
 import { AutoRunController } from './client/auto-run.js';
 import { QuestionForm } from './questions/QuestionForm.js';
 import { NativeSessionHeader } from './client/native-session-header.js';
@@ -22,7 +23,6 @@ import type { NativeLocaleSource, NativeSlotSource, NativeSnapshotSource } from 
 import { createModePortSource } from './client/mode-port.js';
 import { TASK_CONTEXT_NODE_KIND, TaskContextNodeView, taskContextDefinition } from './client/task-context-node.js';
 import { useConversationNavigation, isOwnedSubagent, type ConversationLineagePort } from './client/conversation-navigation.js';
-import type { RunCommand } from './client/ui.js';
 import type { ClientApi } from './shared/types.js';
 
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
@@ -105,11 +105,8 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   const lifetime = new AbortController();
   const held = new Set<SessionReference>();
   const bridge = new ClientBridge(ctx.remote, ctx.uiSession.sessionStatus);
-  let autoRunRunner: RunCommand | null = null;
-  const autoRun = new AutoRunController({ run: command => {
-    if (autoRunRunner === null) return Promise.reject({ code: 'CLIENT_UNAVAILABLE', message: 'The Kanban board is not available.' });
-    return autoRunRunner(command);
-  } });
+  // The command port belongs to this client generation, not to a mounted board.
+  const autoRun = new AutoRunController({ run: command => bridge.api.command(command) });
   const scopedSessions = ctx.sessions;
   const modePortSource = createModePortSource(agentPresetsNamespace(ctx), { developerTools: () => developerToolsEnabled(ctx) });
   let modeInjection: ReturnType<Context['inject']> | undefined;
@@ -174,7 +171,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       t={props.t}
     />;
   }
-  function BoardPage(props: MainProps & { api: ClientApi; autoRun: AutoRunController; onRunReady: (run: RunCommand) => void }) {
+  function BoardPage(props: MainProps & { api: ClientApi; autoRun: AutoRunController }) {
     const surfaceServices = useMemo<ConversationSurfaceServices>(() => ({
       sessions: scopedSessions,
       claimComposer: sessionId => bridge.claimComposer(sessionId) ?? null,
@@ -205,7 +202,6 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       sessionTitles={sessionTitles}
       picker={picker}
       autoRun={props.autoRun}
-      onRunReady={props.onRunReady}
       lineage={lineage}
       renderConversation={(id, target) => <RetainedConversation
         key={target?.childSessionId ?? id}
@@ -219,7 +215,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   function Main(props: MainProps) {
     const active = props.usePanelInfo(value => value.activePanelId === 'kanban');
     if (!active) return null; // A hidden cached page must not leave another copy of a composer mounted.
-    return <><style>{clientCss}</style><FeedStatus /><BoardPage {...props} api={bridge.api} autoRun={autoRun} onRunReady={runner => { autoRunRunner = runner; }} /></>;
+    return <><style>{clientCss}</style><FeedStatus /><BoardPage {...props} api={bridge.api} autoRun={autoRun} /></>;
   }
   function Dock(props: PropsRuntime<'conversation.input.dock'>) {
     const view = useSyncExternalStore(bridge.questionsView.subscribe, bridge.questionsView.getSnapshot, bridge.questionsView.getSnapshot);
@@ -255,9 +251,9 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: 'kanban', order: 80, label: 'Kanban' }, BoardIcon));
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'kanban-decision-questions', order: 20 }, Dock));
   ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: 'decision_request' }, HiddenDecisionRow));
+  // This subscription is the only reconciler for the shared controller; install it eagerly.
+  const unsubscribeAutoRun = bridge.api.subscribe(snapshot => autoRun.reconcile(allTasks(snapshot)));
   bridge.start();
-  let unsubscribeAutoRun = () => {};
-  try { unsubscribeAutoRun = bridge.api.subscribe(snapshot => autoRun.reconcile(snapshot.state.hubs.flatMap(hub => hub.tasks))); } catch { /* BoardView reports feed errors. */ }
   return async () => {
     lifetime.abort(); autoRun.dispose(); unsubscribeAutoRun();
     offTaskContext();

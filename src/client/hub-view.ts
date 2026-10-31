@@ -57,6 +57,8 @@ export function scopeAttention(tasks: Task[], attention: KanbanSnapshot['attenti
   }, { unread: false, running: false, failed: false });
 }
 export function scopedCommand(command: Command, hubId: string | undefined, boardId: string | undefined, multiHub: boolean, multiBoard: boolean): Command {
+  // The timed/manual instruction is task-scoped; the host resolves its Hub by task id.
+  if (command.type === 'task.runInstruction') return command;
   if (command.type === 'workflow.save') return (multiHub || multiBoard) && boardId && hubId ? { type: 'board.workflow.save', hubId, boardId, yaml: command.yaml, ...(command.expectedRevision !== undefined ? { expectedRevision: command.expectedRevision } : {}) } : command;
   if (command.type === 'settings.save' || command.type === 'hub.create' || command.type === 'hub.rename' || command.type === 'hub.delete' || command.type.startsWith('board.')) return command;
   if (command.type === 'task.create') return { ...command, ...(multiHub && hubId ? { hubId } : {}), ...(multiBoard && boardId ? { boardId } : {}) };

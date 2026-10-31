@@ -13,7 +13,7 @@ import { entryInstruction, hasUnresolvedEntry } from '../domain/stage-entry.js';
 import { AutoRunController } from './auto-run.js';
 import { ACTIVE_HUB_KEY, allTasks, boardView, normalizeSnapshot, readBoardPreferences, readStorage, scopeAttention, scopedCommand, writeBoardPreference, writeStorage } from './hub-view.js';
 import { CreateBoardDialog, CreateHubDialog } from './create-dialogs.js';
-import { asProblem, type RunCommand } from './ui.js';
+import { asProblem } from './ui.js';
 import { adviseCommandFailure } from './command-failure.js';
 import { BoardNotices } from './board-notices.js';
 import { styles } from './styles.js';
@@ -27,7 +27,16 @@ import { createBoardPageState, taskPageState, usePageField, type BoardPageState 
 export { createBoardPageState } from './page-state.js';
 export type { BoardPageState } from './page-state.js';
 
-export interface BoardViewProps { api: ClientApi; renderConversation: (id: string, target?: DrawerSubagentAddress) => ReactNode; pageState?: BoardPageState; sessionTitles?: SessionTitles; picker?: DirectoryPickerPort | null; autoRun?: AutoRunController; onRunReady?: (run: RunCommand) => void; lineage?: ConversationLineagePort }
+export interface BoardViewProps {
+  api: ClientApi;
+  renderConversation: (id: string, target?: DrawerSubagentAddress) => ReactNode;
+  pageState?: BoardPageState;
+  sessionTitles?: SessionTitles;
+  picker?: DirectoryPickerPort | null;
+  /** Owned by its provider, which also reconciles it; the board reconciles only its own fallback. */
+  autoRun?: AutoRunController;
+  lineage?: ConversationLineagePort;
+}
 
 export function columnLayout(workflow: Workflow): Array<{ key: string; group?: ColumnGroup; columns: Column[] }> {
   const result: Array<{ key: string; group?: ColumnGroup; columns: Column[] }> = []; const seen = new Set<string>();
@@ -41,7 +50,7 @@ export function columnLayout(workflow: Workflow): Array<{ key: string; group?: C
   return result;
 }
 
-export function BoardView({ api, renderConversation, pageState, sessionTitles, picker = null, autoRun: providedAutoRun, onRunReady, lineage }: BoardViewProps) {
+export function BoardView({ api, renderConversation, pageState, sessionTitles, picker = null, autoRun: providedAutoRun, lineage }: BoardViewProps) {
   const [localPageState] = useState(createBoardPageState); const preferences = pageState ?? localPageState;
   const [snapshot, setSnapshot] = useState<KanbanSnapshot | null>(null); const latest = useRef<KanbanSnapshot | null>(null); const live = useRef(false); const currentApi = useRef(api); currentApi.current = api;
   const [loadError, setLoadError] = useState<Problem | null>(null); const [loadAttempt, setLoadAttempt] = useState(0);
@@ -93,9 +102,9 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
   const runRef = useRef(run); runRef.current = run;
   const [fallbackAutoRun] = useState(() => new AutoRunController({ run: command => runRef.current(command) }));
   const autoRun = providedAutoRun ?? fallbackAutoRun;
-  useEffect(() => { onRunReady?.(run); }, [onRunReady, run]);
   useEffect(() => { if (providedAutoRun) return; return () => fallbackAutoRun.dispose(); }, [providedAutoRun, fallbackAutoRun]);
-  useEffect(() => { if (state) autoRun.reconcile(state.tasks); }, [state, autoRun]);
+  // Owned fallback only: a provided controller is reconciled by the client generation that owns it.
+  useEffect(() => { if (providedAutoRun || !snapshot) return; fallbackAutoRun.reconcile(allTasks(snapshot)); }, [providedAutoRun, snapshot, fallbackAutoRun]);
   function armAfterMove(result: KanbanSnapshot, task: Task, column: Column): void {
     if (task.columnId === column.id) return;
     const normalized = normalizeSnapshot(result);

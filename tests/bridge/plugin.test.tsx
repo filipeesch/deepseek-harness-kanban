@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React, { useEffect, type ComponentType, type ReactNode } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { Context } from '@deepseek-ai/cordis';
 import { RemoteStream, type RemoteStreamOptions } from '@deepseek-ai/dsh-api-gateway/client';
@@ -12,10 +12,23 @@ import { apply, inject } from '../../src/client.js';
 import { TYPERT_REMOTE } from '../../src/remote.js';
 const disposers: Array<() => Promise<void>> = [];
 afterEach(async () => { cleanup(); for (const dispose of disposers.splice(0)) await dispose(); });
+beforeEach(() => { try { globalThis.localStorage?.clear(); } catch { /* jsdom storage optional */ } });
 const question: QuestionRound = { id: 'r', sessionId: 'a', turnId: 't', complete: true, answered: false, pages: [{ callId: 'call-a', sequence: 1, page: { question: 'Choose the implementation', type: 'freetext' } }] };
 function snapshot(rounds: QuestionRound[] = [question]): KanbanSnapshot {
   const now = '2026-10-21T00:00:00Z';
   return { sequence: 1, attention: {}, questionRounds: rounds, state: { hubs: [{ id: 'hub', name: 'Hub', revision: 1, projects: [{ id: 'p', name: 'Project', projectPath: '/project', gitRootPath: '/project' }], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }, { id: 'review', name: 'Review', onEnterPrompt: 'Review **carefully**.' }], groups: [] }, createdAt: now, updatedAt: now }], tasks: [{ id: 'task', boardId: 'board', projectId: 'p', title: 'Native task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' }], notes: [], createdAt: now, updatedAt: now }], settings: { revision: 0 } } };
+}
+/** A two-Hub snapshot with a second board in the first Hub, for navigation coverage. */
+function twoHubSnapshot(): KanbanSnapshot {
+  const value = snapshot([]);
+  const hubA = value.state.hubs[0]!;
+  hubA.name = 'Hub A';
+  hubA.boards.push({ ...structuredClone(hubA.boards[0]!), id: 'board-a2', name: 'Board 2' });
+  const hubB = structuredClone(hubA);
+  hubB.id = 'hub-b'; hubB.name = 'Hub B'; hubB.tasks = [];
+  hubB.boards = [{ ...structuredClone(hubA.boards[0]!), id: 'board-b', name: 'Board B' }];
+  value.state.hubs.push(hubB);
+  return value;
 }
 type Entry = { options: Record<string, unknown>; Component: ComponentType<Record<string, unknown>> };
 function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
@@ -254,6 +267,43 @@ describe('public SDK plugin binding contracts', () => {
       await act(async () => { for (let index = 0; index < 20; index += 1) await Promise.resolve(); });
       const run = f.remote.command.mock.calls.map(([request]) => request).find(request => request?.type === 'task.runInstruction');
       expect(run).toMatchObject({ type: 'task.runInstruction', taskId: 'task', columnId: 'review', expectedEnteredAt: 42, expectedInstruction: 'Review **carefully**.' });
+    } finally { vi.useRealTimers(); }
+  });
+  it.each(['board', 'hub'] as const)('keeps an armed countdown running after a %s switch in the production composition', async kind => {
+    const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;
+    const initial = twoHubSnapshot();
+    const moved = structuredClone(initial);
+    const movedTask = moved.state.hubs[0]!.tasks[0]!;
+    movedTask.columnId = 'review';
+    movedTask.instructionPending = { columnId: 'review', enteredAt: 42 };
+    moved.sequence += 1;
+    const cleared = structuredClone(moved);
+    delete cleared.state.hubs[0]!.tasks[0]!.instructionPending;
+    cleared.sequence += 1;
+    f.remote.snapshot.mockResolvedValue({ ok: true, value: { ok: true, value: initial } });
+    f.remote.command.mockImplementation(async (request: { type: string }) => ({
+      ok: true,
+      value: { ok: true, value: request.type === 'task.runInstruction' ? cleared : request.type === 'task.move' ? moved : initial },
+    }));
+    const provider = ({ children }: { children: ReactNode }) => <div>{children}</div>;
+    const active = (select: (value: { activePanelId: string | null }) => unknown) => select({ activePanelId: 'kanban' });
+    render(<Main usePanelInfo={active} SessionProvider={provider} renderSlot={() => <div>Native slot body</div>} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open task Native task' }));
+    await screen.findByRole('combobox', { name: 'Move task to' });
+    vi.useFakeTimers();
+    try {
+      fireEvent.change(screen.getByRole('combobox', { name: 'Move task to' }), { target: { value: 'review' } });
+      await act(async () => { for (let index = 0; index < 30; index += 1) await Promise.resolve(); });
+      expect(document.querySelector('.kb-card-countdown')).toBeTruthy();
+      fireEvent.click(screen.getByRole('tab', { name: kind === 'board' ? 'Board 2' : 'Hub B' }));
+      await act(async () => { for (let index = 0; index < 20; index += 1) await Promise.resolve(); });
+      const issued = () => f.remote.command.mock.calls.map(([request]) => request).filter(request => request?.type === 'task.runInstruction');
+      expect(issued()).toHaveLength(0);
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      await act(async () => { for (let index = 0; index < 20; index += 1) await Promise.resolve(); });
+      expect(issued()).toHaveLength(1);
+      expect(issued()[0]).toMatchObject({ type: 'task.runInstruction', taskId: 'task', columnId: 'review', expectedEnteredAt: 42, expectedInstruction: 'Review **carefully**.' });
+      expect(issued()[0]).not.toHaveProperty('hubId');
     } finally { vi.useRealTimers(); }
   });
   it('preserves filters and selected task across native page switches while releasing the composer', async () => {

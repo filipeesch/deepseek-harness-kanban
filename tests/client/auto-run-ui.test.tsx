@@ -4,11 +4,14 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BoardView } from '../../src/client/board.js';
 import { AutoRunController } from '../../src/client/auto-run.js';
-import type { KanbanSnapshot } from '../../src/shared/types.js';
+import type { Command, KanbanSnapshot } from '../../src/shared/types.js';
 import { deferred, fakeApi, fixture, fixtureWithPlan } from './helpers.js';
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
-beforeEach(() => { if (!('PointerEvent' in window)) Object.defineProperty(window, 'PointerEvent', { configurable: true, value: MouseEvent }); });
+beforeEach(() => {
+  try { globalThis.localStorage?.clear(); } catch { /* jsdom storage optional */ }
+  if (!('PointerEvent' in window)) Object.defineProperty(window, 'PointerEvent', { configurable: true, value: MouseEvent });
+});
 
 const native = (id: string) => <span>Native {id}</span>;
 const drawer = () => document.querySelector('.kb-drawer') as HTMLElement;
@@ -325,6 +328,36 @@ describe('instructed move auto-run', () => {
     controller.arm({ taskId: 't1', columnId: 'review', enteredAt: 7, instruction: 'Review **carefully**.' });
     await advance(5000);
     expect(run).toHaveBeenCalledTimes(1);
+    controller.dispose();
+  });
+
+  it.each(['board', 'hub'] as const)('keeps an armed countdown when the user switches %s', async kind => {
+    const value = fixture();
+    const hub = value.state.hubs[0]!;
+    if (kind === 'board') {
+      hub.boards.push({ ...structuredClone(hub.boards[0]!), id: 'board-2', name: 'Second board' });
+    } else {
+      value.state.hubs.push({
+        ...structuredClone(hub), id: 'hub-2', name: 'Other hub', tasks: [],
+        boards: [{ ...structuredClone(hub.boards[0]!), id: 'board-2', name: 'Second board' }],
+      });
+    }
+    const run = vi.fn(async (_command: Command) => value);
+    const controller = new AutoRunController({ run });
+    const mock = fakeApi(value);
+    render(<BoardView api={mock.api} autoRun={controller} renderConversation={native} />);
+    await screen.findByRole('button', { name: 'Open task Alpha task' });
+    await openAlpha();
+    vi.useFakeTimers();
+    await moveTo('review');
+    expect(countdown()?.textContent).toContain('5s');
+    const marker = mock.get().state.tasks.find(task => task.id === 't1')!.instructionPending!;
+    fireEvent.click(screen.getByRole('tab', { name: kind === 'board' ? 'Second board' : 'Other hub' }));
+    await settle();
+    expect(run).not.toHaveBeenCalled();
+    await advance(5000);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls[0]![0]).toMatchObject({ type: 'task.runInstruction', taskId: 't1', columnId: 'review', expectedEnteredAt: marker.enteredAt, expectedInstruction: 'Review **carefully**.' });
     controller.dispose();
   });
 });
