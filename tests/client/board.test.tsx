@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { BoardView, columnLayout } from '../../src/client/board.js';
+import { ConversationCloseAction } from '../../src/client/conversation-actions.js';
 import type { KanbanSnapshot, ClientApi, Command } from '../../src/shared/types.js';
 import { styles } from '../../src/client/styles.js';
 import { deferred, fakeApi, fixture, restrictedFixture } from './helpers.js';
@@ -20,7 +21,7 @@ vi.mock('../../src/client/code-editor.js', async () => {
 
 afterEach(cleanup);
 function mount(data = fixture()) {
-  const mock = fakeApi(data); const renderer = vi.fn((id: string) => <div data-testid={'native-' + id}>Native session {id}</div>);
+  const mock = fakeApi(data); const renderer = vi.fn((id: string) => <div data-testid={'native-' + id}>Native session {id}<ConversationCloseAction /></div>);
   const view = render(<BoardView api={mock.api} renderConversation={renderer} />);
   return { ...mock, renderer, ...view, user: userEvent.setup() };
 }
@@ -202,8 +203,19 @@ describe('scoped Kanban page', () => {
     expect(screen.getByTestId('native-s1')).toBeTruthy(); await user.click(screen.getByRole('tab', { name: 'Agent 2' })); expect(screen.getByTestId('native-s2')).toBeTruthy(); expect(screen.queryByTestId('native-s1')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'New conversation' })); await screen.findByTestId('native-s3');
     await user.click(screen.getByRole('button', { name: 'Close Agent 3' })); expect(screen.queryByTestId('native-s3')).toBeNull();
-    await user.click(screen.getByText('Closed conversations (1)')); await user.click(screen.getByRole('button', { name: 'Reopen Agent 3' })); await screen.findByTestId('native-s3');
+    await user.click(screen.getByRole('button', { name: '1 closed conversation' })); await user.click(screen.getByRole('button', { name: 'Reopen Agent 3' })); await screen.findByTestId('native-s3');
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Agent 3' })).toBe(document.activeElement));
     expect(command).toHaveBeenCalledWith({ type: 'conversation.create', taskId: 't1' }); expect(command).toHaveBeenCalledWith({ type: 'conversation.close', taskId: 't1', sessionId: 's3' }); expect(command).toHaveBeenCalledWith({ type: 'conversation.reopen', taskId: 't1', sessionId: 's3' }); expect(renderer).toHaveBeenCalledWith('s2', undefined);
+  });
+
+  it('dismisses the closed-conversation popover without closing the drawer', async () => {
+    const data = fixture(); data.state.tasks[0]!.closedSessionIds = ['s2'];
+    const { user } = mount(data); await openAlpha(user);
+    await user.click(screen.getByRole('button', { name: '1 closed conversation' }));
+    expect(screen.getByRole('dialog', { name: 'Closed conversations' })).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Closed conversations' })).toBeNull());
+    expect(screen.getByRole('heading', { name: 'Alpha task', level: 2 })).toBeTruthy();
   });
 
   it('persists the base-project choice from the missing-tree notice', async () => {

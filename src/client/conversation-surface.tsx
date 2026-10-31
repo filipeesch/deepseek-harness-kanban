@@ -3,6 +3,7 @@ import type { ISessions, SessionReference, SessionTarget } from '@deepseek-ai/ds
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import type { ConversationViewsProps } from '@deepseek-ai/dsh-client-ui-conversation/client';
 import type { DrawerSubagentAddress } from './conversation-navigation.js';
+import { ConversationCloseAction } from './conversation-actions.js';
 
 /** The small owner share the retained surface needs from the Main slot. */
 export interface ConversationSurfaceOwner {
@@ -89,8 +90,8 @@ export function RetainedConversation({ id, target, owner, services }: {
     });
     return () => { active = false; cancellation.abort(); if (retained) { services.release(retained); retained = undefined; } releaseComposer(); };
   }, [targetKey, sessionId, attempt, services]);
-  if (error) return <div className="kanban-native-state" role="alert">{error} <button type="button" onClick={() => setAttempt(value => value + 1)}>Retry conversation</button></div>;
-  if (!reference) return <div className="kanban-native-state" role="status">Opening native conversation…</div>;
+  if (error) return <div className="kanban-native-state"><div role="alert">{error}</div><div className="kb-actions"><button type="button" onClick={() => setAttempt(value => value + 1)}>Retry conversation</button><ConversationCloseAction /></div></div>;
+  if (!reference) return <div className="kanban-native-state"><span role="status">Opening native conversation…</span> <ConversationCloseAction /></div>;
   const Provider = owner.SessionProvider;
   return <Provider session={reference}>
     <div className="kb-session-frame">

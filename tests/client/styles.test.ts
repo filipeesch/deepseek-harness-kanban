@@ -43,6 +43,13 @@ describe('board and editor style contracts', () => {
     expect(styles).not.toContain('[data-conversation-content]>div>div:last-child');
   });
 
+  it('replaces the inline closed block with the chip, popover, and header row', () => {
+    expect(styles).toContain('.dsh-kanban .kb-closed-chip{');
+    expect(styles).toContain('.dsh-kanban .kb-closed-popover{');
+    expect(styles).toContain('.dsh-kanban .kb-session-header-row{');
+    expect(styles).not.toContain('.dsh-kanban .kb-closed{');
+  });
+
 describe('destructive and operation surfaces', () => {
   it('defines the status stack, consequence list, and problem disclosure', () => {
     for (const selector of ['.kb-status-stack', '.kb-operation-failed', '.kb-operation-facts', '.kb-destructive-dialog', '.kb-consequence-list', '.kb-problem-details', '.kb-problem-facts']) expect(styles).toContain(selector);

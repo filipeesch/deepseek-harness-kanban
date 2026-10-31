@@ -14,6 +14,7 @@ import { isGitProject, requireGitProject } from '../shared/project.js';
 import { containsPath } from './git.js';
 import { taskTitleSlug, worktreePathForBranch } from '../shared/worktree-name.js';
 import { ownedSessionIds } from '../domain/session-lineage.js';
+import { firstOpenSessionId } from '../shared/conversations.js';
 import { requiresWorktreeDecision } from '../shared/worktree-decision.js';
 import { HubRepository, HubStore } from './hub-repository.js';
 import type { LocatedTask } from './hub-repository.js';
@@ -338,7 +339,7 @@ export class KanbanApp {
   invariant(column,'INVALID_TARGET','The destination stage does not exist.');
   invariant(task.instructionPending?.columnId===command.columnId&&task.instructionPending.enteredAt===command.expectedEnteredAt,'INSTRUCTION_ALREADY_RESOLVED','This stage entry was already resolved or replaced. Review the current entry before running.');
   const instruction=this.requireReviewedInstruction(entryInstruction(column),command.expectedInstruction);
-  const sessionId=task.sessionIds.find(id=>!task.closedSessionIds.includes(id))??await this.createConversationNow(task.id,{allowUndecided:true});
+  const sessionId=firstOpenSessionId(task)??await this.createConversationNow(task.id,{allowUndecided:true});
   await this.assertExecutionContext(sessionId);
   await this.sessions.send(sessionId,instruction);
   await store.transact(d=>{const current=d.tasks.find(value=>value.id===command.taskId);if(current?.instructionPending?.columnId===command.columnId&&current.instructionPending.enteredAt===command.expectedEnteredAt)delete current.instructionPending;});

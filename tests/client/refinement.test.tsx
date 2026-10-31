@@ -5,7 +5,7 @@ import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within }
 import { userEvent } from '@testing-library/user-event';
 import { BoardView } from '../../src/client/board.js';
 import { fixture, fakeApi, restrictedFixture } from './helpers.js';
-import type { SessionTitles } from '../../src/client/drawer.js';
+import type { SessionTitles } from '../../src/client/conversation-label.js';
 
 afterEach(cleanup);
 beforeEach(() => { window.localStorage.clear(); if (!('PointerEvent' in window)) Object.defineProperty(window, 'PointerEvent', { configurable: true, value: MouseEvent }); });
@@ -130,7 +130,7 @@ describe('refined board interactions', () => {
     const titles: SessionTitles = { title: id => id === 's2' ? 'Closed Planner' : undefined, rename: async () => {} };
     const user = userEvent.setup(); render(<BoardView api={fakeApi(data).api} sessionTitles={titles} renderConversation={native} />); await loaded();
     await user.click(screen.getByRole('button', { name: 'Open task Alpha task' }));
-    await user.click(screen.getByText('Closed conversations (1)'));
+    await user.click(screen.getByRole('button', { name: '1 closed conversation' }));
     expect(screen.getByRole('button', { name: 'Reopen Closed Planner' })).toBeTruthy();
   });
 

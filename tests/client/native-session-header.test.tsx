@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React, { useEffect, type ComponentType } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots';
 import { NativeSessionHeader } from '../../src/client/native-session-header.js';
 import type { NativeLocaleSource, NativeSlotSource } from '../../src/client/native-slot-host.js';
@@ -182,5 +182,31 @@ describe('NativeSessionHeader', () => {
     render(<NativeSessionHeader slots={f.fixture.source} locale={locale} standard={f.standard} navigation={f.navigation} modePort={f.modePort} />);
     expect(screen.queryByTestId('native-header')).toBeNull();
     expect(screen.getByRole('group', { name: 'Conversation status' })).toBeTruthy();
+  });
+
+  it('keeps a trailing plugin action at the end of the native header row', () => {
+    const f = configured();
+    const trailing = <button type="button">Trailing action</button>;
+    const view = render(<NativeSessionHeader slots={f.fixture.source} locale={locale} standard={f.standard} navigation={f.navigation} modePort={f.modePort} trailing={trailing} />);
+    const row = document.querySelector('.kb-session-header-row') as HTMLElement;
+    expect(row).toBeTruthy();
+    expect(within(row).getByTestId('native-header')).toBeTruthy();
+    expect(within(row).getByRole('button', { name: 'Trailing action' })).toBeTruthy();
+
+    f.fixture.set('conversation.session.header', []);
+    view.rerender(<NativeSessionHeader slots={f.fixture.source} locale={locale} standard={f.standard} navigation={f.navigation} modePort={f.modePort} trailing={trailing} />);
+    const fallbackRow = document.querySelector('.kb-session-header-row') as HTMLElement;
+    expect(within(fallbackRow).getByRole('group', { name: 'Conversation status' })).toBeTruthy();
+    expect(within(fallbackRow).getByRole('button', { name: 'Trailing action' })).toBeTruthy();
+  });
+
+  it('keeps the trailing action when the native header crashes', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const f = configured();
+    f.fixture.set('conversation.session.header', [entry('header', () => { throw new Error('native header failed'); }, { store: {} } as Partial<StoredEntry>)]);
+    render(<NativeSessionHeader slots={f.fixture.source} locale={locale} standard={f.standard} navigation={f.navigation} modePort={f.modePort} trailing={<button type="button">Trailing action</button>} />);
+    const row = document.querySelector('.kb-session-header-row') as HTMLElement;
+    expect(within(row).getByRole('group', { name: 'Conversation status' })).toBeTruthy();
+    expect(within(row).getByRole('button', { name: 'Trailing action' })).toBeTruthy();
   });
 });

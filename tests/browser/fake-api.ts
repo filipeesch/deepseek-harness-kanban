@@ -19,10 +19,14 @@ function task(id: string, title: string, columnId: string, position: number): Hu
 
 export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
   const nextEnteredAt = createEnteredAtSource();
+  const closedConversationTask = task('closed', 'Closed conversation task', 'apply', 42);
+  closedConversationTask.sessionIds = ['s-closed', ...Array.from({ length: 11 }, (_, index) => 's-closed-hidden-' + index)];
+  closedConversationTask.closedSessionIds = closedConversationTask.sessionIds.slice(1);
   const tasks: HubTask[] = [
     ...Array.from({ length: 12 }, (_, index) => task('long-' + index, 'Long column task ' + index, 'explore', index)),
     task('short', 'Short task', 'propose', 40),
     task('other', 'Other task', 'apply', 41),
+    closedConversationTask,
     longTitleTask(),
     deleteTarget(),
     failedDelete(),

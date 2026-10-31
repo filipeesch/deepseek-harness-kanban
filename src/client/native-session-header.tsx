@@ -17,6 +17,8 @@ export interface NativeSessionHeaderProps {
   modePort: ModePort | null;
   developerTools?: NativeSnapshotSource;
   renderFactorySlot?: unknown;
+  /** Plugin-owned action rendered at the end of the native header row. */
+  trailing?: ReactNode;
 }
 
 type SelectorHook = (selector: (value: unknown) => unknown) => unknown;
@@ -132,7 +134,7 @@ function redirectSubagent(face: Record<string, unknown>, navigation: Conversatio
  * are hosted manually because the slot renderer's ownership rules belong to
  * the native conversation root, which is private.
  */
-export function NativeSessionHeader({ slots, locale, standard, navigation, modePort, developerTools, renderFactorySlot }: NativeSessionHeaderProps) {
+export function NativeSessionHeader({ slots, locale, standard, navigation, modePort, developerTools, renderFactorySlot, trailing }: NativeSessionHeaderProps) {
   useLocaleRevision(locale);
   const headerEntry = selectNativeSessionHeaderEntry(useSlotEntries(slots, 'conversation.session.header'));
   const fallback = <NativeSessionFallback slots={slots} locale={locale} standard={standard} navigation={navigation} />;
@@ -140,7 +142,7 @@ export function NativeSessionHeader({ slots, locale, standard, navigation, modeP
     if (context.slot === 'conversation.session.header.lineage') return redirectSubagent(face, navigation);
     return face;
   }, [navigation]);
-  if (headerEntry === undefined) return fallback;
+  if (headerEntry === undefined) return <div className="kb-session-header-row"><div className="kb-session-header-main">{fallback}</div>{trailing}</div>;
   const Header = headerEntry.component as ComponentType<Record<string, unknown>>;
   const renderSlot = (key: string, owner?: object, options?: { fallback?: ReactNode }): ReactNode => {
     if (key === 'conversation.session.header.actions') {
@@ -184,9 +186,9 @@ export function NativeSessionHeader({ slots, locale, standard, navigation, modeP
     ...(renderFactorySlot === undefined ? {} : { renderFactorySlot }),
   };
 
-  return <HeaderBoundary key={String(headerEntry.options.key ?? headerEntry.options.id ?? headerEntry.component)} fallback={fallback}>
+  return <div className="kb-session-header-row"><div className="kb-session-header-main"><HeaderBoundary key={String(headerEntry.options.key ?? headerEntry.options.id ?? headerEntry.component)} fallback={fallback}>
     <div className="kb-native-session-header" data-native-session-header="">
       <Header {...headerProps} />
     </div>
-  </HeaderBoundary>;
+  </HeaderBoundary></div>{trailing}</div>;
 }

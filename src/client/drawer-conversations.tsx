@@ -1,16 +1,18 @@
 import React, { Component, useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
-import type { Attention, Problem, Task } from '../shared/types.js';
+import type { Attention, Command, Problem, Task } from '../shared/types.js';
 import { EMPTY_ATTENTION } from '../shared/types.js';
+import { closedSessionIds, openSessionIds } from '../shared/conversations.js';
 import { AttentionDots, AttentionStatusText } from './attention-dots.js';
-import { creationReceiptId, ErrorNotice, useAction, type RunCommand } from './ui.js';
-import { CloseIcon } from './icons.js';
+import { creationReceiptId, useAction, type RunCommand } from './ui.js';
 import { resolveActiveConversation, usePageField, type TaskPageState } from './page-state.js';
+import { conversationLabel, type SessionTitles } from './conversation-label.js';
+import { ClosedConversationsMenu } from './closed-conversations.js';
+import { ConversationActionsProvider, ConversationCloseAction, type ConversationActions } from './conversation-actions.js';
+import { ConversationNotices } from './conversation-notices.js';
 import {
   ConversationNavigationProvider, createConversationNavigation,
   type ConversationLineagePort, type ConversationNavigation, type DrawerSubagentAddress,
 } from './conversation-navigation.js';
-
-export interface SessionTitles { title(sessionId: string): string | undefined; rename(sessionId: string, title: string): Promise<void> }
 
 export interface DrawerConversationsProps {
   task: Task;
@@ -28,22 +30,23 @@ export interface DrawerConversationsProps {
   projectUnavailable?: boolean;
 }
 
-export function conversationLabel(task: Task, sessionId: string, titles?: SessionTitles): string {
-  return titles?.title(sessionId)?.trim() || 'Agent ' + (task.sessionIds.indexOf(sessionId) + 1);
-}
+type CommandScope = 'create' | 'close' | 'reopen';
 
 export function DrawerConversations({ task, run, renderConversation, viewState, sessionTitles, peek, onPeek, lineage, conversationAttention = {}, worktreeDecisionRequired = false, projectUnavailable = false }: DrawerConversationsProps) {
-  const open = task.sessionIds.filter(id => !task.closedSessionIds.includes(id));
+  const open = openSessionIds(task);
+  const closed = closedSessionIds(task);
   const noConversations = task.sessionIds.length === 0;
   const openKey = JSON.stringify(open);
   const [selected, setSelected] = usePageField(viewState, 'conversationId');
   const [selectionRequired, setSelectionRequired] = usePageField(viewState, 'conversationSelectionRequired');
   const action = useAction(run);
   const id = useId();
+  const [commandScope, setCommandScope] = useState<CommandScope | null>(null);
   const [creationPending, setCreationPending] = useState(false);
   const [creationError, setCreationError] = useState<Problem | null>(null);
   const [renaming, setRenaming] = useState<{ sessionId: string; value: string } | null>(null);
   const [renameError, setRenameError] = useState<Problem | null>(null);
+  const [focusTarget, setFocusTarget] = useState<string | null>(null);
   const canSelectDefault = !creationPending && !creationError && !selectionRequired;
   useEffect(() => {
     if (canSelectDefault && (selected === null || !open.includes(selected))) setSelected(open[0] ?? null);
@@ -62,7 +65,6 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
     ...(lineage === undefined ? {} : { lineage }),
   }), [task, chooseConversation, onPeek, lineage]);
   const label = (sessionId: string) => conversationLabel(task, sessionId, sessionTitles);
-
   const busy = Boolean(task.operation || task.pendingTransition);
   const createBlocked = Boolean(creationError || selectionRequired || worktreeDecisionRequired || projectUnavailable);
   const startHint = projectUnavailable
@@ -74,11 +76,17 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
     : creationError || selectionRequired
       ? 'Resolve the conversation creation error before starting.'
       : busy ? 'Wait for the current task operation to finish.' : undefined;
+
+  function execute(command: Command, scope: CommandScope) {
+    setCommandScope(scope);
+    return action.execute(command);
+  }
+
   async function createConversation() {
     if (creationPending || creationError || selectionRequired || worktreeDecisionRequired || projectUnavailable || busy) return;
     setCreationPending(true);
     try {
-      const result = await action.execute({ type: 'conversation.create', taskId: task.id });
+      const result = await execute({ type: 'conversation.create', taskId: task.id }, 'create');
       if (!result) return;
       const sessionId = creationReceiptId(result, 'conversation');
       const createdTask = result.state.hubs.flatMap(hub => hub.tasks).find(value => value.id === task.id);
@@ -105,28 +113,79 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
     catch (error) { setRenameError({ code: 'RENAME_FAILED', message: error instanceof Error ? error.message : 'The conversation title could not be renamed.' }); }
   }
   function closeConversation() {
-    if (!active) return;
+    if (!active || action.pending) return;
     onPeek(null);
-    void action.execute({ type: 'conversation.close', taskId: task.id, sessionId: active });
+    void execute({ type: 'conversation.close', taskId: task.id, sessionId: active }, 'close');
+  }
+  async function reopenConversation(sessionId: string): Promise<boolean> {
+    if (action.pending) return false;
+    const result = await execute({ type: 'conversation.reopen', taskId: task.id, sessionId }, 'reopen');
+    if (!result) return false;
+    chooseConversation(sessionId);
+    return true;
+  }
+  function clearReopenProblem() {
+    if (commandScope === 'reopen') action.clearError();
   }
 
+  const actions: ConversationActions = {
+    activeSessionId: active ?? null,
+    canClose: peek === null && active !== undefined,
+    pending: action.pending,
+    close: closeConversation,
+    label,
+  };
+
+  useEffect(() => {
+    if (focusTarget === null) return;
+    const focusTab = (): boolean => {
+      const tab = document.getElementById(id + '-tab-' + focusTarget);
+      if (tab instanceof HTMLElement) { tab.focus(); setFocusTarget(null); return true; }
+      return false;
+    };
+    if (focusTab()) return;
+    const timer = window.setTimeout(() => {
+      if (focusTab()) return;
+      const chip = document.querySelector<HTMLElement>('.kb-closed-chip');
+      if (chip !== null) { chip.focus(); setFocusTarget(null); }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [focusTarget, openKey, id]);
+
   const viewed = active === undefined ? undefined : peek?.childSessionId ?? active;
-  return <ConversationNavigationProvider value={navigation}><div className="kb-conversations"><ConversationTabs
+  const notices = [
+    { key: 'command', problem: commandScope === 'reopen' ? null : action.error },
+    { key: 'create', problem: creationError },
+    { key: 'rename', problem: renameError },
+  ];
+  const closedMenu = <ClosedConversationsMenu
+    closed={closed}
+    label={label}
+    pending={action.pending}
+    error={commandScope === 'reopen' ? action.error : null}
+    onOpen={clearReopenProblem}
+    onReopen={reopenConversation}
+    onReopened={setFocusTarget}
+  />;
+
+  return <ConversationActionsProvider value={actions}><ConversationNavigationProvider value={navigation}><div className="kb-conversations"><ConversationTabs
     open={open} active={active} id={id} label={label} sessionTitles={sessionTitles}
     renaming={renaming} setRenaming={setRenaming} chooseConversation={chooseConversation}
     beginRename={beginRename} commitRename={commitRename} createConversation={createConversation}
-    closeConversation={closeConversation} creating={creationPending}
-    createBlocked={createBlocked} blockedReason={startHint} busy={busy}
-    actionPending={action.pending} conversationAttention={conversationAttention} /><ErrorNotice problem={action.error} /><ErrorNotice problem={renameError} /><ErrorNotice problem={creationError ?? (selectionRequired ? { code: 'CREATION_RECEIPT_REQUIRED', message: 'Select a conversation tab explicitly or refresh the application before creating another conversation.' } : null)} />
-    {task.closedSessionIds.length > 0 && <details className="kb-closed"><summary>Closed conversations ({task.closedSessionIds.length})</summary><div className="kb-actions">{task.closedSessionIds.map(sessionId => <button key={sessionId} type="button" className="kb-button" disabled={action.pending} onClick={async () => { const result = await action.execute({ type: 'conversation.reopen', taskId: task.id, sessionId }); if (result) chooseConversation(sessionId); }}>Reopen {label(sessionId)}</button>)}</div><p className="kb-hint">Closing a tab preserves its conversation and history.</p></details>}
+    creating={creationPending} createBlocked={createBlocked} blockedReason={startHint} busy={busy}
+    actionPending={action.pending} conversationAttention={conversationAttention} closedMenu={closedMenu} />
+    <ConversationNotices notices={notices} />
+    {selectionRequired && creationError === null && viewed !== undefined && <p className="kb-hint" role="status">Select a conversation tab explicitly before creating another conversation.</p>}
     {viewed ? <ConversationBody active={viewed} root={active} target={peek ?? undefined} id={id} renderConversation={renderConversation} /> : noConversations
       ? creationPending
         ? <p className="kb-empty">Resolving the newly created conversation…</p>
         : selectionRequired
           ? <p className="kb-empty">Select a conversation tab explicitly before continuing.</p>
           : <EmptyConversations blocked={createBlocked} busy={busy} creating={creationPending} hint={startHint} onStart={createConversation} />
-      : <p className="kb-empty">All conversation tabs are closed. Reopen an existing conversation or use + to add one.</p>}
-  </div></ConversationNavigationProvider>;
+      : selectionRequired
+        ? <p className="kb-empty">Select a conversation tab explicitly before continuing.</p>
+        : <p className="kb-empty">All conversations are closed. Use + to start a new one, or reopen one from the closed conversations above.</p>}
+  </div></ConversationNavigationProvider></ConversationActionsProvider>;
 }
 
 interface ConversationTabsProps {
@@ -134,19 +193,20 @@ interface ConversationTabsProps {
   renaming: { sessionId: string; value: string } | null;
   setRenaming: (value: { sessionId: string; value: string } | null) => void;
   chooseConversation: (sessionId: string) => void; beginRename: (sessionId: string) => void; commitRename: () => Promise<void>;
-  createConversation: () => void; closeConversation: () => void;
+  createConversation: () => void;
   creating: boolean; createBlocked: boolean; blockedReason?: string; busy: boolean; actionPending: boolean;
   conversationAttention: Readonly<Record<string, Attention>>;
+  closedMenu: ReactNode;
 }
 
-function ConversationTabs({ open, active, id, label, sessionTitles, renaming, setRenaming, chooseConversation, beginRename, commitRename, createConversation, closeConversation, creating, createBlocked, blockedReason, busy, actionPending, conversationAttention }: ConversationTabsProps) {
+function ConversationTabs({ open, active, id, label, sessionTitles, renaming, setRenaming, chooseConversation, beginRename, commitRename, createConversation, creating, createBlocked, blockedReason, busy, actionPending, conversationAttention, closedMenu }: ConversationTabsProps) {
   return <div className="kb-session-toolbar"><div className="kb-tabs kb-agent-tabs" role="tablist" aria-label="Agent conversations">{open.map((sessionId, index) => {
     if (renaming?.sessionId === sessionId) return <input key={sessionId} className="kb-input kb-tab-input" autoFocus aria-label={'Rename ' + label(sessionId)} value={renaming.value} onChange={event => setRenaming({ sessionId, value: event.target.value })} onBlur={() => void commitRename()} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void commitRename(); } if (event.key === 'Escape') { event.preventDefault(); setRenaming(null); } }} />;
     const attention = conversationAttention[sessionId] ?? EMPTY_ATTENTION;
     return <button type="button" key={sessionId} className="kb-tab" id={id + '-tab-' + sessionId} role="tab" aria-selected={active === sessionId} aria-controls={id + '-conversation'} tabIndex={active === sessionId ? 0 : -1} title={sessionTitles?.title(sessionId) ?? sessionId} onClick={() => chooseConversation(sessionId)} onDoubleClick={() => beginRename(sessionId)} onContextMenu={event => { if (!sessionTitles) return; event.preventDefault(); beginRename(sessionId); }} onKeyDown={event => { let next = index; if (event.key === 'ArrowRight') next = (index + 1) % open.length; else if (event.key === 'ArrowLeft') next = (index + open.length - 1) % open.length; else if (event.key === 'Home') next = 0; else if (event.key === 'End') next = open.length - 1; else return; event.preventDefault(); const value = open[next]; if (value) { chooseConversation(value); document.getElementById(id + '-tab-' + value)?.focus(); } }}>{label(sessionId)}<AttentionDots value={attention} decorative /><AttentionStatusText value={attention} /></button>;
   })}</div>
+    {closedMenu}
     <button type="button" className="kb-button kb-icon-button" aria-label="New conversation" title={blockedReason ?? 'New conversation'} disabled={actionPending || creating || createBlocked || busy} onClick={createConversation}><span aria-hidden="true">+</span></button>
-    {active && <button type="button" className="kb-button kb-icon-button" aria-label={'Close ' + label(active)} title={'Close ' + label(active)} disabled={actionPending} onClick={closeConversation}><CloseIcon size={14} /></button>}
   </div>;
 }
 
@@ -159,11 +219,11 @@ function EmptyConversations({ blocked, busy, creating, hint, onStart }: { blocke
 
 function ConversationBody({ active, root, target, id, renderConversation }: { active: string; root?: string; target?: DrawerSubagentAddress; id: string; renderConversation: (id: string, target?: DrawerSubagentAddress) => ReactNode }) {
   const labelledBy = root === undefined ? undefined : id + '-tab-' + root;
-  return <div className="kb-conversation-panel" role="tabpanel" id={id + '-conversation'} aria-labelledby={labelledBy}><NativeBoundary key={active}>{renderConversation(active, target)}</NativeBoundary></div>;
+  return <div className="kb-conversation-panel" role="tabpanel" id={id + '-conversation'} aria-labelledby={labelledBy}><NativeBoundary key={active} closeAction={<ConversationCloseAction />}>{renderConversation(active, target)}</NativeBoundary></div>;
 }
 
-class NativeBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+class NativeBoundary extends Component<{ children: ReactNode; closeAction?: ReactNode }, { error: string | null }> {
   state: { error: string | null } = { error: null };
   static getDerivedStateFromError(error: unknown) { return { error: error instanceof Error ? error.message : 'Native conversation rendering failed.' }; }
-  render() { return this.state.error ? <div role="alert" className="kb-error"><strong>Native conversation unavailable</strong><p>{this.state.error}</p><button type="button" className="kb-button" onClick={() => this.setState({ error: null })}>Retry native view</button></div> : this.props.children; }
+  render() { return this.state.error ? <div role="alert" className="kb-error"><strong>Native conversation unavailable</strong><p>{this.state.error}</p><div className="kb-actions"><button type="button" className="kb-button" onClick={() => this.setState({ error: null })}>Retry native view</button>{this.props.closeAction}</div></div> : this.props.children; }
 }

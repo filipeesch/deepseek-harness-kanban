@@ -14,11 +14,9 @@ import { TaskActivity } from './activity.js';
 import { transitionDestinations } from '../domain/transitions.js';
 import type { AutoRunController } from './auto-run.js';
 import { DrawerAutoRunNotice } from './auto-run-view.js';
-import { DrawerConversations, conversationLabel, type SessionTitles } from './drawer-conversations.js';
+import { DrawerConversations } from './drawer-conversations.js';
+import type { SessionTitles } from './conversation-label.js';
 import type { ConversationLineagePort, DrawerSubagentAddress } from './conversation-navigation.js';
-
-export { conversationLabel } from './drawer-conversations.js';
-export type { SessionTitles } from './drawer-conversations.js';
 
 interface DrawerProps {
   task: Task; attention?: Attention; conversationAttention?: Readonly<Record<string, Attention>>; state: BoardState; api: ClientApi; run: RunCommand; autoRun?: AutoRunController;

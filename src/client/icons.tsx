@@ -30,3 +30,6 @@ export function AlertIcon({ size = 16, className }: IconProps) {
 export function ClockIcon({ size = 16, className }: IconProps) {
   return <svg {...base(size)} className={className}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>;
 }
+export function ReopenIcon({ size = 16, className }: IconProps) {
+  return <svg {...base(size)} className={className}><path d="M5 12a7 7 0 1 0 2.1-5L4 10" /><path d="M4 4v6h6" /></svg>;
+}

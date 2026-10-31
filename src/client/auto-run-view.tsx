@@ -1,7 +1,9 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { Column, Task } from '../shared/types.js';
+import { firstOpenSessionId } from '../shared/conversations.js';
 import { entryInstruction, hasUnresolvedEntry } from '../domain/stage-entry.js';
 import { AUTO_RUN_DELAY_MS, autoRunEntryForColumn, RUN_FAILURE_FALLBACK, type AutoRunController, type AutoRunEntry } from './auto-run.js';
+import { conversationLabel, type SessionTitleSource } from './conversation-label.js';
 import { PlayIcon } from './icons.js';
 
 export function useAutoRunEntry(controller: AutoRunController, taskId: string): AutoRunEntry | undefined {
@@ -68,15 +70,15 @@ export function CardInstructionAction({ task, column, controller }: { task: Task
 }
 
 export function DrawerAutoRunNotice({ task, controller, columns, sessionTitles }: {
-  task: Task; controller: AutoRunController; columns: readonly Column[]; sessionTitles?: { title(sessionId: string): string | undefined };
+  task: Task; controller: AutoRunController; columns: readonly Column[]; sessionTitles?: SessionTitleSource;
 }) {
   const entry = useAutoRunEntry(controller, task.id);
   const seconds = useCountdown(entry?.status === 'counting' ? entry.deadline : null);
   if (!entry) return null;
   const column = columns.find(value => value.id === entry.columnId);
   const stage = column?.name ?? entry.columnId;
-  const open = task.sessionIds.find(id => !task.closedSessionIds.includes(id));
-  const target = open === undefined ? 'a new conversation' : sessionTitles?.title(open)?.trim() || 'Agent ' + (task.sessionIds.indexOf(open) + 1);
+  const open = firstOpenSessionId(task);
+  const target = open === undefined ? 'a new conversation' : conversationLabel(task, open, sessionTitles);
   if (entry.status === 'failed') return <div className="kb-drawer-autorun kb-drawer-autorun-failed" data-status="failed">
     <p role="alert"><strong>Automatic {stage} instruction failed</strong><span>{entry.error?.message ?? RUN_FAILURE_FALLBACK}</span></p>
   </div>;

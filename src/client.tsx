@@ -18,6 +18,7 @@ import { allTasks } from './client/hub-view.js';
 import { AutoRunController } from './client/auto-run.js';
 import { QuestionForm } from './questions/QuestionForm.js';
 import { NativeSessionHeader } from './client/native-session-header.js';
+import { ConversationCloseAction } from './client/conversation-actions.js';
 import { EmbeddedConversationBody, RetainedConversation, type ConversationSurfaceOwner, type ConversationSurfaceServices } from './client/conversation-surface.js';
 import type { NativeLocaleSource, NativeSlotSource, NativeSnapshotSource } from './client/native-slot-host.js';
 import { createModePortSource } from './client/mode-port.js';
@@ -160,6 +161,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       standard={props as unknown as Record<string, unknown>}
       navigation={navigation}
       modePort={modePort}
+      trailing={<ConversationCloseAction />}
       {...(developerTools === undefined ? {} : { developerTools })}
       {...(renderFactorySlot === undefined ? {} : { renderFactorySlot })}
     />;

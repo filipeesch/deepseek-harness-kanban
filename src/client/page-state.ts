@@ -1,4 +1,5 @@
 import { useCallback, useState, type Dispatch, type SetStateAction } from 'react';
+import { openSessionIds } from '../shared/conversations.js';
 
 export type DrawerSection = 'Conversations' | 'Info' | 'Git' | 'Notes';
 export interface InfoDraft { title: string; description: string }
@@ -19,7 +20,7 @@ export function createTaskPageState(): TaskPageState { return { section: 'Conver
 
 /** Pick the visible conversation for the tab strip and the status row. */
 export function resolveActiveConversation(sessionIds: readonly string[], closedSessionIds: readonly string[], selected: string | null, fallbackAllowed: boolean): string | null {
-  const open = sessionIds.filter(id => !closedSessionIds.includes(id));
+  const open = openSessionIds({ sessionIds, closedSessionIds });
   if (selected !== null && open.includes(selected)) return selected;
   return fallbackAllowed ? open[0] ?? null : null;
 }
