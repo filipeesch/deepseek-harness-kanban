@@ -13,6 +13,7 @@ import type { GitExecutor, SessionPort, CommandResult, ProjectProbe, WorkspacePo
 import type { GitProject } from '../shared/types.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 import { createNativeSessionFacts, inspectedOpenTurn, nativePending } from './native-facts.js';
+import type { ConversationFactsReader } from './conversation-facts.js';
 import { executeCommand } from './host-command.js';
 import { createHostProjectProbe } from './project-probe.js';
 
@@ -78,8 +79,13 @@ function commonPolicy(policies: SandboxExecutionPolicy[]): SandboxExecutionPolic
   return selected;
 }
 
+/** Optional Host integrations the native adapters read; absent keeps the inspect fallback. */
+export interface NativePortsOptions {
+  conversationFacts?: ConversationFactsReader;
+}
+
 /** Native adapters own no session history, permission grants, or replacement runtime. */
-export function createNativePorts(ctx: Context): { sessions: SessionPort; executor: GitExecutor; workspaces: WorkspacePort; probe: ProjectProbe } {
+export function createNativePorts(ctx: Context, options: NativePortsOptions = {}): { sessions: SessionPort; executor: GitExecutor; workspaces: WorkspacePort; probe: ProjectProbe } {
   const inspect = (id: string, signal = AbortSignal.timeout(READ_TIMEOUT_MS)) =>
     ctx.sessionController.inspect(SessionId(id), signal);
   const projections = (id: string, signal = AbortSignal.timeout(READ_TIMEOUT_MS)) =>
@@ -130,7 +136,11 @@ export function createNativePorts(ctx: Context): { sessions: SessionPort; execut
     }
   };
   const admissions = new Map<string, { text: string; done: Promise<void> }>();
-  const sessionFacts = createNativeSessionFacts({ activity, projections, inspect });
+  const liveFacts = options.conversationFacts === undefined ? undefined : (id: string) => {
+    const session = ctx.sessions.get(SessionId(id));
+    return session === undefined ? undefined : options.conversationFacts!.read(session);
+  };
+  const sessionFacts = createNativeSessionFacts({ activity, projections, inspect, ...(liveFacts === undefined ? {} : { liveFacts }) });
   const sessions: SessionPort = {
     async create(projectPath, workspaceId) {
       const cwd = await directoryPath(projectPath);

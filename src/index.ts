@@ -8,6 +8,7 @@ import { HubRepository } from './host/hub-repository.js';
 import { openKanbanStorage } from './host/storage.js';
 import { openQuestionStorage } from './host/question-storage.js';
 import { createNativePorts } from './host/native.js';
+import { registerConversationFacts } from './host/conversation-facts.js';
 import { GitAdapter } from './host/git.js';
 import { KanbanApp } from './host/app.js';
 import { KanbanController } from './host/controller.js';
@@ -59,7 +60,7 @@ export async function apply(ctx:Context):Promise<void>{
  let questions:{storage:import('./host/question-storage.js').QuestionStore;close:()=>Promise<void>};
  try{questions=await openQuestionStorage(ctx);}catch(error){await storage.close();throw error;}
  const lifetime=new AbortController();
- const native=createNativePorts(ctx);const hubs=await HubRepository.open(opened.storage);
+ const conversationFacts=registerConversationFacts(ctx);ctx.effect(()=>()=>conversationFacts.dispose());const native=createNativePorts(ctx,{conversationFacts});const hubs=await HubRepository.open(opened.storage);
  const report=(error:unknown)=>ctx.logger.warn(error instanceof Error?error.message:String(error));
  const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await ctx.sessionController.inspect(SessionId(id),lifetime.signal)).events,questionStore:questions.storage,probe:native.probe},native.workspaces);
  let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offSignals:(()=>void)|undefined;

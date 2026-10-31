@@ -205,7 +205,7 @@ describe('public SDK plugin binding contracts', () => {
     await waitFor(() => expect(g.remote.questions).toHaveBeenCalled());
     expect(empty.container.querySelector('form')).toBeNull();
   });
-  it('owns native reference/provider binding, switches A/B by explicit reference, and releases on Info/unmount', async () => {
+  it('owns native reference/provider binding, keeps visited conversations warm across tabs and sections, and releases with the drawer', async () => {
     const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;
     const provider = vi.fn(({ session, children }: { session: SessionReference; children: ReactNode }) => <div data-testid="provided-session" data-session={session.sessionId}>{children}</div>);
     const headerMounts = vi.fn(); const headerUnmounts = vi.fn();
@@ -214,17 +214,30 @@ describe('public SDK plugin binding contracts', () => {
     const rendered = render(<Main usePanelInfo={(select: (info: { activePanelId: string }) => unknown) => select({ activePanelId: 'kanban' })} SessionProvider={provider} renderSlot={renderSlot} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Open task Native task' }));
     await waitFor(() => expect(screen.getByTestId('provided-session').getAttribute('data-session')).toBe('a'));
-    expect(f.retain.mock.calls[0]?.[0]).toBe('a'); expect(renderSlot).toHaveBeenCalledWith('kanban.conversation', {}); expect(renderSlot).toHaveBeenCalledWith('kanban.session.header', {});
+    expect(f.retain.mock.calls[0]?.[0]).toBe('a');
+    // Lazy warmth: the unvisited second tab is not opened in the background.
+    expect(f.retain).toHaveBeenCalledTimes(1); expect(renderSlot).toHaveBeenCalledWith('kanban.conversation', {}); expect(renderSlot).toHaveBeenCalledWith('kanban.session.header', {});
     expect(headerMounts).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('tab', { name: 'Agent 2' }));
     await waitFor(() => expect(screen.getByTestId('provided-session').getAttribute('data-session')).toBe('b'));
     expect(headerMounts).toHaveBeenCalledTimes(2); expect(headerUnmounts).toHaveBeenCalledTimes(1);
-    expect(f.references[0]?.release).toHaveBeenCalled();
+    // A visited conversation stays retained while the drawer is open.
+    expect(f.references[0]?.release).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('tab', { name: 'Info' }));
-    await waitFor(() => expect(f.references[1]?.release).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByTestId('provided-session')).toBeNull());
     expect(headerMounts).toHaveBeenCalledTimes(2); expect(headerUnmounts).toHaveBeenCalledTimes(2);
-    expect(screen.queryByTestId('provided-session')).toBeNull(); expect(f.nativeSelect).not.toHaveBeenCalled();
-    rendered.unmount(); expect(f.refresh).toHaveBeenCalledTimes(2);
+    expect(f.references[0]?.release).not.toHaveBeenCalled();
+    expect(f.references[1]?.release).not.toHaveBeenCalled();
+    expect(f.nativeSelect).not.toHaveBeenCalled();
+    // Returning to Conversations reuses both warm leases.
+    fireEvent.click(screen.getByRole('tab', { name: 'Conversations' }));
+    await waitFor(() => expect(screen.getByTestId('provided-session').getAttribute('data-session')).toBe('b'));
+    expect(f.retain).toHaveBeenCalledTimes(2);
+    rendered.unmount();
+    // Closing the drawer releases every visited lease; the catalog already held both.
+    expect(f.references[0]?.release).toHaveBeenCalledOnce();
+    expect(f.references[1]?.release).toHaveBeenCalledOnce();
+    expect(f.refresh).not.toHaveBeenCalled();
   });
   it('keeps a drawer stage change out of the native composer', async () => {
     const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;

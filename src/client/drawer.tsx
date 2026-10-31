@@ -17,6 +17,9 @@ import { DrawerAutoRunNotice } from './auto-run-view.js';
 import { DrawerConversations } from './drawer-conversations.js';
 import type { SessionTitles } from './conversation-label.js';
 import type { ConversationLineagePort, DrawerSubagentAddress } from './conversation-navigation.js';
+import { ConversationLeaseRegistry, type ConversationLeaseEnvironment } from './conversation-leases.js';
+import { ConversationLeasesProvider } from './conversation-lease-context.js';
+import { openSessionIds } from '../shared/conversations.js';
 
 interface DrawerProps {
   task: Task; attention?: Attention; conversationAttention?: Readonly<Record<string, Attention>>; state: BoardState; api: ClientApi; run: RunCommand; autoRun?: AutoRunController;
@@ -25,6 +28,8 @@ interface DrawerProps {
   onMove: (task: Task, column: Column, beforeTaskId?: string | null) => Promise<boolean>;
   onDanger: (task: Task, type: 'task.delete' | 'worktree.remove') => void;
   viewState?: TaskPageState; sessionTitles?: SessionTitles;
+  /** Lease scope for this drawer; omitted only by isolated render harnesses. */
+  conversationLeases?: ConversationLeaseEnvironment;
   lineage?: ConversationLineagePort;
   /** Controlled investigation target; omitted keeps the drawer's transient local state. */
   peek?: DrawerSubagentAddress | null;
@@ -37,7 +42,7 @@ const DRAWER_DEFAULT_WIDTH = 620;
 function clampWidth(value: number): number { const max = Math.max(360, (typeof window === 'undefined' ? 1200 : window.innerWidth) * 0.9); return Math.min(Math.max(value, 360), max); }
 function storedWidth(): number { try { const value = Number(window.localStorage.getItem(DRAWER_WIDTH_KEY)); if (Number.isFinite(value) && value > 0) return clampWidth(value === 560 ? DRAWER_DEFAULT_WIDTH : value); } catch { /* storage is optional */ } return clampWidth(DRAWER_DEFAULT_WIDTH); }
 
-export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAttention, state, api, run, autoRun, renderConversation, onClose, onMove, onDanger, viewState, sessionTitles, lineage, peek: controlledPeek, onPeek, entering = false, closing = false }: DrawerProps) {
+export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAttention, state, api, run, autoRun, renderConversation, onClose, onMove, onDanger, viewState, sessionTitles, conversationLeases, lineage, peek: controlledPeek, onPeek, entering = false, closing = false }: DrawerProps) {
   const [localViewState] = useState(createTaskPageState); const preferences = viewState ?? localViewState;
   const [section, setSection] = usePageField(preferences, 'section'); const id = useId(); const close = useRef<HTMLButtonElement>(null);
   const [localPeek, setLocalPeek] = useState<DrawerSubagentAddress | null>(null);
@@ -46,6 +51,8 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
   const taskId = useRef(task.id);
   const [width, setWidth] = useState(storedWidth); const widthRef = useRef(width); widthRef.current = width;
   const aside = useRef<HTMLElement>(null);
+  const [leases] = useState<ConversationLeaseRegistry | null>(() => conversationLeases === undefined ? null : new ConversationLeaseRegistry(conversationLeases));
+  const openKey = JSON.stringify(openSessionIds(task));
   const [movingTo, setMovingTo] = useState<string | null>(null); const alive = useRef(true);
   useEffect(() => {
     close.current?.focus();
@@ -66,6 +73,8 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
   const destinations = transitionDestinations(state.workflow, task.columnId);
   const worktreeDraft = useWorktreeDraft({ api, task, project, basePath: state.settings?.worktreeBasePath, enabled: gitBacked && !task.worktree && (section === 'Conversations' || section === 'Git') });
   useEffect(() => { if (!gitBacked && section === 'Git') setSection('Info'); }, [gitBacked, section, setSection]);
+  useEffect(() => () => { leases?.dispose(); }, [leases]);
+  useEffect(() => { if (leases !== null) leases.retainOnly(openSessionIds(task)); }, [leases, openKey]);
 
   async function moveTo(column: Column) {
     if (blocked || movingTo) return;
@@ -88,7 +97,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
     if (event.key === 'Home') { event.preventDefault(); persistWidth(clampWidth(DRAWER_DEFAULT_WIDTH)); }
   }
 
-  return <aside ref={aside} className="kb-drawer" aria-label="Task details" aria-labelledby={id + '-title'} style={{ width }} data-entering={entering ? 'true' : undefined} data-closing={closing ? 'true' : undefined}>
+  const body = <aside ref={aside} className="kb-drawer" aria-label="Task details" aria-labelledby={id + '-title'} style={{ width }} data-entering={entering ? 'true' : undefined} data-closing={closing ? 'true' : undefined}>
     <div className="kb-drawer-resize" role="separator" aria-orientation="vertical" aria-label="Resize task drawer" aria-valuenow={Math.round(width)} aria-valuemin={360} aria-valuemax={Math.round(Math.max(360, (typeof window === 'undefined' ? 1200 : window.innerWidth) * 0.9))} tabIndex={0} onPointerDown={startResize} onDoubleClick={() => persistWidth(clampWidth(DRAWER_DEFAULT_WIDTH))} onKeyDown={resizeKey} />
     <header className="kb-drawer-header"><div><h2 id={id + '-title'}>{task.title}</h2><p className="kb-hint">{project?.name ?? task.projectId}</p><TaskActivity attention={attention} /></div><div className="kb-drawer-header-actions">
       <button type="button" className="kb-button kb-icon-button kb-danger" aria-label="Delete task" title="Delete task" disabled={blocked} onClick={() => onDanger(task, 'task.delete')}><TrashIcon size={16} /></button>
@@ -107,4 +116,5 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
       {section === 'Notes' && <NotesPanel task={task} state={state} run={run} viewState={preferences} />}
     </section>
   </aside>;
+  return leases === null ? body : <ConversationLeasesProvider registry={leases}>{body}</ConversationLeasesProvider>;
 }

@@ -15,7 +15,7 @@ export function writeBoardPreference(hubId: string, boardId: string, previous: R
   writeStorage(ACTIVE_BOARDS_KEY, JSON.stringify(next));
   return next;
 }
-export function allTasks(snapshot: KanbanSnapshot): Task[] { return snapshot.state.hubs.flatMap(hub => hub.tasks); }
+export function allTasks(snapshot: Pick<KanbanSnapshot, 'state'>): Task[] { return snapshot.state.hubs.flatMap(hub => hub.tasks); }
 export function boardView(hub: HubState, board: Board, settings: KanbanSnapshot['state']['settings']): BoardState {
   const tasks = hub.tasks.filter(task => task.boardId === board.id);
   const taskIds = new Set(tasks.map(task => task.id));

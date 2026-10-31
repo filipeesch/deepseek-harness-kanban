@@ -2,20 +2,17 @@ import { RemoteSnapshotStream, RemoteStreamCarrierError, type ClientRemote } fro
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots';
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client';
-import type { SessionId } from '@deepseek-ai/dsh-session/types';
+import { projectTaskAttention, RunningSessions } from './client/kanban-attention.js';
+import { allTasks } from './client/hub-view.js';
+import { ConversationReadState } from './client/conversation-read-state.js';
+import type { KeyValueStorage } from './client/key-value-storage.js';
 import type { KanbanRemote } from './remote.js';
-import type { Attention, ClientApi, Command, HostSnapshot, KanbanSnapshot, Outcome, Problem, QuestionRound, Task } from './shared/types.js';
-import { EMPTY_CONVERSATION_FACTS } from './shared/types.js';
-import { aggregateTaskAttention, projectConversation } from './client/attention-projection.js';
-import { ConversationReadTracker } from './client/conversation-read-tracker.js';
-import { browserStorage, type KeyValueStorage } from './client/key-value-storage.js';
-import { ReadAcknowledgments } from './client/read-acknowledgments.js';
+import type { ClientApi, Command, HostSnapshot, KanbanSnapshot, Outcome, Problem, QuestionRound } from './shared/types.js';
 
 export interface BridgeStatus { error: Problem | null; connected: boolean }
 export interface QuestionView { rounds: readonly QuestionRound[]; errors: ReadonlyMap<string, Problem> }
 export type BridgeRemote = Pick<ClientRemote, '$stream'> & { kanban: KanbanRemote };
 type Baseline = { kind: 'baseline'; snapshot: HostSnapshot };
-function allTasks(snapshot: Pick<HostSnapshot, 'state'>): Task[] { return snapshot.state.hubs.flatMap(hub => hub.tasks); }
 type Update = { kind: 'update'; snapshot: HostSnapshot };
 function problem(error: unknown): Problem {
   if (typeof error === 'object' && error !== null && 'message' in error) {
@@ -45,7 +42,7 @@ export class ClientBridge {
   private readonly questionState = observable<QuestionView>({ rounds: [], errors: new Map() });
   readonly questionsView = this.questionState.source;
   private readonly snapshots = new Set<(snapshot: KanbanSnapshot) => void>();
-  private readonly runningSessions = new Set<string>();
+  private readonly running = new RunningSessions();
   private host: HostSnapshot | undefined;
   private merged: KanbanSnapshot | undefined;
   private clientEpoch = 0;
@@ -53,8 +50,7 @@ export class ClientBridge {
   private readonly prepared = new Map<string, Promise<readonly QuestionRound[]>>();
   private readonly questionSessions = new Set<string>();
   private readonly dismissed = new Set<string>();
-  private readonly progress: ReadAcknowledgments;
-  private readonly reads: ConversationReadTracker;
+  private readonly readState: ConversationReadState;
   private readonly composers = new Set<string>();
   private readonly stopStatus: () => void;
   private control: RemoteSnapshotStream<Baseline, Update>;
@@ -62,13 +58,12 @@ export class ClientBridge {
   private disposed = false;
   readonly api: ClientApi;
   constructor(private readonly remote: BridgeRemote, private readonly nativeStatus: HostObservable<SessionStatusSnapshot>, options: { storage?: KeyValueStorage } = {}) {
-    this.progress = new ReadAcknowledgments(options.storage ?? browserStorage());
-    this.reads = new ConversationReadTracker(this.progress);
+    this.readState = new ConversationReadState(options.storage);
     this.control = this.makeControl();
-    this.syncRunning(this.nativeStatus.getSnapshot());
+    this.running.sync(this.nativeStatus.getSnapshot());
     this.stopStatus = nativeStatus.subscribe(() => {
       this.publish();
-      if (this.syncRunning(this.nativeStatus.getSnapshot())) this.refreshAttention();
+      if (this.running.sync(this.nativeStatus.getSnapshot())) this.refreshAttention();
     });
     this.api = {
       snapshot: () => this.unarySnapshot(() => remote.kanban.snapshot()),
@@ -133,8 +128,8 @@ export class ClientBridge {
     // after the close is still presented as unread.
     this.acknowledgeClosed(previous, snapshot);
     this.host = snapshot;
-    if (baseline) this.pruneReads(snapshot);
-    this.progress.flush();
+    if (baseline) this.readState.prune(new Set(allTasks(snapshot).flatMap(task => task.sessionIds)));
+    this.readState.flush();
     if (snapshot.questionRounds !== undefined) { this.rounds = snapshot.questionRounds.filter(round => !this.dismissed.has(round.id)); this.publishQuestions(); }
     this.health.set({ error: null, connected: true });
     this.publish();
@@ -150,29 +145,14 @@ export class ClientBridge {
     for (const task of allTasks(next)) {
       for (const sessionId of task.closedSessionIds) {
         if (before.has(sessionId)) continue;
-        this.reads.close(sessionId);
+        this.readState.close(sessionId);
       }
     }
-  }
-  private pruneReads(snapshot: HostSnapshot): void {
-    this.progress.prune(new Set(allTasks(snapshot).flatMap(task => task.sessionIds)));
   }
   private publish(): void {
     if (this.disposed || !this.host) return;
-    const statuses = this.nativeStatus.getSnapshot();
-    this.reads.sync(this.host.conversations);
-    const conversationAttention: Record<string, Attention> = {};
-    for (const task of allTasks(this.host)) {
-      for (const sessionId of task.sessionIds) {
-        if (conversationAttention[sessionId]) continue;
-        const facts = this.host.conversations[sessionId] ?? EMPTY_CONVERSATION_FACTS;
-        conversationAttention[sessionId] = projectConversation(facts, statuses.get(sessionId as SessionId), this.reads.acknowledged(sessionId));
-      }
-    }
-    const attention: Record<string, Attention> = {};
-    for (const task of allTasks(this.host)) {
-      attention[task.id] = aggregateTaskAttention(task.sessionIds.flatMap(sessionId => conversationAttention[sessionId] ? [conversationAttention[sessionId]!] : []));
-    }
+    this.readState.sync(this.host.conversations);
+    const { attention, conversationAttention } = projectTaskAttention(this.host, this.nativeStatus.getSnapshot(), sessionId => this.readState.acknowledged(sessionId));
     const { conversations: _conversations, ...base } = this.host;
     this.merged = { ...base, attention, conversationAttention, questionRounds: [...this.rounds], clientEpoch: this.clientEpoch };
     for (const listener of [...this.snapshots]) { try { listener(this.merged); } catch { /* Keep sibling consumers alive. */ } }
@@ -181,26 +161,11 @@ export class ClientBridge {
   private refreshAttention(): void {
     void this.unarySnapshot(() => this.remote.kanban.snapshot()).catch(() => undefined);
   }
-  /** Track the native running sessions, returning true when any conversation starts a turn. */
-  private syncRunning(statuses: SessionStatusSnapshot): boolean {
-    let rising = false;
-    const seen = new Set<string>();
-    for (const [id, status] of statuses) {
-      const key = String(id);
-      seen.add(key);
-      if (status.running === true) {
-        if (!this.runningSessions.has(key)) rising = true;
-        this.runningSessions.add(key);
-      }
-    }
-    for (const id of [...this.runningSessions]) if (!seen.has(id)) this.runningSessions.delete(id);
-    return rising;
-  }
   /** Acknowledge only the actually mounted/read drawer session, without native mainView writes. */
   viewSession(id: string): () => void {
-    const release = this.reads.view(id);
+    const release = this.readState.view(id);
     this.publish();
-    this.progress.flush();
+    this.readState.flush();
     return release;
   }
   /** Prevent two plugin occurrences from mounting the same native composer simultaneously. */

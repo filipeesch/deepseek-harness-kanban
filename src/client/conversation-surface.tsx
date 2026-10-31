@@ -1,9 +1,10 @@
-import React, { useEffect, useState, type ComponentType, type ReactNode } from 'react';
-import type { ISessions, SessionReference, SessionTarget } from '@deepseek-ai/dsh-api-session-controller/client';
-import type { SessionId } from '@deepseek-ai/dsh-session/types';
+import React, { memo, useEffect, useState, type ComponentType, type ReactNode } from 'react';
+import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client';
 import type { ConversationViewsProps } from '@deepseek-ai/dsh-client-ui-conversation/client';
 import type { DrawerSubagentAddress } from './conversation-navigation.js';
 import { ConversationCloseAction } from './conversation-actions.js';
+import { useConversationLeaseState } from './conversation-leases.js';
+import { useConversationLeases } from './conversation-lease-context.js';
 
 /** The small owner share the retained surface needs from the Main slot. */
 export interface ConversationSurfaceOwner {
@@ -13,11 +14,7 @@ export interface ConversationSurfaceOwner {
 
 /** Application services used by the retained conversation surface. */
 export interface ConversationSurfaceServices {
-  sessions: Pick<ISessions, 'refresh' | 'retain'>;
   claimComposer(sessionId: string): (() => void) | null;
-  lifetime: AbortSignal;
-  hold(reference: SessionReference): void;
-  release(reference: SessionReference): void;
 }
 
 /** Props for the public conversation.content occurrence embedded in a task drawer. */
@@ -51,47 +48,36 @@ export function EmbeddedConversationBody({ sessionId, useSession, renderFactoryS
   }, { slots: { views: FixedChat } });
 }
 
-/**
- * Retain one native session (or subagent address), claim composer ownership,
- * and render the hosted header above the public content factory.
- */
-export function RetainedConversation({ id, target, owner, services }: {
+function RetainedConversationView({ id, target, owner, services }: {
   id: string;
   target?: DrawerSubagentAddress;
   owner: ConversationSurfaceOwner;
   services: ConversationSurfaceServices;
 }) {
-  const [reference, setReference] = useState<SessionReference | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState(0);
+  const leases = useConversationLeases();
   const sessionId = target?.childSessionId ?? id;
   const targetKey = target === undefined ? id : target.parentSessionId + ':' + target.childSessionId + ':' + target.mode;
+  const lease = useConversationLeaseState(leases, sessionId);
+  const [claimError, setClaimError] = useState<string | null>(null);
   useEffect(() => {
-    let active = true; let retained: SessionReference | undefined;
-    const cancellation = new AbortController();
-    const signal = AbortSignal.any([cancellation.signal, services.lifetime]);
     const releaseComposer = services.claimComposer(sessionId);
-    const retainTarget: SessionTarget = target === undefined ? id as SessionId : {
-      parentSessionId: target.parentSessionId as SessionId,
-      childSessionId: target.childSessionId as SessionId,
-      mode: target.mode,
+    if (!releaseComposer) {
+      setClaimError('This conversation already has an active Kanban composer. Close the other view first.');
+      return undefined;
+    }
+    setClaimError(null);
+    // Acquisition follows a successful claim: a refused duplicate never pins a Session it cannot render.
+    const releaseLease = target === undefined ? (leases.acquireRoot(id), undefined) : leases.acquirePeek(target);
+    return () => {
+      releaseLease?.();
+      releaseComposer();
     };
-    setReference(null); setError(null);
-    if (!releaseComposer) { setError('This conversation already has an active Kanban composer. Close the other view first.'); return; }
-    void (async () => {
-      // Fresh host task sessions must first join the native Client catalog; this changes no selection.
-      await services.sessions.refresh(); signal.throwIfAborted();
-      retained = services.sessions.retain(retainTarget, { source: 'kanbanTaskDrawer', signal });
-      services.hold(retained); await retained.ready; signal.throwIfAborted();
-      if (active) setReference(retained);
-    })().catch((failure: unknown) => {
-      if (active && !signal.aborted) setError(failure instanceof Error ? failure.message : String(failure));
-      if (retained) { services.release(retained); retained = undefined; }
-    });
-    return () => { active = false; cancellation.abort(); if (retained) { services.release(retained); retained = undefined; } releaseComposer(); };
-  }, [targetKey, sessionId, attempt, services]);
-  if (error) return <div className="kanban-native-state"><div role="alert">{error}</div><div className="kb-actions"><button type="button" onClick={() => setAttempt(value => value + 1)}>Retry conversation</button><ConversationCloseAction /></div></div>;
-  if (!reference) return <div className="kanban-native-state"><span role="status">Opening native conversation…</span> <ConversationCloseAction /></div>;
+    // targetKey describes the entire address; keeping the object out avoids re-acquiring on identity churn.
+  }, [leases, id, targetKey, sessionId, services]);
+  if (claimError !== null) return <div className="kanban-native-state"><div role="alert">{claimError}</div><div className="kb-actions"><ConversationCloseAction /></div></div>;
+  if (lease?.status === 'error') return <div className="kanban-native-state"><div role="alert">{lease.error ?? 'The native conversation could not open.'}</div><div className="kb-actions"><button type="button" onClick={() => leases.retry(target ?? id)}>Retry conversation</button><ConversationCloseAction /></div></div>;
+  if (lease?.reference === undefined) return <div className="kanban-native-state"><span role="status">Opening native conversation…</span> <ConversationCloseAction /></div>;
+  const reference = lease.reference;
   const Provider = owner.SessionProvider;
   return <Provider session={reference}>
     <div className="kb-session-frame">
@@ -102,3 +88,10 @@ export function RetainedConversation({ id, target, owner, services }: {
     </div>
   </Provider>;
 }
+
+/**
+ * Retain one native session (or subagent address) through the drawer lease scope
+ * and render the hosted header above the public content factory. The native
+ * content owns history settling and open-failure presentation.
+ */
+export const RetainedConversation = memo(RetainedConversationView);

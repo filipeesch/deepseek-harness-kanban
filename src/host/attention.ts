@@ -13,7 +13,7 @@ export interface AttentionCoordinatorOptions {
   source: ConversationFactsSource;
   tasks: () => readonly AttentionTask[];
   pendingQuestion: (sessionId: string) => boolean;
-  refreshWorktrees: () => Promise<void>;
+  runPendingWork: () => Promise<void>;
   onChange: () => void;
   report: (error: unknown) => void;
   debounceMs?: number;
@@ -143,7 +143,7 @@ export class AttentionCoordinator {
     this.ticking = true;
     try {
       try {
-        await this.options.refreshWorktrees();
+        await this.options.runPendingWork();
       } catch (error) {
         this.options.report(error);
       }

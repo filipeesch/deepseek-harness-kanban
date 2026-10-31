@@ -9,6 +9,7 @@ import { conversationLabel, type SessionTitles } from './conversation-label.js';
 import { ClosedConversationsMenu } from './closed-conversations.js';
 import { ConversationActionsProvider, ConversationCloseAction, type ConversationActions } from './conversation-actions.js';
 import { ConversationNotices } from './conversation-notices.js';
+import { useOptionalConversationLeases } from './conversation-lease-context.js';
 import {
   ConversationNavigationProvider, createConversationNavigation,
   type ConversationLineagePort, type ConversationNavigation, type DrawerSubagentAddress,
@@ -40,6 +41,7 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
   const [selected, setSelected] = usePageField(viewState, 'conversationId');
   const [selectionRequired, setSelectionRequired] = usePageField(viewState, 'conversationSelectionRequired');
   const action = useAction(run);
+  const leases = useOptionalConversationLeases();
   const id = useId();
   const [commandScope, setCommandScope] = useState<CommandScope | null>(null);
   const [creationPending, setCreationPending] = useState(false);
@@ -49,15 +51,19 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
   const [focusTarget, setFocusTarget] = useState<string | null>(null);
   const canSelectDefault = !creationPending && !creationError && !selectionRequired;
   useEffect(() => {
-    if (canSelectDefault && (selected === null || !open.includes(selected))) setSelected(open[0] ?? null);
-  }, [openKey, selected, setSelected, canSelectDefault]);
+    if (!canSelectDefault || (selected !== null && open.includes(selected))) return;
+    const next = open[0] ?? null;
+    setSelected(next);
+    if (next !== null) leases?.acquireRoot(next);
+  }, [openKey, selected, setSelected, canSelectDefault, leases]);
   const active = resolveActiveConversation(task.sessionIds, task.closedSessionIds, selected, canSelectDefault) ?? undefined;
   const chooseConversation = useCallback((sessionId: string) => {
+    leases?.acquireRoot(sessionId);
     onPeek(null);
     setSelected(sessionId);
     setSelectionRequired(false);
     setCreationError(null);
-  }, [onPeek, setSelected, setSelectionRequired]);
+  }, [leases, onPeek, setSelected, setSelectionRequired]);
   const navigation = useMemo<ConversationNavigation>(() => createConversationNavigation({
     task,
     selectRoot: chooseConversation,

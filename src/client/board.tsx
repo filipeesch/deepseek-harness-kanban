@@ -8,6 +8,7 @@ import { DirectoryPickerProvider } from './services.js';
 import type { DirectoryPickerPort } from './directory-picker.js';
 import { TaskDrawer } from './drawer.js';
 import type { SessionTitles } from './conversation-label.js';
+import type { ConversationLeaseEnvironment } from './conversation-leases.js';
 import type { ConversationLineagePort, DrawerSubagentAddress } from './conversation-navigation.js';
 import { transitionAccess } from '../domain/transitions.js';
 import { entryInstruction, hasUnresolvedEntry } from '../domain/stage-entry.js';
@@ -35,6 +36,8 @@ export interface BoardViewProps {
   renderConversation: (id: string, target?: DrawerSubagentAddress) => ReactNode;
   pageState?: BoardPageState;
   sessionTitles?: SessionTitles;
+  /** Lease scope owned by each mounted task drawer; absent only in isolated render harnesses. */
+  conversationLeases?: ConversationLeaseEnvironment;
   picker?: DirectoryPickerPort | null;
   /** Owned by its provider, which also reconciles it; the board reconciles only its own fallback. */
   autoRun?: AutoRunController;
@@ -53,7 +56,7 @@ export function columnLayout(workflow: Workflow): Array<{ key: string; group?: C
   return result;
 }
 
-export function BoardView({ api, renderConversation, pageState, sessionTitles, picker = null, autoRun: providedAutoRun, lineage }: BoardViewProps) {
+export function BoardView({ api, renderConversation, pageState, sessionTitles, conversationLeases, picker = null, autoRun: providedAutoRun, lineage }: BoardViewProps) {
   const [localPageState] = useState(createBoardPageState); const preferences = pageState ?? localPageState;
   const [snapshot, setSnapshot] = useState<KanbanSnapshot | null>(null); const latest = useRef<KanbanSnapshot | null>(null); const live = useRef(false); const currentApi = useRef(api); currentApi.current = api;
   const [loadError, setLoadError] = useState<Problem | null>(null); const [loadAttempt, setLoadAttempt] = useState(0);
@@ -349,7 +352,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
     {state && <><div className="kb-page-body" ref={boardBody} onPointerDown={onBoardPointerDown}>{state.projects.length === 0 && <div className="kb-empty"><h2>Add your first project</h2><p>Register a project folder, and its Git root when it is a repository, to create tasks.</p><button type="button" className="kb-button kb-primary" onClick={() => setConfiguration('Projects')}>Configure projects</button></div>}
       <div className="kb-columns" aria-label="Workflow columns">{columnLayout(state.workflow).map(slot => <section key={slot.key} className={'kb-column-slot ' + (slot.group ? 'kb-column-group' : '')} aria-label={slot.group?.name}>{slot.group && <h2 className="kb-group-heading">{slot.group.name}</h2>}{slot.columns.map(column => { const tasks = tasksForColumn(column.id); const restricted = Boolean(drag && drag.overColumnId === column.id && transitionAccess(state.workflow, drag.sourceColumnId, column.id) === 'restricted');
         return <section className={'kb-column' + (restricted ? ' kb-drop-restricted' : '')} key={column.id} aria-label={column.name + ' column'} data-column-id={column.id}><header className="kb-column-header"><h2>{column.name}</h2><span aria-label={tasks.length + ' tasks'}>{tasks.length}</span></header>{column.id === state.workflow.initialColumnId && renderNewTaskButton(column)}<div className="kb-card-list">{tasks.map(task => renderCard(task, column))}{drag?.overColumnId === column.id && <div className={'kb-drop-indicator' + (restricted ? ' kb-drop-indicator-restricted' : '')} style={{ top: drag.indicatorY }} aria-hidden="true" />}{tasks.length === 0 && <p className="kb-empty-column">No matching tasks</p>}</div></section>; })}</section>)}</div></div>
-      {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} conversationAttention={snapshot?.conversationAttention} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} sessionTitles={sessionTitles} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} lineage={lineage} />}
+      {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} conversationAttention={snapshot?.conversationAttention} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} sessionTitles={sessionTitles} {...(conversationLeases === undefined ? {} : { conversationLeases })} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} lineage={lineage} />}
 
     {newTask && state && <NewTaskDialog state={state} run={run} onClose={() => setNewTask(false)} onCreated={openTask} />}
     {destruction && (() => {

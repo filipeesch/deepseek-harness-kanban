@@ -223,6 +223,14 @@ export class HubRepository {
     return undefined;
   }
 
+  /** Whether any task owns this Session, without cloning the Hub it belongs to. */
+  hasTaskSession(sessionId: string): boolean {
+    for (const hub of this.hubs.values()) {
+      for (const task of hub.tasks) if (task.sessionIds.includes(sessionId)) return true;
+    }
+    return false;
+  }
+
   findTaskBySession(sessionId: string): LocatedTask | undefined {
     for (const hub of this.hubs.values()) {
       const task = hub.tasks.find(value => value.sessionIds.includes(sessionId));
