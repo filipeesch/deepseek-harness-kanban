@@ -1,4 +1,4 @@
-import type { BoardState, CreateWorktree, GitProject, HubState, KanbanMeta, ProjectLocation, SessionFacts } from './types.js';
+import type { BoardState, ConversationFacts, CreateWorktree, GitProject, HubState, KanbanMeta, ProjectLocation } from './types.js';
 export interface StateStorage { load(): Promise<unknown | null>; save(state: BoardState): Promise<void> }
 /** Durable Hub-record storage. The adapter owns the DSH domain; the repository owns the write chain. */
 export interface HubStorage {
@@ -37,8 +37,8 @@ export interface SessionPort extends SessionTopologyPort {
   isIdle(sessionId: string): Promise<boolean>;
   send(sessionId: string, text: string, requestId?: string): Promise<void>;
   archive(sessionId: string): Promise<void>;
-  /** Native execution facts: turn, background work, pending interaction, and the last outcome. */
-  facts(sessionId: string): Promise<SessionFacts>;
+  /** Native execution facts: running agents, background work, pending interaction, and the last settled turn. */
+  facts(sessionId: string): Promise<ConversationFacts>;
   /** Includes cold sessions' projected effective directories where available. */
   directories(within?: string): Promise<Array<{ sessionId: string; directory: string }>>;
 }

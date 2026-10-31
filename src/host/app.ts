@@ -3,7 +3,7 @@ import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { canTransition, transitionAccess } from '../domain/transitions.js';
 import { entryInstruction, nextEnteredAt } from '../domain/stage-entry.js';
-import type { BoardSettings, Command, HubState, HubTask, KanbanSnapshot, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound } from '../shared/types.js';
+import type { BoardSettings, Command, HostSnapshot, HubState, HubTask, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound } from '../shared/types.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionStore } from './question-storage.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
@@ -140,11 +140,11 @@ export class KanbanApp {
  }
  activityChanged():void{if(this.disposed)return;this.attention.touch();this.changed();}
  sessionActivity(sessionId?:string):void{if(this.disposed)return;this.attention.touch(sessionId);this.changed();}
- async snapshot(refreshAttention=false):Promise<KanbanSnapshot>{
+ async snapshot(refreshAttention=false):Promise<HostSnapshot>{
   if(refreshAttention){this.attention.invalidate();this.sequence++;}
   const sequence=this.sequence;const state=this.hubs.snapshot();const questionRounds=structuredClone([...this.questions.getRounds()]);
-  const attention=await this.attention.project(this.locator.all().map(located=>({id:located.task.id,sessionIds:located.task.sessionIds})));
-  return {state,attention,sequence,questionRounds};
+  const conversations=await this.attention.project(this.locator.all().map(located=>({id:located.task.id,sessionIds:located.task.sessionIds})));
+  return {state,conversations,sequence,questionRounds};
  }
  async branches(taskId:string):Promise<string[]>{const located=this.locatedTask(taskId);return this.git.branches(requireGitProject(located.project),located.task.sessionIds);}
  async worktreeDefault(taskId:string):Promise<{branchName:string;path:string}>{
@@ -267,10 +267,10 @@ export class KanbanApp {
  }
  saveNote(input:Extract<Command,{type:'note.save'}>){return this.serial(()=>this.saveNoteNow(input));}
  private async saveNoteNow(input:Extract<Command,{type:'note.save'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).saveNote(input.taskId,{id:input.noteId,content:input.content,tags:input.tags});}
- command(command:Command):Promise<KanbanSnapshot>{return this.serial(()=>this.execute(command));}
- private async execute(command:Command):Promise<KanbanSnapshot>{
+ command(command:Command):Promise<HostSnapshot>{return this.serial(()=>this.execute(command));}
+ private async execute(command:Command):Promise<HostSnapshot>{
   invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');
-  let commandReceipt:KanbanSnapshot['commandReceipt'];
+  let commandReceipt:HostSnapshot['commandReceipt'];
   switch(command.type){
    case 'hub.create':{const hub=await this.hubs.createHub(command.name);commandReceipt={kind:'hub',id:hub.id};break;}
    case 'hub.rename':{await this.hubs.renameHub(command.hubId,command.name,command.expectedRevision);break;}

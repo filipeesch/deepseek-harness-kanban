@@ -94,7 +94,7 @@ describe('Hub-scoped host commands', () => {
     f.sessions.busy.add(task.sessionIds[0]!);
     f.app.sessionActivity(task.sessionIds[0]!);
     const snapshot = await f.app.snapshot();
-    expect(snapshot.attention[task.id]?.running).toBe(true);
+    expect(snapshot.conversations[task.sessionIds[0]!]?.running).toBe(true);
   });
 
   it('rejects a board that does not belong to the supplied hub_id', async () => {

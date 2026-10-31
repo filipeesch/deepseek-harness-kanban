@@ -1,18 +1,16 @@
-import type { Attention, BackgroundActivity, BackgroundKind, SessionFacts } from '../shared/types.js';
-import { EMPTY_ATTENTION } from '../shared/types.js';
-import type { SessionFactsSource } from './native-facts.js';
+import type { ConversationFacts } from '../shared/types.js';
+import { EMPTY_CONVERSATION_FACTS } from '../shared/types.js';
+import type { ConversationFactsSource } from './native-facts.js';
 
-const MAX_LABEL_LENGTH = 120;
 /** Bounded re-reads after a transient facts failure; a new edge resets the allowance. */
 export const MAX_READ_RETRIES = 5;
-const KIND_ORDER: Record<BackgroundKind, number> = { job: 0, subagent: 1, schedule: 2 };
 const DEFAULT_DEBOUNCE_MS = 50;
 const DEFAULT_RECONCILE_MS = 2_000;
 
 /** One task whose conversations contribute to its attention. */
 export interface AttentionTask { id: string; sessionIds: readonly string[] }
 export interface AttentionCoordinatorOptions {
-  source: SessionFactsSource;
+  source: ConversationFactsSource;
   tasks: () => readonly AttentionTask[];
   pendingQuestion: (sessionId: string) => boolean;
   refreshWorktrees: () => Promise<void>;
@@ -22,17 +20,23 @@ export interface AttentionCoordinatorOptions {
   reconcileMs?: number;
 }
 
-function hasActive(attention: Record<string, Attention>): boolean {
-  return Object.values(attention).some(value => value.running || value.background.length > 0);
+function hasActive(facts: Record<string, ConversationFacts>): boolean {
+  return Object.values(facts).some(value => value.running || value.background.length > 0);
 }
-function sameAttention(left: Record<string, Attention>, right: Record<string, Attention>): boolean {
+
+function sameSettledTurn(left: ConversationFacts['settledTurn'], right: ConversationFacts['settledTurn']): boolean {
+  return (left?.seq ?? null) === (right?.seq ?? null) && (left?.outcome ?? null) === (right?.outcome ?? null);
+}
+
+/** Compare two conversation-fact projections for the host's publish-on-change rule. */
+export function sameConversationFacts(left: Record<string, ConversationFacts>, right: Record<string, ConversationFacts>): boolean {
   const keys = Object.keys(left);
   if (keys.length !== Object.keys(right).length) return false;
   for (const key of keys) {
     const before = left[key]!, after = right[key];
     if (!after) return false;
-    if (before.running !== after.running || before.unread !== after.unread
-      || before.awaitingReply !== after.awaitingReply || before.failed !== after.failed) return false;
+    if (before.running !== after.running || before.awaitingReply !== after.awaitingReply) return false;
+    if (!sameSettledTurn(before.settledTurn, after.settledTurn)) return false;
     if (before.background.length !== after.background.length) return false;
     for (let index = 0; index < before.background.length; index += 1) {
       if (before.background[index]!.kind !== after.background[index]!.kind
@@ -42,43 +46,20 @@ function sameAttention(left: Record<string, Attention>, right: Record<string, At
   return true;
 }
 
-/** Order every activity by family and bound each label; the list keeps one entry per activity. */
-export function normalizeBackground(items: readonly BackgroundActivity[]): BackgroundActivity[] {
-  return items
-    .map(item => ({ kind: item.kind, label: item.label.length > MAX_LABEL_LENGTH ? item.label.slice(0, MAX_LABEL_LENGTH - 1) + '…' : item.label }))
-    .sort((left, right) => KIND_ORDER[left.kind] - KIND_ORDER[right.kind]);
-}
-
-/** Combine one task's conversation attention into its task-level attention. */
-export function mergeTaskAttention(values: readonly Attention[]): Attention {
-  const merged: Attention = { ...EMPTY_ATTENTION, background: [] };
-  const background: BackgroundActivity[] = [];
-  for (const value of values) {
-    merged.running ||= value.running;
-    merged.unread ||= value.unread;
-    merged.awaitingReply ||= value.awaitingReply;
-    merged.failed ||= value.failed;
-    background.push(...value.background);
-  }
-  merged.background = normalizeBackground(background);
-  return merged;
-}
-
-const FAILED_FACTS: SessionFacts = { turn: false, background: [], awaitingReply: false, failed: true };
-
 /**
- * Owns the per-conversation fact cache, invalidation, and task projection. One coalesced
+ * Owns the per-conversation fact cache, invalidation, and projection. One coalesced
  * tick keeps the pending-worktree resume coupled to activity changes; the caller decides
  * when to publish.
  */
 export class AttentionCoordinator {
-  private readonly cache = new Map<string, Promise<SessionFacts>>();
+  private readonly cache = new Map<string, Promise<ConversationFacts>>();
+  private readonly lastGood = new Map<string, ConversationFacts>();
   private readonly failedReads = new Map<string, number>();
   private readonly debounceMs: number;
   private readonly reconcileMs: number;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private timerKind: 'debounce' | 'reconcile' | undefined;
-  private last: Record<string, Attention> | undefined;
+  private last: Record<string, ConversationFacts> | undefined;
   private ticking = false;
   private tickAgain = false;
   private disposed = false;
@@ -103,8 +84,8 @@ export class AttentionCoordinator {
     this.schedule(this.debounceMs, 'debounce');
   }
 
-  /** Project the current tasks' attention and reconcile the bounded background timer. */
-  async project(tasks?: readonly AttentionTask[]): Promise<Record<string, Attention>> {
+  /** Project the current conversations' facts and reconcile the bounded background timer. */
+  async project(tasks?: readonly AttentionTask[]): Promise<Record<string, ConversationFacts>> {
     if (this.disposed) return {};
     const projected = await this.projectFresh(tasks);
     if (this.disposed) return projected;
@@ -121,6 +102,7 @@ export class AttentionCoordinator {
     this.timerKind = undefined;
     this.last = undefined;
     this.cache.clear();
+    this.lastGood.clear();
     this.failedReads.clear();
   }
 
@@ -139,7 +121,7 @@ export class AttentionCoordinator {
     return [...this.failedReads.values()].some(attempts => attempts < MAX_READ_RETRIES);
   }
 
-  private arm(projected: Record<string, Attention>): void {
+  private arm(projected: Record<string, ConversationFacts>): void {
     if (this.disposed) return;
     if (hasActive(projected) || this.retrying()) {
       if (this.timer === undefined) this.schedule(this.reconcileMs, 'reconcile');
@@ -169,7 +151,7 @@ export class AttentionCoordinator {
       this.invalidate();
       const projected = await this.projectFresh();
       if (this.disposed) return;
-      const changed = !this.last || !sameAttention(this.last, projected);
+      const changed = !this.last || !sameConversationFacts(this.last, projected);
       this.last = projected;
       if (changed) this.options.onChange();
       this.arm(projected);
@@ -184,29 +166,35 @@ export class AttentionCoordinator {
     }
   }
 
-  private async projectFresh(tasks?: readonly AttentionTask[]): Promise<Record<string, Attention>> {
+  private async projectFresh(tasks?: readonly AttentionTask[]): Promise<Record<string, ConversationFacts>> {
     if (this.disposed) return {};
     const list = tasks ?? this.options.tasks();
     const known = new Set<string>();
-    const attention: Record<string, Attention> = {};
+    const facts: Record<string, ConversationFacts> = {};
     for (const task of list) {
-      const values: Attention[] = [];
       for (const sessionId of task.sessionIds) {
+        if (known.has(sessionId)) continue;
         known.add(sessionId);
-        values.push(this.toAttention(sessionId, await this.read(sessionId)));
+        facts[sessionId] = this.withPendingQuestion(sessionId, await this.read(sessionId));
       }
-      attention[task.id] = mergeTaskAttention(values);
     }
     for (const sessionId of [...this.cache.keys()]) if (!known.has(sessionId)) this.cache.delete(sessionId);
+    for (const sessionId of [...this.lastGood.keys()]) if (!known.has(sessionId)) this.lastGood.delete(sessionId);
     for (const sessionId of [...this.failedReads.keys()]) if (!known.has(sessionId)) this.failedReads.delete(sessionId);
-    return attention;
+    return facts;
   }
 
-  private read(sessionId: string): Promise<SessionFacts> {
+  private withPendingQuestion(sessionId: string, facts: ConversationFacts): ConversationFacts {
+    if (facts.awaitingReply || !this.options.pendingQuestion(sessionId)) return facts;
+    return { ...facts, awaitingReply: true };
+  }
+
+  private read(sessionId: string): Promise<ConversationFacts> {
     const cached = this.cache.get(sessionId);
     if (cached) return cached;
-    const pending: Promise<SessionFacts> = this.options.source.read(sessionId).then(facts => {
+    const pending: Promise<ConversationFacts> = this.options.source.read(sessionId).then(facts => {
       this.failedReads.delete(sessionId);
+      this.lastGood.set(sessionId, facts);
       return facts;
     }).catch(() => {
       // A late rejection must not mark or evict a newer successful read.
@@ -214,19 +202,10 @@ export class AttentionCoordinator {
         this.cache.delete(sessionId);
         this.failedReads.set(sessionId, (this.failedReads.get(sessionId) ?? 0) + 1);
       }
-      return FAILED_FACTS;
+      // Keep the last known facts so a transient failure does not flicker a presented indicator.
+      return this.lastGood.get(sessionId) ?? EMPTY_CONVERSATION_FACTS;
     });
     this.cache.set(sessionId, pending);
     return pending;
-  }
-
-  private toAttention(sessionId: string, facts: SessionFacts): Attention {
-    return {
-      running: facts.turn,
-      background: facts.background,
-      unread: false,
-      awaitingReply: facts.awaitingReply || this.options.pendingQuestion(sessionId),
-      failed: facts.failed,
-    };
   }
 }

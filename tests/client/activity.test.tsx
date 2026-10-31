@@ -10,36 +10,36 @@ const attention = (overrides: Partial<Attention> = {}): Attention => ({
   running: false, background: [], unread: false, awaitingReply: false, failed: false, ...overrides,
 });
 const job = { kind: 'job' as const, label: 'Run tests' };
-const subagent = { kind: 'subagent' as const, label: 'Research' };
 const schedule = { kind: 'schedule' as const, label: 'Wake later' };
 
 describe('background activity copy', () => {
-  it('counts families in a stable order and names the labels', () => {
+  it('counts the job and schedule families in a stable order and names the labels', () => {
     expect(backgroundSummary([])).toBe('');
     expect(backgroundSummary([job])).toBe('1 job');
-    expect(backgroundSummary([job, job, subagent])).toBe('2 jobs · 1 subagent');
-    expect(backgroundSummary([schedule, subagent, job])).toBe('1 job · 1 subagent · 1 schedule');
-    expect(backgroundDetails([job, subagent])).toBe('Run tests · Research');
+    expect(backgroundSummary([job, job, schedule])).toBe('2 jobs · 1 schedule');
+    expect(backgroundSummary([schedule, job])).toBe('1 job · 1 schedule');
+    expect(backgroundDetails([job, schedule])).toBe('Run tests · Wake later');
+    expect(backgroundSummary([job, schedule])).not.toContain('subagent');
   });
 
   it('keeps one family label and aggregates once families mix', () => {
     expect(backgroundIndicatorText([])).toBe('');
     expect(backgroundIndicatorText([job])).toBe('1 job');
     expect(backgroundIndicatorText([job, job])).toBe('2 jobs');
-    expect(backgroundIndicatorText([job, subagent])).toBe('2 activities');
-    expect(backgroundIndicatorText([job, subagent, schedule])).toBe('3 activities');
-    expect(backgroundAccessibleName([job, subagent])).toBe('Background activity: 2 activities. Run tests · Research');
+    expect(backgroundIndicatorText([job, schedule])).toBe('2 activities');
+    expect(backgroundIndicatorText([job, job, schedule])).toBe('3 activities');
+    expect(backgroundAccessibleName([job, schedule])).toBe('Background activity: 2 activities. Run tests · Wake later');
   });
 });
 
 describe('task activity drawer variant', () => {
-  it('shows the turn status and background labels without a second live region', () => {
-    render(<TaskActivity attention={attention({ running: true, background: [job, subagent] })} />);
+  it('shows the agent execution status and background labels without a second live region', () => {
+    render(<TaskActivity attention={attention({ running: true, background: [job, schedule] })} />);
     expect(screen.queryByRole('status')).toBeNull();
     expect(screen.getByText('Working')).toBeTruthy();
-    const detail = screen.getByText('Background: Run tests · Research');
+    const detail = screen.getByText('Background: Run tests · Wake later');
     expect(detail.className).toBe('kb-task-background');
-    expect(detail.getAttribute('title')).toBe('Run tests · Research');
+    expect(detail.getAttribute('title')).toBe('Run tests · Wake later');
   });
 
   it('shows background labels alone after the turn ends', () => {

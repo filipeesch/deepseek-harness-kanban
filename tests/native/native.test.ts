@@ -260,20 +260,20 @@ describe('native conversations', () => {
     expect(f.archiveSession).toHaveBeenCalledWith('a');
     expect(f.create).not.toHaveBeenCalled(); expect(f.set).not.toHaveBeenCalled();
   });
-  it('keeps turn execution, background activity, awaiting reply, and the latest failed outcome independent; unread stays client-owned', async () => {
+  it('keeps agent execution, background activity, awaiting reply, and the latest settled turn independent; unread stays client-owned', async () => {
     const f = fixture();
     f.waterfall.mockResolvedValue([{ kind: 'turn' }, { kind: 'job', items: [{ id: 'job-1', label: 'Run tests' }] }]);
     f.projection.mockResolvedValue({ kind: 'sequenced', asOfSeq: 3, values: { userQuestions: { active: [{ callId: 'q' }] } } } as unknown as Projection);
     const snapshot = f.inspections.get('a')!;
-    f.inspections.set('a', { ...snapshot, events: [envelope('turn/end', { turn: 1, reason: { kind: 'error', error: { message: 'Failed', code: 'UNKNOWN' } } })] });
+    f.inspections.set('a', { ...snapshot, events: [envelope('turn/end', { turn: 1, reason: { kind: 'error', error: { message: 'Failed', code: 'UNKNOWN' } } }, 4)] });
     expect(await f.sessions.facts('a')).toEqual({
-      turn: true,
+      running: true,
       background: [{ kind: 'job', label: 'Run tests' }],
       awaitingReply: true,
-      failed: true,
+      settledTurn: { seq: 4, outcome: 'error' },
     });
-    f.inspections.set('a', { ...snapshot, events: [envelope('turn/end', { turn: 1, reason: { kind: 'error' } }), envelope('turn/end', { turn: 2, reason: { kind: 'completed' } }, 1)] });
-    expect((await f.sessions.facts('a')).failed).toBe(false);
+    f.inspections.set('a', { ...snapshot, events: [envelope('turn/end', { turn: 1, reason: { kind: 'error' } }, 4), envelope('turn/end', { turn: 2, reason: { kind: 'completed' } }, 5)] });
+    expect((await f.sessions.facts('a')).settledTurn).toEqual({ seq: 5, outcome: 'ok' });
   });
   it('protects cold shared worktrees using exact directories rather than immutable list cwd', async () => {
     const f = fixture(); const coldId = SessionId('cold'); const changed = join(root, 'external-tree', 'api');

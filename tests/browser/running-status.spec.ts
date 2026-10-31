@@ -29,7 +29,7 @@ test('cards show working and background activity with a real pulse', async ({ pa
 
   const both = page.locator('[data-task-id="long-2"]');
   await expect(both.locator('.kb-working')).toBeVisible();
-  await expect(both.getByText('1 subagent')).toBeVisible();
+  await expect(both.getByText('1 schedule')).toBeVisible();
 });
 
 test('mixed background kinds aggregate into one activity line beside the identity row', async ({ page }) => {
@@ -38,12 +38,12 @@ test('mixed background kinds aggregate into one activity line beside the identit
   const card = page.locator('[data-task-id="long-3"]');
   const chip = card.locator('.kb-card-activity .kb-background');
   await expect(chip).toHaveText('2 activities');
-  await expect(chip).toHaveAttribute('aria-label', 'Background activity: 2 activities. Run tests · Research');
-  await expect(chip).toHaveAttribute('title', 'Run tests · Research');
+  await expect(chip).toHaveAttribute('aria-label', 'Background activity: 2 activities. Run tests · Wake later');
+  await expect(chip).toHaveAttribute('title', 'Run tests · Wake later');
   await expect(chip).not.toContainText('job');
   await expect(chip).not.toContainText('subagent');
 
-  const dots = card.locator('.kb-card-context .kb-card-attention .kb-dot');
+  const dots = card.locator('.kb-card-context .kb-attention-dots .kb-dot');
   await expect(dots).toHaveCount(3);
   await expect(card.locator('.kb-card-context').getByText('2 activities')).toHaveCount(0);
   const activity = await card.locator('.kb-card-activity').evaluate(element => Math.round(element.getBoundingClientRect().height));
@@ -55,7 +55,7 @@ test('drawer header keeps the execution status across sections', async ({ page }
   await page.getByRole('button', { name: 'Open task Long column task 2', exact: true }).click();
   const drawer = page.locator('.kb-drawer');
   await expect(drawer.locator('.kb-drawer-header .kb-working')).toBeVisible();
-  await expect(drawer.locator('.kb-drawer-header').getByText('Background: Research')).toBeVisible();
+  await expect(drawer.locator('.kb-drawer-header').getByText('Background: Wake later')).toBeVisible();
   for (const tab of ['Info', 'Git', 'Notes']) {
     await drawer.getByRole('tab', { name: tab }).click();
     await expect(drawer.locator('.kb-drawer-header .kb-working')).toBeVisible();
@@ -69,4 +69,22 @@ test('reduced motion keeps the indicator visible without animation', async ({ pa
   expect(await page.locator('.kb-working-dot').first().evaluate(element => element.getAnimations().length)).toBe(0);
   await expect(page.locator('.kb-working').first()).toBeVisible();
   await expect(page.locator('.kb-card[data-working=true]').first()).toBeVisible();
+});
+
+test('working label matches the background chip typography', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=activity');
+  await page.waitForSelector('.kb-card');
+  const working = page.locator('[data-task-id="long-0"] .kb-working');
+  const chip = page.locator('[data-task-id="long-1"] .kb-background');
+  const reading = (locator: typeof working) => locator.evaluate(element => ({ size: getComputedStyle(element).fontSize, spacing: getComputedStyle(element).letterSpacing }));
+  const cardWorking = await reading(working);
+  const cardChip = await reading(chip);
+  expect(cardWorking.size).toBe(cardChip.size);
+  expect(cardWorking.size).toBe('10.5px');
+  expect(cardWorking.spacing).toBe('normal');
+
+  await page.getByRole('button', { name: 'Open task Long column task 0', exact: true }).click();
+  const drawerWorking = page.locator('.kb-drawer-header .kb-working');
+  await expect(drawerWorking).toBeVisible();
+  expect(await reading(drawerWorking)).toEqual(cardWorking);
 });

@@ -7,19 +7,19 @@ import { RemoteStream, type RemoteStreamOptions } from '@deepseek-ai/dsh-api-gat
 import type { RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol';
 import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client';
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots';
-import type { KanbanSnapshot, QuestionRound } from '../../src/shared/types.js';
+import type { HostSnapshot, QuestionRound } from '../../src/shared/types.js';
 import { apply, inject } from '../../src/client.js';
 import { TYPERT_REMOTE } from '../../src/remote.js';
 const disposers: Array<() => Promise<void>> = [];
 afterEach(async () => { cleanup(); for (const dispose of disposers.splice(0)) await dispose(); });
 beforeEach(() => { try { globalThis.localStorage?.clear(); } catch { /* jsdom storage optional */ } });
 const question: QuestionRound = { id: 'r', sessionId: 'a', turnId: 't', complete: true, answered: false, pages: [{ callId: 'call-a', sequence: 1, page: { question: 'Choose the implementation', type: 'freetext' } }] };
-function snapshot(rounds: QuestionRound[] = [question]): KanbanSnapshot {
+function snapshot(rounds: QuestionRound[] = [question]): HostSnapshot {
   const now = '2026-10-21T00:00:00Z';
-  return { sequence: 1, attention: {}, questionRounds: rounds, state: { hubs: [{ id: 'hub', name: 'Hub', revision: 1, projects: [{ id: 'p', name: 'Project', projectPath: '/project', gitRootPath: '/project' }], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }, { id: 'review', name: 'Review', onEnterPrompt: 'Review **carefully**.' }], groups: [] }, createdAt: now, updatedAt: now }], tasks: [{ id: 'task', boardId: 'board', projectId: 'p', title: 'Native task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' }], notes: [], createdAt: now, updatedAt: now }], settings: { revision: 0 } } };
+  return { sequence: 1, conversations: {}, questionRounds: rounds, state: { hubs: [{ id: 'hub', name: 'Hub', revision: 1, projects: [{ id: 'p', name: 'Project', projectPath: '/project', gitRootPath: '/project' }], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }, { id: 'review', name: 'Review', onEnterPrompt: 'Review **carefully**.' }], groups: [] }, createdAt: now, updatedAt: now }], tasks: [{ id: 'task', boardId: 'board', projectId: 'p', title: 'Native task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' }], notes: [], createdAt: now, updatedAt: now }], settings: { revision: 0 } } };
 }
 /** A two-Hub snapshot with a second board in the first Hub, for navigation coverage. */
-function twoHubSnapshot(): KanbanSnapshot {
+function twoHubSnapshot(): HostSnapshot {
   const value = snapshot([]);
   const hubA = value.state.hubs[0]!;
   hubA.name = 'Hub A';
@@ -87,7 +87,7 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
     questions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: rounds } }),
     dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
     agentPresets,
-    follow(signal?: AbortSignal): RemoteStreamHandle<KanbanSnapshot, never> {
+    follow(signal?: AbortSignal): RemoteStreamHandle<HostSnapshot, never> {
       return {
         async *[Symbol.asyncIterator]() { if (!signal?.aborted) await new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once: true })); },
         send(_value: never) {}, end() {}, dispose() {},
@@ -239,7 +239,7 @@ describe('public SDK plugin binding contracts', () => {
   });
   it('keeps an armed countdown running when the Kanban panel is hidden', async () => {
     const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;
-    const initial = (await f.remote.snapshot() as unknown as { value: { value: KanbanSnapshot } }).value.value;
+    const initial = (await f.remote.snapshot() as unknown as { value: { value: HostSnapshot } }).value.value;
     const moved = structuredClone(initial);
     const task = moved.state.hubs[0]!.tasks[0]!;
     task.columnId = 'review';

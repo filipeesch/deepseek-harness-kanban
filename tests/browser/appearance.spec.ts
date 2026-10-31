@@ -133,13 +133,14 @@ test('drawer header and background detail keep the host appearance across sectio
   await page.getByRole('button', { name: 'Open task Long column task 2', exact: true }).click();
   const drawer = page.locator('.kb-drawer');
   await expect(drawer.locator('.kb-drawer-header .kb-working')).toBeVisible();
-  await expect(drawer.locator('.kb-drawer-header')).toContainText('Background: Research');
+  await expect(drawer.locator('.kb-drawer-header')).toContainText('Background: Wake later');
+  await expect(drawer.getByRole('tab', { name: /Agent 1/ }).locator('.kb-attention-dots .kb-dot')).toHaveCount(0);
   const light = await appearance(page);
   expect(light.drawerContrast, 'the drawer detail is legible in light').toBeGreaterThanOrEqual(4.5);
   await page.screenshot({ path: path.join(OUT, 'appearance-drawer-light.png') });
   await drawer.getByRole('tab', { name: 'Info' }).click();
   await expect(drawer.locator('.kb-drawer-header .kb-working')).toBeVisible();
-  await expect(drawer.locator('.kb-drawer-header')).toContainText('Background: Research');
+  await expect(drawer.locator('.kb-drawer-header')).toContainText('Background: Wake later');
 
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('');
@@ -149,4 +150,16 @@ test('drawer header and background detail keep the host appearance across sectio
   expect(dark.drawerContrast, 'the drawer detail is legible in dark').toBeGreaterThanOrEqual(4.5);
   await page.screenshot({ path: path.join(OUT, 'appearance-drawer-dark.png') });
   await expect(page.locator('[data-task-id="long-1"]')).toContainText('1 job');
+});
+
+test('conversation tab shows every attention state in both appearances', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto(HARNESS + '?scenario=appearance');
+  await page.getByRole('button', { name: 'Open task Long column task 3', exact: true }).click();
+  const tab = page.locator('.kb-drawer').getByRole('tab', { name: /Agent 1/ });
+  await expect(tab.locator('.kb-attention-dots .kb-dot')).toHaveCount(3);
+  await page.screenshot({ path: '.verification/attention-tabs-light.png' });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('');
+  await page.screenshot({ path: '.verification/attention-tabs-dark.png' });
 });

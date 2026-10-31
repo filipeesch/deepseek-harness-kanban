@@ -75,11 +75,12 @@ describe('scoped Kanban page', () => {
   it('shows background work on its own after the turn ends', async () => {
     const { publish, get } = mount(); await loaded();
     const next = get();
-    next.attention.t2 = { running: false, background: [{ kind: 'subagent', label: 'Research' }], unread: false, awaitingReply: false, failed: false };
+    next.attention.t2 = { running: false, background: [{ kind: 'job', label: 'Run tests' }], unread: false, awaitingReply: false, failed: false };
     act(() => { publish(next); });
-    expect(screen.getByText('1 subagent')).toBeTruthy();
-    expect(screen.getByTitle('Research')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Open task Beta task' }).closest('.kb-card')?.getAttribute('data-working')).toBeNull();
+    const beta = screen.getByRole('button', { name: 'Open task Beta task' }).closest('.kb-card') as HTMLElement;
+    expect(within(beta).getByText('1 job')).toBeTruthy();
+    expect(within(beta).getByTitle('Run tests')).toBeTruthy();
+    expect(beta.getAttribute('data-working')).toBeNull();
   });
 
   it('keeps the task execution status in the drawer header across sections', async () => {

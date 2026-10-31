@@ -56,16 +56,28 @@ export interface KanbanMeta { initializedAt?: string; settingsRevision: number; 
 export interface KanbanState { hubs: HubState[]; settings: KanbanSettings }
 /** Legacy single-board state, read only by the migration path. */
 export interface BoardState { schemaVersion: 2; revision: number; workflowYaml: string; workflow: Workflow; projects: Project[]; tasks: Task[]; notes: Note[]; settings?: BoardSettings }
-export type BackgroundKind = 'job' | 'subagent' | 'schedule';
-/** One unsettled non-turn activity owned by a task conversation. */
+export type BackgroundKind = 'job' | 'schedule';
+/** One unsettled activity that outlives the turn, owned by a task conversation. */
 export interface BackgroundActivity { kind: BackgroundKind; label: string }
+/** The last settled assistant turn of one conversation, identified by its durable event sequence. */
+export interface SettledTurn { seq: number; outcome: 'ok' | 'error' }
 /** One conversation's native execution facts as the host owns them. */
-export interface SessionFacts { turn: boolean; background: BackgroundActivity[]; awaitingReply: boolean; failed: boolean }
-/** One conversation's native execution facts as the host owns them. */
+export interface ConversationFacts {
+  /** At least one owned agent is running: this conversation's own turn or a subagent descendant. */
+  running: boolean;
+  background: BackgroundActivity[];
+  awaitingReply: boolean;
+  settledTurn: SettledTurn | null;
+}
+export const EMPTY_CONVERSATION_FACTS: ConversationFacts = { running: false, background: [], awaitingReply: false, settledTurn: null };
+/** One conversation's projected attention, including the client-owned read state. */
 export interface Attention { running: boolean; background: BackgroundActivity[]; unread: boolean; awaitingReply: boolean; failed: boolean }
 /** Transient identity of the entity created by this exact command, never persisted. */
 export interface CommandReceipt { kind: 'hub' | 'board' | 'project' | 'task' | 'conversation' | 'note'; id: string }
-export interface KanbanSnapshot { commandReceipt?: CommandReceipt; state: KanbanState; attention: Record<string, Attention>; sequence: number; clientEpoch?: number; questionRounds?: QuestionRound[] }
+/** Host snapshot: durable state plus per-conversation attention facts. */
+export interface HostSnapshot { commandReceipt?: CommandReceipt; state: KanbanState; conversations: Record<string, ConversationFacts>; sequence: number; questionRounds?: QuestionRound[] }
+/** Client snapshot: host facts plus the client-owned attention projection. */
+export interface KanbanSnapshot extends Omit<HostSnapshot, 'conversations'> { attention: Record<string, Attention>; conversationAttention: Record<string, Attention>; clientEpoch?: number }
 export const EMPTY_ATTENTION: Attention = { running: false, background: [], unread: false, awaitingReply: false, failed: false };
 export interface ProjectInput { id?: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string }
 export interface NewTask { projectId: string; title: string; description: string; boardId?: string }

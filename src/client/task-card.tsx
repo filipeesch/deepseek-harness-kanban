@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import type { Attention, Column, Task } from '../shared/types.js';
 import { backgroundAccessibleName, backgroundDetails, backgroundIndicatorText, WorkingAnnouncement, WorkingBadge } from './activity.js';
+import { AttentionDots } from './attention-dots.js';
 import { autoRunEntryForColumn, RUN_FAILURE_FALLBACK, type AutoRunController } from './auto-run.js';
 import { CardInstructionAction, useAutoRunEntry } from './auto-run-view.js';
 import { AlertIcon, ClockIcon } from './icons.js';
@@ -39,15 +40,10 @@ export function cardStatusEntries(task: Task, runFailure?: string): CardStatusEn
 function CardContext({ taskId, title, projectName, attention, selectionMode, selected, onToggleSelect, onActivate }: {
   taskId: string; title: string; projectName: string; attention: Attention; selectionMode: boolean; selected: boolean; onToggleSelect: (taskId: string) => void; onActivate: () => void;
 }) {
-  const hasAttention = attention.unread || attention.awaitingReply || attention.failed;
   return <div className="kb-card-context" onClick={onActivate}>
     {selectionMode && <input type="checkbox" className="kb-card-select" aria-label={'Select ' + title} checked={selected} onClick={event => event.stopPropagation()} onChange={() => onToggleSelect(taskId)} />}
     <span className="kb-card-project" title={projectName}>{projectName}</span>
-    {hasAttention && <span className="kb-card-attention" role="group" aria-label={'Attention for ' + title}>
-      {attention.unread && <span className="kb-dot kb-blue" role="img" aria-label="Unread messages" title="Unread messages" />}
-      {attention.awaitingReply && <span className="kb-dot kb-orange" role="img" aria-label="Awaiting reply" title="Awaiting reply" />}
-      {attention.failed && <span className="kb-dot kb-red" role="img" aria-label="Agent failure" title="Agent failure" />}
-    </span>}
+    <AttentionDots value={attention} label={'Attention for ' + title} />
   </div>;
 }
 

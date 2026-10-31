@@ -2,21 +2,29 @@ import { RemoteSnapshotStream, RemoteStreamCarrierError, type ClientRemote } fro
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots';
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client';
+import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import type { KanbanRemote } from './remote.js';
-import type { ClientApi, Command, KanbanSnapshot, Outcome, Problem, QuestionRound, Task } from './shared/types.js';
-import { projectTaskAttention, ReminderTracker } from './client/attention.js';
+import type { Attention, ClientApi, Command, HostSnapshot, KanbanSnapshot, Outcome, Problem, QuestionRound, Task } from './shared/types.js';
+import { EMPTY_CONVERSATION_FACTS } from './shared/types.js';
+import { aggregateTaskAttention, projectConversation } from './client/attention-projection.js';
+import { ConversationReadTracker } from './client/conversation-read-tracker.js';
+import { browserStorage, type KeyValueStorage } from './client/key-value-storage.js';
+import { ReadAcknowledgments } from './client/read-acknowledgments.js';
 
 export interface BridgeStatus { error: Problem | null; connected: boolean }
 export interface QuestionView { rounds: readonly QuestionRound[]; errors: ReadonlyMap<string, Problem> }
 export type BridgeRemote = Pick<ClientRemote, '$stream'> & { kanban: KanbanRemote };
-type Baseline = { kind: 'baseline'; snapshot: KanbanSnapshot };
-function allTasks(snapshot: KanbanSnapshot): Task[] { return snapshot.state.hubs.flatMap(hub => hub.tasks); }
-type Update = { kind: 'update'; snapshot: KanbanSnapshot };
+type Baseline = { kind: 'baseline'; snapshot: HostSnapshot };
+function allTasks(snapshot: Pick<HostSnapshot, 'state'>): Task[] { return snapshot.state.hubs.flatMap(hub => hub.tasks); }
+type Update = { kind: 'update'; snapshot: HostSnapshot };
 function problem(error: unknown): Problem {
   if (typeof error === 'object' && error !== null && 'message' in error) {
     return { code: 'code' in error && typeof error.code === 'string' ? error.code : 'CLIENT_ERROR', message: String(error.message) };
   }
   return { code: 'CLIENT_ERROR', message: String(error) };
+}
+function closedSessions(snapshot: Pick<HostSnapshot, 'state'>): Set<string> {
+  return new Set(allTasks(snapshot).flatMap(task => task.closedSessionIds));
 }
 /** Native transport result wraps the plugin's independent business Outcome. Unwrap BOTH. */
 export function unwrap<T>(result: RemoteResult<Outcome<T>>): T {
@@ -38,26 +46,27 @@ export class ClientBridge {
   readonly questionsView = this.questionState.source;
   private readonly snapshots = new Set<(snapshot: KanbanSnapshot) => void>();
   private readonly runningSessions = new Set<string>();
-  private host: KanbanSnapshot | undefined;
+  private host: HostSnapshot | undefined;
   private merged: KanbanSnapshot | undefined;
   private clientEpoch = 0;
   private rounds: readonly QuestionRound[] = [];
   private readonly prepared = new Map<string, Promise<readonly QuestionRound[]>>();
   private readonly questionSessions = new Set<string>();
   private readonly dismissed = new Set<string>();
-  private readonly reminders = new ReminderTracker();
+  private readonly progress: ReadAcknowledgments;
+  private readonly reads: ConversationReadTracker;
   private readonly composers = new Set<string>();
   private readonly stopStatus: () => void;
   private control: RemoteSnapshotStream<Baseline, Update>;
   private restarting: Promise<void> | undefined;
   private disposed = false;
   readonly api: ClientApi;
-  constructor(private readonly remote: BridgeRemote, private readonly nativeStatus: HostObservable<SessionStatusSnapshot>) {
+  constructor(private readonly remote: BridgeRemote, private readonly nativeStatus: HostObservable<SessionStatusSnapshot>, options: { storage?: KeyValueStorage } = {}) {
+    this.progress = new ReadAcknowledgments(options.storage ?? browserStorage());
+    this.reads = new ConversationReadTracker(this.progress);
     this.control = this.makeControl();
-    this.reminders.sync(this.nativeStatus.getSnapshot());
     this.syncRunning(this.nativeStatus.getSnapshot());
     this.stopStatus = nativeStatus.subscribe(() => {
-      this.reminders.sync(this.nativeStatus.getSnapshot());
       this.publish();
       if (this.syncRunning(this.nativeStatus.getSnapshot())) this.refreshAttention();
     });
@@ -70,7 +79,7 @@ export class ClientBridge {
       subscribe: (listener) => { this.snapshots.add(listener); return () => this.snapshots.delete(listener); },
     };
   }
-  private async unarySnapshot(request: () => Promise<RemoteResult<Outcome<KanbanSnapshot>>>): Promise<KanbanSnapshot> {
+  private async unarySnapshot(request: () => Promise<RemoteResult<Outcome<HostSnapshot>>>): Promise<KanbanSnapshot> {
     const epoch = this.clientEpoch;
     try {
       const response = unwrap(await request());
@@ -116,24 +125,56 @@ export class ClientBridge {
     })().catch(error => this.fail(error)).finally(() => { this.restarting = undefined; });
   }
   private fail(error: unknown): void { if (!this.disposed) this.health.set({ error: problem(error), connected: false }); }
-  private accept(snapshot: KanbanSnapshot, baseline = false): void {
+  private accept(snapshot: HostSnapshot, baseline = false): void {
     if (this.disposed || (!baseline && this.host && snapshot.sequence < this.host.sequence)) return;
+    const previous = this.host;
     if (baseline) { this.clientEpoch++; this.prepared.clear(); }
+    // A close transition uses the facts the reader last saw, so a turn that settles
+    // after the close is still presented as unread.
+    this.acknowledgeClosed(previous, snapshot);
     this.host = snapshot;
+    if (baseline) this.pruneReads(snapshot);
+    this.progress.flush();
     if (snapshot.questionRounds !== undefined) { this.rounds = snapshot.questionRounds.filter(round => !this.dismissed.has(round.id)); this.publishQuestions(); }
     this.health.set({ error: null, connected: true });
     this.publish();
     // Ordinary chats are absent from host startup replay; refresh their tracked histories in each new epoch.
     if (baseline) for (const id of this.questionSessions) void this.prepareQuestions(id).catch(() => undefined);
   }
+  /** A conversation whose tab just closed acknowledges the turn that had already settled. */
+  private acknowledgeClosed(previous: HostSnapshot | undefined, next: HostSnapshot): void {
+    // A conversation already closed before this bridge started has no observed close
+    // transition; its settled turn stays unread until the conversation is reopened and read.
+    if (previous === undefined) return;
+    const before = closedSessions(previous);
+    for (const task of allTasks(next)) {
+      for (const sessionId of task.closedSessionIds) {
+        if (before.has(sessionId)) continue;
+        this.reads.close(sessionId);
+      }
+    }
+  }
+  private pruneReads(snapshot: HostSnapshot): void {
+    this.progress.prune(new Set(allTasks(snapshot).flatMap(task => task.sessionIds)));
+  }
   private publish(): void {
     if (this.disposed || !this.host) return;
-    const attention: KanbanSnapshot['attention'] = { ...this.host.attention };
     const statuses = this.nativeStatus.getSnapshot();
+    this.reads.sync(this.host.conversations);
+    const conversationAttention: Record<string, Attention> = {};
     for (const task of allTasks(this.host)) {
-      attention[task.id] = projectTaskAttention(this.host.attention[task.id], statuses, this.reminders, task.sessionIds);
+      for (const sessionId of task.sessionIds) {
+        if (conversationAttention[sessionId]) continue;
+        const facts = this.host.conversations[sessionId] ?? EMPTY_CONVERSATION_FACTS;
+        conversationAttention[sessionId] = projectConversation(facts, statuses.get(sessionId as SessionId), this.reads.acknowledged(sessionId));
+      }
     }
-    this.merged = { ...this.host, attention, questionRounds: [...this.rounds], clientEpoch: this.clientEpoch };
+    const attention: Record<string, Attention> = {};
+    for (const task of allTasks(this.host)) {
+      attention[task.id] = aggregateTaskAttention(task.sessionIds.flatMap(sessionId => conversationAttention[sessionId] ? [conversationAttention[sessionId]!] : []));
+    }
+    const { conversations: _conversations, ...base } = this.host;
+    this.merged = { ...base, attention, conversationAttention, questionRounds: [...this.rounds], clientEpoch: this.clientEpoch };
     for (const listener of [...this.snapshots]) { try { listener(this.merged); } catch { /* Keep sibling consumers alive. */ } }
   }
   /** A conversation started running: ask the host for a freshly projected attention snapshot. */
@@ -157,8 +198,9 @@ export class ClientBridge {
   }
   /** Acknowledge only the actually mounted/read drawer session, without native mainView writes. */
   viewSession(id: string): () => void {
-    const release = this.reminders.view(id);
+    const release = this.reads.view(id);
     this.publish();
+    this.progress.flush();
     return release;
   }
   /** Prevent two plugin occurrences from mounting the same native composer simultaneously. */

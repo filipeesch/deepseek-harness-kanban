@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { GitExecutor, CommandResult, SessionPort } from '../../src/shared/ports.js';
-import type { GitProject, HubState, Project, SessionFacts } from '../../src/shared/types.js';
+import type { ConversationFacts, GitProject, HubState, Project } from '../../src/shared/types.js';
 import { KanbanError } from '../../src/shared/errors.js';
 
 const exec = promisify(execFile);
@@ -100,7 +100,7 @@ export class Sessions implements SessionPort {
   async isIdle(id: string): Promise<boolean> { return !this.active.has(id); }
   async send(): Promise<void> {}
   async archive(id: string): Promise<void> { await this.beforeArchive?.(id); this.archiveCalls.push(id); }
-  async facts(): Promise<SessionFacts> { return { turn: false, background: [], awaitingReply: false, failed: false }; }
+  async facts(): Promise<ConversationFacts> { return { running: false, background: [], awaitingReply: false, settledTurn: null }; }
   async directories(): Promise<Array<{ sessionId: string; directory: string }>> { return [...this.dirs].map(([sessionId, directory]) => ({ sessionId, directory })); }
   /** Add a real-child-like session for ownership tests. Pass `origin: undefined` for a fork. */
   seedSubagent(parent: string, child: string, directory: string, origin: 'subagent' | undefined = 'subagent'): string {

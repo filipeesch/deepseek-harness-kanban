@@ -1,4 +1,4 @@
-import type { BackgroundActivity, BackgroundKind, SessionFacts } from '../shared/types.js';
+import type { BackgroundActivity, BackgroundKind, ConversationFacts, SettledTurn } from '../shared/types.js';
 
 /** One family reported by the public `workspace/session-activity` waterfall. */
 export interface ActivityEntry {
@@ -8,7 +8,7 @@ export interface ActivityEntry {
 /** The native inspection facts this module depends on, kept structural for direct tests. */
 export interface InspectionLike {
   readonly meta: { readonly cwd?: string };
-  readonly events: ReadonlyArray<{ readonly type: string; readonly data: unknown }>;
+  readonly events: ReadonlyArray<{ readonly type: string; readonly seq: number; readonly data: unknown }>;
 }
 export interface ProjectionLike { readonly values?: unknown }
 export interface NativeFactsDeps {
@@ -16,21 +16,24 @@ export interface NativeFactsDeps {
   projections(sessionId: string): Promise<ProjectionLike | null | undefined>;
   inspect(sessionId: string): Promise<InspectionLike>;
 }
-export interface SessionFactsSource { read(sessionId: string): Promise<SessionFacts> }
+export interface ConversationFactsSource { read(sessionId: string): Promise<ConversationFacts> }
 
-const BACKGROUND_KINDS = new Set<BackgroundKind>(['job', 'subagent', 'schedule']);
+/** Families that count as owned agent execution: the conversation's own turn and its descendants. */
+const AGENT_KINDS = new Set(['turn', 'subagent']);
+/** Families that count as background work outliving the turn. */
+const BACKGROUND_KINDS = new Set<BackgroundKind>(['job', 'schedule']);
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Split the activity families: the turn family is execution, every other known family is background work. */
-export function partitionActivity(entries: readonly ActivityEntry[]): Pick<SessionFacts, 'turn' | 'background'> {
-  let turn = false;
+/** Split the activity families: agent execution (own turn or descendants) and the remaining background work. */
+export function partitionActivity(entries: readonly ActivityEntry[]): Pick<ConversationFacts, 'running' | 'background'> {
+  let running = false;
   const background: BackgroundActivity[] = [];
   for (const entry of entries) {
     const kind = typeof entry.kind === 'string' ? entry.kind : '';
-    if (kind === 'turn') { turn = true; continue; }
+    if (AGENT_KINDS.has(kind)) { running = true; continue; }
     if (!BACKGROUND_KINDS.has(kind as BackgroundKind)) continue;
     const items = Array.isArray(entry.items) ? entry.items : [];
     if (items.length === 0) { background.push({ kind: kind as BackgroundKind, label: kind }); continue; }
@@ -40,7 +43,7 @@ export function partitionActivity(entries: readonly ActivityEntry[]): Pick<Sessi
       background.push({ kind: kind as BackgroundKind, label });
     }
   }
-  return { turn, background };
+  return { running, background };
 }
 
 /** A conversation awaits a reply while a native question or approval is still open. */
@@ -68,27 +71,27 @@ export function inspectedOpenTurn(inspection: InspectionLike): boolean {
   return open;
 }
 
-/** The last recorded turn outcome failed and no later turn has succeeded. */
-export function lastOutcomeFailed(inspection: InspectionLike): boolean {
-  let failed = false;
+/** The last settled turn, identified by its durable event sequence so a read state can target it. */
+export function lastSettledTurn(inspection: InspectionLike): SettledTurn | null {
+  let settled: SettledTurn | null = null;
   for (const event of inspection.events) {
     if (event.type !== 'turn/end') continue;
     const data = record(event.data) ? event.data : undefined;
     const reason = data && record(data.reason) ? data.reason : undefined;
-    failed = reason?.kind === 'error';
+    settled = { seq: event.seq, outcome: reason?.kind === 'error' ? 'error' : 'ok' };
   }
-  return failed;
+  return settled;
 }
 
 /** Read the native facts from an injected inspection seam; the port factory keeps the service wiring. */
-export function createNativeSessionFacts(deps: NativeFactsDeps): SessionFactsSource {
+export function createNativeSessionFacts(deps: NativeFactsDeps): ConversationFactsSource {
   return {
-    async read(sessionId: string): Promise<SessionFacts> {
+    async read(sessionId: string): Promise<ConversationFacts> {
       const [activity, projection, inspection] = await Promise.all([
         deps.activity(sessionId), deps.projections(sessionId), deps.inspect(sessionId),
       ]);
-      const { turn, background } = partitionActivity(activity);
-      return { turn, background, awaitingReply: nativePending(projection, inspection), failed: lastOutcomeFailed(inspection) };
+      const { running, background } = partitionActivity(activity);
+      return { running, background, awaitingReply: nativePending(projection, inspection), settledTurn: lastSettledTurn(inspection) };
     },
   };
 }

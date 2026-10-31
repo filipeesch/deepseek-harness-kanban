@@ -3,12 +3,11 @@ import type { Attention, BackgroundActivity, BackgroundKind } from '../shared/ty
 
 const UNITS: Record<BackgroundKind, readonly [string, string]> = {
   job: ['job', 'jobs'],
-  subagent: ['subagent', 'subagents'],
   schedule: ['schedule', 'schedules'],
 };
-const KIND_ORDER: readonly BackgroundKind[] = ['job', 'subagent', 'schedule'];
+const KIND_ORDER: readonly BackgroundKind[] = ['job', 'schedule'];
 
-/** Count copy derived from the activity families, e.g. "1 job · 2 subagents". */
+/** Count copy derived from the activity families, e.g. "1 job · 2 schedules". */
 export function backgroundSummary(items: readonly BackgroundActivity[]): string {
   return KIND_ORDER.flatMap(kind => {
     const count = items.filter(item => item.kind === kind).length;

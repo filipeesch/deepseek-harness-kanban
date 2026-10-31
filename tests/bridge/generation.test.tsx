@@ -4,30 +4,30 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { RemoteStream, type RemoteStreamOptions } from '@deepseek-ai/dsh-api-gateway/client';
 import type { RemoteResult, RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol';
-import type { KanbanSnapshot, Outcome } from '../../src/shared/types.js';
+import type { HostSnapshot, KanbanSnapshot, Outcome } from '../../src/shared/types.js';
 import { ClientBridge, type BridgeRemote } from '../../src/client-bridge.js';
 import { BoardView } from '../../src/client/board.js';
 
-class Feed implements RemoteStreamHandle<KanbanSnapshot, never>, AsyncIterator<KanbanSnapshot> {
-  private values: KanbanSnapshot[] = []; private done = false;
-  private pending: ((value: IteratorResult<KanbanSnapshot>) => void) | undefined;
-  push(value: KanbanSnapshot) { if (this.pending) { this.pending({ done: false, value }); this.pending = undefined; } else this.values.push(value); }
+class Feed implements RemoteStreamHandle<HostSnapshot, never>, AsyncIterator<HostSnapshot> {
+  private values: HostSnapshot[] = []; private done = false;
+  private pending: ((value: IteratorResult<HostSnapshot>) => void) | undefined;
+  push(value: HostSnapshot) { if (this.pending) { this.pending({ done: false, value }); this.pending = undefined; } else this.values.push(value); }
   send(_value: never): void { throw new Error('No uplink'); }
   end(): void { this.dispose(); }
   dispose(): void { this.done = true; this.pending?.({ done: true, value: undefined }); this.pending = undefined; }
-  next(): Promise<IteratorResult<KanbanSnapshot>> {
+  next(): Promise<IteratorResult<HostSnapshot>> {
     if (this.values.length) return Promise.resolve({ done: false, value: this.values.shift()! });
     if (this.done) return Promise.resolve({ done: true, value: undefined });
     return new Promise(resolve => { this.pending = resolve; });
   }
-  return(): Promise<IteratorResult<KanbanSnapshot>> { this.dispose(); return Promise.resolve({ done: true, value: undefined }); }
-  [Symbol.asyncIterator](): AsyncIterator<KanbanSnapshot> { return this; }
+  return(): Promise<IteratorResult<HostSnapshot>> { this.dispose(); return Promise.resolve({ done: true, value: undefined }); }
+  [Symbol.asyncIterator](): AsyncIterator<HostSnapshot> { return this; }
 }
-function snapshot(sequence: number, title: string): KanbanSnapshot {
+function snapshot(sequence: number, title: string): HostSnapshot {
   const now = '2026-10-21T00:00:00Z';
-  return { sequence, attention: {}, questionRounds: [], state: { hubs: [{ id: 'hub', name: 'Hub', revision: 0, projects: [], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Workflow', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: now, updatedAt: now }], notes: [], tasks: [{ id: 'task', boardId: 'board', title, description: '', projectId: 'p', columnId: 'backlog', position: 0, sessionIds: [], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' }], createdAt: now, updatedAt: now }], settings: { revision: 0 } } };
+  return { sequence, conversations: {}, questionRounds: [], state: { hubs: [{ id: 'hub', name: 'Hub', revision: 0, projects: [], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Workflow', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: now, updatedAt: now }], notes: [], tasks: [{ id: 'task', boardId: 'board', title, description: '', projectId: 'p', columnId: 'backlog', position: 0, sessionIds: [], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' }], createdAt: now, updatedAt: now }], settings: { revision: 0 } } };
 }
-const success = (value: KanbanSnapshot): RemoteResult<Outcome<KanbanSnapshot>> => ({ ok: true, value: { ok: true, value } });
+const success = (value: HostSnapshot): RemoteResult<Outcome<HostSnapshot>> => ({ ok: true, value: { ok: true, value } });
 const bridges: ClientBridge[] = [];
 afterEach(async () => { cleanup(); for (const bridge of bridges.splice(0)) await bridge.dispose(); });
 function fixture() {
@@ -57,8 +57,8 @@ describe('combined native bridge + actual BoardView generation ordering', () => 
     f.bridge.start(); await waitFor(() => expect(f.feeds).toHaveLength(1));
     await act(async () => f.feeds[0]!.push(snapshot(7, 'Before restart')));
     await waitFor(() => expect(accepted.at(-1)?.clientEpoch).toBe(1));
-    let resolveOld!: (value: RemoteResult<Outcome<KanbanSnapshot>>) => void;
-    const oldResponse = new Promise<RemoteResult<Outcome<KanbanSnapshot>>>(resolve => { resolveOld = resolve; });
+    let resolveOld!: (value: RemoteResult<Outcome<HostSnapshot>>) => void;
+    const oldResponse = new Promise<RemoteResult<Outcome<HostSnapshot>>>(resolve => { resolveOld = resolve; });
     vi.mocked(f.remote.kanban[method]).mockReturnValueOnce(oldResponse);
     const inFlight = method === 'snapshot' ? f.bridge.api.snapshot() : f.bridge.api.command({ type: 'task.edit', taskId: 'task', title: 'Changed' });
     f.bridge.retry(); await waitFor(() => expect(f.feeds).toHaveLength(2));

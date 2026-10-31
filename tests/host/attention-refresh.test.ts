@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HubRepository } from '../../src/host/hub-repository.js';
 import { KanbanApp } from '../../src/host/app.js';
-import type { Attention, SessionFacts } from '../../src/shared/types.js';
+import type { ConversationFacts } from '../../src/shared/types.js';
 import { MemoryHubStorage, TestGit, TestSessions } from './helpers.js';
 
 // Actual app/store and public memory ports only: no host runtime, filesystem, jobs or models.
@@ -31,8 +31,7 @@ async function fixture() {
   return { app, hubs, store, sessions, task, sessionId, facts, notify, report };
 }
 
-const idleFacts: SessionFacts = { turn: false, background: [], awaitingReply: false, failed: false };
-const idleAttention: Attention = { running: false, background: [], unread: false, awaitingReply: false, failed: false };
+const idleFacts: ConversationFacts = { running: false, background: [], awaitingReply: false, settledTurn: null };
 function event(app: KanbanApp, sessionId: string) {
   app.observe(sessionId, { type: 'turn/end', seq: 1, data: { turn: 1, reason: { kind: 'blocked' } } });
 }
@@ -49,13 +48,13 @@ describe('coalesced public attention refresh', () => {
     f.sessions.busy.add(f.sessionId);
     if (source === 'observe') event(f.app, f.sessionId); else f.app.activityChanged();
     const early = await f.app.snapshot();
-    expect(early.attention[f.task.id]?.running).toBe(true);
+    expect(early.conversations[f.sessionId]?.running).toBe(true);
     f.notify.mockClear();
     f.sessions.busy.clear();
     await vi.advanceTimersByTimeAsync(50);
     expect(f.notify).toHaveBeenCalledOnce();
     const fresh = await f.app.snapshot();
-    expect(fresh.attention[f.task.id]?.running).toBe(false);
+    expect(fresh.conversations[f.sessionId]?.running).toBe(false);
     expect(fresh.sequence).toBeGreaterThan(early.sequence);
     expect(f.facts).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(1_000);
@@ -66,30 +65,30 @@ describe('coalesced public attention refresh', () => {
   it('CR11 recovers a rejected initial read on the bounded retry without an event', async () => {
     const f = await fixture();
     f.facts.mockRejectedValueOnce(new Error('Initial memory-port failure'));
-    expect((await f.app.snapshot()).attention[f.task.id]?.failed).toBe(true);
+    expect((await f.app.snapshot()).conversations[f.sessionId]).toEqual(idleFacts);
     expect(f.notify).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(1);
     f.notify.mockClear();
     await vi.advanceTimersByTimeAsync(2_000);
-    expect(f.notify).toHaveBeenCalledOnce();
-    expect((await f.app.snapshot()).attention[f.task.id]).toEqual(idleAttention);
+    expect(f.notify).not.toHaveBeenCalled();
+    expect((await f.app.snapshot()).conversations[f.sessionId]).toEqual(idleFacts);
     expect(f.facts).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
   });
 
   it('CR11 does not let a late old rejection evict a newer successful cached read', async () => {
     const f = await fixture();
-    const old = deferred<SessionFacts>();
+    const old = deferred<ConversationFacts>();
     f.facts.mockImplementationOnce(() => old.promise).mockResolvedValue(idleFacts);
     const pending = f.app.snapshot();
     f.app.activityChanged();
     const fresh = await f.app.snapshot();
     old.reject(new Error('Old memory-port rejection'));
     const stale = await pending;
-    expect(stale.attention[f.task.id]?.failed).toBe(true);
+    expect(stale.conversations[f.sessionId]).toEqual(idleFacts);
     expect(stale.sequence).toBeLessThan(fresh.sequence);
-    expect(fresh.attention[f.task.id]).toEqual(idleAttention);
-    expect((await f.app.snapshot()).attention[f.task.id]).toEqual(idleAttention);
+    expect(fresh.conversations[f.sessionId]).toEqual(idleFacts);
+    expect((await f.app.snapshot()).conversations[f.sessionId]).toEqual(idleFacts);
     expect(f.facts).toHaveBeenCalledTimes(2);
   });
 
@@ -97,28 +96,28 @@ describe('coalesced public attention refresh', () => {
     const f = await fixture();
     f.facts.mockRejectedValueOnce(new Error('Transient memory-port failure'));
     event(f.app, f.sessionId);
-    expect((await f.app.snapshot()).attention[f.task.id]?.failed).toBe(true);
+    expect((await f.app.snapshot()).conversations[f.sessionId]).toEqual(idleFacts);
     f.notify.mockClear();
     await vi.advanceTimersByTimeAsync(50);
-    expect(f.notify).toHaveBeenCalledOnce();
-    expect((await f.app.snapshot()).attention[f.task.id]).toEqual(idleAttention);
+    expect(f.notify).not.toHaveBeenCalled();
+    expect((await f.app.snapshot()).conversations[f.sessionId]).toEqual(idleFacts);
     expect(f.facts).toHaveBeenCalledTimes(2);
   });
 
   it('keeps delayed stale snapshots older than the refreshed sequence and out of the new cache', async () => {
     const f = await fixture();
-    const old = deferred<SessionFacts>();
+    const old = deferred<ConversationFacts>();
     f.facts.mockImplementationOnce(() => old.promise).mockResolvedValue(idleFacts);
     event(f.app, f.sessionId);
     const pending = f.app.snapshot();
     await vi.advanceTimersByTimeAsync(50);
     const refreshed = f.app.snapshot();
-    old.resolve({ ...idleFacts, turn: true });
+    old.resolve({ ...idleFacts, running: true });
     const [stale, fresh] = await Promise.all([pending, refreshed]);
-    expect(stale.attention[f.task.id]?.running).toBe(true);
+    expect(stale.conversations[f.sessionId]?.running).toBe(true);
     expect(stale.sequence).toBeLessThan(fresh.sequence);
-    expect(fresh.attention[f.task.id]?.running).toBe(false);
-    expect((await f.app.snapshot()).attention[f.task.id]?.running).toBe(false);
+    expect(fresh.conversations[f.sessionId]?.running).toBe(false);
+    expect((await f.app.snapshot()).conversations[f.sessionId]?.running).toBe(false);
     expect(f.facts).toHaveBeenCalledTimes(2);
   });
 
@@ -153,7 +152,7 @@ describe('coalesced public attention refresh', () => {
     await vi.advanceTimersByTimeAsync(50);
     expect(f.report).toHaveBeenCalledWith(failure);
     expect(f.notify).toHaveBeenCalledOnce();
-    expect((await f.app.snapshot()).attention[f.task.id]?.running).toBe(false);
+    expect((await f.app.snapshot()).conversations[f.sessionId]?.running).toBe(false);
   });
 
   it('does not publish or invalidate cached attention after an in-flight retry outlives close', async () => {

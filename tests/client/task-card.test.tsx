@@ -88,10 +88,10 @@ describe('task card activity region', () => {
   });
 
   it('aggregates mixed background families in one line', () => {
-    const { card } = setup({ attention: attentionWith({ background: [{ kind: 'job', label: 'Run tests' }, { kind: 'subagent', label: 'Research' }] }) });
+    const { card } = setup({ attention: attentionWith({ background: [{ kind: 'job', label: 'Run tests' }, { kind: 'schedule', label: 'Wake later' }] }) });
     const chip = within(card).getByRole('note');
     expect(chip.textContent).toBe('2 activities');
-    expect(chip.getAttribute('aria-label')).toBe('Background activity: 2 activities. Run tests · Research');
+    expect(chip.getAttribute('aria-label')).toBe('Background activity: 2 activities. Run tests · Wake later');
     expect(chip.textContent).not.toContain('job');
     expect(chip.textContent).not.toContain('subagent');
   });

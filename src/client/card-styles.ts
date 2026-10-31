@@ -9,7 +9,6 @@ export const cardStyles = String.raw`
 .dsh-kanban .kb-card-selected{outline:2px solid var(--dsw-alias-state-business-primary,CanvasText);outline-offset:-2px}
 .dsh-kanban .kb-card-context{display:flex;align-items:center;gap:8px;min-width:0;min-height:16px;position:relative;z-index:2}
 .dsh-kanban .kb-card-project{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;opacity:.66}
-.dsh-kanban .kb-card-attention{display:flex;align-items:center;gap:6px;flex:0 0 auto}
 .dsh-kanban .kb-card-select{position:relative;z-index:3;margin:0;flex:0 0 auto}
 .dsh-kanban .kb-card-activity{display:flex;align-items:center;gap:7px;min-width:0;min-height:26px;flex-wrap:nowrap}
 .dsh-kanban .kb-card-run{margin-left:auto;display:flex;align-items:center;gap:2px;position:relative;z-index:2;flex:0 0 auto}

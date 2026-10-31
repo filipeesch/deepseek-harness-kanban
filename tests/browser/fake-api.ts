@@ -31,8 +31,11 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
   const attention: KanbanSnapshot['attention'] = options.attention ? {
     'long-0': { running: true, background: [], unread: false, awaitingReply: false, failed: false },
     'long-1': { running: false, background: [{ kind: 'job', label: 'Run tests' }], unread: false, awaitingReply: false, failed: false },
-    'long-2': { running: true, background: [{ kind: 'subagent', label: 'Research' }], unread: false, awaitingReply: false, failed: false },
-    'long-3': { running: false, background: [{ kind: 'job', label: 'Run tests' }, { kind: 'subagent', label: 'Research' }], unread: true, awaitingReply: true, failed: true },
+    'long-2': { running: true, background: [{ kind: 'schedule', label: 'Wake later' }], unread: false, awaitingReply: false, failed: false },
+    'long-3': { running: false, background: [{ kind: 'job', label: 'Run tests' }, { kind: 'schedule', label: 'Wake later' }], unread: true, awaitingReply: true, failed: true },
+  } : {};
+  const conversationAttention: KanbanSnapshot['conversationAttention'] = options.attention ? {
+    's-long-0': attention['long-0']!, 's-long-1': attention['long-1']!, 's-long-2': { running: true, background: [{ kind: 'schedule', label: 'Wake later' }], unread: false, awaitingReply: false, failed: false }, 's-long-3': attention['long-3']!,
   } : {};
   const shortTask = tasks.find(value => value.id === 'short')!;
   if (options.pending) shortTask.pendingTransition = { id: 'pending-short', fromColumnId: 'propose', columnId: 'apply', mode: 'move', status: 'waiting' };
@@ -46,7 +49,7 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     tasks, notes: [], createdAt: now, updatedAt: now,
   };
   const settings = { revision: 1, worktreeBasePath: '/worktrees' };
-  const raw: KanbanSnapshot = { sequence: 1, attention, state: { hubs: [hub], settings } };
+  const raw: KanbanSnapshot = { sequence: 1, attention, conversationAttention, state: { hubs: [hub], settings } };
   let value = withLegacy(raw);
   if ((options.hubs ?? 1) > 1) value.state.hubs.push({ id: 'hub-2', name: 'Second Hub', revision: 0, projects: [], boards: [], tasks: [], notes: [], createdAt: now, updatedAt: now });
   const listeners = new Set<(snapshot: TestSnapshot) => void>();
@@ -97,7 +100,7 @@ export function workflowYaml(restricted = false): string {
   return ['name: Harness flow', 'initial_column: explore', 'columns:', '  - id: explore', '    label: Explore', ...(restricted ? ['    allowed_transitions: [propose]'] : []), '  - id: propose', '    label: Propose', ...(restricted ? [] : ['    on_enter_prompt: |', '      Plan this task.']), '  - id: apply', '    label: Apply', 'groups:', '  - id: planning', '    label: Planning', '    columns: [explore, propose]', ''].join(String.fromCharCode(10));
 }
 
-function clone(value: KanbanSnapshot): KanbanSnapshot { const normalized = withLegacy(value); return structuredClone({ sequence: normalized.sequence, attention: normalized.attention, state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } } }); }
+function clone(value: KanbanSnapshot): KanbanSnapshot { const normalized = withLegacy(value); return structuredClone({ sequence: normalized.sequence, attention: normalized.attention, conversationAttention: normalized.conversationAttention, state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } } }); }
 function withLegacy(snapshot: KanbanSnapshot): TestSnapshot {
   const state = { hubs: snapshot.state.hubs } as KanbanState & Omit<BoardState, 'settings'> & { settings: any };
   let settingsValue = structuredClone(snapshot.state.settings);
