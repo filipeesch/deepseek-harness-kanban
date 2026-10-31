@@ -143,9 +143,9 @@ export class KanbanApp {
  sessionActivity(sessionId?:string):void{if(this.disposed)return;this.attention.touch(sessionId);this.changed();}
  async snapshot(refreshAttention=false):Promise<HostSnapshot>{
   if(refreshAttention){this.attention.invalidate();this.sequence++;}
-  const sequence=this.sequence;const state=this.hubs.snapshot();const questionRounds=structuredClone([...this.questions.getRounds()]);
+  const sequence=this.sequence;const state=this.hubs.snapshot();
   const conversations=await this.attention.project(this.locator.all().map(located=>({id:located.task.id,sessionIds:located.task.sessionIds})));
-  return {state,conversations,sequence,questionRounds};
+  return {state,conversations,sequence};
  }
  async branches(taskId:string):Promise<string[]>{const located=this.locatedTask(taskId);return this.git.branches(requireGitProject(located.project),located.task.sessionIds);}
  async worktreeDefault(taskId:string):Promise<{branchName:string;path:string}>{

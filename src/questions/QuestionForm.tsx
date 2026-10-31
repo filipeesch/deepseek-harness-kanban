@@ -2,23 +2,27 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { QuestionAnswer, QuestionPage, QuestionRound } from '../shared/types.js';
 import { OTHER_CHOICE, answerFor, emptyAnswer, formatAnswers, isAnswerValid } from './validation.js';
+import { canSubmit, submitState } from './submission.js';
 import { questionCss } from './styles.js';
 
 export interface QuestionFormProps {
   round: QuestionRound;
+  hidden?: boolean;
   onSubmit(text: string): void | Promise<void>;
   onDismiss?(): void | Promise<void>;
+  /** Called after the hidden form releases focus, so the host can return it to the composer. */
+  onHide?(): void;
 }
 
 type ActiveSlide = { kind: 'page'; callId: string } | { kind: 'notes' };
+type Submission = 'idle' | 'submitting' | 'failed';
 interface Draft {
   roundId: string;
   active: ActiveSlide | null;
   answers: Record<string, QuestionAnswer>;
   generalNotes: string;
   collapsed: boolean;
-  submitting: boolean;
-  submitted: boolean;
+  submission: Submission;
   error: string | null;
   confirmingDismiss: boolean;
   dismissing: boolean;
@@ -32,7 +36,7 @@ const WEIGHT_LABELS: Record<NonNullable<QuestionPage['weight']>, string> = {
 };
 
 function newDraft(roundId: string): Draft {
-  return { roundId, active: null, answers: Object.create(null) as Record<string, QuestionAnswer>, generalNotes: '', collapsed: false, submitting: false, submitted: false, error: null, confirmingDismiss: false, dismissing: false, dismissError: null };
+  return { roundId, active: null, answers: Object.create(null) as Record<string, QuestionAnswer>, generalNotes: '', collapsed: false, submission: 'idle', error: null, confirmingDismiss: false, dismissing: false, dismissError: null };
 }
 function Markdown({ text }: { text: string }) {
   return <ReactMarkdown skipHtml disallowedElements={['img']}>{text}</ReactMarkdown>;
@@ -58,35 +62,52 @@ function Chevron({ up }: { up: boolean }) {
 }
 
 /** The fixed question strip docked above the composer: pages first, Additional Notes last. */
-export function QuestionForm({ round, onSubmit, onDismiss }: QuestionFormProps) {
+export function QuestionForm({ round, hidden = false, onSubmit, onDismiss, onHide }: QuestionFormProps) {
   const prefix = useId();
   const bodyId = prefix + '-body';
   const headingId = prefix + '-heading';
   const [draft, setDraft] = useState<Draft>(() => newDraft(round.id));
   const [focused, setFocused] = useState<Record<string, string>>({});
-  const inFlight = useRef(new Set<string>());
-  const sent = useRef(new Set<string>());
   const headingRef = useRef<HTMLDivElement>(null);
   const keepAnsweringRef = useRef<HTMLButtonElement>(null);
   const dismissRef = useRef<HTMLButtonElement>(null);
   const wasConfirming = useRef(false);
   const firstSlide = useRef(true);
+  const sending = useRef(false);
+  const seenPages = useRef<Set<string>>(new Set());
+  const onHideRef = useRef(onHide);
+  useEffect(() => { onHideRef.current = onHide; }, [onHide]);
   useEffect(() => { setDraft(previous => previous.roundId === round.id ? previous : newDraft(round.id)); }, [round.id]);
+  useEffect(() => { seenPages.current = new Set(); sending.current = false; }, [round.id]);
   const current = draft.roundId === round.id ? draft : newDraft(round.id);
   const slides: ActiveSlide[] = [...round.pages.map(page => ({ kind: 'page' as const, callId: page.callId })), { kind: 'notes' as const }];
   const active = current.active !== null && slides.some(slide => sameSlide(slide, current.active!)) ? current.active : slides[0]!;
   const index = slides.findIndex(slide => sameSlide(slide, active));
   const entry = active.kind === 'page' ? round.pages.find(page => page.callId === active.callId) : undefined;
   const answer = entry ? answerFor(current.answers, entry.callId) ?? emptyAnswer() : emptyAnswer();
-  const disabled = round.answered || current.submitting || current.submitted || current.dismissing || sent.current.has(round.id);
+  const disabled = round.answered || current.submission === 'submitting' || current.dismissing;
   const hasDraft = Object.values(current.answers).some(answer => answer.choices.length > 0 || answer.text.trim().length > 0 || answer.other.trim().length > 0 || answer.notes.trim().length > 0) || current.generalNotes.trim().length > 0;
   const answersValid = round.pages.length > 0 && round.pages.every(page => isAnswerValid(page.page, answerFor(current.answers, page.callId)));
-  const canSubmit = round.complete && !disabled && answersValid;
+  const state = submitState({ complete: round.complete, answersValid, busy: current.submission === 'submitting', error: current.error });
+  const canSubmitNow = canSubmit(state);
   const canAdvance = entry !== undefined && !disabled && isAnswerValid(entry.page, answer);
   const activeKey = active.kind === 'page' ? active.callId : 'notes';
   const optionFocus = entry ? focused[entry.callId] ?? answer.choices[0] ?? '' : '';
   const otherActive = answer.choices.includes(OTHER_CHOICE) || optionFocus === OTHER_CHOICE;
+  const newPage = active.kind === 'notes'
+    ? round.pages.filter(page => !seenPages.current.has(page.callId)).sort((left, right) => left.sequence - right.sequence)[0]
+    : undefined;
+  const awaitingTurn = active.kind === 'notes' && state.kind === 'blocked' && state.reason === 'awaiting-turn';
 
+  useEffect(() => {
+    if (!hidden) return;
+    const activeElement = document.activeElement;
+    if (activeElement instanceof HTMLElement && activeElement !== document.body) activeElement.blur();
+    onHideRef.current?.();
+  }, [hidden]);
+  useEffect(() => {
+    if (active.kind === 'page') seenPages.current.add(active.callId);
+  }, [activeKey, round.pages]);
   useEffect(() => {
     if (firstSlide.current) { firstSlide.current = false; return; }
     headingRef.current?.focus();
@@ -147,18 +168,20 @@ export function QuestionForm({ round, onSubmit, onDismiss }: QuestionFormProps) 
     }
   }
   async function send(): Promise<void> {
-    if (active.kind !== 'notes' || !canSubmit || inFlight.current.has(round.id) || sent.current.has(round.id)) return;
+    if (active.kind !== 'notes' || !canSubmitNow || sending.current) return;
     const roundId = round.id;
-    inFlight.current.add(roundId);
-    updateDraft(previous => ({ ...previous, submitting: true, error: null }));
+    sending.current = true;
+    updateDraft(previous => ({ ...previous, submission: 'submitting', error: null }));
     try {
       const text = formatAnswers(round, current.answers, current.generalNotes);
       await onSubmit(text);
-      sent.current.add(roundId);
-      setDraft(previous => previous.roundId === roundId ? { ...previous, submitting: false, submitted: true } : previous);
+      // The dock hides this form as soon as the submission is recorded; the feed
+      // confirms the answer instead of a local "submitted" status.
     } catch (error) {
-      setDraft(previous => previous.roundId === roundId ? { ...previous, submitting: false, error: errorMessage(error) } : previous);
-    } finally { inFlight.current.delete(roundId); }
+      setDraft(previous => previous.roundId === roundId ? { ...previous, submission: 'failed', error: errorMessage(error) } : previous);
+    } finally {
+      sending.current = false;
+    }
   }
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -167,7 +190,7 @@ export function QuestionForm({ round, onSubmit, onDismiss }: QuestionFormProps) 
 
   return <>
     <style>{questionCss}</style>
-    <form className="kq-strip" aria-label="Questions from the agent" onSubmit={submit}>
+    <form className="kq-strip" aria-label="Questions from the agent" hidden={hidden} aria-hidden={hidden || undefined} onSubmit={submit}>
       <button type="button" className="kq-header" aria-expanded={!current.collapsed} aria-controls={bodyId} onClick={toggle}>
         <span className="kq-icon"><QuestionGlyph /></span>
         <span className="kq-title">Questions from the agent</span>
@@ -177,7 +200,6 @@ export function QuestionForm({ round, onSubmit, onDismiss }: QuestionFormProps) 
       {!current.collapsed && <div className="kq-panel" id={bodyId}>
         <div className="kq-scroll">
           {round.answered && <p className="kq-status" role="status">This round has been answered in the conversation.</p>}
-          {current.submitted && <p className="kq-status" role="status">Response submitted.</p>}
           {entry ? <section className="kq-slide" aria-labelledby={headingId}>
             {entry.page.context && <div className="kq-context"><Markdown text={entry.page.context} /></div>}
             <div className="kq-question-head">
@@ -225,6 +247,10 @@ export function QuestionForm({ round, onSubmit, onDismiss }: QuestionFormProps) 
             <div ref={headingRef} id={headingId} role="heading" aria-level={3} tabIndex={-1} className="kq-question">Additional Notes</div>
             {round.pages.length === 0 && <p className="kq-hint">Waiting for question pages.</p>}
             <textarea className="kq-input" aria-label="Additional Notes" placeholder="Anything else the agent should know?" value={current.generalNotes} disabled={disabled} onChange={event => updateDraft(previous => ({ ...previous, generalNotes: event.target.value }))} />
+            {newPage && <div className="kq-new-page" role="status">
+              <span>New question received.</span>
+              <button type="button" className="kq-secondary" onClick={() => goTo({ kind: 'page', callId: newPage.callId })}>Answer new question</button>
+            </div>}
           </section>}
           {current.error && <p className="kq-error" role="alert">{current.error}</p>}
           {current.dismissError && <p className="kq-error" role="alert">{current.dismissError}</p>}
@@ -237,11 +263,12 @@ export function QuestionForm({ round, onSubmit, onDismiss }: QuestionFormProps) 
               <button type="button" className="kq-secondary kq-dismiss-confirm" disabled={current.dismissing} onClick={() => void dismiss()}>{current.dismissing ? 'Dismissing…' : 'Dismiss questions'}</button>
             </div>
           </> : <>
+            {awaitingTurn && <p className="kq-waiting" role="status">Waiting for the agent to finish this turn before Submit is available.</p>}
             {onDismiss && <button ref={dismissRef} type="button" className="kq-secondary kq-dismiss" disabled={disabled} onClick={requestDismiss}>Dismiss</button>}
             <div className="kq-footer-actions">
               <button type="button" className="kq-secondary" onClick={back} disabled={index === 0 || disabled}>Back</button>
               {active.kind === 'notes'
-                ? <button type="button" className="kq-primary" disabled={!canSubmit} onClick={event => { if (event.detail > 1) return; void send(); }}>{current.submitting ? 'Submitting…' : 'Submit'}</button>
+                ? <button type="button" className="kq-primary" disabled={!canSubmitNow} onClick={event => { if (event.detail > 1) return; void send(); }}>{current.submission === 'submitting' ? 'Submitting…' : 'Submit'}</button>
                 : <button type="button" className="kq-primary" onClick={next} disabled={!canAdvance}>Next</button>}
             </div>
           </>}

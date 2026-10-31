@@ -148,6 +148,7 @@ export class QuestionIndex {
   private events = new Map<string, Map<number, ProjectionEvent>>();
   private dismissed = new Map<string, Set<number>>();
   private rounds = new Map<string, readonly QuestionRound[]>();
+  private revisions = new Map<string, number>();
   private allRounds: readonly QuestionRound[] = EMPTY_ROUNDS;
   private listeners = new Set<() => void>();
   private disposed = false;
@@ -172,6 +173,9 @@ export class QuestionIndex {
   getRounds(sessionId?: string): readonly QuestionRound[] {
     return sessionId === undefined ? this.allRounds : this.rounds.get(sessionId) ?? EMPTY_ROUNDS;
   }
+
+  /** Monotonic per-conversation projection revision; unrelated sessions never advance it. */
+  revisionOf(sessionId: string): number { return this.revisions.get(sessionId) ?? 0; }
 
   /** Includes incomplete rounds while questions are still arriving; no native tool is blocked. */
   pending(sessionId?: string): boolean { return this.getRounds(sessionId).some(round => !round.answered && round.pages.length > 0); }
@@ -304,6 +308,7 @@ export class QuestionIndex {
     this.events = next;
     this.dismissed = nextDismissed;
     this.rounds.clear();
+    this.revisions.clear();
     this.allRounds = EMPTY_ROUNDS;
     for (const sessionId of new Set([...next.keys(), ...nextDismissed.keys()])) this.rebuild(sessionId);
     this.emit();
@@ -315,11 +320,13 @@ export class QuestionIndex {
     this.events.clear();
     this.dismissed.clear();
     this.rounds.clear();
+    this.revisions.clear();
     this.allRounds = EMPTY_ROUNDS;
   }
 
   private rebuild(sessionId: string): void {
     this.rounds.set(sessionId, buildRounds(sessionId, this.events.get(sessionId)?.values() ?? [], this.dismissed.get(sessionId)));
+    this.revisions.set(sessionId, (this.revisions.get(sessionId) ?? 0) + 1);
     this.allRounds = freeze([...this.rounds].sort(([a], [b]) => a.localeCompare(b)).flatMap(([, rounds]) => [...rounds]));
   }
   private emit(): void { for (const listener of [...this.listeners]) listener(); }

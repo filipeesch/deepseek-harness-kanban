@@ -7,20 +7,39 @@ import { RemoteStream, type RemoteStreamOptions } from '@deepseek-ai/dsh-api-gat
 import type { RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol';
 import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client';
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots';
-import type { HostSnapshot, QuestionRound } from '../../src/shared/types.js';
+import type { HostSnapshot, QuestionFeedFrame, QuestionRound } from '../../src/shared/types.js';
 import { apply, inject } from '../../src/client.js';
 import { TYPERT_REMOTE } from '../../src/remote.js';
 const disposers: Array<() => Promise<void>> = [];
 afterEach(async () => { cleanup(); for (const dispose of disposers.splice(0)) await dispose(); });
 beforeEach(() => { try { globalThis.localStorage?.clear(); } catch { /* jsdom storage optional */ } });
 const question: QuestionRound = { id: 'r', sessionId: 'a', turnId: 't', complete: true, answered: false, pages: [{ callId: 'call-a', sequence: 1, page: { question: 'Choose the implementation', type: 'freetext' } }] };
-function snapshot(rounds: QuestionRound[] = [question]): HostSnapshot {
+class QuestionFeed implements RemoteStreamHandle<QuestionFeedFrame, never>, AsyncIterator<QuestionFeedFrame> {
+  private values: QuestionFeedFrame[] = [];
+  private done = false;
+  private error: unknown;
+  private waiter: { resolve: (value: IteratorResult<QuestionFeedFrame>) => void; reject: (reason: unknown) => void } | undefined;
+  push(value: QuestionFeedFrame) { if (this.waiter) { this.waiter.resolve({ done: false, value }); this.waiter = undefined; } else this.values.push(value); }
+  fail(error: unknown) { this.error = error; this.waiter?.reject(error); this.waiter = undefined; }
+  send(_value: never): void { throw new Error('No uplink supported'); }
+  end(): void { this.dispose(); }
+  dispose(): void { this.done = true; this.waiter?.resolve({ done: true, value: undefined }); this.waiter = undefined; }
+  next(): Promise<IteratorResult<QuestionFeedFrame>> {
+    if (this.values.length) return Promise.resolve({ done: false, value: this.values.shift()! });
+    if (this.error) return Promise.reject(this.error);
+    if (this.done) return Promise.resolve({ done: true, value: undefined });
+    return new Promise((resolve, reject) => { this.waiter = { resolve, reject }; });
+  }
+  return(): Promise<IteratorResult<QuestionFeedFrame>> { this.dispose(); return Promise.resolve({ done: true, value: undefined }); }
+  [Symbol.asyncIterator](): AsyncIterator<QuestionFeedFrame> { return this; }
+}
+function snapshot(): HostSnapshot {
   const now = '2026-10-21T00:00:00Z';
-  return { sequence: 1, conversations: {}, questionRounds: rounds, state: { hubs: [{ id: 'hub', name: 'Hub', revision: 1, projects: [{ id: 'p', name: 'Project', projectPath: '/project', gitRootPath: '/project' }], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }, { id: 'review', name: 'Review', onEnterPrompt: 'Review **carefully**.' }], groups: [] }, createdAt: now, updatedAt: now }], tasks: [{ id: 'task', boardId: 'board', projectId: 'p', title: 'Native task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' }], notes: [], createdAt: now, updatedAt: now }], settings: { revision: 0 } } };
+  return { sequence: 1, conversations: {}, state: { hubs: [{ id: 'hub', name: 'Hub', revision: 1, projects: [{ id: 'p', name: 'Project', projectPath: '/project', gitRootPath: '/project' }], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }, { id: 'review', name: 'Review', onEnterPrompt: 'Review **carefully**.' }], groups: [] }, createdAt: now, updatedAt: now }], tasks: [{ id: 'task', boardId: 'board', projectId: 'p', title: 'Native task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' }], notes: [], createdAt: now, updatedAt: now }], settings: { revision: 0 } } };
 }
 /** A two-Hub snapshot with a second board in the first Hub, for navigation coverage. */
 function twoHubSnapshot(): HostSnapshot {
-  const value = snapshot([]);
+  const value = snapshot();
   const hubA = value.state.hubs[0]!;
   hubA.name = 'Hub A';
   hubA.boards.push({ ...structuredClone(hubA.boards[0]!), id: 'board-a2', name: 'Board 2' });
@@ -41,7 +60,8 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
   const nativeSlots = new Map<string, StoredEntry[]>();
   const taskContextRegistrations: unknown[] = [];
   const taskContextDisposer = vi.fn();
-  const send = vi.fn().mockResolvedValue(undefined); const scope = vi.fn(() => ({ get: vi.fn(() => ({ send })) }));
+  const focusComposer = vi.fn();
+  const send = vi.fn().mockResolvedValue(undefined); const scope = vi.fn(() => ({ get: vi.fn(() => ({ send, input: { for: vi.fn(() => ({ focus: focusComposer })) } })) }));
   const references: SessionReference[] = [];
   const contextWindow = {
     entries: [{ type: 'event', event: { type: 'user/message', data: { source: { kind: 'kanban-task' }, content: [{ type: 'text', text: 'Task: Native task (task-1)' }] } } }],
@@ -79,12 +99,19 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
     list: vi.fn(async () => ({ ok: true, value: { presets: [{ id: 'standard', name: 'Standard', isDefault: true }, { id: 'ptc', name: 'PTC' }] } })),
     select: vi.fn(async () => ({ ok: true, value: {} })),
   };
+  const questionFeeds: QuestionFeed[] = [];
   const remote = {
-    snapshot: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot(rounds) } }),
-    command: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot(rounds) } }),
+    snapshot: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot() } }),
+    command: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: snapshot() } }),
     branches: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['main'] } }),
     detectProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { kind: 'git', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' } } }),
-    questions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: rounds } }),
+    questionsFollow: vi.fn((_request: { sessionId: string }, signal?: AbortSignal): RemoteStreamHandle<QuestionFeedFrame, never> => {
+      const feed = new QuestionFeed();
+      questionFeeds.push(feed);
+      if (rounds.length > 0) feed.push({ kind: 'baseline', rounds });
+      signal?.addEventListener('abort', () => feed.dispose(), { once: true });
+      return feed;
+    }),
     dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
     agentPresets,
     follow(signal?: AbortSignal): RemoteStreamHandle<HostSnapshot, never> {
@@ -128,7 +155,7 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
     get mainView() { throw new Error('Global main session access is forbidden'); },
     get userQuestions() { throw new Error('Native question lifecycle access is forbidden'); },
   } as unknown as Context;
-  return { ctx, entries, nativeActions, nativeSlots, mount, unmount, openMount: () => openMount(), remote, send, scope, retain, refresh, references, nativeSelect, requestDraftInitialization, focus, agentPresets, uiConversation, sessionState, list, subagentAddress, taskContextRegistrations, taskContextDisposer };
+  return { ctx, entries, nativeActions, nativeSlots, mount, unmount, openMount: () => openMount(), remote, questionFeeds, send, scope, retain, refresh, references, nativeSelect, requestDraftInitialization, focus, focusComposer, agentPresets, uiConversation, sessionState, list, subagentAddress, taskContextRegistrations, taskContextDisposer };
 }
 async function installed(rounds?: QuestionRound[]) {
   const f = fixture(false, rounds); const dispose = await apply(f.ctx); disposers.push(dispose); return f;
@@ -174,7 +201,8 @@ describe('public SDK plugin binding contracts', () => {
     const Summary = f.entries.get('tool.call.toolview:decision_request')!.Component;
     render(<><Dock sessionId="a" /><Summary sessionId="a" callId="call-a" phase="result" /></>);
     await screen.findByRole('form', { name: 'Questions from the agent' });
-    expect(f.remote.questions).toHaveBeenCalledTimes(1);
+    expect(f.remote.questionsFollow).toHaveBeenCalledTimes(1);
+    expect(f.remote.questionsFollow).toHaveBeenCalledWith({ sessionId: 'a' }, expect.any(AbortSignal));
     expect(screen.queryByText('Decision question')).toBeNull();
     expect(screen.queryByRole('button', { name: /Open questions|Review questions/ })).toBeNull();
     expect(screen.getByText('1 / 2').getAttribute('aria-live')).toBe('polite');
@@ -187,7 +215,96 @@ describe('public SDK plugin binding contracts', () => {
     fireEvent.click(screen.getByRole('button', { name: /Submit/ }));
     await waitFor(() => expect(f.send).toHaveBeenCalledOnce());
     expect(f.scope).toHaveBeenCalledWith('a'); expect(f.send.mock.calls[0]?.[0]).toContain('Use the approved native implementation.');
-    expect(f.remote.command).not.toHaveBeenCalled(); expect(f.remote.questions).toHaveBeenCalledTimes(1); expect(f.nativeSelect).not.toHaveBeenCalled();
+    // The strip leaves the dock before admission settles while the draft stays mounted.
+    const strip = document.querySelector('form.kq-strip');
+    expect(strip?.hasAttribute('hidden')).toBe(true);
+    expect(strip?.getAttribute('aria-hidden')).toBe('true');
+    await waitFor(() => expect(f.focusComposer).toHaveBeenCalled());
+    expect(f.remote.command).not.toHaveBeenCalled(); expect(f.nativeSelect).not.toHaveBeenCalled();
+  });
+  it('restores the draft with the admission error when Submit fails', async () => {
+    const f = await installed();
+    const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
+    render(<Dock sessionId="a" />);
+    await screen.findByRole('form', { name: 'Questions from the agent' });
+    fireEvent.change(screen.getByLabelText('Your answer'), { target: { value: 'Use the approved native implementation.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Additional Notes' }), { target: { value: 'Keep the notes.' } });
+    vi.mocked(f.send).mockRejectedValueOnce(new Error('Native message was not admitted.'));
+    fireEvent.click(screen.getByRole('button', { name: /Submit/ }));
+    expect(await screen.findByText('Native message was not admitted.')).toBeTruthy();
+    const strip = document.querySelector('form.kq-strip');
+    expect(strip?.hasAttribute('hidden')).toBe(false);
+    expect((screen.getByRole('button', { name: 'Submit' }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect((screen.getByLabelText('Your answer') as HTMLTextAreaElement).value).toBe('Use the approved native implementation.');
+  });
+  it('keeps a submitted round hidden across an unresolved frame and removes it when answered', async () => {
+    const f = await installed();
+    const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
+    render(<Dock sessionId="a" />);
+    await screen.findByRole('form', { name: 'Questions from the agent' });
+    fireEvent.change(screen.getByLabelText('Your answer'), { target: { value: 'Use the approved native implementation.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent.click(screen.getByRole('button', { name: /Submit/ }));
+    await waitFor(() => expect(f.send).toHaveBeenCalledOnce());
+    f.questionFeeds[0]!.push({ kind: 'update', rounds: [question] });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(document.querySelector('form.kq-strip')?.hasAttribute('hidden')).toBe(true);
+    f.questionFeeds[0]!.push({ kind: 'update', rounds: [{ ...question, answered: true }] });
+    await waitFor(() => expect(document.querySelector('form.kq-strip')).toBeNull());
+  });
+  it('keeps the submitted round when the feed drops it before admission settles', async () => {
+    const f = await installed();
+    const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
+    let reject!: (reason: Error) => void;
+    vi.mocked(f.send).mockImplementationOnce(() => new Promise<void>((_, no) => { reject = no; }));
+    render(<Dock sessionId="a" />);
+    await screen.findByRole('form', { name: 'Questions from the agent' });
+    fireEvent.change(screen.getByLabelText('Your answer'), { target: { value: 'Use the approved native implementation.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent.click(screen.getByRole('button', { name: /Submit/ }));
+    await waitFor(() => expect(f.send).toHaveBeenCalledOnce());
+    f.questionFeeds[0]!.push({ kind: 'update', rounds: [] });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(document.querySelector('form.kq-strip')?.hasAttribute('hidden')).toBe(true);
+    reject(new Error('Native message was not admitted.'));
+    expect(await screen.findByText('Native message was not admitted.')).toBeTruthy();
+    expect(document.querySelector('form.kq-strip')?.hasAttribute('hidden')).toBe(false);
+  });
+  it('retires the dock when a normal reply answers the round', async () => {
+    const f = await installed();
+    const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
+    render(<Dock sessionId="a" />);
+    await screen.findByRole('form', { name: 'Questions from the agent' });
+    f.questionFeeds[0]!.push({ kind: 'update', rounds: [{ ...question, answered: true }] });
+    await waitFor(() => expect(document.querySelector('form.kq-strip')).toBeNull());
+  });
+  it('defers a newer round until the submitted round is confirmed', async () => {
+    const newer: QuestionRound = { ...question, id: 'newer', turnId: '2', pages: [{ callId: 'call-b', sequence: 2, page: { question: 'Newest question', type: 'freetext' } }] };
+    const f = await installed();
+    const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
+    render(<Dock sessionId="a" />);
+    await screen.findByRole('form', { name: 'Questions from the agent' });
+    fireEvent.change(screen.getByLabelText('Your answer'), { target: { value: 'Use the approved native implementation.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent.click(screen.getByRole('button', { name: /Submit/ }));
+    await waitFor(() => expect(f.send).toHaveBeenCalledOnce());
+    f.questionFeeds[0]!.push({ kind: 'update', rounds: [question, newer] });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(document.querySelector('form.kq-strip')?.hasAttribute('hidden')).toBe(true);
+    f.questionFeeds[0]!.push({ kind: 'update', rounds: [{ ...question, answered: true }, newer] });
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Newest question' })).toBeTruthy());
+  });
+  it('closes a question feed when its Dock unmounts', async () => {
+    const f = await installed();
+    const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
+    const view = render(<Dock sessionId="a" />);
+    await screen.findByRole('form', { name: 'Questions from the agent' });
+    const feed = f.questionFeeds[0]!;
+    const dispose = vi.spyOn(feed, 'dispose');
+    view.unmount();
+    await waitFor(() => expect(dispose).toHaveBeenCalled());
   });
   it('shows only the most recent unresolved round and no strip once the round is answered', async () => {
     const older: QuestionRound = { ...question, id: 'older', turnId: '1', pages: [{ callId: 'call-a', sequence: 1, page: { question: 'Older question', type: 'freetext' } }] };
@@ -202,7 +319,7 @@ describe('public SDK plugin binding contracts', () => {
     const g = await installed([{ ...newer, answered: true }]);
     const AnsweredDock = g.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
     const empty = render(<AnsweredDock sessionId="a" />);
-    await waitFor(() => expect(g.remote.questions).toHaveBeenCalled());
+    await waitFor(() => expect(g.remote.questionsFollow).toHaveBeenCalled());
     expect(empty.container.querySelector('form')).toBeNull();
   });
   it('owns native reference/provider binding, switches A/B by explicit reference, and releases on Info/unmount', async () => {

@@ -206,6 +206,26 @@ describe('QuestionIndex canonical events', () => {
     expect(record.dismissedTurns).toEqual([9]);
   });
 
+  it('advances a per-session revision only for that conversation', () => {
+    const index = new QuestionIndex();
+    expect(index.revisionOf('a')).toBe(0);
+    index.apply('b', result(1, 0, 'q'));
+    expect(index.revisionOf('a')).toBe(0);
+    expect(index.revisionOf('b')).toBe(1);
+    index.apply('a', result(2, 0, 'q'));
+    expect(index.revisionOf('a')).toBe(1);
+    expect(index.apply('a', result(2, 0, 'q'))).toBe(false);
+    expect(index.revisionOf('a')).toBe(1);
+    index.dismiss('a', [index.getRounds('a')[0]!.id]);
+    expect(index.revisionOf('a')).toBe(2);
+    index.undismiss('a', [0]);
+    expect(index.revisionOf('a')).toBe(3);
+    expect(index.revisionOf('b')).toBe(1);
+    index.load(index.serialize());
+    expect(index.revisionOf('a')).toBe(1);
+    expect(index.revisionOf('b')).toBe(1);
+  });
+
   it('keeps an unresolvable PTC page while the dismissal marker hides its round', () => {
     const index = new QuestionIndex();
     index.apply('a', ptcStart(1, 'root', 'nested'));

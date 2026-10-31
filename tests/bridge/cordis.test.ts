@@ -9,7 +9,7 @@ import { TYPERT_REMOTE } from '../../src/remote.js';
 import * as KanbanClient from '../../src/client.js';
 const fibers: Fiber[] = [];
 afterEach(async () => { for (const fiber of fibers.splice(0).reverse()) await fiber.dispose(); });
-const board: HostSnapshot = { sequence: 0, conversations: {}, questionRounds: [], state: { hubs: [{ id: 'hub', name: 'Hub', revision: 0, projects: [], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], tasks: [], notes: [], createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], settings: { revision: 0 } } };
+const board: HostSnapshot = { sequence: 0, conversations: {}, state: { hubs: [{ id: 'hub', name: 'Hub', revision: 0, projects: [], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], tasks: [], notes: [], createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], settings: { revision: 0 } } };
 async function runtime() {
   const root = new Context();
   const call = vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: board } });

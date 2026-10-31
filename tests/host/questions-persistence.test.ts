@@ -143,7 +143,7 @@ describe('conversation question persistence', () => {
     await expect(app.dismissQuestions('s', rounds[0]!.id)).resolves.toEqual([]);
     expect(await app.rounds('s')).toEqual([]);
     expect(app.questions.pending('s')).toBe(false);
-    expect((await app.snapshot()).questionRounds).toEqual([]);
+    expect(app.questions.getRounds()).toEqual([]);
     expect(saves.at(-1)?.dismissedTurns).toEqual([1, 2]);
     expect(saves.at(-1)?.events.some(event => event.kind === 'native-page')).toBe(false);
     const sessions = app.sessions as unknown as { sent: unknown[]; archived: string[] };
@@ -200,7 +200,7 @@ describe('conversation question persistence', () => {
     const second = await appWith(store, { history: async () => replay });
     expect(await second.rounds('s')).toEqual([]);
     expect(second.questions.pending('s')).toBe(false);
-    expect((await second.snapshot()).questionRounds).toEqual([]);
+    expect(second.questions.getRounds()).toEqual([]);
     await second.close();
   });
 

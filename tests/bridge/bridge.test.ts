@@ -7,7 +7,7 @@ import type { SessionStatus, SessionStatusSnapshot } from '@deepseek-ai/dsh-clie
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import { ClientBridge, unwrap, type BridgeRemote } from '../../src/client-bridge.js';
 import type { KeyValueStorage } from '../../src/client/key-value-storage.js';
-import type { ConversationFacts, HostSnapshot, HubTask, KanbanSnapshot, QuestionRound } from '../../src/shared/types.js';
+import type { ConversationFacts, HostSnapshot, HubTask, KanbanSnapshot, QuestionFeedFrame, QuestionRound } from '../../src/shared/types.js';
 function source<T>(initial: T) {
   let value = initial; const listeners = new Set<() => void>();
   const observable: HostObservable<T> = { getSnapshot: () => value, subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
@@ -31,8 +31,8 @@ class Feed<T> implements RemoteStreamHandle<T, never>, AsyncIterator<T> {
   [Symbol.asyncIterator](): AsyncIterator<T> { return this; }
 }
 const task = (id: string, sessionIds: string[], closedSessionIds: string[] = []): HubTask => ({ id, boardId: 'board', projectId: 'p', title: id, description: '', columnId: 'backlog', position: 0, sessionIds, closedSessionIds, effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' });
-function hostSnapshot(sequence = 1, conversations: Record<string, ConversationFacts> = {}, questionRounds?: QuestionRound[]): HostSnapshot {
-  return { sequence, conversations, state: { hubs: [{ id: 'hub', name: 'Hub', revision: sequence, projects: [], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], tasks: [task('t1', ['a', 'b']), task('t2', ['c'])], notes: [], createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], settings: { revision: 0 } }, ...(questionRounds ? { questionRounds } : {}) };
+function hostSnapshot(sequence = 1, conversations: Record<string, ConversationFacts> = {}): HostSnapshot {
+  return { sequence, conversations, state: { hubs: [{ id: 'hub', name: 'Hub', revision: sequence, projects: [], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], tasks: [task('t1', ['a', 'b']), task('t2', ['c'])], notes: [], createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], settings: { revision: 0 } } };
 }
 function closed(closedSessionIds: string[], conversations: Record<string, ConversationFacts> = {}, sequence = 1): HostSnapshot {
   const value = hostSnapshot(sequence, conversations);
@@ -54,6 +54,7 @@ function fixture(options: { storage?: KeyValueStorage } = {}) {
   const status = source<SessionStatusSnapshot>(new Map());
   const generation = source<ConnectionGeneration | undefined>({ id: 1, host: { home: '/home' } });
   const feeds: Feed<HostSnapshot>[] = [];
+  const questionFeeds: Feed<QuestionFeedFrame>[] = [];
   const remote: BridgeRemote = {
     kanban: {
       snapshot: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: hostSnapshot() } }),
@@ -61,7 +62,7 @@ function fixture(options: { storage?: KeyValueStorage } = {}) {
       branches: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['main'] } }),
       worktreeDefault: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { branchName: 'task', path: '' } } }),
       detectProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { kind: 'git', projectPath: '/repo/apps/web', gitRootPath: '/repo', defaultBranch: 'main' } } }),
-      questions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [round()] } }),
+      questionsFollow: vi.fn((_request: { sessionId: string }, signal?: AbortSignal) => { const feed = new Feed<QuestionFeedFrame>(); questionFeeds.push(feed); signal?.addEventListener('abort', () => feed.dispose(), { once: true }); return feed; }),
       dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
       follow: vi.fn((signal?: AbortSignal) => { const feed = new Feed<HostSnapshot>(); feeds.push(feed); signal?.addEventListener('abort', () => feed.dispose(), { once: true }); return feed; }),
     },
@@ -69,7 +70,7 @@ function fixture(options: { storage?: KeyValueStorage } = {}) {
   };
   const bridge = new ClientBridge(remote, status.observable, options.storage ? { storage: options.storage } : {});
   alive.add(bridge);
-  return { bridge, remote, status, generation, feeds };
+  return { bridge, remote, status, generation, feeds, questionFeeds };
 }
 function native(running = false, pending = false): SessionStatus {
   return { running, completionUnread: false, pendingInteraction: pending ? { key: 'pending', kind: 'approval', sessionId: 'a' as SessionId } : undefined };
@@ -294,94 +295,70 @@ describe('honest local view acknowledgement', () => {
   });
 });
 
-describe('one-shot cold question preparation', () => {
-  it('queries once, then follows host-projected round updates rather than polling', async () => {
-    const f = fixture(); await f.bridge.api.snapshot();
-    await Promise.all([f.bridge.prepareQuestions('a'), f.bridge.prepareQuestions('a')]);
-    await f.bridge.prepareQuestions('a'); expect(f.remote.kanban.questions).toHaveBeenCalledOnce();
-    expect(f.bridge.questionsView.getSnapshot().rounds).toEqual([round()]);
-    f.bridge.start(); await vi.waitFor(() => expect(f.feeds).toHaveLength(1)); f.feeds[0]!.push(hostSnapshot(3, {}, [round(true)]));
+describe('question feed bridge', () => {
+  it('tracks one conversation, opens one feed, and applies baseline and update frames', async () => {
+    const f = fixture();
+    f.bridge.trackQuestions('a'); f.bridge.trackQuestions('a');
+    await vi.waitFor(() => expect(f.questionFeeds).toHaveLength(1));
+    expect(f.remote.kanban.questionsFollow).toHaveBeenCalledWith({ sessionId: 'a' }, expect.any(AbortSignal));
+    f.questionFeeds[0]!.push({ kind: 'baseline', rounds: [round()] });
+    await vi.waitFor(() => expect(f.bridge.questionsView.getSnapshot().rounds).toEqual([round()]));
+    f.questionFeeds[0]!.push({ kind: 'update', rounds: [round(true)] });
     await vi.waitFor(() => expect(f.bridge.questionsView.getSnapshot().rounds[0]?.answered).toBe(true));
-    expect(f.remote.kanban.questions).toHaveBeenCalledTimes(2); // First physical baseline starts a new preparation epoch.
   });
-  it('rehydrates an ordinary pending round after a physical host baseline reset', async () => {
-    const f = fixture(); f.bridge.start(); await vi.waitFor(() => expect(f.feeds).toHaveLength(1)); f.feeds[0]!.push(hostSnapshot(7, {}, []));
-    await vi.waitFor(() => expect(f.bridge.status.getSnapshot().connected).toBe(true)); await f.bridge.prepareQuestions('a');
-    expect(f.bridge.questionsView.getSnapshot().rounds).toHaveLength(1);
-    f.bridge.retry(); await vi.waitFor(() => expect(f.feeds).toHaveLength(2)); f.feeds[1]!.push(hostSnapshot(0, {}, []));
-    await vi.waitFor(() => expect(f.remote.kanban.questions).toHaveBeenCalledTimes(2));
-    await vi.waitFor(() => expect(f.bridge.questionsView.getSnapshot().rounds).toHaveLength(1));
-    expect(f.bridge.questionsView.getSnapshot().rounds[0]?.answered).toBe(false);
-  });
-  it('fences an old history response and retires a round answered in the current host epoch', async () => {
-    const f = fixture(); f.bridge.start(); await vi.waitFor(() => expect(f.feeds).toHaveLength(1)); f.feeds[0]!.push(hostSnapshot(7, {}, []));
-    await vi.waitFor(() => expect(f.bridge.status.getSnapshot().connected).toBe(true)); let resolve!: (value: Awaited<ReturnType<BridgeRemote['kanban']['questions']>>) => void;
-    vi.mocked(f.remote.kanban.questions).mockImplementationOnce(() => new Promise(done => { resolve = done; })); const old = f.bridge.prepareQuestions('a');
-    await vi.waitFor(() => expect(f.remote.kanban.questions).toHaveBeenCalledOnce());
-    vi.mocked(f.remote.kanban.questions).mockResolvedValueOnce({ ok: true, value: { ok: true, value: [round(true)] } });
-    f.bridge.retry(); await vi.waitFor(() => expect(f.feeds).toHaveLength(2)); f.feeds[1]!.push(hostSnapshot(0, {}, []));
-    await vi.waitFor(() => expect(f.bridge.questionsView.getSnapshot().rounds[0]?.answered).toBe(true));
-    resolve({ ok: true, value: { ok: true, value: [round(false)] } }); expect((await old)[0]?.answered).toBe(true);
-    expect(f.bridge.questionsView.getSnapshot().rounds[0]?.answered).toBe(true); expect(f.remote.kanban.questions).toHaveBeenCalledTimes(2);
-  });
-  it('never rewinds an answered current-host round with a cold history result', async () => {
-    const f = fixture(); f.bridge.start(); await vi.waitFor(() => expect(f.feeds).toHaveLength(1)); f.feeds[0]!.push(hostSnapshot(7, {}, [round(true)]));
-    await vi.waitFor(() => expect(f.bridge.questionsView.getSnapshot().rounds[0]?.answered).toBe(true));
-    expect((await f.bridge.prepareQuestions('a'))[0]?.answered).toBe(true);
-  });
-  it('exposes background history errors per session and permits a safe retry', async () => {
-    const f = fixture(); await f.bridge.prepareQuestions('a'); vi.mocked(f.remote.kanban.questions).mockRejectedValueOnce(new Error('History unavailable'));
-    f.bridge.start(); await vi.waitFor(() => expect(f.feeds).toHaveLength(1)); f.feeds[0]!.push(hostSnapshot(0, {}, []));
-    await vi.waitFor(() => expect(f.bridge.questionsView.getSnapshot().errors.get('a')?.message).toBe('History unavailable'));
-    expect(f.bridge.status.getSnapshot().connected).toBe(true); await f.bridge.prepareQuestions('a');
-    expect(f.bridge.questionsView.getSnapshot().errors.has('a')).toBe(false); expect(f.bridge.questionsView.getSnapshot().rounds).toHaveLength(1);
-  });
-  it('can retry a failed initial preparation without marking the round answered', async () => {
-    const f = fixture(); vi.mocked(f.remote.kanban.questions).mockRejectedValueOnce(new Error('History unavailable'));
-    await expect(f.bridge.prepareQuestions('a')).rejects.toThrow('History unavailable');
-    await f.bridge.prepareQuestions('a');
-    expect(f.bridge.questionsView.getSnapshot().rounds[0]?.answered).toBe(false);
-    expect(f.remote.kanban.questions).toHaveBeenCalledTimes(2);
-  });
-});
 
-describe('question dismissal bridge', () => {
-  it('removes the round locally and fences a late preparation merge', async () => {
-    const f = fixture(); await f.bridge.prepareQuestions('a');
-    expect(f.bridge.questionsView.getSnapshot().rounds).toHaveLength(1);
-    let resolve!: (value: Awaited<ReturnType<BridgeRemote['kanban']['questions']>>) => void;
-    vi.mocked(f.remote.kanban.questions).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
-    const stale = f.bridge.prepareQuestions('b');
-    await vi.waitFor(() => expect(f.remote.kanban.questions).toHaveBeenCalledTimes(2));
+  it('publishes a feed error and reopens it on retry', async () => {
+    const f = fixture();
+    f.bridge.trackQuestions('a');
+    await vi.waitFor(() => expect(f.questionFeeds).toHaveLength(1));
+    f.questionFeeds[0]!.fail(new Error('Question feed unavailable'));
+    await vi.waitFor(() => expect(f.bridge.questionsView.getSnapshot().errors.get('a')?.message).toBe('Question feed unavailable'));
+    f.bridge.retryQuestions('a');
+    await vi.waitFor(() => expect(f.questionFeeds.length).toBeGreaterThanOrEqual(2));
+    expect(f.bridge.questionsView.getSnapshot().errors.has('a')).toBe(false);
+  });
+
+  it('removes a dismissed round locally and filters a later baseline', async () => {
+    const f = fixture(); f.bridge.trackQuestions('a');
+    await vi.waitFor(() => expect(f.questionFeeds).toHaveLength(1));
+    f.questionFeeds[0]!.push({ kind: 'baseline', rounds: [round()] });
+    await vi.waitFor(() => expect(f.bridge.questionsView.getSnapshot().rounds).toHaveLength(1));
     vi.mocked(f.remote.kanban.dismissQuestions).mockResolvedValueOnce({ ok: true, value: { ok: true, value: [] } });
     await f.bridge.dismissQuestions('a', 'round');
     expect(f.remote.kanban.dismissQuestions).toHaveBeenCalledWith({ sessionId: 'a', roundId: 'round' });
     expect(f.bridge.questionsView.getSnapshot().rounds).toEqual([]);
-    await expect(f.bridge.prepareQuestions('a')).resolves.toEqual([]);
-    resolve({ ok: true, value: { ok: true, value: [{ ...round(), sessionId: 'b' }] } });
-    await stale;
-    expect(f.bridge.questionsView.getSnapshot().rounds.filter(value => value.sessionId === 'a')).toEqual([]);
+    f.questionFeeds[0]!.push({ kind: 'baseline', rounds: [round()] });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(f.bridge.questionsView.getSnapshot().rounds).toEqual([]);
   });
 
   it('keeps the round when the host rejects the dismissal', async () => {
-    const f = fixture(); await f.bridge.prepareQuestions('a');
+    const f = fixture(); f.bridge.trackQuestions('a');
+    await vi.waitFor(() => expect(f.questionFeeds).toHaveLength(1));
+    f.questionFeeds[0]!.push({ kind: 'baseline', rounds: [round()] });
+    await vi.waitFor(() => expect(f.bridge.questionsView.getSnapshot().rounds).toHaveLength(1));
     vi.mocked(f.remote.kanban.dismissQuestions).mockRejectedValueOnce(Object.assign(new Error('No such round'), { code: 'OTHER_FAILURE' }));
     await expect(f.bridge.dismissQuestions('a', 'round')).rejects.toThrow('No such round');
     expect(f.bridge.questionsView.getSnapshot().rounds).toHaveLength(1);
   });
 
-  it('treats an already dismissed round as success and filters a later snapshot', async () => {
-    const f = fixture(); await f.bridge.prepareQuestions('a');
+  it('treats an already dismissed round as success and filters a later baseline', async () => {
+    const f = fixture(); f.bridge.trackQuestions('a');
+    await vi.waitFor(() => expect(f.questionFeeds).toHaveLength(1));
+    f.questionFeeds[0]!.push({ kind: 'baseline', rounds: [round()] });
+    await vi.waitFor(() => expect(f.bridge.questionsView.getSnapshot().rounds).toHaveLength(1));
     vi.mocked(f.remote.kanban.dismissQuestions).mockResolvedValueOnce({ ok: true, value: { ok: false, error: { code: 'QUESTION_ROUND_NOT_FOUND', message: 'Already dismissed' } } });
     await expect(f.bridge.dismissQuestions('a', 'round')).resolves.toEqual([]);
-    f.bridge.start(); await vi.waitFor(() => expect(f.feeds).toHaveLength(1)); f.feeds[0]!.push(hostSnapshot(7, {}, [round()]));
-    await vi.waitFor(() => expect(f.bridge.questionsView.getSnapshot().rounds).toEqual([]));
+    f.questionFeeds[0]!.push({ kind: 'baseline', rounds: [round()] });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(f.bridge.questionsView.getSnapshot().rounds).toEqual([]);
   });
 
   it('does not hide unrelated unresolved rounds when the trigger is missing', async () => {
-    const f = fixture();
-    vi.mocked(f.remote.kanban.questions).mockResolvedValueOnce({ ok: true, value: { ok: true, value: [round(), { ...round(), id: 'round-2' }] } });
-    await f.bridge.prepareQuestions('a');
+    const f = fixture(); f.bridge.trackQuestions('a');
+    await vi.waitFor(() => expect(f.questionFeeds).toHaveLength(1));
+    f.questionFeeds[0]!.push({ kind: 'baseline', rounds: [round(), { ...round(), id: 'round-2' }] });
+    await vi.waitFor(() => expect(f.bridge.questionsView.getSnapshot().rounds).toHaveLength(2));
     vi.mocked(f.remote.kanban.dismissQuestions).mockResolvedValueOnce({ ok: true, value: { ok: false, error: { code: 'QUESTION_ROUND_NOT_FOUND', message: 'Already answered' } } });
     await expect(f.bridge.dismissQuestions('a', 'round')).resolves.toMatchObject([{ id: 'round-2' }]);
     expect(f.bridge.questionsView.getSnapshot().rounds.map(value => value.id)).toEqual(['round-2']);

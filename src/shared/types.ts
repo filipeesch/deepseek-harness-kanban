@@ -75,7 +75,7 @@ export interface Attention { running: boolean; background: BackgroundActivity[];
 /** Transient identity of the entity created by this exact command, never persisted. */
 export interface CommandReceipt { kind: 'hub' | 'board' | 'project' | 'task' | 'conversation' | 'note'; id: string }
 /** Host snapshot: durable state plus per-conversation attention facts. */
-export interface HostSnapshot { commandReceipt?: CommandReceipt; state: KanbanState; conversations: Record<string, ConversationFacts>; sequence: number; questionRounds?: QuestionRound[] }
+export interface HostSnapshot { commandReceipt?: CommandReceipt; state: KanbanState; conversations: Record<string, ConversationFacts>; sequence: number }
 /** Client snapshot: host facts plus the client-owned attention projection. */
 export interface KanbanSnapshot extends Omit<HostSnapshot, 'conversations'> { attention: Record<string, Attention>; conversationAttention: Record<string, Attention>; clientEpoch?: number }
 export const EMPTY_ATTENTION: Attention = { running: false, background: [], unread: false, awaitingReply: false, failed: false };
@@ -124,4 +124,6 @@ export interface QuestionPage {
 }
 export interface RoundPage { callId: string; sequence: number; page: QuestionPage }
 export interface QuestionRound { id: string; sessionId: string; turnId: string; pages: RoundPage[]; complete: boolean; answered: boolean }
+/** One conversation-scoped question projection frame; baseline replaces, update supersedes the same session. */
+export interface QuestionFeedFrame { kind: 'baseline' | 'update'; rounds: QuestionRound[] }
 export interface QuestionAnswer { choices: string[]; text: string; other: string; notes: string }

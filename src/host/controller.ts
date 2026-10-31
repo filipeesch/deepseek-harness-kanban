@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis';
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
-import type { Command, HostSnapshot, Outcome, ProjectLocation, QuestionRound } from '../shared/types.js';
+import type { Command, HostSnapshot, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound } from '../shared/types.js';
 import { problem, KanbanError } from '../shared/errors.js';
 import type { KanbanApp } from './app.js';
 export class KanbanController extends TypertRemoteService {
@@ -12,13 +12,37 @@ export class KanbanController extends TypertRemoteService {
  @Remote async branches(request:{taskId:string}):Promise<Outcome<string[]>>{return this.attempt(()=>this.app.branches(request.taskId));}
  @Remote async worktreeDefault(request:{taskId:string}):Promise<Outcome<{branchName:string;path:string}>>{return this.attempt(()=>this.app.worktreeDefault(request.taskId));}
  @Remote async detectProject(request:{path:string}):Promise<Outcome<ProjectLocation>>{return this.attempt(()=>this.app.detectProject(request.path));}
- @Remote async questions(request:{sessionId:string}):Promise<Outcome<QuestionRound[]>>{return this.attempt(()=>this.app.rounds(request.sessionId));}
  @Remote async dismissQuestions(request:{sessionId:string;roundId:string}):Promise<Outcome<QuestionRound[]>>{return this.attempt(()=>this.app.dismissQuestions(request.sessionId,request.roundId));}
  @Remote({mode:'stream'}) async *follow(signal:AbortSignal):AsyncGenerator<HostSnapshot>{
   this.owner();let dirty=true;let wake:(()=>void)|undefined;
   const changed=()=>{dirty=true;wake?.();};const off=this.app.subscribe(changed);
   signal.addEventListener('abort',changed,{once:true});
   try{while(!signal.aborted){if(dirty){dirty=false;yield await this.app.snapshot();continue;}await new Promise<void>(resolve=>{wake=resolve;if(dirty||signal.aborted)resolve();});wake=undefined;}}
+  finally{off();signal.removeEventListener('abort',changed);wake?.();}
+ }
+ /**
+  * One conversation's question projection, independent of board and attention work.
+  * A baseline frame precedes updates; unrelated sessions never advance this revision.
+  */
+ @Remote({mode:'stream'}) async *questionsFollow(request:{sessionId:string},signal:AbortSignal):AsyncGenerator<QuestionFeedFrame>{
+  this.owner();const sessionId=request.sessionId;
+  let dirty=true;let first=true;let last=-1;let wake:(()=>void)|undefined;
+  const changed=()=>{dirty=true;wake?.();};const off=this.app.questions.subscribe(changed);
+  signal.addEventListener('abort',changed,{once:true});
+  try{while(!signal.aborted){
+   if(dirty){
+    dirty=false;
+    const revision=this.app.questions.revisionOf(sessionId);
+    if(first||revision!==last){
+     last=revision;
+     const rounds=await this.app.rounds(sessionId);
+     signal.throwIfAborted();
+     yield {kind:first?'baseline':'update',rounds};
+     first=false;continue;
+    }
+   }
+   await new Promise<void>(resolve=>{wake=resolve;if(dirty||signal.aborted)resolve();});wake=undefined;
+  }}
   finally{off();signal.removeEventListener('abort',changed);wake?.();}
  }
 }
