@@ -79,6 +79,31 @@ describe('native session facts', () => {
     expect(inspect).toHaveBeenCalledWith('session-1');
   });
 
+  it('uses the incremental fold for a live Session without inspecting its history', async () => {
+    const activity = vi.fn(async () => [{ kind: 'turn' }]);
+    const projections = vi.fn(async () => sequenced());
+    const inspect = vi.fn(async () => inspection());
+    const facts = createNativeSessionFacts({
+      activity, projections, inspect,
+      liveFacts: () => ({ lastTurnEndSeq: 9, lastTurnOutcome: 'error', openApprovalIds: [] }),
+    });
+    expect(await facts.read('session-1')).toEqual({
+      running: true,
+      background: [],
+      awaitingReply: false,
+      settledTurn: { seq: 9, outcome: 'error' },
+    });
+    expect(inspect).not.toHaveBeenCalled();
+  });
+
+  it('keeps an open approval from the fold as awaiting a reply', async () => {
+    const facts = createNativeSessionFacts({
+      activity: async () => [], projections: async () => null, inspect: async () => inspection(),
+      liveFacts: () => ({ lastTurnEndSeq: null, lastTurnOutcome: null, openApprovalIds: ['approval-1'] }),
+    });
+    expect((await facts.read('session-1')).awaitingReply).toBe(true);
+  });
+
   it('reports the last settled turn regardless of an open turn', async () => {
     const inspect = vi.fn(async () => inspection([
       { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } }, seq: 3 },

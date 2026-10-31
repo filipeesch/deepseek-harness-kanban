@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { Context } from '@deepseek-ai/cordis';
-import type { ISessions, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client';
+import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client';
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client';
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client';
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client';
@@ -21,10 +21,12 @@ import { selectActiveRound } from './questions/submission.js';
 import { NativeSessionHeader } from './client/native-session-header.js';
 import { ConversationCloseAction } from './client/conversation-actions.js';
 import { EmbeddedConversationBody, RetainedConversation, type ConversationSurfaceOwner, type ConversationSurfaceServices } from './client/conversation-surface.js';
+import type { ConversationLeaseEnvironment } from './client/conversation-leases.js';
+import type { SessionTitles } from './client/conversation-label.js';
 import type { NativeLocaleSource, NativeSlotSource, NativeSnapshotSource } from './client/native-slot-host.js';
 import { createModePortSource } from './client/mode-port.js';
 import { TASK_CONTEXT_NODE_KIND, TaskContextNodeView, taskContextDefinition } from './client/task-context-node.js';
-import { useConversationNavigation, isOwnedSubagent, type ConversationLineagePort } from './client/conversation-navigation.js';
+import { useConversationNavigation, isOwnedSubagent, type ConversationLineagePort, type DrawerSubagentAddress } from './client/conversation-navigation.js';
 import type { ClientApi } from './shared/types.js';
 
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
@@ -105,7 +107,6 @@ export async function apply(raw: Context): Promise<() => Promise<void>> {
 function initializeClient(raw: Context, pageState: BoardPageState): () => Promise<void> {
   const ctx = raw as unknown as ClientContext;
   const lifetime = new AbortController();
-  const held = new Set<SessionReference>();
   const bridge = new ClientBridge(ctx.remote, ctx.uiSession.sessionStatus);
   // The command port belongs to this client generation, not to a mounted board.
   const autoRun = new AutoRunController({ run: command => bridge.api.command(command) });
@@ -175,13 +176,13 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     />;
   }
   function BoardPage(props: MainProps & { api: ClientApi; autoRun: AutoRunController }) {
-    const surfaceServices = useMemo<ConversationSurfaceServices>(() => ({
+    const leaseEnvironment = useMemo<ConversationLeaseEnvironment>(() => ({
       sessions: scopedSessions,
-      claimComposer: sessionId => bridge.claimComposer(sessionId) ?? null,
       lifetime: lifetime.signal,
-      hold: reference => { held.add(reference); },
-      release: reference => { if (held.delete(reference)) reference.release(); },
-    }), [scopedSessions, bridge]);
+    }), [scopedSessions, lifetime]);
+    const surfaceServices = useMemo<ConversationSurfaceServices>(() => ({
+      claimComposer: sessionId => bridge.claimComposer(sessionId) ?? null,
+    }), [bridge]);
     const surfaceOwner = useMemo<ConversationSurfaceOwner>(() => ({
       SessionProvider: props.SessionProvider,
       renderSlot: (key, owner) => props.renderSlot(key, owner as never),
@@ -190,7 +191,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     const subscribeSessionList = useCallback((listener: () => void) => sessionListSource.subscribe(listener), [sessionListSource]);
     const getSessionList = useCallback(() => sessionListSource.getSnapshot(), [sessionListSource]);
     const sessionList = useSyncExternalStore(subscribeSessionList, getSessionList, getSessionList);
-    const sessionTitles = {
+    const sessionTitles = useMemo<SessionTitles>(() => ({
       title: (sessionId: string) => sessionList.byId[sessionId as SessionId]?.title,
       rename: async (sessionId: string, title: string) => {
         const face = scopedSessions.scope(sessionId as SessionId)?.get('session');
@@ -198,7 +199,14 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
         const result = await face.rename(title);
         if (!result.ok) throw new Error(result.error.message);
       },
-    };
+    }), [sessionList, scopedSessions]);
+    const renderConversation = useCallback((id: string, target?: DrawerSubagentAddress) => <RetainedConversation
+      key={target?.childSessionId ?? id}
+      id={id}
+      {...(target === undefined ? {} : { target })}
+      owner={surfaceOwner}
+      services={surfaceServices}
+    />, [surfaceOwner, surfaceServices]);
     return <BoardView
       api={props.api}
       pageState={pageState}
@@ -206,13 +214,8 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       picker={picker}
       autoRun={props.autoRun}
       lineage={lineage}
-      renderConversation={(id, target) => <RetainedConversation
-        key={target?.childSessionId ?? id}
-        id={id}
-        {...(target === undefined ? {} : { target })}
-        owner={surfaceOwner}
-        services={surfaceServices}
-      />}
+      conversationLeases={leaseEnvironment}
+      renderConversation={renderConversation}
     />;
   }
   function Main(props: MainProps) {
@@ -265,7 +268,6 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     lifetime.abort(); autoRun.dispose(); unsubscribeAutoRun();
     offTaskContext();
     try { await modeInjection?.dispose(); } catch { /* the optional namespace fiber is best effort */ }
-    for (const reference of held) reference.release(); held.clear();
     await bridge.dispose();
   };
 }

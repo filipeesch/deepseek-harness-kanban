@@ -6,6 +6,8 @@ import type { ContextOperation, GitProject, HubState, OperationRequest, Project,
 import { canonicalPath } from './git.js';
 import { isGitProject, requireGitProject } from '../shared/project.js';
 import { WorktreeSharingGuard } from './worktree-sharing.js';
+import { DestructiveOperationHandler, type DestructiveOperationHost } from './destructive-operation.js';
+import { OperationQueue } from './operation-queue.js';
 
 export interface WorktreeStore {
   locate(taskId: string): { hubId: string; hub: HubState; task: Task; project: Project };
@@ -48,6 +50,8 @@ export class WorktreeCoordinator {
   private readonly now: () => string;
   private readonly onTaskDeleted?: (task: Task, project: Project) => Promise<void>;
   private readonly sharing: WorktreeSharingGuard;
+  private readonly destructive: DestructiveOperationHandler;
+  private readonly queue = new OperationQueue();
   private readonly tails = new Map<string, Promise<void>>();
   private resumed: Promise<void> | undefined;
   private resumeAgain = false;
@@ -59,13 +63,30 @@ export class WorktreeCoordinator {
     this.now = options.now ?? (() => new Date().toISOString());
     this.onTaskDeleted = options.onTaskDeleted;
     this.sharing = options.sharing ?? new WorktreeSharingGuard(store, sessions);
+    this.destructive = new DestructiveOperationHandler(store, sessions, git, this.destructiveHost(), { now: this.now, sharing: this.sharing, ...(options.onTaskDeleted ? { onTaskDeleted: options.onTaskDeleted } : {}) });
   }
 
-  dispose(): void { this.disposed = true; this.controller.abort(); }
+  private destructiveHost(): DestructiveOperationHost {
+    return {
+      read: taskId => this.read(taskId),
+      assertOpen: () => this.assertOpen(),
+      signal: this.signal,
+      update: (taskId, operationId, change) => this.update(taskId, operationId, change),
+      idle: (taskId, operationId) => this.idle(taskId, operationId),
+      switchDirectories: (taskId, operationId, target, write, project) => this.switchDirectories(taskId, operationId, target, write, project),
+      sourceUnchanged: (taskId, expected) => this.sourceUnchanged(taskId, expected),
+    };
+  }
+
+  dispose(): void { this.disposed = true; this.queue.dispose(); this.controller.abort(); }
 
   async settle(): Promise<void> {
-    await Promise.all([...this.tails.values()]);
-    await this.resumed;
+    for (;;) {
+      await this.resumed;
+      await this.queue.settle();
+      await Promise.all([...this.tails.values()]);
+      if (!this.resumed && this.queue.size === 0 && this.tails.size === 0) return;
+    }
   }
 
   async close(): Promise<void> { this.dispose(); await this.settle(); }
@@ -105,7 +126,7 @@ export class WorktreeCoordinator {
     return true;
   }
 
-  async request(taskId: string, request: OperationRequest): Promise<HubState> {
+  async request(taskId: string, request: OperationRequest, options: { background?: boolean } = {}): Promise<HubState> {
     if (request.kind === 'return') return this.returnToBase(taskId);
     const current = this.read(taskId);
     if (!isGitProject(current.project) && request.kind !== 'delete') {
@@ -123,7 +144,7 @@ export class WorktreeCoordinator {
       if (task.operation) {
         if (!this.sameRequest(task.operation.request, normalized)) throw new KanbanError('OPERATION_PENDING', 'Resolve the existing operation before starting a different operation.', { kind: task.operation.request.kind });
         await this.update(taskId, task.operation.id, (_task, operation) => {
-          if ((operation.request.kind === 'remove' || operation.request.kind === 'delete') && (normalized.kind === 'remove' || normalized.kind === 'delete')) operation.request.discardChanges ||= normalized.discardChanges;
+          if ((operation.request.kind === 'remove' || operation.request.kind === 'delete') && (normalized.kind === 'remove' || normalized.kind === 'delete')) { operation.request.discardChanges ||= normalized.discardChanges; if (normalized.force === true) operation.request.force = true; }
           // Preserve the journal and previous failure stage for safe retry/recovery.
           if (operation.phase === 'failed') operation.phase = 'waiting';
         });
@@ -131,23 +152,39 @@ export class WorktreeCoordinator {
         if (task.worktree && (normalized.kind === 'create' || (normalized.kind === 'attach' && task.worktree.path !== normalized.path))) throw new KanbanError('WORKTREE_ALREADY_BOUND', 'Remove or recover the current worktree before choosing another target.');
         await this.start(taskId, normalized);
       }
-      await this.drive(taskId);
+      if ((normalized.kind === 'delete' || normalized.kind === 'remove') && options.background === true) {
+        await this.admitAndQueue(taskId);
+      } else {
+        await this.drive(taskId);
+      }
       return this.hubAfter(taskId, before);
     });
   }
 
   private hubAfter(taskId: string, fallback: HubState): HubState { try { return this.store.locate(taskId).hub; } catch { return fallback; } }
 
-  async retry(taskId: string): Promise<HubState> {
+  async retry(taskId: string, options: { background?: boolean } = {}): Promise<HubState> {
     const before = this.read(taskId).hub;
     return this.serial(taskId, async () => {
       this.assertOpen();
       const { task } = this.read(taskId);
       if (!task.operation) throw new KanbanError('NO_OPERATION', 'There is no operation to retry.');
+      const destructive = task.operation.request.kind === 'delete' || task.operation.request.kind === 'remove';
       await this.update(taskId, task.operation.id, (_task, operation) => { if (operation.phase === 'failed') operation.phase = 'waiting'; });
-      await this.drive(taskId);
+      if (destructive && options.background === true) await this.admitAndQueue(taskId);
+      else await this.drive(taskId);
       return this.hubAfter(taskId, before);
     });
+  }
+
+  /** Prepare synchronously, persist the queued phase, and hand execution to the queue. */
+  private async admitAndQueue(taskId: string): Promise<void> {
+    const prepared = await this.drive(taskId, { admissionOnly: true });
+    const admitted = this.read(taskId).task.operation;
+    if (prepared !== 'admission' || !admitted) return;
+    const operationId = admitted.id;
+    await this.update(taskId, operationId, (_task, operation) => { operation.phase = 'queued'; });
+    this.queue.enqueue({ taskId, operationId, run: () => this.serial(taskId, async () => { await this.drive(taskId); }).then(() => {}) });
   }
 
   async returnToBase(taskId: string): Promise<HubState> {
@@ -199,7 +236,10 @@ export class WorktreeCoordinator {
         this.resumeAgain = false;
         const tasks = this.store.allTasks().filter(task => task.operation && task.operation.phase !== 'failed');
         // Each failure remains on its own task; one failing task must not starve others.
-        await Promise.all(tasks.map(task => this.serial(task.id, () => this.drive(task.id)).catch(() => {})));
+        const destructive = tasks.filter(task => task.operation!.request.kind === 'delete' || task.operation!.request.kind === 'remove').sort((left, right) => left.operation!.createdAt.localeCompare(right.operation!.createdAt));
+        const rest = tasks.filter(task => !destructive.includes(task));
+        for (const task of destructive) this.enqueueDestructive(task.id);
+        await Promise.all(rest.map(task => this.serial(task.id, () => this.drive(task.id)).catch(() => {})));
       } while (this.resumeAgain && !this.disposed && !this.signal.aborted);
     })().finally(() => {
       this.resumed = undefined;
@@ -291,24 +331,27 @@ export class WorktreeCoordinator {
     return true;
   }
 
-  private async drive(taskId: string): Promise<void> {
+  private enqueueDestructive(taskId: string): void {
+    const operation = this.read(taskId).task.operation;
+    if (!operation || (operation.request.kind !== 'delete' && operation.request.kind !== 'remove')) return;
+    this.queue.enqueue({ taskId, operationId: operation.id, run: () => this.serial(taskId, async () => { await this.drive(taskId); }).then(() => {}) });
+  }
+
+  private async drive(taskId: string, options: { admissionOnly?: boolean } = {}): Promise<'admission' | 'waiting' | 'done'> {
     const initial = this.read(taskId);
     const op = initial.task.operation;
-    if (!op) return;
+    if (!op) return 'done';
     const operationId = op.id;
     let createInvoked = false;
     try {
-      if (!await this.idle(taskId, operationId)) return;
+      if (op.request.kind === 'delete' || op.request.kind === 'remove') return await this.destructive.drive(taskId, operationId, options);
+      if (!await this.idle(taskId, operationId)) return 'waiting';
       await this.update(taskId, operationId, (_task, operation) => { operation.phase = 'preflight'; delete operation.error; });
       let { task, project } = this.read(taskId);
       const expectedProject = project;
       const request = op.request;
       const gitProject = isGitProject(project) ? project : undefined;
-      if (gitProject === undefined && request.kind !== 'delete') throw new KanbanError('PROJECT_NOT_GIT', 'This project is not a Git repository; Git and worktree actions are unavailable.', { projectId: project.id });
-      if ((request.kind === 'remove' || request.kind === 'delete') && !op.gitCompleted) {
-        const currentTarget = task.worktree ? await canonicalPath(task.worktree.path, true) : undefined;
-        if (currentTarget !== op.targetPath) throw new KanbanError('OPERATION_TARGET_CHANGED', 'The confirmed worktree target changed; it will not be removed.');
-      }
+      if (gitProject === undefined) throw new KanbanError('PROJECT_NOT_GIT', 'This project is not a Git repository; Git and worktree actions are unavailable.', { projectId: project.id });
       let target: string = task.effectiveCwd;
       if (request.kind === 'create' || request.kind === 'attach') {
         const gitRepo = requireGitProject(project);
@@ -348,66 +391,27 @@ export class WorktreeCoordinator {
         target = await this.git.projectDirectory(gitRepo, tree.path);
       } else if (gitProject !== undefined) {
         target = await this.git.projectDirectory(gitProject);
-        if ((request.kind === 'remove' || request.kind === 'delete') && task.worktree && !op.gitCompleted) {
-          await this.sharing.assertExclusive(taskId, task.worktree.path);
-          if (await exists(task.worktree.path)) {
-            const tree = await this.git.inspect(gitProject, task.worktree.path, task.sessionIds);
-            if (tree.dirty && !request.discardChanges) throw new KanbanError('DISCARD_REQUIRED', 'Explicit confirmation is required to discard local worktree changes.', { path: tree.path });
-          }
-        }
       }
       this.sourceUnchanged(taskId, expectedProject);
-      if (gitProject !== undefined && !await this.switchDirectories(taskId, operationId, target, request.kind === 'create' || request.kind === 'attach', gitProject)) return;
+      if (gitProject !== undefined && !await this.switchDirectories(taskId, operationId, target, request.kind === 'create' || request.kind === 'attach', gitProject)) return 'waiting';
       ({ task, project } = this.read(taskId));
-      if (request.kind === 'create' || request.kind === 'attach' || request.kind === 'return') {
-        await this.update(taskId, operationId, draft => {
-          this.sourceUnchanged(taskId, expectedProject);
-          if (draft.worktree && request.kind !== 'return') draft.worktree.status = 'ready';
-          if (request.kind === 'attach' && draft.unclaimedWorktrees) {
-            const remaining = draft.unclaimedWorktrees.filter(record => record.path !== draft.worktree?.path);
-            if (remaining.length) draft.unclaimedWorktrees = remaining; else delete draft.unclaimedWorktrees;
-          }
-          draft.operation = null;
-        });
-        return;
-      }
-      if (!task.operation!.gitCompleted) {
-        if (!await this.idle(taskId, operationId)) return;
-        if (gitProject === undefined) {
-          await this.update(taskId, operationId, (draft, operation) => { draft.worktree = null; operation.gitCompleted = true; });
-        } else if (task.worktree) {
-          await this.sharing.assertExclusive(taskId, task.worktree.path);
-          await this.update(taskId, operationId, (_task, operation) => { operation.phase = 'removing'; });
-          this.assertOpen();
-          if (!await this.idle(taskId, operationId)) return;
-          this.sourceUnchanged(taskId, expectedProject);
-          await this.sharing.assertExclusive(taskId, op.targetPath!);
-          this.sourceUnchanged(taskId, expectedProject);
-          const confirmed = this.read(taskId).task.worktree;
-          if (!confirmed || await canonicalPath(confirmed.path, true) !== op.targetPath) throw new KanbanError('OPERATION_TARGET_CHANGED', 'The worktree binding changed before removal.');
-          await this.git.remove(gitProject, op.targetPath!, request.discardChanges, task.sessionIds, this.signal);
+      await this.update(taskId, operationId, draft => {
+        this.sourceUnchanged(taskId, expectedProject);
+        if (draft.worktree && request.kind !== 'return') draft.worktree.status = 'ready';
+        if (request.kind === 'attach' && draft.unclaimedWorktrees) {
+          const remaining = draft.unclaimedWorktrees.filter(record => record.path !== draft.worktree?.path);
+          if (remaining.length) draft.unclaimedWorktrees = remaining; else delete draft.unclaimedWorktrees;
         }
-        await this.update(taskId, operationId, (draft, operation) => { draft.worktree = null; operation.gitCompleted = true; });
-      }
-      if (request.kind === 'remove') { await this.update(taskId, operationId, draft => { draft.operation = null; }); return; }
-      for (const id of task.sessionIds) {
-        const latest = this.read(taskId).task.operation!;
-        if (latest.archivedSessionIds.includes(id)) continue;
-        if (!await this.idle(taskId, operationId)) return;
-        await this.update(taskId, operationId, (_task, operation) => { operation.phase = 'archiving'; });
-        this.assertOpen();
-        await this.sessions.archive(id);
-        await this.update(taskId, operationId, (_task, operation) => { operation.archivedSessionIds.push(id); });
-      }
-      this.assertOpen();
-      const deleted = this.read(taskId);
-      await this.store.transactTask(taskId, state => {
-        if (requireTask(state, taskId).operation?.id !== operationId) throw new KanbanError('OPERATION_CHANGED', 'The deletion operation changed.');
-        state.notes = state.notes.filter(note => note.taskId !== taskId);
-        state.tasks = state.tasks.filter(item => item.id !== taskId);
+        draft.operation = null;
       });
-      try { await this.onTaskDeleted?.(deleted.task, deleted.project); } catch { /* cleanup is reported by the callback owner */ }
+      return 'done';
     } catch (error) {
+      if ((this.disposed || this.signal.aborted) && (op.request.kind === 'delete' || op.request.kind === 'remove')) {
+        // Shutdown is not a terminal failure for destructive work: keep the journal resumable.
+        try { await this.update(taskId, operationId, (_task, operation) => { operation.phase = 'queued'; delete operation.error; }); }
+        catch { /* the task may already be gone */ }
+        throw error;
+      }
       const current = this.store.locate(taskId).task;
       if (current?.operation?.id === operationId) {
         const failure = problem(error);

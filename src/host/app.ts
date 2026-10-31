@@ -9,6 +9,8 @@ import type { QuestionStore } from './question-storage.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
 import { WorktreeCoordinator } from './worktrees.js';
 import { AttentionCoordinator } from './attention.js';
+import { PendingWorkRunner } from './pending-work.js';
+import { PublishScheduler } from './publish-scheduler.js';
 import { isAbsolutePath } from '../domain/validation.js';
 import { isGitProject, requireGitProject } from '../shared/project.js';
 import { containsPath } from './git.js';
@@ -40,21 +42,26 @@ export class KanbanApp {
  private readonly listeners=new Set<()=>void>();
  private readonly prepared=new Map<string,Promise<void>>();
  private readonly attention:AttentionCoordinator;
+ private readonly pendingWork:PendingWorkRunner;
+ private readonly publisher=new PublishScheduler({publish:()=>this.changed()});
  private readonly disposers:Array<()=>void>=[];
+ private stateCache:HostSnapshot['state']|undefined;
  private sequence=0; private disposed=false; private driving=false; private driveAgain=false; private drivePromise:Promise<void>|undefined; private commandTail:Promise<void>=Promise.resolve();
  private readonly saveTimers=new Map<string,ReturnType<typeof setTimeout>>();
  constructor(readonly hubs:HubRepository,readonly sessions:SessionPort,readonly git:GitPort,private readonly options:AppOptions={},private readonly workspaces?:WorkspacePort){
   this.locator=new TaskLocator(hubs);
   this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,onTaskDeleted:async task=>{try{await this.cleanupWorktreeWorkspace(task as HubTask);}catch(error){this.options.report?.(error);}}});
-  this.attention=new AttentionCoordinator({source:{read:id=>this.sessions.facts(id)},tasks:()=>this.locator.all().map(located=>({id:located.task.id,sessionIds:located.task.sessionIds})),pendingQuestion:id=>this.questions.pending(id),refreshWorktrees:async()=>{await this.worktrees.resumePending();await this.dispatchPending();},onChange:()=>this.changed(),report:error=>this.options.report?.(error)});
-  this.disposers.push(hubs.subscribe(()=>{this.changed();void this.dispatchPending().catch(error=>options.report?.(error));}));
-  this.disposers.push(this.questions.subscribe(()=>this.changed()));
+  this.pendingWork=new PendingWorkRunner({resumeWorktrees:async()=>{await this.worktrees.resumePending();},dispatchPending:async()=>{await this.dispatchPending();},report:error=>this.options.report?.(error)});
+  this.attention=new AttentionCoordinator({source:{read:id=>this.sessions.facts(id)},tasks:()=>this.locator.all().map(located=>({id:located.task.id,sessionIds:located.task.sessionIds})),pendingQuestion:id=>this.questions.pending(id),runPendingWork:async()=>{await this.pendingWork.run();},onChange:()=>this.attentionChanged(),report:error=>this.options.report?.(error)});
+  this.disposers.push(hubs.subscribe(()=>{this.stateCache=undefined;this.markChanged();void this.dispatchPending().catch(error=>options.report?.(error));}));
  }
  /** The first/default Hub facade retained for single-Hub callers and tests. */
  get store():HubStore{return this.hubs.defaultHub();}
  private hubStore(hubId?:string):HubStore{return this.hubs.hub(this.hubs.resolveHubId(hubId));}
  private locatedTask(taskId:string):LocatedTask{return this.hubs.requireTask(taskId);}
- private changed():void{if(this.disposed)return;this.sequence++;for(const listener of this.listeners){try{listener();}catch(error){this.options.report?.(error);}}}
+ private changed():void{if(this.disposed)return;for(const listener of this.listeners){try{listener();}catch(error){this.options.report?.(error);}}}
+ private markChanged():void{if(this.disposed)return;this.sequence++;this.publisher.request();}
+ private attentionChanged():void{if(this.disposed)return;this.sequence++;this.publisher.request();this.publisher.flush();}
  subscribe(listener:()=>void):()=>void{this.listeners.add(listener);return()=>this.listeners.delete(listener);}
  async initialize():Promise<void>{
   await this.reconcileWorkspaces();
@@ -120,7 +127,11 @@ export class KanbanApp {
  observe(sessionId:string,event:unknown):void{
   if(this.disposed)return;
   const promptTime=userPromptTime(event);if(promptTime!==undefined)this.clearInstructionPending(sessionId,promptTime);
-  if(isEvent(event)&&this.questions.apply(sessionId,event))this.schedulePersist(sessionId);this.attention.touch(sessionId);this.changed();
+  const questionChanged=isEvent(event)&&this.questions.apply(sessionId,event);
+  if(questionChanged)this.schedulePersist(sessionId);
+  const taskRelevant=this.locator.hasSession(sessionId);
+  if(taskRelevant)this.attention.touch(sessionId);
+  if(taskRelevant&&!questionChanged)this.markChanged();
  }
  private clearInstructionPending(sessionId:string,time:number):void{
   const located=this.locator.bySession(sessionId);const task=located?.task;const marker=task?.instructionPending;
@@ -139,11 +150,11 @@ export class KanbanApp {
    if(prompted)await this.hubStore(located.hubId).transact(draft=>{const current=draft.tasks.find(value=>value.id===task.id);if(current?.instructionPending?.enteredAt===marker.enteredAt)delete current.instructionPending;});
   }
  }
- activityChanged():void{if(this.disposed)return;this.attention.touch();this.changed();}
- sessionActivity(sessionId?:string):void{if(this.disposed)return;this.attention.touch(sessionId);this.changed();}
+ activityChanged():void{if(this.disposed)return;this.attention.touch();this.markChanged();}
+ sessionActivity(sessionId?:string):void{if(this.disposed)return;if(sessionId!==undefined&&!this.locator.hasSession(sessionId))return;this.attention.touch(sessionId);this.markChanged();}
  async snapshot(refreshAttention=false):Promise<HostSnapshot>{
   if(refreshAttention){this.attention.invalidate();this.sequence++;}
-  const sequence=this.sequence;const state=this.hubs.snapshot();
+  const sequence=this.sequence;const state=this.stateCache??=this.hubs.snapshot();
   const conversations=await this.attention.project(this.locator.all().map(located=>({id:located.task.id,sessionIds:located.task.sessionIds})));
   return {state,conversations,sequence};
  }
@@ -290,13 +301,13 @@ export class KanbanApp {
    case 'conversation.close':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).closeSession(command.taskId,command.sessionId);break;}
    case 'conversation.reopen':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).reopenSession(command.taskId,command.sessionId);break;}
    case 'note.save':{const value=await this.saveNoteNow(command);commandReceipt={kind:'note',id:value.id};break;}
-   case 'task.delete':this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'delete');invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm task data/worktree removal and native conversation archiving.');if(command.requireIdle)await this.assertBatchDeletable(command.taskId);await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'delete',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath});break;
+   case 'task.delete':this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'delete');invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm task data/worktree removal and native conversation archiving.');if(command.requireIdle)await this.assertBatchDeletable(command.taskId);await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'delete',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true});break;
    case 'worktree.create':this.assertContext(command.taskId);invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'create',mode:command.mode,path:command.path,branchName:command.branchName,sourceBranch:command.sourceBranch});break;
    case 'worktree.attach':this.assertContext(command.taskId);invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'attach',path:command.path});break;
    case 'worktree.dismiss':{this.assertContext(command.taskId);const located=this.locatedTask(command.taskId);invariant(isGitProject(located.project),'PROJECT_NOT_GIT','Worktree choices require a Git-backed project.');invariant(!located.task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');invariant(!located.task.worktree,'WORKTREE_EXISTS','The task already has a worktree.');if(located.task.worktreeDismissed!==true)await this.hubs.hub(located.hubId).dismissWorktree(command.taskId);break;}
-   case 'worktree.remove':this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'remove');invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm removal of the worktree while preserving the task and branch.');await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'remove',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath});break;
+   case 'worktree.remove':this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'remove');invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm removal of the worktree while preserving the task and branch.');await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'remove',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true});break;
    case 'operation.retry':{
-    const located=this.locatedTask(command.taskId);const store=this.hubs.hub(located.hubId);const task=located.task;if(task.operation){await this.worktrees.retry(command.taskId);const current=store.snapshot().tasks.find(t=>t.id===command.taskId);if(current&&!current.operation&&current.pendingTransition?.worktreeRequest&&current.pendingTransition.status==='failed')await store.transact(d=>{const p=d.tasks.find(t=>t.id===command.taskId)!.pendingTransition!;p.status='waiting';delete p.error;});}else if(task.pendingTransition){await store.transact(d=>{const t=d.tasks.find(t=>t.id===command.taskId)!;if(t.pendingTransition){t.pendingTransition.status='waiting';delete t.pendingTransition.error;}});}await this.dispatchPending();break;
+    const located=this.locatedTask(command.taskId);const store=this.hubs.hub(located.hubId);const task=located.task;if(task.operation){await this.worktrees.retry(command.taskId,{background:true});const current=store.snapshot().tasks.find(t=>t.id===command.taskId);if(current&&!current.operation&&current.pendingTransition?.worktreeRequest&&current.pendingTransition.status==='failed')await store.transact(d=>{const p=d.tasks.find(t=>t.id===command.taskId)!.pendingTransition!;p.status='waiting';delete p.error;});}else if(task.pendingTransition){await store.transact(d=>{const t=d.tasks.find(t=>t.id===command.taskId)!;if(t.pendingTransition){t.pendingTransition.status='waiting';delete t.pendingTransition.error;}});}await this.dispatchPending();break;
    }
    case 'operation.return':await this.clearPending(command.taskId);await this.worktrees.returnToBase(command.taskId);break;
    case 'task.move':await this.move(command);break;
@@ -366,5 +377,5 @@ export class KanbanApp {
    }catch(error){await this.failPending(located.hubId,task.id,pending.id,error);this.options.report?.(error);}
   }}while(this.driveAgain&&!this.disposed);}finally{this.driving=false;}
  }
- async close():Promise<void>{if(this.disposed)return;await this.flushQuestions();this.disposed=true;this.attention.dispose();for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.worktrees.settle();}
+ async close():Promise<void>{if(this.disposed)return;await this.flushQuestions();this.publisher.flush();this.disposed=true;this.publisher.dispose();this.attention.dispose();for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.worktrees.settle();}
 }

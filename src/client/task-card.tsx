@@ -26,8 +26,20 @@ export interface CardStatusEntry { key: string; tone: 'danger' | 'pending'; labe
 export function cardStatusEntries(task: Task, runFailure?: string): CardStatusEntry[] {
   const entries: CardStatusEntry[] = [];
   if (task.operation) {
-    const failed = task.operation.phase === 'failed';
-    entries.push({ key: 'operation', tone: failed ? 'danger' : 'pending', label: failed ? 'Operation failed' : 'Operation: ' + task.operation.phase });
+    const operation = task.operation;
+    const failed = operation.phase === 'failed';
+    const destructive = operation.request.kind === 'delete' || operation.request.kind === 'remove';
+    const deleteKind = operation.request.kind === 'delete';
+    const label = destructive
+      ? failed
+        ? (deleteKind ? 'Deletion needs attention' : 'Worktree removal needs attention')
+        : operation.phase === 'queued'
+          ? (deleteKind ? 'Queued to delete' : 'Queued to remove worktree')
+          : operation.phase === 'waiting'
+            ? (deleteKind ? 'Deletion waiting for idle' : 'Removal waiting for idle')
+            : (deleteKind ? 'Deleting…' : 'Removing worktree…')
+      : failed ? 'Operation failed' : 'Operation: ' + operation.phase;
+    entries.push({ key: 'operation', tone: failed ? 'danger' : 'pending', label });
   }
   if (task.pendingTransition) {
     const failed = task.pendingTransition.status === 'failed';

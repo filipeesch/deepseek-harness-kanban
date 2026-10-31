@@ -90,6 +90,7 @@ describe('native workspace binding', () => {
     expect(f.workspaces.get(bound.worktreeWorkspaceId!)?.path).toBe(worktreePath);
     const baseWorkspace = f.store.requireProject(f.project.id).workspaceId;
     await f.app.command({ type: 'task.delete', taskId: task.id, confirmed: true, expectedWorktreePath: tree, requireIdle: true });
+    await f.app.worktrees.settle();
     expect(f.store.snapshot().tasks).toHaveLength(0);
     expect(f.workspaces.deleted).toContain(bound.worktreeWorkspaceId);
     expect(f.workspaces.deleted).not.toContain(baseWorkspace);

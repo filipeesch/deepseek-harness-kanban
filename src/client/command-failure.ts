@@ -31,7 +31,7 @@ function removalOrigin(command: Command, task: Task | undefined, priorOperation:
   if ((request.kind !== 'remove' && request.kind !== 'delete') || request.discardChanges) return {};
   const capturedPath = request.expectedWorktreePath !== undefined ? request.expectedWorktreePath : priorOperation.targetPath;
   if (capturedPath === undefined) return { notice: { code: 'CONFIRMATION_REQUIRED', message: 'The original removal target is unavailable. Return to base and review a new removal confirmation.' } };
-  return { command: { type: request.kind === 'delete' ? 'task.delete' : 'worktree.remove', taskId: task.id, confirmed: true, expectedWorktreePath: capturedPath } };
+  return { command: { type: request.kind === 'delete' ? 'task.delete' : 'worktree.remove', taskId: task.id, confirmed: true, expectedWorktreePath: capturedPath, ...(request.force === true ? { force: true } : {}) } };
 }
 
 /** Classifies a failed command into a board notice and an optional discard confirmation. */

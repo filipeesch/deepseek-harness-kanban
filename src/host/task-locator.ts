@@ -10,6 +10,7 @@ export class TaskLocator {
 
   byTask(taskId: string): LocatedTask | undefined { return this.hubs.findTask(taskId); }
   bySession(sessionId: string): LocatedTask | undefined { return this.hubs.findTaskBySession(sessionId); }
+  hasSession(sessionId: string): boolean { return this.hubs.hasTaskSession(sessionId); }
   all(): LocatedTask[] { return this.hubs.allTasks(); }
 
   project(projectId: string): LocatedProject | undefined {

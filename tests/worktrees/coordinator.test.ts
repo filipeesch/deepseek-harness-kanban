@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { lstat, mkdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { GitAdapter } from '../../src/host/git.js';
@@ -125,7 +125,7 @@ describe('WorktreeCoordinator', () => {
     f.sessions.active.add('b');
     const waiting = await f.coordinator.request('task', { kind: 'delete', discardChanges: true });
     expect(waiting.tasks[0]!.operation!.id).toBe(originalId); expect(waiting.tasks[0]!.operation!.request).toEqual({ kind: 'delete', discardChanges: true });
-    f.sessions.active.clear(); await f.coordinator.resumePending(); expect(f.store.snapshot().tasks).toEqual([]);
+    f.sessions.active.clear(); await f.coordinator.resumePending(); await f.coordinator.settle(); expect(f.store.snapshot().tasks).toEqual([]);
   });
 
   it('does not replace an unrelated failed operation without explicit recovery', async () => {
@@ -605,5 +605,56 @@ describe('task lineage and destructive sharing', () => {
     expect(f.sessions.archiveCalls).toEqual(['a', 'b']);
     await expect(stat(f.tree)).rejects.toMatchObject({ code: 'ENOENT' });
     expect((await git(f.project.gitRootPath, ['show-ref', '--verify', 'refs/heads/external'])).exitCode).toBe(0);
+  });
+
+  it('resumes a persisted queued deletion through the destructive queue', async () => {
+    const f = await setup();
+    f.store.state.tasks[0]!.operation = {
+      id: 'queued-op', request: { kind: 'delete', discardChanges: false }, phase: 'queued',
+      previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false, createdAt: new Date().toISOString(),
+    };
+    await f.coordinator.resumePending();
+    await f.coordinator.settle();
+    expect(f.store.snapshot().tasks).toEqual([]);
+    expect(f.sessions.archiveCalls).toEqual(['a', 'b']);
+  });
+
+  it('rechecks idleness before executing a queued destructive operation', async () => {
+    const f = await setup();
+    f.store.state.tasks[0]!.operation = {
+      id: 'queued-busy', request: { kind: 'delete', discardChanges: false }, phase: 'queued',
+      previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false, createdAt: new Date().toISOString(),
+    };
+    f.sessions.active.add('a');
+    await f.coordinator.resumePending();
+    await f.coordinator.settle();
+    expect(f.store.snapshot().tasks).toHaveLength(1);
+    expect(f.store.snapshot().tasks[0]!.operation?.phase).toBe('waiting');
+    expect(f.sessions.archiveCalls).toEqual([]);
+    f.sessions.active.clear();
+    await f.coordinator.resumePending();
+    await f.coordinator.settle();
+    expect(f.store.snapshot().tasks).toEqual([]);
+    expect(f.sessions.archiveCalls).toEqual(['a', 'b']);
+  });
+
+  it('keeps an interrupted destructive operation resumable after shutdown', async () => {
+    const f = await setup(); await create(f);
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    f.sessions.beforeArchive = async () => { await gate; };
+    const request = f.coordinator.request('task', { kind: 'delete', discardChanges: false }, { background: true });
+    await vi.waitFor(() => expect(f.store.snapshot().tasks[0]!.operation?.phase).toBe('archiving'), { timeout: 5000 });
+    f.coordinator.dispose();
+    release();
+    await request.catch(() => {});
+    await f.coordinator.settle();
+    expect(f.store.snapshot().tasks).toHaveLength(1);
+    expect(f.store.snapshot().tasks[0]!.operation?.phase).toBe('queued');
+    f.sessions.beforeArchive = undefined;
+    const next = new WorktreeCoordinator(f.store, f.sessions, f.adapter);
+    await next.resumePending();
+    await next.settle();
+    expect(f.store.snapshot().tasks).toEqual([]);
+    expect(f.sessions.archiveCalls).toEqual(['a', 'b']);
   });
 });

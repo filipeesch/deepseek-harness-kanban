@@ -1,8 +1,9 @@
-import { describe,it,expect,afterEach } from 'vitest';
+import { describe,it,expect,afterEach,vi } from 'vitest';
 import path from 'node:path';
 import { mkdir, rm } from 'node:fs/promises';
 import { CommandSchema } from '../../src/remote.js';
 import { fixture, taskWithConversation } from './helpers.js';
+import { call, result } from '../questions/fixtures.js';
 let active:Array<Awaited<ReturnType<typeof fixture>>>=[];
 afterEach(async()=>{for(const f of active.splice(0))await f.close();});
 async function setup(){const f=await fixture();active.push(f);return f;}
@@ -12,6 +13,8 @@ async function instructed(f:Awaited<ReturnType<typeof setup>>){return configured
 describe('host command orchestration',()=>{
  it('returns the exact created entity receipt rather than snapshot set differences',async()=>{const f=await setup();const other=await f.app.createTask({projectId:f.project.id,title:'Concurrent tool task',description:''});const result=await f.app.command({type:'task.create',projectId:f.project.id,title:'UI task',description:''});expect(result.commandReceipt?.kind).toBe('task');expect(result.commandReceipt?.id).not.toBe(other.id);expect(result.state.hubs[0]!.tasks.find(t=>t.id===result.commandReceipt?.id)?.title).toBe('UI task');expect((await f.app.snapshot()).commandReceipt).toBeUndefined();});
  it('stamps metadata before asynchronous attention reads, not after intervening commits',async()=>{const f=await setup();const t=await task(f);let release!:()=>void;let entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});const gate=new Promise<void>(resolve=>{release=resolve;});f.sessions.facts=async()=>{entered();await gate;return {running:false,background:[],awaitingReply:false,settledTurn:null};};const before=f.store.snapshot();const pending=f.app.snapshot();await started;await f.store.editTask(t.id,{title:'Changed while reading attention'});release();const stale=await pending;const fresh=await f.app.snapshot();expect(stale.state.hubs[0]!.revision).toBe(before.revision);expect(stale.state.hubs[0]!.tasks[0]?.title).toBe(t.title);expect(fresh.state.hubs[0]!.tasks[0]?.title).toBe('Changed while reading attention');expect(stale.sequence).toBeLessThan(fresh.sequence);});
+ it('updates ordinary-chat question state without publishing the board',async()=>{const f=await setup();const notify=vi.fn();f.app.subscribe(notify);expect(f.app.locator.hasSession('ordinary-chat')).toBe(false);f.app.observe('ordinary-chat',call(1,1,'c'));f.app.observe('ordinary-chat',result(2,1,'c'));expect(f.app.questions.getRounds('ordinary-chat')).toHaveLength(1);await new Promise(resolve=>setTimeout(resolve,20));expect(notify).not.toHaveBeenCalled();});
+ it('reuses the cached board state until the repository changes',async()=>{const f=await setup();const t=await task(f);const first=await f.app.snapshot();const second=await f.app.snapshot();expect(second.state).toBe(first.state);await f.store.editTask(t.id,{title:'Changed state cache'});const third=await f.app.snapshot();expect(third.state).not.toBe(first.state);expect(third.state.hubs[0]!.tasks[0]?.title).toBe('Changed state cache');});
  it('starts a task without a native conversation until an explicit start',async()=>{const f=await setup();const t=await f.app.createTask({projectId:f.project.id,title:'Lazy task',description:'No conversation yet'});expect(t.sessionIds).toEqual([]);expect(f.store.requireTask(t.id).sessionIds).toEqual([]);expect(f.sessions.dirs.size).toBe(0);await expect(f.app.createConversation(t.id)).rejects.toMatchObject({code:'WORKTREE_DECISION_REQUIRED'});await expect(f.app.command({type:'conversation.create',taskId:t.id})).rejects.toMatchObject({code:'WORKTREE_DECISION_REQUIRED'});expect(f.sessions.dirs.size).toBe(0);await f.app.command({type:'worktree.dismiss',taskId:t.id});const dismissedAt=f.store.requireTask(t.id).updatedAt;const dismissedRevision=f.store.snapshot().revision;await f.app.command({type:'worktree.dismiss',taskId:t.id});expect(f.store.requireTask(t.id).worktreeDismissed).toBe(true);expect(f.store.requireTask(t.id).updatedAt).toBe(dismissedAt);expect(f.store.snapshot().revision).toBe(dismissedRevision);const id=await f.app.createConversation(t.id);expect(f.store.requireTask(t.id).sessionIds).toEqual([id]);expect(await f.sessions.directory(id)).toBe(f.projectPath);expect(f.sessions.sent).toEqual([]);});
  it('creates the first conversation in a ready worktree before the task starts',async()=>{const f=await setup();const t=await f.app.createTask({projectId:f.project.id,title:'Worktree first',description:''});const root=path.join(f.root,'first-tree');await f.app.command({type:'worktree.create',taskId:t.id,mode:'new',path:root,branchName:'task/first',sourceBranch:'main'});const id=await f.app.createConversation(t.id);expect(f.store.requireTask(t.id).sessionIds).toEqual([id]);expect(await f.sessions.directory(id)).toBe(path.join(root,'apps','web'));expect(f.sessions.workspaceIds.get(id)).toBe(f.workspaces.byPath.get(path.join(root,'apps','web'))?.id);});
  it('lets a stage instruction create the first conversation before the worktree choice',async()=>{const f=await setup();const columnId=await instructed(f);const t=await f.app.createTask({projectId:f.project.id,title:'Instruction first',description:''});await f.app.command({type:'task.move',taskId:t.id,columnId});const marker=f.store.requireTask(t.id).instructionPending!;await f.app.command({type:'task.runInstruction',taskId:t.id,columnId,expectedEnteredAt:marker.enteredAt,expectedInstruction:'Plan this task.'});const after=f.store.requireTask(t.id);expect(after.sessionIds).toHaveLength(1);expect(f.sessions.sent).toHaveLength(1);expect(f.sessions.sent[0]!.id).toBe(after.sessionIds[0]);expect(await f.sessions.directory(after.sessionIds[0]!)).toBe(f.projectPath);expect(after.instructionPending).toBeUndefined();});
@@ -125,9 +128,9 @@ describe('host command orchestration',()=>{
   await f.app.command({type:'task.runInstruction',taskId:t.id,columnId,expectedEnteredAt:marker.enteredAt,expectedInstruction:'Plan this task.'});
   expect(f.sessions.sent).toHaveLength(1);expect(f.sessions.sent[0]!.id).toBe(t.sessionIds[0]);expect(f.store.requireTask(t.id).effectiveCwd).toBe(f.projectPath);expect(await f.sessions.directory(second)).toBe(f.projectPath);
  });
- it('removes a ready worktree with no conversations',async()=>{const f=await setup();const t=await f.app.createTask({projectId:f.project.id,title:'Empty worktree',description:''});const tree=path.join(f.root,'empty-tree');await f.app.command({type:'worktree.create',taskId:t.id,mode:'new',path:tree,branchName:'task/empty',sourceBranch:'main'});await f.app.command({type:'worktree.remove',taskId:t.id,confirmed:true,expectedWorktreePath:tree});const after=f.store.requireTask(t.id);expect(after.worktree).toBeNull();expect(after.effectiveCwd).toBe(f.projectPath);expect(f.sessions.archived).toEqual([]);expect(f.git.removed).toContain(tree);});
- it('deletes a ready worktree task with no conversations',async()=>{const f=await setup();const t=await f.app.createTask({projectId:f.project.id,title:'Delete empty worktree',description:''});const tree=path.join(f.root,'delete-empty-tree');await f.app.command({type:'worktree.create',taskId:t.id,mode:'new',path:tree,branchName:'task/delete-empty',sourceBranch:'main'});await f.app.command({type:'task.delete',taskId:t.id,confirmed:true,expectedWorktreePath:tree});expect(f.store.snapshot().tasks).toEqual([]);expect(f.sessions.archived).toEqual([]);expect(f.git.removed).toContain(tree);});
- it('deletes a task without a native conversation',async()=>{const f=await setup();const t=await f.app.createTask({projectId:f.project.id,title:'No conversation',description:''});await f.app.command({type:'task.delete',taskId:t.id,confirmed:true,expectedWorktreePath:null});expect(f.store.snapshot().tasks).toEqual([]);expect(f.sessions.archived).toEqual([]);});
+ it('removes a ready worktree with no conversations',async()=>{const f=await setup();const t=await f.app.createTask({projectId:f.project.id,title:'Empty worktree',description:''});const tree=path.join(f.root,'empty-tree');await f.app.command({type:'worktree.create',taskId:t.id,mode:'new',path:tree,branchName:'task/empty',sourceBranch:'main'});await f.app.command({type:'worktree.remove',taskId:t.id,confirmed:true,expectedWorktreePath:tree});await f.app.worktrees.settle();const after=f.store.requireTask(t.id);expect(after.worktree).toBeNull();expect(after.effectiveCwd).toBe(f.projectPath);expect(f.sessions.archived).toEqual([]);expect(f.git.removed).toContain(tree);});
+ it('deletes a ready worktree task with no conversations',async()=>{const f=await setup();const t=await f.app.createTask({projectId:f.project.id,title:'Delete empty worktree',description:''});const tree=path.join(f.root,'delete-empty-tree');await f.app.command({type:'worktree.create',taskId:t.id,mode:'new',path:tree,branchName:'task/delete-empty',sourceBranch:'main'});await f.app.command({type:'task.delete',taskId:t.id,confirmed:true,expectedWorktreePath:tree});await f.app.worktrees.settle();expect(f.store.snapshot().tasks).toEqual([]);expect(f.sessions.archived).toEqual([]);expect(f.git.removed).toContain(tree);});
+ it('deletes a task without a native conversation',async()=>{const f=await setup();const t=await f.app.createTask({projectId:f.project.id,title:'No conversation',description:''});await f.app.command({type:'task.delete',taskId:t.id,confirmed:true,expectedWorktreePath:null});await f.app.worktrees.settle();expect(f.store.snapshot().tasks).toEqual([]);expect(f.sessions.archived).toEqual([]);});
  it('leaves unassociated ordinary sessions outside the task-context guard',async()=>{
   const f=await setup();Object.assign(f.sessions,{async validateDirectory(){throw new Error('Should not validate an unrelated native session.');}});await expect(f.app.assertExecutionContext('ordinary-chat')).resolves.toBeUndefined();
  });
@@ -145,6 +148,12 @@ describe('host command orchestration',()=>{
   expect(CommandSchema.parse(run)).toEqual(run);
   expect(()=>CommandSchema.parse({type:'task.runInstruction',taskId:'task-1',columnId:'plan',expectedInstruction:'Plan exactly.'})).toThrow();
   expect(()=>CommandSchema.parse({...run,extra:true})).toThrow();
+  const forcedDelete={type:'task.delete' as const,taskId:'task-1',confirmed:true,expectedWorktreePath:null,force:true};
+  expect(CommandSchema.parse(forcedDelete)).toEqual(forcedDelete);
+  expect(()=>CommandSchema.parse({...forcedDelete,force:'yes'})).toThrow();
+  const forcedRemove={type:'worktree.remove' as const,taskId:'task-1',confirmed:true,expectedWorktreePath:null,force:true};
+  expect(CommandSchema.parse(forcedRemove)).toEqual(forcedRemove);
+  expect(()=>CommandSchema.parse({...forcedRemove,force:1})).toThrow();
  });
 });
 describe('task deletion lineage and workspace cleanup', () => {
@@ -163,6 +172,7 @@ describe('task deletion lineage and workspace cleanup', () => {
     const child = f.sessions.seedSubagent(current.sessionIds[0]!, 'child', path.join(root, 'apps', 'web'));
     workspace.sessionIds.push(child);
     await f.app.command({ type: 'task.delete', taskId: current.id, confirmed: true, expectedWorktreePath: root });
+    await f.app.worktrees.settle();
     expect(f.store.snapshot().tasks).toEqual([]);
     expect(f.workspaces.deleted).toContain(workspaceId);
     expect(f.sessions.archived).toEqual(current.sessionIds);
@@ -174,6 +184,7 @@ describe('task deletion lineage and workspace cleanup', () => {
     const f = await setup(); const { task: current, root, workspaceId } = await worktreeTask(f);
     f.workspaces.get(workspaceId)!.sessionIds.push('foreign-session');
     await f.app.command({ type: 'task.delete', taskId: current.id, confirmed: true, expectedWorktreePath: root });
+    await f.app.worktrees.settle();
     expect(f.store.snapshot().tasks).toEqual([]);
     expect(f.workspaces.deleted).not.toContain(workspaceId);
   });
@@ -191,6 +202,7 @@ describe('task deletion lineage and workspace cleanup', () => {
       };
     });
     await f.app.command({ type: 'operation.retry', taskId: current.id });
+    await f.app.worktrees.settle();
     expect(f.store.snapshot().tasks).toEqual([]);
     expect(f.sessions.archived).toEqual(current.sessionIds);
     expect(f.sessions.archived).not.toContain(child);

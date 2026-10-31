@@ -26,6 +26,8 @@ async function fixture() {
   const task = store.requireTask(created.id);
   const sessionId = task.sessionIds[0]!;
   const facts = vi.spyOn(sessions, 'facts');
+  // Flush the fixture's own setup publication so each test starts with a quiet window.
+  await vi.advanceTimersByTimeAsync(100);
   const notify = vi.fn();
   app.subscribe(notify);
   return { app, hubs, store, sessions, task, sessionId, facts, notify, report };
@@ -129,15 +131,16 @@ describe('coalesced public attention refresh', () => {
     f.app.activityChanged();
     await f.app.snapshot();
     f.notify.mockClear();
-    expect(vi.getTimerCount()).toBe(1);
+    // One attention retry timer plus one publication window.
+    expect(vi.getTimerCount()).toBe(2);
     await vi.advanceTimersByTimeAsync(49);
     expect(retry).not.toHaveBeenCalled();
     expect(f.notify).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(retry).toHaveBeenCalledOnce();
-    // The projection is idle before and after, so the coalesced tick publishes nothing.
-    expect(f.notify).not.toHaveBeenCalled();
-    expect(vi.getTimerCount()).toBe(0);
+    // The projection is idle before and after; only the coalesced event publication lands.
+    expect(f.notify).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(1);
   });
 
   it('still invalidates and republishes attention when the existing retry reports an error', async () => {

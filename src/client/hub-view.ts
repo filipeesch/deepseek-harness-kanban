@@ -15,7 +15,7 @@ export function writeBoardPreference(hubId: string, boardId: string, previous: R
   writeStorage(ACTIVE_BOARDS_KEY, JSON.stringify(next));
   return next;
 }
-export function allTasks(snapshot: KanbanSnapshot): Task[] { return snapshot.state.hubs.flatMap(hub => hub.tasks); }
+export function allTasks(snapshot: Pick<KanbanSnapshot, 'state'>): Task[] { return snapshot.state.hubs.flatMap(hub => hub.tasks); }
 export function boardView(hub: HubState, board: Board, settings: KanbanSnapshot['state']['settings']): BoardState {
   const tasks = hub.tasks.filter(task => task.boardId === board.id);
   const taskIds = new Set(tasks.map(task => task.id));
@@ -48,13 +48,6 @@ export function normalizeSnapshot(snapshot: KanbanSnapshot): KanbanSnapshot {
       }),
     },
   };
-}
-export interface ScopeAttention { unread: boolean; running: boolean; failed: boolean }
-export function scopeAttention(tasks: Task[], attention: KanbanSnapshot['attention']): ScopeAttention {
-  return tasks.reduce<ScopeAttention>((result, task) => {
-    const value = attention[task.id];
-    return { unread: result.unread || Boolean(value?.unread), running: result.running || Boolean(value?.running || value?.background.length), failed: result.failed || Boolean(value?.failed) };
-  }, { unread: false, running: false, failed: false });
 }
 export function scopedCommand(command: Command, hubId: string | undefined, boardId: string | undefined, multiHub: boolean, multiBoard: boolean): Command {
   // The timed/manual instruction is task-scoped; the host resolves its Hub by task id.

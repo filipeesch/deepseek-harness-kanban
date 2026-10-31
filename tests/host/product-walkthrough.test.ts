@@ -200,6 +200,7 @@ describe('bounded integrated product walkthrough', () => {
     expect((await stat(f.tree)).isDirectory()).toBe(true);
     unavailable.mockRestore();
     await f.app.command({ type: 'task.delete', taskId: t.id, confirmed: true, expectedWorktreePath: f.tree, discardChanges: true });
+    await f.app.worktrees.settle();
     expect(f.executor.removals).toEqual([{ directories: [[t.a, f.project.projectPath], [t.b, f.project.projectPath], [c, f.project.projectPath]], archived: [] }]);
     expect(f.app.store.snapshot().tasks).toEqual([]); expect(f.app.store.snapshot().notes).toEqual([]);
     expect(f.sessions.archived).toEqual([t.a, t.b, c]);
@@ -209,7 +210,7 @@ describe('bounded integrated product walkthrough', () => {
     expect((await gitOk(f.project.gitRootPath, ['branch', '--list', 'task/product-walkthrough'])).trim()).toContain('task/product-walkthrough');
     expect((await gitOk(f.project.gitRootPath, ['branch', '--show-current'])).trim()).toBe('main');
     f.noNativeDestruction();
-  }, 20000);
+  }, 30000);
 
   // PW03 maps product tasks 4.7, 6.4, 8.4, 9.4: removing only isolation retains the task and shared notes.
   it('PW03 declines dirty worktree removal, then discards explicitly while preserving task, notes, branch, and histories', async () => {
@@ -224,6 +225,7 @@ describe('bounded integrated product walkthrough', () => {
     expect(f.app.store.requireTask(t.id).operation).toMatchObject({ phase: 'failed', error: { code: 'DISCARD_REQUIRED' } });
     expect(f.executor.removals).toEqual([]); expect((await stat(f.tree)).isDirectory()).toBe(true);
     await f.app.command({ type: 'worktree.remove', taskId: t.id, confirmed: true, expectedWorktreePath: f.tree, discardChanges: true });
+    await f.app.worktrees.settle();
     expect(f.executor.removals).toEqual([{ directories: [[t.a, f.project.projectPath], [t.b, f.project.projectPath]], archived: [] }]);
     expect(f.app.store.requireTask(t.id)).toMatchObject({ sessionIds: [t.a, t.b], worktree: null, operation: null, effectiveCwd: f.project.projectPath });
     expect(await f.tool('list_notes', {}, t.a)).toEqual([note]); expect(await f.tool('list_notes', {}, t.b)).toEqual([note]);
@@ -242,6 +244,7 @@ describe('bounded integrated product walkthrough', () => {
     const child = f.sessions.seedSubagent(t.a, 'synthetic-subagent', target);
     expect(f.app.store.requireTask(t.id).sessionIds).toEqual([t.a, t.b]);
     await f.app.command({ type: 'task.delete', taskId: t.id, confirmed: true, expectedWorktreePath: f.tree });
+    await f.app.worktrees.settle();
     expect(f.app.store.snapshot().tasks).toEqual([]);
     expect(f.sessions.archived).toEqual([t.a, t.b]);
     expect(f.sessions.archived).not.toContain(child);

@@ -10,17 +10,17 @@ export type ProjectLocation =
 export interface Column { id: string; name: string; onEnterPrompt?: string; allowedTransitions?: string[] }
 export interface ColumnGroup { id: string; name: string; columnIds: string[] }
 export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[] }
-export interface Worktree { path: string; branch: string; owned: boolean; status: 'preparing' | 'ready' | 'error' }
+export interface Worktree { path: string; branch: string; owned: boolean; status: 'preparing' | 'ready' | 'error'; error?: Problem }
 export interface CreateWorktree { mode: 'new' | 'existing'; path: string; branchName: string; sourceBranch?: string }
 export type OperationRequest =
   | ({ kind: 'create' } & CreateWorktree)
   | { kind: 'attach'; path: string }
-  | { kind: 'remove'; discardChanges: boolean; expectedWorktreePath?: string | null }
-  | { kind: 'delete'; discardChanges: boolean; expectedWorktreePath?: string | null }
+  | { kind: 'remove'; discardChanges: boolean; expectedWorktreePath?: string | null; force?: boolean }
+  | { kind: 'delete'; discardChanges: boolean; expectedWorktreePath?: string | null; force?: boolean }
   | { kind: 'return' };
 export interface ContextOperation {
   id: string; request: OperationRequest;
-  phase: 'waiting' | 'preflight' | 'git' | 'switching' | 'removing' | 'archiving' | 'failed';
+  phase: 'queued' | 'waiting' | 'preflight' | 'git' | 'switching' | 'removing' | 'archiving' | 'failed';
   targetPath?: string; targetDirectory?: string;
   previousDirectories: Record<string, string>; switchedSessionIds: string[];
   archivedSessionIds: string[]; gitCompleted: boolean; error?: Problem; createdAt: string;
@@ -100,11 +100,11 @@ export type Command =
   | { type: 'task.runInstruction'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction: string }
   | { type: 'conversation.create'; hubId?: string; taskId: string }
   | { type: 'conversation.close' | 'conversation.reopen'; hubId?: string; taskId: string; sessionId: string }
-  | { type: 'task.delete'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; requireIdle?: boolean }
+  | { type: 'task.delete'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; requireIdle?: boolean; force?: boolean }
   | ({ type: 'worktree.create'; hubId?: string; taskId: string } & CreateWorktree)
   | { type: 'worktree.attach'; hubId?: string; taskId: string; path: string }
   | { type: 'worktree.dismiss'; hubId?: string; taskId: string }
-  | { type: 'worktree.remove'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean }
+  | { type: 'worktree.remove'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; force?: boolean }
   | { type: 'operation.retry' | 'operation.return'; hubId?: string; taskId: string }
   | { type: 'note.save'; hubId?: string; taskId: string; noteId?: string; content: string; tags?: string[] };
 export type Outcome<T> = { ok: true; value: T } | { ok: false; error: Problem };

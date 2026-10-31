@@ -29,13 +29,13 @@ const createWorktree = z.strictObject({ mode: z.enum(['new', 'existing']), path:
 const operationRequest = z.discriminatedUnion('kind', [
   createWorktree.extend({ kind: z.literal('create') }),
   z.strictObject({ kind: z.literal('attach'), path: absolutePath }),
-  z.strictObject({ kind: z.literal('remove'), discardChanges: z.boolean(), expectedWorktreePath: absolutePath.nullable().optional() }),
-  z.strictObject({ kind: z.literal('delete'), discardChanges: z.boolean(), expectedWorktreePath: absolutePath.nullable().optional() }),
+  z.strictObject({ kind: z.literal('remove'), discardChanges: z.boolean(), expectedWorktreePath: absolutePath.nullable().optional(), force: z.boolean().optional() }),
+  z.strictObject({ kind: z.literal('delete'), discardChanges: z.boolean(), expectedWorktreePath: absolutePath.nullable().optional(), force: z.boolean().optional() }),
   z.strictObject({ kind: z.literal('return') }),
 ]);
 const operation = z.strictObject({
   id, request: operationRequest,
-  phase: z.enum(['waiting', 'preflight', 'git', 'switching', 'removing', 'archiving', 'failed']),
+  phase: z.enum(['queued', 'waiting', 'preflight', 'git', 'switching', 'removing', 'archiving', 'failed']),
   targetPath: absolutePath.optional(), targetDirectory: absolutePath.optional(),
   previousDirectories: z.record(id, absolutePath), switchedSessionIds: z.array(id), archivedSessionIds: z.array(id),
   createAttempt: z.strictObject({ operationId: id, path: absolutePath, gitRootPath: absolutePath, branchName: nonempty, mode: z.enum(['new', 'existing']), absentBefore: z.literal(true) }).optional(),
@@ -48,7 +48,7 @@ const pendingTransition = z.strictObject({
 const task = z.strictObject({
   id, projectId: id, title: nonempty, description: z.string(), columnId: id, position: z.number().finite(),
   sessionIds: z.array(id), closedSessionIds: z.array(id), effectiveCwd: absolutePath,
-  worktree: z.strictObject({ path: absolutePath, branch: nonempty, owned: z.boolean(), status: z.enum(['preparing', 'ready', 'error']) }).nullable(),
+  worktree: z.strictObject({ path: absolutePath, branch: nonempty, owned: z.boolean(), status: z.enum(['preparing', 'ready', 'error']), error: problem.optional() }).nullable(),
   worktreeDismissed: z.boolean().optional(),
   unclaimedWorktrees: z.array(z.strictObject({ path: absolutePath, branch: nonempty, error: problem })).optional(),
   worktreeWorkspaceId: id.optional(), worktreeWorkspaceOwned: z.boolean().optional(),

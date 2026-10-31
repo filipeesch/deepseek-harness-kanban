@@ -16,15 +16,15 @@ const coordinators: AttentionCoordinator[] = [];
 function fixture(overrides: Partial<AttentionCoordinatorOptions> = {}) {
   const values = new Map<string, ConversationFacts>();
   const source = { read: vi.fn(async (sessionId: string) => values.get(sessionId) ?? facts()) };
-  const refreshWorktrees = vi.fn(async () => {});
+  const runPendingWork = vi.fn(async () => {});
   const onChange = vi.fn();
   const report = vi.fn();
   const coordinator = new AttentionCoordinator({
     source, tasks: () => tasks('s1'), pendingQuestion: () => false,
-    refreshWorktrees, onChange, report, debounceMs: 50, ...overrides,
+    runPendingWork, onChange, report, debounceMs: 50, ...overrides,
   });
   coordinators.push(coordinator);
-  return { coordinator, source, values, refreshWorktrees, onChange, report };
+  return { coordinator, source, values, runPendingWork, onChange, report };
 }
 afterEach(() => { for (const coordinator of coordinators.splice(0)) coordinator.dispose(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
@@ -235,9 +235,9 @@ describe('coalesced activity refresh', () => {
     f.coordinator.touch();
     expect(vi.getTimerCount()).toBe(1);
     await vi.advanceTimersByTimeAsync(49);
-    expect(f.refreshWorktrees).not.toHaveBeenCalled();
+    expect(f.runPendingWork).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
-    expect(f.refreshWorktrees).toHaveBeenCalledOnce();
+    expect(f.runPendingWork).toHaveBeenCalledOnce();
     expect(f.onChange).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -246,7 +246,7 @@ describe('coalesced activity refresh', () => {
     vi.useFakeTimers();
     const f = fixture();
     const failure = new Error('Memory retry failure');
-    f.refreshWorktrees.mockRejectedValueOnce(failure);
+    f.runPendingWork.mockRejectedValueOnce(failure);
     f.coordinator.touch();
     await vi.advanceTimersByTimeAsync(50);
     expect(f.report).toHaveBeenCalledWith(failure);
@@ -257,7 +257,7 @@ describe('coalesced activity refresh', () => {
     vi.useFakeTimers();
     const f = fixture();
     const retry = deferred<void>();
-    f.refreshWorktrees.mockImplementationOnce(() => retry.promise);
+    f.runPendingWork.mockImplementationOnce(() => retry.promise);
     f.coordinator.touch();
     await vi.advanceTimersByTimeAsync(50);
     f.coordinator.dispose();

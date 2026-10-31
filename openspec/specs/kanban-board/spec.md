@@ -155,7 +155,8 @@ The board SHALL move tasks between workflow stages only through drag and drop. A
 - **THEN** the move completes without asking whether to create a worktree
 
 ### Requirement: Bulk task deletion
-The board SHALL provide an explicit selection mode that presents a selection control on each card and disables card dragging while active. The user SHALL be able to select multiple tasks across visible stages. A bulk deletion SHALL require one confirmation and SHALL apply the individual task deletion semantics to each eligible task. A task SHALL be skipped when any of its conversations is active through a running turn or unsettled background work, it has a pending operation or transition, or its worktree has local changes. The board SHALL report skipped tasks and their reasons, and SHALL leave those tasks selected. Leaving selection mode SHALL clear the selection.
+
+The board SHALL provide an explicit selection mode that presents a selection control on each card and disables card dragging while active. The user SHALL be able to select multiple tasks across visible stages. A bulk deletion SHALL require one confirmation and SHALL apply the individual task deletion semantics to each eligible task. A task SHALL be skipped when any of its conversations is active through a running turn or unsettled background work, it has a pending operation or transition, or its worktree has local changes. An eligible task SHALL be reported as accepted for background deletion rather than as already deleted. The board SHALL report accepted and skipped tasks and the reason for each skip, SHALL leave skipped tasks selected, and SHALL NOT claim a queued deletion completed. Leaving selection mode SHALL clear the selection.
 
 #### Scenario: Enter selection mode and select tasks
 - **WHEN** the user enters selection mode and activates cards in more than one stage
@@ -163,7 +164,14 @@ The board SHALL provide an explicit selection mode that presents a selection con
 
 #### Scenario: Delete eligible tasks
 - **WHEN** the user confirms deletion of a selection whose tasks are eligible
-- **THEN** each eligible task is deleted with the individual deletion semantics and the selection is cleared
+- **THEN** each eligible task is accepted for background deletion with the individual deletion semantics
+- **AND** the selection is cleared
+
+#### Scenario: Report accepted and skipped tasks
+- **WHEN** a confirmed bulk deletion admits some tasks and skips others
+- **THEN** the result states how many tasks were accepted for deletion
+- **AND** it identifies every skipped task and reason
+- **AND** it does not report the accepted tasks as already deleted
 
 #### Scenario: Skip a task with a running conversation
 - **WHEN** the user confirms deletion of a selection that includes a task with a running turn or unsettled background work
@@ -380,11 +388,20 @@ The card's activity region SHALL keep its content on one line. When the task own
 
 ### Requirement: Task card status strip
 
-The board SHALL present a card's unresolved context operation and confirmed transition in one status region below the activity region. Each status SHALL carry a tone that distinguishes a failure from a pending state and SHALL present a short label that names the state. A status SHALL remain visible while its operation or transition is unresolved. A run-action admission failure SHALL be reported in the same status region. When a card has more than one such fact, the status region SHALL present them together without replacing one with another.
+The board SHALL present a card's unresolved context operation and confirmed transition in one status region below the activity region. Each status SHALL carry a tone that distinguishes a failure from a pending state and SHALL present a short label that names the state. A destructive operation's label SHALL use task-deletion or worktree-removal language and SHALL distinguish queued, in progress, and failed states rather than exposing a raw phase token. A status SHALL remain visible while its operation or transition is unresolved. A run-action admission failure SHALL be reported in the same status region. When a card has more than one such fact, the status region SHALL present them together without replacing one with another.
 
 #### Scenario: Report a failed operation
 - **WHEN** a card's task has a context operation in a failed phase
 - **THEN** the status region presents a failure-toned status naming the failure
+
+#### Scenario: Report a pending deletion
+- **WHEN** a card's task has a queued or in-progress deletion or worktree removal
+- **THEN** the status region presents a pending-toned status that names the destructive action and its queued or in-progress state
+- **AND** it does not present the raw operation phase as the label
+
+#### Scenario: Report a failed deletion
+- **WHEN** a card's task has a failed deletion or worktree removal
+- **THEN** the status region presents a failure-toned status that names the destructive action as needing attention
 
 #### Scenario: Report a pending transition
 - **WHEN** a card's task has a confirmed transition that is not settled
@@ -735,22 +752,60 @@ The Kanban page SHALL present the boards of the active Hub as tabs below the Hub
 - **AND** the switch does not send, cancel, or duplicate the instruction
 
 ### Requirement: Board attention aggregation
-The board tab SHALL present aggregated attention for all tasks on that board. The aggregation SHALL include unread activity and active execution. The aggregation SHALL clear when no task on the board has those facts. Attention on a board that is not active SHALL remain visible on its tab.
+The board tab SHALL present aggregated attention for all tasks on that board. Attention SHALL consist of the unread indicator, the awaiting-reply indicator, the failure indicator, and a running-task indicator. The unread, awaiting-reply, and failure indicators SHALL be presented first, in that order, and the running-task indicator SHALL follow them. The running-task indicator SHALL be presented as a pulsing ring in the host accent with an adjacent numeral, and SHALL be present whenever at least one task on the board is running, including when exactly one task is running. The numeral SHALL be the number of running tasks, counting each task once regardless of how many agents, subagents, jobs, or schedules it owns. A task SHALL count as running while it has a running agent turn, an owned subagent still running after the turn ends, or unsettled background work such as jobs or schedules. The numeral SHALL be legible in the host's light and dark appearances, SHALL use tabular figures so the board label does not shift as the count changes, and SHALL remain visible without animation when the host prefers reduced motion. Hovering the indicator SHALL expose the titles of the running tasks. The board tab's accessible name SHALL include the running-task count. The unread, awaiting-reply, and failure indicators SHALL coexist with the running-task indicator. The running-task indicator SHALL communicate both the presence and the number of running tasks rather than a static status color alone. The running count SHALL clear when no task on the board is running. Attention on a board that is not active SHALL remain visible on its tab.
 
 #### Scenario: Aggregate unread activity on the board tab
 - **WHEN** a task on a board has unread activity
 - **THEN** that board's tab presents an unread indicator
 
+#### Scenario: Aggregate awaiting reply on the board tab
+- **WHEN** a task on a board is awaiting the user's reply
+- **THEN** that board's tab presents an awaiting-reply indicator
+
 #### Scenario: Aggregate execution on the board tab
-- **WHEN** a task on a board is running a turn or owns background activity
-- **THEN** that board's tab presents an execution indicator
+- **WHEN** two tasks on the same board are running
+- **THEN** that board's tab presents a running-task indicator
+- **AND** its numeral is 2
+
+#### Scenario: Count a task once
+- **WHEN** a task has a running agent turn and also owns unsettled jobs
+- **THEN** that task contributes 1 to the board's running-task count
+
+#### Scenario: Keep counting an owned subagent
+- **WHEN** a task's assistant turn ends while an owned subagent descendant is still running
+- **THEN** that task still contributes 1 to the board's running-task count
+
+#### Scenario: Count background work without an agent
+- **WHEN** a task on the board owns only unsettled background work and no agent is running
+- **THEN** that task contributes 1 to the board's running-task count
+
+#### Scenario: Order the running count after the attention indicators
+- **WHEN** a board tab presents unread, awaiting-reply, and failure indicators together with running tasks
+- **THEN** the unread, awaiting-reply, and failure indicators appear first, in that order
+- **AND** the running-task indicator appears after them
+
+#### Scenario: Expose the running task titles on hover
+- **WHEN** the user hovers the running-task indicator on a board tab
+- **THEN** the exposed detail lists the titles of the running tasks on that board
+
+#### Scenario: Announce the running count to assistive technology
+- **WHEN** a board tab carries a running-task indicator numbered 2
+- **THEN** the tab's accessible name includes that there are 2 running tasks
+
+#### Scenario: Keep the ring visible without animation
+- **WHEN** the host prefers reduced motion and a board has running tasks
+- **THEN** the running-task indicator remains visible without animation
 
 #### Scenario: Clear the board indicator
-- **WHEN** no task on the board has unread activity or active execution
-- **THEN** the board tab presents neither indicator
+- **WHEN** no task on the board has unread activity, is awaiting a reply, has failed, has a running agent, has an owned subagent, or owns unsettled background work
+- **THEN** the board tab presents no attention or running-task indicator
+
+#### Scenario: Keep every attention indicator alongside the count
+- **WHEN** a task on the board has unread activity, an awaiting reply, or a failure in addition to running tasks
+- **THEN** the board tab presents the corresponding attention indicators together with the running-task indicator
 
 #### Scenario: Show attention for an inactive board
-- **WHEN** a task on a board in the active Hub gains unread activity or starts running while another board is active
+- **WHEN** a task on a board in the active Hub gains unread activity, awaits a reply, or starts running while another board is active
 - **THEN** the inactive board's tab presents the corresponding indicator
 
 ### Requirement: Explicit confirmation for a restricted transition
@@ -916,3 +971,32 @@ The active board SHALL keep its frame stable while a command is in flight. Comma
 - **WHEN** a board command fails
 - **THEN** a board-level notice states the failure
 - **AND** no global saving indicator or live save announcement is added for that command
+
+### Requirement: Board destructive-operation notice
+
+The active board SHALL present one persistent notice above the board body while a destructive operation is queued or running, while a destructive operation needs attention, or while a deletion retained a checkout path on disk. The notice SHALL summarize in-progress and queued deletions and worktree removals with the affected task titles. For a failed operation, the notice SHALL identify the task and offer recovery actions appropriate to the recorded operation, including retry, return when permitted, and force when the failure is `SHARED_WORKTREE`. The notice SHALL update from host state without a reload, SHALL not claim success for an unresolved or failed operation, and SHALL NOT replace the drawer operation status or the card status. A completed deletion that retained a plain checkout path SHALL be reported with that path and SHALL be dismissible.
+
+#### Scenario: Show queued and in-progress deletions
+
+- **WHEN** one or more accepted deletions are queued or executing
+- **THEN** the board notice identifies the affected tasks and their aggregate state
+- **AND** the rest of the board remains usable
+
+#### Scenario: Show a failed destructive operation with recovery
+
+- **WHEN** an accepted deletion or worktree removal fails
+- **THEN** the board notice presents the failure and the recovery actions
+- **AND** it offers force only when the failure is `SHARED_WORKTREE`
+- **AND** it offers return only when returning the task's conversations is permitted
+
+#### Scenario: Report a retained plain checkout
+
+- **WHEN** a deletion completes and leaves a plain checkout on disk
+- **THEN** the board notice reports the retained path
+- **AND** the user can dismiss the report
+
+#### Scenario: Notice clears when the operation resolves
+
+- **WHEN** every tracked queued or failed destructive operation resolves or is cleared
+- **THEN** the notice no longer presents that operation
+- **AND** the card and drawer status remain the authoritative per-task surfaces

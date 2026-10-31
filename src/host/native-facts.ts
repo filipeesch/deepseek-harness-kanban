@@ -1,4 +1,5 @@
 import type { BackgroundActivity, BackgroundKind, ConversationFacts, SettledTurn } from '../shared/types.js';
+import type { ConversationFactsFold } from './conversation-facts.js';
 
 /** One family reported by the public `workspace/session-activity` waterfall. */
 export interface ActivityEntry {
@@ -15,6 +16,8 @@ export interface NativeFactsDeps {
   activity(sessionId: string): Promise<readonly ActivityEntry[]>;
   projections(sessionId: string): Promise<ProjectionLike | null | undefined>;
   inspect(sessionId: string): Promise<InspectionLike>;
+  /** Incremental facts for a live Session; absent for a not-live Session. */
+  liveFacts?(sessionId: string): ConversationFactsFold | undefined;
 }
 export interface ConversationFactsSource { read(sessionId: string): Promise<ConversationFacts> }
 
@@ -46,11 +49,16 @@ export function partitionActivity(entries: readonly ActivityEntry[]): Pick<Conve
   return { running, background };
 }
 
-/** A conversation awaits a reply while a native question or approval is still open. */
-export function nativePending(projection: ProjectionLike | null | undefined, inspection: InspectionLike): boolean {
+/** A pending native question is visible in its projection; approvals have no standard projection. */
+function pendingUserQuestion(projection: ProjectionLike | null | undefined): boolean {
   const values = record(projection?.values) ? projection.values : undefined;
   const questions = values?.['userQuestions'];
-  if (record(questions) && Array.isArray(questions.active) && questions.active.length > 0) return true;
+  return record(questions) && Array.isArray(questions.active) && questions.active.length > 0;
+}
+
+/** A conversation awaits a reply while a native question or approval is still open. */
+export function nativePending(projection: ProjectionLike | null | undefined, inspection: InspectionLike): boolean {
+  if (pendingUserQuestion(projection)) return true;
   const approvals = new Set<string>();
   for (const event of inspection.events) {
     if (event.type === 'turn/end') approvals.clear();
@@ -83,14 +91,30 @@ export function lastSettledTurn(inspection: InspectionLike): SettledTurn | null 
   return settled;
 }
 
-/** Read the native facts from an injected inspection seam; the port factory keeps the service wiring. */
+/** The settled turn held by the incremental fold, or null before the first completed turn. */
+function foldedSettledTurn(fold: ConversationFactsFold): SettledTurn | null {
+  if (fold.lastTurnEndSeq === null) return null;
+  return { seq: fold.lastTurnEndSeq, outcome: fold.lastTurnOutcome === 'error' ? 'error' : 'ok' };
+}
+
+/** Read the native facts from injected seams: projections for a live Session, inspection otherwise. */
 export function createNativeSessionFacts(deps: NativeFactsDeps): ConversationFactsSource {
   return {
     async read(sessionId: string): Promise<ConversationFacts> {
-      const [activity, projection, inspection] = await Promise.all([
-        deps.activity(sessionId), deps.projections(sessionId), deps.inspect(sessionId),
+      const [activity, projection] = await Promise.all([
+        deps.activity(sessionId), deps.projections(sessionId),
       ]);
       const { running, background } = partitionActivity(activity);
+      const fold = deps.liveFacts?.(sessionId);
+      if (fold !== undefined) {
+        return {
+          running,
+          background,
+          awaitingReply: pendingUserQuestion(projection) || fold.openApprovalIds.length > 0,
+          settledTurn: foldedSettledTurn(fold),
+        };
+      }
+      const inspection = await deps.inspect(sessionId);
       return { running, background, awaitingReply: nativePending(projection, inspection), settledTurn: lastSettledTurn(inspection) };
     },
   };

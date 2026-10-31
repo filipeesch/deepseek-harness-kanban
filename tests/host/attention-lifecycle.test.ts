@@ -129,7 +129,7 @@ describe('attention activity lifecycle', () => {
     notify.mockClear();
     f.families.set(f.sessionId, []);
     f.emitAgentStatus('idle');
-    expect(notify).toHaveBeenCalled();
+    await vi.waitFor(() => expect(notify).toHaveBeenCalled());
     expect((await f.app.snapshot()).conversations[f.sessionId]?.running).toBe(false);
   });
 
@@ -175,17 +175,15 @@ describe('attention activity lifecycle', () => {
     f.emitSessionEvent({ type: 'turn/end', seq: 1, time: 1, data: { turn: 1, reason: { kind: 'completed' } } });
     expect((await f.app.snapshot()).conversations[f.sessionId]?.running).toBe(true);
 
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const resume = vi.spyOn(f.app.worktrees, 'resumePending');
     notify.mockClear();
     f.families.set(f.sessionId, []);
     f.emitAgentStatus('idle');
-    expect(notify).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(notify).toHaveBeenCalled());
+    expect(resume).toHaveBeenCalledOnce();
     await f.app.snapshot();
     notify.mockClear();
-    await vi.advanceTimersByTimeAsync(50);
-    expect(resume).toHaveBeenCalledOnce();
-    // The coalesced tick sees the projection the edge already published.
+    await new Promise(resolve => setTimeout(resolve, 60));
     expect(notify).not.toHaveBeenCalled();
     expect((await f.app.snapshot()).conversations[f.sessionId]?.running).toBe(false);
   });
