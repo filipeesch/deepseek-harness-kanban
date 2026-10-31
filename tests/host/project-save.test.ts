@@ -109,7 +109,8 @@ describe('folder projects and execution context', () => {
     const project = created.state.hubs[0]!.projects.find(value => value.name === 'Plain')!;
     const result = await f.app.command({ type: 'task.create', projectId: project.id, title: 'Plain task', description: '' });
     const task = result.state.hubs[0]!.tasks.find(value => value.title === 'Plain task')!;
-    return { project, task };
+    await f.app.createConversation(task.id);
+    return { project, task: f.store.requireTask(task.id) };
   }
 
   it('rejects branch discovery and worktree defaults for a folder project', async () => {

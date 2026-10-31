@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools';
 import { productToolDefinitions } from '../../src/host/tools.js';
 import type { HubState } from '../../src/shared/types.js';
-import { fixture } from './helpers.js';
+import { fixture, taskWithConversation } from './helpers.js';
 
 const active: Array<Awaited<ReturnType<typeof fixture>>> = [];
 afterEach(async () => { for (const value of active.splice(0).reverse()) await value.close(); });
@@ -90,8 +90,7 @@ describe('Hub-scoped host commands', () => {
   it('projects execution attention from tasks in every Hub', async () => {
     const f = await setup();
     const second = await secondHub(f);
-    const result = await f.app.command({ type: 'task.create', hubId: second.hubId, boardId: second.boardId, projectId: second.project.id, title: 'Running elsewhere', description: '' });
-    const task = result.state.hubs.find(hub => hub.id === second.hubId)!.tasks[0]!;
+    const task = await taskWithConversation(f.app, { boardId: second.boardId, projectId: second.project.id, title: 'Running elsewhere', description: '' });
     f.sessions.busy.add(task.sessionIds[0]!);
     f.app.sessionActivity(task.sessionIds[0]!);
     const snapshot = await f.app.snapshot();

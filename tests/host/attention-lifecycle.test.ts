@@ -10,7 +10,7 @@ import { KanbanApp } from '../../src/host/app.js';
 import { initialState } from '../../src/domain/schema.js';
 import type { BoardState } from '../../src/shared/types.js';
 import type { GitPort } from '../../src/shared/ports.js';
-import { TestGit } from './helpers.js';
+import { TestGit, taskWithConversation } from './helpers.js';
 import { fakeKanbanStorage } from './fake-kanban-storage.js';
 
 type Family = { kind: string; items?: Array<{ id: string; label?: string }> };
@@ -107,7 +107,7 @@ async function runtime() {
   vi.spyOn(KanbanApp.prototype, 'initialize').mockImplementation(function (this: KanbanApp) { app = this; return initialize.call(this); });
   const host = root.plugin(KanbanHost); fibers.push(host); await host;
   const project = await app.store.saveProject({ name: 'Attention fixture', projectPath, gitRootPath: gitRoot });
-  const task = await app.createTask({ projectId: project.id, title: 'Attention lifecycle', description: '' });
+  const task = await taskWithConversation(app, { projectId: project.id, title: 'Attention lifecycle', description: '' });
   const sessionId = task.sessionIds[0]!;
   const session = sessions.get(sessionId)!;
   const agent = agents.get(sessionId)!;

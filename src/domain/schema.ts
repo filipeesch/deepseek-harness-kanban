@@ -47,8 +47,9 @@ const pendingTransition = z.strictObject({
 });
 const task = z.strictObject({
   id, projectId: id, title: nonempty, description: z.string(), columnId: id, position: z.number().finite(),
-  sessionIds: z.array(id).min(1), closedSessionIds: z.array(id), effectiveCwd: absolutePath,
+  sessionIds: z.array(id), closedSessionIds: z.array(id), effectiveCwd: absolutePath,
   worktree: z.strictObject({ path: absolutePath, branch: nonempty, owned: z.boolean(), status: z.enum(['preparing', 'ready', 'error']) }).nullable(),
+  worktreeDismissed: z.boolean().optional(),
   unclaimedWorktrees: z.array(z.strictObject({ path: absolutePath, branch: nonempty, error: problem })).optional(),
   worktreeWorkspaceId: id.optional(), worktreeWorkspaceOwned: z.boolean().optional(),
   operation: operation.nullable(), pendingTransition: pendingTransition.optional(), instructionPending: z.strictObject({ columnId: id, enteredAt: z.number().finite() }).optional(), createdAt: timestamp, updatedAt: timestamp,

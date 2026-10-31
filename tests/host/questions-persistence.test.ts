@@ -207,7 +207,9 @@ describe('conversation question persistence', () => {
   it('clears the awaiting-reply attention after dismissal', async () => {
     const app = await appWith(undefined);
     const project = await app.store.saveProject({ name: 'Attention project', projectPath: '/memory/repo/app', gitRootPath: '/memory/repo' });
-    const task = await app.createTask({ projectId: project.id, title: 'Attention task', description: '' });
+    const created = await app.createTask({ projectId: project.id, title: 'Attention task', description: '' });
+    await app.store.addSession(created.id, 'attention-session');
+    const task = app.store.requireTask(created.id);
     const sessionId = task.sessionIds[0]!;
     const sessions = app.sessions as unknown as TestSessions;
     sessions.awaiting.add(sessionId);

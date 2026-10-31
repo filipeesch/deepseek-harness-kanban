@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { EMPTY_ATTENTION, type Attention, type BoardState, type ClientApi, type Column, type Task } from '../shared/types.js';
 import { isGitProject } from '../shared/project.js';
+import { requiresWorktreeDecision } from '../shared/worktree-decision.js';
 import { InfoPanel, NotesPanel } from './forms.js';
 import { GitPanel, PendingTransitionStatus } from './git.js';
 import { OperationStatus } from './operation-status.js';
@@ -40,7 +41,7 @@ function storedWidth(): number { try { const value = Number(window.localStorage.
 
 export function TaskDrawer({ task, attention = EMPTY_ATTENTION, state, api, run, autoRun, renderConversation, onClose, onMove, onDanger, viewState, sessionTitles, lineage, peek: controlledPeek, onPeek, entering = false, closing = false }: DrawerProps) {
   const [localViewState] = useState(createTaskPageState); const preferences = viewState ?? localViewState;
-  const [section, setSection] = usePageField(preferences, 'section'); const [dismissed, setDismissed] = useState(false); const id = useId(); const close = useRef<HTMLButtonElement>(null);
+  const [section, setSection] = usePageField(preferences, 'section'); const id = useId(); const close = useRef<HTMLButtonElement>(null);
   const [localPeek, setLocalPeek] = useState<DrawerSubagentAddress | null>(null);
   const peek = controlledPeek === undefined ? localPeek : controlledPeek;
   const setPeek = onPeek ?? setLocalPeek;
@@ -54,7 +55,6 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, state, api, run,
     return () => { alive.current = false; };
   }, []);
   useEffect(() => { const element = aside.current; if (!element) return; if (closing) element.setAttribute('inert', ''); else element.removeAttribute('inert'); return () => element.removeAttribute('inert'); }, [closing]);
-  useEffect(() => { setDismissed(false); }, [task.worktree?.path]);
   useEffect(() => { if (closing || section !== 'Conversations') setPeek(null); }, [closing, section]);
   useEffect(() => {
     if (taskId.current === task.id) return;
@@ -63,6 +63,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, state, api, run,
   }, [task.id, setPeek]);
   const project = state.projects.find(value => value.id === task.projectId); const blocked = Boolean(task.operation || task.pendingTransition);
   const gitBacked = project !== undefined && isGitProject(project);
+  const worktreeDecisionRequired = requiresWorktreeDecision(task, project);
   const sections = ['Conversations', 'Info', ...(gitBacked ? ['Git'] : []), 'Notes'];
   const destinations = transitionDestinations(state.workflow, task.columnId);
   const worktreeDraft = useWorktreeDraft({ api, task, project, basePath: state.settings?.worktreeBasePath, enabled: gitBacked && !task.worktree && (section === 'Conversations' || section === 'Git') });
@@ -102,7 +103,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, state, api, run,
     <div className="kb-drawer-toolbar"><Tabs label="Task sections" values={sections} selected={section} onSelect={value => setSection(value as DrawerSection)} id={id} /><label className="kb-stage-compact"><span className="kb-sr">Move task to</span><select className="kb-input kb-stage-select" aria-label="Move task to" aria-describedby={id + '-stage-hint'} value={movingTo ?? task.columnId} disabled={blocked || movingTo !== null} onChange={event => { const column = state.workflow.columns.find(value => value.id === event.target.value); if (column && column.id !== task.columnId) void moveTo(column); }}>{destinations.map(({ column, access }) => <option key={column.id} value={column.id} className={access === 'restricted' ? 'kb-stage-option-restricted' : undefined} aria-label={access === 'restricted' ? column.name + ', requires confirmation' : undefined}>{column.name}</option>)}</select></label><span className="kb-sr" id={id + '-stage-hint'}>Stages that this workflow does not permit require confirmation before moving.</span></div>
     {autoRun && <DrawerAutoRunNotice task={task} controller={autoRun} columns={state.workflow.columns} sessionTitles={sessionTitles} />}
     <section className={'kb-drawer-panel ' + (section === 'Conversations' ? 'kb-chat-panel' : '')} role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>
-      {section === 'Conversations' && <>{!gitBacked && task.worktree && <p className="kb-hint" role="note" aria-label="Plain checkout">This checkout is no longer Git-managed. Git actions are unavailable and the directory is kept when the task is deleted.</p>}{gitBacked && !task.worktree && !dismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} onDismiss={() => setDismissed(true)} />}<DrawerConversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} peek={peek} onPeek={setPeek} lineage={lineage} /></>}
+      {section === 'Conversations' && <>{!gitBacked && task.worktree && <p className="kb-hint" role="note" aria-label="Plain checkout">This checkout is no longer Git-managed. Git actions are unavailable and the directory is kept when the task is deleted.</p>}{gitBacked && !task.worktree && !task.worktreeDismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} />}<DrawerConversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} peek={peek} onPeek={setPeek} lineage={lineage} worktreeDecisionRequired={worktreeDecisionRequired} projectUnavailable={project === undefined} /></>}
       {section === 'Info' && <InfoPanel task={task} state={state} run={run} viewState={preferences} />}
       {section === 'Git' && gitBacked && <GitPanel task={task} project={project} api={api} run={run} worktreeBasePath={state.settings?.worktreeBasePath} draft={worktreeDraft} />}
       {section === 'Notes' && <NotesPanel task={task} state={state} run={run} viewState={preferences} />}

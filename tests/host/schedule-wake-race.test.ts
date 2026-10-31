@@ -11,7 +11,7 @@ import { WorktreeCoordinator } from '../../src/host/worktrees.js';
 import { initialState } from '../../src/domain/schema.js';
 import type { BoardState } from '../../src/shared/types.js';
 import type { GitPort } from '../../src/shared/ports.js';
-import { TestGit } from './helpers.js';
+import { TestGit, taskWithConversation } from './helpers.js';
 import { fakeKanbanStorage } from './fake-kanban-storage.js';
 
 const isolated = vi.hoisted(() => ({ git: undefined as GitPort | undefined, spawn: vi.fn() }));
@@ -117,7 +117,7 @@ async function runtime() {
   const resume = vi.spyOn(WorktreeCoordinator.prototype, 'resumePending');
   const host = root.plugin(KanbanHost); fibers.push(host); await host;
   const project = await app.store.saveProject({ name: 'Source-only schedule fixture', projectPath, gitRootPath: gitRoot });
-  const task = await app.createTask({ projectId: project.id, title: 'Wait for owned future schedule', description: '' });
+  const task = await taskWithConversation(app, { projectId: project.id, title: 'Wait for owned future schedule', description: '' });
   owner = task.sessionIds[0]!;
   let nativeNotifications = 0;
   const nativeNotification = () => {

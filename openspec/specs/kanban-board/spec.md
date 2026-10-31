@@ -52,7 +52,7 @@ Each board SHALL support its own workflow configuration in YAML, including the i
 - **AND** no other board's workflow is read or replaced
 
 ### Requirement: Top-level task creation
-The active board SHALL provide one New task action at the top of its workflow's configured initial column. It SHALL collect a title, description, and project from the active Hub's project registry. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. Saving a new task SHALL place it in the active board's configured initial stage without initiating an agent execution. The board header SHALL NOT provide a separate New task action.
+The active board SHALL provide one New task action at the top of its workflow's configured initial column. It SHALL collect a title, description, and project from the active Hub's project registry. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. Saving a new task SHALL place it in the active board's configured initial stage without creating a native DSH conversation and without initiating an agent execution. The board header SHALL NOT provide a separate New task action.
 
 #### Scenario: Open task creation from the board
 - **WHEN** the user selects the New task action at the top of the active board's configured initial column
@@ -64,6 +64,7 @@ The active board SHALL provide one New task action at the top of its workflow's 
 - **WHEN** the user saves a new task and the active board's workflow has a configured initial stage
 - **THEN** the task is created in that stage with the supplied title, description, and project
 - **AND** the task belongs to the active board
+- **AND** no native DSH conversation or workspace is created
 - **AND** task creation does not initiate an agent execution
 
 #### Scenario: Require an explicit project choice
@@ -75,6 +76,11 @@ The active board SHALL provide one New task action at the top of its workflow's 
 - **WHEN** the active Hub has no boards
 - **THEN** the board surface presents the create-board empty state
 - **AND** no New task action is available
+
+#### Scenario: Start the first conversation after creation
+- **WHEN** the user opens a newly created task's Conversations section
+- **THEN** the task has no native conversation
+- **AND** the section presents the explicit start state defined by `task-conversations`
 
 ### Requirement: Edit task text at any stage
 The user SHALL be able to edit a task's title and description in any workflow stage, including after a worktree has been created. Saving those edits SHALL NOT automatically send a message to any task conversation or initiate an agent execution.
@@ -147,6 +153,7 @@ The board SHALL move tasks between workflow stages only through drag and drop. A
 #### Scenario: Drop without a worktree
 - **WHEN** the user drops a task that has no worktree on a permitted stage
 - **THEN** the move completes without asking whether to create a worktree
+
 ### Requirement: Bulk task deletion
 The board SHALL provide an explicit selection mode that presents a selection control on each card and disables card dragging while active. The user SHALL be able to select multiple tasks across visible stages. A bulk deletion SHALL require one confirmation and SHALL apply the individual task deletion semantics to each eligible task. A task SHALL be skipped when any of its conversations is active through a running turn or unsettled background work, it has a pending operation or transition, or its worktree has local changes. The board SHALL report skipped tasks and their reasons, and SHALL leave those tasks selected. Leaving selection mode SHALL clear the selection.
 
@@ -489,6 +496,7 @@ When a task's current stage has an entry instruction, its card SHALL expose a ru
 #### Scenario: No action without an entry instruction
 - **WHEN** a card's current stage has no entry instruction
 - **THEN** the card does not expose the run action
+
 ### Requirement: Movement never runs an agent
 Moving a task, including into a stage with an entry instruction, SHALL update its workflow stage and position without initiating an agent execution at the time of the move. An instructed move SHALL arm the timed stage instruction defined by the Timed stage instruction after a move requirement; that scheduled execution is separate from the move. Execution SHALL otherwise require a separate explicit card run action or a user-sent message from the conversation composer. Optional worktree creation and directory switching SHALL follow the separate worktree-management requirements.
 

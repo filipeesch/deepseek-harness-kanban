@@ -226,15 +226,13 @@ export class BoardStore {
     });
   }
 
-  async createTask(input: NewTask, sessionId: string): Promise<Task> {
+  async createTask(input: NewTask): Promise<Task> {
     const value = clone(input);
     invariant(value && typeof value === 'object' && !Array.isArray(value), 'INVALID_INPUT', 'New task input must be a mapping.');
-    assertId(sessionId, 'Session ID');
     requiredText(value.title, 'Task title');
     invariant(typeof value.description === 'string', 'INVALID_INPUT', 'Task description must be text.');
     return this.transact(state => {
       const project = this.requireProject(value.projectId, state);
-      this.assertAvailableSession(state, sessionId);
       const peers = state.tasks.filter(task => task.columnId === state.workflow.initialColumnId);
       let position = peers.length ? peers.reduce((minimum, task) => Math.min(minimum, task.position), Infinity) - 1 : 0;
       if (!Number.isFinite(position) || peers.some(task => task.position === position)) {
@@ -246,7 +244,7 @@ export class BoardStore {
       const initialInstruction = entryInstruction(initialColumn);
       const task: Task = {
         id: nextId(state.tasks), projectId: project.id, title: value.title.trim(), description: value.description,
-        columnId: state.workflow.initialColumnId, position, sessionIds: [sessionId], closedSessionIds: [], effectiveCwd: project.projectPath,
+        columnId: state.workflow.initialColumnId, position, sessionIds: [], closedSessionIds: [], effectiveCwd: project.projectPath,
         worktree: null, operation: null, ...(initialInstruction !== undefined ? { instructionPending: { columnId: initialColumn!.id, enteredAt: nextEnteredAt() } } : {}), createdAt: timestamp, updatedAt: timestamp,
       };
       state.tasks.push(task);

@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { BoardStateSchema } from '../../src/domain/schema.js';
-import { fixture } from './helpers.js';
+import { fixture, taskWithConversation } from './helpers.js';
 
 let active: Array<Awaited<ReturnType<typeof fixture>>> = [];
 import { afterEach } from 'vitest';
 afterEach(async () => { for (const f of active.splice(0)) await f.close(); });
 async function setup() { const f = await fixture(); active.push(f); return f; }
-async function task(f: Awaited<ReturnType<typeof setup>>) { return f.app.createTask({ projectId: f.project.id, title: 'Legacy task', description: '' }); }
+async function task(f: Awaited<ReturnType<typeof setup>>) { return taskWithConversation(f.app, { projectId: f.project.id, title: 'Legacy task', description: '' }); }
 async function instructed(f: Awaited<ReturnType<typeof setup>>) {
   const workflow = f.store.snapshot().workflow;
   workflow.columns[1]!.onEnterPrompt = 'Plan this task.';

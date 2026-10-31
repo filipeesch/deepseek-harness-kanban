@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { BoardStore } from '../../src/domain/store.js';
 import { initialState } from '../../src/domain/schema.js';
-import { fixture, MemoryStorage, TestWorkspaces } from './helpers.js';
+import { fixture, taskWithConversation, MemoryStorage, TestWorkspaces } from './helpers.js';
 import type { Task } from '../../src/shared/types.js';
 
 let active: Array<Awaited<ReturnType<typeof fixture>>> = [];
@@ -36,7 +36,7 @@ describe('delete-only lifecycle and placement', () => {
   });
 
   it('rejects batch deletion before starting when a conversation is busy', async () => {
-    const f = await setup(); const task = await f.app.createTask({ projectId: f.project.id, title: 'Busy', description: '' });
+    const f = await setup(); const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Busy', description: '' });
     f.sessions.busy.add(task.sessionIds[0]!);
     await expect(f.app.command({ type: 'task.delete', taskId: task.id, confirmed: true, expectedWorktreePath: null, requireIdle: true })).rejects.toMatchObject({ code: 'TASK_BUSY' });
     expect(f.store.requireTask(task.id).operation).toBeNull(); expect(f.sessions.archived).toEqual([]);
@@ -68,8 +68,8 @@ describe('delete-only lifecycle and placement', () => {
 describe('native workspace binding', () => {
   it('shares the base workspace and binds each conversation to it', async () => {
     const f = await setup();
-    const first = await f.app.createTask({ projectId: f.project.id, title: 'First', description: '' });
-    const second = await f.app.createTask({ projectId: f.project.id, title: 'Second', description: '' });
+    const first = await taskWithConversation(f.app, { projectId: f.project.id, title: 'First', description: '' });
+    const second = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Second', description: '' });
     const project = f.store.requireProject(f.project.id);
     expect(project.workspaceId).toBeTruthy();
     expect(f.sessions.workspaceIds.get(first.sessionIds[0]!)).toBe(project.workspaceId);
@@ -95,16 +95,30 @@ describe('native workspace binding', () => {
     expect(f.workspaces.deleted).not.toContain(baseWorkspace);
   });
 
-  it('does not create a cwd-only session when workspace creation fails', async () => {
-    const f = await setup(); const broken = new TestWorkspaces(); broken.ensure = async () => { throw new Error('workspace unavailable'); };
+  it('does not create a workspace or native session when a task is created', async () => {
+    const f = await setup();
+    const task = await f.app.createTask({ projectId: f.project.id, title: 'Lazy task', description: '' });
+    expect(task.sessionIds).toEqual([]);
+    expect(f.sessions.dirs.size).toBe(0);
+    expect(f.workspaces.byPath.size).toBe(0);
+  });
+
+  it('does not create a cwd-only session when the first workspace creation fails', async () => {
+    const f = await setup();
+    const task = await f.app.createTask({ projectId: f.project.id, title: 'Workspace failure', description: '' });
+    await f.app.command({ type: 'worktree.dismiss', taskId: task.id });
+    const broken = new TestWorkspaces(); broken.ensure = async () => { throw new Error('workspace unavailable'); };
     const app = new (await import('../../src/host/app.js')).KanbanApp(f.hubs, f.sessions, f.git, {}, broken);
-    await expect(app.createTask({ projectId: f.project.id, title: 'No workspace', description: '' })).rejects.toThrow('workspace unavailable');
-    expect(f.store.snapshot().tasks).toHaveLength(0);
+    await expect(app.createConversation(task.id)).rejects.toThrow('workspace unavailable');
+    expect(f.sessions.dirs.size).toBe(0);
+    expect(f.store.requireTask(task.id).sessionIds).toEqual([]);
+    await app.close();
   });
 
   it('reconciles a workspace for an existing cwd-only task', async () => {
     const f = await setup();
-    await f.store.createTask({ projectId: f.project.id, title: 'Legacy task', description: '' }, 'legacy-session');
+    const legacy = await f.store.createTask({ projectId: f.project.id, title: 'Legacy task', description: '' });
+    await f.store.addSession(legacy.id, 'legacy-session');
     f.sessions.dirs.set('legacy-session', f.projectPath);
     await f.store.transact(state => { const project = state.projects.find(value => value.id === f.project.id)!; delete project.workspaceId; delete project.workspaceOwned; });
     const { KanbanApp } = await import('../../src/host/app.js');

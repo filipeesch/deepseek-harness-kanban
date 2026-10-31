@@ -4,7 +4,7 @@ These are plugin-owned scenario templates for DSH's web e2e lane. They are not r
 
 Prerequisites:
 
-- DSH checkout at `dsh-v0.2.1-rc.2`, installed and built (`apps/web/dist` and `packages/bundle/web-app/lib` exist). Run the DSH install/build with the checkout's own toolchain before this runner; a pulled checkout alone is not enough.
+- An installed and built DSH checkout (`apps/web/dist` and `packages/bundle/web-app/lib` exist). The runner does not require a specific tag; it reports the checkout version and warns when it differs from the plugin's pinned SDK. Run the DSH install/build with the checkout's own toolchain before this runner; a pulled checkout alone is not enough.
 - Plugin dependencies installed.
 
 Run:

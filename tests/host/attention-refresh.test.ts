@@ -21,7 +21,9 @@ async function fixture() {
   const report = vi.fn();
   const app = new KanbanApp(hubs, sessions, new TestGit(), { report });
   apps.push(app);
-  const task = await app.createTask({ projectId: project.id, title: 'Attention fixture', description: '' });
+  const created = await app.createTask({ projectId: project.id, title: 'Attention fixture', description: '' });
+  await store.addSession(created.id, 'attention-session');
+  const task = store.requireTask(created.id);
   const sessionId = task.sessionIds[0]!;
   const facts = vi.spyOn(sessions, 'facts');
   const notify = vi.fn();

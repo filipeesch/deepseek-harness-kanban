@@ -42,7 +42,6 @@ describe('persisted board schema', () => {
     ['session shared by tasks', (state: ReturnType<typeof populatedState>) => { state.tasks.push(sampleTask('task-2')); }],
     ['duplicate task session', (state: ReturnType<typeof populatedState>) => { state.tasks[0]!.sessionIds.push('session-1'); }],
     ['closed foreign session', (state: ReturnType<typeof populatedState>) => { state.tasks[0]!.closedSessionIds.push('missing'); }],
-    ['no initial native session', (state: ReturnType<typeof populatedState>) => { state.tasks[0]!.sessionIds = []; }],
     ['relative project path', (state: ReturnType<typeof populatedState>) => { state.projects[0]!.projectPath = 'relative/path'; }],
     ['invalid ID', (state: ReturnType<typeof populatedState>) => { state.notes[0]!.id = '../file'; }],
     ['workflow mismatch', (state: ReturnType<typeof populatedState>) => { state.workflow.columns[0]!.name = 'Unpersisted change'; }],
@@ -50,6 +49,12 @@ describe('persisted board schema', () => {
     const state = populatedState();
     mutate(state);
     expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+
+
+  it('accepts a task without an initial native session and with a persisted base choice', () => {
+    const state = populatedState(); state.tasks[0]!.sessionIds = []; state.tasks[0]!.worktreeDismissed = true;
+    expect(BoardStateSchema.safeParse(state).success).toBe(true);
   });
 
   it.each(['remove', 'delete'] as const)('preserves an optional captured worktree confirmation target for %s', kind => {

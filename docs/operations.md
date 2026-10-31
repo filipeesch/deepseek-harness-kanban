@@ -176,12 +176,12 @@ pnpm run test:browser
 pnpm run build
 # Combined sequence: typechecks, tests, then build
 pnpm run check
-# Real-composition e2e is manual before release against a pinned DSH checkout:
+# Real-composition e2e is manual before release against an installed and built DSH checkout:
 node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness --check
 node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness
 ```
 
-`pnpm run test:browser` is the separate Playwright harness for real CSS layout, CodeMirror, and animation behavior. It is intentionally not part of `pnpm run check`, which stays portable. `scripts/e2e-dsh.mjs` requires a DSH `dsh-v0.2.1-rc.2` checkout installed and built; it copies the plugin-owned scenario templates into that checkout's web test tree, runs them with `DSH_SNAPSHOT=replay`, and removes them afterward. The scenarios seed a question session without a model call and exercise real temporary Git for the worktree flow.
+`pnpm run test:browser` is the separate Playwright harness for real CSS layout, CodeMirror, and animation behavior. It is intentionally not part of `pnpm run check`, which stays portable. `scripts/e2e-dsh.mjs` accepts any installed and built DSH checkout (it reports the checkout version and warns when it differs from the plugin's pinned SDK) and copies the plugin-owned scenario templates into that checkout's web test tree, runs them with `DSH_SNAPSHOT=replay`, and removes them afterward. The scenarios seed a question session without a model call and exercise real temporary Git for the worktree flow.
 
 The hardened bundled Node failed loading the Rollup native addon due to a **Team ID/code-signing mismatch**. This does not justify disabling library validation, removing signatures/quarantine, or re-signing the app. Run the suite under normal Node instead and keep the actual failure distinct from test assertions.
 

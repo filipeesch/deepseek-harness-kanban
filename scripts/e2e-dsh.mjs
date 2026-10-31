@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,15 +19,33 @@ if (!checkoutArg) {
 }
 const checkout = resolve(checkoutArg);
 function fail(message) { console.error('e2e-dsh: ' + message); process.exit(1); }
+function describeCheckout() {
+  try { return execFileSync('git', ['describe', '--tags', '--always', '--dirty'], { cwd: checkout, encoding: 'utf8' }).trim(); }
+  catch { return 'not a git checkout'; }
+}
+function pluginDshVersion() {
+  try {
+    const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+    return manifest.dependencies?.['@deepseek-ai/dsh-llm'] ?? manifest.devDependencies?.['@deepseek-ai/dsh-llm'];
+  } catch { return undefined; }
+}
 function verify() {
-  if (!existsSync(join(checkout, 'package.json'))) fail('DSH checkout not found at ' + checkout);
-  const tag = execFileSync('git', ['describe', '--tags', '--exact-match'], { cwd: checkout, encoding: 'utf8' }).trim();
-  if (tag !== 'dsh-v0.2.1-rc.2') fail('expected DSH dsh-v0.2.1-rc.2, found ' + tag);
+  const manifestPath = join(checkout, 'package.json');
+  if (!existsSync(manifestPath)) fail('DSH checkout not found at ' + checkout);
+  let manifest;
+  try { manifest = JSON.parse(readFileSync(manifestPath, 'utf8')); }
+  catch (error) { fail('DSH checkout package.json is not valid JSON: ' + String(error)); }
+  const version = typeof manifest.version === 'string' ? manifest.version : 'unknown';
+  const tag = describeCheckout();
   for (const path of ['apps/web/dist/index.html', 'packages/bundle/web-app/lib']) if (!existsSync(join(checkout, path))) fail('missing built DSH artifact ' + path + '; install and run `pnpm run build` in the DSH checkout');
   if (!existsSync(join(root, 'tests/e2e-dsh/question-round.jsonl'))) fail('missing question fixture');
   if (!existsSync(join(root, 'tests/e2e-dsh/task-context.jsonl'))) fail('missing task-context fixture');
   if (!existsSync(join(root, 'tests/e2e-dsh/auto-run.replay.override.json'))) fail('missing auto-run replay override');
-  console.log('e2e-dsh prerequisites: ' + checkout + ' (' + tag + ')');
+  const pinned = pluginDshVersion();
+  if (pinned !== undefined && version !== 'unknown' && pinned !== version) {
+    console.warn('e2e-dsh: the plugin expects DSH ' + pinned + ' but the checkout reports ' + version + '; continuing with the checkout as requested.');
+  }
+  console.log('e2e-dsh prerequisites: ' + checkout + ' (' + tag + '; version ' + version + ')');
 }
 verify();
 if (checkOnly) process.exit(0);

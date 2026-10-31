@@ -19,14 +19,19 @@ export interface DrawerConversationsProps {
   peek: DrawerSubagentAddress | null;
   onPeek: (target: DrawerSubagentAddress | null) => void;
   lineage?: ConversationLineagePort;
+  /** The task must resolve its worktree choice before an explicit first conversation. */
+  worktreeDecisionRequired?: boolean;
+  /** The client snapshot cannot resolve the task's project. */
+  projectUnavailable?: boolean;
 }
 
 export function conversationLabel(task: Task, sessionId: string, titles?: SessionTitles): string {
   return titles?.title(sessionId)?.trim() || 'Agent ' + (task.sessionIds.indexOf(sessionId) + 1);
 }
 
-export function DrawerConversations({ task, run, renderConversation, viewState, sessionTitles, peek, onPeek, lineage }: DrawerConversationsProps) {
+export function DrawerConversations({ task, run, renderConversation, viewState, sessionTitles, peek, onPeek, lineage, worktreeDecisionRequired = false, projectUnavailable = false }: DrawerConversationsProps) {
   const open = task.sessionIds.filter(id => !task.closedSessionIds.includes(id));
+  const noConversations = task.sessionIds.length === 0;
   const openKey = JSON.stringify(open);
   const [selected, setSelected] = usePageField(viewState, 'conversationId');
   const [selectionRequired, setSelectionRequired] = usePageField(viewState, 'conversationSelectionRequired');
@@ -55,8 +60,19 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
   }), [task, chooseConversation, onPeek, lineage]);
   const label = (sessionId: string) => conversationLabel(task, sessionId, sessionTitles);
 
+  const busy = Boolean(task.operation || task.pendingTransition);
+  const createBlocked = Boolean(creationError || selectionRequired || worktreeDecisionRequired || projectUnavailable);
+  const startHint = projectUnavailable
+    ? 'Refresh the board: the task project is unavailable.'
+    : worktreeDecisionRequired
+    ? task.worktree === null
+      ? 'Create a worktree or continue in the base project using the notice above before starting.'
+      : 'Resolve the worktree setup in Git before starting.'
+    : creationError || selectionRequired
+      ? 'Resolve the conversation creation error before starting.'
+      : busy ? 'Wait for the current task operation to finish.' : undefined;
   async function createConversation() {
-    if (creationPending || creationError || selectionRequired) return;
+    if (creationPending || creationError || selectionRequired || worktreeDecisionRequired || projectUnavailable || busy) return;
     setCreationPending(true);
     try {
       const result = await action.execute({ type: 'conversation.create', taskId: task.id });
@@ -97,10 +113,16 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
     renaming={renaming} setRenaming={setRenaming} chooseConversation={chooseConversation}
     beginRename={beginRename} commitRename={commitRename} createConversation={createConversation}
     closeConversation={closeConversation} creating={creationPending}
-    createBlocked={Boolean(creationError || selectionRequired)} busy={Boolean(task.operation || task.pendingTransition)}
+    createBlocked={createBlocked} blockedReason={startHint} busy={busy}
     actionPending={action.pending} /><ErrorNotice problem={action.error} /><ErrorNotice problem={renameError} /><ErrorNotice problem={creationError ?? (selectionRequired ? { code: 'CREATION_RECEIPT_REQUIRED', message: 'Select a conversation tab explicitly or refresh the application before creating another conversation.' } : null)} />
     {task.closedSessionIds.length > 0 && <details className="kb-closed"><summary>Closed conversations ({task.closedSessionIds.length})</summary><div className="kb-actions">{task.closedSessionIds.map(sessionId => <button key={sessionId} type="button" className="kb-button" disabled={action.pending} onClick={async () => { const result = await action.execute({ type: 'conversation.reopen', taskId: task.id, sessionId }); if (result) chooseConversation(sessionId); }}>Reopen {label(sessionId)}</button>)}</div><p className="kb-hint">Closing a tab preserves its conversation and history.</p></details>}
-    {viewed ? <ConversationBody active={viewed} root={active} target={peek ?? undefined} id={id} renderConversation={renderConversation} /> : <p className="kb-empty">{creationPending ? 'Resolving the newly created conversation…' : selectionRequired ? 'Select a conversation tab explicitly before continuing.' : 'All conversation tabs are closed. Reopen an existing conversation or use + to add one.'}</p>}
+    {viewed ? <ConversationBody active={viewed} root={active} target={peek ?? undefined} id={id} renderConversation={renderConversation} /> : noConversations
+      ? creationPending
+        ? <p className="kb-empty">Resolving the newly created conversation…</p>
+        : selectionRequired
+          ? <p className="kb-empty">Select a conversation tab explicitly before continuing.</p>
+          : <EmptyConversations blocked={createBlocked} busy={busy} creating={creationPending} hint={startHint} onStart={createConversation} />
+      : <p className="kb-empty">All conversation tabs are closed. Reopen an existing conversation or use + to add one.</p>}
   </div></ConversationNavigationProvider>;
 }
 
@@ -110,15 +132,22 @@ interface ConversationTabsProps {
   setRenaming: (value: { sessionId: string; value: string } | null) => void;
   chooseConversation: (sessionId: string) => void; beginRename: (sessionId: string) => void; commitRename: () => Promise<void>;
   createConversation: () => void; closeConversation: () => void;
-  creating: boolean; createBlocked: boolean; busy: boolean; actionPending: boolean;
+  creating: boolean; createBlocked: boolean; blockedReason?: string; busy: boolean; actionPending: boolean;
 }
 
-function ConversationTabs({ open, active, id, label, sessionTitles, renaming, setRenaming, chooseConversation, beginRename, commitRename, createConversation, closeConversation, creating, createBlocked, busy, actionPending }: ConversationTabsProps) {
+function ConversationTabs({ open, active, id, label, sessionTitles, renaming, setRenaming, chooseConversation, beginRename, commitRename, createConversation, closeConversation, creating, createBlocked, blockedReason, busy, actionPending }: ConversationTabsProps) {
   return <div className="kb-session-toolbar"><div className="kb-tabs kb-agent-tabs" role="tablist" aria-label="Agent conversations">{open.map((sessionId, index) => renaming?.sessionId === sessionId
     ? <input key={sessionId} className="kb-input kb-tab-input" autoFocus aria-label={'Rename ' + label(sessionId)} value={renaming.value} onChange={event => setRenaming({ sessionId, value: event.target.value })} onBlur={() => void commitRename()} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void commitRename(); } if (event.key === 'Escape') { event.preventDefault(); setRenaming(null); } }} />
     : <button type="button" key={sessionId} className="kb-tab" id={id + '-tab-' + sessionId} role="tab" aria-selected={active === sessionId} aria-controls={id + '-conversation'} tabIndex={active === sessionId ? 0 : -1} title={sessionTitles?.title(sessionId) ?? sessionId} onClick={() => chooseConversation(sessionId)} onDoubleClick={() => beginRename(sessionId)} onContextMenu={event => { if (!sessionTitles) return; event.preventDefault(); beginRename(sessionId); }} onKeyDown={event => { let next = index; if (event.key === 'ArrowRight') next = (index + 1) % open.length; else if (event.key === 'ArrowLeft') next = (index + open.length - 1) % open.length; else if (event.key === 'Home') next = 0; else if (event.key === 'End') next = open.length - 1; else return; event.preventDefault(); const value = open[next]; if (value) { chooseConversation(value); document.getElementById(id + '-tab-' + value)?.focus(); } }}>{label(sessionId)}</button>)}</div>
-    <button type="button" className="kb-button kb-icon-button" aria-label="New conversation" title="New conversation" disabled={actionPending || creating || createBlocked || busy} onClick={createConversation}><span aria-hidden="true">+</span></button>
+    <button type="button" className="kb-button kb-icon-button" aria-label="New conversation" title={blockedReason ?? 'New conversation'} disabled={actionPending || creating || createBlocked || busy} onClick={createConversation}><span aria-hidden="true">+</span></button>
     {active && <button type="button" className="kb-button kb-icon-button" aria-label={'Close ' + label(active)} title={'Close ' + label(active)} disabled={actionPending} onClick={closeConversation}><CloseIcon size={14} /></button>}
+  </div>;
+}
+
+function EmptyConversations({ blocked, busy, creating, hint, onStart }: { blocked: boolean; busy: boolean; creating: boolean; hint?: string; onStart: () => void }) {
+  return <div className="kb-empty">
+    <p className="kb-hint">{hint ?? 'No conversation yet. Start one to work on this task.'}</p>
+    <button type="button" className="kb-button kb-primary" disabled={blocked || busy || creating} onClick={onStart}>{creating ? 'Starting…' : 'Start conversation'}</button>
   </div>;
 }
 

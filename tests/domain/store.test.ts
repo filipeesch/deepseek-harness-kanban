@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { BoardState, Project } from '../../src/shared/types.js';
+import type { BoardState, Project, Task } from '../../src/shared/types.js';
 import { BoardStore } from '../../src/domain/store.js';
 import { initialState } from '../../src/domain/schema.js';
 import { DEFAULT_WORKFLOW_YAML } from '../../src/domain/workflow.js';
@@ -13,6 +13,13 @@ async function fixture() {
 }
 
 const newTask = { projectId: 'project-1', title: 'Add API', description: '**Spec**' };
+
+/** Legacy storage fixture: create a task, then associate an explicit session when the test needs one. */
+async function seedTask(store: BoardStore, sessionId: string, input = newTask): Promise<Task> {
+  const task = await store.createTask(input);
+  await store.addSession(task.id, sessionId);
+  return store.requireTask(task.id);
+}
 
 describe('durable board transactions', () => {
   it('persists initial revision zero once and reopens without resetting or writing', async () => {
@@ -35,7 +42,7 @@ describe('durable board transactions', () => {
     const before = store.snapshot();
     const notifications: BoardState[] = [];
     store.subscribe(snapshot => notifications.push(snapshot));
-    const pending = store.createTask(newTask, 'session-1');
+    const pending = store.createTask(newTask);
     await entered.promise;
     expect(store.snapshot()).toEqual(before);
     expect(notifications).toEqual([]);
@@ -52,13 +59,13 @@ describe('durable board transactions', () => {
     let published = 0;
     store.subscribe(() => { published++; });
     storage.failSave = true;
-    await expect(store.createTask(newTask, 'session-failed')).rejects.toMatchObject({ code: 'STORAGE_SAVE_FAILED' });
+    await expect(store.createTask(newTask)).rejects.toMatchObject({ code: 'STORAGE_SAVE_FAILED' });
     expect(store.snapshot()).toEqual(before);
     expect(storage.data).toEqual(before);
     expect(published).toBe(0);
     storage.failSave = false;
-    const task = await store.createTask(newTask, 'session-success');
-    expect(task.sessionIds).toEqual(['session-success']);
+    const task = await store.createTask(newTask);
+    expect(task.sessionIds).toEqual([]);
     expect(published).toBe(1);
     expect(store.snapshot().revision).toBe(before.revision + 1);
   });
@@ -140,10 +147,10 @@ describe('durable board transactions', () => {
     store.subscribe(() => { throw new Error('Observer failed.'); });
     store.subscribe(async () => { throw new Error('Async observer failed.'); });
     const unsubscribe = store.subscribe(() => { calls++; });
-    await store.createTask(newTask, 'session-1');
+    await store.createTask(newTask);
     unsubscribe();
     unsubscribe();
-    await store.createTask(newTask, 'session-2');
+    await store.createTask(newTask);
     await Promise.resolve();
     expect(calls).toBe(1);
     expect(store.snapshot().tasks).toHaveLength(2);
@@ -156,7 +163,7 @@ describe('durable board transactions', () => {
       unsubscribe();
       followup = store.saveProject({ ...sampleProject('project-2'), name: 'Follow-up' });
     });
-    await store.createTask(newTask, 'session-1');
+    await store.createTask(newTask);
     await followup;
     expect(store.snapshot().projects).toHaveLength(2);
   });
@@ -164,7 +171,7 @@ describe('durable board transactions', () => {
   it('rejects nested transactions rather than deadlocking', async () => {
     const { store } = await fixture();
     await expect(store.transact(async () => { await store.transact(() => undefined); })).rejects.toMatchObject({ code: 'REENTRANT_TRANSACTION' });
-    await store.createTask(newTask, 'session-after-error');
+    await store.createTask(newTask);
     expect(store.snapshot().tasks).toHaveLength(1);
   });
 
@@ -214,29 +221,30 @@ describe('durable board transactions', () => {
 });
 
 describe('task and project behavior', () => {
-  it('creates tasks in the configured first stage at the exact project path with one native session', async () => {
+  it('creates tasks in the configured first stage at the exact project path without a native session', async () => {
     const { store } = await fixture();
-    const first = await store.createTask(newTask, 'session-1');
-    const second = await store.createTask(newTask, 'session-2');
-    expect(first).toMatchObject({ projectId: 'project-1', columnId: 'backlog', position: 0, effectiveCwd: '/repos/platform/services/api', sessionIds: ['session-1'], worktree: null, operation: null });
+    const first = await store.createTask(newTask);
+    const second = await store.createTask(newTask);
+    expect(first).toMatchObject({ projectId: 'project-1', columnId: 'backlog', position: 0, effectiveCwd: '/repos/platform/services/api', sessionIds: [], worktree: null, operation: null });
     expect(second.position).toBeLessThan(first.position);
     expect(second.id).not.toBe(first.id);
     await store.setWorkflow('initial_column: done\ncolumns:\n  - id: backlog\n    label: Backlog\n  - id: done\n    label: Done\n');
-    expect((await store.createTask(newTask, 'session-3')).columnId).toBe('done');
+    expect((await store.createTask(newTask)).columnId).toBe('done');
   });
 
-  it('rejects missing projects, invalid IDs, and native-session reuse', async () => {
+  it('rejects missing projects, invalid session IDs, and native-session reuse', async () => {
     const { store } = await fixture();
-    await expect(store.createTask({ ...newTask, projectId: 'missing' }, 'session-1')).rejects.toMatchObject({ code: 'PROJECT_NOT_FOUND' });
-    await expect(store.createTask(newTask, '../session')).rejects.toMatchObject({ code: 'INVALID_ID' });
-    await store.createTask(newTask, 'session-1');
-    await expect(store.createTask(newTask, 'session-1')).rejects.toMatchObject({ code: 'SESSION_IN_USE' });
+    await expect(store.createTask({ ...newTask, projectId: 'missing' })).rejects.toMatchObject({ code: 'PROJECT_NOT_FOUND' });
+    const task = await store.createTask(newTask);
+    await expect(store.addSession(task.id, '../session')).rejects.toMatchObject({ code: 'INVALID_ID' });
+    await store.addSession(task.id, 'session-1');
+    await expect(store.addSession(task.id, 'session-1')).rejects.toMatchObject({ code: 'SESSION_IN_USE' });
     expect(store.snapshot().tasks).toHaveLength(1);
   });
 
   it('edits text outside Backlog and with a worktree without changing session bindings or column', async () => {
     const { store } = await fixture();
-    const task = await store.createTask(newTask, 'session-1');
+    const task = await seedTask(store, 'session-1');
     await store.transact(state => {
       const draft = store.requireTask(task.id, state);
       draft.columnId = 'in_progress';
@@ -252,7 +260,7 @@ describe('task and project behavior', () => {
 
   it('keeps native session identity while tabs close/reopen and new tabs are associated', async () => {
     const { store, storage } = await fixture();
-    const task = await store.createTask(newTask, 'session-1');
+    const task = await seedTask(store, 'session-1');
     await store.addSession(task.id, 'session-2');
     await store.closeSession(task.id, 'session-1');
     await store.closeSession(task.id, 'session-1');
@@ -267,7 +275,7 @@ describe('task and project behavior', () => {
 
   it('blocks adding sessions while a context operation is unresolved', async () => {
     const { store } = await fixture();
-    const task = await store.createTask(newTask, 'session-1');
+    const task = await store.createTask(newTask);
     await store.transact(state => {
       store.requireTask(task.id, state).operation = { id: 'operation-1', request: { kind: 'return' }, phase: 'waiting', previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false, createdAt: new Date().toISOString() };
     });
@@ -276,7 +284,7 @@ describe('task and project behavior', () => {
 
   it('rejects orphaning active tasks and preserves the previous YAML on failure', async () => {
     const { store } = await fixture();
-    await store.createTask(newTask, 'session-1');
+    await store.createTask(newTask);
     const before = store.snapshot();
     await expect(store.setWorkflow('columns: [{id: replacement, label: Replacement}]')).rejects.toMatchObject({ code: 'WORKFLOW_ORPHAN_COLUMNS' });
     expect(store.snapshot()).toEqual(before);
@@ -286,7 +294,7 @@ describe('task and project behavior', () => {
 
   it('durably preserves pending confirmed transitions and rejects orphaned pending columns', async () => {
     const { store, storage } = await fixture();
-    const task = await store.createTask(newTask, 'session-1');
+    const task = await seedTask(store, 'session-1');
     await store.transact(state => {
       store.requireTask(task.id, state).pendingTransition = { id: 'transition-1', fromColumnId: 'backlog', columnId: 'in_progress', mode: 'run', sessionId: 'session-1', status: 'waiting' };
     });
@@ -299,7 +307,7 @@ describe('task and project behavior', () => {
 
   it('retains the exact approved pending instruction across restart, task edits, and workflow edits', async () => {
     const { store, storage } = await fixture();
-    const task = await store.createTask(newTask, 'session-1');
+    const task = await seedTask(store, 'session-1');
     const approved = 'Approved instruction\nPreserve this exact text.';
     await store.transact(state => {
       store.requireTask(task.id, state).pendingTransition = { id: 'transition-text', fromColumnId: 'backlog', columnId: 'in_progress', mode: 'run', sessionId: 'session-1', text: approved, status: 'waiting' };
@@ -314,7 +322,7 @@ describe('task and project behavior', () => {
 
   it('persists a confirmed worktree prerequisite before any operation journal exists', async () => {
     const { store, storage } = await fixture();
-    const task = await store.createTask(newTask, 'session-1');
+    const task = await seedTask(store, 'session-1');
     const request = { mode: 'new' as const, path: '/worktrees/approved', branchName: 'approved-feature', sourceBranch: 'main' };
     let published: BoardState | undefined;
     store.subscribe(state => { published = state; });
@@ -332,21 +340,21 @@ describe('task and project behavior', () => {
   it('reports invalid mapping inputs instead of leaking low-level property errors', async () => {
     const { store } = await fixture();
     await expect(store.saveProject(null as never)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
-    await expect(store.createTask(null as never, 'session-1')).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    await expect(store.createTask(null as never)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
     await expect(store.saveNote('missing', null as never)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
 
   it('deletes only project registrations that have no tasks', async () => {
     const { store, project } = await fixture();
     const unused = await store.saveProject(sampleProject('project-unused'));
-    await store.createTask(newTask, 'session-1');
+    await store.createTask(newTask);
     await expect(store.deleteProject(project.id)).rejects.toMatchObject({ code: 'PROJECT_IN_USE' });
     await expect(store.deleteProject(unused.id)).resolves.toMatchObject({ id: unused.id });
     expect(store.snapshot().projects.map(value => value.id)).toEqual([project.id]);
   });
   it('protects project paths referenced by tasks while permitting name/default-branch edits', async () => {
     const { store } = await fixture();
-    await store.createTask(newTask, 'session-1');
+    await store.createTask(newTask);
     await expect(store.saveProject({ ...sampleProject(), projectPath: '/other/project' })).rejects.toMatchObject({ code: 'PROJECT_IN_USE' });
     const project = await store.saveProject({ ...sampleProject(), name: 'Renamed', defaultBranch: 'main' });
     expect(project).toMatchObject({ name: 'Renamed', defaultBranch: 'main', projectPath: '/repos/platform/services/api', gitRootPath: '/repos/platform' });
@@ -362,7 +370,7 @@ describe('task and project behavior', () => {
 
   it('returns detached lookup results unless an explicit transaction draft is supplied', async () => {
     const { store } = await fixture();
-    const task = await store.createTask(newTask, 'session-1');
+    const task = await store.createTask(newTask);
     store.requireTask(task.id).title = 'Ignored mutation';
     store.requireProject('project-1').name = 'Ignored mutation';
     expect(store.requireTask(task.id).title).toBe(newTask.title);
@@ -375,8 +383,8 @@ describe('task and project behavior', () => {
 describe('shared notes and reversible archive', () => {
   it('shares notes by task, preserves Markdown formatting, and rejects another task note ID', async () => {
     const { store } = await fixture();
-    const first = await store.createTask(newTask, 'session-1');
-    const second = await store.createTask(newTask, 'session-2');
+    const first = await seedTask(store, 'session-1');
+    const second = await seedTask(store, 'session-2');
     await store.addSession(first.id, 'session-3');
     const content = '    indented Markdown\n\nBody\n';
     const note = await store.saveNote(first.id, { content, tags: [' api ', 'api', 'review'] });
@@ -392,7 +400,7 @@ describe('shared notes and reversible archive', () => {
 
   it('keeps notes across worktree context changes and restart', async () => {
     const { store, storage } = await fixture();
-    const task = await store.createTask(newTask, 'session-1');
+    const task = await seedTask(store, 'session-1');
     const note = await store.saveNote(task.id, { content: '# Persistent context' });
     await store.transact(state => {
       const value = store.requireTask(task.id, state);

@@ -32,9 +32,9 @@ describe('useWorktreeDraft', () => {
   }
   it('loads the host suggestion into untouched fields', async () => {
     const { result } = setup();
-    await waitFor(() => expect(result.current.value.branchName).toBe('alpha-task'));
+    await waitFor(() => expect(result.current.suggestion).toEqual({ branchName: 'alpha-task', path: '/worktrees/alpha-task' }));
+    expect(result.current.value.branchName).toBe('alpha-task');
     expect(result.current.value.path).toBe('/worktrees/alpha-task');
-    expect(result.current.suggestion).toEqual({ branchName: 'alpha-task', path: '/worktrees/alpha-task' });
   });
   it('keeps a touched destination while a branch edit advances an untouched one', async () => {
     const { result } = setup();
@@ -60,7 +60,7 @@ describe('useWorktreeDraft', () => {
 
 function NoticeHarness({ api, run, basePath = '/worktrees', disabled = false, onReview = vi.fn() }: { api: ClientApi; run: (command: import('../../src/shared/types.js').Command) => Promise<import('../../src/shared/types.js').KanbanSnapshot>; basePath?: string; disabled?: boolean; onReview?: () => void }) {
   const draft = useWorktreeDraft({ api, task, project, basePath, enabled: true });
-  return <><button type="button" onClick={() => draft.assign({ ...draft.value, branchName: 'edited-branch' })}>Edit draft</button><WorktreeNotice task={task} project={project} draft={draft} run={run} disabled={disabled} onReview={onReview} onDismiss={vi.fn()} /></>;
+  return <><button type="button" onClick={() => draft.assign({ ...draft.value, branchName: 'edited-branch' })}>Edit draft</button><WorktreeNotice task={task} project={project} draft={draft} run={run} disabled={disabled} onReview={onReview} /></>;
 }
 async function noticeSetup(basePath = '/worktrees', disabled = false) {
   const value = fixture(); value.state.settings = basePath ? { worktreeBasePath: basePath } : undefined;

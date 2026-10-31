@@ -156,15 +156,13 @@ function assertAvailableSession(hub: HubState, sessionId: string): void {
   invariant(!hub.tasks.some(task => task.sessionIds.includes(sessionId)), 'SESSION_IN_USE', 'Native session is already associated with a task.');
 }
 
-export function createTask(hub: HubState, input: { boardId: string; projectId: string; title: string; description: string }, sessionId: string, deps: OperationDeps): HubTask {
+export function createTask(hub: HubState, input: { boardId: string; projectId: string; title: string; description: string }, deps: OperationDeps): HubTask {
   const value = clone(input);
   invariant(value && typeof value === 'object' && !Array.isArray(value), 'INVALID_INPUT', 'New task input must be a mapping.');
-  assertId(sessionId, 'Session ID');
   requiredText(value.title, 'Task title');
   invariant(typeof value.description === 'string', 'INVALID_INPUT', 'Task description must be text.');
   const board = requireBoard(hub, value.boardId);
   const project = requireProject(hub, value.projectId);
-  assertAvailableSession(hub, sessionId);
   const peers = hub.tasks.filter(task => task.boardId === board.id && task.columnId === board.workflow.initialColumnId);
   let position = peers.length ? peers.reduce((minimum, task) => Math.min(minimum, task.position), Infinity) - 1 : 0;
   if (!Number.isFinite(position) || peers.some(task => task.position === position)) {
@@ -175,13 +173,22 @@ export function createTask(hub: HubState, input: { boardId: string; projectId: s
   const initialColumn = board.workflow.columns.find(column => column.id === board.workflow.initialColumnId);
   const task: HubTask = {
     id: nextId(hub.tasks, deps.id), boardId: board.id, projectId: project.id, title: value.title.trim(), description: value.description,
-    columnId: board.workflow.initialColumnId, position, sessionIds: [sessionId], closedSessionIds: [], effectiveCwd: project.projectPath,
+    columnId: board.workflow.initialColumnId, position, sessionIds: [], closedSessionIds: [], effectiveCwd: project.projectPath,
     worktree: null, operation: null,
     ...(entryInstruction(initialColumn) !== undefined ? { instructionPending: { columnId: initialColumn!.id, enteredAt: nextEnteredAt(Date.parse(at)) } } : {}),
     createdAt: at, updatedAt: at,
   };
   hub.tasks.push(task);
   hub.updatedAt = at;
+  return task;
+}
+
+export function dismissWorktree(hub: HubState, taskId: string, deps: OperationDeps): HubTask {
+  const task = requireTask(hub, taskId);
+  if (task.worktreeDismissed === true) return task;
+  task.worktreeDismissed = true;
+  task.updatedAt = timestamp(deps);
+  hub.updatedAt = task.updatedAt;
   return task;
 }
 

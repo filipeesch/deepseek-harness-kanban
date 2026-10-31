@@ -114,6 +114,59 @@ describe('scoped Kanban page', () => {
     expect(command.mock.calls.some(([value]) => value.type === 'task.move')).toBe(false); expect(screen.getByRole('button', { name: 'Open task New API task' })).toBeTruthy();
   });
 
+  it('withholds the first conversation until the task worktree choice is made', async () => {
+    const { user, command } = mount(); await loaded();
+    await user.click(screen.getByRole('button', { name: 'New task' }));
+    const dialog = screen.getByRole('dialog', { name: 'New task' });
+    await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'Gated task');
+    await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Project' }), 'p2');
+    await user.click(within(dialog).getByRole('button', { name: 'Create task' }));
+    const start = await screen.findByRole('button', { name: 'Start conversation' });
+    expect((start as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'New conversation' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Continue in base project' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Continue in base project' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Start conversation' }) as HTMLButtonElement).disabled).toBe(false));
+    expect((screen.getByRole('button', { name: 'New conversation' }) as HTMLButtonElement).disabled).toBe(false);
+    await user.click(screen.getByRole('button', { name: 'Start conversation' }));
+    await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'conversation.create' })));
+  });
+
+  it('starts a zero-conversation folder task without a worktree gate', async () => {
+    const data = fixture(); data.state.tasks[0]!.sessionIds = []; delete data.state.projects[0]!.gitRootPath;
+    const { user } = mount(data); await openAlpha(user);
+    expect(screen.queryByRole('note', { name: 'Worktree not created' })).toBeNull();
+    expect((screen.getByRole('button', { name: 'Start conversation' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('starts a zero-conversation task with a ready worktree', async () => {
+    const data = fixture(); const task = data.state.tasks[0]!; task.sessionIds = []; task.worktree = { path: '/trees/alpha', branch: 'alpha', owned: true, status: 'ready' }; task.effectiveCwd = '/trees/alpha';
+    const { user } = mount(data); await openAlpha(user);
+    expect(screen.queryByRole('note', { name: 'Worktree not created' })).toBeNull();
+    expect((screen.getByRole('button', { name: 'Start conversation' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('withholds the start for a zero-conversation preparing worktree and points to Git', async () => {
+    const data = fixture(); const task = data.state.tasks[0]!; task.sessionIds = []; task.worktree = { path: '/trees/alpha', branch: 'alpha', owned: true, status: 'preparing' }; task.effectiveCwd = '/trees/alpha';
+    const { user } = mount(data); await openAlpha(user);
+    expect(screen.queryByRole('note', { name: 'Worktree not created' })).toBeNull();
+    expect(screen.getByText('Resolve the worktree setup in Git before starting.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Start conversation' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('withholds the start when the task project is unavailable', async () => {
+    const data = fixture(); data.state.tasks[0]!.sessionIds = []; data.state.tasks[0]!.projectId = 'missing-project';
+    const { user } = mount(data); await openAlpha(user);
+    expect(screen.getByText('Refresh the board: the task project is unavailable.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Start conversation' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('keeps an existing conversation ungated and allows another tab', async () => {
+    const { user } = mount(); await openAlpha(user);
+    expect(screen.queryByRole('button', { name: 'Start conversation' })).toBeNull();
+    expect((screen.getByRole('button', { name: 'New conversation' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('starts the new task project empty and requires an explicit choice', async () => {
     const { user } = mount(); await loaded(); await user.click(screen.getByRole('button', { name: 'New task' }));
     const dialog = screen.getByRole('dialog', { name: 'New task' });
@@ -152,8 +205,8 @@ describe('scoped Kanban page', () => {
     expect(command).toHaveBeenCalledWith({ type: 'conversation.create', taskId: 't1' }); expect(command).toHaveBeenCalledWith({ type: 'conversation.close', taskId: 't1', sessionId: 's3' }); expect(command).toHaveBeenCalledWith({ type: 'conversation.reopen', taskId: 't1', sessionId: 's3' }); expect(renderer).toHaveBeenCalledWith('s2', undefined);
   });
 
-  it('dismisses the missing-tree notice without filesystem or directory commands', async () => {
-    const { user, command } = mount(); await openAlpha(user); expect(screen.getByRole('note', { name: 'Worktree not created' })).toBeTruthy(); await user.click(screen.getByRole('button', { name: 'Dismiss' })); expect(screen.queryByRole('note', { name: 'Worktree not created' })).toBeNull(); expect(command).not.toHaveBeenCalled();
+  it('persists the base-project choice from the missing-tree notice', async () => {
+    const { user, command } = mount(); await openAlpha(user); expect(screen.getByRole('note', { name: 'Worktree not created' })).toBeTruthy(); await user.click(screen.getByRole('button', { name: 'Continue in base project' })); await waitFor(() => expect(screen.queryByRole('note', { name: 'Worktree not created' })).toBeNull()); expect(command).toHaveBeenCalledWith({ type: 'worktree.dismiss', taskId: 't1' });
   });
 
   it('shares notes across tabs and strips unsafe raw HTML and javascript links', async () => {

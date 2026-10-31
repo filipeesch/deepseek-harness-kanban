@@ -14,7 +14,7 @@ describe('Hub operations', () => {
 
   it('blocks deleting a board with tasks and allows the last empty board to leave an empty Hub', () => {
     const hub = sampleHub(); const deps = operationDeps();
-    operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Task', description: '' }, 'session', deps);
+    operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Task', description: '' }, deps);
     expect(() => operations.deleteBoard(hub, 'board', deps)).toThrowError(/tasks/);
     hub.tasks = [];
     operations.deleteBoard(hub, 'board', deps);
@@ -24,7 +24,7 @@ describe('Hub operations', () => {
   it('keeps workflows isolated and rejects only the owning board orphan', () => {
     const hub = sampleHub(); const deps = operationDeps();
     const other = operations.addBoard(hub, 'Other', deps);
-    operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Task', description: '' }, 'session', deps);
+    operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Task', description: '' }, deps);
     operations.saveBoardWorkflow(hub, other.id, 'name: Other\ninitial_column: done\ncolumns:\n  - id: done\n    label: Done\n', deps);
     expect(hub.boards[0]!.workflow.columns.map(column => column.id)).toEqual(['backlog']);
     expect(() => operations.saveBoardWorkflow(hub, 'board', 'name: Empty\ninitial_column: done\ncolumns:\n  - id: done\n    label: Done\n', deps)).toThrowError(/orphan/);
@@ -32,15 +32,15 @@ describe('Hub operations', () => {
 
   it('creates a task in the board initial stage and preserves per-board positions', () => {
     const hub = sampleHub(); const deps = operationDeps();
-    const first = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'First', description: '' }, 's1', deps);
-    const second = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Second', description: '' }, 's2', deps);
+    const first = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'First', description: '' }, deps);
+    const second = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Second', description: '' }, deps);
     expect(first.columnId).toBe('backlog'); expect(second.position).toBeLessThan(first.position);
-    expect(() => operations.createTask(hub, { boardId: 'board', projectId: 'missing', title: 'No', description: '' }, 's3', deps)).toThrowError(/Project/);
+    expect(() => operations.createTask(hub, { boardId: 'board', projectId: 'missing', title: 'No', description: '' }, deps)).toThrowError(/Project/);
   });
 
   it('blocks deleting a project used by a task on another board', () => {
     const hub = sampleHub(); const deps = operationDeps(); const other = operations.addBoard(hub, 'Other', deps);
-    operations.createTask(hub, { boardId: other.id, projectId: 'project', title: 'Task', description: '' }, 'session', deps);
+    operations.createTask(hub, { boardId: other.id, projectId: 'project', title: 'Task', description: '' }, deps);
     expect(() => operations.deleteProject(hub, 'project', deps)).toThrowError(/tasks/);
     hub.tasks = [];
     operations.deleteProject(hub, 'project', deps);
@@ -50,14 +50,14 @@ describe('Hub operations', () => {
   it('places a task within its owning board workflow', () => {
     const hub = sampleHub(); const deps = operationDeps();
     operations.saveBoardWorkflow(hub, 'board', 'name: Flow\ninitial_column: backlog\ncolumns:\n  - id: backlog\n    label: Backlog\n  - id: done\n    label: Done\n', deps);
-    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Task', description: '' }, 'session', deps);
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Task', description: '' }, deps);
     operations.placeTask(hub, task.id, 'done', null, Date.now());
     expect(hub.tasks.find(value => value.id === task.id)).toMatchObject({ boardId: 'board', columnId: 'done' });
   });
 
   it('updates task text and notes only for tasks in the Hub', () => {
     const hub = sampleHub(); const deps = operationDeps();
-    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Before', description: '' }, 'session', deps);
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Before', description: '' }, deps);
     const edited = operations.editTask(hub, task.id, { title: 'After' }, deps);
     const note = operations.saveNote(hub, task.id, { content: 'Shared' }, deps);
     expect(edited.title).toBe('After'); expect(note.taskId).toBe(task.id);

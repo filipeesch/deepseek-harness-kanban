@@ -11,7 +11,7 @@ import { createHostProjectProbe } from '../../src/host/project-probe.js';
 import { KanbanError } from '../../src/shared/errors.js';
 import type { CommandResult } from '../../src/shared/ports.js';
 import type { GitProject, Project } from '../../src/shared/types.js';
-import { MemoryHubStorage, TestSessions } from './helpers.js';
+import { MemoryHubStorage, taskWithConversation, TestSessions } from './helpers.js';
 import { cleanup as cleanupGit, fixture as gitFixture, gitOk, LocalExecutor } from '../worktrees/helpers.js';
 
 const approvedInstruction = '    Implement the approved product change.\n\nKeep the monorepo subdirectory.\n';
@@ -91,7 +91,8 @@ async function setup() {
   async function task() {
     await tool('create_card', { project_id: files.project.id, title: 'Product walkthrough', description: '**Initial product description**' });
     const created = app.store.snapshot().tasks.at(-1)!;
-    const a = created.sessionIds[0]!;
+    await app.command({ type: 'worktree.dismiss', taskId: created.id });
+    const a = await app.createConversation(created.id);
     const b = await app.createConversation(created.id);
     expect(a).not.toBe(b);
     expect([a, b]).not.toContain('unbound-synthetic-blank');
@@ -264,7 +265,7 @@ describe('bounded integrated product walkthrough', () => {
     await expect(f.app.command({ type: 'project.save', project: { id: 'missing', name: 'Missing project', projectPath: path.join(f.root, 'missing'), gitRootPath: f.project.gitRootPath } })).rejects.toMatchObject({ code: 'ENOENT' });
     expect(f.app.store.snapshot()).toEqual(beforeInvalid);
     const a = await f.task(); const note = await addSharedNote(f, a);
-    const b = await f.app.createTask({ projectId: 'root-project', title: 'Independent other task', description: 'Different shared-note collection' });
+    const b = await taskWithConversation(f.app, { projectId: 'root-project', title: 'Independent other task', description: 'Different shared-note collection' });
     expect(await f.tool('list_projects', {})).toEqual(f.app.store.snapshot().projects);
     expect(await f.tool('list_projects', {}, a.a)).toEqual(await f.tool('list_projects', {}));
     const boardId = f.app.store.snapshot().boards[0]!.id; const hubId = f.app.hubs.defaultHubId(); expect(await f.tool('list_boards', {})).toEqual([expect.objectContaining({ id: boardId, hubId, name: 'Kanban' })]);

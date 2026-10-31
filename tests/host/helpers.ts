@@ -2,9 +2,10 @@ import { mkdtemp, mkdir, realpath, rm, stat } from 'node:fs/promises';
 import path from 'node:path';import os from 'node:os';
 import { HubRepository } from '../../src/host/hub-repository.js';
 import { KanbanApp } from '../../src/host/app.js';
-import type { BoardState, GitProject, HubState, KanbanMeta, ProjectLocation, SessionFacts, Project, CreateWorktree } from '../../src/shared/types.js';
+import type { BoardState, GitProject, HubState, KanbanMeta, ProjectLocation, SessionFacts, Project, CreateWorktree, NewTask, Task } from '../../src/shared/types.js';
 import type { HubStorage, SessionPort, GitPort, GitTree, WorkspacePort, WorkspaceInfo, ProjectProbe } from '../../src/shared/ports.js';
 import { KanbanError } from '../../src/shared/errors.js';
+import { isGitProject } from '../../src/shared/project.js';
 
 export const RESTRICTED_WORKFLOW = [
   'name: Restricted Flow',
@@ -76,3 +77,13 @@ export class TestWorkspaces implements WorkspacePort {
  async delete(id:string){this.deleted.push(id);const value=this.byId.get(id);if(value)this.byPath.delete(value.path);this.byId.delete(id);}
 }
 export async function fixture(){const root=await realpath(await mkdtemp(path.join(os.tmpdir(),'dsh-kanban-host-')));const gitRoot=path.join(root,'repo');const projectPath=path.join(gitRoot,'apps','web');await mkdir(projectPath,{recursive:true});const storage=new MemoryHubStorage();const hubs=await HubRepository.open(storage,{id:(()=>{let n=0;return()=>`test-${++n}`;})(),now:(()=>new Date().toISOString())});const store=hubs.defaultHub();const project=await store.saveProject({name:'Web',projectPath,gitRootPath:gitRoot}) as GitProject;const hub=hubs.requireHub(hubs.defaultHubId());const board=hub.boards[0]!;const sessions=new TestSessions();const git=new TestGit();const workspaces=new TestWorkspaces();const probe=new TestProjectProbe();probe.locations.set(projectPath,{kind:'git',projectPath,gitRootPath:gitRoot,defaultBranch:'main'});probe.locations.set(gitRoot,{kind:'git',projectPath:gitRoot,gitRootPath:gitRoot,defaultBranch:'main'});const app=new KanbanApp(hubs,sessions,git,{probe},workspaces);return {root,gitRoot,projectPath,storage,hubs,store,hub,board,project,sessions,git,workspaces,probe,app,async close(){await app.close();if(path.dirname(root)!==await realpath(os.tmpdir())||!path.basename(root).startsWith('dsh-kanban-host-')||await realpath(root)!==root)throw new Error('Unsafe test cleanup target');await rm(root,{recursive:true,force:true});}};}
+
+/** Seed a task's first conversation, recording the base-project choice when the fixture project is Git-backed. */
+export async function taskWithConversation(app: KanbanApp, input: NewTask): Promise<Task> {
+  const task = await app.createTask(input);
+  const located = app.locator.byTask(task.id);
+  if (!located) throw new Error('The created task is not locatable.');
+  if (isGitProject(located.project) && !task.worktree && !task.worktreeDismissed) await app.command({ type: 'worktree.dismiss', taskId: task.id });
+  await app.createConversation(task.id);
+  return app.hubs.requireTask(task.id).task;
+}

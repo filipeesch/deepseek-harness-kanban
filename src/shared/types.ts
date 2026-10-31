@@ -31,6 +31,8 @@ export interface Task {
   id: string; projectId: string; title: string; description: string; columnId: string; position: number;
   sessionIds: string[]; closedSessionIds: string[]; effectiveCwd: string;
   worktree: Worktree | null; operation: ContextOperation | null; pendingTransition?: PendingTransition;
+  /** The task has recorded a choice to continue in its base project instead of creating a worktree. */
+  worktreeDismissed?: boolean;
   /** The current instructed-stage entry whose card action has not been satisfied by a prompt. */
   instructionPending?: { columnId: string; enteredAt: number };
   /** Diagnostic-only checkouts left on disk; never an execution or cleanup target. */
@@ -89,6 +91,7 @@ export type Command =
   | { type: 'task.delete'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; requireIdle?: boolean }
   | ({ type: 'worktree.create'; hubId?: string; taskId: string } & CreateWorktree)
   | { type: 'worktree.attach'; hubId?: string; taskId: string; path: string }
+  | { type: 'worktree.dismiss'; hubId?: string; taskId: string }
   | { type: 'worktree.remove'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean }
   | { type: 'operation.retry' | 'operation.return'; hubId?: string; taskId: string }
   | { type: 'note.save'; hubId?: string; taskId: string; noteId?: string; content: string; tags?: string[] };

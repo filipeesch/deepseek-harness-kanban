@@ -389,12 +389,15 @@ export class HubStore {
   async setTaskWorktreeWorkspace(taskId: string, workspaceId: string, owned: boolean): Promise<HubTask> {
     return this.transact(draft => operations.setTaskWorktreeWorkspace(draft, taskId, workspaceId, owned, this.deps()));
   }
-  async createTask(input: { projectId: string; title: string; description: string; boardId?: string }, sessionId: string): Promise<HubTask> {
+  async createTask(input: { projectId: string; title: string; description: string; boardId?: string }): Promise<HubTask> {
     return this.transact(draft => {
       const boardId = input.boardId ?? draft.boards[0]?.id;
       invariant(boardId, 'BOARD_NOT_FOUND', 'The Hub has no board.');
-      return operations.createTask(draft, { ...input, boardId }, sessionId, this.deps());
+      return operations.createTask(draft, { ...input, boardId }, this.deps());
     });
+  }
+  async dismissWorktree(taskId: string): Promise<HubTask> {
+    return this.transact(draft => operations.dismissWorktree(draft, taskId, this.deps()));
   }
   async editTask(taskId: string, patch: TaskTextPatch, expectedRevision?: number): Promise<HubTask> {
     return this.transact(draft => operations.editTask(draft, taskId, patch, this.deps()), expectedRevision);

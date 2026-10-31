@@ -14,6 +14,7 @@ import { isGitProject, requireGitProject } from '../shared/project.js';
 import { containsPath } from './git.js';
 import { taskTitleSlug, worktreePathForBranch } from '../shared/worktree-name.js';
 import { ownedSessionIds } from '../domain/session-lineage.js';
+import { requiresWorktreeDecision } from '../shared/worktree-decision.js';
 import { HubRepository, HubStore } from './hub-repository.js';
 import type { LocatedTask } from './hub-repository.js';
 import { RepositoryWorktreeStore, TaskLocator } from './task-locator.js';
@@ -224,8 +225,8 @@ export class KanbanApp {
   if(!this.workspaces)return;
   for(const located of this.locator.all()){
    const {task,project,hubId}=located;
-   try{await this.ensureProjectWorkspace(hubId,project);await this.ensureWorktreeWorkspace(hubId,task,project);}
-   catch(error){this.options.report?.(error);}
+   if(task.sessionIds.length>0){try{await this.ensureProjectWorkspace(hubId,project);await this.ensureWorktreeWorkspace(hubId,task,project);}
+   catch(error){this.options.report?.(error);}}
    for(const sessionId of task.sessionIds){
     try{
      const directory=await this.sessions.directory(sessionId);
@@ -246,8 +247,10 @@ export class KanbanApp {
  private assertContext(taskId:string):void{const task=this.locatedTask(taskId).task;invariant(!task.operation,'CONTEXT_OPERATION_PENDING','Resolve the task context operation before admitting another conversation or execution.');}
  private serial<T>(run:()=>Promise<T>):Promise<T>{const result=this.commandTail.then(run);this.commandTail=result.then(()=>undefined,()=>undefined);return result;}
  createConversation(taskId:string):Promise<string>{return this.serial(()=>this.createConversationNow(taskId));}
- private async createConversationNow(taskId:string):Promise<string>{
-  this.assertContext(taskId);const located=this.locatedTask(taskId);const store=this.hubs.hub(located.hubId);const before=located.task;const project=located.project;const workspaceId=await this.ensureWorktreeWorkspace(located.hubId,before,project);const id=await this.sessions.create(project.projectPath,workspaceId);
+ private async createConversationNow(taskId:string,options:{allowUndecided?:boolean}={}):Promise<string>{
+  this.assertContext(taskId);const located=this.locatedTask(taskId);const store=this.hubs.hub(located.hubId);const before=located.task;const project=located.project;
+  invariant(options.allowUndecided===true||!requiresWorktreeDecision(before,project),'WORKTREE_DECISION_REQUIRED','Choose whether to create a worktree or continue in the base project before starting the first conversation.');
+  const workspaceId=await this.ensureWorktreeWorkspace(located.hubId,before,project);const id=await this.sessions.create(project.projectPath,workspaceId);
   try{if(before.effectiveCwd!==project.projectPath)await this.sessions.setDirectory(id,before.effectiveCwd);this.assertContext(taskId);const current=store.requireTask(taskId);invariant(current.effectiveCwd===before.effectiveCwd,'CONTEXT_CHANGED','Task directory changed while the conversation was being created.');await store.addSession(taskId,id);return id;}
   catch(error){try{await this.sessions.archive(id);}catch(archiveError){this.options.report?.(archiveError);}throw error;}
  }
@@ -259,8 +262,8 @@ export class KanbanApp {
   else if(input.boardId){const found=this.hubs.list().find(value=>value.boards.some(board=>board.id===input.boardId));invariant(found,'BOARD_NOT_FOUND','Board does not exist.');hubId=found.id;hub=found;project=hub.projects.find(value=>value.id===input.projectId);invariant(project,'PROJECT_NOT_FOUND','Project does not exist in the board Hub.');}
   else{const located=this.locator.project(input.projectId);invariant(located,'PROJECT_NOT_FOUND','Project does not exist.');hubId=located.hubId;hub=located.hub;project=located.project;}
   boardId??=hub.boards[0]?.id;invariant(boardId,'BOARD_NOT_FOUND','The Hub has no board.');invariant(hub.boards.some(board=>board.id===boardId),'BOARD_NOT_FOUND','Board does not exist in the selected Hub.');
-  const store=this.hubs.hub(hubId);const workspaceId=await this.ensureProjectWorkspace(hubId,project);const id=await this.sessions.create(project.projectPath,workspaceId);
-  try{return await store.createTask({...input,boardId},id);}catch(error){try{await this.sessions.archive(id);}catch(archiveError){this.options.report?.(archiveError);}throw error;}
+  const store=this.hubs.hub(hubId);
+  return store.createTask({...input,boardId});
  }
  saveNote(input:Extract<Command,{type:'note.save'}>){return this.serial(()=>this.saveNoteNow(input));}
  private async saveNoteNow(input:Extract<Command,{type:'note.save'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).saveNote(input.taskId,{id:input.noteId,content:input.content,tags:input.tags});}
@@ -289,6 +292,7 @@ export class KanbanApp {
    case 'task.delete':this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'delete');invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm task data/worktree removal and native conversation archiving.');if(command.requireIdle)await this.assertBatchDeletable(command.taskId);await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'delete',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath});break;
    case 'worktree.create':this.assertContext(command.taskId);invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'create',mode:command.mode,path:command.path,branchName:command.branchName,sourceBranch:command.sourceBranch});break;
    case 'worktree.attach':this.assertContext(command.taskId);invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'attach',path:command.path});break;
+   case 'worktree.dismiss':{this.assertContext(command.taskId);const located=this.locatedTask(command.taskId);invariant(isGitProject(located.project),'PROJECT_NOT_GIT','Worktree choices require a Git-backed project.');invariant(!located.task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');invariant(!located.task.worktree,'WORKTREE_EXISTS','The task already has a worktree.');if(located.task.worktreeDismissed!==true)await this.hubs.hub(located.hubId).dismissWorktree(command.taskId);break;}
    case 'worktree.remove':this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'remove');invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm removal of the worktree while preserving the task and branch.');await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'remove',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath});break;
    case 'operation.retry':{
     const located=this.locatedTask(command.taskId);const store=this.hubs.hub(located.hubId);const task=located.task;if(task.operation){await this.worktrees.retry(command.taskId);const current=store.snapshot().tasks.find(t=>t.id===command.taskId);if(current&&!current.operation&&current.pendingTransition?.worktreeRequest&&current.pendingTransition.status==='failed')await store.transact(d=>{const p=d.tasks.find(t=>t.id===command.taskId)!.pendingTransition!;p.status='waiting';delete p.error;});}else if(task.pendingTransition){await store.transact(d=>{const t=d.tasks.find(t=>t.id===command.taskId)!;if(t.pendingTransition){t.pendingTransition.status='waiting';delete t.pendingTransition.error;}});}await this.dispatchPending();break;
@@ -334,7 +338,7 @@ export class KanbanApp {
   invariant(column,'INVALID_TARGET','The destination stage does not exist.');
   invariant(task.instructionPending?.columnId===command.columnId&&task.instructionPending.enteredAt===command.expectedEnteredAt,'INSTRUCTION_ALREADY_RESOLVED','This stage entry was already resolved or replaced. Review the current entry before running.');
   const instruction=this.requireReviewedInstruction(entryInstruction(column),command.expectedInstruction);
-  const sessionId=task.sessionIds.find(id=>!task.closedSessionIds.includes(id))??await this.createConversationNow(task.id);
+  const sessionId=task.sessionIds.find(id=>!task.closedSessionIds.includes(id))??await this.createConversationNow(task.id,{allowUndecided:true});
   await this.assertExecutionContext(sessionId);
   await this.sessions.send(sessionId,instruction);
   await store.transact(d=>{const current=d.tasks.find(value=>value.id===command.taskId);if(current?.instructionPending?.columnId===command.columnId&&current.instructionPending.enteredAt===command.expectedEnteredAt)delete current.instructionPending;});

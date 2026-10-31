@@ -89,7 +89,7 @@ describe('HubRepository', () => {
   it('enforces last-Hub protection and task-blocked deletion', async () => {
     const { hubs, store } = await repo();
     await store.saveProject({ name: 'Web', projectPath: '/repo', gitRootPath: '/repo' });
-    await store.createTask({ projectId: store.snapshot().projects[0]!.id, title: 'Task', description: '' }, 'session');
+    await store.createTask({ projectId: store.snapshot().projects[0]!.id, title: 'Task', description: '' });
     const second = await hubs.createHub('Second');
     await expect(hubs.deleteHub(hubs.defaultHubId())).rejects.toMatchObject({ code: 'HUB_IN_USE' });
     await hubs.deleteHub(second.id);
@@ -99,14 +99,15 @@ describe('HubRepository', () => {
   it('rejects a native session shared by tasks in another Hub', async () => {
     const { hubs, store } = await repo();
     await store.saveProject({ name: 'Web', projectPath: '/repo', gitRootPath: '/repo' });
-    const task = await store.createTask({ projectId: store.snapshot().projects[0]!.id, title: 'Task', description: '' }, 'shared-session');
+    const task = await store.createTask({ projectId: store.snapshot().projects[0]!.id, title: 'Task', description: '' });
+    const shared = await store.addSession(task.id, 'shared-session');
     const second = await hubs.createHub('Second');
     const secondStore = hubs.hub(second.id);
     const secondBoard = await secondStore.addBoard('B');
     secondStore.requireProject; // keep the facade shape used by callers
     await expect(secondStore.transact(draft => {
       draft.projects.push({ id: 'p', name: 'P', projectPath: '/repo2', gitRootPath: '/repo2' });
-      draft.tasks.push({ ...task, id: 'other', boardId: secondBoard.id, projectId: 'p' });
+      draft.tasks.push({ ...shared, id: 'other', boardId: secondBoard.id, projectId: 'p' });
     })).rejects.toMatchObject({ code: 'SESSION_IN_USE' });
   });
 
