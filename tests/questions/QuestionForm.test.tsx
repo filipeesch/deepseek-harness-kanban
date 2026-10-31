@@ -167,7 +167,7 @@ describe('QuestionForm strip', () => {
     expect(submitButton().disabled).toBe(false);
     await user.click(submitButton());
     expect(onSubmit).toHaveBeenCalledTimes(2);
-    await waitFor(() => expect(screen.getByText('Response submitted.')).toBeTruthy());
+    await waitFor(() => expect(submitButton().textContent).toBe('Submitting…'));
     expect(submitButton().disabled).toBe(true);
   });
 
@@ -241,5 +241,75 @@ describe('QuestionForm strip', () => {
     await user.click(screen.getByRole('button', { name: 'Dismiss' }));
     expect(screen.getByText(/Discard this and other unanswered rounds/)).toBeTruthy();
     expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it('locks a duplicate synchronous submit before the busy state renders', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn(() => new Promise<void>(() => {}));
+    render(<QuestionForm round={round([free])} onSubmit={onSubmit} />);
+    await user.type(screen.getByRole('textbox', { name: 'Your answer' }), 'Answer');
+    await user.click(nextButton());
+    const form = screen.getByRole('form', { name: 'Questions from the agent' });
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it('announces a page that arrives on Additional Notes without losing the draft', async () => {
+    const user = userEvent.setup();
+    const index = new QuestionIndex();
+    index.apply('a', call(1, 2, 'q1'));
+    index.apply('a', result(2, 2, 'q1', choice));
+    index.apply('a', end(3, 2));
+    const view = render(<QuestionForm round={index.getRounds('a')[0]!} onSubmit={vi.fn()} />);
+    await user.click(screen.getByRole('radio', { name: 'Local' }));
+    await user.click(nextButton());
+    await user.type(screen.getByRole('textbox', { name: 'Additional Notes' }), 'Keep this');
+    expect(screen.queryByText('New question received.')).toBeNull();
+    index.apply('a', call(4, 2, 'q2'));
+    index.apply('a', result(5, 2, 'q2', free));
+    view.rerender(<QuestionForm round={index.getRounds('a')[0]!} onSubmit={vi.fn()} />);
+    expect(screen.getByText('New question received.')).toBeTruthy();
+    expect((screen.getByRole('textbox', { name: 'Additional Notes' }) as HTMLTextAreaElement).value).toBe('Keep this');
+    await user.click(screen.getByRole('button', { name: 'Answer new question' }));
+    expect(screen.getByRole('heading', { name: 'Explain the constraints' })).toBeTruthy();
+    await user.click(backButton());
+    expect((screen.getByRole('radio', { name: 'Local' }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('explains the turn-completion gate in the footer', async () => {
+    const user = userEvent.setup();
+    render(<QuestionForm round={round([free], false)} onSubmit={vi.fn()} />);
+    await user.type(screen.getByRole('textbox', { name: 'Your answer' }), 'Answer');
+    await user.click(nextButton());
+    expect(screen.getByText('Waiting for the agent to finish this turn before Submit is available.')).toBeTruthy();
+    expect(submitButton().disabled).toBe(true);
+  });
+
+  it('blurs the active control when the strip is hidden', async () => {
+    const user = userEvent.setup();
+    const value = round([free]);
+    const view = render(<QuestionForm round={value} onSubmit={vi.fn()} />);
+    await user.type(screen.getByRole('textbox', { name: 'Your answer' }), 'Answer');
+    await user.click(nextButton());
+    const submit = submitButton();
+    submit.focus();
+    expect(document.activeElement).toBe(submit);
+    view.rerender(<QuestionForm round={value} hidden onSubmit={vi.fn()} />);
+    await waitFor(() => expect(document.activeElement).not.toBe(submit));
+  });
+
+  it('announces a page inserted before a page the user already visited', async () => {
+    const user = userEvent.setup();
+    const pageA = { callId: 'a', sequence: 2, page: choice };
+    const pageC = { callId: 'c', sequence: 1, page: free };
+    const first = { ...round([choice]), pages: [pageA] };
+    const view = render(<QuestionForm round={first} onSubmit={vi.fn()} />);
+    await user.click(screen.getByRole('radio', { name: 'Local' }));
+    await user.click(nextButton());
+    view.rerender(<QuestionForm round={{ ...first, pages: [pageC, pageA] }} onSubmit={vi.fn()} />);
+    expect(screen.getByText('New question received.')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Answer new question' }));
+    expect(screen.getByRole('heading', { name: 'Explain the constraints' })).toBeTruthy();
   });
 });

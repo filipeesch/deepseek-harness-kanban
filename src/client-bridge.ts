@@ -7,10 +7,10 @@ import { allTasks } from './client/hub-view.js';
 import { ConversationReadState } from './client/conversation-read-state.js';
 import type { KeyValueStorage } from './client/key-value-storage.js';
 import type { KanbanRemote } from './remote.js';
-import type { ClientApi, Command, HostSnapshot, KanbanSnapshot, Outcome, Problem, QuestionRound } from './shared/types.js';
+import type { ClientApi, Command, HostSnapshot, KanbanSnapshot, Outcome, Problem, QuestionFeedFrame, QuestionRound } from './shared/types.js';
+import { QuestionRoundCache, type QuestionRoundView } from './client/question-round-cache.js';
 
 export interface BridgeStatus { error: Problem | null; connected: boolean }
-export interface QuestionView { rounds: readonly QuestionRound[]; errors: ReadonlyMap<string, Problem> }
 export type BridgeRemote = Pick<ClientRemote, '$stream'> & { kanban: KanbanRemote };
 type Baseline = { kind: 'baseline'; snapshot: HostSnapshot };
 type Update = { kind: 'update'; snapshot: HostSnapshot };
@@ -39,17 +39,13 @@ function observable<T>(initial: T) {
 export class ClientBridge {
   private readonly health = observable<BridgeStatus>({ error: null, connected: false });
   readonly status = this.health.source;
-  private readonly questionState = observable<QuestionView>({ rounds: [], errors: new Map() });
-  readonly questionsView = this.questionState.source;
+  readonly questions: QuestionRoundCache;
+  readonly questionsView: HostObservable<QuestionRoundView>;
   private readonly snapshots = new Set<(snapshot: KanbanSnapshot) => void>();
   private readonly running = new RunningSessions();
   private host: HostSnapshot | undefined;
   private merged: KanbanSnapshot | undefined;
   private clientEpoch = 0;
-  private rounds: readonly QuestionRound[] = [];
-  private readonly prepared = new Map<string, Promise<readonly QuestionRound[]>>();
-  private readonly questionSessions = new Set<string>();
-  private readonly dismissed = new Set<string>();
   private readonly readState: ConversationReadState;
   private readonly composers = new Set<string>();
   private readonly stopStatus: () => void;
@@ -59,6 +55,11 @@ export class ClientBridge {
   readonly api: ClientApi;
   constructor(private readonly remote: BridgeRemote, private readonly nativeStatus: HostObservable<SessionStatusSnapshot>, options: { storage?: KeyValueStorage } = {}) {
     this.readState = new ConversationReadState(options.storage);
+    this.questions = new QuestionRoundCache({
+      feed: { open: (sessionId, onFrame, onError) => this.openQuestionFeed(sessionId, onFrame, onError) },
+      dismissal: { dismiss: async (sessionId, roundId) => unwrap(await this.remote.kanban.dismissQuestions({ sessionId, roundId })) },
+    });
+    this.questionsView = this.questions.view;
     this.control = this.makeControl();
     this.running.sync(this.nativeStatus.getSnapshot());
     this.stopStatus = nativeStatus.subscribe(() => {
@@ -123,18 +124,15 @@ export class ClientBridge {
   private accept(snapshot: HostSnapshot, baseline = false): void {
     if (this.disposed || (!baseline && this.host && snapshot.sequence < this.host.sequence)) return;
     const previous = this.host;
-    if (baseline) { this.clientEpoch++; this.prepared.clear(); }
+    if (baseline) this.clientEpoch++;
     // A close transition uses the facts the reader last saw, so a turn that settles
     // after the close is still presented as unread.
     this.acknowledgeClosed(previous, snapshot);
     this.host = snapshot;
     if (baseline) this.readState.prune(new Set(allTasks(snapshot).flatMap(task => task.sessionIds)));
     this.readState.flush();
-    if (snapshot.questionRounds !== undefined) { this.rounds = snapshot.questionRounds.filter(round => !this.dismissed.has(round.id)); this.publishQuestions(); }
     this.health.set({ error: null, connected: true });
     this.publish();
-    // Ordinary chats are absent from host startup replay; refresh their tracked histories in each new epoch.
-    if (baseline) for (const id of this.questionSessions) void this.prepareQuestions(id).catch(() => undefined);
   }
   /** A conversation whose tab just closed acknowledges the turn that had already settled. */
   private acknowledgeClosed(previous: HostSnapshot | undefined, next: HostSnapshot): void {
@@ -154,7 +152,7 @@ export class ClientBridge {
     this.readState.sync(this.host.conversations);
     const { attention, conversationAttention } = projectTaskAttention(this.host, this.nativeStatus.getSnapshot(), sessionId => this.readState.acknowledged(sessionId));
     const { conversations: _conversations, ...base } = this.host;
-    this.merged = { ...base, attention, conversationAttention, questionRounds: [...this.rounds], clientEpoch: this.clientEpoch };
+    this.merged = { ...base, attention, conversationAttention, clientEpoch: this.clientEpoch };
     for (const listener of [...this.snapshots]) { try { listener(this.merged); } catch { /* Keep sibling consumers alive. */ } }
   }
   /** A conversation started running: ask the host for a freshly projected attention snapshot. */
@@ -178,74 +176,49 @@ export class ClientBridge {
     const task = this.host ? allTasks(this.host).find(entry => entry.sessionIds.includes(id) && entry.operation && entry.operation.phase !== 'waiting' && entry.operation.phase !== 'failed') : undefined;
     if (task) throw Object.assign(new Error('This conversation is switching project context. Wait for the active operation before submitting an answer.'), { code: 'CONTEXT_MIGRATION_ACTIVE' });
   }
-  async prepareQuestions(id: string): Promise<readonly QuestionRound[]> {
-    if (this.disposed) return [];
-    this.questionSessions.add(id);
-    const existing = this.prepared.get(id); if (existing) return existing;
-    const before = this.host?.sequence; const epoch = this.clientEpoch;
-    this.questionError(id);
-    const work: Promise<readonly QuestionRound[]> = Promise.resolve().then(async () => {
-      try {
-        const rounds = unwrap(await this.remote.kanban.questions({ sessionId: id }));
-        if (this.disposed) return [];
-        if (this.clientEpoch !== epoch) return this.prepareQuestions(id);
-        if (this.host?.sequence === before) {
-          const current = this.rounds.filter(round => round.sessionId === id && !this.dismissed.has(round.id));
-          const visible = rounds.filter(round => !this.dismissed.has(round.id));
-          const incoming = new Set(visible.map(round => round.id));
-          const merged = visible.map(round => {
-            const known = current.find(old => old.id === round.id);
-            return known && (known.answered || known.complete && !round.complete) ? known : round;
-          });
-          this.rounds = [...this.rounds.filter(round => round.sessionId !== id), ...merged, ...current.filter(round => !incoming.has(round.id))];
-          this.publishQuestions(); this.publish();
-        }
-        return this.rounds.filter(round => round.sessionId === id);
-      } catch (error) {
-        if (this.disposed) return [];
-        if (this.clientEpoch !== epoch) return this.prepareQuestions(id);
-        if (this.prepared.get(id) === work) this.prepared.delete(id);
-        this.questionError(id, problem(error));
-        throw error;
-      }
-    });
-    this.prepared.set(id, work); return work;
+  /** Track one conversation's question feed; the returned release closes it when the last holder leaves. */
+  trackQuestions(id: string): () => void {
+    return this.disposed ? () => {} : this.questions.track(id);
+  }
+  /** Reopen a failed question feed without dropping the rounds already shown. */
+  retryQuestions(id: string): void {
+    if (!this.disposed) this.questions.retry(id);
+  }
+  /** Record that the host accepted the submission; a dropped round may now confirm it. */
+  settleSubmission(id: string): void {
+    if (!this.disposed) this.questions.settle(id);
   }
   /** Dismiss the displayed round and every other unresolved round in that conversation. */
   async dismissQuestions(sessionId: string, roundId: string): Promise<readonly QuestionRound[]> {
     if (this.disposed) return [];
-    let remaining: readonly QuestionRound[];
-    let missing = false;
-    try {
-      remaining = unwrap(await this.remote.kanban.dismissQuestions({ sessionId, roundId }));
-    } catch (error) {
-      if ((error as { code?: unknown }).code !== 'QUESTION_ROUND_NOT_FOUND') throw error;
-      // The displayed round was already answered or dismissed elsewhere. Do not hide
-      // unrelated unresolved rounds that the host did not actually dismiss.
-      missing = true;
-      remaining = this.rounds.filter(round => round.sessionId === sessionId && round.id !== roundId);
-    }
-    if (this.disposed) return [];
-    if (!missing) for (const round of this.rounds) if (round.sessionId === sessionId && !round.answered) this.dismissed.add(round.id);
-    this.dismissed.add(roundId);
-    this.rounds = [...this.rounds.filter(round => round.sessionId !== sessionId), ...remaining.filter(round => !this.dismissed.has(round.id))];
-    this.prepared.delete(sessionId);
-    this.publishQuestions(); this.publish();
-    return this.rounds.filter(round => round.sessionId === sessionId);
+    return this.questions.dismiss(sessionId, roundId);
   }
 
-  private questionError(id: string, error?: Problem): void {
-    const previous = this.questionsView.getSnapshot(); const errors = new Map(previous.errors);
-    if (error) errors.set(id, error); else errors.delete(id);
-    this.questionState.set({ ...previous, errors });
+  private openQuestionFeed(sessionId: string, onFrame: (frame: QuestionFeedFrame) => void, onError: (error: Problem) => void): () => void {
+    const remote = this.remote;
+    const feed = remote.$stream<QuestionFeedFrame>({
+      name: 'Question rounds',
+      open: async function* (signal) {
+        for await (const frame of remote.kanban.questionsFollow({ sessionId }, signal)) yield frame;
+      },
+      ended: (accepted) => accepted ? new RemoteStreamCarrierError('Question rounds stream ended; reconnecting.') : new Error('Question rounds stream ended before its opening frame.'),
+      carrierFailed: (error) => onError(problem(error)),
+    });
+    const control = new RemoteSnapshotStream<QuestionFeedFrame, QuestionFeedFrame>(feed, {
+      name: 'Question rounds',
+      isSnapshot: (frame): frame is QuestionFeedFrame => frame.kind === 'baseline',
+      replace: frame => onFrame(frame),
+      update: frame => onFrame(frame),
+      failed: error => onError(problem(error)),
+    });
+    control.start();
+    return () => { control.dispose().catch(error => onError(problem(error))); };
   }
-  private publishQuestions(): void {
-    this.questionState.set({ rounds: this.rounds, errors: this.questionsView.getSnapshot().errors });
-  }
+
   async dispose(): Promise<void> {
     if (this.disposed) return;
-    this.disposed = true; this.stopStatus(); this.snapshots.clear(); this.composers.clear(); this.prepared.clear(); this.questionSessions.clear(); this.dismissed.clear();
-    this.health.clear(); this.questionState.clear();
+    this.disposed = true; this.stopStatus(); this.snapshots.clear(); this.composers.clear();
+    this.questions.dispose(); this.health.clear();
     await this.restarting; await this.control.dispose();
   }
 }

@@ -5,6 +5,7 @@
  */
 export const questionCss = String.raw`
 .kq-strip{box-sizing:border-box;display:flex;flex-direction:column;flex:none;width:calc(100% - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset));max-width:calc(var(--dsh-composer-card-max-width) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset));margin:0 auto;min-width:0;overflow:hidden;border:0.5px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-lg);background:var(--dsw-specific-menu,Canvas);color:var(--dsw-alias-label-primary,inherit);font:inherit;color-scheme:inherit;box-shadow:var(--dsw-elevation-panel,none)}
+.kq-strip[hidden]{display:none}
 .kq-header{display:flex;align-items:center;gap:8px;flex:1;min-width:0;min-height:34px;padding:5px 12px;border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
 .kq-header:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .kq-icon{display:grid;place-items:center;flex:none;color:var(--dsw-alias-label-tertiary,currentColor)}
@@ -47,6 +48,8 @@ export const questionCss = String.raw`
 .kq-input[data-fill=true]{height:100%;min-height:88px;border:0;border-radius:0;resize:none}
 .kq-hint{margin:0;font-size:12px;color:var(--dsw-alias-label-tertiary,currentColor)}
 .kq-error{margin:0;font-size:12px;color:var(--dsw-alias-state-error-primary,crimson)}
+.kq-waiting{flex:1 1 100%;margin:0;font-size:12px;line-height:1.4;color:var(--dsw-alias-label-tertiary,currentColor)}
+.kq-new-page{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0;padding:8px 10px;border-left:2px solid var(--dsw-alias-state-business-primary);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-state-business-tertiary,transparent);font-size:12px;line-height:1.4;color:var(--dsw-alias-label-primary,currentColor)}
 .kq-primary{flex:none;padding:6px 14px;border:0;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);font:inherit;font-size:13px;font-weight:500;cursor:pointer}
 .kq-primary:disabled{opacity:.4;cursor:not-allowed}
 .kq-secondary{flex:none;padding:6px 12px;border:0.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary,currentColor);font:inherit;font-size:13px;cursor:pointer}

@@ -50,7 +50,7 @@ The rich question experience SHALL support Markdown question context and questio
 - **THEN** that text is retained with the round's textual submission
 
 ### Requirement: Streaming paginated question rounds
-Questions SHALL be presented as pages within a round, including when pages arrive incrementally from the agent. The user SHALL be able to begin answering received pages while additional questions are arriving and navigate between received pages without losing answers entered within that round.
+Questions SHALL be presented as pages within a round, including when pages arrive incrementally from the agent. The user SHALL be able to begin answering received pages while additional questions are arriving and navigate between received pages without losing answers entered within that round. Receiving a new page SHALL preserve the current slide and every entered answer, Other text, notes, and Additional Notes draft. When the user is on the Additional Notes slide and a new question page arrives before it, the form SHALL present an explicit notice of the new question and an action that opens the first new page.
 
 #### Scenario: Answer before all pages have arrived
 - **WHEN** the first question page has arrived and further question pages are still being produced
@@ -59,6 +59,16 @@ Questions SHALL be presented as pages within a round, including when pages arriv
 #### Scenario: Navigate within a round
 - **WHEN** the user moves to another received question page and then returns to a previously answered page
 - **THEN** the answer entered on that page remains available within the round
+
+#### Scenario: New page arrives on Additional Notes
+- **WHEN** the user is on the Additional Notes slide with entered answers or notes and a new question page arrives
+- **THEN** the form keeps the user's current slide and draft
+- **AND** the form shows a notice that a new question arrived with an action that opens the first new page
+
+#### Scenario: Use the new-question notice
+- **WHEN** the user activates the new-question notice's action
+- **THEN** the form shows the first page that arrived after the pages the user had already reached
+- **AND** the previously entered answers and Additional Notes remain available
 
 ### Requirement: Submit a round as one textual reply
 Submitting a completed question round SHALL aggregate its answers, including applicable selected choices, Other text, and user notes, into a normal textual reply in the originating DSH conversation. The reply SHALL associate each answer with its question rather than submit a separate conversational turn for each page.
@@ -100,7 +110,7 @@ The active question round SHALL be presented in a panel docked directly above th
 - **THEN** the panel body is shown without an additional action
 
 ### Requirement: Additional Notes slide and submit placement
-The round SHALL present one slide per question page and SHALL always end with an Additional Notes slide, including rounds with a single question. Each question slide SHALL show the question, its choices and explanations, per-answer notes, and a Next action. The Additional Notes slide SHALL show a free-text field, a Back action, and Submit. Submit SHALL exist only on the Additional Notes slide and SHALL remain disabled until the round is complete and every answer is valid.
+The round SHALL present one slide per question page and SHALL always end with an Additional Notes slide, including rounds with a single question. Each question slide SHALL show the question, its choices and explanations, per-answer notes, and a Next action. The Additional Notes slide SHALL show a free-text field, a Back action, and Submit. Submit SHALL exist only on the Additional Notes slide and SHALL remain disabled until the round is complete and every answer is valid. While the round is not complete, the form SHALL state that the agent is still finishing its turn instead of leaving the disabled Submit reason unexplained.
 
 #### Scenario: Single-question round
 - **WHEN** the round contains one question
@@ -114,6 +124,10 @@ The round SHALL present one slide per question page and SHALL always end with an
 - **WHEN** the round is still receiving pages or any answer is invalid
 - **THEN** the Submit action remains disabled
 
+#### Scenario: Explain the turn-completion gate
+- **WHEN** every received answer is valid but the agent's turn has not ended
+- **THEN** the form remains expandable and states that Submit is waiting for the agent to finish the turn
+
 ### Requirement: One question surface per conversation
 The panel above the composer SHALL be the only interactive question surface. The plugin SHALL NOT render a second summary, the question text, the choices, or an open or review action for `decision_request` calls in the conversation transcript.
 
@@ -126,11 +140,17 @@ The panel above the composer SHALL be the only interactive question surface. The
 - **THEN** it is answered through the panel above the composer, or by an ordinary chat message
 
 ### Requirement: Question panel removed when the round is answered
-The panel SHALL leave the composer dock when its round is answered, whether the answer arrives by Submit or as an ordinary chat reply.
+The panel SHALL leave the composer dock immediately when the user submits a valid round, before the reply admission settles. If admission fails, the panel SHALL return with the entered answers, Other text, notes, and Additional Notes and SHALL show the admission error, with Submit available for a retry. The panel SHALL also leave when a round is answered by an ordinary chat reply. A panel removed by Submit SHALL NOT return because of a later question-state update that still reports the round unresolved; it returns only on admission failure or when a different unresolved round becomes the active round.
 
 #### Scenario: Remove after Submit
 - **WHEN** the user submits a valid round
-- **THEN** the panel leaves the composer dock and the conversation receives the textual reply
+- **THEN** the panel leaves the composer dock immediately
+- **AND** the conversation receives the textual reply without waiting for the panel to be removed
+
+#### Scenario: Restore a failed Submit
+- **WHEN** the reply admission fails after the panel left the dock
+- **THEN** the panel returns with the entered answers and an admission error
+- **AND** Submit is available for a retry
 
 #### Scenario: Remove after an ordinary reply
 - **WHEN** the user replies with a normal chat message while a round is unanswered
@@ -139,6 +159,14 @@ The panel SHALL leave the composer dock when its round is answered, whether the 
 #### Scenario: Stay while unanswered
 - **WHEN** a round is unanswered, including while the user replies on other topics without settling the round's answers
 - **THEN** the panel remains available above the composer
+
+#### Scenario: Submitted round does not resurrect
+- **WHEN** a question-state update arrives after Submit but before the round is confirmed answered
+- **THEN** the submitted round remains hidden from the composer dock
+
+#### Scenario: A newer round still appears
+- **WHEN** the agent presents a different unresolved round after the submitted round left the dock
+- **THEN** the newer round is presented normally above the composer
 
 ### Requirement: Durable conversation-scoped question state
 Question rounds SHALL be persisted per conversation and SHALL NOT be owned by a task or board record. Reloading a conversation SHALL restore an unanswered round with its pages and completion state, without depending on history replay alone. An answered round SHALL NOT reappear in the panel after reload.
@@ -220,3 +248,19 @@ Dismissal SHALL be question-surface state only. It SHALL NOT submit an answer, s
 #### Scenario: Pending state clears
 - **WHEN** a round is dismissed
 - **THEN** the conversation is no longer shown as awaiting a question answer because of that round
+
+### Requirement: Conversation-scoped question state updates
+Question rounds SHALL update from conversation-scoped question state that does not wait for board or attention projection to complete. Submit becoming available when the agent's turn ends, retirement after an ordinary chat reply, and the removal of a submitted round SHALL NOT depend on the board snapshot or on conversation fact inspection.
+
+#### Scenario: Turn completion unlocks Submit independently of board projection
+- **WHEN** the agent's turn ends and the conversation-scoped question state reports the round complete while board projection is still delayed
+- **THEN** Submit becomes available without waiting for the board projection to finish
+
+#### Scenario: Ordinary reply retires the panel independently of board projection
+- **WHEN** a normal chat reply is recorded for the conversation while board projection is still delayed
+- **THEN** the panel leaves the composer dock without waiting for the board projection to finish
+
+#### Scenario: Reload restores from conversation-scoped state
+- **WHEN** the conversation is reloaded while a round is unanswered
+- **THEN** the panel returns with the same pages and completion state from the conversation-scoped question state
+- **AND** an answered round does not reappear

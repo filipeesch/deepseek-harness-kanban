@@ -3,7 +3,7 @@ import { createTypertRemoteInfo } from '@deepseek-ai/dsh-typert-protocol/remote-
 import type { RemoteResult, RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol';
 import type { TypertContribution } from '@deepseek-ai/dsh-typert-registry';
 import { KanbanStateSchema } from './domain/hub-schema.js';
-import type { Command, HostSnapshot, Outcome, ProjectLocation, QuestionRound } from './shared/types.js';
+import type { Command, HostSnapshot, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound } from './shared/types.js';
 export const PACKAGE_NAME = 'dsh-kanban';
 const id=z.string().min(1).max(200);
 const revision=z.number().int().nonnegative().optional();
@@ -42,10 +42,11 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
 ]);
 export const QuestionPageSchema=z.object({question:z.string(),type:z.enum(['exclusive','non_exclusive','freetext']),context:z.string().optional(),options:z.array(z.object({title:z.string(),description:z.string()}).strict()).optional(),weight:z.enum(['critical','medium','easy']).optional(),model_lean:z.string().optional(),model_lean_reason:z.string().optional(),answers_affect_followup:z.boolean().optional()}).strict();
 export const QuestionRoundSchema=z.object({id:z.string(),sessionId:z.string(),turnId:z.string(),pages:z.array(z.object({callId:z.string(),sequence:z.number(),page:QuestionPageSchema}).strict()),complete:z.boolean(),answered:z.boolean()}).strict();
+export const QuestionFeedFrameSchema:z.ZodType<QuestionFeedFrame>=z.object({kind:z.enum(['baseline','update']),rounds:z.array(QuestionRoundSchema)}).strict();
 const SettledTurnSchema=z.object({seq:z.number().int().nonnegative(),outcome:z.enum(['ok','error'])}).strict();
 const BackgroundActivitySchema=z.object({kind:z.enum(['job','schedule']),label:z.string()}).strict();
 const ConversationFactsSchema=z.object({running:z.boolean(),background:z.array(BackgroundActivitySchema),awaitingReply:z.boolean(),settledTurn:SettledTurnSchema.nullable()}).strict();
-export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note']),id}).strict().optional(),state:KanbanStateSchema,conversations:z.record(z.string(),ConversationFactsSchema),sequence:z.number().int().nonnegative(),questionRounds:z.array(QuestionRoundSchema).optional()}).strict();
+export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note']),id}).strict().optional(),state:KanbanStateSchema,conversations:z.record(z.string(),ConversationFactsSchema),sequence:z.number().int().nonnegative()}).strict();
 const ProblemSchema=z.object({code:z.string(),message:z.string(),details:z.record(z.string(),z.unknown()).optional()}).strict();
 const outcome=<T extends z.ZodType>(value:T)=>z.discriminatedUnion('ok',[z.object({ok:z.literal(true),value}).strict(),z.object({ok:z.literal(false),error:ProblemSchema}).strict()]);
 const codec=(name:string,create:()=>z.ZodType)=>({mode:'strict' as const,typeSymbol:PACKAGE_NAME+'#'+name,create});
@@ -57,8 +58,8 @@ export const TYPERT_REMOTE=createTypertRemoteInfo({package:PACKAGE_NAME,methods:
  'kanban/branches':{...base,parameters:[parameter('request',z.object({taskId:id}).strict(),'TaskLookup')],result:codec('BranchesOutcome',()=>outcome(z.array(z.string())))},
  'kanban/worktreeDefault':{...base,parameters:[parameter('request',z.object({taskId:id}).strict(),'TaskLookup')],result:codec('WorktreeDefaultOutcome',()=>outcome(worktreeDefault))},
  'kanban/detectProject':{...base,parameters:[parameter('request',z.object({path:z.string().min(1)}).strict(),'ProjectPathLookup')],result:codec('ProjectLocationOutcome',()=>outcome(projectLocation))},
- 'kanban/questions':{...base,parameters:[parameter('request',z.object({sessionId:id}).strict(),'SessionLookup')],result:codec('QuestionOutcome',()=>outcome(z.array(QuestionRoundSchema)))},
  'kanban/dismissQuestions':{...base,parameters:[parameter('request',z.object({sessionId:id,roundId:id}).strict(),'QuestionDismissal')],result:codec('QuestionDismissalOutcome',()=>outcome(z.array(QuestionRoundSchema)))},
+ 'kanban/questionsFollow':{...base,mode:'stream',parameters:[parameter('request',z.object({sessionId:id}).strict(),'SessionLookup')],cancellation:{parameter:'signal'},result:codec('QuestionFeedFrame',()=>QuestionFeedFrameSchema)},
  'kanban/follow':{...base,mode:'stream',parameters:[],cancellation:{parameter:'signal'},result:codec('Snapshot',()=>SnapshotSchema)},
 }},z);
 export const TYPERT_HOST:TypertContribution={package:PACKAGE_NAME,face:'host',schemas:[],get invocations(){return TYPERT_REMOTE.descriptors;},model:{services:[],events:[],objects:[]}};
@@ -68,15 +69,15 @@ export interface KanbanRemote {
  branches(request:{taskId:string}):Promise<RemoteResult<Outcome<string[]>>>;
  worktreeDefault(request:{taskId:string}):Promise<RemoteResult<Outcome<{branchName:string;path:string}>>>;
  detectProject(request:{path:string}):Promise<RemoteResult<Outcome<ProjectLocation>>>;
- questions(request:{sessionId:string}):Promise<RemoteResult<Outcome<QuestionRound[]>>>;
  dismissQuestions(request:{sessionId:string;roundId:string}):Promise<RemoteResult<Outcome<QuestionRound[]>>>;
+ questionsFollow(request:{sessionId:string},signal?:AbortSignal):RemoteStreamHandle<QuestionFeedFrame,never>;
  follow(signal?:AbortSignal):RemoteStreamHandle<HostSnapshot, never>;
 }
 declare module '@deepseek-ai/dsh-typert-protocol' {
  interface TypertRemoteNamespaceMap {kanban:KanbanRemote}
  interface TypertRemoteMap {
   'kanban/snapshot':KanbanRemote['snapshot']; 'kanban/command':KanbanRemote['command'];
-  'kanban/branches':KanbanRemote['branches']; 'kanban/worktreeDefault':KanbanRemote['worktreeDefault']; 'kanban/detectProject':KanbanRemote['detectProject']; 'kanban/questions':KanbanRemote['questions']; 'kanban/dismissQuestions':KanbanRemote['dismissQuestions']; 'kanban/follow':KanbanRemote['follow'];
+  'kanban/branches':KanbanRemote['branches']; 'kanban/worktreeDefault':KanbanRemote['worktreeDefault']; 'kanban/detectProject':KanbanRemote['detectProject']; 'kanban/dismissQuestions':KanbanRemote['dismissQuestions']; 'kanban/questionsFollow':KanbanRemote['questionsFollow']; 'kanban/follow':KanbanRemote['follow'];
  }
 }
 export default TYPERT_REMOTE;

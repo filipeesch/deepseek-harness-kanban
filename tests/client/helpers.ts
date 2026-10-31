@@ -75,7 +75,7 @@ export function restrictedInstructedFixture(): TestSnapshot {
 
 function cloneSnapshot(value: KanbanSnapshot): KanbanSnapshot {
   const normalized = withLegacyView(value);
-  return structuredClone({ sequence: normalized.sequence, attention: normalized.attention, conversationAttention: normalized.conversationAttention, state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } }, ...(normalized.questionRounds ? { questionRounds: normalized.questionRounds } : {}), ...(normalized.clientEpoch !== undefined ? { clientEpoch: normalized.clientEpoch } : {}) });
+  return structuredClone({ sequence: normalized.sequence, attention: normalized.attention, conversationAttention: normalized.conversationAttention, state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } }, ...(normalized.clientEpoch !== undefined ? { clientEpoch: normalized.clientEpoch } : {}) });
 }
 
 export function fakeApi(initial: TestSnapshot = fixture()) {

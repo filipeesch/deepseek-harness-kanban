@@ -17,6 +17,7 @@ import { BoardView, createBoardPageState, type BoardPageState } from './client/b
 import { allTasks } from './client/hub-view.js';
 import { AutoRunController } from './client/auto-run.js';
 import { QuestionForm } from './questions/QuestionForm.js';
+import { selectActiveRound } from './questions/submission.js';
 import { NativeSessionHeader } from './client/native-session-header.js';
 import { ConversationCloseAction } from './client/conversation-actions.js';
 import { EmbeddedConversationBody, RetainedConversation, type ConversationSurfaceOwner, type ConversationSurfaceServices } from './client/conversation-surface.js';
@@ -225,21 +226,25 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   function Dock(props: PropsRuntime<'conversation.input.dock'>) {
     const view = useSyncExternalStore(bridge.questionsView.subscribe, bridge.questionsView.getSnapshot, bridge.questionsView.getSnapshot);
     const [attempt, setAttempt] = useState(0);
+    useEffect(() => bridge.trackQuestions(props.sessionId), [props.sessionId]);
     useEffect(() => {
-      void bridge.prepareQuestions(props.sessionId).catch(() => undefined); // The session-scoped observable owns retry errors.
-    }, [props.sessionId, attempt]);
+      if (attempt > 0) bridge.retryQuestions(props.sessionId);
+    }, [attempt]);
     const historyError = view.errors.get(props.sessionId)?.message;
-    const lastSequence = (value: { pages: readonly { sequence: number }[] }) => value.pages.reduce((max, page) => Math.max(max, page.sequence), -1);
-    const round = view.rounds
-      .filter(candidate => candidate.sessionId === props.sessionId && !candidate.answered && candidate.pages.length > 0)
-      .sort((left, right) => Number(left.turnId) - Number(right.turnId) || lastSequence(left) - lastSequence(right))
-      .at(-1);
-    return <><FeedStatus />{historyError && <div role="alert">Decision questions are unavailable: {historyError} <button type="button" onClick={() => setAttempt(value => value + 1)}>Retry questions</button></div>}{round && <QuestionForm key={round.id} round={round} onSubmit={async (text) => {
+    const round = selectActiveRound(view.rounds, props.sessionId, id => bridge.questions.isSubmitted(id), bridge.questions.focusedRoundId);
+    const scoped = scopedSessions.scope(props.sessionId);
+    const conversation = scoped?.get('conversation');
+    return <><FeedStatus />{historyError && <div role="alert">Question rounds are unavailable: {historyError} <button type="button" onClick={() => setAttempt(value => value + 1)}>Retry questions</button></div>}{round && <QuestionForm key={round.id} round={round} hidden={bridge.questions.isSubmitted(round.id)} onHide={() => {
+      if (!scoped || !conversation) return;
+      try { conversation.input.for(scoped).focus(); } catch { /* the form already blurred its active control */ }
+    }} onSubmit={async (text) => {
       // This is ordinary native human text. It does not settle native approvals or userQuestions.
       bridge.assertSubmissionAllowed(props.sessionId);
-      const conversation = scopedSessions.scope(props.sessionId)?.get('conversation');
       if (!conversation) throw new Error('The native conversation scope is not available. Reopen this conversation and retry.');
-      await conversation.send(text);
+      // The dock hides the round before admission settles; a failure restores it with the draft.
+      bridge.questions.submit(round.id);
+      try { await conversation.send(text); bridge.settleSubmission(round.id); }
+      catch (error) { bridge.questions.rollback(round.id); throw error; }
     }} onDismiss={async () => {
       await bridge.dismissQuestions(props.sessionId, round.id);
     }} />}</>;

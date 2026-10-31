@@ -6,7 +6,7 @@ import { Configuration } from '../../src/client/settings/configuration.js';
 import { ProjectEditorDialog } from '../../src/client/projects/project-editor-dialog.js';
 import { DirectoryPickerProvider } from '../../src/client/services.js';
 import { QuestionForm } from '../../src/questions/QuestionForm.js';
-import type { Command, QuestionRound } from '../../src/shared/types.js';
+import type { Command, QuestionRound, RoundPage } from '../../src/shared/types.js';
 import { createHarnessApi, type TestSnapshot } from './fake-api.js';
 import { themeFixture } from './theme-fixture.js';
 
@@ -43,12 +43,19 @@ function NativeComposerScenario() {
   </div>;
 }
 
+const questionCase = new URLSearchParams(window.location.search).get('case') ?? 'default';
 const round: QuestionRound = {
   id: 'round-1', sessionId: 'session-1', turnId: '1', complete: true, answered: false,
   pages: [{ callId: 'call-1', sequence: 0, page: { question: 'Which **storage** should we use?', type: 'exclusive', options: [{ title: 'Local', description: 'Keep it local.' }, { title: 'Remote', description: 'Use a service.' }] } }],
 };
+const secondPage: RoundPage = { callId: 'call-2', sequence: 1, page: { question: 'Which **theme** should we use?', type: 'freetext' } };
 function QuestionScenario() {
-  return <div style={{ padding: 20, width: 380 }}><QuestionForm round={round} onSubmit={() => {}} onDismiss={() => {}} /></div>;
+  const [value, setValue] = useState<QuestionRound>(() => ({ ...round, complete: questionCase !== 'waiting' && questionCase !== 'new-page' }));
+  const [hidden, setHidden] = useState(questionCase === 'hidden');
+  return <div style={{ padding: 20, width: 380 }}>
+    <QuestionForm round={value} hidden={hidden} onSubmit={() => { if (questionCase === 'submit') setHidden(true); }} onDismiss={() => {}} />
+    {questionCase === 'new-page' && <button type="button" onClick={() => setValue(previous => ({ ...previous, pages: [...previous.pages, secondPage] }))}>Add page</button>}
+  </div>;
 }
 
 function ThemeSync() {
@@ -69,7 +76,7 @@ function App() {
   if (scenario === 'project-editor') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><ProjectEditorScenario /></div></>;
   if (scenario === 'native-composer') return <><style>{styles}</style><NativeComposerScenario /></>;
   if (scenario === 'workflow') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario /></div></>;
-  if (scenario === 'question') return <><style>{styles}</style><div className="dsh-kanban"><QuestionScenario /></div></>;
+  if (scenario === 'question') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban"><QuestionScenario /></div></>;
   return <BoardView api={harness.api} renderConversation={id => <div data-native={id} />} />;
 }
 
