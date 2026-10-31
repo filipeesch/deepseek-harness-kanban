@@ -49,9 +49,9 @@ export class GitAdapter implements GitPort {
     await this.executor.assertPolicy(project, [...new Set(canonical)], sessionIds, write);
   }
 
-  private async checked(project: GitProject, args: string[], sessions: string[], signal?: AbortSignal): Promise<string> {
+  private async checked(project: GitProject, args: string[], sessions: string[], signal?: AbortSignal, write = false): Promise<string> {
     signal?.throwIfAborted();
-    const result = await this.executor.run(project, args, sessions, signal);
+    const result = await this.executor.run(project, args, sessions, signal, write);
     if (result.exitCode !== 0) throw new KanbanError('GIT_FAILED', 'Git operation failed: ' + (result.stderr.trim() || result.stdout.trim() || 'exit ' + result.exitCode), { args, exitCode: result.exitCode, stderr: result.stderr });
     return result.stdout;
   }
@@ -145,9 +145,9 @@ export class GitAdapter implements GitPort {
       const source = request.sourceBranch ?? project.defaultBranch ?? 'HEAD';
       if (!source || /[\0\r\n]/.test(source)) throw new KanbanError('INVALID_BRANCH', 'A valid source branch is required.');
       const commit = (await this.checked(project, ['-C', root, 'rev-parse', '--verify', '--end-of-options', source + '^{commit}'], sessionIds, signal)).trim();
-      await this.checked(project, ['-C', root, 'worktree', 'add', '-b', request.branchName, '--', target, commit], sessionIds, signal);
+      await this.checked(project, ['-C', root, 'worktree', 'add', '-b', request.branchName, '--', target, commit], sessionIds, signal, true);
     } else {
-      await this.checked(project, ['-C', root, 'worktree', 'add', '--', target, request.branchName], sessionIds, signal);
+      await this.checked(project, ['-C', root, 'worktree', 'add', '--', target, request.branchName], sessionIds, signal, true);
     }
     return this.inspect(project, target, sessionIds);
   }
@@ -171,7 +171,7 @@ export class GitAdapter implements GitPort {
     const args = ['-C', root, 'worktree', 'remove'];
     if (discardChanges) args.push('--force');
     args.push('--', target);
-    await this.checked(project, args, sessionIds, signal);
+    await this.checked(project, args, sessionIds, signal, true);
     if (await exists(target)) throw new KanbanError('WORKTREE_REMOVE_INCOMPLETE', 'Git reported removal but the worktree directory still exists.', { path: target });
   }
 }

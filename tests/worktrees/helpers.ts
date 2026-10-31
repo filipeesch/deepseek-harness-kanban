@@ -42,11 +42,12 @@ export async function cleanup(): Promise<void> {
 }
 export class LocalExecutor implements GitExecutor {
   calls: string[][] = [];
+  writes: boolean[] = [];
   policies: Array<{ paths: string[]; ids: string[]; write: boolean }> = [];
   deny: ((paths: string[], write: boolean) => boolean) | undefined;
   fail: ((args: string[]) => CommandResult | undefined) | undefined;
-  async run(project: GitProject, args: string[], _ids: string[], signal?: AbortSignal): Promise<CommandResult> {
-    this.calls.push([...args]);
+  async run(project: GitProject, args: string[], _ids: string[], signal?: AbortSignal, write = false): Promise<CommandResult> {
+    this.calls.push([...args]); this.writes.push(write);
     return this.fail?.(args) ?? git(project.gitRootPath, args, signal);
   }
   async assertPolicy(_project: GitProject, paths: string[], ids: string[], write: boolean): Promise<void> {

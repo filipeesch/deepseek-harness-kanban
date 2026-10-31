@@ -57,6 +57,6 @@ export interface ProjectProbe {
 }
 export interface CommandResult { exitCode: number; stdout: string; stderr: string }
 export interface GitExecutor {
-  run(project: GitProject, args: string[], sessionIds: string[], signal?: AbortSignal): Promise<CommandResult>;
+  run(project: GitProject, args: string[], sessionIds: string[], signal?: AbortSignal, write?: boolean): Promise<CommandResult>;
   assertPolicy(project: GitProject, paths: string[], sessionIds: string[], write: boolean): Promise<void>;
 }

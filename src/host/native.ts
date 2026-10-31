@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import type { GitExecutor, SessionPort, CommandResult, ProjectProbe, WorkspacePort } from '../shared/ports.js';
+import type { GitProject } from '../shared/types.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 import { createNativeSessionFacts, inspectedOpenTurn, nativePending } from './native-facts.js';
 import { executeCommand } from './host-command.js';
@@ -90,10 +91,20 @@ export function createNativePorts(ctx: Context): { sessions: SessionPort; execut
     if ('error' in resolved) throw resolved.error;
     return resolved.agent;
   };
-  const policiesFor = async (ids: string[], signal?: AbortSignal): Promise<SandboxExecutionPolicy[]> => {
+  const policiesFor = async (project: GitProject, ids: string[], signal?: AbortSignal, write = false): Promise<SandboxExecutionPolicy[]> => {
     const policyService = ctx.get('sandboxPolicy');
     invariant(policyService, 'SANDBOX_POLICY_UNAVAILABLE', 'The native sandbox policy service is unavailable.');
-    if (ids.length === 0) return [validatePolicy(policyService.resolve())];
+    if (ids.length === 0) {
+      // A lazy task can have no native session yet, so there is no session policy to inherit.
+      // Kanban Git commands are host-side user actions; read the project from its Git root and
+      // let a user-initiated mutating command manage a worktree outside that root.
+      const base = validatePolicy(policyService.resolve());
+      return [validatePolicy({
+        ...base,
+        ...(write ? { mode: 'danger-full-access' as const } : {}),
+        workspaceRoot: project.gitRootPath,
+      })];
+    }
     const policies: SandboxExecutionPolicy[] = [];
     for (const id of new Set(ids)) {
       signal?.throwIfAborted();
@@ -305,16 +316,16 @@ export function createNativePorts(ctx: Context): { sessions: SessionPort; execut
     },
   };
   const executor: GitExecutor = {
-    async assertPolicy(_project, paths, ids, write) {
-      await checkPaths(paths, await policiesFor(ids), write);
+    async assertPolicy(project, paths, ids, write) {
+      await checkPaths(paths, await policiesFor(project, ids, undefined, write), write);
     },
-    async run(project, args, ids, signal) {
+    async run(project, args, ids, signal, write = false) {
       signal?.throwIfAborted();
       invariant(args.every((arg) => typeof arg === 'string' && !arg.includes('\0')), 'INVALID_GIT_ARGUMENT', 'Git arguments must be exact strings without NUL bytes.');
       const timeout = AbortSignal.timeout(EXECUTION_TIMEOUT_MS);
       const lifetime = signal ? AbortSignal.any([signal, timeout]) : timeout;
       const cwd = await directoryPath(project.gitRootPath);
-      const policy = commonPolicy(await policiesFor(ids, lifetime));
+      const policy = commonPolicy(await policiesFor(project, ids, lifetime, write));
       let wrapped: ConfinedArgv | undefined;
       let argv = ['git', ...args];
       if (policy.mode !== 'danger-full-access') {

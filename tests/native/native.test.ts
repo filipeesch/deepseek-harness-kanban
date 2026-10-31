@@ -397,10 +397,14 @@ describe('all-session policy preflight', () => {
     expect(cold).toBeInstanceOf(Session); expect(cold?.header.cwd).toBe(root); expect(cold).not.toBe(f.session);
     expect(f.resolveAgent).not.toHaveBeenCalled(); expect(f.create).not.toHaveBeenCalled();
   });
-  it('uses the real deployment default for agentless checks and fails closed without a policy service', async () => {
+  it('uses the project root for agentless reads and full access for agentless worktree writes', async () => {
     const f = fixture();
-    await expect(f.executor.assertPolicy(project, [root], [], true)).rejects.toMatchObject({ code: 'SANDBOX_DENIED' });
+    await expect(f.executor.assertPolicy(project, [root], [], false)).resolves.toBeUndefined();
+    await expect(f.executor.assertPolicy(project, [join(root, 'outside-tree')], [], true)).resolves.toBeUndefined();
     expect(f.resolvePolicy).toHaveBeenCalledWith();
+    await f.executor.run(project, ['worktree', 'add', '--', join(root, 'outside-tree')], [], undefined, true);
+    expect(f.confine).not.toHaveBeenCalled();
+    spawnMock.mockClear();
     delete f.services.sandboxPolicy;
     await expect(f.executor.run(project, ['status'], [])).rejects.toMatchObject({ code: 'SANDBOX_POLICY_UNAVAILABLE' });
     expect(spawnMock).not.toHaveBeenCalled();

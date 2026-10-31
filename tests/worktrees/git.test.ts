@@ -16,6 +16,16 @@ describe('GitAdapter through the injected executor', () => {
     expect(executor.policies.some(call => call.write && call.paths.includes(tree.commonDirectory) && call.ids.join() === 'a,b')).toBe(true);
   });
 
+  it('marks worktree mutations as writes for an agentless policy', async () => {
+    const f = await fixture(); const executor = new LocalExecutor(); const adapter = new GitAdapter(executor);
+    const tree = await adapter.create(f.project, { mode: 'new', path: f.tree, branchName: 'agentless-write' }, []);
+    const add = executor.calls.findIndex(args => args.includes('worktree') && args.includes('add'));
+    expect(add).toBeGreaterThanOrEqual(0); expect(executor.writes[add]).toBe(true);
+    await adapter.remove(f.project, tree.path, false, []);
+    const remove = executor.calls.findIndex(args => args.includes('worktree') && args.includes('remove'));
+    expect(remove).toBeGreaterThan(add); expect(executor.writes[remove]).toBe(true);
+  });
+
   it('creates a checkout for an existing branch without deleting that branch on removal', async () => {
     const f = await fixture(); const adapter = new GitAdapter(new LocalExecutor());
     await gitOk(f.project.gitRootPath, ['branch', 'existing']);
