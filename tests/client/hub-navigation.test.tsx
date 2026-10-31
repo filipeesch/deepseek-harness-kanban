@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { BoardView } from '../../src/client/board.js';
 import { fixture, fakeApi, task } from './helpers.js';
@@ -25,6 +25,8 @@ describe('Hub and board navigation', () => {
     await user.click(within(hubDialog).getByRole('button', { name: 'Create Hub' }));
     await waitFor(() => expect(screen.getByRole('tab', { name: /Second Hub/ }).getAttribute('aria-selected')).toBe('true'));
     expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'hub.create', name: 'Second Hub' }));
+    const boardTabs = screen.getByRole('tablist', { name: 'Boards' });
+    expect(within(boardTabs).getByRole('button', { name: 'Create board' })).toBeTruthy();
     const empty = (await screen.findByRole('heading', { name: 'Create your first board' })).parentElement!;
     await user.click(within(empty).getByRole('button', { name: 'Create board' }));
     const boardDialog = screen.getByRole('dialog', { name: 'Create board' });
@@ -55,6 +57,62 @@ describe('Hub and board navigation', () => {
     render(<BoardView api={mock.api} renderConversation={() => null} />);
     const tab = await screen.findByRole('tab', { name: /Attention Hub/ });
     expect(within(tab).getByRole('img', { name: 'Hub unread activity' })).toBeTruthy();
+  });
+
+  it('shows the running-task count after the attention indicators on the Hub and board tabs', async () => {
+    const { publish, get } = mount();
+    const hubTab = await screen.findByRole('tab', { name: /My Hub.*1 task running/ });
+    const boardTab = screen.getByRole('tab', { name: /Delivery.*1 task running/ });
+    expect(within(hubTab).getByRole('img', { name: '1 task running' }).getAttribute('title')).toBe('1 task running: Alpha task');
+    expect(hubTab.querySelector('.kb-tab-running-count')?.textContent).toBe('1');
+    expect(within(hubTab).getByRole('img', { name: 'Hub failure' })).toBeTruthy();
+    expect(within(hubTab).getByRole('img', { name: 'Hub awaiting reply' })).toBeTruthy();
+    expect([...hubTab.querySelectorAll('.kb-dot, .kb-tab-running')].map(element => element.className)).toEqual(['kb-dot kb-blue', 'kb-dot kb-orange', 'kb-dot kb-red', 'kb-tab-running']);
+    expect(within(boardTab).getByRole('img', { name: 'Board unread activity' })).toBeTruthy();
+    expect(within(boardTab).getByRole('img', { name: 'Board awaiting reply' })).toBeTruthy();
+    expect(within(boardTab).getByRole('img', { name: 'Board failure' })).toBeTruthy();
+    expect(within(boardTab).getByRole('img', { name: '1 task running' }).getAttribute('title')).toBe('1 task running: Alpha task');
+    expect([...boardTab.querySelectorAll('.kb-dot, .kb-tab-running')].map(element => element.className)).toEqual(['kb-dot kb-blue', 'kb-dot kb-orange', 'kb-dot kb-red', 'kb-tab-running']);
+
+    const next = get();
+    next.attention.t1 = { running: false, background: [], unread: false, awaitingReply: false, failed: false };
+    act(() => { publish(next); });
+    await waitFor(() => {
+      expect(within(screen.getByRole('tab', { name: /My Hub/ })).queryByRole('img', { name: /task running/ })).toBeNull();
+      expect(within(screen.getByRole('tab', { name: /Delivery/ })).queryByRole('img', { name: /task running/ })).toBeNull();
+    });
+  });
+
+  it('keeps the running-task count on an inactive board tab', async () => {
+    const value = fixture();
+    const hub = value.state.hubs[0]!;
+    hub.boards.push({ ...hub.boards[0]!, id: 'board-2', name: 'Second board' });
+    hub.tasks.push({ ...task('t3', 'Second board task', 'p1', 'intake'), boardId: 'board-2' });
+    value.attention.t3 = { running: true, background: [], unread: false, awaitingReply: false, failed: false };
+    render(<BoardView api={fakeApi(value).api} renderConversation={() => null} />);
+    const tab = await screen.findByRole('tab', { name: /Second board.*1 task running/ });
+    expect(within(tab).getByRole('img', { name: '1 task running' })).toBeTruthy();
+  });
+
+  it('counts each task once when a task runs a turn and owns background work', async () => {
+    const { publish, get } = mount();
+    const next = get();
+    next.attention.t1 = { running: true, background: [{ kind: 'job', label: 'Run tests' }, { kind: 'schedule', label: 'Wake later' }], unread: false, awaitingReply: false, failed: false };
+    next.attention.t2 = { running: true, background: [], unread: false, awaitingReply: false, failed: false };
+    act(() => { publish(next); });
+    const boardTab = screen.getByRole('tab', { name: /Delivery/ });
+    await waitFor(() => expect(within(boardTab).getByRole('img', { name: '2 tasks running' })).toBeTruthy());
+    expect(boardTab.querySelector('.kb-tab-running-count')?.textContent).toBe('2');
+  });
+
+  it('keeps the running-task count on an inactive Hub tab', async () => {
+    const value = fixture();
+    value.state.hubs.push({ ...value.state.hubs[0]!, id: 'hub-2', name: 'Running Hub', boards: value.state.hubs[0]!.boards.map(board => ({ ...board, id: 'board-2' })), tasks: [{ ...task('t3', 'Second Hub task', 'p1', 'intake'), boardId: 'board-2' }] });
+    value.attention.t3 = { running: true, background: [], unread: false, awaitingReply: false, failed: false };
+    const mock = fakeApi(value);
+    render(<BoardView api={mock.api} renderConversation={() => null} />);
+    const tab = await screen.findByRole('tab', { name: /Running Hub/ });
+    expect(within(tab).getByRole('img', { name: '1 task running' })).toBeTruthy();
   });
 });
 

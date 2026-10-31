@@ -49,13 +49,6 @@ export function normalizeSnapshot(snapshot: KanbanSnapshot): KanbanSnapshot {
     },
   };
 }
-export interface ScopeAttention { unread: boolean; running: boolean; failed: boolean }
-export function scopeAttention(tasks: Task[], attention: KanbanSnapshot['attention']): ScopeAttention {
-  return tasks.reduce<ScopeAttention>((result, task) => {
-    const value = attention[task.id];
-    return { unread: result.unread || Boolean(value?.unread), running: result.running || Boolean(value?.running || value?.background.length), failed: result.failed || Boolean(value?.failed) };
-  }, { unread: false, running: false, failed: false });
-}
 export function scopedCommand(command: Command, hubId: string | undefined, boardId: string | undefined, multiHub: boolean, multiBoard: boolean): Command {
   // The timed/manual instruction is task-scoped; the host resolves its Hub by task id.
   if (command.type === 'task.runInstruction') return command;

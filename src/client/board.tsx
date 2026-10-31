@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { Board, ClientApi, Column, ColumnGroup, Command, HubState, KanbanSnapshot, Problem, Task, Workflow } from '../shared/types.js';
+import type { Board, ClientApi, Column, ColumnGroup, Command, KanbanSnapshot, Problem, Task, Workflow } from '../shared/types.js';
 import { EMPTY_ATTENTION } from '../shared/types.js';
 import { isGitProject } from '../shared/project.js';
 import { NewTaskDialog } from './forms.js';
@@ -12,7 +12,9 @@ import type { ConversationLineagePort, DrawerSubagentAddress } from './conversat
 import { transitionAccess } from '../domain/transitions.js';
 import { entryInstruction, hasUnresolvedEntry } from '../domain/stage-entry.js';
 import { AutoRunController } from './auto-run.js';
-import { ACTIVE_HUB_KEY, allTasks, boardView, normalizeSnapshot, readBoardPreferences, readStorage, scopeAttention, scopedCommand, writeBoardPreference, writeStorage } from './hub-view.js';
+import { ACTIVE_HUB_KEY, allTasks, boardView, normalizeSnapshot, readBoardPreferences, readStorage, scopedCommand, writeBoardPreference, writeStorage } from './hub-view.js';
+import { projectScopeActivity, type ScopeActivity } from './scope-activity.js';
+import { HubNav } from './hub-nav.js';
 import { CreateBoardDialog, CreateHubDialog } from './create-dialogs.js';
 import { asProblem } from './ui.js';
 import { adviseCommandFailure } from './command-failure.js';
@@ -80,8 +82,18 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
   const activeHub = snapshot?.state.hubs.find(hub => hub.id === activeHubId) ?? snapshot?.state.hubs[0];
   const activeBoard = activeHub ? activeHub.boards.find(board => board.id === activeBoardByHub[activeHub.id]) ?? activeHub.boards[0] : undefined;
   const state = useMemo(() => snapshot && activeHub && activeBoard ? boardView(activeHub, activeBoard, snapshot.state.settings ?? { revision: 0 }) : undefined, [snapshot, activeHub, activeBoard]);
-  function attentionForHub(hub: HubState) { return snapshot ? scopeAttention(hub.tasks, snapshot.attention) : { unread: false, running: false, failed: false }; }
-  function attentionForBoard(hub: HubState, boardId: string) { return snapshot ? scopeAttention(hub.tasks.filter(task => task.boardId === boardId), snapshot.attention) : { unread: false, running: false, failed: false }; }
+  const hubActivity = useMemo(() => {
+    const values = new Map<string, ScopeActivity>();
+    if (!snapshot) return values;
+    for (const hub of snapshot.state.hubs) values.set(hub.id, projectScopeActivity(hub.tasks, snapshot.attention));
+    return values;
+  }, [snapshot]);
+  const boardActivity = useMemo(() => {
+    const values = new Map<string, ScopeActivity>();
+    if (!snapshot || !activeHub) return values;
+    for (const board of activeHub.boards) values.set(board.id, projectScopeActivity(activeHub.tasks.filter(task => task.boardId === board.id), snapshot.attention));
+    return values;
+  }, [snapshot, activeHub]);
   function selectHub(hubId: string) { if (hubId === activeHub?.id) return; setActiveHubIdState(hubId); writeStorage(ACTIVE_HUB_KEY, hubId); setSearch(''); setProjectFilter(''); setSelectedId(null); setSelectionMode(false); setSelectedIds(new Set()); }
   function selectBoard(hubId: string, boardId: string) { setActiveBoardByHub(previous => writeBoardPreference(hubId, boardId, previous)); setSearch(''); setProjectFilter(''); setSelectedId(null); setSelectionMode(false); setSelectedIds(new Set()); }
   useEffect(() => { if (snapshot && activeHub && activeHub.id !== activeHubId) { setActiveHubIdState(activeHub.id); writeStorage(ACTIVE_HUB_KEY, activeHub.id); } }, [snapshot, activeHub, activeHubId]);
@@ -319,16 +331,18 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, p
       <button type="button" className="kb-button" disabled={batchPending} onClick={exitSelection}>Cancel</button>
     </>}
   </div></div>
-    <nav className="kb-hub-nav" aria-label="Hub and board navigation">
-      <div className="kb-hub-tabs" role="tablist" aria-label="Hubs">
-        {snapshot?.state.hubs.map(hub => { const attention = attentionForHub(hub); return <button type="button" role="tab" key={hub.id} className={'kb-hub-tab' + (hub.id === activeHub?.id ? ' is-active' : '')} aria-selected={hub.id === activeHub?.id} onClick={() => selectHub(hub.id)}>{hub.name}{attention.unread && <span className="kb-dot kb-blue" role="img" aria-label="Hub unread activity" />}{attention.running && <span className="kb-dot kb-activity" role="img" aria-label="Hub active execution" />}{attention.failed && <span className="kb-dot kb-red" role="img" aria-label="Hub failure" />}</button>; })}
-        <button type="button" className="kb-tab-add" aria-label="Create Hub" title="Create Hub" onClick={() => setNewHub(true)}><PlusIcon size={13} /></button>
-      </div>
-      {activeHub && <div className="kb-board-tabs" role="tablist" aria-label="Boards">
-        {activeHub.boards.map(board => { const attention = attentionForBoard(activeHub, board.id); return <button type="button" role="tab" key={board.id} className={'kb-board-tab' + (board.id === activeBoard?.id ? ' is-active' : '')} aria-selected={board.id === activeBoard?.id} onClick={() => selectBoard(activeHub.id, board.id)}>{board.name}{attention.unread && <span className="kb-dot kb-blue" role="img" aria-label="Board unread activity" />}{attention.running && <span className="kb-dot kb-activity" role="img" aria-label="Board active execution" />}{attention.failed && <span className="kb-dot kb-red" role="img" aria-label="Board failure" />}</button>; })}
-        <button type="button" className="kb-tab-add" aria-label="Create board" title="Create board" onClick={() => setNewBoard(true)}><PlusIcon size={13} /></button>
-      </div>}
-    </nav>
+    <HubNav
+      hubs={snapshot?.state.hubs ?? []}
+      boards={activeHub?.boards}
+      {...(activeHub ? { activeHubId: activeHub.id } : {})}
+      {...(activeBoard ? { activeBoardId: activeBoard.id } : {})}
+      hubActivity={hubActivity}
+      boardActivity={boardActivity}
+      onSelectHub={selectHub}
+      onSelectBoard={selectBoard}
+      onCreateHub={() => setNewHub(true)}
+      onCreateBoard={() => setNewBoard(true)}
+    />
   </header>
     {configuration && <Configuration key={configuration} state={state ?? null} hub={activeHub ?? null} board={activeBoard ?? null} hubCount={snapshot?.state.hubs.length ?? 1} settings={snapshot?.state.settings} settingsRevision={snapshot?.state.settings?.revision ?? 0} run={run} api={api} initial={configuration} onClose={() => setConfiguration(null)} onHubDeleted={() => { setConfiguration(null); setActiveHubIdState(null); writeStorage(ACTIVE_HUB_KEY, null); }} onBoardDeleted={() => { setConfiguration(null); }} onBoardCreated={id => { selectBoard(activeHub!.id, id); setConfiguration(null); }} />}
     <BoardNotices loadError={loadError} actionError={actionError} onRetryLoad={() => setLoadAttempt(value => value + 1)} />{retainedCheckout !== null && <p className="kb-hint" role="status">Task deleted. The checkout at <code>{retainedCheckout}</code> was left on disk.<button type="button" className="kb-button" onClick={() => setRetainedCheckout(null)}>Dismiss</button></p>}{!snapshot && !loadError && <p className="kb-empty" role="status">Loading Kanban…</p>}{snapshot && !activeHub && <div className="kb-empty"><h2>No Hub available</h2><p>Create a Hub to continue.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewHub(true)}>Create Hub</button></div>}{snapshot && activeHub && !activeBoard && <div className="kb-empty"><h2>Create your first board</h2><p>Boards hold a workflow and their tasks inside this Hub.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewBoard(true)}>Create board</button></div>}
