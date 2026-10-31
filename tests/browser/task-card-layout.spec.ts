@@ -6,14 +6,16 @@ test('keeps the project label and attention dots hoverable while the card still 
   await page.goto(HARNESS + '?scenario=activity');
   await page.waitForSelector('.kb-card');
   const hits = await page.evaluate(() => {
-    const project = document.querySelector('[data-task-id="long-0"] .kb-card-project')!;
-    const projectRect = project.getBoundingClientRect();
-    const dot = document.querySelector('[data-task-id="long-3"] .kb-dot')!;
-    const dotRect = dot.getBoundingClientRect();
     const at = (x: number, y: number) => String(document.elementFromPoint(x, y)?.className ?? document.elementFromPoint(x, y)?.tagName ?? '');
+    const hit = (selector: string) => {
+      const element = document.querySelector(selector)!;
+      element.scrollIntoView({ block: 'center' });
+      const rect = element.getBoundingClientRect();
+      return at(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    };
     return {
-      project: at(projectRect.left + projectRect.width / 2, projectRect.top + projectRect.height / 2),
-      dot: at(dotRect.left + dotRect.width / 2, dotRect.top + dotRect.height / 2),
+      project: hit('[data-task-id="long-0"] .kb-card-project'),
+      dot: hit('[data-task-id="long-3"] .kb-dot'),
     };
   });
   expect(hits.project).toContain('kb-card-project');

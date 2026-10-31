@@ -7,6 +7,7 @@ export interface OperationDescription {
   facts: OperationFact[];
   retry: boolean;
   return: boolean;
+  force: boolean;
   retryLabel: string;
   returnLabel: string;
 }
@@ -46,6 +47,7 @@ export function describeOperation(task: Task, operation: ContextOperation): Oper
   if (failed) detail = failedPhase === 'failed'
     ? 'The operation stopped before completion. Review what completed before retrying.'
     : 'The operation stopped during ' + failedPhase + '. Review what completed before retrying.';
+  else if (operation.phase === 'queued') detail = 'Queued after the other destructive operations.';
   else if (operation.phase === 'waiting') detail = 'Waiting for every conversation to become idle.';
   else if (operation.phase === 'preflight') detail = 'Checking the task context and permissions.';
   else if (operation.phase === 'git') detail = operation.request.kind === 'create' || operation.request.kind === 'attach'
@@ -81,8 +83,9 @@ export function describeOperation(task: Task, operation: ContextOperation): Oper
     title,
     detail,
     facts,
-    retry: operation.phase === 'waiting' || failed,
+    retry: operation.phase === 'queued' || operation.phase === 'waiting' || failed,
     return: failed && operation.request.kind !== 'return' && !archivingStarted(operation),
+    force: failed && (operation.request.kind === 'delete' || operation.request.kind === 'remove') && operation.error?.code === 'SHARED_WORKTREE',
     retryLabel: operation.request.kind === 'delete' ? 'Retry deletion' : 'Retry ' + label.toLowerCase(),
     returnLabel: 'Return chats to project',
   };

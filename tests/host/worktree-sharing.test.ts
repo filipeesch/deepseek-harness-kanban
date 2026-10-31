@@ -99,4 +99,29 @@ describe('WorktreeSharingGuard', () => {
     const guard = new WorktreeSharingGuard(store([task()], f.root), sessions);
     await expect(guard.assertExclusive('task', f.root)).rejects.toThrow('topology unavailable');
   });
+
+  it('collects every blocker, keeping the legacy detail fields', async () => {
+    const f = await fixture();
+    const other = task({ id: 'other', title: 'Other task', worktree: { path: f.root, branch: 'other', owned: true, status: 'ready' } });
+    const extra = task({ id: 'second', title: 'Second task', worktree: { path: path.join(f.root, 'sub'), branch: 'second', owned: true, status: 'ready' } });
+    const sessions: SessionTopologyPort = { topology: vi.fn(async () => ({ related: [{ sessionId: 'outside', directory: path.join(f.root, 'sub') }], lineage: [] })) };
+    const guard = new WorktreeSharingGuard(store([task(), other, extra], f.root), sessions);
+    const failure = await guard.assertExclusive('task', f.root).catch(error => error);
+    expect(failure.details.blockers).toEqual([
+      { kind: 'task', taskId: 'other', title: 'Other task', path: f.root },
+      { kind: 'task', taskId: 'second', title: 'Second task', path: path.join(f.root, 'sub') },
+      { kind: 'session', sessionId: 'outside', path: path.join(f.root, 'sub') },
+    ]);
+    expect(failure.details.taskId).toBe('other');
+    expect(failure.details.sessionId).toBe('outside');
+  });
+
+  it('skips the sharing refusal under force without reading topology', async () => {
+    const f = await fixture();
+    const other = task({ id: 'other', title: 'Other task', worktree: { path: f.root, branch: 'other', owned: true, status: 'ready' } });
+    const topology = vi.fn(async () => ({ related: [{ sessionId: 'outside', directory: f.root }], lineage: [] }));
+    const guard = new WorktreeSharingGuard(store([task(), other], f.root), { topology });
+    await expect(guard.assertExclusive('task', f.root, { force: true })).resolves.toBeUndefined();
+    expect(topology).not.toHaveBeenCalled();
+  });
 });

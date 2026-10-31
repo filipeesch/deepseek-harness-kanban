@@ -1,6 +1,6 @@
 import React, { useId, useState } from 'react';
 import type { ClientApi, CreateWorktree, Project, Task } from '../shared/types.js';
-import { asProblem, ErrorNotice, useAction, type RunCommand } from './ui.js';
+import { asProblem, ErrorNotice, ProblemNotice, useAction, type RunCommand } from './ui.js';
 import { taskTitleSlug } from '../shared/worktree-name.js';
 import { cleanWorktree, validWorktree, type WorktreeDraft } from './worktree-draft.js';
 
@@ -61,8 +61,12 @@ export function GitPanel({ task, project, api, run, worktreeBasePath, draft }: {
         </div>
       </div>}
       {stateLabel === 'creating' && <div className="kb-git-card-body"><p className="kb-git-progress" role="status">Creating worktree…</p><p className="kb-hint">The task conversations will move to the checkout once it is ready.</p></div>}
+      {stateLabel === 'error' && tree && <div className="kb-git-card-body"><div className="kb-git-card-actions">
+        {!confirmRemove ? <button type="button" className="kb-button kb-button-danger-quiet" disabled={blocked || action.pending} onClick={() => setConfirmRemove(true)}>{tree.error?.code === 'WORKTREE_REMOVED' ? 'Clear removed checkout' : 'Remove worktree'}</button> : <div className="kb-inline-confirm"><p>Clear the failed binding at <code>{tree.path}</code>? The task and branch are kept.</p><div className="kb-actions"><button type="button" className="kb-button" disabled={action.pending} onClick={() => setConfirmRemove(false)}>Cancel</button><button type="button" className="kb-button kb-danger" disabled={action.pending} onClick={() => void remove()}>{action.pending ? 'Clearing…' : 'Confirm worktree removal'}</button></div></div>}
+      </div></div>}
       {(stateLabel === 'none' || stateLabel === 'error') && <div className="kb-git-card-body">
-        {stateLabel === 'error' && <div className="kb-callout kb-callout-danger" role="alert"><strong>Worktree setup failed</strong><p>Review the error and retry, or attach an existing checkout.</p></div>}
+        {stateLabel === 'error' && <div className="kb-callout kb-callout-danger" role="alert"><strong>{tree?.error?.code === 'WORKTREE_REMOVED' ? 'Checkout removed externally' : 'Worktree setup failed'}</strong><p>Review the error and retry, or attach an existing checkout.</p></div>}
+        <ProblemNotice problem={tree?.error ?? null} title="Worktree binding needs attention" />
         <div className="kb-segmented" role="group" aria-label="Worktree setup mode">
           <button type="button" className={'kb-segment' + (createMode === 'create' ? ' is-active' : '')} aria-pressed={createMode === 'create'} onClick={() => setCreateMode('create')}>Create new</button>
           <button type="button" className={'kb-segment' + (createMode === 'attach' ? ' is-active' : '')} aria-pressed={createMode === 'attach'} aria-label="Attach existing worktree" onClick={() => setCreateMode('attach')}>Attach existing</button>

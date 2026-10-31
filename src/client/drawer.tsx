@@ -27,6 +27,7 @@ interface DrawerProps {
   onClose: () => void;
   onMove: (task: Task, column: Column, beforeTaskId?: string | null) => Promise<boolean>;
   onDanger: (task: Task, type: 'task.delete' | 'worktree.remove') => void;
+  onForce?: (taskId: string) => void;
   viewState?: TaskPageState; sessionTitles?: SessionTitles;
   /** Lease scope for this drawer; omitted only by isolated render harnesses. */
   conversationLeases?: ConversationLeaseEnvironment;
@@ -42,7 +43,7 @@ const DRAWER_DEFAULT_WIDTH = 620;
 function clampWidth(value: number): number { const max = Math.max(360, (typeof window === 'undefined' ? 1200 : window.innerWidth) * 0.9); return Math.min(Math.max(value, 360), max); }
 function storedWidth(): number { try { const value = Number(window.localStorage.getItem(DRAWER_WIDTH_KEY)); if (Number.isFinite(value) && value > 0) return clampWidth(value === 560 ? DRAWER_DEFAULT_WIDTH : value); } catch { /* storage is optional */ } return clampWidth(DRAWER_DEFAULT_WIDTH); }
 
-export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAttention, state, api, run, autoRun, renderConversation, onClose, onMove, onDanger, viewState, sessionTitles, conversationLeases, lineage, peek: controlledPeek, onPeek, entering = false, closing = false }: DrawerProps) {
+export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAttention, state, api, run, autoRun, renderConversation, onClose, onMove, onDanger, onForce, viewState, sessionTitles, conversationLeases, lineage, peek: controlledPeek, onPeek, entering = false, closing = false }: DrawerProps) {
   const [localViewState] = useState(createTaskPageState); const preferences = viewState ?? localViewState;
   const [section, setSection] = usePageField(preferences, 'section'); const id = useId(); const close = useRef<HTMLButtonElement>(null);
   const [localPeek, setLocalPeek] = useState<DrawerSubagentAddress | null>(null);
@@ -104,7 +105,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
       <button ref={close} type="button" className="kb-button kb-icon-button" aria-label="Close task details" title="Close task details" onClick={onClose}><CloseIcon size={16} /></button>
     </div></header>
     {(task.operation || task.pendingTransition) && <div className="kb-status-stack">
-      <OperationStatus task={task} run={run} sessionTitles={sessionTitles} />
+      <OperationStatus task={task} run={run} sessionTitles={sessionTitles} {...(onForce ? { onForce } : {})} />
       <PendingTransitionStatus task={task} run={run} columnName={state.workflow.columns.find(column => column.id === task.pendingTransition?.columnId)?.name ?? task.pendingTransition?.columnId ?? ''} />
     </div>}
     <div className="kb-drawer-toolbar"><Tabs label="Task sections" values={sections} selected={section} onSelect={value => setSection(value as DrawerSection)} id={id} /><label className="kb-stage-compact"><span className="kb-sr">Move task to</span><select className="kb-input kb-stage-select" aria-label="Move task to" aria-describedby={id + '-stage-hint'} value={movingTo ?? task.columnId} disabled={blocked || movingTo !== null} onChange={event => { const column = state.workflow.columns.find(value => value.id === event.target.value); if (column && column.id !== task.columnId) void moveTo(column); }}>{destinations.map(({ column, access }) => <option key={column.id} value={column.id} className={access === 'restricted' ? 'kb-stage-option-restricted' : undefined} aria-label={access === 'restricted' ? column.name + ', requires confirmation' : undefined}>{column.name}</option>)}</select></label><span className="kb-sr" id={id + '-stage-hint'}>Stages that this workflow does not permit require confirmation before moving.</span></div>

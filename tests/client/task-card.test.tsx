@@ -114,11 +114,19 @@ describe('task card status strip', () => {
   it('shows a failure-toned operation status', () => {
     const { card } = setup({ task: { ...baseTask, operation: failedOperation } });
     const line = card.querySelector('.kb-card-status-line')!;
-    expect(line.textContent).toBe('Operation failed');
+    expect(line.textContent).toBe('Deletion needs attention');
     expect(line.className).toContain('is-danger');
     expect(line.querySelector('svg')).toBeTruthy();
   });
 
+
+  it('keeps generic copy for non-destructive operations', () => {
+    const create: ContextOperation = { ...failedOperation, id: 'create-op', request: { kind: 'create', mode: 'new', path: '/tree', branchName: 'feature' }, phase: 'preflight' };
+    const { card } = setup({ task: { ...baseTask, operation: create } });
+    const line = card.querySelector('.kb-card-status-line')!;
+    expect(line.textContent).toBe('Operation: preflight');
+    expect(line.className).toContain('is-pending');
+  });
   it('shows a pending-toned transition status', () => {
     const { card } = setup({ task: { ...baseTask, pendingTransition: { id: 'p', fromColumnId: 'intake', columnId: 'doing', mode: 'move', status: 'waiting' } } });
     const line = card.querySelector('.kb-card-status-line')!;

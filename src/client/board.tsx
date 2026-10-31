@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Board, ClientApi, Column, ColumnGroup, Command, KanbanSnapshot, Problem, Task, Workflow } from '../shared/types.js';
 import { EMPTY_ATTENTION } from '../shared/types.js';
-import { isGitProject } from '../shared/project.js';
 import { NewTaskDialog } from './forms.js';
 import { Configuration } from './settings/configuration.js';
 import { DirectoryPickerProvider } from './services.js';
@@ -21,7 +20,11 @@ import { asProblem } from './ui.js';
 import { adviseCommandFailure } from './command-failure.js';
 import { BoardNotices } from './board-notices.js';
 import { styles } from './styles.js';
-import { BulkDeleteDialog, BulkResultDialog, DeleteTaskDialog, DiscardDialog, type BulkDeletionResult, type BulkProgress, type DestructiveRequest } from './destructive-dialogs.js';
+import { DeleteTaskDialog, DiscardDialog, RemoveWorktreeDialog, type DestructiveRequest } from './destructive-dialogs.js';
+import { BulkDeleteDialog, BulkResultDialog, type BulkDeletionResult, type BulkProgress } from './bulk-delete-dialogs.js';
+import { ForceRemovalDialog } from './force-removal-dialog.js';
+import { useDestructiveOperations } from './destructive-operations.js';
+import { DestructiveOperationsNotice } from './destructive-notices.js';
 import { CheckSquareIcon, PlusIcon, SettingsIcon, TrashIcon } from './icons.js';
 import { useCardDrag } from './useCardDrag.js';
 import { TaskCard } from './task-card.js';
@@ -62,13 +65,14 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   const [loadError, setLoadError] = useState<Problem | null>(null); const [loadAttempt, setLoadAttempt] = useState(0);
   const [search, setSearch] = usePageField(preferences, 'search'); const [projectFilter, setProjectFilter] = usePageField(preferences, 'projectFilter'); const [selectedId, setSelectedId] = usePageField(preferences, 'selectedTaskId');
   const [newTask, setNewTask] = useState(false); const [newHub, setNewHub] = useState(false); const [newBoard, setNewBoard] = useState(false); const [configuration, setConfiguration] = useState<string | null>(null);
-  const [destruction, setDestruction] = useState<DestructiveRequest | null>(null); const [destructionStarted, setDestructionStarted] = useState(false); const [discard, setDiscard] = useState<DestructiveRequest | null>(null); const [destructionError, setDestructionError] = useState<Problem | null>(null); const [destructionPending, setDestructionPending] = useState(false); const [actionError, setActionError] = useState<Problem | null>(null);
+  const [actionError, setActionError] = useState<Problem | null>(null);
   const [selectionMode, setSelectionMode] = useState(false); const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [retainedCheckout, setRetainedCheckout] = useState<string | null>(null);
   const [batchConfirm, setBatchConfirm] = useState(false); const [batchPending, setBatchPending] = useState(false); const [batchTasks, setBatchTasks] = useState<Task[]>([]); const [batchProgress, setBatchProgress] = useState<BulkProgress | null>(null); const [batchResult, setBatchResult] = useState<BulkDeletionResult | null>(null);
   const [drawerEntering, setDrawerEntering] = useState(false);
   const [drawerClosing, setDrawerClosing] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const discardRequest = useRef<((request: DestructiveRequest) => void) | undefined>(undefined);
   const restoreFocus = useRef<string | null>(null);
   const boardBody = useRef<HTMLDivElement>(null);
 
@@ -109,7 +113,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     catch (error) {
       const advice = adviseCommandFailure({ command: scoped, problem: asProblem(error), task: invokedTask, priorOperation: priorOperation ?? undefined, allowDiscard });
       if (advice.notice) setActionError(advice.notice);
-      if (advice.discard) setDiscard(advice.discard);
+      if (advice.discard) discardRequest.current?.(advice.discard);
       throw error;
     }
   }, [api, accept, activeHub?.id, activeBoard?.id, snapshot?.state.hubs.length, activeHub?.boards.length]);
@@ -134,18 +138,20 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   }
   const moveRequest = useMoveRequest({ state: state ?? null, run, onImmediateError: error => setActionError(asProblem(error)), onMoved: armAfterMove });
   const { optimistic, confirmation, pending: movePending, error: moveError, canRetry, confirm: confirmMove, cancel: cancelMove } = moveRequest;
+  const destructive = useDestructiveOperations({
+    run: (command, allowDiscard) => run(command, allowDiscard),
+    tasks: () => latest.current ? allTasks(latest.current) : [],
+    retained: setRetainedCheckout,
+    closed: taskId => { if (selectedId === taskId) setSelectedId(null); },
+  });
+  discardRequest.current = destructive.openDiscard;
+  useEffect(() => { destructive.reconcile(state?.tasks ?? []); }, [state?.tasks, destructive.reconcile]);
   useEffect(() => {
-    if (!destruction) return;
-    const task = state?.tasks.find(value => value.id === destruction.taskId);
-    if (!task) {
-      setDestruction(null); setDestructionError(null); setDestructionStarted(false);
-      if (destruction.command.type === 'task.delete') setSelectedId(null);
-      return;
-    }
-    if (destructionStarted && !task.operation) {
-      setDestruction(null); setDestructionError(null); setDestructionStarted(false);
-    }
-  }, [state, destruction, destructionStarted]);
+    const view = destructive.state.view;
+    if (!view || destructive.state.pending) return;
+    const task = state?.tasks.find(value => value.id === view.request.taskId);
+    if (!task) destructive.close();
+  }, [state, destructive.state.view, destructive.state.pending, destructive.close]);
   function clearCloseTimer() { if (closeTimer.current !== undefined) { clearTimeout(closeTimer.current); closeTimer.current = undefined; } }
   function finishClose() {
     restoreFocus.current = selectedId;
@@ -199,69 +205,8 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   }});
 
   function requestDanger(task: Task, type: 'task.delete' | 'worktree.remove') {
-    setActionError(null); setDestructionError(null); setDestructionStarted(false);
-    const project = state?.projects.find(value => value.id === task.projectId);
-    setDestruction({
-      command: { type, taskId: task.id, confirmed: true, expectedWorktreePath: task.worktree?.path ?? null },
-      taskId: task.id, title: task.title, path: task.worktree?.path ?? null,
-      expectedWorktreePath: task.worktree?.path ?? null,
-      branch: task.worktree?.branch ?? null, owned: task.worktree?.owned,
-      ...(project !== undefined && !isGitProject(project) && task.worktree !== null ? { plainCheckout: true } : {}),
-    });
-  }
-  function runDestruction(request: DestructiveRequest, command: Command = request.command) {
-    const task = latest.current ? allTasks(latest.current).find(value => value.id === request.command.taskId) : undefined;
-    if (!task || (task.worktree?.path ?? null) !== request.expectedWorktreePath) return Promise.reject({ code: 'CONTEXT_CHANGED', message: 'The task worktree changed while confirmation was open. Cancel and review the current target before trying again.' });
-    return run(command);
-  }
-  async function confirmDestruction() {
-    if (!destruction || destructionPending) return;
-    const request = destruction;
-    setDestructionPending(true); setDestructionError(null);
-    try {
-      const result = await runDestruction(request);
-      const normalizedResult = normalizeSnapshot(result); const current = normalizedResult.state.hubs.flatMap(hub => hub.tasks).find(task => task.id === request.taskId);
-      if (current?.operation) { setDestructionStarted(true); return; }
-      if (!current && request.command.type === 'task.delete' && request.plainCheckout === true && request.path !== null) setRetainedCheckout(request.path);
-      setDestruction(null);
-      if (!current && request.command.type === 'task.delete') setSelectedId(null);
-    } catch (error) {
-      const problem = asProblem(error);
-      if (problem.code === 'DISCARD_REQUIRED') { setDestruction(null); setDestructionStarted(false); setDiscard({ ...request, error: problem }); }
-      else setDestructionError(problem);
-    } finally { setDestructionPending(false); }
-  }
-  async function retryDestruction() {
-    if (!destruction || destructionPending) return;
-    const request = destruction;
-    setDestructionPending(true); setDestructionError(null);
-    try {
-      const result = await run({ type: 'operation.retry', taskId: request.taskId });
-      const normalizedResult = normalizeSnapshot(result); const current = normalizedResult.state.hubs.flatMap(hub => hub.tasks).find(task => task.id === request.taskId);
-      if (current?.operation) { setDestructionStarted(true); return; }
-      if (!current && request.command.type === 'task.delete' && request.plainCheckout === true && request.path !== null) setRetainedCheckout(request.path);
-      setDestruction(null);
-      if (!current && request.command.type === 'task.delete') setSelectedId(null);
-    } catch (error) {
-      const problem = asProblem(error);
-      if (problem.code === 'DISCARD_REQUIRED') { setDestruction(null); setDestructionStarted(false); setDiscard({ ...request, error: problem }); }
-      else setDestructionError(problem);
-    } finally { setDestructionPending(false); }
-  }
-  async function returnDestruction() {
-    if (!destruction || destructionPending) return;
-    const request = destruction;
-    setDestructionPending(true); setDestructionError(null);
-    try {
-      const result = await run({ type: 'operation.return', taskId: request.taskId });
-      const normalizedResult = normalizeSnapshot(result); const current = normalizedResult.state.hubs.flatMap(hub => hub.tasks).find(task => task.id === request.taskId);
-      if (current?.operation) { setDestructionStarted(true); return; }
-      if (!current && request.command.type === 'task.delete' && request.plainCheckout === true && request.path !== null) setRetainedCheckout(request.path);
-      setDestruction(null);
-      if (!current && request.command.type === 'task.delete') setSelectedId(null);
-    }
-    catch (error) { setDestructionError(asProblem(error)); }
-    finally { setDestructionPending(false); }
+    setActionError(null);
+    destructive.open(task, state?.projects.find(value => value.id === task.projectId), type);
   }
 
   const selectedTasks = state?.tasks.filter(task => selectedIds.has(task.id)) ?? [];
@@ -286,7 +231,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     if (batchPending) return;
     const tasks = latest.current ? allTasks(latest.current) : [];
     const total = batchTasks.length || selectedIds.size;
-    const skipped: Array<{ title: string; message: string }> = []; let deleted = 0; let current = 0;
+    const skipped: Array<{ title: string; message: string }> = []; let queued = 0; let current = 0;
     setBatchPending(true); setActionError(null); setBatchProgress(null);
     for (const taskId of [...selectedIds]) {
       current += 1;
@@ -295,15 +240,15 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       setBatchProgress({ current, total, title: task.title });
       try {
         await run({ type: 'task.delete', taskId, confirmed: true, expectedWorktreePath: task.worktree?.path ?? null, requireIdle: true }, false);
-        deleted += 1;
+        queued += 1;
         setSelectedIds(previous => { const next = new Set(previous); next.delete(taskId); return next; });
       } catch (error) {
         skipped.push({ title: task.title, message: asProblem(error).message });
       }
     }
     setBatchPending(false); setBatchProgress(null); setBatchConfirm(false);
-    if (skipped.length > 0) setBatchResult({ deleted, skipped });
-    else { setBatchResult(null); exitSelection(); }
+    setBatchResult({ queued, skipped });
+    if (skipped.length === 0) exitSelection();
   }
 
   function renderCard(task: Task, column: Column) {
@@ -348,19 +293,26 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     />
   </header>
     {configuration && <Configuration key={configuration} state={state ?? null} hub={activeHub ?? null} board={activeBoard ?? null} hubCount={snapshot?.state.hubs.length ?? 1} settings={snapshot?.state.settings} settingsRevision={snapshot?.state.settings?.revision ?? 0} run={run} api={api} initial={configuration} onClose={() => setConfiguration(null)} onHubDeleted={() => { setConfiguration(null); setActiveHubIdState(null); writeStorage(ACTIVE_HUB_KEY, null); }} onBoardDeleted={() => { setConfiguration(null); }} onBoardCreated={id => { selectBoard(activeHub!.id, id); setConfiguration(null); }} />}
-    <BoardNotices loadError={loadError} actionError={actionError} onRetryLoad={() => setLoadAttempt(value => value + 1)} />{retainedCheckout !== null && <p className="kb-hint" role="status">Task deleted. The checkout at <code>{retainedCheckout}</code> was left on disk.<button type="button" className="kb-button" onClick={() => setRetainedCheckout(null)}>Dismiss</button></p>}{!snapshot && !loadError && <p className="kb-empty" role="status">Loading Kanban…</p>}{snapshot && !activeHub && <div className="kb-empty"><h2>No Hub available</h2><p>Create a Hub to continue.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewHub(true)}>Create Hub</button></div>}{snapshot && activeHub && !activeBoard && <div className="kb-empty"><h2>Create your first board</h2><p>Boards hold a workflow and their tasks inside this Hub.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewBoard(true)}>Create board</button></div>}
+    <BoardNotices loadError={loadError} actionError={actionError} onRetryLoad={() => setLoadAttempt(value => value + 1)} />{state && <DestructiveOperationsNotice tasks={state.tasks} retained={retainedCheckout} onDismissRetained={() => setRetainedCheckout(null)} onOpen={openTask} onRetry={taskId => void destructive.retryTask(taskId)} onForce={destructive.openForce} onReturn={taskId => { void run({ type: 'operation.return', taskId }).catch(error => setActionError(asProblem(error))); }} />}{!snapshot && !loadError && <p className="kb-empty" role="status">Loading Kanban…</p>}{snapshot && !activeHub && <div className="kb-empty"><h2>No Hub available</h2><p>Create a Hub to continue.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewHub(true)}>Create Hub</button></div>}{snapshot && activeHub && !activeBoard && <div className="kb-empty"><h2>Create your first board</h2><p>Boards hold a workflow and their tasks inside this Hub.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewBoard(true)}>Create board</button></div>}
     {state && <><div className="kb-page-body" ref={boardBody} onPointerDown={onBoardPointerDown}>{state.projects.length === 0 && <div className="kb-empty"><h2>Add your first project</h2><p>Register a project folder, and its Git root when it is a repository, to create tasks.</p><button type="button" className="kb-button kb-primary" onClick={() => setConfiguration('Projects')}>Configure projects</button></div>}
       <div className="kb-columns" aria-label="Workflow columns">{columnLayout(state.workflow).map(slot => <section key={slot.key} className={'kb-column-slot ' + (slot.group ? 'kb-column-group' : '')} aria-label={slot.group?.name}>{slot.group && <h2 className="kb-group-heading">{slot.group.name}</h2>}{slot.columns.map(column => { const tasks = tasksForColumn(column.id); const restricted = Boolean(drag && drag.overColumnId === column.id && transitionAccess(state.workflow, drag.sourceColumnId, column.id) === 'restricted');
         return <section className={'kb-column' + (restricted ? ' kb-drop-restricted' : '')} key={column.id} aria-label={column.name + ' column'} data-column-id={column.id}><header className="kb-column-header"><h2>{column.name}</h2><span aria-label={tasks.length + ' tasks'}>{tasks.length}</span></header>{column.id === state.workflow.initialColumnId && renderNewTaskButton(column)}<div className="kb-card-list">{tasks.map(task => renderCard(task, column))}{drag?.overColumnId === column.id && <div className={'kb-drop-indicator' + (restricted ? ' kb-drop-indicator-restricted' : '')} style={{ top: drag.indicatorY }} aria-hidden="true" />}{tasks.length === 0 && <p className="kb-empty-column">No matching tasks</p>}</div></section>; })}</section>)}</div></div>
-      {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} conversationAttention={snapshot?.conversationAttention} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} sessionTitles={sessionTitles} {...(conversationLeases === undefined ? {} : { conversationLeases })} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} lineage={lineage} />}
+      {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} conversationAttention={snapshot?.conversationAttention} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} onForce={destructive.openForce} sessionTitles={sessionTitles} {...(conversationLeases === undefined ? {} : { conversationLeases })} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} lineage={lineage} />}
 
     {newTask && state && <NewTaskDialog state={state} run={run} onClose={() => setNewTask(false)} onCreated={openTask} />}
-    {destruction && (() => {
-      const task = state.tasks.find(value => value.id === destruction.taskId);
+    {destructive.state.view && (() => {
+      const view = destructive.state.view;
+      const task = state.tasks.find(value => value.id === view.request.taskId);
       if (!task) return null;
-      return <DeleteTaskDialog request={destruction} task={task} project={state.projects.find(value => value.id === task.projectId)} attention={snapshot?.attention[task.id] ?? EMPTY_ATTENTION} sessionTitles={sessionTitles} pending={destructionPending} problem={destructionError} onCancel={() => { setDestruction(null); setDestructionError(null); setDestructionStarted(false); }} onConfirm={() => void confirmDestruction()} onRetry={() => void retryDestruction()} onReturn={() => void returnDestruction()} />;
+      if (view.kind === 'force') return <ForceRemovalDialog key={'force-' + task.id} request={view.request} blockers={view.blockers} sessionTitles={sessionTitles} pending={destructive.state.pending} problem={destructive.state.error} onCancel={destructive.close} onConfirm={destructive.confirmForce} />;
+      if (view.kind === 'discard') return <DiscardDialog key={'discard-' + task.id} request={view.request} run={command => {
+        const current = latest.current ? allTasks(latest.current).find(value => value.id === view.request.taskId) : undefined;
+        if (!current || (current.worktree?.path ?? null) !== view.request.expectedWorktreePath) return Promise.reject({ code: 'CONTEXT_CHANGED', message: 'The task worktree changed while confirmation was open. Cancel and review the current target before trying again.' });
+        return run(command, false);
+      }} onClose={destructive.close} onDeleted={() => setSelectedId(null)} />;
+      const Dialog = view.request.command.type === 'task.delete' ? DeleteTaskDialog : RemoveWorktreeDialog;
+      return <Dialog request={view.request} task={task} project={state.projects.find(value => value.id === task.projectId)} attention={snapshot?.attention[task.id] ?? EMPTY_ATTENTION} sessionTitles={sessionTitles} pending={destructive.state.pending} problem={destructive.state.error} onCancel={destructive.close} onConfirm={destructive.confirm} onRetry={destructive.retry} onReturn={destructive.returnToBase} onForce={() => destructive.openForce(task.id)} />;
     })()}
-    {discard && <DiscardDialog key={discard.command.type + discard.command.taskId} request={discard} run={command => runDestruction(discard, command)} onClose={() => setDiscard(null)} onDeleted={() => setSelectedId(null)} />}
     {batchConfirm && <BulkDeleteDialog tasks={batchTasks} attention={snapshot?.attention ?? {}} pending={batchPending} progress={batchProgress} onCancel={() => { if (!batchPending) setBatchConfirm(false); }} onConfirm={() => void deleteSelected()} />}
     {batchResult && <BulkResultDialog result={batchResult} onClose={() => setBatchResult(null)} />}
     </>}

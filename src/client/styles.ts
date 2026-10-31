@@ -73,6 +73,14 @@ export const styles = String.raw`
 .dsh-kanban .kb-selection-count{font-size:13px;font-weight:600;padding:0 4px}
 .dsh-kanban .kb-batch-list{max-height:220px;overflow:auto;margin:0;padding-left:20px;font-size:13px}
 .dsh-kanban .kb-batch-list li{margin:3px 0;overflow-wrap:anywhere}
+.dsh-kanban .kb-destructive-notice{display:flex;flex-direction:column;gap:8px;margin:8px 0;padding:10px 14px;border:1px solid var(--kb-line);border-radius:8px;background:var(--kb-soft);font-size:13px}
+.dsh-kanban .kb-destructive-row{display:flex;flex-direction:column;gap:6px;padding:6px 0;border-top:1px solid var(--kb-line)}
+.dsh-kanban .kb-destructive-row:first-child{border-top:0;padding-top:0}
+.dsh-kanban .kb-destructive-row-failed{border-left:3px solid var(--color-destructive,#c53030);padding-left:10px}
+.dsh-kanban .kb-destructive-row .kb-batch-list{max-height:120px}
+.dsh-kanban .kb-destructive-row .kb-actions{flex-wrap:wrap;gap:6px}
+.dsh-kanban .kb-link-button{padding:0;border:0;background:none;color:inherit;font:inherit;text-decoration:underline;cursor:pointer}
+.dsh-kanban .kb-link-button:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:2px}
 .dsh-kanban .kb-drawer-header-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
 .dsh-kanban .kb-drawer-toolbar{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--kb-line);flex-shrink:0}
 .dsh-kanban .kb-drawer-toolbar .kb-tabs{flex:1;border-bottom:0;padding:0 4px 0 12px}

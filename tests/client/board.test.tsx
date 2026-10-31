@@ -459,12 +459,12 @@ describe('Git controls and destructive actions', () => {
     command.mockImplementationOnce(() => gate.promise);
     command.mockRejectedValueOnce({ code: 'TASK_BUSY', message: 'Wait for Beta.' });
     await user.click(within(dialog).getByRole('button', { name: 'Delete selected' }));
-    expect(await screen.findByText('Deleting 1 of 2: Alpha task')).toBeTruthy();
+    expect(await screen.findByText('Queueing 1 of 2: Alpha task')).toBeTruthy();
     const next = get(); next.sequence += 1; next.state.tasks = next.state.tasks.filter(task => task.id !== 't1');
     act(() => { publish(next); });
     gate.resolve(next);
     const result = await screen.findByRole('dialog', { name: 'Deletion results' });
-    expect(within(result).getByText('1 task deleted.')).toBeTruthy();
+    expect(within(result).getByText('1 task queued for deletion.')).toBeTruthy();
     expect(within(result).getByText(/Wait for Beta/)).toBeTruthy();
   });
 
@@ -510,7 +510,7 @@ describe('Git controls and destructive actions', () => {
     command.mockRejectedValueOnce({ code: 'TASK_BUSY', message: 'Wait for Alpha.' });
     await user.click(within(dialog).getByRole('button', { name: 'Delete selected' }));
     const result = await screen.findByRole('dialog', { name: 'Deletion results' });
-    expect(within(result).getByText('1 task deleted.')).toBeTruthy();
+    expect(within(result).getByText('1 task queued for deletion.')).toBeTruthy();
     expect(screen.getByText(/Wait for Alpha/)).toBeTruthy();
     expect(screen.getByText('1 selected')).toBeTruthy();
     expect(command).toHaveBeenCalledWith({ type: 'task.delete', taskId: 't1', confirmed: true, expectedWorktreePath: null, requireIdle: true });
