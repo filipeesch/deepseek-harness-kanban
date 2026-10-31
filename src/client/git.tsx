@@ -26,7 +26,27 @@ export function WorktreeFields({ value, onChange, branches, disabled = false, ca
 export function PendingTransitionStatus({ task, run, columnName }: { task: Task; run: RunCommand; columnName: string }) {
   const action = useAction(run); const transition = task.pendingTransition;
   if (!transition) return null;
-  return <div className="kb-operation" aria-live="polite"><p role="status">{transition.status === 'sending' ? 'Sending the confirmed workflow instruction.' : transition.status === 'failed' ? 'The confirmed workflow action needs attention.' : 'The confirmed workflow action is waiting for the worktree context.'}</p><p className="kb-hint">Destination: {columnName}. {transition.mode === 'run' ? 'The entry instruction was explicitly approved.' : 'Move only; no agent instruction will run.'}</p><ErrorNotice problem={transition.error ?? null} /><ErrorNotice problem={action.error} />{!task.operation && transition.status !== 'sending' && <div className="kb-actions"><button className="kb-button" disabled={action.pending} onClick={() => void action.execute({ type: 'operation.retry', taskId: task.id })}>Retry confirmed action</button><button className="kb-button" disabled={action.pending} onClick={() => void action.execute({ type: 'operation.return', taskId: task.id })}>Cancel action and return to base</button></div>}</div>;
+  const automatic = transition.origin === 'auto';
+  const status = transition.status === 'sending'
+    ? (automatic ? 'Sending the automatic workflow instruction.' : 'Sending the confirmed workflow instruction.')
+    : transition.status === 'failed'
+      ? (automatic ? 'The automatic advance needs attention.' : 'The confirmed workflow action needs attention.')
+      : (automatic ? 'The automatic advance is waiting to be dispatched.' : 'The confirmed workflow action is waiting for the worktree context.');
+  const explanation = automatic
+    ? 'The host advanced this task after a completed turn.'
+    : transition.mode === 'run' ? 'The entry instruction was explicitly approved.' : 'Move only; no agent instruction will run.';
+  const actionable = automatic ? transition.status === 'failed' : transition.status !== 'sending';
+  return <div className="kb-operation" aria-live="polite">
+    <p role="status">{status}</p>
+    <p className="kb-hint">Destination: {columnName}. {explanation}</p>
+    <ErrorNotice problem={transition.error ?? null} /><ErrorNotice problem={action.error} />
+    {!task.operation && actionable && <div className="kb-actions">
+      <button className="kb-button" disabled={action.pending} onClick={() => void action.execute({ type: 'operation.retry', taskId: task.id })}>{automatic ? 'Retry automatic advance' : 'Retry confirmed action'}</button>
+      {automatic
+        ? <button className="kb-button" disabled={action.pending} onClick={() => void action.execute({ type: 'operation.dismiss', taskId: task.id })}>Dismiss failed advance</button>
+        : <button className="kb-button" disabled={action.pending} onClick={() => void action.execute({ type: 'operation.return', taskId: task.id })}>Cancel action and return to base</button>}
+    </div>}
+  </div>;
 }
 
 function UnclaimedWorktreesNotice({ task }: { task: Task }) {

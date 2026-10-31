@@ -30,6 +30,21 @@ describe('Hub operations', () => {
     expect(() => operations.saveBoardWorkflow(hub, 'board', 'name: Empty\ninitial_column: done\ncolumns:\n  - id: done\n    label: Done\n', deps)).toThrowError(/orphan/);
   });
 
+  it('records auto-mode pauses only for the stage they were observed in and clears them on a move', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    hub.boards[0]!.workflow.columns.push({ id: 'done', name: 'Done' });
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Auto', description: '' }, deps);
+    operations.setAutoMode(hub, task.id, true, deps);
+    const pause = { reason: 'turn-error' as const, at: '2026-01-01T00:00:00.000Z' };
+    operations.pauseAutoMode(hub, task.id, pause, deps, 'done');
+    expect(hub.tasks[0]!.autoMode?.pause).toBeUndefined();
+    operations.pauseAutoMode(hub, task.id, pause, deps, 'backlog');
+    expect(hub.tasks[0]!.autoMode?.pause).toEqual(pause);
+    operations.placeTask(hub, task.id, 'done', null, 1);
+    expect(hub.tasks[0]!.autoMode?.pause).toBeUndefined();
+    expect(hub.tasks[0]!.autoMode?.enabled).toBe(true);
+  });
+
   it('creates a task in the board initial stage and preserves per-board positions', () => {
     const hub = sampleHub(); const deps = operationDeps();
     const first = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'First', description: '' }, deps);

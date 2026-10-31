@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { Board, BoardSettings, HubState, HubTask, KanbanMeta, KanbanState, Note, Project, ProjectInput, Workflow } from '../shared/types.js';
+import type { AutoModePause, Board, BoardSettings, HubState, HubTask, KanbanMeta, KanbanState, Note, Project, ProjectInput, Workflow } from '../shared/types.js';
 import type { HubStorage } from '../shared/ports.js';
 import { HubStateSchema, initialHubState, defaultHubState } from '../domain/hub-schema.js';
 import type { NoteInput, OperationDeps, TaskTextPatch } from '../domain/hub-operations.js';
@@ -409,6 +409,12 @@ export class HubStore {
   }
   async editTask(taskId: string, patch: TaskTextPatch, expectedRevision?: number): Promise<HubTask> {
     return this.transact(draft => operations.editTask(draft, taskId, patch, this.deps()), expectedRevision);
+  }
+  async setAutoMode(taskId: string, enabled: boolean): Promise<HubTask> {
+    return this.transact(draft => operations.setAutoMode(draft, taskId, enabled, this.deps()));
+  }
+  async pauseAutoMode(taskId: string, pause: AutoModePause, expectedColumnId?: string): Promise<HubTask> {
+    return this.transact(draft => operations.pauseAutoMode(draft, taskId, pause, this.deps(), expectedColumnId));
   }
   async addSession(taskId: string, sessionId: string): Promise<HubTask> {
     return this.transact(draft => operations.addSession(draft, taskId, sessionId, this.deps()));

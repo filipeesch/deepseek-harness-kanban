@@ -19,6 +19,16 @@ describe('persisted board schema', () => {
     expect(BoardStateSchema.safeParse({ ...initialState(), schemaVersion }).success).toBe(false);
   });
 
+  it('accepts the shared auto-mode and transition-origin fields on the legacy aggregate', () => {
+    const state = populatedState();
+    state.tasks[0]!.autoMode = { enabled: true, pause: { reason: 'turn-blocked', at: '2026-10-21T10:00:00.000Z' } };
+    state.tasks[0]!.pendingTransition = { id: 'p', fromColumnId: 'backlog', columnId: 'backlog', mode: 'move', status: 'waiting', origin: 'auto' };
+    const parsed = BoardStateSchema.safeParse(state);
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.tasks[0]!.autoMode?.pause?.reason).toBe('turn-blocked');
+    expect(parsed.success && parsed.data.tasks[0]!.pendingTransition?.origin).toBe('auto');
+  });
+
   it('rejects missing required fields and unknown top-level data instead of silently dropping it', () => {
     const state = initialState() as unknown as Record<string, unknown>;
     delete state.schemaVersion;

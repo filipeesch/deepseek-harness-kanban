@@ -11,7 +11,7 @@ import { createHarnessApi, type TestSnapshot } from './fake-api.js';
 import { themeFixture } from './theme-fixture.js';
 
 const scenario = new URLSearchParams(window.location.search).get('scenario') ?? 'board';
-const harness = createHarnessApi({ attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs', hubs: scenario === 'hubs' ? 2 : 1, restricted: scenario === 'move', persist: scenario === 'board', pending: scenario === 'appearance', detect: scenario === 'project-editor' ? 'git' : 'folder' });
+const harness = createHarnessApi({ attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs', hubs: scenario === 'hubs' ? 2 : 1, restricted: scenario === 'move', persist: scenario === 'board', pending: scenario === 'appearance', auto: scenario === 'auto', detect: scenario === 'project-editor' ? 'git' : 'folder' });
 (window as unknown as { __harness: unknown }).__harness = { commands: harness.commands, snapshot: harness.snapshot };
 
 function WorkflowScenario() {
@@ -73,6 +73,7 @@ function App() {
   if (scenario === 'hubs') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;
   if (scenario === 'appearance') return <><style>{themeFixture}</style><ThemeSync /><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></>;
   if (scenario === 'move') return <><style>{themeFixture}</style><ThemeSync /><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></>;
+  if (scenario === 'auto') return <><style>{themeFixture}</style><ThemeSync /><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></>;
   if (scenario === 'project-editor') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><ProjectEditorScenario /></div></>;
   if (scenario === 'native-composer') return <><style>{styles}</style><NativeComposerScenario /></>;
   if (scenario === 'workflow') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario /></div></>;

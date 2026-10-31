@@ -9,7 +9,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; detect?: 'git' | 'folder' }
+export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder' }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -43,6 +43,15 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
   } : {};
   const shortTask = tasks.find(value => value.id === 'short')!;
   if (options.pending) shortTask.pendingTransition = { id: 'pending-short', fromColumnId: 'propose', columnId: 'apply', mode: 'move', status: 'waiting' };
+  if (options.auto) {
+    tasks.find(value => value.id === 'long-0')!.autoMode = { enabled: true };
+    tasks.find(value => value.id === 'long-1')!.autoMode = { enabled: true, pause: { reason: 'turn-error', at: now } };
+    const failed = tasks.find(value => value.id === 'long-2')!;
+    failed.autoMode = { enabled: true };
+    failed.pendingTransition = { id: 'auto-failed', fromColumnId: 'explore', columnId: 'propose', mode: 'run', text: 'Plan this task.', sessionId: 's-long-2', status: 'failed', origin: 'auto', error: { code: 'SEND_FAILED', message: 'The instruction could not be sent.' } };
+    shortTask.autoMode = { enabled: true };
+    shortTask.pendingTransition = { id: 'auto-short', fromColumnId: 'propose', columnId: 'apply', mode: 'run', text: 'Plan this task.', sessionId: 's-short', status: 'waiting', origin: 'auto' };
+  }
   const hub: HubState = {
     id: 'hub', name: 'Harness Hub', revision: 1,
     projects: [
@@ -83,6 +92,14 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
           const result = applyRunInstruction({ schemaVersion: 2, revision: hub.revision, workflowYaml: board.workflowYaml, workflow: board.workflow, projects: hub.projects, tasks: hub.tasks, notes: hub.notes }, command);
           if (!result.ok) throw { code: result.code, message: result.message };
         }
+      }
+      if (command.type === 'operation.dismiss') {
+        const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);
+        if (task?.pendingTransition?.origin === 'auto' && task.pendingTransition.status === 'failed') delete task.pendingTransition;
+      }
+      if (command.type === 'task.autoMode') {
+        const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);
+        if (task) { if (command.enabled) task.autoMode = { enabled: true }; else delete task.autoMode; }
       }
       if (command.type === 'worktree.create') { const task = firstHub.tasks.find(item => item.id === command.taskId); if (task) { task.worktree = { path: command.path, branch: command.branchName, owned: true, status: 'ready' }; task.effectiveCwd = command.path; } }
       if (command.type === 'board.create') { const hub = value.state.hubs.find(item => item.id === command.hubId); if (hub) { const board = { id: 'board-' + (commands.length + 1), name: command.name, workflowYaml: workflowYaml(), workflow: structuredClone(firstBoard.workflow), createdAt: now, updatedAt: now }; hub.boards.push(board); receipt = { kind: 'board', id: board.id }; } }

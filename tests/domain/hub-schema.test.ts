@@ -52,4 +52,34 @@ describe('HubState schema', () => {
   it('rejects unknown top-level fields', () => {
     expect(HubStateSchema.safeParse({ ...hubWith(task()), extra: true }).success).toBe(false);
   });
+
+  it('accepts auto mode with and without a pause', () => {
+    expect(HubStateSchema.safeParse(hubWith(task({ autoMode: { enabled: true } }))).success).toBe(true);
+    expect(HubStateSchema.safeParse(hubWith(task({ autoMode: { enabled: true, pause: { reason: 'turn-error', at: now } } }))).success).toBe(true);
+    expect(HubStateSchema.safeParse(hubWith(task({ autoMode: { enabled: false } }))).success).toBe(true);
+  });
+
+  it('rejects an unknown auto-mode pause reason and extra auto-mode fields', () => {
+    const unknownReason = task({ autoMode: { enabled: true, pause: { reason: 'turn-unknown' as never, at: now } } });
+    expect(HubStateSchema.safeParse(hubWith(unknownReason)).success).toBe(false);
+    const extra = task({ autoMode: { enabled: true, extra: true } as never });
+    expect(HubStateSchema.safeParse(hubWith(extra)).success).toBe(false);
+    const extraPause = task({ autoMode: { enabled: true, pause: { reason: 'advance-failed', at: now, code: 'X' } } as never });
+    expect(HubStateSchema.safeParse(hubWith(extraPause)).success).toBe(false);
+  });
+
+  it('treats a pending transition without an origin as user-confirmed', () => {
+    const user = task({ pendingTransition: { id: 'p', fromColumnId: 'backlog', columnId: 'backlog', mode: 'move', status: 'waiting' } });
+    const parsed = HubStateSchema.safeParse(hubWith(user));
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.tasks[0]!.pendingTransition?.origin).toBeUndefined();
+  });
+
+  it('accepts an automatic pending transition and rejects a user origin', () => {
+    const auto = task({ pendingTransition: { id: 'p', fromColumnId: 'backlog', columnId: 'backlog', mode: 'move', status: 'waiting', origin: 'auto' } });
+    const parsed = HubStateSchema.safeParse(hubWith(auto));
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.tasks[0]!.pendingTransition?.origin).toBe('auto');
+    expect(HubStateSchema.safeParse(hubWith(task({ pendingTransition: { id: 'p', fromColumnId: 'backlog', columnId: 'backlog', mode: 'move', status: 'waiting', origin: 'user' as never } }))).success).toBe(false);
+  });
 });

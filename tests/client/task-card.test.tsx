@@ -3,6 +3,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { TaskCard, cardStatusEntries, type TaskCardProps } from '../../src/client/task-card.js';
+import { autoModeView } from '../../src/client/auto-mode.js';
 import { AutoRunController } from '../../src/client/auto-run.js';
 import { EMPTY_ATTENTION, type Attention, type Column, type ContextOperation, type Task } from '../../src/shared/types.js';
 import { fixture } from './helpers.js';
@@ -12,6 +13,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 const column: Column = { id: 'intake', name: 'Intake' };
 const baseTask: Task = { ...fixture().state.tasks[0]!, title: 'Alpha task', columnId: 'intake', operation: null, pendingTransition: undefined };
+const workflow = fixture().state.hubs[0]!.boards[0]!.workflow;
 const failedOperation: ContextOperation = { id: 'op', request: { kind: 'delete', discardChanges: false, expectedWorktreePath: null }, phase: 'failed', targetPath: '/tree', previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false, createdAt: 'now' };
 const attentionWith = (overrides: Partial<Attention> = {}): Attention => ({ ...EMPTY_ATTENTION, ...overrides });
 
@@ -19,15 +21,17 @@ function setup(overrides: Partial<TaskCardProps> = {}) {
   const onOpen = vi.fn();
   const onToggleSelect = vi.fn();
   const onBeginDrag = vi.fn();
+  const onToggleAutoMode = vi.fn();
   const shouldSuppressClick = vi.fn(() => false);
   const props: TaskCardProps = {
     task: baseTask, column, projectName: 'API', attention: EMPTY_ATTENTION, selectionMode: false, selected: false,
-    autoRun: new AutoRunController({ run: async () => fixture() }), onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick,
+    autoRun: new AutoRunController({ run: async () => fixture() }), autoMode: autoModeView(baseTask, workflow), onToggleAutoMode,
+    onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick,
     ...overrides,
   };
   const view = render(<TaskCard {...props} />);
   const card = document.querySelector('.kb-card') as HTMLElement;
-  return { ...view, card, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick, props };
+  return { ...view, card, onOpen, onToggleSelect, onBeginDrag, onToggleAutoMode, shouldSuppressClick, props };
 }
 
 describe('task card regions', () => {
@@ -212,5 +216,84 @@ describe('task card interaction surface', () => {
     const { onOpen } = setup({ shouldSuppressClick: () => true });
     fireEvent.click(document.querySelector('.kb-card-open')!);
     expect(onOpen).not.toHaveBeenCalled();
+  });
+});
+
+describe('auto-mode control on the card', () => {
+  it('renders an always-visible unpressed chip in the context region', () => {
+    const { card } = setup();
+    const chip = within(card.querySelector('.kb-card-context') as HTMLElement).getByRole('button', { name: 'Turn on auto mode' });
+    expect(chip.getAttribute('aria-pressed')).toBe('false');
+    expect(chip.textContent).toContain('Auto');
+  });
+
+  it('shows the pressed state and no status while armed', () => {
+    const task: Task = { ...baseTask, autoMode: { enabled: true } };
+    const { card } = setup({ task, autoMode: autoModeView(task, workflow) });
+    const chip = within(card).getByRole('button', { name: 'Turn off auto mode' });
+    expect(chip.getAttribute('aria-pressed')).toBe('true');
+    expect(card.querySelector('.kb-card-status-line')).toBeNull();
+  });
+
+  it('toggles without opening the drawer or starting a drag', () => {
+    const { card, onToggleAutoMode, onOpen, onBeginDrag } = setup();
+    const chip = within(card).getByRole('button', { name: 'Turn on auto mode' });
+    fireEvent.pointerDown(chip, { button: 0 });
+    fireEvent.click(chip);
+    expect(onToggleAutoMode).toHaveBeenCalledWith('t1', true);
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(onBeginDrag).not.toHaveBeenCalled();
+  });
+
+  it('disables the control while the command is in flight', () => {
+    const { card } = setup({ autoModePending: true });
+    expect((within(card).getByRole('button', { name: 'Turn on auto mode' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('omits the control in selection mode', () => {
+    const { card } = setup({ selectionMode: true });
+    expect(within(card).queryByRole('button', { name: 'Turn on auto mode' })).toBeNull();
+  });
+
+  it('reports an advancing and a failed automatic advance in the status strip', () => {
+    const advancing: Task = { ...baseTask, autoMode: { enabled: true }, pendingTransition: { id: 'p', fromColumnId: 'intake', columnId: 'doing', mode: 'move', status: 'waiting', origin: 'auto' } };
+    const first = setup({ task: advancing, autoMode: autoModeView(advancing, workflow) });
+    const line = first.card.querySelector('.kb-card-status-line')!;
+    expect(line.textContent).toBe('Advancing to Doing…');
+    expect(line.className).toContain('is-pending');
+    first.unmount();
+
+    const failed: Task = { ...baseTask, autoMode: { enabled: true }, pendingTransition: { id: 'p', fromColumnId: 'intake', columnId: 'doing', mode: 'move', status: 'failed', origin: 'auto', error: { code: 'SEND_FAILED', message: 'The instruction could not be sent.' } } };
+    const second = setup({ task: failed, autoMode: autoModeView(failed, workflow) });
+    const failedLine = second.card.querySelector('.kb-card-status-line')!;
+    expect(failedLine.textContent).toContain('Automatic advance failed');
+    expect(failedLine.className).toContain('is-danger');
+    expect(failedLine.getAttribute('role')).toBe('alert');
+  });
+
+  it('keeps the stage run action available after a failed automatic advance', () => {
+    const review = workflow.columns.find(column => column.id === 'review')!;
+    const task: Task = {
+      ...baseTask, columnId: 'review', autoMode: { enabled: true }, instructionPending: { columnId: 'review', enteredAt: 1 },
+      pendingTransition: { id: 'p', fromColumnId: 'intake', columnId: 'review', mode: 'run', text: 'Review **carefully**.', sessionId: 's1', status: 'failed', origin: 'auto', error: { code: 'SEND_FAILED', message: 'No.' } },
+    };
+    const { card } = setup({ task, column: review, autoMode: autoModeView(task, workflow) });
+    const play = within(card).getByRole('button', { name: 'Run Review instruction' });
+    expect((play as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('presents the auto-mode status beside an operation status', () => {
+    const task: Task = { ...baseTask, operation: failedOperation, autoMode: { enabled: true, pause: { reason: 'turn-error', at: '2026-01-01T00:00:00Z' } } };
+    const { card } = setup({ task, autoMode: autoModeView(task, workflow) });
+    const lines = [...card.querySelectorAll('.kb-card-status-line')].map(line => line.textContent);
+    expect(lines).toEqual(['Deletion needs attention', 'Auto mode paused: the turn failed']);
+  });
+
+  it('reports a persisted pause with its reason', () => {
+    const task: Task = { ...baseTask, autoMode: { enabled: true, pause: { reason: 'turn-blocked', at: '2026-01-01T00:00:00Z' } } };
+    const { card } = setup({ task, autoMode: autoModeView(task, workflow) });
+    const line = card.querySelector('.kb-card-status-line')!;
+    expect(line.textContent).toBe('Auto mode paused: the turn is waiting for you');
+    expect(line.className).toContain('is-pending');
   });
 });

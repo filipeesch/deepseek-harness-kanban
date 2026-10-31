@@ -9,6 +9,8 @@ Provide a task-centered drawer that contains continuous native DSH conversations
 ### Requirement: Task drawer sections
 Opening a task card SHALL display a task drawer with a header showing the task title, the project, and the task's execution status, and Conversations, Info, Git, and Notes sections. The execution status SHALL remain visible while the user inspects any of those sections. Conversations SHALL contain the task's native DSH chats, Info SHALL expose the task's title and Markdown description, Git SHALL expose its simplified worktree controls, and Notes SHALL expose its shared task notes. The workflow stage control SHALL be presented in the drawer's compact toolbar and SHALL list every workflow stage in workflow order, including the current stage. Stages that the active board's workflow does not permit from the current stage SHALL remain selectable and SHALL be presented with lower visual emphasis than permitted stages, with the restriction also available to assistive technology. Selecting a permitted stage SHALL move the task immediately; selecting a restricted stage SHALL require the explicit confirmation defined by the Explicit confirmation for a restricted transition requirement. An instructed destination SHALL arm the timed stage instruction defined by the Timed stage instruction after a move requirement in `kanban-board`; the drawer SHALL present that countdown notice above its section panel and SHALL expose the same cancel action. The drawer SHALL NOT insert text into the composer for a stage change.
 
+The drawer header SHALL also present the task's auto-mode control defined by Auto mode on a task card in `kanban-board`, with the same pressed state, effect, and enabled or disabled behavior as the card control. The drawer SHALL present the automatic-advance state above its section panel without changing sections: the destination stage while an advance is admitted, a failure when an admitted advance failed, and the pause reason when auto mode is paused. The drawer SHALL present that state with the same meaning as the card status strip and SHALL NOT make reading or acknowledging a conversation clear a pause.
+
 #### Scenario: Open a task from the board
 - **WHEN** a user opens a card on the Kanban board
 - **THEN** the drawer header shows the task title, its project, and its execution status
@@ -66,6 +68,27 @@ Opening a task card SHALL display a task drawer with a header showing the task t
 #### Scenario: Execution status clears when the turn ends
 - **WHEN** the assistant turn of the only active conversation ends and no owned subagent descendant is running
 - **THEN** the drawer header stops presenting the execution status without a reload
+
+#### Scenario: Toggle auto mode from the drawer
+- **WHEN** the user activates the auto-mode control in the drawer header
+- **THEN** the setting changes exactly as the card control changes it
+- **AND** the drawer stays in its current section
+- **AND** the task's stage and position are unchanged
+
+#### Scenario: Present an admitted automatic advance
+- **WHEN** an automatic advance is admitted for the open task
+- **THEN** the drawer presents the destination stage above its section panel
+- **AND** the drawer does not change sections
+
+#### Scenario: Present a paused automatic advance
+- **WHEN** auto mode is paused for the open task
+- **THEN** the drawer presents the pause reason above its section panel
+- **AND** reading the conversation does not clear it
+
+#### Scenario: Present a failed automatic advance
+- **WHEN** an admitted automatic advance fails for the open task
+- **THEN** the drawer presents the failure above its section panel
+- **AND** the stage run action remains available for an unresolved destination entry
 
 ### Requirement: Drawer execution status detail
 The drawer header SHALL present the task's agent execution status with the same meaning as the board card, including the background activity detail when the task owns unsettled background work. Agent execution SHALL include the task conversations' own assistant turns and their owned subagent descendants. The background activity detail SHALL cover jobs and schedules only, SHALL name the task's unsettled activities, and SHALL stop being presented when no background activity remains. The background detail SHALL be visually secondary to the agent execution status.
@@ -148,7 +171,7 @@ The task drawer SHALL be resizable within defined minimum and maximum bounds and
 - **THEN** the drawer displays the newly selected task without a separate chat navigation flow
 
 ### Requirement: Nested native conversation tabs
-A task SHALL begin with no native DSH conversation in its Conversations section. The section SHALL provide an explicit start action that creates the first distinct native DSH conversation as a tab within the same task, and a plus action that creates another distinct native DSH conversation. The first conversation SHALL be created only by that explicit start action or by a stage instruction that needs a conversation and finds none open. For a Git-backed task without a worktree, the explicit start action SHALL remain unavailable until the worktree choice is resolved as defined by `worktree-management`. The first conversation SHALL use the task's current effective directory at creation time.
+A task SHALL begin with no native DSH conversation in its Conversations section. The section SHALL provide an explicit start action that creates the first distinct native DSH conversation as a tab within the same task, and a plus action that creates another distinct native DSH conversation. The first conversation SHALL be created only by that explicit start action or by a stage instruction that needs a conversation and finds none open, including a stage instruction dispatched from a card, a confirmed transition, or an automatic advance. For a Git-backed task without a worktree, the explicit start action SHALL remain unavailable until the worktree choice is resolved as defined by `worktree-management`. The first conversation SHALL use the task's current effective directory at creation time.
 
 #### Scenario: Open a newly created task
 - **WHEN** a user opens a newly created task's Conversations section
@@ -168,6 +191,11 @@ A task SHALL begin with no native DSH conversation in its Conversations section.
 - **WHEN** a stage instruction needs a conversation and the task has no open conversation
 - **THEN** the first native DSH conversation is created in the task's current effective directory
 - **AND** the stage instruction is sent to it
+
+#### Scenario: An automatic advance creates the first conversation
+- **WHEN** an automatic advance needs a conversation and the task has no open conversation
+- **THEN** one native DSH conversation is created
+- **AND** the destination instruction is sent to it
 
 #### Scenario: Withhold the explicit start until the worktree choice
 - **WHEN** the user requests the explicit first start for a Git-backed task with no worktree, no recorded base-project choice, and no conversation

@@ -568,3 +568,66 @@ describe('drawer-wide operation recovery', () => {
     expect(screen.getAllByText('Task deletion needs attention').length).toBeGreaterThan(0);
   });
 });
+
+describe('auto mode on the board', () => {
+  const card = () => document.querySelector('[data-task-id="t1"]') as HTMLElement;
+
+  it('toggles from the card without opening the drawer', async () => {
+    const mock = mount();
+    await loaded();
+    fireEvent.click(within(card()).getByRole('button', { name: 'Turn on auto mode' }));
+    await waitFor(() => expect(mock.command).toHaveBeenCalledWith(expect.objectContaining({ type: 'task.autoMode', taskId: 't1', enabled: true })));
+    await waitFor(() => expect(within(card()).getByRole('button', { name: 'Turn off auto mode' })).toBeTruthy());
+    expect(screen.queryByRole('heading', { name: 'Alpha task', level: 2 })).toBeNull();
+  });
+
+  it('keeps the toggle off and reports a failed command', async () => {
+    const mock = mount();
+    await loaded();
+    mock.command.mockRejectedValueOnce({ code: 'STORAGE_SAVE_FAILED', message: 'Could not save the task.' });
+    fireEvent.click(within(card()).getByRole('button', { name: 'Turn on auto mode' }));
+    await waitFor(() => expect(screen.getByText(/Could not save the task\./)).toBeTruthy());
+    expect(within(card()).getByRole('button', { name: 'Turn on auto mode' }).getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('mirrors the toggle in the drawer and shows the armed notice', async () => {
+    const mock = mount();
+    const user = userEvent.setup();
+    await loaded();
+    await user.click(screen.getByRole('button', { name: 'Open task Alpha task' }));
+    const drawer = document.querySelector('.kb-drawer') as HTMLElement;
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Auto mode: off' }));
+    await waitFor(() => expect(mock.command).toHaveBeenCalledWith(expect.objectContaining({ type: 'task.autoMode', taskId: 't1', enabled: true })));
+    await waitFor(() => expect(within(drawer).getByRole('button', { name: 'Auto mode: on' })).toBeTruthy());
+    expect(within(drawer).getByText('Auto mode is on: the next completed turn moves to Review.')).toBeTruthy();
+  });
+
+  it('allows another card to toggle while one auto-mode command is in flight', async () => {
+    const mock = mount();
+    await loaded();
+    const gate = deferred<KanbanSnapshot>();
+    mock.command.mockImplementationOnce(() => gate.promise);
+    const alpha = document.querySelector('[data-task-id="t1"]') as HTMLElement;
+    const beta = document.querySelector('[data-task-id="t2"]') as HTMLElement;
+    fireEvent.click(within(alpha).getByRole('button', { name: 'Turn on auto mode' }));
+    await waitFor(() => expect((within(alpha).getByRole('button', { name: 'Turn on auto mode' }) as HTMLButtonElement).disabled).toBe(true));
+    fireEvent.click(within(beta).getByRole('button', { name: 'Turn on auto mode' }));
+    await waitFor(() => expect(mock.command).toHaveBeenCalledWith(expect.objectContaining({ type: 'task.autoMode', taskId: 't2', enabled: true })));
+    await waitFor(() => expect(within(beta).getByRole('button', { name: 'Turn off auto mode' })).toBeTruthy());
+    gate.resolve(mock.get());
+    await waitFor(() => expect((within(alpha).getByRole('button', { name: 'Turn on auto mode' }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it('presents a paused automatic advance in the drawer', async () => {
+    const paused = fixture();
+    paused.state.hubs[0]!.tasks[0]!.autoMode = { enabled: true, pause: { reason: 'turn-error', at: '2026-10-21T12:00:00Z' } };
+    const mock = mount(paused);
+    const user = userEvent.setup();
+    await loaded();
+    await user.click(screen.getByRole('button', { name: 'Open task Alpha task' }));
+    const drawer = document.querySelector('.kb-drawer') as HTMLElement;
+    expect(within(drawer).getByText('Auto mode paused: the turn failed')).toBeTruthy();
+    expect(within(drawer).getByRole('button', { name: 'Auto mode: on' }).getAttribute('aria-pressed')).toBe('true');
+    expect(mock.command).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'task.autoMode' }));
+  });
+});
