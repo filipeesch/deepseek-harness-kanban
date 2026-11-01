@@ -2,9 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { canTransition, transitionAccess } from '../domain/transitions.js';
-import { entryInstruction, hasUnresolvedEntry, nextEnteredAt } from '../domain/stage-entry.js';
+import { nextEnteredAt } from '../domain/stage-entry.js';
 import { AUTO_ADVANCE_SETTLE_MS, AutoAdvanceCoordinator } from './auto-advance.js';
-import { resolveAutoAdvance, type AutoAdvancePlan } from '../domain/auto-advance.js';
+import type { AutoAdvancePlan } from '../domain/auto-advance.js';
+import { admitAutoAdvance } from './auto-advance-admission.js';
+import { readPendingUserWork, withQuestionPending } from './pending-source.js';
+import type { ConversationFactsSource } from './native-facts.js';
 import type { AutoModePauseReason, BoardSettings, Command, HostSnapshot, HubState, HubTask, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound } from '../shared/types.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionStore } from './question-storage.js';
@@ -52,15 +55,18 @@ export class KanbanApp {
  private sequence=0; private disposed=false; private driving=false; private driveAgain=false; private drivePromise:Promise<void>|undefined; private commandTail:Promise<void>=Promise.resolve();
  private readonly saveTimers=new Map<string,ReturnType<typeof setTimeout>>();
  private readonly autoAdvance:AutoAdvanceCoordinator;
+ /** The one conversation-fact read every host consumer shares; the question projection is folded in here. */
+ private readonly factsSource:ConversationFactsSource;
  constructor(readonly hubs:HubRepository,readonly sessions:SessionPort,readonly git:GitPort,private readonly options:AppOptions={},private readonly workspaces?:WorkspacePort){
   this.locator=new TaskLocator(hubs);
+  this.factsSource=withQuestionPending({read:id=>this.sessions.facts(id)},this.questions);
   this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,onTaskDeleted:async task=>{try{await this.cleanupWorktreeWorkspace(task as HubTask);}catch(error){this.options.report?.(error);}}});
   this.pendingWork=new PendingWorkRunner({resumeWorktrees:async()=>{await this.worktrees.resumePending();},dispatchPending:async()=>{await this.dispatchPending();},report:error=>this.options.report?.(error)});
-  this.attention=new AttentionCoordinator({source:{read:id=>this.sessions.facts(id)},tasks:()=>this.locator.all().map(located=>({id:located.task.id,sessionIds:located.task.sessionIds})),pendingQuestion:id=>this.questions.pending(id),runPendingWork:async()=>{await this.pendingWork.run();},onChange:()=>this.attentionChanged(),report:error=>this.options.report?.(error)});
+  this.attention=new AttentionCoordinator({source:this.factsSource,tasks:()=>this.locator.all().map(located=>({id:located.task.id,sessionIds:located.task.sessionIds})),runPendingWork:async()=>{await this.pendingWork.run();},onChange:()=>this.attentionChanged(),report:error=>this.options.report?.(error)});
   this.autoAdvance=new AutoAdvanceCoordinator({
    locateBySession:sessionId=>{const located=this.locator.bySession(sessionId);return located?{task:located.task,board:located.board}:undefined;},
    locate:taskId=>{const located=this.locator.byTask(taskId);return located?{task:located.task,board:located.board}:undefined;},
-   facts:async sessionId=>{const facts=await this.sessions.facts(sessionId);return facts.awaitingReply||this.questions.pending(sessionId)?{...facts,awaitingReply:true}:facts;},
+   facts:sessionId=>this.factsSource.read(sessionId),
    admit:(taskId,plan)=>this.admitAutoAdvance(taskId,plan),
    pause:(taskId,reason,message,expectedColumnId)=>this.pauseAutoMode(taskId,reason,message,expectedColumnId),
    schedule:callback=>setTimeout(callback,AUTO_ADVANCE_SETTLE_MS),
@@ -74,6 +80,17 @@ export class KanbanApp {
  private hubStore(hubId?:string):HubStore{return this.hubs.hub(this.hubs.resolveHubId(hubId));}
  private locatedTask(taskId:string):LocatedTask{return this.hubs.requireTask(taskId);}
  private changed():void{if(this.disposed)return;for(const listener of this.listeners){try{listener();}catch(error){this.options.report?.(error);}}}
+ /**
+  * Re-project one conversation's derived facts after a host-side change that emitted
+  * no session event. This invalidates the facts cache and requests a publish only; it
+  * deliberately does not run pending work, which a session-event touch also does.
+  */
+ private rederiveAttention(sessionId:string,immediate=false):void{
+  if(this.disposed)return;
+  this.attention.invalidate(sessionId);
+  if(immediate){this.attentionChanged();return;}
+  this.markChanged();
+ }
  private markChanged():void{if(this.disposed)return;this.sequence++;this.publisher.request();}
  private attentionChanged():void{if(this.disposed)return;this.sequence++;this.publisher.request();this.publisher.flush();}
  subscribe(listener:()=>void):()=>void{this.listeners.add(listener);return()=>this.listeners.delete(listener);}
@@ -92,6 +109,9 @@ export class KanbanApp {
    const record=this.options.questionStore?.load(sessionId);
    if(record!==undefined){try{this.questions.restoreSession(record);}catch(error){this.options.report?.(error);}}
    if(this.options.history){for(const event of await this.options.history(sessionId))if(isEvent(event))this.questions.apply(sessionId,event);}
+   // A restored or replayed unanswered round changes the pending user work the
+   // attention snapshot and the auto-mode hold derive from, without a live event.
+   this.rederiveAttention(sessionId);
    this.schedulePersist(sessionId);
   })();
   this.prepared.set(sessionId,work);
@@ -127,11 +147,15 @@ export class KanbanApp {
   const unresolved=rounds.filter(round=>!round.answered);
   const turns=unresolved.map(round=>Number(round.turnId));
   this.questions.dismiss(sessionId,unresolved.map(round=>round.id));
+  // Dismissal consumes pending user work without a conversation event, so the derived
+  // hold must be re-projected even when the task has no activity left to reconcile.
+  this.rederiveAttention(sessionId,true);
   const existing=this.saveTimers.get(sessionId);
   if(existing!==undefined){clearTimeout(existing);this.saveTimers.delete(sessionId);}
   try{await this.persistSessionStrict(sessionId);}
   catch(error){
    this.questions.undismiss(sessionId,turns);
+   this.rederiveAttention(sessionId,true);
    this.schedulePersist(sessionId);
    this.options.report?.(error);
    throw new KanbanError('STORAGE_SAVE_FAILED','The question dismissal could not be saved.');
@@ -375,30 +399,16 @@ export class KanbanApp {
  private admitAutoAdvance(taskId:string,plan:AutoAdvancePlan):Promise<void>{
   return this.serial(()=>this.admitAutoAdvanceNow(taskId,plan));
  }
- private async admitAutoAdvanceNow(taskId:string,plan:AutoAdvancePlan):Promise<void>{
-  const located=this.locatedTask(taskId);const task=located.task;const store=this.hubs.hub(located.hubId);const destination=plan.destination;
-  invariant(destination,'INVALID_TARGET','The automatic advance has no destination.');
-  if(task.autoMode?.enabled!==true||task.operation||task.pendingTransition||hasUnresolvedEntry(task))return;
-  if(task.columnId!==plan.fromColumnId)return;
-  invariant(resolveAutoAdvance(located.board.workflow,plan.fromColumnId).destination?.id===destination.id,'INVALID_TARGET','The automatic advance destination changed. Review the workflow before retrying.');
-  const instruction=entryInstruction(destination);
-  const sessionId=instruction!==undefined?firstOpenSessionId(task)??await this.createConversationNow(taskId,{allowUndecided:true}):undefined;
-  const latest=this.locatedTask(taskId);const current=latest.task;
-  if(current.autoMode?.enabled!==true||current.operation||current.pendingTransition||hasUnresolvedEntry(current))return;
-  if(current.columnId!==plan.fromColumnId)return;
-  invariant(resolveAutoAdvance(latest.board.workflow,plan.fromColumnId).destination?.id===destination.id,'INVALID_TARGET','The automatic advance destination changed. Review the workflow before retrying.');
-  const pending:PendingTransition={id:randomUUID(),fromColumnId:plan.fromColumnId,columnId:destination.id,mode:instruction!==undefined?'run':'move',status:'waiting',origin:'auto',...(instruction!==undefined?{text:instruction,sessionId:sessionId!}:{})};
-  await store.transact(d=>{
-   const value=d.tasks.find(candidate=>candidate.id===taskId)!;
-   invariant(value.autoMode?.enabled===true,'AUTO_MODE_DISABLED','Auto mode is no longer enabled.');
-   invariant(!value.operation&&!value.pendingTransition,'REVISION_CONFLICT','Task changed before the automatic advance could be admitted.');
-   invariant(value.columnId===plan.fromColumnId,'REVISION_CONFLICT','Task moved before the automatic advance could be admitted.');
-   const board=d.boards.find(candidate=>candidate.id===value.boardId);
-   invariant(board!==undefined&&resolveAutoAdvance(board.workflow,plan.fromColumnId).destination?.id===destination.id,'INVALID_TARGET','The automatic advance destination changed.');
-   value.pendingTransition=pending;
-   if(value.autoMode.pause!==undefined)delete value.autoMode.pause;
-  });
-  await this.dispatchPending();
+ /** The serialized adapter around the one automatic-advance admission path. */
+ private admitAutoAdvanceNow(taskId:string,plan:AutoAdvancePlan):Promise<void>{
+  return admitAutoAdvance({
+   locate:taskId=>this.locatedTask(taskId),
+   transact:(hubId,change)=>this.hubs.hub(hubId).transact(change),
+   resolveSession:async task=>firstOpenSessionId(task)??await this.createConversationNow(task.id,{allowUndecided:true}),
+   pending:task=>readPendingUserWork(this.factsSource,task.sessionIds),
+   dispatch:()=>this.dispatchPending(),
+   report:error=>this.options.report?.(error),
+  },taskId,plan);
  }
  private async dismissFailedAdvance(taskId:string):Promise<void>{
   const located=this.locatedTask(taskId);const pending=located.task.pendingTransition;

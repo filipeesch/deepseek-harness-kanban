@@ -76,6 +76,19 @@ test('presents the armed, paused, and advancing states on cards', async ({ page 
   await expect(page.locator('[data-task-id="long-2"] .kb-auto-chip')).toHaveAttribute('data-auto-state', 'failed');
 });
 
+test('presents the held state on the chip and in the drawer without a status entry', async ({ page }) => {
+  await openBoard(page);
+  const chip = page.locator('[data-task-id="other"] .kb-auto-chip');
+  await expect(chip).toHaveAttribute('data-auto-state', 'held');
+  await expect(chip).toHaveClass(/is-held/);
+  await expect(chip).toHaveAttribute('aria-label', 'Auto mode is waiting for you: 1 queued message. Turn off auto mode');
+  await expect(page.locator('[data-task-id="other"] .kb-card-status-line')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open task Other task', exact: true }).click();
+  const drawer = page.locator('.kb-drawer');
+  await expect(drawer.locator('.kb-drawer-auto')).toHaveAttribute('data-auto-state', 'held');
+  await expect(drawer.locator('.kb-drawer-automode')).toHaveCount(0);
+});
+
 test('toggles auto mode from the card and updates the indicator', async ({ page }) => {
   await openBoard(page);
   const chip = page.locator('[data-task-id="long-1"] .kb-auto-chip');

@@ -71,7 +71,9 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
     setPeek(null);
   }, [task.id, setPeek]);
   const project = state.projects.find(value => value.id === task.projectId); const blocked = Boolean(task.operation || task.pendingTransition);
-  const autoMode = autoModeView(task, state.workflow);
+  // The task-level attention already merges every conversation's pending user work,
+  // including a closed one, so the control reads that instead of re-merging.
+  const autoMode = autoModeView(task, state.workflow, attention.pending);
   const gitBacked = project !== undefined && isGitProject(project);
   const worktreeDecisionRequired = requiresWorktreeDecision(task, project);
   const sections = ['Conversations', 'Info', ...(gitBacked ? ['Git'] : []), 'Notes'];

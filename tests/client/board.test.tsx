@@ -9,6 +9,8 @@ import { ConversationCloseAction } from '../../src/client/conversation-actions.j
 import type { KanbanSnapshot, ClientApi, Command } from '../../src/shared/types.js';
 import { styles } from '../../src/client/styles.js';
 import { deferred, fakeApi, fixture, restrictedFixture } from './helpers.js';
+import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
+import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 
 
 vi.mock('../../src/client/code-editor.js', async () => {
@@ -38,6 +40,18 @@ describe('native overlay protection', () => {
     await user.click(screen.getByRole('button', { name: 'Open task Alpha task' }));
     fireEvent.pointerDown(screen.getByLabelText('Native subagent tree'));
     expect(screen.getByRole('heading', { name: 'Alpha task', level: 2 })).toBeTruthy();
+  });
+});
+
+describe('auto-mode hold from task attention', () => {
+  it('presents the held chip from the task-level pending attention', async () => {
+    const data = fixture();
+    data.state.hubs[0]!.tasks[0]!.autoMode = { enabled: true };
+    data.attention.t1 = { ...data.attention.t1!, running: false, pending: pendingUserWork(['queued-prompt'], 1) };
+    mount(data);
+    const chip = await screen.findByRole('button', { name: /Auto mode is waiting for you: 1 queued message\. Turn off auto mode/ });
+    expect(chip.getAttribute('data-auto-state')).toBe('held');
+    expect(chip.closest('.kb-card')?.querySelector('.kb-card-status-line')).toBeNull();
   });
 });
 
@@ -76,7 +90,7 @@ describe('scoped Kanban page', () => {
   it('shows background work on its own after the turn ends', async () => {
     const { publish, get } = mount(); await loaded();
     const next = get();
-    next.attention.t2 = { running: false, background: [{ kind: 'job', label: 'Run tests' }], unread: false, awaitingReply: false, failed: false };
+    next.attention.t2 = { running: false, background: [{ kind: 'job', label: 'Run tests' }], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
     act(() => { publish(next); });
     const beta = screen.getByRole('button', { name: 'Open task Beta task' }).closest('.kb-card') as HTMLElement;
     expect(within(beta).getByText('1 job')).toBeTruthy();
@@ -99,7 +113,7 @@ describe('scoped Kanban page', () => {
     const drawer = screen.getByLabelText('Task details');
     expect(within(drawer).getByText('Working')).toBeTruthy();
     const next = get();
-    next.attention.t1 = { running: false, background: [], unread: false, awaitingReply: false, failed: false };
+    next.attention.t1 = { running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
     act(() => { publish(next); });
     expect(within(drawer).queryByText('Working')).toBeNull();
     expect(within(drawer).queryByText(/Background:/)).toBeNull();

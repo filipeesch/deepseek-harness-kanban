@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { Attention, Task } from '../../src/shared/types.js';
 import { EMPTY_SCOPE_ACTIVITY, projectScopeActivity } from '../../src/client/scope-activity.js';
+import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 
 function task(id: string, title: string): Task {
   return { id, projectId: 'p1', title, description: '', columnId: 'doing', position: 0, sessionIds: [], closedSessionIds: [], effectiveCwd: '/repo', worktree: null, operation: null, createdAt: '', updatedAt: '' };
 }
 
 function attention(overrides: Partial<Attention> = {}): Attention {
-  return { running: false, background: [], unread: false, awaitingReply: false, failed: false, ...overrides };
+  return { running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK, ...overrides };
 }
 
 describe('projectScopeActivity', () => {
@@ -48,7 +49,7 @@ describe('projectScopeActivity', () => {
     const result = projectScopeActivity(tasks, {
       t1: attention({ unread: true }),
       t2: attention({ failed: true, awaitingReply: true }),
-      t3: attention({ unread: true, failed: true }),
+      t3: attention({ unread: true, failed: true, pending: NO_PENDING_USER_WORK }),
     });
     expect(result.unread).toBe(true);
     expect(result.awaitingReply).toBe(true);

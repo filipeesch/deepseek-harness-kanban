@@ -1,5 +1,6 @@
 import type { ConversationFacts } from '../shared/types.js';
 import { EMPTY_CONVERSATION_FACTS } from '../shared/types.js';
+import { samePendingUserWork } from '../domain/pending-user-work.js';
 import type { ConversationFactsSource } from './native-facts.js';
 
 /** Bounded re-reads after a transient facts failure; a new edge resets the allowance. */
@@ -12,7 +13,6 @@ export interface AttentionTask { id: string; sessionIds: readonly string[] }
 export interface AttentionCoordinatorOptions {
   source: ConversationFactsSource;
   tasks: () => readonly AttentionTask[];
-  pendingQuestion: (sessionId: string) => boolean;
   runPendingWork: () => Promise<void>;
   onChange: () => void;
   report: (error: unknown) => void;
@@ -35,7 +35,7 @@ export function sameConversationFacts(left: Record<string, ConversationFacts>, r
   for (const key of keys) {
     const before = left[key]!, after = right[key];
     if (!after) return false;
-    if (before.running !== after.running || before.awaitingReply !== after.awaitingReply) return false;
+    if (before.running !== after.running || !samePendingUserWork(before.pending, after.pending)) return false;
     if (!sameSettledTurn(before.settledTurn, after.settledTurn)) return false;
     if (before.background.length !== after.background.length) return false;
     for (let index = 0; index < before.background.length; index += 1) {
@@ -175,18 +175,13 @@ export class AttentionCoordinator {
       for (const sessionId of task.sessionIds) {
         if (known.has(sessionId)) continue;
         known.add(sessionId);
-        facts[sessionId] = this.withPendingQuestion(sessionId, await this.read(sessionId));
+        facts[sessionId] = await this.read(sessionId);
       }
     }
     for (const sessionId of [...this.cache.keys()]) if (!known.has(sessionId)) this.cache.delete(sessionId);
     for (const sessionId of [...this.lastGood.keys()]) if (!known.has(sessionId)) this.lastGood.delete(sessionId);
     for (const sessionId of [...this.failedReads.keys()]) if (!known.has(sessionId)) this.failedReads.delete(sessionId);
     return facts;
-  }
-
-  private withPendingQuestion(sessionId: string, facts: ConversationFacts): ConversationFacts {
-    if (facts.awaitingReply || !this.options.pendingQuestion(sessionId)) return facts;
-    return { ...facts, awaitingReply: true };
   }
 
   private read(sessionId: string): Promise<ConversationFacts> {
