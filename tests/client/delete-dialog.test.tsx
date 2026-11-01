@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { DeleteTaskDialog, type DestructiveRequest } from '../../src/client/destructive-dialogs.js';
 import { EMPTY_ATTENTION } from '../../src/shared/types.js';
+import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { task } from './helpers.js';
 
 afterEach(cleanup);
@@ -41,7 +42,7 @@ describe('DeleteTaskDialog', () => {
   });
 
   it('identifies an attached checkout and a running conversation', () => {
-    mount({ request: { ...request, owned: false }, attention: { running: true, background: [], unread: false, awaitingReply: false, failed: false } });
+    mount({ request: { ...request, owned: false }, attention: { running: true, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK } });
     const dialog = screen.getByRole('dialog', { name: 'Delete task' });
     expect(within(dialog).getByText(/attached externally/)).toBeTruthy();
     expect(within(dialog).getByText(/A conversation is running/)).toBeTruthy();

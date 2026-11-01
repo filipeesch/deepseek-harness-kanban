@@ -71,7 +71,7 @@ describe('native session facts', () => {
     expect(await facts.read('session-1')).toEqual({
       running: true,
       background: [{ kind: 'job', label: 'Run tests' }],
-      awaitingReply: true,
+      pending: { kinds: ['native-question'], queuedPrompts: 0 },
       settledTurn: { seq: 11, outcome: 'ok' },
     });
     expect(activity).toHaveBeenCalledWith('session-1');
@@ -90,7 +90,7 @@ describe('native session facts', () => {
     expect(await facts.read('session-1')).toEqual({
       running: true,
       background: [],
-      awaitingReply: false,
+      pending: { kinds: [], queuedPrompts: 0 },
       settledTurn: { seq: 9, outcome: 'error' },
     });
     expect(inspect).not.toHaveBeenCalled();
@@ -101,7 +101,7 @@ describe('native session facts', () => {
       activity: async () => [], projections: async () => null, inspect: async () => inspection(),
       liveFacts: () => ({ lastTurnEndSeq: null, lastTurnOutcome: null, openApprovalIds: ['approval-1'] }),
     });
-    expect((await facts.read('session-1')).awaitingReply).toBe(true);
+    expect((await facts.read('session-1')).pending.kinds).toEqual(['approval']);
   });
 
   it('reports the last settled turn regardless of an open turn', async () => {
@@ -113,6 +113,32 @@ describe('native session facts', () => {
       activity: async () => [{ kind: 'turn' }], projections: async () => null, inspect,
     });
     expect((await facts.read('session-1')).settledTurn).toEqual({ seq: 3, outcome: 'ok' });
+  });
+});
+
+describe('pending user work', () => {
+  it('reports a queued prompt next to the native pending kinds', async () => {
+    const facts = createNativeSessionFacts({
+      activity: async () => [], projections: async () => sequenced({ userQuestions: { active: [{ callId: 'q' }] } }), inspect: async () => inspection(),
+      liveFacts: () => ({ lastTurnEndSeq: null, lastTurnOutcome: null, openApprovalIds: ['approval-1'] }),
+      queuedPrompts: () => 2,
+    });
+    expect((await facts.read('session-1')).pending).toEqual({ kinds: ['native-question', 'approval', 'queued-prompt'], queuedPrompts: 2 });
+  });
+
+  it('reports a queued prompt alone as pending', async () => {
+    const facts = createNativeSessionFacts({
+      activity: async () => [], projections: async () => null, inspect: async () => inspection(), queuedPrompts: () => 1,
+    });
+    expect((await facts.read('session-1')).pending).toEqual({ kinds: ['queued-prompt'], queuedPrompts: 1 });
+  });
+
+  it('fails closed when the queued-prompt read is unavailable', async () => {
+    const facts = createNativeSessionFacts({
+      activity: async () => [], projections: async () => null, inspect: async () => inspection(),
+      queuedPrompts: () => { throw new Error('inbox unavailable'); },
+    });
+    await expect(facts.read('session-1')).rejects.toThrow('inbox unavailable');
   });
 });
 

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HubRepository } from '../../src/host/hub-repository.js';
 import { KanbanApp } from '../../src/host/app.js';
 import type { ConversationFacts } from '../../src/shared/types.js';
+import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { MemoryHubStorage, TestGit, TestSessions } from './helpers.js';
 
 // Actual app/store and public memory ports only: no host runtime, filesystem, jobs or models.
@@ -33,7 +34,7 @@ async function fixture() {
   return { app, hubs, store, sessions, task, sessionId, facts, notify, report };
 }
 
-const idleFacts: ConversationFacts = { running: false, background: [], awaitingReply: false, settledTurn: null };
+const idleFacts: ConversationFacts = { running: false, background: [], pending: NO_PENDING_USER_WORK, settledTurn: null };
 function event(app: KanbanApp, sessionId: string) {
   app.observe(sessionId, { type: 'turn/end', seq: 1, data: { turn: 1, reason: { kind: 'blocked' } } });
 }

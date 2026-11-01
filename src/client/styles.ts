@@ -39,6 +39,7 @@ export const styles = String.raw`
 .dsh-kanban .kb-drawer-auto{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;white-space:nowrap;font-size:12px}
 .dsh-kanban .kb-drawer-auto.is-on{border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary,#3b82f6) 55%,var(--kb-line));background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#3b82f6) 16%,var(--kb-surface))}
 .dsh-kanban .kb-drawer-auto.is-paused{border-style:dashed}
+.dsh-kanban .kb-drawer-auto.is-held{border-style:dotted}
 .dsh-kanban .kb-drawer-auto svg{flex:0 0 auto}
 .dsh-kanban .kb-drawer-automode{display:flex;align-items:center;margin:10px 12px;padding:10px 12px;border:1px solid var(--kb-line);border-radius:8px;background:var(--kb-soft);font-size:12.5px;flex-shrink:0}
 .dsh-kanban .kb-drawer-automode p{margin:0;min-width:0;overflow-wrap:anywhere}

@@ -1,4 +1,5 @@
-import type { BackgroundActivity, BackgroundKind, ConversationFacts, SettledTurn } from '../shared/types.js';
+import type { BackgroundActivity, BackgroundKind, ConversationFacts, PendingUserWorkKind, SettledTurn } from '../shared/types.js';
+import { pendingUserWork } from '../domain/pending-user-work.js';
 import type { ConversationFactsFold } from './conversation-facts.js';
 
 /** One family reported by the public `workspace/session-activity` waterfall. */
@@ -18,8 +19,18 @@ export interface NativeFactsDeps {
   inspect(sessionId: string): Promise<InspectionLike>;
   /** Incremental facts for a live Session; absent for a not-live Session. */
   liveFacts?(sessionId: string): ConversationFactsFold | undefined;
+  /** User messages queued for a later turn, read from the same projection hydration; absent keeps the read to the other facts. */
+  queuedPrompts?(sessionId: string, projection: ProjectionLike | null | undefined): number;
 }
 export interface ConversationFactsSource { read(sessionId: string): Promise<ConversationFacts> }
+
+/** The native pending kinds, ordered by the shared value builder. */
+function nativeKinds(question: boolean, approval: boolean): PendingUserWorkKind[] {
+  const kinds: PendingUserWorkKind[] = [];
+  if (question) kinds.push('native-question');
+  if (approval) kinds.push('approval');
+  return kinds;
+}
 
 /** Families that count as owned agent execution: the conversation's own turn and its descendants. */
 const AGENT_KINDS = new Set(['turn', 'subagent']);
@@ -57,8 +68,8 @@ function pendingUserQuestion(projection: ProjectionLike | null | undefined): boo
 }
 
 /** A conversation awaits a reply while a native question or approval is still open. */
-export function nativePending(projection: ProjectionLike | null | undefined, inspection: InspectionLike): boolean {
-  if (pendingUserQuestion(projection)) return true;
+/** A pending native approval remains open until its decision or the turn boundary that clears it. */
+export function inspectedApprovals(inspection: InspectionLike): boolean {
   const approvals = new Set<string>();
   for (const event of inspection.events) {
     if (event.type === 'turn/end') approvals.clear();
@@ -67,6 +78,10 @@ export function nativePending(projection: ProjectionLike | null | undefined, ins
     if (event.type === 'approval/decided') approvals.delete(event.data.id);
   }
   return approvals.size > 0;
+}
+
+export function nativePending(projection: ProjectionLike | null | undefined, inspection: InspectionLike): boolean {
+  return pendingUserQuestion(projection) || inspectedApprovals(inspection);
 }
 
 /** A turn boundary is open until its matching `turn/end` is recorded. */
@@ -105,17 +120,24 @@ export function createNativeSessionFacts(deps: NativeFactsDeps): ConversationFac
         deps.activity(sessionId), deps.projections(sessionId),
       ]);
       const { running, background } = partitionActivity(activity);
+      const question = pendingUserQuestion(projection);
+      const queuedPrompts = deps.queuedPrompts === undefined ? 0 : deps.queuedPrompts(sessionId, projection);
       const fold = deps.liveFacts?.(sessionId);
       if (fold !== undefined) {
         return {
           running,
           background,
-          awaitingReply: pendingUserQuestion(projection) || fold.openApprovalIds.length > 0,
+          pending: pendingUserWork(nativeKinds(question, fold.openApprovalIds.length > 0), queuedPrompts),
           settledTurn: foldedSettledTurn(fold),
         };
       }
       const inspection = await deps.inspect(sessionId);
-      return { running, background, awaitingReply: nativePending(projection, inspection), settledTurn: lastSettledTurn(inspection) };
+      return {
+        running,
+        background,
+        pending: pendingUserWork(nativeKinds(question, inspectedApprovals(inspection)), queuedPrompts),
+        settledTurn: lastSettledTurn(inspection),
+      };
     },
   };
 }

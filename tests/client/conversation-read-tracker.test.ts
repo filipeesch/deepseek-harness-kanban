@@ -3,13 +3,14 @@ import { ConversationReadTracker } from '../../src/client/conversation-read-trac
 import { browserStorage, type KeyValueStorage } from '../../src/client/key-value-storage.js';
 import { READ_ACKNOWLEDGMENTS_KEY, ReadAcknowledgments } from '../../src/client/read-acknowledgments.js';
 import type { ConversationFacts } from '../../src/shared/types.js';
+import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 
 function memoryStorage(initial: Record<string, string> = {}): KeyValueStorage & { values: Map<string, string> } {
   const values = new Map(Object.entries(initial));
   return { values, get: key => values.get(key) ?? null, set: (key, value) => { if (value === null) values.delete(key); else values.set(key, value); } };
 }
 function facts(overrides: Partial<ConversationFacts> = {}): ConversationFacts {
-  return { running: false, background: [], awaitingReply: false, settledTurn: null, ...overrides };
+  return { running: false, background: [], pending: NO_PENDING_USER_WORK, settledTurn: null, ...overrides };
 }
 
 describe('key-value storage', () => {

@@ -270,7 +270,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   function renderCard(task: Task, column: Column, workflow: Workflow) {
     const attention = snapshot?.attention[task.id] ?? EMPTY_ATTENTION;
     const project = state?.projects.find(value => value.id === task.projectId)?.name ?? task.projectId;
-    return <TaskCard key={task.id} task={task} column={column} projectName={project} attention={attention} selectionMode={selectionMode} selected={selectedIds.has(task.id)} autoRun={autoRun} autoMode={autoModeView(task, workflow)} autoModePending={autoModePending.has(task.id)} onToggleAutoMode={toggleAutoMode} onOpen={openTask} onToggleSelect={toggleSelect} onBeginDrag={begin} shouldSuppressClick={shouldSuppressClick} />;
+    return <TaskCard key={task.id} task={task} column={column} projectName={project} attention={attention} selectionMode={selectionMode} selected={selectedIds.has(task.id)} autoRun={autoRun} autoMode={autoModeView(task, workflow, attention.pending)} autoModePending={autoModePending.has(task.id)} onToggleAutoMode={toggleAutoMode} onOpen={openTask} onToggleSelect={toggleSelect} onBeginDrag={begin} shouldSuppressClick={shouldSuppressClick} />;
   }
 
   function renderNewTaskButton(column: Column) { return <div className="kb-column-create"><button type="button" className="kb-button kb-primary" disabled={!state || state.projects.length === 0} onClick={() => setNewTask(true)} aria-label="New task"><PlusIcon size={14} /> New task</button></div>; }
