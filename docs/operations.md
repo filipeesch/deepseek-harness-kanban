@@ -1,19 +1,27 @@
 # Operations and Recovery
 
-For the independent DSH **0.2.1-rc.2** plugin. Start with [installation and usage](<../README.md>); this guide covers diagnostics, durable operations, policy boundaries, and acceptance evidence. It is not authorization to change the DSH core, profiles, permissions, signing, or authentication.
+For the independent DSH **0.2.x** plugin, verified on **0.2.1-rc.5**. Start with [installation and usage](<../README.md>); this guide covers diagnostics, durable operations, policy boundaries, and acceptance evidence. It is not authorization to change the DSH core, profiles, permissions, signing, or authentication.
 
 ## Installation and update diagnostics
 
-1. Use the required Node/pnpm versions from [the manifest](<../package.json>): runtime Node **>=20.19**, development helpers Node **22+**, and `pnpm@10.15.1`.
-2. Build the checkout before adding it through **the existing GUI → Plugins → Add plugin**, using the absolute built package root/local `link:` specification, then enable it. This is the primary installation path, not an Inspector requirement.
-3. Check the native installation result and plugin row. A downloaded package, enabled flag, active host row, and working client page are distinct evidence. A native restart-required result is not a successfully applied hot reload.
-4. After a deliberate rebuild, explicitly reconcile the changed built files through native Plugin Manager, then refresh the **same existing GUI URL** and inspect it; see [the rebuild/reconcile procedure](<operations.md#explicit-reconciliation-after-a-rebuild>). Do not start a replacement server, edit a profile to force loading, or assume a source watcher exists. A browser refresh alone is not proof that a changed host module reloaded.
+The end-user installation and blocked-build steps live in [the install guide](<../README.md#install-from-github>). This section covers the diagnostics around that path.
+
+- **Development install**: use the required Node/pnpm versions from [the manifest](<../package.json>): runtime Node **>=20.19**, development helpers Node **22+**, and `pnpm@10.15.1`; build the checkout and add its absolute package root with the local `link:` specification.
+- **Verification**: `DSH_BIN=/path/to/dsh pnpm run verify:install` installs a temporary Git snapshot into an isolated `DSH_HOME` and profile, writes the exact `allowBuilds` key, and asserts the installed entry points, the absence of plugin-installed `@deepseek-ai` copies, the saved bundle selection, and the composed enabled `kanban` row. It must leave your own DSH home untouched.
+- **Evidence**: a downloaded package, enabled flag, active host row, and working client page are distinct evidence. A native restart-required result is not a successfully applied hot reload.
+- **Reconcile**: after a deliberate rebuild, explicitly reconcile the changed built files through native Plugin Manager, then refresh the **same existing GUI URL** and inspect it; see [the rebuild/reconcile procedure](<operations.md#explicit-reconciliation-after-a-rebuild>). Do not start a replacement server, edit a profile to force loading, or assume a source watcher exists. A browser refresh alone is not proof that a changed host module reloaded.
+
+### Blocked Git build diagnostics
+
+pnpm reports `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` for this Git prepare block, not the `Ignored build scripts` condition that DSH's Web approval action handles. DSH 0.2.1-rc.5 therefore shows no **Allow these scripts and retry** button here; the failure details and the `.plugin-manager` log contain the exact `allowBuilds` key. Add it to `$DSH_HOME/profiles/<profile>/pnpm-workspace.yaml` and retry, as the README describes. The key is specific to the resolved commit; a new commit needs a new key, while the same resolution is not blocked again.
+
+An installation on a runtime outside the declared `engines.dsh` range reports `incompatible-version` after the fetch and build for a Git spec. Update DSH or grant the exact-version exemption; the risk warning is intentional. The mainland registry mirror supplies registry packages, not the GitHub repository, so the machine must reach `github.com`.
 
 The currently exercised backend is `http://127.0.0.1:51781/`. Preserve your own existing host URL outside this environment. Neither a standalone Vite build nor another server updates that GUI.
 
 ### Network failure during installation
 
-The recent native install failed on the default registry network path. An explicitly requested **one-shot** `https://registry.npmjs.org` override subsequently succeeded, without changing registry settings. Treat this as evidence about that attempt, not a universal registry diagnosis or permission to persist new settings.
+A development installation once failed on the default registry network path. An explicitly requested **one-shot** `https://registry.npmjs.org` override subsequently succeeded, without changing registry settings. Treat this as evidence about that attempt, not a universal registry diagnosis or permission to persist new settings.
 
 Check the actual package-manager exit/application result. If an install times out, it may still be running: inspect current bundle inventory before retrying. Do not loop installs, silently change global registries, disable TLS checks, or treat a timeout as proof that nothing happened.
 
@@ -54,7 +62,7 @@ Before either mutation, the helper validates the built package's public entries 
 
 ### Explicit reconciliation after a rebuild
 
-On the inspected DSH **0.2.1-rc.2** host, the public `pluginManager.setBundleEnabled('dsh-kanban', true)` operation runs profile reconciliation **even when the bundle is already enabled**. Reconciliation detects changed loaded files in linked-package targets and can replace their host modules. This explicit operation does not require a root source watcher, compile source, or promise automatic source HMR.
+On the inspected DSH **0.2.1-rc.5** host, the public `pluginManager.setBundleEnabled('dsh-kanban', true)` operation runs profile reconciliation **even when the bundle is already enabled**. Reconciliation detects changed loaded files in linked-package targets and can replace their host modules. This explicit operation does not require a root source watcher, compile source, or promise automatic source HMR.
 
 After active task work/operations have settled, an authorized operator with the **existing local Inspector** can use the already-documented optional helper:
 

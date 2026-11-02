@@ -1,13 +1,17 @@
-import { build } from 'esbuild';
-import { mkdir, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { build } from 'esbuild';
+import { buildPackage } from './build/run.mjs';
+
+const root = process.cwd();
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-await mkdir('lib', { recursive: true });
-await build({entryPoints:['src/index.ts','src/remote.ts'],outdir:'lib',bundle:true,format:'esm',platform:'node',target:'node20',packages:'external',sourcemap:true});
-const client=await build({entryPoints:['src/client.tsx'],bundle:true,format:'cjs',platform:'browser',target:'es2022',write:false,jsx:'automatic',external:['react','react/jsx-runtime','react-dom','@deepseek-ai/cordis','@deepseek-ai/dsh-client-ui-renderer/client','@deepseek-ai/dsh-client-ui-conversation/client','@deepseek-ai/dsh-api-gateway/client'],sourcemap:false});
-const body=client.outputFiles[0].text;
-const wrapper='window.__ModuleLoader__.load({id:'+JSON.stringify(manifest.name)+',factory:(require)=>{var module={exports:{}};var exports=module.exports;\n'+body+'\nreturn module.exports;}});\n';
-await writeFile('lib/client.js',wrapper);
-for(const config of ['tsconfig.build.json','tsconfig.build.client.json'])execFileSync(process.execPath,['node_modules/typescript/bin/tsc','-p',config],{stdio:'inherit'});
+await buildPackage({
+  root,
+  manifest,
+  build,
+  mkdir,
+  writeFile,
+  exec: (args, cwd) => execFileSync(process.execPath, args, { stdio: 'inherit', cwd }),
+});
 console.log('Built host, lazy client module, and public declarations.');

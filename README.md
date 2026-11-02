@@ -1,50 +1,81 @@
 # DSH Kanban
 
-An independent host/client plugin for **DeepSeek Harness (DSH) 0.2.1-rc.2**: Hub-scoped Kanban boards, per-board workflows, optional Git worktrees, shared task notes, and task drawers that reuse native DSH conversations. It does not replace the DSH core, start another server, or clone the chat/agent runtime.
+An independent host/client plugin for **DeepSeek Harness (DSH) 0.2.x**: Hub-scoped Kanban boards, per-board workflows, optional Git worktrees, shared task notes, and task drawers that reuse native DSH conversations. It does not replace the DSH core, start another server, or clone the chat/agent runtime.
 
 > **Verification boundary:** this plugin is checked through public DSH extension-point contracts, real temporary Git repositories, client integration tests, and the existing DSH GUI. Native conversation/model/scheduler engines remain DSH responsibilities. Acceptance uses a deterministic, test-only model adapter; no real-model request is part of the acceptance path. See [verification status and limitations](<docs/operations.md#verification-status>).
 
 ## Requirements
 
-- DSH **0.2.1-rc.2**. SDK dependencies are pinned to that release candidate; compatibility with other versions is not established.
-- Plugin runtime: **Node.js >=20.19**. Use a normal development Node installation; **Node.js 22+** is required for the optional Inspector helpers' native WebSocket support.
-- **pnpm 10.15.1**, as declared by `packageManager` in [the package manifest](<package.json>).
+- DSH **0.2.x**. The package declares `engines.dsh: ^0.2.1-rc.2`; it is verified on `0.2.1-rc.5`. SDK packages are host-provided peers with `^0.2.1-rc.2` ranges, pinned in development dependencies for building.
+- Network access to GitHub and to the package registry during installation.
 - Git available to the host for worktree operations, and an existing local project/Git repository.
 - Native DSH file policy permitting the requested paths. Changing working directory does **not** grant access.
 
-The package is private and marked `UNLICENSED`; these instructions do not grant a license.
+Development additionally requires **Node.js >=20.19** and **pnpm 10.15.1**, as declared in [the package manifest](<package.json>); Node.js 22+ is required for the optional Inspector helpers' native WebSocket support.
 
-## Build and install into the existing GUI
+## Install from GitHub
 
-Run from this checkout with the required Node and pnpm versions:
+1. Open **Plugins → Add plugin** in the running DSH.
+2. Paste the repository address: `https://github.com/filipeesch/deepseek-harness-kanban`. The `github:filipeesch/deepseek-harness-kanban` form is equivalent.
+3. The first run fails because pnpm blocks the package's build scripts. DSH 0.2.1-rc.5 reports this Git prepare block as a failed installation rather than offering an approval button; open the installation details, copy the exact `allowBuilds` key pnpm prints, add it to the profile's `pnpm-workspace.yaml` as shown below, and retry. The retry runs `prepare`, builds the host and client bundles, and activates the bundle.
+4. If activation did not happen automatically, enable **dsh-kanban** in Plugins. Refresh the existing GUI URL and select **Kanban** in the sidebar.
+
+No standalone web server is needed, and no separate clone or build step is required.
+
+### Resolving the blocked build
+
+Both the Web installation and `dsh plugin --profile <name> add <address>` print the exact key in the failure. Add it to `$DSH_HOME/profiles/<profile>/pnpm-workspace.yaml` and retry:
+
+```yaml
+allowBuilds:
+  "dsh-kanban@git+https://github.com/filipeesch/deepseek-harness-kanban#<commit>": true
+```
+
+The key includes the resolved commit. The same resolution is not blocked again, but a new commit needs a new key.
+
+### Install and update troubleshooting
+
+- **Cannot access GitHub** — the registry mirror supplies registry packages, not the repository. Make `github.com` reachable from the machine (proxy or Git configuration) and retry.
+- **Build scripts blocked** — the Web dialog reports a generic installation failure on DSH 0.2.1-rc.5; its details and log contain the `allowBuilds:` key. Add the exact key as described above and retry. Do not expect an **Allow these scripts and retry** action for this Git prepare error.
+- **Incompatible runtime** — an install outside the declared range reports `incompatible-version` with the unmet requirement. Update DSH, or grant the exact-version exemption (`dsh plugin --profile <name> allow-version <package@version> --dsh-version <runtime> --accept-risk`, or the Plugin Manager). The risk warning is intentional.
+- **Build failed** — open the installation output or the diagnostics log named by the failure; the `prepare` step prints the failing command.
+
+A non-official plugin has no in-place **Update** action. To update, remove it and install from the address again; append a tag or commit to the address to pin a version.
+
+## Develop from a checkout
 
 ```sh
 git clone https://github.com/filipeesch/deepseek-harness-kanban.git
 cd deepseek-harness-kanban
-node --version
-pnpm --version
 pnpm install --frozen-lockfile
 pnpm run build
 ```
 
+`pnpm install` also runs the `prepare` build; use `pnpm install --ignore-scripts` when you only need dependencies.
+
 Then use the **already-running DSH GUI**:
 
 1. Open **Plugins → Add plugin**.
-2. Add the absolute path to the **built package root**, not a source file or build subdirectory. Use the local package/link specification with the absolute path to your checkout:
+2. Add the absolute path to the **built package root**, not a source file or build subdirectory:
 
    ```text
    link:/absolute/path/to/deepseek-harness-kanban
    ```
 
-   If the GUI offers a local-path input, select that same absolute directory.
 3. Enable **dsh-kanban** and inspect the native installation/application result.
-4. Refresh the **existing** GUI URL, then select **Kanban** in its sidebar. The current local backend is `http://127.0.0.1:51781/`; use your existing host URL in other environments.
+4. Refresh the **existing** GUI URL and select **Kanban** in its sidebar.
 
-No standalone web server is needed. Do not start Vite or a replacement DSH instance to make this plugin visible. The plugin adds navigation beside Automation tasks and Plugins; it does not configure a startup-page override.
+The plugin adds navigation beside Automation tasks and Plugins; it does not configure a startup-page override. Do not start Vite or a replacement DSH instance to make the plugin visible.
 
-After source changes, deliberately run `pnpm run build` again, explicitly reconcile the rebuilt plugin through the supported native Plugin Manager operation, and refresh that same GUI. On the inspected rc.2 host, public `pluginManager.setBundleEnabled('dsh-kanban', true)` reconciles changed loaded linked-target files even when already enabled; the optional helper exposes this as `enable`. See [the safe rebuild/reconcile procedure](<docs/operations.md#explicit-reconciliation-after-a-rebuild>). A linked checkout is **not** a promise of source HMR or automatic compilation. Inspect application/errors and honor any native restart-required result instead of reporting a hot update as successful.
+After source changes, run `pnpm run build` again, reconcile the rebuilt plugin through the supported native Plugin Manager operation, and refresh that same GUI. On the verified host, public `pluginManager.setBundleEnabled('dsh-kanban', true)` reconciles changed loaded linked-target files even when already enabled; the optional helper exposes this as `enable`. See [the safe rebuild/reconcile procedure](<docs/operations.md#explicit-reconciliation-after-a-rebuild>). A linked checkout is **not** a promise of source HMR or automatic compilation. Inspect application/errors and honor any native restart-required result instead of reporting a hot update as successful.
 
-The latest installation attempt initially failed fetching from the default registry; a one-shot `https://registry.npmjs.org` override succeeded without changing package-manager or DSH settings. This is observed network troubleshooting, not a requirement to change your registry. See [installation diagnostics](<docs/operations.md#installation-and-update-diagnostics>) and the optional local Inspector procedure there.
+### Verify the install path
+
+```sh
+DSH_BIN=/path/to/dsh pnpm verify:install
+```
+
+The check snapshots the working tree into a temporary Git repository, installs it into an isolated `DSH_HOME` and profile, writes the exact `allowBuilds` key reported by the blocked attempt, and asserts the built entry points, the absence of plugin-installed `@deepseek-ai` copies, the bundle selection, and the composed enabled `kanban` row. It never touches your own DSH home or profile. See [installation diagnostics](<docs/operations.md#installation-and-update-diagnostics>).
 
 ## Hubs and boards
 
@@ -172,6 +203,10 @@ The question strip's footer has a **Dismiss** action on the left. An untouched r
 
 There are **no model tools to move/delete cards or message another card**, no plugin checklist or decision ledger, and no plugin terminal or full Git/code-review integration; the workflow surface has a YAML editor. Existing native DSH features are not removed.
 
+## License
+
+MIT. See [LICENSE](<LICENSE>).
+
 ## Development and evidence
 
 ```sh
@@ -181,6 +216,8 @@ pnpm run test:browser
 pnpm run build
 # Or run those checks in sequence:
 pnpm run check
+# Install this working tree from a temporary Git repository into an isolated DSH home:
+DSH_BIN=/path/to/dsh pnpm run verify:install
 # Manual before release, against an installed and built DSH checkout:
 node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness --check
 node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness

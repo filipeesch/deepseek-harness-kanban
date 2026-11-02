@@ -9,6 +9,7 @@
     "src/questions/**/*.ts",
     "src/questions/**/*.tsx",
     "tests/host/**/*.ts",
+    "tests/scripts/**/*.ts",
     "tests/domain/**/*.ts",
     "tests/native/**/*.ts",
     "tests/worktrees/**/*.ts",
