@@ -1,7 +1,6 @@
 import type { AutoModePauseReason, Board, ConversationFacts, HubTask } from '../shared/types.js';
 import { openSessionIds } from '../shared/conversations.js';
-import { hasUnresolvedEntry } from '../domain/stage-entry.js';
-import { resolveAutoAdvance, type AutoAdvancePlan } from '../domain/auto-advance.js';
+import { resolveAdvanceDecision, resolveAutoAdvance, type AutoAdvancePlan } from '../domain/auto-advance.js';
 
 /** Delay before a completed turn is evaluated, so the native activity projection has settled. */
 export const AUTO_ADVANCE_SETTLE_MS = 250;
@@ -55,9 +54,10 @@ export interface AutoAdvancePorts {
 interface QueuedTask { sessions: Set<string>; attempts: number; generation: number }
 
 /**
- * Turns live turn boundaries into automatic advances. It owns only the policy
- * decision: reason filtering, the settle delay, the idle gate, and admission
- * hand-off. Persistence and execution stay with the injected ports.
+ * Turns live turn boundaries into automatic advances. It owns only the trigger
+ * policy: reason filtering, the settle delay, duplicate handling, and the
+ * admission hand-off. The advance decision is the pure domain rule, and
+ * persistence and execution stay with the injected ports.
  */
 export class AutoAdvanceCoordinator {
   private readonly handled = new Set<string>();
@@ -136,11 +136,18 @@ export class AutoAdvanceCoordinator {
         if ((this.generations.get(taskId) ?? 0) !== entry.generation) continue;
         const located = this.ports.locate(taskId);
         if (!located || located.task.autoMode?.enabled !== true) continue;
-        const gate = await this.idleGate(located.task, entry.sessions);
+        const facts = await this.readTaskFacts(located.task);
         if (this.disposed) return;
         if ((this.generations.get(taskId) ?? 0) !== entry.generation) continue;
-        if (!gate.idle) {
-          if (gate.retry && entry.attempts + 1 < AUTO_ADVANCE_SETTLE_ATTEMPTS) {
+        // A failed read is not idle: report it and let the next completed turn re-evaluate.
+        if (facts === undefined) continue;
+        const decision = resolveAdvanceDecision(located.task, facts);
+        if (decision.kind === 'busy') continue;
+        // Pending user work is a hold, not a retry: nothing is admitted, nothing is recorded.
+        if (decision.kind === 'pending') continue;
+        if (decision.kind === 'running') {
+          if (decision.sessions.some(sessionId => entry.sessions.has(sessionId))
+            && entry.attempts + 1 < AUTO_ADVANCE_SETTLE_ATTEMPTS) {
             this.queued.set(taskId, { sessions: entry.sessions, attempts: entry.attempts + 1, generation: entry.generation });
             retry = true;
           }
@@ -154,24 +161,19 @@ export class AutoAdvanceCoordinator {
     if (retry && !this.disposed) this.arm();
   }
 
-  /** Idle means every open conversation reports neither a running turn nor a pending reply. */
-  private async idleGate(task: HubTask, ending: ReadonlySet<string>): Promise<{ idle: boolean; retry: boolean }> {
-    let retry = false;
-    for (const sessionId of openSessionIds(task)) {
-      let facts: ConversationFacts;
-      try { facts = await this.ports.facts(sessionId); }
-      catch (error) { this.ports.report(error); return { idle: false, retry: false }; }
-      if (this.disposed) return { idle: false, retry: false };
-      if (!facts.running && !facts.awaitingReply) continue;
-      if (!ending.has(sessionId)) return { idle: false, retry: false };
-      retry = true;
+  /** Read every conversation of the task, including a closed one, which still owes the user input. */
+  private async readTaskFacts(task: HubTask): Promise<ReadonlyMap<string, ConversationFacts> | undefined> {
+    try {
+      const entries = await Promise.all(task.sessionIds.map(async sessionId => [sessionId, await this.ports.facts(sessionId)] as const));
+      return new Map(entries);
+    } catch (error) {
+      this.ports.report(error);
+      return undefined;
     }
-    return retry ? { idle: false, retry: true } : { idle: true, retry: false };
   }
 
   private async advance(task: HubTask, board: Board): Promise<void> {
     if (this.disposed) return;
-    if (task.operation || task.pendingTransition || hasUnresolvedEntry(task)) return;
     const plan = resolveAutoAdvance(board.workflow, task.columnId);
     if (!plan.destination) return;
     try {

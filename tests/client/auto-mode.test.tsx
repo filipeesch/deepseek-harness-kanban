@@ -5,6 +5,8 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { autoModeView, CardAutoModeControl, DrawerAutoModeToggle, AutoModeNotice } from '../../src/client/auto-mode.js';
 import { PendingTransitionStatus } from '../../src/client/git.js';
 import type { Column, Task, Workflow } from '../../src/shared/types.js';
+import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
+import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import { fixture } from './helpers.js';
 
 afterEach(cleanup);
@@ -42,10 +44,32 @@ describe('autoModeView', () => {
     expect(view.notice).toBe('Auto mode is on: the next completed turn moves to Review.');
   });
 
-  it('derives the waiting state for an unresolved current entry', () => {
+  it('derives the instruction state for an unresolved current entry', () => {
     const view = autoModeView(task({ columnId: 'review', autoMode: { enabled: true }, instructionPending: { columnId: 'review', enteredAt: 1 } }), workflow);
-    expect(view.state).toBe('waiting');
+    expect(view.state).toBe('instruction');
     expect(view.status).toEqual({ tone: 'pending', label: 'Auto mode is waiting for the Review instruction' });
+  });
+
+  it('derives the held state from pending user work without a status-strip or drawer entry', () => {
+    const view = autoModeView(task({ autoMode: { enabled: true } }), workflow, pendingUserWork(['decision-question', 'queued-prompt'], 2));
+    expect(view.state).toBe('held');
+    expect(view.status).toBeUndefined();
+    expect(view.notice).toBeUndefined();
+    expect(view.waitLabel).toBe('Auto mode is waiting for you: an unanswered question, 2 queued messages.');
+    expect(view.title).toContain('The next completed turn advances once nothing of yours is pending.');
+  });
+
+  it('orders the held state after a recorded pause and before the unresolved instruction', () => {
+    const held = pendingUserWork(['queued-prompt'], 1);
+    expect(autoModeView(task({ autoMode: { enabled: true, pause: { reason: 'turn-aborted', at: now } } }), workflow, held).state).toBe('paused');
+    expect(autoModeView(task({ columnId: 'review', autoMode: { enabled: true }, instructionPending: { columnId: 'review', enteredAt: 1 } }), workflow, held).state).toBe('held');
+    expect(autoModeView(task({ autoMode: undefined }), workflow, held).state).toBe('off');
+  });
+
+  it('ignores pending user work while auto mode is off', () => {
+    const view = autoModeView(task(), workflow, pendingUserWork(['approval']));
+    expect(view.state).toBe('off');
+    expect(view.waitLabel).toBeUndefined();
   });
 
   it('derives the final-stage state when no destination is ahead', () => {
@@ -151,6 +175,23 @@ describe('auto-mode controls', () => {
     }), workflow);
     render(<AutoModeNotice view={view} />);
     expect(screen.getByRole('alert').textContent).toContain('Automatic advance failed');
+  });
+
+  it('presents the held state on the card chip and in its accessible name', () => {
+    const view = autoModeView(task({ autoMode: { enabled: true } }), workflow, pendingUserWork(['native-question']));
+    render(<CardAutoModeControl view={view} onToggle={() => {}} />);
+    const chip = screen.getByRole('button', { name: 'Auto mode is waiting for you: an unanswered agent question. Turn off auto mode' });
+    expect(chip.getAttribute('data-auto-state')).toBe('held');
+    expect(chip.className).toContain('is-held');
+    expect(chip.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('mirrors the held state in the drawer control without adding a notice', () => {
+    const view = autoModeView(task({ autoMode: { enabled: true } }), workflow, pendingUserWork(['queued-prompt'], 1));
+    render(<><DrawerAutoModeToggle view={view} onToggle={() => {}} /><AutoModeNotice view={view} /></>);
+    const toggle = screen.getByRole('button', { name: 'Auto mode is waiting for you: 1 queued message. Auto mode: on' });
+    expect(toggle.getAttribute('data-auto-state')).toBe('held');
+    expect(toggle.className).toContain('is-held');
   });
 
   it('presents an automatic advance failure with only the automatic retry action', () => {

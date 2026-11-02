@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { KanbanApp } from '../../src/host/app.js';
 import { AUTO_ADVANCE_SETTLE_MS } from '../../src/host/auto-advance.js';
 import type { ConversationFacts } from '../../src/shared/types.js';
-import { call, result } from '../questions/fixtures.js';
+import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
+import { call, human, result } from '../questions/fixtures.js';
+import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import { fixture, taskWithConversation } from './helpers.js';
 
 const FLOW = [
@@ -401,7 +403,7 @@ describe('automatic advance gates', () => {
       f.app.observe(sessionId, turnEnd(1));
       await vi.advanceTimersByTimeAsync(AUTO_ADVANCE_SETTLE_MS + 25);
       await f.store.transact(draft => { draft.tasks.find(value => value.id === task.id)!.columnId = 'done'; });
-      release({ running: false, background: [], awaitingReply: false, settledTurn: null });
+      release({ running: false, background: [], pending: NO_PENDING_USER_WORK, settledTurn: null });
       for (let microtask = 0; microtask < 20; microtask += 1) await Promise.resolve();
       await vi.advanceTimersByTimeAsync(25);
     } finally { vi.useRealTimers(); }
@@ -423,7 +425,7 @@ describe('automatic advance gates', () => {
       f.app.observe(sessionId, turnEnd(1));
       await vi.advanceTimersByTimeAsync(AUTO_ADVANCE_SETTLE_MS + 25);
       await f.store.setWorkflow(SILENT_FLOW);
-      release({ running: false, background: [], awaitingReply: false, settledTurn: null });
+      release({ running: false, background: [], pending: NO_PENDING_USER_WORK, settledTurn: null });
       for (let microtask = 0; microtask < 20; microtask += 1) await Promise.resolve();
       await vi.advanceTimersByTimeAsync(25);
     } finally { vi.useRealTimers(); }
@@ -447,6 +449,125 @@ describe('automatic advance gates', () => {
     expect(f.store.requireTask(task.id).columnId).toBe('backlog');
     expect(f.sessions.sent).toEqual([]);
     expect(f.store.requireTask(task.id).autoMode?.pause).toBeUndefined();
+  });
+
+  it('holds the ending conversation for each kind of pending user work', async () => {
+    const kinds: Array<{ name: string; mark: (f: Awaited<ReturnType<typeof setup>>, sessionId: string) => void }> = [
+      { name: 'a queued prompt', mark: (f, sessionId) => f.sessions.queued.add(sessionId) },
+      { name: 'a pending approval', mark: (f, sessionId) => f.sessions.approvals.add(sessionId) },
+      { name: 'an unanswered native question', mark: (f, sessionId) => f.sessions.awaiting.add(sessionId) },
+    ];
+    for (const kind of kinds) {
+      const f = await setup();
+      await f.store.setWorkflow(FLOW);
+      const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Held by ' + kind.name, description: '' });
+      await arm(f.app, task.id);
+      const sessionId = task.sessionIds[0]!;
+      kind.mark(f, sessionId);
+      await endTurn(f.app, sessionId, 1);
+      await delay(100);
+      expect(f.store.requireTask(task.id).columnId).toBe('backlog');
+      expect(f.store.requireTask(task.id).autoMode?.pause).toBeUndefined();
+      expect(f.store.requireTask(task.id).pendingTransition).toBeUndefined();
+      expect(f.sessions.sent).toEqual([]);
+      f.sessions.queued.delete(sessionId); f.sessions.approvals.delete(sessionId); f.sessions.awaiting.delete(sessionId);
+      await endTurn(f.app, sessionId, 2);
+      await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('plan');
+    }
+  });
+
+  it('holds while a closed conversation still owes the user input', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Closed pending', description: '' });
+    const first = task.sessionIds[0]!;
+    const second = await f.app.createConversation(task.id);
+    await arm(f.app, task.id);
+    f.sessions.queued.add(second);
+    await f.app.command({ type: 'conversation.close', taskId: task.id, sessionId: second });
+    await endTurn(f.app, first, 1);
+    await delay(100);
+    expect(f.store.requireTask(task.id).columnId).toBe('backlog');
+    expect(f.store.requireTask(task.id).pendingTransition).toBeUndefined();
+    expect(f.sessions.sent).toEqual([]);
+  });
+
+  it('advances only on a completed turn after the pending work is consumed', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Consumed then turn', description: '' });
+    await arm(f.app, task.id);
+    const sessionId = task.sessionIds[0]!;
+    f.app.observe(sessionId, call(1, 1, 'c1'));
+    f.app.observe(sessionId, result(2, 1, 'c1'));
+    await endTurn(f.app, sessionId, 3);
+    await delay(100);
+    expect(f.store.requireTask(task.id).columnId).toBe('backlog');
+    // Consuming the round without a completed turn does not move the card.
+    f.app.observe(sessionId, human(4));
+    await delay(100);
+    expect(f.store.requireTask(task.id).columnId).toBe('backlog');
+    await endTurn(f.app, sessionId, 5);
+    await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('plan');
+  });
+
+  it('holds for an open question round in a closed conversation', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Closed round', description: '' });
+    const first = task.sessionIds[0]!;
+    const second = await f.app.createConversation(task.id);
+    f.app.observe(second, call(1, 1, 'closed-1'));
+    f.app.observe(second, result(2, 1, 'closed-1'));
+    await f.app.command({ type: 'conversation.close', taskId: task.id, sessionId: second });
+    await arm(f.app, task.id);
+    await endTurn(f.app, first, 1);
+    await delay(100);
+    expect(f.store.requireTask(task.id).columnId).toBe('backlog');
+    expect(f.store.requireTask(task.id).pendingTransition).toBeUndefined();
+    expect(f.sessions.sent).toEqual([]);
+  });
+
+  it('clears the derived pending state after a dismissal without a conversation event', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Dismissed hold', description: '' });
+    const sessionId = task.sessionIds[0]!;
+    f.app.observe(sessionId, call(1, 1, 'c1'));
+    f.app.observe(sessionId, result(2, 1, 'c1'));
+    const rounds = await f.app.rounds(sessionId);
+    await delay(80);
+    expect((await f.app.snapshot()).conversations[sessionId]?.pending.kinds).toEqual(['decision-question']);
+    // Prepared already, so only the dismissal itself can re-project the derived state.
+    await f.app.dismissQuestions(sessionId, rounds[0]!.id);
+    await delay(80);
+    expect((await f.app.snapshot()).conversations[sessionId]?.pending.kinds).toEqual([]);
+    expect(f.store.requireTask(task.id).columnId).toBe('backlog');
+  });
+
+  it('re-validates pending user work during the admission', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Late pending', description: '' });
+    await arm(f.app, task.id);
+    const sessionId = task.sessionIds[0]!;
+    const idle = { running: false, background: [], pending: pendingUserWork([]), settledTurn: null };
+    let reads = 0;
+    const original = f.sessions.facts.bind(f.sessions);
+    // Read order inside the window: the attention debounce (50 ms), the advance settle
+    // (250 ms), then the admission re-read immediately after. Only the admission sees
+    // the queued prompt, so the assertion is about the re-check, not the settle gate.
+    f.sessions.facts = async (id: string) => {
+      if (id !== sessionId) return original(id);
+      reads += 1;
+      return reads <= 2 ? idle : { ...idle, pending: pendingUserWork(['queued-prompt'], 1) };
+    };
+    await endTurn(f.app, sessionId, 1);
+    await delay(100);
+    expect(f.store.requireTask(task.id).columnId).toBe('backlog');
+    expect(f.store.requireTask(task.id).pendingTransition).toBeUndefined();
+    expect(f.store.requireTask(task.id).autoMode?.pause).toBeUndefined();
+    expect(f.sessions.sent).toEqual([]);
   });
 
   it('does not advance for a turn that ended before auto mode was re-enabled', async () => {

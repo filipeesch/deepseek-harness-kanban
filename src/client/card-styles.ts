@@ -33,6 +33,8 @@ export const cardStyles = String.raw`
 .dsh-kanban .kb-auto-chip.is-on{opacity:1;border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary,#3b82f6) 55%,var(--kb-line));background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#3b82f6) 16%,var(--kb-surface))}
 .dsh-kanban .kb-auto-chip.is-paused::after{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.75}
 .dsh-kanban .kb-auto-chip.is-advancing::after{content:'';width:5px;height:5px;border-radius:50%;background:var(--dsw-alias-state-business-primary,#3b82f6);animation:kb-auto-pulse 1.2s ease-in-out infinite}
+.dsh-kanban .kb-auto-chip.is-held{border-style:dotted}
+.dsh-kanban .kb-auto-chip.is-held::after{content:'';width:5px;height:5px;border-radius:50%;border:1px solid currentColor;box-sizing:border-box;opacity:.85}
 @keyframes kb-auto-pulse{0%,100%{opacity:.35}50%{opacity:1}}
 .dsh-kanban .kb-auto-chip:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:2px}
 .dsh-kanban .kb-auto-chip:disabled{opacity:.45;cursor:default}

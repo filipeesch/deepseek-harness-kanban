@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { AutoAdvanceCoordinator, pauseReasonFor, turnEndKey, turnEndReason, type AutoAdvancePorts, type AutoAdvanceTaskView } from '../../src/host/auto-advance.js';
 import type { AutoAdvancePlan } from '../../src/domain/auto-advance.js';
 import type { AutoModePauseReason, Board, Column, ConversationFacts, HubTask } from '../../src/shared/types.js';
+import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
+import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 
 const now = '2026-01-01T00:00:00.000Z';
-const idle: ConversationFacts = { running: false, background: [], awaitingReply: false, settledTurn: null };
+const idle: ConversationFacts = { running: false, background: [], pending: NO_PENDING_USER_WORK, settledTurn: null };
 
 const column = (id: string, extra: Partial<Column> = {}): Column => ({ id, name: id.toUpperCase(), ...extra });
 const board = (...columns: Column[]): Board => ({
@@ -148,7 +150,7 @@ describe('auto-advance coordinator', () => {
   it('waits while another conversation is awaiting a reply', async () => {
     const f = harness();
     f.seed(task({ sessionIds: ['s1', 's2'] }), board(column('backlog'), column('plan')));
-    f.facts.set('s2', { ...idle, awaitingReply: true });
+    f.facts.set('s2', { ...idle, pending: pendingUserWork(['native-question']) });
     f.coordinator.observe('s1', turnEnd(1));
     await f.scheduler.flush();
     expect(f.admitted).toHaveLength(0);
@@ -242,6 +244,40 @@ describe('auto-advance coordinator', () => {
     release(idle);
     for (let microtask = 0; microtask < 20; microtask += 1) await Promise.resolve();
     expect(f.admitted).toHaveLength(0);
+  });
+
+  it('holds without a retry or a pause while the task is owed user input', async () => {
+    const f = harness();
+    f.seed(task(), board(column('backlog'), column('plan')));
+    f.facts.set('s1', { ...idle, pending: pendingUserWork(['queued-prompt'], 1) });
+    f.coordinator.observe('s1', turnEnd(1));
+    await f.scheduler.flush(4);
+    expect(f.admitted).toHaveLength(0);
+    expect(f.pauses).toHaveLength(0);
+    expect(f.scheduler.size).toBe(0);
+  });
+
+  it('holds for pending work in a closed conversation', async () => {
+    const f = harness();
+    f.seed(task({ sessionIds: ['s1', 's2'], closedSessionIds: ['s2'] }), board(column('backlog'), column('plan')));
+    f.facts.set('s2', { ...idle, pending: pendingUserWork(['decision-question']) });
+    f.coordinator.observe('s1', turnEnd(1));
+    await f.scheduler.flush();
+    expect(f.admitted).toHaveLength(0);
+    expect(f.pauses).toHaveLength(0);
+  });
+
+  it('advances on the next completed turn after the pending work is consumed', async () => {
+    const f = harness();
+    f.seed(task(), board(column('backlog'), column('plan')));
+    f.facts.set('s1', { ...idle, pending: pendingUserWork(['approval']) });
+    f.coordinator.observe('s1', turnEnd(1));
+    await f.scheduler.flush();
+    expect(f.admitted).toHaveLength(0);
+    f.facts.set('s1', idle);
+    f.coordinator.observe('s1', turnEnd(2));
+    await f.scheduler.flush();
+    expect(f.admitted).toHaveLength(1);
   });
 
   it('does not admit when disposed while the facts read is in flight', async () => {

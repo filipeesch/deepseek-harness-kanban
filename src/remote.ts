@@ -47,7 +47,8 @@ export const QuestionRoundSchema=z.object({id:z.string(),sessionId:z.string(),tu
 export const QuestionFeedFrameSchema:z.ZodType<QuestionFeedFrame>=z.object({kind:z.enum(['baseline','update']),rounds:z.array(QuestionRoundSchema)}).strict();
 const SettledTurnSchema=z.object({seq:z.number().int().nonnegative(),outcome:z.enum(['ok','error'])}).strict();
 const BackgroundActivitySchema=z.object({kind:z.enum(['job','schedule']),label:z.string()}).strict();
-const ConversationFactsSchema=z.object({running:z.boolean(),background:z.array(BackgroundActivitySchema),awaitingReply:z.boolean(),settledTurn:SettledTurnSchema.nullable()}).strict();
+const PendingUserWorkSchema=z.object({kinds:z.array(z.enum(['decision-question','native-question','approval','queued-prompt'])),queuedPrompts:z.number().int().nonnegative()}).strict();
+const ConversationFactsSchema=z.object({running:z.boolean(),background:z.array(BackgroundActivitySchema),pending:PendingUserWorkSchema,settledTurn:SettledTurnSchema.nullable()}).strict();
 export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note']),id}).strict().optional(),state:KanbanStateSchema,conversations:z.record(z.string(),ConversationFactsSchema),sequence:z.number().int().nonnegative()}).strict();
 const ProblemSchema=z.object({code:z.string(),message:z.string(),details:z.record(z.string(),z.unknown()).optional()}).strict();
 const outcome=<T extends z.ZodType>(value:T)=>z.discriminatedUnion('ok',[z.object({ok:z.literal(true),value}).strict(),z.object({ok:z.literal(false),error:ProblemSchema}).strict()]);

@@ -8,6 +8,7 @@ import { createTaskPageState } from '../../src/client/page-state.js';
 import type { DrawerSubagentAddress } from '../../src/client/conversation-navigation.js';
 import type { Attention } from '../../src/shared/types.js';
 import { deferred, fakeApi, fixture, type TestSnapshot } from './helpers.js';
+import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 
 afterEach(cleanup);
 const child: DrawerSubagentAddress = { parentSessionId: 's1', childSessionId: 'child-1', mode: 'continuable' };
@@ -252,7 +253,7 @@ describe('drawer conversation peek', () => {
 });
 
 describe('conversation tab attention', () => {
-  const attention = (overrides: Partial<Attention> = {}): Attention => ({ running: false, background: [], unread: false, awaitingReply: false, failed: false, ...overrides });
+  const attention = (overrides: Partial<Attention> = {}): Attention => ({ running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK, ...overrides });
   function mountAttention(taskPatch: (task: ReturnType<typeof fixture>['state']['tasks'][number]) => ReturnType<typeof fixture>['state']['tasks'][number], initial: Record<string, Attention>) {
     const data = fixture(); const mock = fakeApi(data);
     const task = taskPatch(data.state.tasks[0]!);
@@ -263,19 +264,19 @@ describe('conversation tab attention', () => {
   }
 
   it('shows each conversation status on its own tab and updates the dots live', async () => {
-    const { rerender, props } = mountAttention(task => task, { s1: attention({ unread: true, awaitingReply: true }), s2: attention({ failed: true }) });
+    const { rerender, props } = mountAttention(task => task, { s1: attention({ unread: true, awaitingReply: true }), s2: attention({ failed: true, pending: NO_PENDING_USER_WORK }) });
     const tabs = await screen.findByRole('tablist', { name: 'Agent conversations' });
     expect(within(tabs).getByRole('tab', { name: /Agent 1 Unread messages, Awaiting reply/ })).toBeTruthy();
     expect(within(tabs).getByRole('tab', { name: /Agent 2 Agent failure/ })).toBeTruthy();
     expect(within(tabs).getByRole('tab', { name: /Agent 1/ }).querySelectorAll('.kb-dot')).toHaveLength(2);
     expect(within(tabs).getByRole('tab', { name: /Agent 2/ }).querySelectorAll('.kb-dot')).toHaveLength(1);
-    rerender(<TaskDrawer {...props({ s1: attention(), s2: attention({ failed: true }) })} />);
+    rerender(<TaskDrawer {...props({ s1: attention(), s2: attention({ failed: true, pending: NO_PENDING_USER_WORK }) })} />);
     await waitFor(() => expect(within(tabs).getByRole('tab', { name: 'Agent 1' }).querySelectorAll('.kb-dot')).toHaveLength(0));
     expect(within(tabs).getByRole('tab', { name: /Agent 2 Agent failure/ }).querySelectorAll('.kb-dot')).toHaveLength(1);
   });
 
   it('keeps the dots out of closed-conversation entries', async () => {
-    const { getByRole } = mountAttention(task => ({ ...task, closedSessionIds: ['s2'] }), { s1: attention(), s2: attention({ unread: true, failed: true }) });
+    const { getByRole } = mountAttention(task => ({ ...task, closedSessionIds: ['s2'] }), { s1: attention(), s2: attention({ unread: true, failed: true, pending: NO_PENDING_USER_WORK }) });
     await screen.findByRole('tab', { name: 'Agent 1' });
     fireEvent.click(getByRole('button', { name: '1 closed conversation' }));
     const reopen = getByRole('button', { name: 'Reopen Agent 2' });

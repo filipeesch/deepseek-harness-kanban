@@ -4,10 +4,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { backgroundAccessibleName, backgroundDetails, backgroundIndicatorText, backgroundSummary, TaskActivity } from '../../src/client/activity.js';
 import type { Attention } from '../../src/shared/types.js';
+import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 
 afterEach(cleanup);
 const attention = (overrides: Partial<Attention> = {}): Attention => ({
-  running: false, background: [], unread: false, awaitingReply: false, failed: false, ...overrides,
+  running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK, ...overrides,
 });
 const job = { kind: 'job' as const, label: 'Run tests' };
 const schedule = { kind: 'schedule' as const, label: 'Wake later' };

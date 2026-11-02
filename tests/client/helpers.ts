@@ -2,6 +2,7 @@ import { vi } from 'vitest';
 import type { BoardState, ClientApi, Command, HubState, HubTask, KanbanSnapshot, KanbanState } from '../../src/shared/types.js';
 import { taskTitleSlug, worktreePathForBranch } from '../../src/shared/worktree-name.js';
 import { applyInitialEntry, applyMove, applyRunInstruction, createEnteredAtSource } from '../support/in-memory-board.js';
+import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 
 const FIXTURE_WORKFLOW_YAML = ['name: Delivery', 'initial_column: intake', 'columns:', '  - id: intake', '    label: Intake', '    allowed_transitions: [doing, review]', '  - id: doing', '    label: Doing', '  - id: review', '    label: Review', '    on_enter_prompt: |', '      Review **carefully**.', 'groups:', '  - id: plan', '    label: Planning', '    columns: [intake, review]', ''].join(String.fromCharCode(10));
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
@@ -20,7 +21,7 @@ function rawFixture(): KanbanSnapshot {
     tasks: [task('t1', 'Alpha task', 'p1', 'intake'), { ...task('t2', 'Beta task', 'p2', 'doing'), description: 'Searchable documentation', worktree: { path: '/trees/beta', branch: 'beta', owned: true, status: 'ready' }, effectiveCwd: '/trees/beta' }],
     notes: [], createdAt: now, updatedAt: now,
   };
-  return { sequence: 1, attention: { t1: { running: true, background: [{ kind: 'job', label: 'Run tests' }], unread: true, awaitingReply: true, failed: true } }, conversationAttention: {}, state: { hubs: [hub], settings: { revision: 1 } } };
+  return { sequence: 1, attention: { t1: { running: true, background: [{ kind: 'job', label: 'Run tests' }], unread: true, awaitingReply: true, failed: true, pending: NO_PENDING_USER_WORK } }, conversationAttention: {}, state: { hubs: [hub], settings: { revision: 1 } } };
 }
 
 /** Test-only legacy view over the first Hub and board. Production code reads state.hubs. */

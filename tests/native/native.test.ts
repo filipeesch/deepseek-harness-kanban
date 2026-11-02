@@ -269,11 +269,21 @@ describe('native conversations', () => {
     expect(await f.sessions.facts('a')).toEqual({
       running: true,
       background: [{ kind: 'job', label: 'Run tests' }],
-      awaitingReply: true,
+      pending: { kinds: ['native-question'], queuedPrompts: 0 },
       settledTurn: { seq: 4, outcome: 'error' },
     });
     f.inspections.set('a', { ...snapshot, events: [envelope('turn/end', { turn: 1, reason: { kind: 'error' } }, 4), envelope('turn/end', { turn: 2, reason: { kind: 'completed' } }, 5)] });
     expect((await f.sessions.facts('a')).settledTurn).toEqual({ seq: 5, outcome: 'ok' });
+  });
+  it('does not count the queued instruction the host admitted itself as pending user work', async () => {
+    const f = fixture();
+    const inbox = f.agent.inbox as unknown as { nextTurn: unknown[] };
+    inbox.nextTurn.push({ role: 'user', content: [], source: { kind: 'user', rpcId: 'auto-1' } });
+    await f.sessions.send('a', 'Plan it.', 'auto-1');
+    expect((await f.sessions.facts('a')).pending).toEqual({ kinds: [], queuedPrompts: 0 });
+    // A prompt the user submitted stays user work, even next to the host's own instruction.
+    inbox.nextTurn.push({ role: 'user', content: [], source: { kind: 'user', rpcId: 'user-1' } });
+    expect((await f.sessions.facts('a')).pending).toEqual({ kinds: ['queued-prompt'], queuedPrompts: 1 });
   });
   it('protects cold shared worktrees using exact directories rather than immutable list cwd', async () => {
     const f = fixture(); const coldId = SessionId('cold'); const changed = join(root, 'external-tree', 'api');

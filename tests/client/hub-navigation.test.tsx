@@ -5,6 +5,7 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import { userEvent } from '@testing-library/user-event';
 import { BoardView } from '../../src/client/board.js';
 import { fixture, fakeApi, task } from './helpers.js';
+import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 
 beforeEach(() => { try { globalThis.localStorage?.clear(); } catch { /* jsdom storage optional */ } });
 afterEach(cleanup);
@@ -52,7 +53,7 @@ describe('Hub and board navigation', () => {
     const value = fixture();
     const secondTask = task('t3', 'Second Hub task', 'p1', 'intake');
     value.state.hubs.push({ ...value.state.hubs[0]!, id: 'hub-2', name: 'Attention Hub', boards: value.state.hubs[0]!.boards.map(board => ({ ...board, id: 'board-2' })), tasks: [{ ...secondTask, boardId: 'board-2' }] });
-    value.attention.t3 = { running: false, background: [], unread: true, awaitingReply: false, failed: false };
+    value.attention.t3 = { running: false, background: [], unread: true, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
     const mock = fakeApi(value);
     render(<BoardView api={mock.api} renderConversation={() => null} />);
     const tab = await screen.findByRole('tab', { name: /Attention Hub/ });
@@ -75,7 +76,7 @@ describe('Hub and board navigation', () => {
     expect([...boardTab.querySelectorAll('.kb-dot, .kb-tab-running')].map(element => element.className)).toEqual(['kb-dot kb-blue', 'kb-dot kb-orange', 'kb-dot kb-red', 'kb-tab-running']);
 
     const next = get();
-    next.attention.t1 = { running: false, background: [], unread: false, awaitingReply: false, failed: false };
+    next.attention.t1 = { running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
     act(() => { publish(next); });
     await waitFor(() => {
       expect(within(screen.getByRole('tab', { name: /My Hub/ })).queryByRole('img', { name: /task running/ })).toBeNull();
@@ -88,7 +89,7 @@ describe('Hub and board navigation', () => {
     const hub = value.state.hubs[0]!;
     hub.boards.push({ ...hub.boards[0]!, id: 'board-2', name: 'Second board' });
     hub.tasks.push({ ...task('t3', 'Second board task', 'p1', 'intake'), boardId: 'board-2' });
-    value.attention.t3 = { running: true, background: [], unread: false, awaitingReply: false, failed: false };
+    value.attention.t3 = { running: true, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
     render(<BoardView api={fakeApi(value).api} renderConversation={() => null} />);
     const tab = await screen.findByRole('tab', { name: /Second board.*1 task running/ });
     expect(within(tab).getByRole('img', { name: '1 task running' })).toBeTruthy();
@@ -97,8 +98,8 @@ describe('Hub and board navigation', () => {
   it('counts each task once when a task runs a turn and owns background work', async () => {
     const { publish, get } = mount();
     const next = get();
-    next.attention.t1 = { running: true, background: [{ kind: 'job', label: 'Run tests' }, { kind: 'schedule', label: 'Wake later' }], unread: false, awaitingReply: false, failed: false };
-    next.attention.t2 = { running: true, background: [], unread: false, awaitingReply: false, failed: false };
+    next.attention.t1 = { running: true, background: [{ kind: 'job', label: 'Run tests' }, { kind: 'schedule', label: 'Wake later' }], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
+    next.attention.t2 = { running: true, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
     act(() => { publish(next); });
     const boardTab = screen.getByRole('tab', { name: /Delivery/ });
     await waitFor(() => expect(within(boardTab).getByRole('img', { name: '2 tasks running' })).toBeTruthy());
@@ -108,7 +109,7 @@ describe('Hub and board navigation', () => {
   it('keeps the running-task count on an inactive Hub tab', async () => {
     const value = fixture();
     value.state.hubs.push({ ...value.state.hubs[0]!, id: 'hub-2', name: 'Running Hub', boards: value.state.hubs[0]!.boards.map(board => ({ ...board, id: 'board-2' })), tasks: [{ ...task('t3', 'Second Hub task', 'p1', 'intake'), boardId: 'board-2' }] });
-    value.attention.t3 = { running: true, background: [], unread: false, awaitingReply: false, failed: false };
+    value.attention.t3 = { running: true, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
     const mock = fakeApi(value);
     render(<BoardView api={mock.api} renderConversation={() => null} />);
     const tab = await screen.findByRole('tab', { name: /Running Hub/ });

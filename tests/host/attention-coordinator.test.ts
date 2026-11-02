@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AttentionCoordinator, MAX_READ_RETRIES, sameConversationFacts, type AttentionCoordinatorOptions, type AttentionTask } from '../../src/host/attention.js';
 import type { ConversationFacts } from '../../src/shared/types.js';
+import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
+import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 
 const tasks = (...sessionIds: string[]): AttentionTask[] => [{ id: 't1', sessionIds }];
 function facts(overrides: Partial<ConversationFacts> = {}): ConversationFacts {
-  return { running: false, background: [], awaitingReply: false, settledTurn: null, ...overrides };
+  return { running: false, background: [], pending: NO_PENDING_USER_WORK, settledTurn: null, ...overrides };
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -20,7 +22,7 @@ function fixture(overrides: Partial<AttentionCoordinatorOptions> = {}) {
   const onChange = vi.fn();
   const report = vi.fn();
   const coordinator = new AttentionCoordinator({
-    source, tasks: () => tasks('s1'), pendingQuestion: () => false,
+    source, tasks: () => tasks('s1'),
     runPendingWork, onChange, report, debounceMs: 50, ...overrides,
   });
   coordinators.push(coordinator);
@@ -68,21 +70,20 @@ describe('conversation facts cache', () => {
 describe('per-conversation projection', () => {
   it('keeps every conversation separate instead of aggregating by task', async () => {
     const f = fixture({ tasks: () => tasks('s1', 's2') });
-    f.values.set('s1', facts({ running: true, awaitingReply: true }));
+    f.values.set('s1', facts({ running: true, pending: pendingUserWork(['native-question']) }));
     f.values.set('s2', facts({ background: [{ kind: 'job', label: 'Run tests' }], settledTurn: { seq: 4, outcome: 'error' } }));
     expect(await f.coordinator.project()).toEqual({
-      s1: { running: true, background: [], awaitingReply: true, settledTurn: null },
-      s2: { running: false, background: [{ kind: 'job', label: 'Run tests' }], awaitingReply: false, settledTurn: { seq: 4, outcome: 'error' } },
+      s1: { running: true, background: [], pending: { kinds: ['native-question'], queuedPrompts: 0 }, settledTurn: null },
+      s2: { running: false, background: [{ kind: 'job', label: 'Run tests' }], pending: NO_PENDING_USER_WORK, settledTurn: { seq: 4, outcome: 'error' } },
     });
   });
 
-  it('evaluates the plugin question state per conversation without re-reading native facts', async () => {
-    let pending = false;
-    const f = fixture({ pendingQuestion: sessionId => pending && sessionId === 's2', tasks: () => tasks('s1', 's2') });
-    expect((await f.coordinator.project()).s2?.awaitingReply).toBe(false);
-    pending = true;
-    expect((await f.coordinator.project()).s1?.awaitingReply).toBe(false);
-    expect((await f.coordinator.project()).s2?.awaitingReply).toBe(true);
+  it('keeps pending user work per conversation instead of inheriting it across the task', async () => {
+    const f = fixture({ tasks: () => tasks('s1', 's2') });
+    f.values.set('s2', facts({ pending: pendingUserWork(['decision-question']) }));
+    expect((await f.coordinator.project()).s2?.pending).toEqual({ kinds: ['decision-question'], queuedPrompts: 0 });
+    const projected = await f.coordinator.project();
+    expect(projected.s1?.pending).toEqual(NO_PENDING_USER_WORK);
     expect(f.source.read).toHaveBeenCalledTimes(2);
   });
 });
@@ -95,6 +96,8 @@ describe('conversation fact comparison', () => {
     expect(sameConversationFacts(base, { s1: facts({ settledTurn: { seq: 1, outcome: 'error' } }) })).toBe(false);
     expect(sameConversationFacts(base, { s1: { ...base.s1, running: true } })).toBe(false);
     expect(sameConversationFacts(base, { s1: facts({ background: [{ kind: 'job', label: 'Run tests' }] }) })).toBe(false);
+    expect(sameConversationFacts(base, { s1: facts({ pending: pendingUserWork(['queued-prompt'], 1) }) })).toBe(false);
+    expect(sameConversationFacts(base, { s1: facts({ pending: pendingUserWork(['queued-prompt'], 2) }) })).toBe(false);
     expect(sameConversationFacts(base, {})).toBe(false);
   });
 });

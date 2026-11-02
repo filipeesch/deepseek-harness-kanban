@@ -1,4 +1,6 @@
 import type { BoardState, ClientApi, Command, HubState, HubTask, KanbanSnapshot, KanbanState } from '../../src/shared/types.js';
+import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
+import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import { taskTitleSlug, worktreePathForBranch } from '../../src/shared/worktree-name.js';
 import { applyMove, applyRunInstruction, createEnteredAtSource } from '../support/in-memory-board.js';
 
@@ -33,18 +35,27 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     failedDeleteReturn(),
   ];
   const attention: KanbanSnapshot['attention'] = options.attention ? {
-    'long-0': { running: true, background: [], unread: false, awaitingReply: false, failed: false },
-    'long-1': { running: false, background: [{ kind: 'job', label: 'Run tests' }], unread: false, awaitingReply: false, failed: false },
-    'long-2': { running: true, background: [{ kind: 'schedule', label: 'Wake later' }], unread: false, awaitingReply: false, failed: false },
-    'long-3': { running: false, background: [{ kind: 'job', label: 'Run tests' }, { kind: 'schedule', label: 'Wake later' }], unread: true, awaitingReply: true, failed: true },
+    'long-0': { running: true, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK },
+    'long-1': { running: false, background: [{ kind: 'job', label: 'Run tests' }], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK },
+    'long-2': { running: true, background: [{ kind: 'schedule', label: 'Wake later' }], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK },
+    'long-3': { running: false, background: [{ kind: 'job', label: 'Run tests' }, { kind: 'schedule', label: 'Wake later' }], unread: true, awaitingReply: true, failed: true, pending: NO_PENDING_USER_WORK },
   } : {};
   const conversationAttention: KanbanSnapshot['conversationAttention'] = options.attention ? {
-    's-long-0': attention['long-0']!, 's-long-1': attention['long-1']!, 's-long-2': { running: true, background: [{ kind: 'schedule', label: 'Wake later' }], unread: false, awaitingReply: false, failed: false }, 's-long-3': attention['long-3']!,
+    's-long-0': attention['long-0']!, 's-long-1': attention['long-1']!, 's-long-2': { running: true, background: [{ kind: 'schedule', label: 'Wake later' }], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK }, 's-long-3': attention['long-3']!,
   } : {};
+  // The auto-mode scenario also holds one task on pending user work, so the chip's
+  // held state is exercised against the real components. The control reads the
+  // task-level attention, which the host aggregates from every conversation.
+  if (options.auto) {
+    const held: KanbanSnapshot['attention'][string] = { running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: pendingUserWork(['queued-prompt'], 1) };
+    attention['other'] = held;
+    conversationAttention['s-other'] = held;
+  }
   const shortTask = tasks.find(value => value.id === 'short')!;
   if (options.pending) shortTask.pendingTransition = { id: 'pending-short', fromColumnId: 'propose', columnId: 'apply', mode: 'move', status: 'waiting' };
   if (options.auto) {
     tasks.find(value => value.id === 'long-0')!.autoMode = { enabled: true };
+    tasks.find(value => value.id === 'other')!.autoMode = { enabled: true };
     tasks.find(value => value.id === 'long-1')!.autoMode = { enabled: true, pause: { reason: 'turn-error', at: now } };
     const failed = tasks.find(value => value.id === 'long-2')!;
     failed.autoMode = { enabled: true };

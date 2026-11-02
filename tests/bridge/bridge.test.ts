@@ -8,6 +8,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import { ClientBridge, unwrap, type BridgeRemote } from '../../src/client-bridge.js';
 import type { KeyValueStorage } from '../../src/client/key-value-storage.js';
 import type { ConversationFacts, HostSnapshot, HubTask, KanbanSnapshot, QuestionFeedFrame, QuestionRound } from '../../src/shared/types.js';
+import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 function source<T>(initial: T) {
   let value = initial; const listeners = new Set<() => void>();
   const observable: HostObservable<T> = { getSnapshot: () => value, subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
@@ -39,7 +40,7 @@ function closed(closedSessionIds: string[], conversations: Record<string, Conver
   value.state.hubs[0]!.tasks[0] = task('t1', ['a', 'b'], closedSessionIds);
   return value;
 }
-function idle(): ConversationFacts { return { running: false, background: [], awaitingReply: false, settledTurn: null }; }
+function idle(): ConversationFacts { return { running: false, background: [], pending: NO_PENDING_USER_WORK, settledTurn: null }; }
 function settled(seq: number, outcome: 'ok' | 'error' = 'ok', overrides: Partial<ConversationFacts> = {}): ConversationFacts {
   return { ...idle(), settledTurn: { seq, outcome }, ...overrides };
 }

@@ -14,6 +14,7 @@ import type { GitProject } from '../shared/types.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 import { createNativeSessionFacts, inspectedOpenTurn, nativePending } from './native-facts.js';
 import type { ConversationFactsReader } from './conversation-facts.js';
+import { createQueuedPromptReader, PluginPromptLedger } from './queued-prompts.js';
 import { executeCommand } from './host-command.js';
 import { createHostProjectProbe } from './project-probe.js';
 
@@ -136,11 +137,18 @@ export function createNativePorts(ctx: Context, options: NativePortsOptions = {}
     }
   };
   const admissions = new Map<string, { text: string; done: Promise<void> }>();
+  const ownPrompts = new PluginPromptLedger();
+  const queuedPrompts = createQueuedPromptReader({
+    live: id => {
+      const agent = ctx.agents.get(SessionId(id));
+      return agent === undefined ? undefined : { nextTurn: agent.inbox.nextTurn, nextStep: agent.inbox.nextStep };
+    },
+  }, ownPrompts);
   const liveFacts = options.conversationFacts === undefined ? undefined : (id: string) => {
     const session = ctx.sessions.get(SessionId(id));
     return session === undefined ? undefined : options.conversationFacts!.read(session);
   };
-  const sessionFacts = createNativeSessionFacts({ activity, projections, inspect, ...(liveFacts === undefined ? {} : { liveFacts }) });
+  const sessionFacts = createNativeSessionFacts({ activity, projections, inspect, queuedPrompts, ...(liveFacts === undefined ? {} : { liveFacts }) });
   const sessions: SessionPort = {
     async create(projectPath, workspaceId) {
       const cwd = await directoryPath(projectPath);
@@ -219,6 +227,8 @@ export function createNativePorts(ctx: Context, options: NativePortsOptions = {}
         invariant(active.text === text, 'PROMPT_ID_CONFLICT', 'The same prompt identity cannot describe two different instructions.');
         return active.done;
       }
+      // The host's own admitted prompt is not user work; record its identity before it can be queued.
+      ownPrompts.add(id, requestId);
       // Native prompt admission dedupes rpcId in both Inbox lists and durable user/message events.
       // Join in-flight calls too: the SDK checks identity before asynchronous attachment admission.
       const done = (async () => {

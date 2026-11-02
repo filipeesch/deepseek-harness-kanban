@@ -9,7 +9,7 @@ Provide a task-centered drawer that contains continuous native DSH conversations
 ### Requirement: Task drawer sections
 Opening a task card SHALL display a task drawer with a header showing the task title, the project, and the task's execution status, and Conversations, Info, Git, and Notes sections. The execution status SHALL remain visible while the user inspects any of those sections. Conversations SHALL contain the task's native DSH chats, Info SHALL expose the task's title and Markdown description, Git SHALL expose its simplified worktree controls, and Notes SHALL expose its shared task notes. The workflow stage control SHALL be presented in the drawer's compact toolbar and SHALL list every workflow stage in workflow order, including the current stage. Stages that the active board's workflow does not permit from the current stage SHALL remain selectable and SHALL be presented with lower visual emphasis than permitted stages, with the restriction also available to assistive technology. Selecting a permitted stage SHALL move the task immediately; selecting a restricted stage SHALL require the explicit confirmation defined by the Explicit confirmation for a restricted transition requirement. An instructed destination SHALL arm the timed stage instruction defined by the Timed stage instruction after a move requirement in `kanban-board`; the drawer SHALL present that countdown notice above its section panel and SHALL expose the same cancel action. The drawer SHALL NOT insert text into the composer for a stage change.
 
-The drawer header SHALL also present the task's auto-mode control defined by Auto mode on a task card in `kanban-board`, with the same pressed state, effect, and enabled or disabled behavior as the card control. The drawer SHALL present the automatic-advance state above its section panel without changing sections: the destination stage while an advance is admitted, a failure when an admitted advance failed, and the pause reason when auto mode is paused. The drawer SHALL present that state with the same meaning as the card status strip and SHALL NOT make reading or acknowledging a conversation clear a pause.
+The drawer header SHALL also present the task's auto-mode control defined by Auto mode on a task card in `kanban-board`, with the same pressed state, effect, indication, and enabled or disabled behavior as the card control, including the held state while the task has pending user work. The drawer SHALL present the automatic-advance state above its section panel without changing sections: the destination stage while an advance is admitted, a failure when an admitted advance failed, and the pause reason when auto mode is paused. The drawer SHALL NOT present a separate entry for the held state above its section panel, because the mirrored control presents it. The drawer SHALL present the automatic-advance state with the same meaning as the card status strip and SHALL NOT make reading or acknowledging a conversation clear a pause.
 
 #### Scenario: Open a task from the board
 - **WHEN** a user opens a card on the Kanban board
@@ -74,6 +74,11 @@ The drawer header SHALL also present the task's auto-mode control defined by Aut
 - **THEN** the setting changes exactly as the card control changes it
 - **AND** the drawer stays in its current section
 - **AND** the task's stage and position are unchanged
+
+#### Scenario: Mirror the held auto-mode state
+- **WHEN** the open task has auto mode enabled and pending user work
+- **THEN** the drawer's mirrored auto-mode control presents the held state
+- **AND** no separate entry for that state is added above the section panel
 
 #### Scenario: Present an admitted automatic advance
 - **WHEN** an automatic advance is admitted for the open task

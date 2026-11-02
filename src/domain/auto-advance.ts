@@ -1,5 +1,8 @@
-import type { Column, Workflow } from '../shared/types.js';
-import { entryInstruction } from './stage-entry.js';
+import type { Column, ConversationFacts, PendingUserWork, Task, Workflow } from '../shared/types.js';
+import { NO_PENDING_USER_WORK } from '../shared/types.js';
+import { openSessionIds } from '../shared/conversations.js';
+import { entryInstruction, hasUnresolvedEntry } from './stage-entry.js';
+import { hasPendingUserWork, mergePendingUserWork } from './pending-user-work.js';
 
 /** One automatic advance's resolved path: every stage crossed, ending at the destination. */
 export interface AutoAdvancePlan {
@@ -9,6 +12,33 @@ export interface AutoAdvancePlan {
   destination?: Column;
   /** The destination's entry instruction, or undefined when the destination has none. */
   instruction?: string;
+}
+
+/** Why a completed turn does not advance the task, or that it does. */
+export type AdvanceDecision =
+  /** The task itself is busy with a context operation, a confirmed transition, or an unresolved entry. */
+  | { readonly kind: 'busy' }
+  /** An open conversation is still executing; the ending conversation is retried after the settle delay. */
+  | { readonly kind: 'running'; readonly sessions: readonly string[] }
+  /** The task still owes the user input; nothing is admitted and nothing is recorded. */
+  | { readonly kind: 'pending'; readonly pending: PendingUserWork }
+  | { readonly kind: 'advance' };
+
+/**
+ * Decide what a completed turn means for one task. The precedence is deliberate:
+ * a busy task is skipped silently, an executing open conversation waits for the
+ * settle delay, and pending user work is a hold that never records a pause.
+ */
+export function resolveAdvanceDecision(task: Task, facts: ReadonlyMap<string, ConversationFacts>): AdvanceDecision {
+  if (task.operation || task.pendingTransition || hasUnresolvedEntry(task)) return { kind: 'busy' };
+  const open = new Set(openSessionIds(task));
+  const running: string[] = [];
+  for (const sessionId of task.sessionIds) {
+    if (open.has(sessionId) && facts.get(sessionId)?.running === true) running.push(sessionId);
+  }
+  if (running.length > 0) return { kind: 'running', sessions: running };
+  const pending = mergePendingUserWork(task.sessionIds.map(sessionId => facts.get(sessionId)?.pending ?? NO_PENDING_USER_WORK));
+  return hasPendingUserWork(pending) ? { kind: 'pending', pending } : { kind: 'advance' };
 }
 
 /**
