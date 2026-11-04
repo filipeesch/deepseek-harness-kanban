@@ -6,7 +6,7 @@ An independent host/client plugin for **DeepSeek Harness (DSH) 0.2.1-rc.2**: Hub
 
 ## Requirements
 
-- DSH **0.2.1-rc.2**. SDK dependencies are pinned to that release candidate; compatibility with other versions is not established.
+- DSH **0.2.1-rc.2**, the release candidate the plugin is built against. The DSH SDK packages are peer dependencies in the `^0.2.1-rc.2` line, the host installation provides them, and hosts on `0.2.1-rc.5` were verified.
 - Plugin runtime: **Node.js >=20.19**. Use a normal development Node installation; **Node.js 22+** is required for the optional Inspector helpers' native WebSocket support.
 - **pnpm 10.15.1**, as declared by `packageManager` in [the package manifest](<package.json>).
 - Git available to the host for worktree operations, and an existing local project/Git repository.
@@ -14,7 +14,27 @@ An independent host/client plugin for **DeepSeek Harness (DSH) 0.2.1-rc.2**: Hub
 
 The package is private and marked `UNLICENSED`; these instructions do not grant a license.
 
-## Build and install into the existing GUI
+## Install
+
+### Install the released plugin
+
+Every release publishes one installable file, `dsh-kanban.tgz`, built from the tagged commit. Its name is fixed and is part of the install contract, so the install specification never changes between versions.
+
+1. Open **Plugins → Add plugin**.
+2. Paste the release asset address into the package field:
+
+   ```text
+   https://github.com/filipeesch/deepseek-harness-kanban/releases/latest/download/dsh-kanban.tgz
+   ```
+
+3. Enable **dsh-kanban** and inspect the native installation/application result.
+4. Refresh the **existing** GUI URL, then select **Kanban** in its sidebar. Use the URL the host printed on launch.
+
+The asset already contains the compiled entries, so this path runs no build and needs no dependency build-script approval. The host treats the address as a tarball, not as a repository, and installs it without scripts. The plugin declares the DSH SDK packages as peer dependencies, so the host installation provides them and the profile never gains a second, version-skewed copy of them. pnpm still downloads the artifact's own runtime dependencies (`zod`, `yaml`, and the editor packages) from the registry, so the installation needs registry access but no build.
+
+No standalone web server is needed. Do not start Vite or a replacement DSH instance to make this plugin visible. The plugin adds navigation beside Automation tasks and Plugins; it does not configure a startup-page override.
+
+### Install a source checkout (for development)
 
 Run from this checkout with the required Node and pnpm versions:
 
@@ -38,13 +58,24 @@ Then use the **already-running DSH GUI**:
 
    If the GUI offers a local-path input, select that same absolute directory.
 3. Enable **dsh-kanban** and inspect the native installation/application result.
-4. Refresh the **existing** GUI URL, then select **Kanban** in its sidebar. The current local backend is `http://127.0.0.1:51781/`; use your existing host URL in other environments.
-
-No standalone web server is needed. Do not start Vite or a replacement DSH instance to make this plugin visible. The plugin adds navigation beside Automation tasks and Plugins; it does not configure a startup-page override.
+4. Refresh the **existing** GUI URL, then select **Kanban** in its sidebar.
 
 After source changes, deliberately run `pnpm run build` again, explicitly reconcile the rebuilt plugin through the supported native Plugin Manager operation, and refresh that same GUI. On the inspected rc.2 host, public `pluginManager.setBundleEnabled('dsh-kanban', true)` reconciles changed loaded linked-target files even when already enabled; the optional helper exposes this as `enable`. See [the safe rebuild/reconcile procedure](<docs/operations.md#explicit-reconciliation-after-a-rebuild>). A linked checkout is **not** a promise of source HMR or automatic compilation. Inspect application/errors and honor any native restart-required result instead of reporting a hot update as successful.
 
-The latest installation attempt initially failed fetching from the default registry; a one-shot `https://registry.npmjs.org` override succeeded without changing package-manager or DSH settings. This is observed network troubleshooting, not a requirement to change your registry. See [installation diagnostics](<docs/operations.md#installation-and-update-diagnostics>) and the optional local Inspector procedure there.
+### Do not install with the repository URL
+
+Pasting `https://github.com/filipeesch/deepseek-harness-kanban` adds a **Git** dependency, not the release download: pnpm clones the default branch, which does not contain `lib/` because it is build output ignored by Git. The host validates the bundle patch after installing but not the package's public entry points, so an unbuilt clone can install as successful and then fail to import on the next start.
+
+The manifest declares a `prepare` script, so pnpm refuses to build a Git dependency unless the profile allows it. The install then fails, and the host restores the profile's `package.json` and `pnpm-lock.yaml` instead of selecting a bundle that cannot load. The host offers no approval button for that refusal. To install from Git anyway, copy the exact key pnpm prints in the refusal into the profile's `pnpm-workspace.yaml` and retry. The key names the resolved commit, so it changes whenever the ref moves:
+
+```yaml
+allowBuilds:
+  "dsh-kanban@git+https://github.com/filipeesch/deepseek-harness-kanban#<commit>": true
+```
+
+An approved run installs the dependency and then runs the build, which needs the profile's package manager on `PATH` plus registry access for the checkout's dependencies. The release asset skips that build and the inner install, but both paths download the artifact's own runtime dependencies from the registry. Prefer the release asset unless you are testing the Git path itself. See [installation diagnostics](<docs/operations.md#installation-and-update-diagnostics>) for the failure signatures.
+
+The latest source installation attempt initially failed fetching from the default registry; a one-shot `https://registry.npmjs.org` override succeeded without changing package-manager or DSH settings. This is observed network troubleshooting, not a requirement to change your registry. See [installation diagnostics](<docs/operations.md#installation-and-update-diagnostics>) and the optional local Inspector procedure there.
 
 ## Hubs and boards
 

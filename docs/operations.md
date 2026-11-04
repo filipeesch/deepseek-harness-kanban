@@ -5,17 +5,32 @@ For the independent DSH **0.2.1-rc.2** plugin. Start with [installation and usag
 ## Installation and update diagnostics
 
 1. Use the required Node/pnpm versions from [the manifest](<../package.json>): runtime Node **>=20.19**, development helpers Node **22+**, and `pnpm@10.15.1`.
-2. Build the checkout before adding it through **the existing GUI → Plugins → Add plugin**, using the absolute built package root/local `link:` specification, then enable it. This is the primary installation path, not an Inspector requirement.
-3. Check the native installation result and plugin row. A downloaded package, enabled flag, active host row, and working client page are distinct evidence. A native restart-required result is not a successfully applied hot reload.
+2. Install the **release asset** through the existing GUI → **Plugins → Add plugin**, using the address `https://github.com/filipeesch/deepseek-harness-kanban/releases/latest/download/dsh-kanban.tgz`. Every release publishes that exact file name, built from the tagged commit, so the address stays valid across versions and the installation runs no build. Use the absolute built package root and local `link:` specification only for a development checkout.
+3. Check the native installation result and plugin row. A downloaded package, enabled flag, active host row, and working client page are distinct evidence. A native restart-required result is not a successfully applied hot reload. A successful installation does not certify that the bundle can activate; see [installation failure signatures](<operations.md#installation-failure-signatures>).
 4. After a deliberate rebuild, explicitly reconcile the changed built files through native Plugin Manager, then refresh the **same existing GUI URL** and inspect it; see [the rebuild/reconcile procedure](<operations.md#explicit-reconciliation-after-a-rebuild>). Do not start a replacement server, edit a profile to force loading, or assume a source watcher exists. A browser refresh alone is not proof that a changed host module reloaded.
 
 The currently exercised backend is `http://127.0.0.1:51781/`. Preserve your own existing host URL outside this environment. Neither a standalone Vite build nor another server updates that GUI.
 
-### Network failure during installation
+### Installation failure signatures
 
-The recent native install failed on the default registry network path. An explicitly requested **one-shot** `https://registry.npmjs.org` override subsequently succeeded, without changing registry settings. Treat this as evidence about that attempt, not a universal registry diagnosis or permission to persist new settings.
+**A package installed without built entries.** A Git-spec installation clones the repository, and a clone has no `lib/`, because that directory is build output ignored by Git. The host checks the bundle patch after `pnpm add` but not the package's public entry points, so the installation reports success and the failure only appears on the next start as an import error for `lib/index.js`; every relaunch repeats it until the profile is repaired. Do not read an applied installation as proof that the package can load. Reinstall the bundle from the release asset instead.
 
-Check the actual package-manager exit/application result. If an install times out, it may still be running: inspect current bundle inventory before retrying. Do not loop installs, silently change global registries, disable TLS checks, or treat a timeout as proof that nothing happened.
+**Host packages shadowed by a plugin's own dependencies.** A profile installs with `nodeLinker: hoisted`, so any `@deepseek-ai` package a plugin lists under `dependencies` lands at the profile root and is what the host resolves for its own plugin rows. A plugin pinned to an older release candidate then makes DSH report those rows as incompatible with the running host and disable them, which surfaces as `startup failed` with required rows waiting for services. The plugin declares the DSH SDK packages as peer dependencies for this reason; a profile that shows hoisted `@deepseek-ai` copies under `node_modules` is presenting that failure mode.
+
+**A Git install refused for build permission.** A Git-spec installation of a checkout that declares `prepare` fails with `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` until the profile permits that dependency's build scripts. The host restores the profile's `package.json` and `pnpm-lock.yaml` and keeps starting, but it offers no approval button for this refusal, because the guided retry is driven by a different pnpm report. Copy the exact key pnpm prints in the refusal into the profile's `pnpm-workspace.yaml` and retry. The key names the resolved commit and changes whenever the ref moves:
+
+```yaml
+allowBuilds:
+  "dsh-kanban@git+https://github.com/filipeesch/deepseek-harness-kanban#<commit>": true
+```
+
+An approved run then runs the dependency's own install and build, which needs the profile's package manager on `PATH`; the release asset runs neither.
+
+### Network failure during a source installation
+
+The recent source install failed on the default registry network path. An explicitly requested **one-shot** `https://registry.npmjs.org` override subsequently succeeded, without changing registry settings. Treat this as evidence about that attempt, not a universal registry diagnosis or permission to persist new settings.
+
+The release asset avoids the build and the dependency's inner install, but pnpm still resolves the artifact's own runtime dependencies from the registry, so a restricted network can fail either path. Check the actual package-manager exit/application result. If an install times out, it may still be running: inspect current bundle inventory before retrying. Do not loop installs, silently change global registries, disable TLS checks, or treat a timeout as proof that nothing happened.
 
 ### Optional existing local Inspector helper
 

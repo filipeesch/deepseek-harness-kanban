@@ -1,0 +1,53 @@
+name: Release
+
+# Publishes the installable plugin artifact. The asset name is part of the
+# public install contract: the README installs from
+# /releases/latest/download/dsh-kanban.tgz, so every release must publish
+# exactly that file name.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.15.1"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify
+        run: pnpm check
+
+      - name: Check the tag matches the manifest version
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+
+      - name: Pack the plugin
+        run: pnpm pack --pack-destination dist
+
+      - name: Use the stable asset name
+        run: cp dist/dsh-kanban-*.tgz dsh-kanban.tgz
+
+      - name: Publish the release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dsh-kanban.tgz \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes ||
+          gh release upload "$GITHUB_REF_NAME" dsh-kanban.tgz --clobber
