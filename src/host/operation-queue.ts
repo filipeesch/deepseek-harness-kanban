@@ -1,24 +1,32 @@
 export interface OperationQueueJob {
+  /** Destructive work is serialized inside a lane and may overlap across lanes. */
+  lane: string;
   taskId: string;
   operationId: string;
   run: () => Promise<void>;
 }
 
+interface Lane {
+  pending: OperationQueueJob[];
+  running: Promise<void> | undefined;
+}
+
 /**
- * FIFO host queue for destructive context operations. Execution is serial so
- * Git worktree metadata, native archives, and workspace cleanup are never
- * touched by two destructive operations at once. The queue never holds the
- * command path: callers enqueue and return.
+ * FIFO host queue for destructive context operations with one lane per
+ * repository. Each lane runs at most one job, so Git worktree metadata is never
+ * touched twice at once while unrelated repositories keep making progress. The
+ * queue never holds the command path: callers enqueue and return.
  */
 export class OperationQueue {
-  private readonly pending: OperationQueueJob[] = [];
+  private readonly lanes = new Map<string, Lane>();
   private readonly keys = new Set<string>();
   private readonly idleWaiters: Array<() => void> = [];
-  private running: Promise<void> | undefined;
   private disposed = false;
 
   get size(): number {
-    return this.pending.length + (this.running ? 1 : 0);
+    let total = 0;
+    for (const lane of this.lanes.values()) total += lane.pending.length + (lane.running ? 1 : 0);
+    return total;
   }
 
   /** Returns false when the queue is disposed; a duplicate operation is already queued and returns true. */
@@ -27,39 +35,54 @@ export class OperationQueue {
     const key = job.taskId + ':' + job.operationId;
     if (this.keys.has(key)) return true;
     this.keys.add(key);
-    this.pending.push(job);
-    this.drain();
+    this.laneFor(job.lane).pending.push(job);
+    this.drain(job.lane);
     return true;
   }
 
   /** Stop accepting work and prevent not-yet-started jobs from running. */
   dispose(): void {
     this.disposed = true;
-    this.pending.length = 0;
+    // Queued jobs are dropped, but a running job stays counted so `settle()`
+    // still waits for it before shutdown reports completion.
+    for (const lane of this.lanes.values()) lane.pending.length = 0;
     this.keys.clear();
     this.settleIdle();
   }
 
-  /** Resolve once the running job and every queued job have finished. */
+  /** Resolve once every lane is idle and no queued job remains. */
   settle(): Promise<void> {
-    if (!this.running && this.pending.length === 0) return Promise.resolve();
+    if (this.size === 0) return Promise.resolve();
     return new Promise<void>(resolve => { this.idleWaiters.push(resolve); });
   }
 
-  private drain(): void {
-    if (this.running) return;
-    if (this.disposed) { this.pending.length = 0; this.settleIdle(); return; }
-    const job = this.pending.shift();
-    if (!job) { this.settleIdle(); return; }
-    this.running = job.run().catch(() => {}).finally(() => {
-      this.running = undefined;
+  private laneFor(name: string): Lane {
+    let lane = this.lanes.get(name);
+    if (!lane) { lane = { pending: [], running: undefined }; this.lanes.set(name, lane); }
+    return lane;
+  }
+
+  private drain(name: string): void {
+    const lane = this.lanes.get(name);
+    if (!lane || lane.running) return;
+    if (this.disposed) { lane.pending.length = 0; this.forget(name, lane); this.settleIdle(); return; }
+    const job = lane.pending.shift();
+    if (!job) { this.forget(name, lane); this.settleIdle(); return; }
+    lane.running = Promise.resolve().then(() => job.run()).catch(() => {}).finally(() => {
+      lane.running = undefined;
       this.keys.delete(job.taskId + ':' + job.operationId);
-      this.drain();
+      this.drain(name);
+      this.settleIdle();
     });
   }
 
+  private forget(name: string, lane: Lane): void {
+    if (lane.pending.length > 0 || lane.running) return;
+    if (this.lanes.get(name) === lane) this.lanes.delete(name);
+  }
+
   private settleIdle(): void {
-    if (this.running || this.pending.length > 0) return;
+    if (this.size > 0) return;
     for (const resolve of this.idleWaiters.splice(0)) resolve();
   }
 }

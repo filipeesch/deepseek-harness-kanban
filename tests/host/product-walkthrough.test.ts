@@ -189,11 +189,14 @@ describe('bounded integrated product walkthrough', () => {
     const beforeDecline = f.app.store.snapshot();
     await expect(f.app.command({ type: 'task.delete', taskId: t.id, confirmed: false, expectedWorktreePath: f.tree })).rejects.toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
     expect(f.app.store.snapshot()).toEqual(beforeDecline); expect(f.executor.removals).toEqual([]);
-    await expect(f.app.command({ type: 'task.delete', taskId: t.id, confirmed: true, expectedWorktreePath: f.tree, discardChanges: false })).rejects.toMatchObject({ code: 'DISCARD_REQUIRED' });
+    await f.app.command({ type: 'task.delete', taskId: t.id, confirmed: true, expectedWorktreePath: f.tree, discardChanges: false });
+    await f.app.worktrees.settle();
     expect(f.app.store.requireTask(t.id).operation).toMatchObject({ phase: 'failed', error: { code: 'DISCARD_REQUIRED' } });
     expect(f.executor.removals).toEqual([]); expect((await stat(f.tree)).isDirectory()).toBe(true);
     const unavailable = vi.spyOn(f.sessions, 'topology').mockRejectedValue(new KanbanError('SESSION_CONTEXT_UNAVAILABLE', 'Synthetic public directory catalog unavailable.'));
-    await expect(f.app.command({ type: 'task.delete', taskId: t.id, confirmed: true, expectedWorktreePath: f.tree, discardChanges: true })).rejects.toMatchObject({ code: 'SESSION_CONTEXT_UNAVAILABLE' });
+    await f.app.command({ type: 'task.delete', taskId: t.id, confirmed: true, expectedWorktreePath: f.tree, discardChanges: true });
+    await f.app.worktrees.settle();
+    expect(f.app.store.requireTask(t.id).operation).toMatchObject({ phase: 'failed', error: { code: 'SESSION_CONTEXT_UNAVAILABLE' } });
     expect(f.app.store.requireTask(t.id).sessionIds).toEqual([t.a, t.b, c]);
     expect(f.app.store.snapshot().notes).toEqual([note]);
     expect(f.executor.removals).toEqual([]); expect(f.sessions.archived).toEqual([]);
@@ -221,7 +224,8 @@ describe('bounded integrated product walkthrough', () => {
     expect(f.sessions.dirs.get(t.a)).toBe(targetDirectory); expect(f.sessions.dirs.get(t.b)).toBe(targetDirectory);
     await writeFile(path.join(targetDirectory, 'untracked.txt'), 'discard only after consent\n');
     await expect(f.app.command({ type: 'worktree.remove', taskId: t.id, confirmed: false, expectedWorktreePath: f.tree })).rejects.toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
-    await expect(f.app.command({ type: 'worktree.remove', taskId: t.id, confirmed: true, expectedWorktreePath: f.tree, discardChanges: false })).rejects.toMatchObject({ code: 'DISCARD_REQUIRED' });
+    await f.app.command({ type: 'worktree.remove', taskId: t.id, confirmed: true, expectedWorktreePath: f.tree, discardChanges: false });
+    await f.app.worktrees.settle();
     expect(f.app.store.requireTask(t.id).operation).toMatchObject({ phase: 'failed', error: { code: 'DISCARD_REQUIRED' } });
     expect(f.executor.removals).toEqual([]); expect((await stat(f.tree)).isDirectory()).toBe(true);
     await f.app.command({ type: 'worktree.remove', taskId: t.id, confirmed: true, expectedWorktreePath: f.tree, discardChanges: true });

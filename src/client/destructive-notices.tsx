@@ -12,6 +12,7 @@ function stateLabel(task: Task): string {
   const operation = destructiveOperation(task)!;
   if (operation.phase === 'queued') return 'Queued';
   if (operation.phase === 'waiting') return 'Waiting for idle';
+  if (operation.phase === 'preflight') return 'Checking…';
   if (operation.request.kind === 'delete') return 'Deleting…';
   return 'Removing worktree…';
 }

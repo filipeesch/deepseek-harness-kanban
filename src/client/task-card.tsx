@@ -43,7 +43,9 @@ export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: 
           ? (deleteKind ? 'Queued to delete' : 'Queued to remove worktree')
           : operation.phase === 'waiting'
             ? (deleteKind ? 'Deletion waiting for idle' : 'Removal waiting for idle')
-            : (deleteKind ? 'Deleting…' : 'Removing worktree…')
+            : operation.phase === 'preflight'
+              ? (deleteKind ? 'Checking before deleting…' : 'Checking before removing…')
+              : (deleteKind ? 'Deleting…' : 'Removing worktree…')
       : failed ? 'Operation failed' : 'Operation: ' + operation.phase;
     entries.push({ key: 'operation', tone: failed ? 'danger' : 'pending', label });
   }
