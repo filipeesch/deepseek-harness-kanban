@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { requiresWorktreeDecision } from '../../src/shared/worktree-decision.js';
+import { requiresWorktreeDecision, unresolvedWorktreeBinding } from '../../src/shared/worktree-decision.js';
 import type { Project, Task } from '../../src/shared/types.js';
 
 const gitProject: Project = { id: 'p', name: 'Web', projectPath: '/repo/apps/web', gitRootPath: '/repo' };
@@ -26,5 +26,21 @@ describe('requiresWorktreeDecision', () => {
   it('does not require a choice for a folder project or an existing conversation', () => {
     expect(requiresWorktreeDecision(task(), folderProject)).toBe(false);
     expect(requiresWorktreeDecision(task({ sessionIds: ['session-1'] }), gitProject)).toBe(false);
+  });
+});
+
+describe('unresolvedWorktreeBinding', () => {
+  it('reports a Git-backed binding that is preparing or in error', () => {
+    expect(unresolvedWorktreeBinding(task({ worktree: preparing }), gitProject)).toBe(true);
+    expect(unresolvedWorktreeBinding(task({ worktree: failed }), gitProject)).toBe(true);
+  });
+  it('does not report a ready binding, an absent binding, or a folder project', () => {
+    expect(unresolvedWorktreeBinding(task({ worktree: ready }), gitProject)).toBe(false);
+    expect(unresolvedWorktreeBinding(task(), gitProject)).toBe(false);
+    expect(unresolvedWorktreeBinding(task({ worktree: failed }), folderProject)).toBe(false);
+    expect(unresolvedWorktreeBinding(task({ worktree: failed }), undefined)).toBe(false);
+  });
+  it('ignores conversations, because the block only applies to the first execution', () => {
+    expect(unresolvedWorktreeBinding(task({ worktree: failed, sessionIds: ['session-1'] }), gitProject)).toBe(true);
   });
 });

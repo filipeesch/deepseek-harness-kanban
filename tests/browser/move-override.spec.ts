@@ -136,3 +136,27 @@ test('a restricted drag warns before the drop and confirms the override', async 
   const moved = await page.evaluate(() => (window as unknown as { __harness: { commands(): Array<{ type: string; overrideTransition?: boolean }> } }).__harness.commands().find(command => command.type === 'task.move'));
   expect(moved).toMatchObject({ type: 'task.move', columnId: 'apply', overrideTransition: true });
 });
+
+test('confirms the restricted transition before preparing the first execution', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto(HARNESS + '?scenario=prepare-restricted');
+  await page.getByRole('button', { name: 'Open task First execution task' }).click();
+  await page.getByRole('combobox', { name: 'Move task to' }).selectOption('apply');
+  const override = page.getByRole('dialog', { name: 'Move to Apply?' });
+  await expect(override).toBeVisible();
+  await override.getByRole('button', { name: 'Move anyway' }).click();
+  const preparation = page.getByRole('dialog', { name: 'Prepare the first execution' });
+  await expect(preparation).toBeVisible();
+  await page.clock.install({ time: new Date() });
+  await expect(override).toBeHidden();
+  const before = await page.evaluate(() => (window as unknown as { __harness: { commands(): Array<{ type: string }> } }).__harness.commands());
+  expect(before.some(command => command.type === 'task.move')).toBe(false);
+  await page.screenshot({ path: path.join(OUT, 'prepare-after-override.png') });
+  await preparation.getByRole('button', { name: 'Continue in base project' }).click();
+  await expect(preparation).toBeHidden();
+  await expect(override).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Cancel automatic Apply instruction' }).first()).toBeVisible();
+  const sent = await page.evaluate(() => (window as unknown as { __harness: { commands(): Array<{ type: string; columnId?: string; overrideTransition?: boolean }> } }).__harness.commands());
+  expect(sent.map(command => command.type)).toEqual(['worktree.dismiss', 'conversation.create', 'task.move']);
+  expect(sent.find(command => command.type === 'task.move')).toMatchObject({ columnId: 'apply', overrideTransition: true });
+});

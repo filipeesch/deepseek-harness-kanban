@@ -16,3 +16,18 @@ export function requiresWorktreeDecision(
     && task.worktreeDismissed !== true
     && task.worktree?.status !== 'ready';
 }
+
+/**
+ * Whether the task carries a Git-backed worktree binding that is not ready.
+ * Such a binding blocks the task's first execution until it is resolved in the
+ * Git section; conversations that already exist keep running.
+ */
+export function unresolvedWorktreeBinding(
+  task: Pick<Task, 'worktree'>,
+  project: Project | undefined,
+): boolean {
+  return project !== undefined
+    && isGitProject(project)
+    && task.worktree != null
+    && task.worktree.status !== 'ready';
+}

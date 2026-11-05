@@ -58,6 +58,10 @@ export const styles = String.raw`
 .dsh-kanban .kb-operation-facts code{white-space:pre-wrap;overflow-wrap:anywhere}
 .dsh-kanban .kb-destructive-dialog{display:flex;flex-direction:column;gap:14px;min-width:0}
 .dsh-kanban .kb-transition-dialog{display:flex;flex-direction:column;gap:14px;min-width:0}
+.dsh-kanban .kb-preparation{display:flex;flex-direction:column;gap:12px;min-width:0}
+.dsh-kanban .kb-preparation-identity{display:flex;flex-direction:column;gap:4px;font-size:13px;margin:0}
+.dsh-kanban .kb-preparation-model{display:flex;align-items:center;min-height:28px;flex-wrap:wrap;gap:8px}
+.dsh-kanban .kb-preparation p{margin:0}
 .dsh-kanban .kb-transition-identity{display:flex;flex-direction:column;gap:4px;font-size:13px}
 .dsh-kanban .kb-destructive-identity{display:flex;flex-direction:column;gap:4px;font-size:13px}
 .dsh-kanban .kb-destructive-identity code{overflow-wrap:anywhere;white-space:pre-wrap}

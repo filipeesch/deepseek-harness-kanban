@@ -25,6 +25,7 @@ import type { ConversationLeaseEnvironment } from './client/conversation-leases.
 import type { SessionTitles } from './client/conversation-label.js';
 import type { NativeLocaleSource, NativeSlotSource, NativeSnapshotSource } from './client/native-slot-host.js';
 import { createModePortSource } from './client/mode-port.js';
+import type { PreparationSeat } from './client/execution-preparation/model-seat.js';
 import { TASK_CONTEXT_NODE_KIND, TaskContextNodeView, taskContextDefinition } from './client/task-context-node.js';
 import { useConversationNavigation, isOwnedSubagent, type ConversationLineagePort, type DrawerSubagentAddress } from './client/conversation-navigation.js';
 import type { ClientApi } from './shared/types.js';
@@ -187,6 +188,10 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       SessionProvider: props.SessionProvider,
       renderSlot: (key, owner) => props.renderSlot(key, owner as never),
     }), [props.SessionProvider, props.renderSlot]);
+    const nativeSeat = useMemo<PreparationSeat>(() => ({
+      slots: ctx.slots as unknown as NativeSlotSource,
+      locale: ctx.locale as unknown as NativeLocaleSource,
+    }), [ctx.slots, ctx.locale]);
     const sessionListSource = scopedSessions.list ?? emptySessionList;
     const subscribeSessionList = useCallback((listener: () => void) => sessionListSource.subscribe(listener), [sessionListSource]);
     const getSessionList = useCallback(() => sessionListSource.getSnapshot(), [sessionListSource]);
@@ -214,6 +219,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       picker={picker}
       autoRun={props.autoRun}
       lineage={lineage}
+      nativeSeat={nativeSeat}
       conversationLeases={leaseEnvironment}
       renderConversation={renderConversation}
     />;

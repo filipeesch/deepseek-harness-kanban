@@ -10,7 +10,6 @@ import type { SessionTitles } from './conversation-label.js';
 import type { ConversationLeaseEnvironment } from './conversation-leases.js';
 import type { ConversationLineagePort, DrawerSubagentAddress } from './conversation-navigation.js';
 import { transitionAccess } from '../domain/transitions.js';
-import { entryInstruction, hasUnresolvedEntry } from '../domain/stage-entry.js';
 import { AutoRunController } from './auto-run.js';
 import { autoModeView } from './auto-mode.js';
 import { ACTIVE_HUB_KEY, allTasks, boardView, normalizeSnapshot, readBoardPreferences, readStorage, scopedCommand, writeBoardPreference, writeStorage } from './hub-view.js';
@@ -28,10 +27,10 @@ import { useDestructiveOperations } from './destructive-operations.js';
 import { batchRejectionProblem, useBatchDeletion } from './useBatchDeletion.js';
 import { DestructiveOperationsNotice } from './destructive-notices.js';
 import { CheckSquareIcon, PlusIcon, SettingsIcon, TrashIcon } from './icons.js';
-import { useCardDrag } from './useCardDrag.js';
 import { TaskCard } from './task-card.js';
-import { useMoveRequest } from './useMoveRequest.js';
-import { TransitionOverrideDialog } from './transition-override-dialog.js';
+import { useBoardMoves } from './board-moves.js';
+import { useExecutionPreparation } from './execution-preparation/use-execution-preparation.js';
+import type { PreparationSeat } from './execution-preparation/model-seat.js';
 import { createBoardPageState, taskPageState, usePageField, type BoardPageState } from './page-state.js';
 export { createBoardPageState } from './page-state.js';
 export type { BoardPageState } from './page-state.js';
@@ -47,6 +46,8 @@ export interface BoardViewProps {
   /** Owned by its provider, which also reconciles it; the board reconciles only its own fallback. */
   autoRun?: AutoRunController;
   lineage?: ConversationLineagePort;
+  /** Native slots and locale used by the first-execution model stage; absent in isolated harnesses. */
+  nativeSeat?: PreparationSeat;
 }
 
 export function columnLayout(workflow: Workflow): Array<{ key: string; group?: ColumnGroup; columns: Column[] }> {
@@ -61,7 +62,7 @@ export function columnLayout(workflow: Workflow): Array<{ key: string; group?: C
   return result;
 }
 
-export function BoardView({ api, renderConversation, pageState, sessionTitles, conversationLeases, picker = null, autoRun: providedAutoRun, lineage }: BoardViewProps) {
+export function BoardView({ api, renderConversation, pageState, sessionTitles, conversationLeases, picker = null, autoRun: providedAutoRun, lineage, nativeSeat }: BoardViewProps) {
   const [localPageState] = useState(createBoardPageState); const preferences = pageState ?? localPageState;
   const [snapshot, setSnapshot] = useState<KanbanSnapshot | null>(null); const latest = useRef<KanbanSnapshot | null>(null); const live = useRef(false); const currentApi = useRef(api); currentApi.current = api;
   const [loadError, setLoadError] = useState<Problem | null>(null); const [loadAttempt, setLoadAttempt] = useState(0);
@@ -129,19 +130,22 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   useEffect(() => { if (providedAutoRun) return; return () => fallbackAutoRun.dispose(); }, [providedAutoRun, fallbackAutoRun]);
   // Owned fallback only: a provided controller is reconciled by the client generation that owns it.
   useEffect(() => { if (providedAutoRun || !snapshot) return; fallbackAutoRun.reconcile(allTasks(snapshot)); }, [providedAutoRun, snapshot, fallbackAutoRun]);
-  function armAfterMove(result: KanbanSnapshot, task: Task, column: Column): void {
-    if (task.columnId === column.id) return;
-    const normalized = normalizeSnapshot(result);
-    const moved = normalized.state.hubs.flatMap(hub => hub.tasks).find(value => value.id === task.id);
-    const movedBoard = moved ? normalized.state.hubs.flatMap(hub => hub.boards).find(value => value.id === moved.boardId) : undefined;
-    const destination = movedBoard?.workflow.columns.find(value => value.id === column.id);
-    const instruction = entryInstruction(destination);
-    if (moved && destination && instruction !== undefined && hasUnresolvedEntry(moved, destination.id)) {
-      autoRun.arm({ taskId: moved.id, columnId: destination.id, enteredAt: moved.instructionPending!.enteredAt, instruction });
-    }
-  }
-  const moveRequest = useMoveRequest({ state: state ?? null, run, onImmediateError: error => setActionError(asProblem(error)), onMoved: armAfterMove });
-  const { optimistic, confirmation, pending: movePending, error: moveError, canRetry, confirm: confirmMove, cancel: cancelMove } = moveRequest;
+  const preparation = useExecutionPreparation({
+    api,
+    run,
+    ...(nativeSeat === undefined ? {} : { seat: nativeSeat }),
+    ...(conversationLeases === undefined ? {} : { leases: conversationLeases }),
+  });
+  const moves = useBoardMoves({
+    state: state ?? null,
+    run,
+    autoRun,
+    selectionMode,
+    prepare: preparation.prepare,
+    onError: error => setActionError(asProblem(error)),
+    onMoveStart: () => setActionError(null),
+  });
+  const { optimistic, drag, begin, shouldSuppressClick } = moves;
   const destructive = useDestructiveOperations({
     run: (command, allowDiscard) => run(command, allowDiscard),
     tasks: () => latest.current ? allTasks(latest.current) : [],
@@ -191,23 +195,10 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   }, [selectedId, drawerClosing]);
 
 
-  function canDrop(columnId: string, taskId: string): boolean {
-    if (!state || selectionMode) return false;
-    const task = state.tasks.find(value => value.id === taskId);
-    const column = state.workflow.columns.find(value => value.id === columnId);
-    return Boolean(task && column && !task.operation && !task.pendingTransition);
-  }
-
   async function moveTo(task: Task, column: Column, beforeTaskId: string | null = null): Promise<boolean> {
     setActionError(null);
-    return moveRequest.move(task, column, beforeTaskId);
+    return moves.moveTo(task, column, beforeTaskId);
   }
-
-  const { drag, begin, shouldSuppressClick } = useCardDrag({ enabled: Boolean(state) && !selectionMode, canDrop, onDrop: (taskId, columnId, beforeTaskId) => {
-    const task = latest.current ? allTasks(latest.current).find(value => value.id === taskId) : undefined;
-    const column = state?.workflow.columns.find(value => value.id === columnId);
-    if (task && column) void moveTo(task, column, beforeTaskId);
-  }});
 
   function requestDanger(task: Task, type: 'task.delete' | 'worktree.remove') {
     setActionError(null);
@@ -257,7 +248,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   function renderCard(task: Task, column: Column, workflow: Workflow) {
     const attention = snapshot?.attention[task.id] ?? EMPTY_ATTENTION;
     const project = state?.projects.find(value => value.id === task.projectId)?.name ?? task.projectId;
-    return <TaskCard key={task.id} task={task} column={column} projectName={project} attention={attention} selectionMode={selectionMode} selected={selectedIds.has(task.id)} autoRun={autoRun} autoMode={autoModeView(task, workflow, attention.pending)} autoModePending={autoModePending.has(task.id)} onToggleAutoMode={toggleAutoMode} onOpen={openTask} onToggleSelect={toggleSelect} onBeginDrag={begin} shouldSuppressClick={shouldSuppressClick} />;
+    return <TaskCard key={task.id} task={task} column={column} projectName={project} attention={attention} selectionMode={selectionMode} selected={selectedIds.has(task.id)} autoRun={autoRun} autoMode={autoModeView(task, workflow, attention.pending)} autoModePending={autoModePending.has(task.id)} onToggleAutoMode={toggleAutoMode} onOpen={openTask} onToggleSelect={toggleSelect} onBeginDrag={begin} shouldSuppressClick={shouldSuppressClick} onRun={moves.requestRun} />;
   }
 
   function renderNewTaskButton(column: Column) { return <div className="kb-column-create"><button type="button" className="kb-button kb-primary" disabled={!state || state.projects.length === 0} onClick={() => setNewTask(true)} aria-label="New task"><PlusIcon size={14} /> New task</button></div>; }
@@ -320,6 +311,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     </>}
     {newHub && <CreateHubDialog run={run} onClose={() => setNewHub(false)} onCreated={id => { setActiveHubIdState(id); writeStorage(ACTIVE_HUB_KEY, id); setNewHub(false); }} />}
     {newBoard && activeHub && <CreateBoardDialog hubId={activeHub.id} run={run} onClose={() => setNewBoard(false)} onCreated={id => { selectBoard(activeHub.id, id); setNewBoard(false); }} />}
-    {confirmation && <TransitionOverrideDialog taskTitle={confirmation.taskTitle} workflowName={confirmation.workflowName} sourceName={confirmation.fromName} destinationName={confirmation.toName} pending={movePending} problem={moveError} canRetry={canRetry} onCancel={cancelMove} onConfirm={() => void confirmMove()} />}
+    {moves.overrideDialog && <div hidden={preparation.dialog !== null}>{moves.overrideDialog}</div>}
+    {preparation.dialog}
   </section></DirectoryPickerProvider>;
 }

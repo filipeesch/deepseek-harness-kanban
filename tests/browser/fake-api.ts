@@ -11,7 +11,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder' }
+export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted' }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -33,6 +33,7 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     deleteTarget(),
     failedDelete(),
     failedDeleteReturn(),
+    ...(options.prepare === undefined ? [] : [firstExecutionTask(), blockedBindingTask()]),
   ];
   const attention: KanbanSnapshot['attention'] = options.attention ? {
     'long-0': { running: true, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK },
@@ -69,7 +70,7 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
       { id: 'p', name: 'Project', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' },
       { id: 'p2', name: 'A very long project name that must truncate inside the card', projectPath: '/repo/long', gitRootPath: '/repo', defaultBranch: 'main' },
     ],
-    boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(options.restricted), workflow: { name: 'Harness flow', initialColumnId: 'explore', columns: [{ id: 'explore', name: 'Explore', ...(options.restricted ? { allowedTransitions: ['propose'] } : {}) }, { id: 'propose', name: 'Propose', ...(options.restricted ? {} : { onEnterPrompt: 'Plan this task.' }) }, { id: 'apply', name: 'Apply' }], groups: [{ id: 'planning', name: 'Planning', columnIds: ['explore', 'propose'] }] }, createdAt: now, updatedAt: now }],
+    boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(options.restricted, options.prepare !== undefined), workflow: { name: 'Harness flow', initialColumnId: 'explore', columns: [{ id: 'explore', name: 'Explore', ...(options.restricted ? { allowedTransitions: ['propose'] } : {}) }, { id: 'propose', name: 'Propose', ...(options.restricted ? {} : { onEnterPrompt: 'Plan this task.' }) }, { id: 'apply', name: 'Apply', ...(options.prepare === undefined ? {} : { onEnterPrompt: 'Apply the plan.' }) }], groups: [{ id: 'planning', name: 'Planning', columnIds: ['explore', 'propose'] }] }, createdAt: now, updatedAt: now }],
     tasks, notes: [], createdAt: now, updatedAt: now,
   };
   const settings = { revision: 1, worktreeBasePath: '/worktrees' };
@@ -113,6 +114,11 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
         if (task) { if (command.enabled) task.autoMode = { enabled: true }; else delete task.autoMode; }
       }
       if (command.type === 'worktree.create') { const task = firstHub.tasks.find(item => item.id === command.taskId); if (task) { task.worktree = { path: command.path, branch: command.branchName, owned: true, status: 'ready' }; task.effectiveCwd = command.path; } }
+      if (command.type === 'worktree.dismiss') { const task = firstHub.tasks.find(item => item.id === command.taskId); if (task) task.worktreeDismissed = true; }
+      if (command.type === 'conversation.create') {
+        const task = value.state.hubs.flatMap(item => item.tasks).find(item => item.id === command.taskId);
+        if (task) { const id = 's-created-' + task.sessionIds.length + '-' + commands.length; task.sessionIds.push(id); receipt = { kind: 'conversation', id }; }
+      }
       if (command.type === 'board.create') { const hub = value.state.hubs.find(item => item.id === command.hubId); if (hub) { const board = { id: 'board-' + (commands.length + 1), name: command.name, workflowYaml: workflowYaml(), workflow: structuredClone(firstBoard.workflow), createdAt: now, updatedAt: now }; hub.boards.push(board); receipt = { kind: 'board', id: board.id }; } }
       if (command.type === 'hub.create') { const created: HubState = { id: 'hub-' + (commands.length + 1), name: command.name, revision: 0, projects: [], boards: [], tasks: [], notes: [], createdAt: now, updatedAt: now }; value.state.hubs.push(created); receipt = { kind: 'hub', id: created.id }; }
       const snapshot = publish();
@@ -128,8 +134,18 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
   return { api, snapshot: () => withLegacy(clone(value)), commands: () => structuredClone(commands) };
 }
 
-export function workflowYaml(restricted = false): string {
-  return ['name: Harness flow', 'initial_column: explore', 'columns:', '  - id: explore', '    label: Explore', ...(restricted ? ['    allowed_transitions: [propose]'] : []), '  - id: propose', '    label: Propose', ...(restricted ? [] : ['    on_enter_prompt: |', '      Plan this task.']), '  - id: apply', '    label: Apply', 'groups:', '  - id: planning', '    label: Planning', '    columns: [explore, propose]', ''].join(String.fromCharCode(10));
+export function workflowYaml(restricted = false, applyInstruction = false): string {
+  return ['name: Harness flow', 'initial_column: explore', 'columns:', '  - id: explore', '    label: Explore', ...(restricted ? ['    allowed_transitions: [propose]'] : []), '  - id: propose', '    label: Propose', ...(restricted ? [] : ['    on_enter_prompt: |', '      Plan this task.']), '  - id: apply', '    label: Apply', ...(applyInstruction ? ['    on_enter_prompt: |', '      Apply the plan.'] : []), 'groups:', '  - id: planning', '    label: Planning', '    columns: [explore, propose]', ''].join(String.fromCharCode(10));
+}
+
+function firstExecutionTask(): HubTask {
+  return { ...task('first', 'First execution task', 'explore', -1), sessionIds: [], closedSessionIds: [] };
+}
+function blockedBindingTask(): HubTask {
+  return {
+    ...task('broken', 'Broken binding task', 'explore', -2), sessionIds: [], closedSessionIds: [],
+    worktree: { path: '/worktrees/broken', branch: 'broken', owned: true, status: 'error', error: { code: 'WORKTREE_CREATE_FAILED', message: 'The checkout could not be created.' } },
+  };
 }
 
 function clone(value: KanbanSnapshot): KanbanSnapshot { const normalized = withLegacy(value); return structuredClone({ sequence: normalized.sequence, attention: normalized.attention, conversationAttention: normalized.conversationAttention, state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } } }); }

@@ -14,7 +14,7 @@ if (args.includes('--only') && only === undefined) {
   process.exit(2);
 }
 if (!checkoutArg) {
-  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only background-delete|board|conversation|deletion|hubs|override|native-drawer|auto-run|auto-mode|project]');
+  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only background-delete|board|conversation|deletion|hubs|override|native-drawer|auto-run|auto-mode|prepare|project]');
   process.exit(2);
 }
 const checkout = resolve(checkoutArg);
@@ -61,6 +61,7 @@ const scenarioTemplates = new Map([
   ['native-drawer', ['kanban-native-drawer.e2e.template.ts', 'kanban-native-drawer.e2e.ts']],
   ['auto-run', ['kanban-auto-run.e2e.template.ts', 'kanban-auto-run.e2e.ts']],
   ['auto-mode', ['kanban-auto-mode.e2e.template.ts', 'kanban-auto-mode.e2e.ts']],
+  ['prepare', ['kanban-prepare.e2e.template.ts', 'kanban-prepare.e2e.ts']],
   ['project', ['kanban-project-management.e2e.template.ts', 'kanban-project-management.e2e.ts']],
 ]);
 if (only !== undefined && !scenarioTemplates.has(only)) fail('unknown --only value: ' + only);

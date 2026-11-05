@@ -2,7 +2,7 @@ import React, { useRef } from 'react';
 import type { Attention, Column, Task } from '../shared/types.js';
 import { backgroundAccessibleName, backgroundDetails, backgroundIndicatorText, WorkingAnnouncement, WorkingBadge } from './activity.js';
 import { AttentionDots } from './attention-dots.js';
-import { autoRunEntryForColumn, RUN_FAILURE_FALLBACK, type AutoRunController } from './auto-run.js';
+import { autoRunEntryForColumn, RUN_FAILURE_FALLBACK, type AutoRunController, type AutoRunInput } from './auto-run.js';
 import { CardInstructionAction, useAutoRunEntry } from './auto-run-view.js';
 import { CardAutoModeControl, type AutoModeStatus, type AutoModeView } from './auto-mode.js';
 import { AlertIcon, ClockIcon } from './icons.js';
@@ -22,6 +22,8 @@ export interface TaskCardProps {
   onToggleSelect: (taskId: string) => void;
   onBeginDrag: (event: React.PointerEvent<HTMLElement>, taskId: string, columnId: string) => void;
   shouldSuppressClick: () => boolean;
+  /** Prepares the first execution before the card's run action sends anything. */
+  onRun?: (input: AutoRunInput) => void;
 }
 
 export interface CardStatusEntry { key: string; tone: 'danger' | 'pending'; label: string; alert?: boolean }
@@ -92,7 +94,7 @@ function CardStatus({ entries }: { entries: readonly CardStatusEntry[] }) {
 }
 
 /** One task card; every board concern arrives through props. */
-export function TaskCard({ task, column, projectName, attention, selectionMode, selected, autoRun, autoMode, autoModePending, onToggleAutoMode, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick }: TaskCardProps) {
+export function TaskCard({ task, column, projectName, attention, selectionMode, selected, autoRun, autoMode, autoModePending, onToggleAutoMode, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick, onRun }: TaskCardProps) {
   const openButton = useRef<HTMLButtonElement>(null);
   const runEntry = useAutoRunEntry(autoRun, task.id);
   const currentRun = autoRunEntryForColumn(runEntry, column.id);
@@ -113,7 +115,7 @@ export function TaskCard({ task, column, projectName, attention, selectionMode, 
       <strong>{task.title}</strong>
     </button>
     <CardContext taskId={task.id} title={task.title} projectName={projectName} attention={attention} selectionMode={selectionMode} selected={selected} autoMode={autoMode} autoModePending={autoModePending} onToggleAutoMode={onToggleAutoMode} onToggleSelect={onToggleSelect} onActivate={activate} />
-    <CardActivity attention={attention} label={task.title} onActivate={activate} action={!selectionMode ? <CardInstructionAction key={column.id} task={task} column={column} controller={autoRun} /> : undefined} />
+    <CardActivity attention={attention} label={task.title} onActivate={activate} action={!selectionMode ? <CardInstructionAction key={column.id} task={task} column={column} controller={autoRun} {...(onRun === undefined ? {} : { onRun })} /> : undefined} />
     <CardStatus entries={cardStatusEntries(task, runFailure, autoMode.status)} />
   </article>;
 }
