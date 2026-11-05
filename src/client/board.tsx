@@ -22,9 +22,10 @@ import { adviseCommandFailure } from './command-failure.js';
 import { BoardNotices } from './board-notices.js';
 import { styles } from './styles.js';
 import { DeleteTaskDialog, DiscardDialog, RemoveWorktreeDialog, type DestructiveRequest } from './destructive-dialogs.js';
-import { BulkDeleteDialog, BulkResultDialog, type BulkDeletionResult, type BulkProgress } from './bulk-delete-dialogs.js';
+import { BulkDeleteDialog } from './bulk-delete-dialogs.js';
 import { ForceRemovalDialog } from './force-removal-dialog.js';
 import { useDestructiveOperations } from './destructive-operations.js';
+import { batchRejectionProblem, useBatchDeletion } from './useBatchDeletion.js';
 import { DestructiveOperationsNotice } from './destructive-notices.js';
 import { CheckSquareIcon, PlusIcon, SettingsIcon, TrashIcon } from './icons.js';
 import { useCardDrag } from './useCardDrag.js';
@@ -71,7 +72,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   const [autoModePending, setAutoModePending] = useState<ReadonlySet<string>>(() => new Set());
   const autoModeInFlight = useRef(new Set<string>());
   const [retainedCheckout, setRetainedCheckout] = useState<string | null>(null);
-  const [batchConfirm, setBatchConfirm] = useState(false); const [batchPending, setBatchPending] = useState(false); const [batchTasks, setBatchTasks] = useState<Task[]>([]); const [batchProgress, setBatchProgress] = useState<BulkProgress | null>(null); const [batchResult, setBatchResult] = useState<BulkDeletionResult | null>(null);
+  const [batchConfirm, setBatchConfirm] = useState(false); const [batchTasks, setBatchTasks] = useState<Task[]>([]);
   const [drawerEntering, setDrawerEntering] = useState(false);
   const [drawerClosing, setDrawerClosing] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -148,6 +149,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     closed: taskId => { if (selectedId === taskId) setSelectedId(null); },
   });
   discardRequest.current = destructive.openDiscard;
+  const batch = useBatchDeletion({ run: (command, allowDiscard) => run(command, allowDiscard), onRejected: rejections => setActionError(batchRejectionProblem(rejections)) });
   useEffect(() => { destructive.reconcile(state?.tasks ?? []); }, [state?.tasks, destructive.reconcile]);
   useEffect(() => {
     const view = destructive.state.view;
@@ -240,31 +242,16 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
         setAutoModePending(new Set(autoModeInFlight.current));
       });
   }
-  function enterSelection() { setSelectionMode(true); setSelectedIds(new Set()); setBatchResult(null); setBatchTasks([]); setBatchProgress(null); }
-  function exitSelection() { setSelectionMode(false); setSelectedIds(new Set()); setBatchTasks([]); setBatchProgress(null); }
-
-  async function deleteSelected() {
-    if (batchPending) return;
-    const tasks = latest.current ? allTasks(latest.current) : [];
-    const total = batchTasks.length || selectedIds.size;
-    const skipped: Array<{ title: string; message: string }> = []; let queued = 0; let current = 0;
-    setBatchPending(true); setActionError(null); setBatchProgress(null);
-    for (const taskId of [...selectedIds]) {
-      current += 1;
-      const task = tasks.find(value => value.id === taskId);
-      if (!task) { setSelectedIds(previous => { const next = new Set(previous); next.delete(taskId); return next; }); continue; }
-      setBatchProgress({ current, total, title: task.title });
-      try {
-        await run({ type: 'task.delete', taskId, confirmed: true, expectedWorktreePath: task.worktree?.path ?? null, requireIdle: true }, false);
-        queued += 1;
-        setSelectedIds(previous => { const next = new Set(previous); next.delete(taskId); return next; });
-      } catch (error) {
-        skipped.push({ title: task.title, message: asProblem(error).message });
-      }
-    }
-    setBatchPending(false); setBatchProgress(null); setBatchConfirm(false);
-    setBatchResult({ queued, skipped });
-    if (skipped.length === 0) exitSelection();
+  function enterSelection() { setSelectionMode(true); setSelectedIds(new Set()); setBatchTasks([]); }
+  function exitSelection() { setSelectionMode(false); setSelectedIds(new Set()); setBatchTasks([]); }
+  function deleteSelected() {
+    if (batch.pending || batchTasks.length === 0) return;
+    // Close the confirmation and leave selection mode before admission settles,
+    // so the board is free while the deletions queue.
+    setBatchConfirm(false);
+    setActionError(null);
+    exitSelection();
+    batch.confirm(batchTasks);
   }
 
   function renderCard(task: Task, column: Column, workflow: Workflow) {
@@ -291,8 +278,8 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       <button type="button" className="kb-button kb-icon-button" disabled={!snapshot} aria-label="Configuration" title="Configuration" onClick={() => setConfiguration('General')}><SettingsIcon size={16} /></button>
     </> : <>
       <span className="kb-selection-count" role="status">{selectedIds.size} selected</span>
-      <button type="button" className="kb-button kb-danger" disabled={selectedIds.size === 0 || batchPending} onClick={() => { setBatchTasks(selectedTasks); setBatchProgress(null); setBatchConfirm(true); }}><TrashIcon size={14} /> Delete {selectedIds.size || ''}</button>
-      <button type="button" className="kb-button" disabled={batchPending} onClick={exitSelection}>Cancel</button>
+      <button type="button" className="kb-button kb-danger" disabled={selectedIds.size === 0 || batch.pending} onClick={() => { setBatchTasks(selectedTasks); setBatchConfirm(true); }}><TrashIcon size={14} /> Delete {selectedIds.size || ''}</button>
+      <button type="button" className="kb-button" disabled={batch.pending} onClick={exitSelection}>Cancel</button>
     </>}
   </div></div>
     <HubNav
@@ -329,8 +316,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       const Dialog = view.request.command.type === 'task.delete' ? DeleteTaskDialog : RemoveWorktreeDialog;
       return <Dialog request={view.request} task={task} project={state.projects.find(value => value.id === task.projectId)} attention={snapshot?.attention[task.id] ?? EMPTY_ATTENTION} sessionTitles={sessionTitles} pending={destructive.state.pending} problem={destructive.state.error} onCancel={destructive.close} onConfirm={destructive.confirm} onRetry={destructive.retry} onReturn={destructive.returnToBase} onForce={() => destructive.openForce(task.id)} />;
     })()}
-    {batchConfirm && <BulkDeleteDialog tasks={batchTasks} attention={snapshot?.attention ?? {}} pending={batchPending} progress={batchProgress} onCancel={() => { if (!batchPending) setBatchConfirm(false); }} onConfirm={() => void deleteSelected()} />}
-    {batchResult && <BulkResultDialog result={batchResult} onClose={() => setBatchResult(null)} />}
+    {batchConfirm && <BulkDeleteDialog tasks={batchTasks} attention={snapshot?.attention ?? {}} onCancel={() => setBatchConfirm(false)} onConfirm={deleteSelected} />}
     </>}
     {newHub && <CreateHubDialog run={run} onClose={() => setNewHub(false)} onCreated={id => { setActiveHubIdState(id); writeStorage(ACTIVE_HUB_KEY, id); setNewHub(false); }} />}
     {newBoard && activeHub && <CreateBoardDialog hubId={activeHub.id} run={run} onClose={() => setNewBoard(false)} onCreated={id => { selectBoard(activeHub.id, id); setNewBoard(false); }} />}

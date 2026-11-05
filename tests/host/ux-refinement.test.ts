@@ -35,20 +35,24 @@ describe('delete-only lifecycle and placement', () => {
     await expect(BoardStore.open(storage)).rejects.toMatchObject({ code: 'LEGACY_ARCHIVED_TASK' });
   });
 
-  it('rejects batch deletion before starting when a conversation is busy', async () => {
+  it('defers an admitted deletion while a conversation is busy', async () => {
     const f = await setup(); const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Busy', description: '' });
     f.sessions.busy.add(task.sessionIds[0]!);
-    await expect(f.app.command({ type: 'task.delete', taskId: task.id, confirmed: true, expectedWorktreePath: null, requireIdle: true })).rejects.toMatchObject({ code: 'TASK_BUSY' });
-    expect(f.store.requireTask(task.id).operation).toBeNull(); expect(f.sessions.archived).toEqual([]);
+    await f.app.command({ type: 'task.delete', taskId: task.id, confirmed: true, expectedWorktreePath: null });
+    await f.app.worktrees.settle();
+    expect(f.store.requireTask(task.id).operation?.phase).toBe('waiting'); expect(f.sessions.archived).toEqual([]);
   });
 
-  it('rejects batch deletion before starting when the worktree is dirty', async () => {
+  it('records a queued deletion failure when the worktree is dirty', async () => {
     const f = await setup(); const task = await f.app.createTask({ projectId: f.project.id, title: 'Dirty', description: '' });
     const tree = path.join(f.root, 'dirty-tree');
     await f.store.transact(state => { const value = f.store.requireTask(task.id, state); value.worktree = { path: tree, branch: 'dirty', owned: true, status: 'ready' }; value.effectiveCwd = path.join(tree, 'apps', 'web'); });
     f.git.trees.set(tree, { path: tree, branch: 'dirty', dirty: true, commonDirectory: path.join(f.gitRoot, '.git') });
-    await expect(f.app.command({ type: 'task.delete', taskId: task.id, confirmed: true, expectedWorktreePath: tree, requireIdle: true })).rejects.toMatchObject({ code: 'DISCARD_REQUIRED' });
-    expect(f.store.requireTask(task.id).operation).toBeNull(); expect(f.git.removed).toEqual([]);
+    await f.app.command({ type: 'task.delete', taskId: task.id, confirmed: true, expectedWorktreePath: tree });
+    await f.app.worktrees.settle();
+    const failed = f.store.requireTask(task.id).operation!;
+    expect(failed.phase).toBe('failed'); expect(failed.error?.code).toBe('DISCARD_REQUIRED');
+    expect(f.git.removed).toEqual([]);
   });
 
   it('reorders within a column using beforeTaskId and rejects an invalid anchor', async () => {
@@ -89,7 +93,7 @@ describe('native workspace binding', () => {
     expect(f.sessions.workspaceIds.get(conversation)).toBe(bound.worktreeWorkspaceId);
     expect(f.workspaces.get(bound.worktreeWorkspaceId!)?.path).toBe(worktreePath);
     const baseWorkspace = f.store.requireProject(f.project.id).workspaceId;
-    await f.app.command({ type: 'task.delete', taskId: task.id, confirmed: true, expectedWorktreePath: tree, requireIdle: true });
+    await f.app.command({ type: 'task.delete', taskId: task.id, confirmed: true, expectedWorktreePath: tree });
     await f.app.worktrees.settle();
     expect(f.store.snapshot().tasks).toHaveLength(0);
     expect(f.workspaces.deleted).toContain(bound.worktreeWorkspaceId);

@@ -23,6 +23,13 @@ describe('task.autoMode command', () => {
     expect(() => CommandSchema.parse({ type: 'operation.dismiss' })).toThrow();
   });
 
+  it('accepts a wire deletion without the removed bulk flag', () => {
+    const deletion = { type: 'task.delete' as const, taskId: 'task-1', confirmed: true, expectedWorktreePath: null };
+    expect(CommandSchema.parse(deletion)).toEqual(deletion);
+    expect(CommandSchema.parse({ ...deletion, force: true })).toMatchObject({ force: true });
+    expect(() => CommandSchema.parse({ ...deletion, requireIdle: true })).toThrow();
+  });
+
   it('arms and disarms without moving the task, sending, or creating a conversation', async () => {
     const f = await setup();
     const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Auto task', description: '' });

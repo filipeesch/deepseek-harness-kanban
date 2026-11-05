@@ -423,7 +423,7 @@ describe('Git controls and destructive actions', () => {
     const initial = fixture(); initial.state.tasks[1]!.operation = { id: 'old-target', request: { kind: 'remove', discardChanges: false, expectedWorktreePath: '/trees/original' }, targetPath: '/trees/original', phase: 'failed', previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false, createdAt: 'now' }; const { user, command } = mount(initial); await loaded(); await user.click(screen.getByRole('button', { name: 'Open task Beta task' })); command.mockRejectedValueOnce({ code: 'DISCARD_REQUIRED', message: 'Local changes exist.' }); await user.click(screen.getByRole('button', { name: 'Retry worktree removal' })); const dialog = await screen.findByRole('dialog', { name: 'Discard local worktree changes?' }); expect(within(dialog).getByText('/trees/original')).toBeTruthy(); await user.click(within(dialog).getByRole('checkbox')); await user.click(within(dialog).getByRole('button', { name: 'Discard changes and continue' })); await within(dialog).findByText(/worktree changed while confirmation/); expect(command.mock.calls).toHaveLength(1);
   });
 
-  it('skips a bulk task with local changes without opening the single-task discard dialog', async () => {
+  it('reports a bulk admission rejection without opening the single-task discard dialog', async () => {
     const { user, command } = mount(); await loaded();
     await user.click(screen.getByRole('button', { name: 'Select cards to delete' }));
     await user.click(screen.getByRole('checkbox', { name: 'Select Alpha task' }));
@@ -431,9 +431,9 @@ describe('Git controls and destructive actions', () => {
     const dialog = screen.getByRole('dialog', { name: 'Delete selected tasks' });
     command.mockRejectedValueOnce({ code: 'DISCARD_REQUIRED', message: 'Local changes exist.' });
     await user.click(within(dialog).getByRole('button', { name: 'Delete selected' }));
-    await screen.findByRole('dialog', { name: 'Deletion results' });
+    expect(await screen.findByText(/Could not start deletion for Alpha task: Local changes exist\./)).toBeTruthy();
     expect(screen.queryByRole('dialog', { name: 'Discard local worktree changes?' })).toBeNull();
-    expect(screen.getByText(/Local changes exist\./)).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Deletion results' })).toBeNull();
   });
 
   it('keeps a shared-worktree failure inside the delete dialog without a duplicate board error', async () => {
@@ -462,7 +462,7 @@ describe('Git controls and destructive actions', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete task' })).toBeNull());
   });
 
-  it('reports bulk progress while a selected deletion is deferred', async () => {
+  it('keeps the board usable while a selected deletion is still being admitted', async () => {
     const { user, command, get, publish } = mount(); await loaded();
     await user.click(screen.getByRole('button', { name: 'Select cards to delete' }));
     await user.click(screen.getByRole('checkbox', { name: 'Select Alpha task' }));
@@ -470,16 +470,18 @@ describe('Git controls and destructive actions', () => {
     await user.click(screen.getByRole('button', { name: 'Delete 2' }));
     const dialog = screen.getByRole('dialog', { name: 'Delete selected tasks' });
     const gate = deferred<KanbanSnapshot>();
-    command.mockImplementationOnce(() => gate.promise);
-    command.mockRejectedValueOnce({ code: 'TASK_BUSY', message: 'Wait for Beta.' });
+    command.mockImplementation(() => gate.promise);
     await user.click(within(dialog).getByRole('button', { name: 'Delete selected' }));
-    expect(await screen.findByText('Queueing 1 of 2: Alpha task')).toBeTruthy();
-    const next = get(); next.sequence += 1; next.state.tasks = next.state.tasks.filter(task => task.id !== 't1');
+    // The confirmation is gone before admission settles and no progress surface replaces it.
+    expect(screen.queryByRole('dialog', { name: 'Delete selected tasks' })).toBeNull();
+    expect(screen.queryByText(/Queueing \d of \d/)).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'Deletion results' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'New task' })).toBeTruthy();
+    const next = get(); next.sequence += 1; next.state.tasks = next.state.tasks.filter(task => task.id !== 't1' && task.id !== 't2');
     act(() => { publish(next); });
     gate.resolve(next);
-    const result = await screen.findByRole('dialog', { name: 'Deletion results' });
-    expect(within(result).getByText('1 task queued for deletion.')).toBeTruthy();
-    expect(within(result).getByText(/Wait for Beta/)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Open task Alpha task' })).toBeNull());
+    expect(screen.queryByRole('dialog', { name: 'Deletion results' })).toBeNull();
   });
 
   it('keeps a deferred deletion failure in the confirmation surface', async () => {
@@ -512,7 +514,7 @@ describe('Git controls and destructive actions', () => {
     const { user, command } = mount(); await openAlpha(user); await user.click(screen.getByRole('button', { name: 'Delete task' })); const deleteDialog = screen.getByRole('dialog', { name: 'Delete task' }); expect(command).not.toHaveBeenCalled(); await user.click(within(deleteDialog).getByRole('button', { name: 'Delete task' })); await waitFor(() => expect(screen.queryByRole('button', { name: 'Open task Alpha task' })).toBeNull()); expect(command).toHaveBeenCalledWith({ type: 'task.delete', taskId: 't1', confirmed: true, expectedWorktreePath: null }); expect(screen.queryByRole('button', { name: 'Close task details' })).toBeNull();
   });
 
-  it('deletes selected tasks best-effort and reports blocked tasks', async () => {
+  it('dispatches one deletion per selected task without the removed bulk flag', async () => {
     const { user, command } = mount(); await loaded();
     await user.click(screen.getByRole('button', { name: 'Select cards to delete' }));
     await user.click(screen.getByRole('checkbox', { name: 'Select Alpha task' }));
@@ -523,12 +525,10 @@ describe('Git controls and destructive actions', () => {
     expect(within(dialog).getByText(/1 worktree/)).toBeTruthy();
     command.mockRejectedValueOnce({ code: 'TASK_BUSY', message: 'Wait for Alpha.' });
     await user.click(within(dialog).getByRole('button', { name: 'Delete selected' }));
-    const result = await screen.findByRole('dialog', { name: 'Deletion results' });
-    expect(within(result).getByText('1 task queued for deletion.')).toBeTruthy();
-    expect(screen.getByText(/Wait for Alpha/)).toBeTruthy();
-    expect(screen.getByText('1 selected')).toBeTruthy();
-    expect(command).toHaveBeenCalledWith({ type: 'task.delete', taskId: 't1', confirmed: true, expectedWorktreePath: null, requireIdle: true });
-    expect(command).toHaveBeenCalledWith({ type: 'task.delete', taskId: 't2', confirmed: true, expectedWorktreePath: '/trees/beta', requireIdle: true });
+    expect(await screen.findByText(/Could not start deletion for Alpha task: Wait for Alpha\./)).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Deletion results' })).toBeNull();
+    expect(command).toHaveBeenCalledWith({ type: 'task.delete', taskId: 't1', confirmed: true, expectedWorktreePath: null });
+    expect(command).toHaveBeenCalledWith({ type: 'task.delete', taskId: 't2', confirmed: true, expectedWorktreePath: '/trees/beta' });
   });
 });
 

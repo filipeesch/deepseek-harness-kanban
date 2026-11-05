@@ -4,6 +4,7 @@ import type { GitPort, SessionPort } from '../shared/ports.js';
 import { isGitProject } from '../shared/project.js';
 import type { ContextOperation, GitProject, HubState, Project, Task } from '../shared/types.js';
 import { canonicalPath, containsPath } from './git.js';
+import { requireTask, type OperationJournal } from './operation-journal.js';
 import { WorktreeSharingGuard } from './worktree-sharing.js';
 
 export interface DestructiveStore {
@@ -17,7 +18,6 @@ export interface DestructiveOperationHost {
   read(taskId: string): { task: Task; project: Project; hub: HubState };
   assertOpen(): void;
   signal: AbortSignal;
-  update(taskId: string, operationId: string, change: (task: Task, operation: ContextOperation) => void): Promise<void>;
   idle(taskId: string, operationId: string): Promise<boolean>;
   switchDirectories(taskId: string, operationId: string, target: string, write: boolean, project: GitProject): Promise<boolean>;
   sourceUnchanged(taskId: string, expected: Project): void;
@@ -30,7 +30,7 @@ export interface DestructiveOperationOptions {
 }
 
 type DestructiveRequest = Extract<ContextOperation['request'], { kind: 'delete' | 'remove' }>;
-type DriveResult = 'admission' | 'waiting' | 'done';
+type DriveResult = 'waiting' | 'done';
 
 async function entryExists(value: string): Promise<boolean> {
   try { await lstat(value); return true; }
@@ -42,17 +42,12 @@ async function canonicalOrNull(value: string): Promise<string | null> {
   catch { return null; }
 }
 
-function requireTask(state: HubState, taskId: string): Task {
-  const task = state.tasks.find(item => item.id === taskId);
-  if (!task) throw new KanbanError('TASK_NOT_FOUND', 'The task does not exist.', { taskId });
-  return task;
-}
-
 /**
- * Owns the delete/remove lifecycle: synchronous prepare for admission plus the
- * journaled execution that the host queue runs later. It never schedules itself.
+ * Owns the journaled delete/remove execution that the host queue runs: the
+ * authoritative preflight followed by the slow cleanup. It never schedules
+ * itself and never runs on the interactive command path.
  */
-export class DestructiveOperationHandler {
+export class DestructiveExecution {
   private readonly now: () => string;
   private readonly sharing: WorktreeSharingGuard;
   private readonly onTaskDeleted?: (task: Task, project: Project) => Promise<void>;
@@ -63,6 +58,7 @@ export class DestructiveOperationHandler {
     private readonly sessions: SessionPort,
     private readonly git: GitPort,
     private readonly host: DestructiveOperationHost,
+    private readonly journal: OperationJournal,
     options: DestructiveOperationOptions = {},
   ) {
     this.now = options.now ?? (() => new Date().toISOString());
@@ -71,19 +67,32 @@ export class DestructiveOperationHandler {
     this.signal = host.signal;
   }
 
-  /** Admission prepare or the full journaled execution, depending on `admissionOnly`. */
-  async drive(taskId: string, operationId: string, options: { admissionOnly?: boolean } = {}): Promise<DriveResult> {
+  private update(taskId: string, operationId: string, change: (task: Task, operation: ContextOperation) => void): Promise<void> {
+    return this.journal.update(taskId, operationId, change);
+  }
+
+  /** The authoritative preflight and the cleanup, both inside the queued lane. */
+  async drive(taskId: string, operationId: string): Promise<DriveResult> {
     if (!await this.idle(taskId, operationId)) return 'waiting';
     await this.update(taskId, operationId, (_task, operation) => { operation.phase = 'preflight'; delete operation.error; });
     let { task, project } = this.host.read(taskId);
     const operation = task.operation;
     if (!operation || operation.id !== operationId) throw new KanbanError('OPERATION_CHANGED', 'The operation changed while it was being coordinated.');
     const request = operation.request as DestructiveRequest;
+    // The confirmed target is revalidated against the current binding before any
+    // removal, so a binding changed after admission fails instead of removing it.
+    if (request.expectedWorktreePath !== undefined) {
+      const actual = task.worktree?.path ?? null;
+      if (request.expectedWorktreePath !== actual) throw new KanbanError('WORKTREE_CHANGED', 'The worktree changed since this confirmation was displayed.', { expectedWorktreePath: request.expectedWorktreePath, actualWorktreePath: actual });
+    }
     const gitProject = isGitProject(project) ? project : undefined;
     if (gitProject === undefined && request.kind !== 'delete') throw new KanbanError('PROJECT_NOT_GIT', 'This project is not a Git repository; Git and worktree actions are unavailable.', { projectId: project.id });
     if (!operation.gitCompleted) {
+      // Admission records the persisted binding without touching the filesystem;
+      // the canonical comparison happens here, inside the lane.
       const currentTarget = task.worktree ? await canonicalPath(task.worktree.path, true) : undefined;
-      if (currentTarget !== operation.targetPath) throw new KanbanError('OPERATION_TARGET_CHANGED', 'The confirmed worktree target changed; it will not be removed.');
+      const confirmedTarget = operation.targetPath === undefined ? undefined : await canonicalPath(operation.targetPath, true);
+      if (currentTarget !== confirmedTarget) throw new KanbanError('OPERATION_TARGET_CHANGED', 'The confirmed worktree target changed; it will not be removed.');
     }
 
     let checkoutRemoved = false;
@@ -92,8 +101,6 @@ export class DestructiveOperationHandler {
     if (task.worktree && !operation.gitCompleted) {
       await this.assertPreRemoval(taskId, task, gitProject, request);
     }
-
-    if (options.admissionOnly) return 'admission';
 
     this.host.sourceUnchanged(taskId, project);
     if (gitProject !== undefined && !await this.host.switchDirectories(taskId, operationId, target, false, gitProject)) return 'waiting';
@@ -112,7 +119,10 @@ export class DestructiveOperationHandler {
         await this.assertRemovalTarget(taskId, request);
         this.host.sourceUnchanged(taskId, project);
         const confirmed = this.host.read(taskId).task.worktree;
-        if (!confirmed || await canonicalPath(confirmed.path, true) !== operation.targetPath) throw new KanbanError('OPERATION_TARGET_CHANGED', 'The worktree binding changed before removal.');
+        // Compare the persisted binding with the persisted target: admission
+        // records the binding verbatim, so canonicalizing one side here would
+        // reject a correct target that is not already realpath-canonical.
+        if (!confirmed || confirmed.path !== operation.targetPath) throw new KanbanError('OPERATION_TARGET_CHANGED', 'The worktree binding changed before removal.');
         await this.git.remove(gitProject, operation.targetPath!, request.discardChanges, task.sessionIds, this.signal);
         checkoutRemoved = true;
       }
@@ -225,14 +235,5 @@ export class DestructiveOperationHandler {
       operation.phase = 'waiting';
     });
     return idle;
-  }
-
-  private async update(taskId: string, operationId: string, change: (task: Task, operation: ContextOperation) => void): Promise<void> {
-    await this.store.transactTask(taskId, state => {
-      const task = requireTask(state, taskId);
-      if (task.operation?.id !== operationId) throw new KanbanError('OPERATION_CHANGED', 'The operation changed while it was being coordinated.');
-      change(task, task.operation);
-      task.updatedAt = this.now();
-    });
   }
 }

@@ -113,7 +113,7 @@ export type Command =
   | { type: 'task.runInstruction'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction: string }
   | { type: 'conversation.create'; hubId?: string; taskId: string }
   | { type: 'conversation.close' | 'conversation.reopen'; hubId?: string; taskId: string; sessionId: string }
-  | { type: 'task.delete'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; requireIdle?: boolean; force?: boolean }
+  | { type: 'task.delete'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; force?: boolean }
   | ({ type: 'worktree.create'; hubId?: string; taskId: string } & CreateWorktree)
   | { type: 'worktree.attach'; hubId?: string; taskId: string; path: string }
   | { type: 'worktree.dismiss'; hubId?: string; taskId: string }
