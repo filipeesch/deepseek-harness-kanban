@@ -18,7 +18,7 @@ The package is private and marked `UNLICENSED`; these instructions do not grant 
 
 ### Install the released plugin
 
-Every release publishes one installable file, `dsh-kanban.tgz`, built from the tagged commit. Its name is fixed and is part of the install contract, so the install specification never changes between versions.
+Every release publishes one installable file, `dsh-kanban.tgz`, built from the commit that landed on `main`. Its name is fixed and is part of the install contract, so the install specification never changes between versions. The release is created for the version in the manifest; a later merge republishes that release when the version did not change.
 
 1. Open **Plugins → Add plugin**.
 2. Paste the release asset address into the package field:
