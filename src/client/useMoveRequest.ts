@@ -15,11 +15,20 @@ export interface MoveConfirmation {
   workflowName: string;
 }
 
+/** One validated move intent, handed to the client preparation before the move is applied. */
+export interface MoveIntent {
+  task: Task;
+  column: Column;
+  beforeTaskId: string | null;
+}
+
 export interface MoveRequestOptions {
   state: BoardState | null;
   run: (command: Command) => Promise<KanbanSnapshot>;
   onImmediateError: (error: unknown) => void;
   onMoved?: (result: KanbanSnapshot, task: Task, column: Column) => void;
+  /** Runs after every validation and the restricted-move confirmation; false cancels the move. */
+  beforeApply?: (intent: MoveIntent) => Promise<boolean>;
 }
 
 export interface MoveRequest {
@@ -55,11 +64,12 @@ function staleConfirmation(request: PendingConfirmation, state: BoardState | nul
 }
 
 /** Classifies moves, applies allowed and reorder requests, and owns the restricted-move confirmation lifecycle. */
-export function useMoveRequest({ state, run, onImmediateError, onMoved }: MoveRequestOptions): MoveRequest {
+export function useMoveRequest({ state, run, onImmediateError, onMoved, beforeApply }: MoveRequestOptions): MoveRequest {
   const stateRef = useRef(state); stateRef.current = state;
   const runRef = useRef(run); runRef.current = run;
   const errorRef = useRef(onImmediateError); errorRef.current = onImmediateError;
   const onMovedRef = useRef(onMoved); onMovedRef.current = onMoved;
+  const beforeApplyRef = useRef(beforeApply); beforeApplyRef.current = beforeApply;
   const alive = useRef(true);
   const submitting = useRef(false);
   const pendingRequest = useRef<PendingConfirmation | null>(null);
@@ -117,7 +127,13 @@ export function useMoveRequest({ state, run, onImmediateError, onMoved }: MoveRe
     const access = transitionAccess(currentState.workflow, currentTask.columnId, currentColumn.id);
     if (access === null) { errorRef.current({ code: 'INVALID_TARGET', message: 'The destination stage does not exist.' }); return false; }
     if (access === 'reorder' || access === 'allowed') {
-      try { return await apply(currentTask, currentColumn, beforeTaskId, false); }
+      try {
+        if (access === 'allowed' && beforeApplyRef.current !== undefined) {
+          const proceed = await beforeApplyRef.current({ task: currentTask, column: currentColumn, beforeTaskId });
+          if (!proceed) return false;
+        }
+        return await apply(currentTask, currentColumn, beforeTaskId, false);
+      }
       catch (failure) { if (alive.current) errorRef.current(failure); return false; }
     }
     if (pendingRequest.current) return false; // A second restricted request is refused; the open confirmation remains authoritative.
@@ -152,6 +168,10 @@ export function useMoveRequest({ state, run, onImmediateError, onMoved }: MoveRe
     submitting.current = true;
     setPending(true); setError(null); setCanRetry(true);
     try {
+      if (beforeApplyRef.current !== undefined) {
+        const proceed = await beforeApplyRef.current({ task, column: destination, beforeTaskId: request.beforeTaskId });
+        if (!proceed) { settle(false); return; }
+      }
       await apply(task, destination, request.beforeTaskId, access === 'restricted');
       settle(true);
     } catch (failure) {

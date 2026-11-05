@@ -23,7 +23,7 @@ import { taskTitleSlug, worktreePathForBranch } from '../shared/worktree-name.js
 import { ownedSessionIds } from '../domain/session-lineage.js';
 import { firstOpenSessionId } from '../shared/conversations.js';
 import { admitStageInstruction, type StageInstructionDeps } from './stage-instruction.js';
-import { requiresWorktreeDecision } from '../shared/worktree-decision.js';
+import { requiresWorktreeDecision, unresolvedWorktreeBinding } from '../shared/worktree-decision.js';
 import { HubRepository, HubStore } from './hub-repository.js';
 import type { LocatedTask } from './hub-repository.js';
 import { RepositoryWorktreeStore, TaskLocator } from './task-locator.js';
@@ -300,6 +300,7 @@ export class KanbanApp {
  createConversation(taskId:string):Promise<string>{return this.serial(()=>this.createConversationNow(taskId));}
  private async createConversationNow(taskId:string,options:{allowUndecided?:boolean}={}):Promise<string>{
   this.assertContext(taskId);const located=this.locatedTask(taskId);const store=this.hubs.hub(located.hubId);const before=located.task;const project=located.project;
+  invariant(!(options.allowUndecided===true&&before.sessionIds.length===0&&unresolvedWorktreeBinding(before,project)),'WORKTREE_BINDING_UNRESOLVED','Resolve the worktree binding in the Git section before starting the first conversation.');
   invariant(options.allowUndecided===true||!requiresWorktreeDecision(before,project),'WORKTREE_DECISION_REQUIRED','Choose whether to create a worktree or continue in the base project before starting the first conversation.');
   const workspaceId=await this.ensureWorktreeWorkspace(located.hubId,before,project);const id=await this.sessions.create(project.projectPath,workspaceId);
   try{if(before.effectiveCwd!==project.projectPath)await this.sessions.setDirectory(id,before.effectiveCwd);this.assertContext(taskId);const current=store.requireTask(taskId);invariant(current.effectiveCwd===before.effectiveCwd,'CONTEXT_CHANGED','Task directory changed while the conversation was being created.');await store.addSession(taskId,id);return id;}

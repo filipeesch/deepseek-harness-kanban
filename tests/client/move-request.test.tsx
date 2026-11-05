@@ -44,6 +44,14 @@ function setup(initial = restrictedState()) {
   return { ...hook, run, onImmediateError };
 }
 
+function setupWithPreparation(initial = restrictedState()) {
+  const run = vi.fn(async (_command: Command): Promise<KanbanSnapshot> => fixture());
+  const onImmediateError = vi.fn();
+  const beforeApply = vi.fn(async () => true);
+  const hook = renderHook(({ state }: { state: BoardState }) => useMoveRequest({ state, run, onImmediateError, beforeApply }), { initialProps: { state: initial } });
+  return { ...hook, run, onImmediateError, beforeApply };
+}
+
 describe('useMoveRequest', () => {
   it('moves an allowed transition immediately and omits the override flag', async () => {
     const { result, run } = setup();
@@ -58,12 +66,44 @@ describe('useMoveRequest', () => {
   });
 
   it('moves a same-stage reorder immediately', async () => {
-    const { result, run } = setup();
+    const { result, run, beforeApply } = setupWithPreparation();
     const state = restrictedState();
     let moved = false;
     await act(async () => { moved = await result.current.move(state.tasks[0]!, column(state, 'intake'), null); });
     expect(moved).toBe(true);
     expect(run).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'intake' });
+    expect(beforeApply).not.toHaveBeenCalled();
+  });
+
+  it('cancels an allowed move when the preparation is cancelled', async () => {
+    const { result, run, beforeApply } = setupWithPreparation();
+    beforeApply.mockResolvedValueOnce(false);
+    const state = restrictedState();
+    let moved = true;
+    await act(async () => { moved = await result.current.move(state.tasks[0]!, column(state, 'doing')); });
+    expect(moved).toBe(false);
+    expect(beforeApply).toHaveBeenCalledOnce();
+    expect(run).not.toHaveBeenCalled();
+    expect(result.current.optimistic).toBeNull();
+  });
+
+  it('cancels a confirmed restricted move when the preparation is cancelled', async () => {
+    const { result, run, beforeApply } = setupWithPreparation();
+    const state = restrictedState();
+    let pending!: Promise<boolean>;
+    act(() => { pending = result.current.move(state.tasks[0]!, column(state, 'blocked')); });
+    await waitFor(() => expect(result.current.confirmation).not.toBeNull());
+    beforeApply.mockResolvedValueOnce(false);
+    let moved = true;
+    await act(async () => {
+      const confirmed = result.current.confirm();
+      moved = await pending;
+      await confirmed;
+    });
+    expect(moved).toBe(false);
+    expect(beforeApply).toHaveBeenCalledOnce();
+    expect(run).not.toHaveBeenCalled();
+    expect(result.current.confirmation).toBeNull();
   });
 
   it('opens a confirmation for a restricted move without running a command', async () => {

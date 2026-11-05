@@ -19,6 +19,39 @@ describe('host command orchestration',()=>{
  it('starts a task without a native conversation until an explicit start',async()=>{const f=await setup();const t=await f.app.createTask({projectId:f.project.id,title:'Lazy task',description:'No conversation yet'});expect(t.sessionIds).toEqual([]);expect(f.store.requireTask(t.id).sessionIds).toEqual([]);expect(f.sessions.dirs.size).toBe(0);await expect(f.app.createConversation(t.id)).rejects.toMatchObject({code:'WORKTREE_DECISION_REQUIRED'});await expect(f.app.command({type:'conversation.create',taskId:t.id})).rejects.toMatchObject({code:'WORKTREE_DECISION_REQUIRED'});expect(f.sessions.dirs.size).toBe(0);await f.app.command({type:'worktree.dismiss',taskId:t.id});const dismissedAt=f.store.requireTask(t.id).updatedAt;const dismissedRevision=f.store.snapshot().revision;await f.app.command({type:'worktree.dismiss',taskId:t.id});expect(f.store.requireTask(t.id).worktreeDismissed).toBe(true);expect(f.store.requireTask(t.id).updatedAt).toBe(dismissedAt);expect(f.store.snapshot().revision).toBe(dismissedRevision);const id=await f.app.createConversation(t.id);expect(f.store.requireTask(t.id).sessionIds).toEqual([id]);expect(await f.sessions.directory(id)).toBe(f.projectPath);expect(f.sessions.sent).toEqual([]);});
  it('creates the first conversation in a ready worktree before the task starts',async()=>{const f=await setup();const t=await f.app.createTask({projectId:f.project.id,title:'Worktree first',description:''});const root=path.join(f.root,'first-tree');await f.app.command({type:'worktree.create',taskId:t.id,mode:'new',path:root,branchName:'task/first',sourceBranch:'main'});const id=await f.app.createConversation(t.id);expect(f.store.requireTask(t.id).sessionIds).toEqual([id]);expect(await f.sessions.directory(id)).toBe(path.join(root,'apps','web'));expect(f.sessions.workspaceIds.get(id)).toBe(f.workspaces.byPath.get(path.join(root,'apps','web'))?.id);});
  it('lets a stage instruction create the first conversation before the worktree choice',async()=>{const f=await setup();const columnId=await instructed(f);const t=await f.app.createTask({projectId:f.project.id,title:'Instruction first',description:''});await f.app.command({type:'task.move',taskId:t.id,columnId});const marker=f.store.requireTask(t.id).instructionPending!;await f.app.command({type:'task.runInstruction',taskId:t.id,columnId,expectedEnteredAt:marker.enteredAt,expectedInstruction:'Plan this task.'});const after=f.store.requireTask(t.id);expect(after.sessionIds).toHaveLength(1);expect(f.sessions.sent).toHaveLength(1);expect(f.sessions.sent[0]!.id).toBe(after.sessionIds[0]);expect(await f.sessions.directory(after.sessionIds[0]!)).toBe(f.projectPath);expect(after.instructionPending).toBeUndefined();});
+ it('refuses the implicit first conversation while the worktree binding is not ready',async()=>{
+  const f=await setup();const columnId=await instructed(f);
+  const t=await f.app.createTask({projectId:f.project.id,title:'Broken binding',description:''});
+  await f.store.transact(d=>{d.tasks.find(value=>value.id===t.id)!.worktree={path:path.join(f.root,'broken-tree'),branch:'task/broken',owned:true,status:'error',error:{code:'WORKTREE_CREATE_FAILED',message:'Injected failure.'}};});
+  await f.app.command({type:'task.move',taskId:t.id,columnId});
+  const marker=f.store.requireTask(t.id).instructionPending!;
+  await expect(f.app.command({type:'task.runInstruction',taskId:t.id,columnId,expectedEnteredAt:marker.enteredAt,expectedInstruction:'Plan this task.'})).rejects.toMatchObject({code:'WORKTREE_BINDING_UNRESOLVED'});
+  expect(f.store.requireTask(t.id).sessionIds).toEqual([]);
+  expect(f.sessions.sent).toEqual([]);
+ });
+ it('keeps instructions on an existing conversation while the worktree binding is not ready',async()=>{
+  const f=await setup();const columnId=await instructed(f);const t=await task(f);
+  await f.store.transact(d=>{d.tasks.find(value=>value.id===t.id)!.worktree={path:path.join(f.root,'broken-tree'),branch:'task/broken',owned:true,status:'error',error:{code:'WORKTREE_CREATE_FAILED',message:'Injected failure.'}};});
+  await f.app.command({type:'task.move',taskId:t.id,columnId});
+  const marker=f.store.requireTask(t.id).instructionPending!;
+  await f.app.command({type:'task.runInstruction',taskId:t.id,columnId,expectedEnteredAt:marker.enteredAt,expectedInstruction:'Plan this task.'});
+  expect(f.sessions.sent).toHaveLength(1);
+  expect(f.sessions.sent[0]!.id).toBe(t.sessionIds[0]);
+  expect(f.store.requireTask(t.id).sessionIds).toEqual(t.sessionIds);
+ });
+ it('creates a replacement conversation with every tab closed while the worktree binding is not ready',async()=>{
+  const f=await setup();const columnId=await instructed(f);const t=await task(f);
+  await f.store.transact(d=>{d.tasks.find(value=>value.id===t.id)!.worktree={path:path.join(f.root,'broken-tree'),branch:'task/broken',owned:true,status:'error',error:{code:'WORKTREE_CREATE_FAILED',message:'Injected failure.'}};});
+  await f.app.command({type:'task.move',taskId:t.id,columnId});
+  for(const sessionId of t.sessionIds)await f.app.command({type:'conversation.close',taskId:t.id,sessionId});
+  const marker=f.store.requireTask(t.id).instructionPending!;
+  await f.app.command({type:'task.runInstruction',taskId:t.id,columnId,expectedEnteredAt:marker.enteredAt,expectedInstruction:'Plan this task.'});
+  const after=f.store.requireTask(t.id);
+  expect(after.sessionIds).toHaveLength(t.sessionIds.length+1);
+  const created=after.sessionIds.find(id=>!t.sessionIds.includes(id))!;
+  expect(f.sessions.sent).toHaveLength(1);
+  expect(f.sessions.sent[0]).toMatchObject({id:created,text:'Plan this task.'});
+ });
  it('forces a fresh conversation-fact projection when the client asks for one',async()=>{const f=await setup();const t=await task(f);let running=false;f.sessions.facts=async()=>({running,background:[],pending:NO_PENDING_USER_WORK,settledTurn:null});const idle=await f.app.snapshot();expect(idle.conversations[t.sessionIds[0]!]?.running).toBe(false);running=true;const cached=await f.app.snapshot();expect(cached.conversations[t.sessionIds[0]!]?.running).toBe(false);const fresh=await f.app.snapshot(true);expect(fresh.conversations[t.sessionIds[0]!]?.running).toBe(true);expect(fresh.sequence).toBeGreaterThan(cached.sequence);expect((await f.app.snapshot()).conversations[t.sessionIds[0]!]?.running).toBe(true);});
  it('edits any stage without sending a hidden instruction',async()=>{const f=await setup();const t=await task(f);await f.store.transact(d=>{d.tasks[0]!.columnId=d.boards[0]!.workflow.columns[2]!.id;});await f.app.command({type:'task.edit',taskId:t.id,title:'Changed',description:'New text'});expect(f.store.requireTask(t.id).title).toBe('Changed');expect(f.sessions.sent).toEqual([]);});
  it('creates distinct tabs inheriting the effective monorepo directory',async()=>{const f=await setup();const t=await task(f);const id=await f.app.createConversation(t.id);expect(id).not.toBe(t.sessionIds[0]);expect(f.store.requireTask(t.id).sessionIds).toHaveLength(2);expect(await f.sessions.directory(id)).toBe(f.projectPath);});

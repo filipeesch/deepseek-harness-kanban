@@ -2,7 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { Column, Task } from '../shared/types.js';
 import { firstOpenSessionId } from '../shared/conversations.js';
 import { entryInstruction, hasUnresolvedEntry } from '../domain/stage-entry.js';
-import { AUTO_RUN_DELAY_MS, autoRunEntryForColumn, RUN_FAILURE_FALLBACK, type AutoRunController, type AutoRunEntry } from './auto-run.js';
+import { AUTO_RUN_DELAY_MS, autoRunEntryForColumn, RUN_FAILURE_FALLBACK, type AutoRunController, type AutoRunEntry, type AutoRunInput } from './auto-run.js';
 import { conversationLabel, type SessionTitleSource } from './conversation-label.js';
 import { PlayIcon } from './icons.js';
 
@@ -26,7 +26,7 @@ export function useCountdown(deadline: number | null): number {
   return deadline === null ? 0 : Math.max(0, Math.ceil((deadline - now) / 1000));
 }
 
-export function CardInstructionAction({ task, column, controller }: { task: Task; column: Column; controller: AutoRunController }) {
+export function CardInstructionAction({ task, column, controller, onRun }: { task: Task; column: Column; controller: AutoRunController; onRun?: (input: AutoRunInput) => void }) {
   const entry = useAutoRunEntry(controller, task.id);
   const current = autoRunEntryForColumn(entry, column.id);
   const unresolved = hasUnresolvedEntry(task, column.id);
@@ -43,10 +43,11 @@ export function CardInstructionAction({ task, column, controller }: { task: Task
   const mode = counting ? 'counting' : sending ? 'sending' : 'play';
   const label = counting ? 'Cancel automatic ' + column.name + ' instruction' : sending ? 'Sending ' + column.name + ' instruction' : 'Run ' + column.name + ' instruction';
   const marker = task.instructionPending!;
+  const input: AutoRunInput = { taskId: task.id, columnId: column.id, enteredAt: marker.enteredAt, instruction: instruction ?? '' };
   const activate = mode === 'counting'
     ? () => controller.cancel(task.id)
     : mode === 'play' && playable
-      ? () => void controller.runNow({ taskId: task.id, columnId: column.id, enteredAt: marker.enteredAt, instruction })
+      ? () => { if (onRun !== undefined) onRun(input); else void controller.runNow(input); }
       : undefined;
   return <div className="kb-card-run" data-auto-run={mode === 'play' && failed ? 'failed' : mode}>
     <button
