@@ -6,8 +6,11 @@ import type { ContextOperation, GitProject, HubState, OperationRequest, Project,
 import { canonicalPath } from './git.js';
 import { isGitProject, requireGitProject } from '../shared/project.js';
 import { WorktreeSharingGuard } from './worktree-sharing.js';
-import { DestructiveOperationHandler, type DestructiveOperationHost } from './destructive-operation.js';
+import { DestructiveExecution, type DestructiveOperationHost } from './destructive-operation.js';
+import { DestructiveAdmission } from './destructive-admission.js';
 import { OperationQueue } from './operation-queue.js';
+import { OperationJournal, requireTask } from './operation-journal.js';
+import { repositoryLane } from './repository-lane.js';
 
 export interface WorktreeStore {
   locate(taskId: string): { hubId: string; hub: HubState; task: Task; project: Project };
@@ -17,11 +20,6 @@ export interface WorktreeStore {
 export interface WorktreeCoordinatorOptions { signal?: AbortSignal; id?: () => string; now?: () => string; onTaskDeleted?: (task: Task, project: Project) => Promise<void>; sharing?: WorktreeSharingGuard }
 type CreateAttempt = NonNullable<ContextOperation['createAttempt']>;
 
-function requireTask(state: HubState, id: string): Task {
-  const task = state.tasks.find(item => item.id === id);
-  if (!task) throw new KanbanError('TASK_NOT_FOUND', 'The task does not exist.', { taskId: id });
-  return task;
-}
 function requireProject(state: HubState, id: string): Project {
   const project = state.projects.find(item => item.id === id);
   if (!project) throw new KanbanError('PROJECT_NOT_FOUND', 'The task project does not exist.', { projectId: id });
@@ -50,7 +48,9 @@ export class WorktreeCoordinator {
   private readonly now: () => string;
   private readonly onTaskDeleted?: (task: Task, project: Project) => Promise<void>;
   private readonly sharing: WorktreeSharingGuard;
-  private readonly destructive: DestructiveOperationHandler;
+  private readonly journal: OperationJournal;
+  private readonly admission: DestructiveAdmission;
+  private readonly destructive: DestructiveExecution;
   private readonly queue = new OperationQueue();
   private readonly tails = new Map<string, Promise<void>>();
   private resumed: Promise<void> | undefined;
@@ -63,7 +63,9 @@ export class WorktreeCoordinator {
     this.now = options.now ?? (() => new Date().toISOString());
     this.onTaskDeleted = options.onTaskDeleted;
     this.sharing = options.sharing ?? new WorktreeSharingGuard(store, sessions);
-    this.destructive = new DestructiveOperationHandler(store, sessions, git, this.destructiveHost(), { now: this.now, sharing: this.sharing, ...(options.onTaskDeleted ? { onTaskDeleted: options.onTaskDeleted } : {}) });
+    this.journal = new OperationJournal(store, this.now);
+    this.admission = new DestructiveAdmission({ locate: taskId => this.read(taskId) }, this.journal);
+    this.destructive = new DestructiveExecution(store, sessions, git, this.destructiveHost(), this.journal, { now: this.now, sharing: this.sharing, ...(options.onTaskDeleted ? { onTaskDeleted: options.onTaskDeleted } : {}) });
   }
 
   private destructiveHost(): DestructiveOperationHost {
@@ -71,7 +73,6 @@ export class WorktreeCoordinator {
       read: taskId => this.read(taskId),
       assertOpen: () => this.assertOpen(),
       signal: this.signal,
-      update: (taskId, operationId, change) => this.update(taskId, operationId, change),
       idle: (taskId, operationId) => this.idle(taskId, operationId),
       switchDirectories: (taskId, operationId, target, write, project) => this.switchDirectories(taskId, operationId, target, write, project),
       sourceUnchanged: (taskId, expected) => this.sourceUnchanged(taskId, expected),
@@ -111,12 +112,7 @@ export class WorktreeCoordinator {
   }
 
   private async update(taskId: string, operationId: string, change: (task: Task, operation: ContextOperation) => void): Promise<void> {
-    await this.store.transactTask(taskId, state => {
-      const task = requireTask(state, taskId);
-      if (task.operation?.id !== operationId) throw new KanbanError('OPERATION_CHANGED', 'The operation changed while it was being coordinated.');
-      change(task, task.operation);
-      task.updatedAt = this.now();
-    });
+    await this.journal.update(taskId, operationId, change);
   }
 
   private sameRequest(a: OperationRequest, b: OperationRequest): boolean {
@@ -140,9 +136,10 @@ export class WorktreeCoordinator {
       const normalized = structuredClone(request);
       if (normalized.kind === 'create' || normalized.kind === 'attach') normalized.path = await canonicalPath(normalized.path, true);
       const { task } = this.read(taskId);
-      await this.confirmationMatches(task, normalized);
+      this.confirmationMatches(task, normalized);
       if (task.operation) {
         if (!this.sameRequest(task.operation.request, normalized)) throw new KanbanError('OPERATION_PENDING', 'Resolve the existing operation before starting a different operation.', { kind: task.operation.request.kind });
+        this.recordedTargetMatches(task.operation, normalized);
         await this.update(taskId, task.operation.id, (_task, operation) => {
           if ((operation.request.kind === 'remove' || operation.request.kind === 'delete') && (normalized.kind === 'remove' || normalized.kind === 'delete')) { operation.request.discardChanges ||= normalized.discardChanges; if (normalized.force === true) operation.request.force = true; }
           // Preserve the journal and previous failure stage for safe retry/recovery.
@@ -170,21 +167,62 @@ export class WorktreeCoordinator {
       const { task } = this.read(taskId);
       if (!task.operation) throw new KanbanError('NO_OPERATION', 'There is no operation to retry.');
       const destructive = task.operation.request.kind === 'delete' || task.operation.request.kind === 'remove';
+      const previousPhase = task.operation.phase;
       await this.update(taskId, task.operation.id, (_task, operation) => { if (operation.phase === 'failed') operation.phase = 'waiting'; });
-      if (destructive && options.background === true) await this.admitAndQueue(taskId);
+      if (destructive && options.background === true) {
+        try { await this.admitAndQueue(taskId); }
+        catch (error) {
+          // Keep the previous failure visible when retry could not even be admitted.
+          if (previousPhase === 'failed') await this.update(taskId, task.operation.id, (_task, operation) => { operation.phase = 'failed'; });
+          throw error;
+        }
+      }
       else await this.drive(taskId);
       return this.hubAfter(taskId, before);
     });
   }
 
-  /** Prepare synchronously, persist the queued phase, and hand execution to the queue. */
+  /**
+   * Admit the recorded destructive operation from persisted state only, then hand
+   * execution to its repository lane. The authoritative preflight runs there, so
+   * admission never inspects Git, native conversations, or the filesystem.
+   */
   private async admitAndQueue(taskId: string): Promise<void> {
-    const prepared = await this.drive(taskId, { admissionOnly: true });
-    const admitted = this.read(taskId).task.operation;
-    if (prepared !== 'admission' || !admitted) return;
-    const operationId = admitted.id;
-    await this.update(taskId, operationId, (_task, operation) => { operation.phase = 'queued'; });
-    this.queue.enqueue({ taskId, operationId, run: () => this.serial(taskId, async () => { await this.drive(taskId); }).then(() => {}) });
+    const operationId = this.read(taskId).task.operation?.id;
+    try {
+      const job = await this.admission.prepare(taskId);
+      this.enqueue(job.lane, job.taskId, job.operationId);
+    } catch (error) {
+      // A rejected admission must not leave the journal in 'waiting': that phase
+      // hides the recovery actions and blocks every other context operation.
+      if (operationId !== undefined) await this.recordAdmissionFailure(taskId, operationId, error);
+      throw error;
+    }
+  }
+
+  private async recordAdmissionFailure(taskId: string, operationId: string, error: unknown): Promise<void> {
+    try {
+      await this.update(taskId, operationId, (_task, operation) => {
+        const failure = problem(error);
+        operation.error = { ...failure, details: { ...failure.details, failedPhase: operation.phase } };
+        operation.phase = 'failed';
+      });
+    } catch { /* the operation was replaced or the task is gone */ }
+  }
+
+  /** A new confirmation may not silently substitute the target of a recorded operation. */
+  private recordedTargetMatches(operation: ContextOperation, request: OperationRequest): void {
+    if (request.kind !== 'delete' && request.kind !== 'remove') return;
+    const recordedRequest = operation.request;
+    if (recordedRequest.kind !== 'delete' && recordedRequest.kind !== 'remove') return;
+    const recorded = recordedRequest.expectedWorktreePath;
+    if (recorded === undefined || request.expectedWorktreePath === undefined) return;
+    if (recorded === request.expectedWorktreePath) return;
+    throw new KanbanError('OPERATION_TARGET_CHANGED', 'The recorded deletion target no longer matches this confirmation; resolve the existing operation before confirming the new binding.', { recordedTargetPath: recorded, confirmedTargetPath: request.expectedWorktreePath });
+  }
+
+  private enqueue(lane: string, taskId: string, operationId: string): void {
+    this.queue.enqueue({ lane, taskId, operationId, run: () => this.serial(taskId, async () => { await this.drive(taskId); }).then(() => {}) });
   }
 
   async returnToBase(taskId: string): Promise<HubState> {
@@ -249,16 +287,20 @@ export class WorktreeCoordinator {
     return this.resumed;
   }
 
-  private async confirmationMatches(task: Task, request: OperationRequest): Promise<void> {
+  /** Compare the confirmed target with the persisted binding; canonicalization belongs to the lane preflight. */
+  private confirmationMatches(task: Task, request: OperationRequest): void {
     if ((request.kind !== 'remove' && request.kind !== 'delete') || request.expectedWorktreePath === undefined) return;
-    const actual = task.worktree ? await canonicalPath(task.worktree.path, true) : null;
+    const actual = task.worktree?.path ?? null;
     if (request.expectedWorktreePath !== actual) throw new KanbanError('WORKTREE_CHANGED', 'The worktree changed since confirmation; review the current target before continuing.', { expectedWorktreePath: request.expectedWorktreePath, actualWorktreePath: actual });
   }
 
   private async start(taskId: string, request: OperationRequest): Promise<void> {
     const prior = this.read(taskId).task;
+    const destructive = request.kind === 'remove' || request.kind === 'delete';
     const rawTarget = request.kind === 'create' || request.kind === 'attach' ? request.path : prior.worktree?.path;
-    const targetPath = rawTarget ? await canonicalPath(rawTarget, true) : undefined;
+    // Destructive admission records the persisted binding only; its canonical
+    // target is resolved by the queued preflight before anything is removed.
+    const targetPath = destructive ? rawTarget : rawTarget ? await canonicalPath(rawTarget, true) : undefined;
     if ((request.kind === 'remove' || request.kind === 'delete') && request.expectedWorktreePath !== undefined && request.expectedWorktreePath !== (targetPath ?? null)) throw new KanbanError('WORKTREE_CHANGED', 'The worktree changed before the confirmed operation could be recorded.');
     await this.store.transactTask(taskId, state => {
       const task = requireTask(state, taskId);
@@ -332,19 +374,20 @@ export class WorktreeCoordinator {
   }
 
   private enqueueDestructive(taskId: string): void {
-    const operation = this.read(taskId).task.operation;
+    const { task, project } = this.read(taskId);
+    const operation = task.operation;
     if (!operation || (operation.request.kind !== 'delete' && operation.request.kind !== 'remove')) return;
-    this.queue.enqueue({ taskId, operationId: operation.id, run: () => this.serial(taskId, async () => { await this.drive(taskId); }).then(() => {}) });
+    this.enqueue(repositoryLane(project), taskId, operation.id);
   }
 
-  private async drive(taskId: string, options: { admissionOnly?: boolean } = {}): Promise<'admission' | 'waiting' | 'done'> {
+  private async drive(taskId: string): Promise<'waiting' | 'done'> {
     const initial = this.read(taskId);
     const op = initial.task.operation;
     if (!op) return 'done';
     const operationId = op.id;
     let createInvoked = false;
     try {
-      if (op.request.kind === 'delete' || op.request.kind === 'remove') return await this.destructive.drive(taskId, operationId, options);
+      if (op.request.kind === 'delete' || op.request.kind === 'remove') return await this.destructive.drive(taskId, operationId);
       if (!await this.idle(taskId, operationId)) return 'waiting';
       await this.update(taskId, operationId, (_task, operation) => { operation.phase = 'preflight'; delete operation.error; });
       let { task, project } = this.read(taskId);

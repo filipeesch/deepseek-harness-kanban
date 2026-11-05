@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { BoardView } from '../../src/client/board.js';
-import { fakeApi, fixture } from './helpers.js';
+import { deferred, fakeApi, fixture } from './helpers.js';
 
 afterEach(cleanup);
 
@@ -92,7 +92,7 @@ describe('background destructive UX', () => {
     expect(screen.getByRole('dialog', { name: 'Force remove shared checkout?' })).toBeTruthy();
   });
 
-  it('reports bulk accepted tasks as queued and keeps skipped tasks selected', async () => {
+  it('closes the bulk confirmation and leaves selection mode before admission settles', async () => {
     const { user, command } = mount();
     await screen.findByRole('button', { name: 'Open task Alpha task' });
     await user.click(screen.getByRole('button', { name: 'Select cards to delete' }));
@@ -100,13 +100,45 @@ describe('background destructive UX', () => {
     await user.click(screen.getByRole('checkbox', { name: 'Select Beta task' }));
     await user.click(screen.getByRole('button', { name: 'Delete 2' }));
     const dialog = screen.getByRole('dialog', { name: 'Delete selected tasks' });
-    command.mockResolvedValueOnce(queuedSnapshot());
-    command.mockRejectedValueOnce({ code: 'TASK_BUSY', message: 'Wait for Beta.' });
+    const gate = deferred<ReturnType<typeof fixture>>();
+    command.mockImplementation(() => gate.promise);
     await user.click(within(dialog).getByRole('button', { name: 'Delete selected' }));
-    const result = await screen.findByRole('dialog', { name: 'Deletion results' });
-    expect(within(result).getByText('1 task queued for deletion.')).toBeTruthy();
-    expect(within(result).getByText(/Wait for Beta/)).toBeTruthy();
-    expect(screen.getByText('1 selected')).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Delete selected tasks' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'Deletion results' })).toBeNull();
+    // Selection mode is left immediately, while both admissions are still in flight.
+    expect(screen.queryByText('2 selected')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Select cards to delete' })).toBeTruthy();
+    expect(command).toHaveBeenCalledWith({ type: 'task.delete', taskId: 't1', confirmed: true, expectedWorktreePath: null });
+    expect(command).toHaveBeenCalledWith({ type: 'task.delete', taskId: 't2', confirmed: true, expectedWorktreePath: '/trees/beta' });
+    await act(async () => { gate.resolve(fixture()); });
+    expect(screen.queryByRole('dialog', { name: 'Deletion results' })).toBeNull();
+  });
+
+  it('reports a bulk admission rejection on the board without a result dialog', async () => {
+    const { user, command } = mount();
+    await screen.findByRole('button', { name: 'Open task Beta task' });
+    await user.click(screen.getByRole('button', { name: 'Select cards to delete' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Select Alpha task' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Select Beta task' }));
+    await user.click(screen.getByRole('button', { name: 'Delete 2' }));
+    command.mockImplementation((input) => input.type === 'task.delete' && input.taskId === 't2'
+      ? Promise.reject({ code: 'TASK_BUSY', message: 'Wait for Beta.' })
+      : Promise.resolve(queuedSnapshot()));
+    await user.click(within(screen.getByRole('dialog', { name: 'Delete selected tasks' })).getByRole('button', { name: 'Delete selected' }));
+    expect(await screen.findByText(/Could not start deletion for Beta task: Wait for Beta\./)).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Deletion results' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open task Beta task' })).toBeTruthy();
+  });
+
+  it('names the queued preflight on the board notice and the card', async () => {
+    const checking = fixture();
+    checking.sequence += 1;
+    checking.state.tasks[0]!.operation = operation({ phase: 'preflight' });
+    mount(checking);
+    const notice = await screen.findByRole('region', { name: 'Destructive operations' });
+    expect(within(notice).getByText(/— Checking…$/)).toBeTruthy();
+    expect(screen.getByText('Checking before deleting…')).toBeTruthy();
+    expect(screen.queryByText(/preflight/)).toBeNull();
   });
 
   it('preserves force through the discard consent', async () => {

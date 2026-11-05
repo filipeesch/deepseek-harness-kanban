@@ -167,6 +167,13 @@ describe('task card status strip', () => {
     ]);
     expect(cardStatusEntries(baseTask)).toEqual([]);
   });
+
+  it('names the checking state of a destructive preflight instead of the raw phase', () => {
+    const checking: Task = { ...baseTask, operation: { ...failedOperation, phase: 'preflight', error: undefined } };
+    expect(cardStatusEntries(checking)).toEqual([{ key: 'operation', tone: 'pending', label: 'Checking before deleting…' }]);
+    const removing: Task = { ...baseTask, operation: { ...failedOperation, phase: 'preflight', request: { kind: 'remove', discardChanges: false, expectedWorktreePath: '/tree' }, error: undefined } };
+    expect(cardStatusEntries(removing)).toEqual([{ key: 'operation', tone: 'pending', label: 'Checking before removing…' }]);
+  });
 });
 
 describe('task card interaction surface', () => {

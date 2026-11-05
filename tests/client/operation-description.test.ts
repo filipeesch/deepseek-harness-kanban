@@ -62,6 +62,16 @@ describe('describeOperation', () => {
     expect(earlyCreate.facts).toContainEqual({ label: 'Target', value: target });
   });
 
+  it('describes the queued preflight of an admitted deletion', () => {
+    const checking = describeOperation(base, operation({ kind: 'delete', discardChanges: false, expectedWorktreePath: target }, { phase: 'preflight' }));
+    expect(checking.title).toBe('Task deletion');
+    expect(checking.detail).toBe('Checking the task context and permissions.');
+    expect(checking.retry).toBe(false);
+    const queued = describeOperation(base, operation({ kind: 'delete', discardChanges: false, expectedWorktreePath: target }, { phase: 'queued' }));
+    expect(queued.detail).toBe('Queued after the other destructive operations.');
+    expect(queued.retry).toBe(true);
+  });
+
   it('does not offer Return for a return operation', () => {
     const value = describeOperation(base, operation({ kind: 'return' }, { phase: 'failed' }));
     expect(value.title).toBe('Return to project needs attention');
