@@ -1,13 +1,14 @@
 name: Release
 
-# Publishes the installable plugin artifact. The asset name is part of the
-# public install contract: the README installs from
-# /releases/latest/download/dsh-kanban.tgz, so every release must publish
-# exactly that file name.
+# Publishes the installable plugin artifact whenever a pull request lands on
+# main. The asset name is part of the public install contract: the README
+# installs from /releases/latest/download/dsh-kanban.tgz, so every release
+# must publish exactly that file name.
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   release:
@@ -15,7 +16,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Check out the tagged commit
+      - name: Check out the merged commit
         uses: actions/checkout@v4
 
       - name: Set up Node.js
@@ -34,9 +35,6 @@ jobs:
       - name: Verify
         run: pnpm check
 
-      - name: Check the tag matches the manifest version
-        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
-
       - name: Pack the plugin
         run: pnpm pack --pack-destination dist
 
@@ -47,7 +45,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dsh-kanban.tgz \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes ||
-          gh release upload "$GITHUB_REF_NAME" dsh-kanban.tgz --clobber
+          version=$(node -p "require('./package.json').version")
+          tag="v$version"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dsh-kanban.tgz --clobber
+          else
+            gh release create "$tag" dsh-kanban.tgz \
+              --title "$tag" \
+              --generate-notes
+          fi
