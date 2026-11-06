@@ -1,22 +1,20 @@
 import { mkdir, readdir, rm, writeFile, lstat } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
-import { parseSharedDocument, serializeSharedDocument, sharedDocumentToken, type SharedHubDocument } from '../../domain/sharing/document.js';
+import { SHARED_DOCUMENT_FILE, parseSharedDocument, serializeSharedDocument, sharedDocumentToken, type SharedHubDocument } from '../../domain/sharing/document.js';
 import { isDomainId } from '../../domain/validation.js';
 import { KanbanError } from '../../shared/errors.js';
 import type { CommandResult } from '../../shared/ports.js';
-import { runHostCommand } from '../host-command.js';
-import { assertSupportedProvider, type SharedConfigStore, type SharedConfigStoreFactory, type SharedDocumentSnapshot } from './store.js';
-import type { SharingBinding } from './state.js';
+import { defaultSharingCommandRunner, type SharingCommandRunner } from './command-runner.js';
+import type { ProviderState, SharingBinding, SharingProviderDescriptor } from './provider.js';
+import type { SharedConfigStore, SharedConfigStoreFactory, SharedDocumentSnapshot } from './store.js';
 
-export const SHARED_DOCUMENT_FILE = 'kanban-hub.yaml';
+export { SHARED_DOCUMENT_FILE } from '../../domain/sharing/document.js';
+export { sharingRoot } from './root.js';
+export type { SharingCommandRunner } from './command-runner.js';
 const CLONE_TIMEOUT_MS = 120_000;
 const FETCH_TIMEOUT_MS = 60_000;
 const PUSH_TIMEOUT_MS = 60_000;
 const WRITE_TIMEOUT_MS = 20_000;
-
-/** Plugin-owned command invocation; injectable so tests avoid the real host path. */
-export type SharingCommandRunner = (argv: string[], cwd: string, timeoutMs?: number) => Promise<CommandResult>;
 
 const AUTH_FAILURE = /authentication failed|could not read username|permission denied \(publickey\)|terminal prompts disabled|invalid username or password|repository not found|403 forbidden/i;
 const UNREACHABLE_FAILURE = /could not resolve host|unable to access|connection refused|connection timed out|network is unreachable|no such file or directory|does not appear to be a git repository|does not exist|operation exceeded|timed out/i;
@@ -33,12 +31,6 @@ async function exists(value: string): Promise<boolean> {
   try { await lstat(value); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
 }
 
-/** `DSH_HOME` is the installation data root; clones stay under it and never in a project. */
-export function sharingRoot(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir()): string {
-  const base = env.DSH_HOME?.trim() || path.join(home, '.dsh');
-  return path.join(base, 'kanban', 'shared');
-}
-
 function clonePathFor(root: string, hubId: string): string {
   if (!isDomainId(hubId)) throw new KanbanError('SHARING_INVALID_HUB', 'The Hub identifier cannot be used for a publishing workspace.');
   return path.join(root, hubId);
@@ -48,7 +40,7 @@ export class GitSharedConfigStore implements SharedConfigStore {
   private readonly runner: SharingCommandRunner;
   private ready: Promise<void> | undefined;
   constructor(private readonly options: { root: string; hubId: string; repository: string; runner?: SharingCommandRunner }) {
-    this.runner = options.runner ?? ((argv, cwd, timeoutMs) => runHostCommand(argv, cwd, timeoutMs));
+    this.runner = options.runner ?? defaultSharingCommandRunner;
   }
 
   private get clonePath(): string { return clonePathFor(this.options.root, this.options.hubId); }
@@ -123,7 +115,7 @@ export class GitSharedConfigStore implements SharedConfigStore {
     throw failure('show', result);
   }
 
-  async read(signal?: AbortSignal): Promise<SharedDocumentSnapshot | null> {
+  async read(signal?: AbortSignal, _cached?: SharedDocumentSnapshot | null): Promise<SharedDocumentSnapshot | null> {
     signal?.throwIfAborted();
     await this.ensure();
     await this.fetch();
@@ -134,6 +126,8 @@ export class GitSharedConfigStore implements SharedConfigStore {
     const document = parseSharedDocument(raw);
     return { token: sharedDocumentToken(document), document };
   }
+
+  state(): ProviderState { return {}; }
 
   async write(document: SharedHubDocument, options: { expectedToken: string | null; message: string }, signal?: AbortSignal): Promise<{ token: string }> {
     signal?.throwIfAborted();
@@ -175,12 +169,37 @@ export class GitSharedConfigStore implements SharedConfigStore {
 export class GitSharedConfigStoreFactory implements SharedConfigStoreFactory {
   constructor(private readonly options: { root: string; runner?: SharingCommandRunner }) {}
   create(hubId: string, binding: SharingBinding): SharedConfigStore {
-    assertSupportedProvider(binding);
+    if (binding.provider !== 'git') throw new KanbanError('SHARING_UNSUPPORTED_STORAGE', 'The configured team storage is not supported by the Git provider.', { provider: binding.provider });
+    const repository = binding.settings.repository;
+    if (!repository) throw new KanbanError('INVALID_INPUT', 'A repository address is required.');
     return new GitSharedConfigStore({
       root: this.options.root,
       hubId,
-      repository: binding.repository,
+      repository,
       ...(this.options.runner === undefined ? {} : { runner: this.options.runner }),
     });
   }
+}
+
+/** The Git storage descriptor: explicit publish, repository address, managed clone. */
+export function createGitProviderDescriptor(options: { root: string; runner?: SharingCommandRunner }): SharingProviderDescriptor {
+  return {
+    id: 'git',
+    label: 'Git repository',
+    syncMode: 'explicit',
+    defaultIntervalMinutes: 5,
+    normalizeSettings(settings) {
+      const repository = (settings.repository ?? '').trim();
+      if (repository.length === 0 || repository.length > 2048 || /[\0\r\n]/.test(repository)) throw new KanbanError('INVALID_INPUT', 'A repository address is required.');
+      return { repository };
+    },
+    describe(binding) { return binding.settings.repository ?? ''; },
+    createStore(hubId, binding, state) {
+      if (binding.provider !== 'git') throw new KanbanError('SHARING_UNSUPPORTED_STORAGE', 'The configured team storage is not supported by the Git provider.', { provider: binding.provider });
+      const repository = binding.settings.repository;
+      if (!repository) throw new KanbanError('INVALID_INPUT', 'A repository address is required.');
+      return new GitSharedConfigStore({ root: options.root, hubId, repository, ...(options.runner === undefined ? {} : { runner: options.runner }) });
+    },
+    normalizeState(state) { return state; },
+  };
 }

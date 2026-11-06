@@ -6,14 +6,14 @@ async function sharingCommands(page: Page): Promise<Array<Record<string, unknown
   return page.evaluate(() => (window as unknown as { __harness: { sharingCommands(): Array<Record<string, unknown>> } }).__harness.sharingCommands());
 }
 
-test('connects an unpublished Hub through the Publishing section', async ({ page }) => {
+test('connects an unpublished Hub through Team Settings', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing');
-  await expect(page.getByRole('tab', { name: 'Publishing' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Team Settings' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByLabel('Repository address')).toBeVisible();
   await page.getByLabel('Repository address').fill('https://example.test/team.git');
   await page.getByLabel('Check interval in minutes').fill('7');
   await page.getByRole('button', { name: 'Connect' }).click();
-  await expect.poll(async () => (await sharingCommands(page))[0]).toMatchObject({ type: 'sharing.connect', repository: 'https://example.test/team.git', intervalMinutes: 7 });
+  await expect.poll(async () => (await sharingCommands(page))[0]).toMatchObject({ type: 'sharing.connect', hubId: 'hub', provider: 'git', settings: { repository: 'https://example.test/team.git' }, intervalMinutes: 7 });
 });
 
 test('previews existing team content and offers both first-connection choices', async ({ page }) => {
@@ -32,12 +32,12 @@ test('previews existing team content and offers both first-connection choices', 
 test('publishes only after getting team updates', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing&sharing=updates');
   await expect(page.getByText('Updates available', { exact: true }).first()).toBeVisible();
-  await expect(page.getByText('Provider: Git')).toBeVisible();
+  await expect(page.locator('[aria-label="Team settings"] .kb-share-meta').getByText('Git repository', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Publish' })).toBeDisabled();
   await page.getByRole('button', { name: 'Get updates (2)' }).click();
   await expect.poll(async () => (await sharingCommands(page))[0]).toMatchObject({ type: 'sharing.getUpdates' });
   await expect(page.getByText(/New from the team: Team board/)).toBeVisible();
-  const text = await page.locator('[aria-label="Publishing settings"]').innerText();
+  const text = await page.locator('[aria-label="Team settings"]').innerText();
   expect(text).not.toMatch(/\b(commit|branch|remote|fetch|push)\b/i);
 });
 
@@ -88,10 +88,10 @@ test('shows a board banner and publishing indicators on both tab rows', async ({
   await expect(page.getByRole('img', { name: 'Team updates available', exact: true })).toBeVisible();
   await expect(page.getByRole('img', { name: 'Team updates available for this board' })).toBeVisible();
   await page.getByRole('button', { name: 'Review team changes' }).click();
-  await expect(page.getByRole('tab', { name: 'Publishing' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Team Settings' })).toHaveAttribute('aria-selected', 'true');
 
   await page.goto(HARNESS + '?scenario=sharing&sharing=draft');
-  await expect(page.getByRole('img', { name: 'Unsent publishing changes' })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Unsynced team changes' })).toBeVisible();
   await expect(page.getByRole('img', { name: 'Board changes not sent' })).toBeVisible();
 
   await page.goto(HARNESS + '?scenario=sharing&sharing=review');
@@ -103,11 +103,11 @@ test('shows a board banner and publishing indicators on both tab rows', async ({
   await expect(page.getByRole('img', { name: 'Board removed by the team' })).toBeVisible();
 
   await page.goto(HARNESS + '?scenario=sharing&sharing=preview');
-  await expect(page.getByRole('img', { name: 'Publishing connection needs review' })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Team storage connection needs review' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Review team changes' })).toHaveCount(0);
   await expect(page.getByRole('img', { name: 'Board changes not sent' })).toHaveCount(0);
   await expect(page.getByRole('img', { name: 'Team updates available' })).toHaveCount(0);
-  await expect(page.getByRole('img', { name: 'Unsent publishing changes' })).toHaveCount(0);
+  await expect(page.getByRole('img', { name: 'Unsynced team changes' })).toHaveCount(0);
 });
 
 test('a name collision has no resolve action and a Hub shows drafts and updates together', async ({ page }) => {
@@ -118,7 +118,7 @@ test('a name collision has no resolve action and a Hub shows drafts and updates 
 
   await page.goto(HARNESS + '?scenario=sharing&sharing=mixed');
   await expect(page.getByRole('img', { name: 'Team updates available' })).toBeVisible();
-  await expect(page.getByRole('img', { name: 'Unsent publishing changes' })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Unsynced team changes' })).toBeVisible();
 });
 
 test('a refused update shows the blocking board, column, and task count', async ({ page }) => {
@@ -140,6 +140,9 @@ test('Save and share publishes after the local save', async ({ page }) => {
   await editor.click();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
   await page.keyboard.insertText('name: Shared flow\ninitial_column: explore\ncolumns:\n  - id: explore\n    label: Explore');
+  await expect(page.locator('.cm-content')).toContainText('Shared flow');
+  await page.waitForTimeout(300);
+  await expect(page.getByText('Valid workflow')).toBeVisible();
   await page.getByRole('button', { name: 'Save and share' }).click();
   await expect(page.getByText('Workflow saved.')).toBeVisible();
   await expect.poll(async () => (await sharingCommands(page)).length).toBe(1);
@@ -154,7 +157,51 @@ test('a failed share keeps the local save and reports the failure', async ({ pag
   await editor.click();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
   await page.keyboard.insertText('name: Failed share\ninitial_column: explore\ncolumns:\n  - id: explore\n    label: Explore');
+  await expect(page.locator('.cm-content')).toContainText('Failed share');
+  await page.waitForTimeout(300);
+  await expect(page.getByText('Valid workflow')).toBeVisible();
   await page.getByRole('button', { name: 'Save and share' }).click();
   await expect(page.getByText('Workflow saved.')).toBeVisible();
   await expect(page.getByText('SHARING_FAILED')).toBeVisible();
+});
+
+test('switches the Team Settings surface to the selected storage', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=publishing');
+  await expect(page.getByRole('tab', { name: 'Team Settings' })).toHaveAttribute('aria-selected', 'true');
+  await page.screenshot({ path: '.verification/team-settings.png', fullPage: true });
+  await page.getByLabel('Team storage').selectOption('google-drive');
+  await expect(page.getByRole('button', { name: 'Connect Google Drive' })).toBeVisible();
+  await expect(page.getByLabel('Repository address')).toHaveCount(0);
+});
+
+
+test('renders a connected Google Drive surface and hides Git actions', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=publishing&sharing=drive');
+  await expect(page.getByRole('tab', { name: 'Team Settings' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByLabel('Team storage')).toHaveValue('google-drive');
+  await expect(page.getByLabel('Team storage')).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Sync now' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Publish' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Get updates' })).toHaveCount(0);
+  await expect(page.getByText('member@example.test')).toBeVisible();
+});
+
+test('resolves a Google Drive conflict and uses a single save action', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=publishing&sharing=drive-review');
+  await expect(page.getByText('Compare the workflow versions')).toBeVisible();
+  await page.getByRole('button', { name: 'Use the team version' }).click();
+  await expect.poll(async () => (await sharingCommands(page))[0]).toMatchObject({ type: 'sharing.resolve', boardId: 'board', choice: 'team' });
+  await page.goto(HARNESS + '?scenario=workflow&sharing=drive');
+  await expect(page.getByRole('button', { name: 'Save workflow' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save and share' })).toHaveCount(0);
+});
+
+test('shows Google Drive preview differences and stages the replace action', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=publishing&sharing=drive-preview');
+  await expect(page.getByText(/already contains a published configuration/)).toBeVisible();
+  await expect(page.getByText('Compare the workflow versions')).toBeVisible();
+  await page.getByRole('button', { name: 'Publish this Hub instead' }).click();
+  await expect(page.getByRole('button', { name: 'Replace the team configuration' })).toBeVisible();
+  await page.getByRole('button', { name: 'Replace the team configuration' }).click();
+  await expect.poll(async () => (await sharingCommands(page))[0]).toMatchObject({ type: 'sharing.publishInitial', confirmed: true });
 });

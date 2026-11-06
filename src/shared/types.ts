@@ -89,19 +89,40 @@ export interface CommandReceipt { kind: 'hub' | 'board' | 'project' | 'task' | '
 /** One board's publishing state, projected from the stored sharing record. */
 export type SharingBoardState = 'in-sync' | 'draft' | 'updates-available' | 'needs-review' | 'orphan';
 export type SharingHubStatus = 'not-published' | 'preview' | 'published' | 'updates-available' | 'needs-review' | 'unavailable';
+export type SharingStorage = 'git' | 'google-drive';
+export type SharingSyncMode = 'explicit' | 'continuous';
+export type SharingAuthStatus = 'not-connected' | 'authorizing' | 'connected' | 'error' | 'reconnect-required';
+export interface SharingAuthView {
+  status: SharingAuthStatus;
+  /** Present while the browser sign-in is waiting for the loopback callback. */
+  authorizationUrl?: string;
+  email?: string;
+  error?: Problem;
+  drives?: Array<{ id: string; name: string }>;
+  folders?: Array<{ id: string; name: string }>;
+}
 export interface SharingBlockerView { code: string; message: string; boardId?: string; boardName?: string; columnId?: string; tasks?: number }
-export interface SharingBoardView { boardId: string; key?: string; name: string; state: SharingBoardState; bound: boolean; /** The decision still requires Get updates. */ pending: boolean; /** Both workflow versions, present for a board that needs a choice. */ detail?: { local: string; team: string; localName: string; teamName: string } }
+export interface SharingBoardView { boardId: string; key?: string; name: string; state: SharingBoardState; bound: boolean; /** The decision still requires review. */ pending: boolean; /** Both workflow versions, present for a board that needs a choice. */ detail?: { local: string; team: string; localName: string; teamName: string } }
 export interface HubSharingView {
   status: SharingHubStatus;
-  provider?: 'git';
+  provider: SharingStorage;
+  providerLabel: string;
+  address: string;
+  /** Kept for Git callers; equal to the repository address. */
   repository?: string;
+  syncMode: SharingSyncMode;
+  /** Drive authorization state; absent for storage that needs no account. */
+  authorization?: SharingAuthStatus;
   intervalMinutes: number;
   lastCheckedAt?: string;
+  lastSyncedAt?: string;
   error?: Problem;
   drafts: number;
+  pending: number;
   updates: number;
   conflicts: number;
   orderChanged: boolean;
+  syncing: boolean;
   boards: SharingBoardView[];
   incoming: Array<{ key: string; name: string }>;
   removed: Array<{ boardId: string; key: string; name: string }>;
@@ -110,9 +131,9 @@ export interface HubSharingView {
   /** Board a team update would remove locally because it holds no local work. */
   removing: Array<{ boardId: string; name: string }>;
 }
-/** Actions that operate a Hub's publishing binding. They are not board commands. */
+/** Actions that operate a Hub's team storage. They are not board commands. */
 export type SharingCommand =
-  | { type: 'sharing.connect'; hubId: string; repository: string; intervalMinutes?: number }
+  | { type: 'sharing.connect'; hubId: string; provider?: SharingStorage; settings?: Record<string, string>; repository?: string; intervalMinutes?: number }
   | { type: 'sharing.receive'; hubId: string }
   | { type: 'sharing.publishInitial'; hubId: string; confirmed: boolean }
   | { type: 'sharing.check'; hubId: string }
@@ -122,9 +143,15 @@ export type SharingCommand =
   | { type: 'sharing.setInterval'; hubId: string; intervalMinutes: number }
   | { type: 'sharing.disconnect'; hubId: string }
   | { type: 'sharing.restore'; hubId: string; boardId: string }
-  | { type: 'sharing.publishOrphan'; hubId: string; boardId: string };
+  | { type: 'sharing.publishOrphan'; hubId: string; boardId: string }
+  | { type: 'sharing.auth.start' }
+  | { type: 'sharing.auth.cancel' }
+  | { type: 'sharing.auth.disconnect' }
+  | { type: 'sharing.auth.switch' }
+  | { type: 'sharing.drives' }
+  | { type: 'sharing.folders'; driveId?: string; parentId?: string };
 /** Host snapshot: durable state plus per-conversation attention facts and per-Hub publishing. */
-export interface HostSnapshot { commandReceipt?: CommandReceipt; state: KanbanState; conversations: Record<string, ConversationFacts>; sharing: Record<string, HubSharingView>; sequence: number }
+export interface HostSnapshot { commandReceipt?: CommandReceipt; state: KanbanState; conversations: Record<string, ConversationFacts>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; sequence: number }
 /** Client snapshot: host facts plus the client-owned attention projection. */
 export interface KanbanSnapshot extends Omit<HostSnapshot, 'conversations'> { attention: Record<string, Attention>; conversationAttention: Record<string, Attention>; clientEpoch?: number }
 export const EMPTY_ATTENTION: Attention = { running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };

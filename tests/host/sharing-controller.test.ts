@@ -5,6 +5,7 @@ import { KanbanError } from '../../src/shared/errors.js';
 import { HubRepository } from '../../src/host/hub-repository.js';
 import { KanbanController } from '../../src/host/controller.js';
 import { HubSharingService } from '../../src/host/sharing/service.js';
+import type { ProviderDescription, SharingBinding, SharingProviderId, SharingProviderResolver } from '../../src/host/sharing/provider.js';
 import type { SharedConfigStore, SharedConfigStoreFactory } from '../../src/host/sharing/store.js';
 import type { HubSharingRecord, HubSharingStore } from '../../src/host/sharing/state.js';
 import { KanbanApp } from '../../src/host/app.js';
@@ -30,7 +31,12 @@ function memoryStore(): HubSharingStore {
 async function fixture() {
   const hubs = await HubRepository.open(new MemoryHubStorage(), { now: () => NOW });
   const store = new Store();
-  const sharing = new HubSharingService({ hubs, store: memoryStore(), providers: { create: () => store } satisfies SharedConfigStoreFactory, now: () => NOW });
+  const sharing = new HubSharingService({ hubs, store: memoryStore(), providers: {
+      create: () => store,
+      describe: (binding: SharingBinding): ProviderDescription => ({ id: binding.provider, label: 'Git repository', address: binding.settings.repository ?? '', syncMode: 'explicit', defaultIntervalMinutes: 5 }),
+      normalize: (_provider: SharingProviderId, settings: Record<string, string>) => settings,
+      defaultInterval: () => 5,
+    } satisfies SharingProviderResolver, now: () => NOW });
   const app = new KanbanApp(hubs, new TestSessions(), new TestGit(), { sharing });
   const controller = new KanbanController(new Context(), app);
   const hubId = hubs.defaultHubId();

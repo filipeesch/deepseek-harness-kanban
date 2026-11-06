@@ -10,7 +10,13 @@ import { openQuestionStorage } from './host/question-storage.js';
 import { openSharingStorage } from './host/sharing/state.js';
 import { HubSharingService } from './host/sharing/service.js';
 import { SharingPollScheduler } from './host/sharing/scheduler.js';
-import { GitSharedConfigStoreFactory, sharingRoot, type SharingCommandRunner } from './host/sharing/git-store.js';
+import { createGitProviderDescriptor } from './host/sharing/git-store.js';
+import { sharingRoot } from './host/sharing/root.js';
+import type { SharingCommandRunner } from './host/sharing/command-runner.js';
+import { GoogleDriveAuthService } from './host/sharing/google-drive-auth.js';
+import { createGoogleDriveProviderDescriptor } from './host/sharing/google-drive-store.js';
+import { credentialStoreFromContext, type CredentialStore } from './host/sharing/credentials.js';
+import { SharingProviderRegistry } from './host/sharing/provider.js';
 import { createNativePorts } from './host/native.js';
 import { registerConversationFacts } from './host/conversation-facts.js';
 import { GitAdapter } from './host/git.js';
@@ -63,10 +69,27 @@ export interface HubSharingRuntime {
  close:()=>Promise<void>;
 }
 /** Compose the publishing runtime over its own storage domain so it can be closed as one unit. */
-export async function openHubSharing(ctx:Context,hubs:HubRepository,options:{report?:(error:unknown)=>void;root?:string;runner?:SharingCommandRunner}={}):Promise<HubSharingRuntime>{
+export interface HubSharingOpenOptions {
+ report?:(error:unknown)=>void;
+ root?:string;
+ runner?:SharingCommandRunner;
+ clientId?:string;
+ clientSecret?:string;
+ fetch?:typeof fetch;
+ credentials?:CredentialStore;
+}
+export async function openHubSharing(ctx:Context,hubs:HubRepository,options:HubSharingOpenOptions={}):Promise<HubSharingRuntime>{
  const storage=await openSharingStorage(ctx,{...(options.report===undefined?{}:{report:options.report})});
  let notify=()=>{};
- const service=new HubSharingService({hubs,store:storage.storage,providers:new GitSharedConfigStoreFactory({root:options.root??sharingRoot(),...(options.runner===undefined?{}:{runner:options.runner})}),notify:()=>notify(),...(options.report===undefined?{}:{report:options.report})});
+ const credentials=options.credentials??credentialStoreFromContext(ctx);
+ const auth=new GoogleDriveAuthService({...(credentials===undefined?{}:{credentials}),...(options.clientId===undefined?{}:{clientId:options.clientId}),...(options.clientSecret===undefined?{}:{clientSecret:options.clientSecret}),...(options.fetch===undefined?{}:{fetch:options.fetch}),onChange:()=>notify()});
+ const root=options.root??sharingRoot();
+ const providers=new SharingProviderRegistry([
+  createGitProviderDescriptor({root,...(options.runner===undefined?{}:{runner:options.runner})}),
+  createGoogleDriveProviderDescriptor({auth,...(options.fetch===undefined?{}:{fetch:options.fetch})}),
+ ]);
+ const service=new HubSharingService({hubs,store:storage.storage,providers,auth,notify:()=>notify(),...(options.report===undefined?{}:{report:options.report})});
+ await service.refreshAuth();
  const scheduler=new SharingPollScheduler({service,...(options.report===undefined?{}:{report:options.report})});
  return {
   service,scheduler,
@@ -75,7 +98,7 @@ export async function openHubSharing(ctx:Context,hubs:HubRepository,options:{rep
  };
 }
 export const name='kanban';
-export const inject=['storageDomain','sessionController','sessions','agents','workingDirectory','workspaceRegistry','sandboxPolicy','tools','typert'];
+export const inject=['storageDomain','sessionController','sessions','agents','workingDirectory','workspaceRegistry','sandboxPolicy','tools','typert','credentials'];
 export async function apply(ctx:Context):Promise<void>{
  const report=(error:unknown)=>ctx.logger.warn(error instanceof Error?error.message:String(error));
  const opened=await openKanbanStorage(ctx);

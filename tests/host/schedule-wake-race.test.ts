@@ -97,6 +97,7 @@ async function runtime() {
   } as never);
   root.provide('sandboxPolicy', { resolve: vi.fn(() => { throw new Error('No native executor or policy operation is allowed.'); }) } as never);
   root.provide('tools', { get: () => undefined, register: () => () => {} } as never);
+  root.provide('credentials', { readRecord: async () => undefined, describeRecord: async () => ({ configured: false }), modifyRecord: async () => {}, deleteRecord: async () => {} } as never);
 
   let scheduleActive = false;
   let owner = '';

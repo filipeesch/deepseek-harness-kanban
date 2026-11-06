@@ -80,6 +80,7 @@ export class KanbanApp {
  /** The first/default Hub facade retained for single-Hub callers and tests. */
  get store():HubStore{return this.hubs.defaultHub();}
  private hubStore(hubId?:string):HubStore{return this.hubs.hub(this.hubs.resolveHubId(hubId));}
+ private noteSharingChange(hubId?:string):void{try{this.options.sharing?.noteLocalChange(this.hubs.resolveHubId(hubId));}catch(error){this.options.report?.(error);}}
  private locatedTask(taskId:string):LocatedTask{return this.hubs.requireTask(taskId);}
  private changed():void{if(this.disposed)return;for(const listener of this.listeners){try{listener();}catch(error){this.options.report?.(error);}}}
  /**
@@ -195,16 +196,17 @@ export class KanbanApp {
  sessionActivity(sessionId?:string):void{if(this.disposed)return;if(sessionId!==undefined&&!this.locator.hasSession(sessionId))return;this.attention.touch(sessionId);this.markChanged();}
  async snapshot(refreshAttention=false):Promise<HostSnapshot>{
   if(refreshAttention){this.attention.invalidate();this.sequence++;}
+  if(this.options.sharing)await this.options.sharing.refreshAuth();
   const sequence=this.sequence;const state=this.stateCache??=this.hubs.snapshot();
   const conversations=await this.attention.project(this.locator.all().map(located=>({id:located.task.id,sessionIds:located.task.sessionIds})));
-  return {state,conversations,sharing:this.options.sharing?.views()??{},sequence};
+  return {state,conversations,sharing:this.options.sharing?.views()??{},sharingAuth:this.options.sharing?.authView()??{status:'not-connected'},sequence};
  }
  /** Publish a new snapshot after publishing state changed outside a board command. */
  sharingChanged():void{this.markChanged();}
  /** Execute one publishing action, then reconcile automatic checks and return a fresh snapshot. */
  async sharingCommand(command:SharingCommand):Promise<HostSnapshot>{
   invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');
-  const sharing=this.options.sharing;invariant(sharing,'SHARING_UNAVAILABLE','Publishing is unavailable in this host.');
+  const sharing=this.options.sharing;invariant(sharing,'SHARING_UNAVAILABLE','Team settings are unavailable in this host.');
   await sharing.command(command);
   this.options.scheduler?.sync();
   return this.snapshot();
@@ -345,8 +347,8 @@ export class KanbanApp {
     this.options.scheduler?.sync();
     break;
    }
-   case 'board.create':{const board=await this.hubStore(command.hubId).addBoard(command.name);commandReceipt={kind:'board',id:board.id};break;}
-   case 'board.rename':{await this.hubStore(command.hubId).renameBoard(command.boardId,command.name,command.expectedRevision);break;}
+   case 'board.create':{const board=await this.hubStore(command.hubId).addBoard(command.name);commandReceipt={kind:'board',id:board.id};this.noteSharingChange(command.hubId);break;}
+   case 'board.rename':{await this.hubStore(command.hubId).renameBoard(command.boardId,command.name,command.expectedRevision);this.noteSharingChange(command.hubId);break;}
    case 'board.delete':{
     invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the board.');
     const located=this.hubs.findBoard(command.boardId);invariant(located,'BOARD_NOT_FOUND','Board does not exist.');
@@ -356,12 +358,13 @@ export class KanbanApp {
     // An orphan board has no binding; this still forgets its orphan anchor so a later
     // team board with the same key cannot resurrect a comparison for a missing board.
     if(this.options.sharing)await this.options.sharing.removeBoard(located.hubId,command.boardId,command.sharing==='team'?'team':'local',located.board.name);
+    this.noteSharingChange(located.hubId);
     break;
    }
-   case 'board.workflow.save':await this.hubStore(command.hubId).saveBoardWorkflow(command.boardId,command.yaml,command.expectedRevision);break;
+   case 'board.workflow.save':await this.hubStore(command.hubId).saveBoardWorkflow(command.boardId,command.yaml,command.expectedRevision);this.noteSharingChange(command.hubId);break;
    case 'project.save':{const store=this.hubStore(command.hubId);const value=await store.saveProject(await this.project(command.project),command.expectedRevision);commandReceipt={kind:'project',id:value.id};break;}
    case 'project.delete':{const store=this.hubStore(command.hubId);invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the project registration.');await store.deleteProject(command.projectId,command.expectedRevision);break;}
-   case 'workflow.save':await this.hubStore(command.hubId).setWorkflow(command.yaml,command.expectedRevision);break;
+   case 'workflow.save':await this.hubStore(command.hubId).setWorkflow(command.yaml,command.expectedRevision);this.noteSharingChange(command.hubId);break;
    case 'settings.save':await this.settings(command.settings,command.expectedRevision);break;
    case 'task.create':{const value=await this.createTaskNow(command);commandReceipt={kind:'task',id:value.id};break;}
    case 'task.edit':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).editTask(command.taskId,{...(command.title!==undefined?{title:command.title}:{}),...(command.description!==undefined?{description:command.description}:{})},command.expectedRevision);break;}

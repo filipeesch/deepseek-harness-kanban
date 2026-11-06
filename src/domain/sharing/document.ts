@@ -4,6 +4,9 @@ import { z } from 'zod';
 import { KanbanError } from '../../shared/errors.js';
 import { parseWorkflow } from '../workflow.js';
 
+/** The published document file name shared by every storage. */
+export const SHARED_DOCUMENT_FILE = 'kanban-hub.yaml';
+
 /** The single published artifact: one ordered board list with authored workflow text. */
 export interface SharedBoardEntry { key: string; name: string; workflow: string }
 export interface SharedHubDocument { version: 1; boards: SharedBoardEntry[] }

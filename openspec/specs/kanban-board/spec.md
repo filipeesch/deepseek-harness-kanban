@@ -24,6 +24,7 @@ Each board SHALL start with a default workflow containing Backlog, Plan, In Prog
 - **WHEN** the user saves a customized workflow for one board
 - **THEN** every other board keeps its own saved workflow
 
+
 ### Requirement: YAML workflow configuration
 Each board SHALL support its own workflow configuration in YAML, including the initial stage, grouped columns, allowed transitions, and optional stage entry instructions. The active board's workflow SHALL be used for rendering, transitions, and task creation. The product SHALL honor configured transition restrictions by requiring explicit confirmation before a restricted transition can proceed, and it SHALL honor column grouping. This version SHALL NOT implement WIP limits and SHALL NOT introduce reusable workflow templates.
 
@@ -50,6 +51,7 @@ Each board SHALL support its own workflow configuration in YAML, including the i
 - **WHEN** the user edits the workflow of the active board
 - **THEN** the editor validates that board's YAML
 - **AND** no other board's workflow is read or replaced
+
 
 ### Requirement: Top-level task creation
 The active board SHALL provide one New task action at the top of its workflow's configured initial column. It SHALL collect a title, description, and project from the active Hub's project registry. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. Saving a new task SHALL place it in the active board's configured initial stage without creating a native DSH conversation and without initiating an agent execution. The board header SHALL NOT provide a separate New task action.
@@ -82,6 +84,7 @@ The active board SHALL provide one New task action at the top of its workflow's 
 - **THEN** the task has no native conversation
 - **AND** the section presents the explicit start state defined by `task-conversations`
 
+
 ### Requirement: Edit task text at any stage
 The user SHALL be able to edit a task's title and description in any workflow stage, including after a worktree has been created. Saving those edits SHALL NOT automatically send a message to any task conversation or initiate an agent execution.
 
@@ -92,6 +95,7 @@ The user SHALL be able to edit a task's title and description in any workflow st
 #### Scenario: Save edits without messaging agents
 - **WHEN** the user saves task title or description changes
 - **THEN** the changes do not automatically append a message to any task chat or initiate a new agent execution
+
 
 ### Requirement: Open a task drawer
 Activating a task card SHALL open its task drawer, giving access to that task's conversations and supporting task information. The whole card surface SHALL be activatable except for nested controls, which SHALL perform their own action without opening the drawer. A focused card SHALL be activatable from the keyboard.
@@ -107,6 +111,7 @@ Activating a task card SHALL open its task drawer, giving access to that task's 
 #### Scenario: Activate a card from the keyboard
 - **WHEN** a task card has keyboard focus and the user presses Enter
 - **THEN** the task drawer opens for the selected task
+
 
 ### Requirement: Execution preparation before a task's first execution
 
@@ -156,6 +161,7 @@ When a user move into an instructed stage or a card run action would start a tas
 - **THEN** the created worktree and conversation are kept
 - **AND** the task's stage and position are unchanged
 - **AND** no agent instruction is sent
+
 
 ### Requirement: Direct stage manipulation on the board
 
@@ -226,6 +232,7 @@ The board SHALL move tasks between workflow stages only through drag and drop. A
 - **THEN** the card does not present a stage selector
 - **AND** no confirmation or drop indicator is shown
 
+
 ### Requirement: Text search and project filtering
 The active board SHALL support text search over its task titles and descriptions and filtering by project, separately and together. The project filter SHALL list the projects owned by the active Hub. This scope SHALL NOT add activity or worktree-status filters.
 
@@ -245,6 +252,7 @@ The active board SHALL support text search over its task titles and descriptions
 - **WHEN** the user changes from one board to another
 - **THEN** the project filter options are limited to the active Hub's projects
 - **AND** tasks from the previous board are not shown
+
 
 ### Requirement: Execution activity is independent of workflow and attention
 The board SHALL represent task execution state independently of the task's workflow stage and of its unread, awaiting-reply, and failure attention indicators. Execution state SHALL consist of two distinct facts. Agent execution SHALL mean that at least one agent owned by the task's conversations is running: a conversation's own assistant turn or an owned native subagent descendant. Background activity SHALL mean that the task owns unsettled work other than agent execution, such as jobs or schedules. Both facts SHALL aggregate across all of the task's conversations rather than only the currently selected conversation. Completing or failing an execution SHALL NOT, by itself, redefine the task's workflow stage. A task SHALL be presented as working while at least one owned agent is running, including when the main turn has ended and only an owned subagent descendant is still running. Work that is not agent execution and outlives the turn SHALL be presented as background activity instead.
@@ -270,6 +278,7 @@ The board SHALL represent task execution state independently of the task's workf
 #### Scenario: All execution activity settles
 - **WHEN** the last owned agent and the last background activity for a task have settled
 - **THEN** the board presents neither an agent execution state nor background activity for that task
+
 
 ### Requirement: Coexisting attention indicators across task conversations
 The board SHALL derive attention per task conversation and aggregate it across all conversations belonging to a task. It SHALL distinguish blue unread-message indicators, orange awaiting-reply indicators, and red failure indicators. Blue and red SHALL be derived by the conversation's last settled assistant turn and its stored per-conversation read acknowledgment: unread SHALL mean that the conversation has a settled turn newer than its acknowledgment, and failure SHALL mean that the settled turn ended with an error outcome and is still unread. Blue and red SHALL NOT be presented while any agent owned by that conversation is running. The orange indicator SHALL reflect a live awaiting-reply state and SHALL NOT require acknowledgment. Attention SHALL be derived from durable conversation facts and the stored acknowledgment, SHALL survive a reload or plugin restart, and SHALL NOT depend on a per-client native unread transition. A conversation with no stored acknowledgment SHALL present its last settled turn as unread. Simultaneously applicable indicators SHALL coexist rather than collapse to a single highest-priority indicator. Those attention indicators SHALL also coexist with the agent execution and background activity presentation rather than replacing one another. Background activity SHALL present a count of the task's unsettled activities; counts are not required for the blue, orange, or red attention indicators.
@@ -305,6 +314,7 @@ The board SHALL derive attention per task conversation and aggregate it across a
 - **WHEN** a read conversation later settles a new turn with an error outcome
 - **THEN** the board presents the failure indicator for that new settled turn
 
+
 ### Requirement: Truthful and self-healing turn execution state
 The board SHALL stop presenting a task's agent execution when the last agent owned by its conversations finishes, without requiring another session event, a reload, or any user action. The board SHALL NOT present agent execution when no owned agent is running. When an activity update is missed or a transient read fails, the board SHALL recover the correct execution state within at most two seconds. Background activity SHALL NOT be presented as agent execution.
 
@@ -323,6 +333,7 @@ The board SHALL stop presenting a task's agent execution when the last agent own
 #### Scenario: Background work never reads as a turn
 - **WHEN** the only active work for a task is a job or schedule
 - **THEN** the task is not presented as running an agent
+
 
 ### Requirement: Task card layout
 
@@ -361,6 +372,7 @@ The project name SHALL remain visible on every card, SHALL be visually quieter t
 #### Scenario: Omit an empty status region
 - **WHEN** a card has no unresolved context operation, confirmed transition, automatic-advance state, or run-action failure
 - **THEN** the card presents no status-region content
+
 
 ### Requirement: Visible execution state on task cards
 
@@ -403,6 +415,7 @@ A task card SHALL present agent execution through a visible working indicator an
 - **WHEN** the host application uses its light or dark appearance
 - **THEN** the working and background indicators remain legible and use host theme colors
 
+
 ### Requirement: Single-line activity strip on task cards
 
 The card's activity region SHALL keep its content on one line. When the task owns exactly one background activity kind, the background indicator SHALL present that kind's label and count. When the task owns more than one background kind, the indicator SHALL present the total number of unsettled activities instead of per-kind text, and SHALL expose every activity label on hover and to assistive technology. The card SHALL reserve the activity region's height in every task state, so that starting or ending a turn, changing the background count, or showing the run action SHALL NOT change the card's height. The run action and its countdown control SHALL render at the trailing edge of the activity region and SHALL NOT add a separate action row.
@@ -433,6 +446,7 @@ The card's activity region SHALL keep its content on one line. When the task own
 - **WHEN** a card exposes the run action or its countdown control
 - **THEN** the control appears at the trailing edge of the activity region
 - **AND** the card does not add a separate action row
+
 
 ### Requirement: Task card status strip
 
@@ -507,6 +521,7 @@ The board SHALL present a card's unresolved context operation, confirmed transit
 - **THEN** the corresponding status is no longer presented in the status region
 - **AND** reading a conversation does not clear an automatic-advance pause by itself
 
+
 ### Requirement: Host-themed board controls
 The board SHALL follow the host application's light and dark appearance for its primary actions, focus indicators, and selection accents. Enabled primary actions SHALL use host theme colors for their fill, foreground, and hover state in both appearances. Primary-action text SHALL maintain at least 4.5:1 contrast against its fill at rest and on hover. The board SHALL NOT use the browser's selection highlight color as a product fill or accent.
 
@@ -529,6 +544,7 @@ The board SHALL follow the host application's light and dark appearance for its 
 - **WHEN** the board renders in either appearance
 - **THEN** primary-action fills and board accents do not use the browser selection highlight color or its matching foreground color
 
+
 ### Requirement: General board configuration with worktree base path
 The Kanban configuration experience SHALL include a General section that is presented first and opened by default. The General section SHALL provide an optional worktree base path used as the parent directory for future task worktree destinations across all Hubs and boards. A non-empty worktree base path SHALL be an absolute path; saving SHALL require it to resolve to an existing directory and SHALL retain that canonical directory. Saving an empty worktree base path SHALL remove the configured value. Changing or clearing the worktree base path SHALL NOT move, remove, or rename any existing worktree or branch.
 
@@ -549,6 +565,7 @@ The Kanban configuration experience SHALL include a General section that is pres
 #### Scenario: Existing worktrees survive a base path change
 - **WHEN** the user changes or clears the worktree base path while tasks have existing worktrees
 - **THEN** every existing worktree, branch, and recorded destination remains unchanged
+
 
 ### Requirement: Run a stage instruction from a card
 
@@ -665,6 +682,7 @@ When a task's current stage has an entry instruction, its card SHALL expose a ru
 - **WHEN** a card's current stage has no entry instruction
 - **THEN** the card does not expose the run action
 
+
 ### Requirement: Movement never runs an agent
 
 A user movement of a task, including into a stage with an entry instruction, SHALL update its workflow stage and position without initiating an agent execution at the time of the move. An instructed user move SHALL arm the timed stage instruction defined by the Timed stage instruction after a move requirement; that scheduled execution is separate from the move. Execution SHALL otherwise require a separate explicit card run action or a user-sent message from the conversation composer. The automatic advance defined by Automatic advance after a completed turn SHALL be the only movement that dispatches the destination instruction itself, SHALL NOT arm the timed stage instruction, and SHALL NOT be available for a task whose auto mode is disabled. Optional worktree creation and directory switching SHALL follow the separate worktree-management requirements.
@@ -686,6 +704,7 @@ A user movement of a task, including into a stage with an entry instruction, SHA
 - **AND** no five-second countdown is armed
 - **AND** no worktree choice is requested by the advance
 
+
 ### Requirement: Rich workflow YAML editing
 The Board configuration SHALL present the active board's workflow YAML in a code-editor surface rather than a plain textarea. The surface SHALL provide YAML syntax highlighting, line numbers, folding, search, and a vertically resizable editing area, and it SHALL preserve the text and comments entered by the user without reformatting.
 
@@ -698,6 +717,7 @@ The Board configuration SHALL present the active board's workflow YAML in a code
 - **WHEN** the user saves a workflow whose text was not changed
 - **THEN** the stored YAML matches the editor text without normalization or reformatting
 
+
 ### Requirement: Expanded workflow editing area
 The Board section SHALL use a larger Configuration surface than the other sections, and the editor SHALL support vertical resizing and a maximize action that expands the editing area without closing Configuration.
 
@@ -709,6 +729,7 @@ The Board section SHALL use a larger Configuration surface than the other sectio
 #### Scenario: Resize the workflow editor
 - **WHEN** the user drags the editor's vertical resize handle
 - **THEN** the editing area grows or shrinks without changing the YAML or closing the dialog
+
 
 ### Requirement: Live workflow diagnostics and guarded save
 The Board section SHALL validate the active board's YAML locally while the user edits, using the same accepted workflow semantics as the host save path. Syntax problems SHALL be shown at their document positions, schema problems SHALL be shown inline or in an issue summary, and Save SHALL remain disabled while the current text is invalid or validation is pending.
@@ -727,6 +748,7 @@ The Board section SHALL validate the active board's YAML locally while the user 
 - **THEN** the host error remains visible after the save attempt
 - **AND** the active board's last valid workflow is not replaced
 
+
 ### Requirement: Workflow draft preservation
 The active board's Workflow draft SHALL survive switching between Configuration tabs. Closing Configuration with unsaved changes, or replacing the draft with Reload, SHALL require explicit confirmation; canceling SHALL keep the draft and the dialog open.
 
@@ -743,6 +765,7 @@ The active board's Workflow draft SHALL survive switching between Configuration 
 - **WHEN** the user activates Reload saved workflow while the draft is dirty
 - **THEN** the user is asked to confirm replacing the draft
 
+
 ### Requirement: Content-height workflow columns
 Each workflow column SHALL size itself to its own cards and controls. A column in a grouped workflow SHALL grow to fit its cards instead of receiving an equal share of a fixed group height. When the columns exceed the viewport, the board page SHALL scroll vertically; cards SHALL NOT be clipped or overflow their column background.
 
@@ -754,6 +777,7 @@ Each workflow column SHALL size itself to its own cards and controls. A column i
 #### Scenario: Short column stays content-sized
 - **WHEN** another column in the same group has fewer cards
 - **THEN** that column ends at its own content instead of stretching to match the taller peer
+
 
 ### Requirement: Animated task drawer transitions
 Opening a task drawer from a card SHALL use a short slide-and-fade transition. Closing the drawer from the header action, Escape, or a board-background click SHALL use a symmetric exit transition before the drawer is removed. The entrance SHALL replay only when opening from a closed drawer, not when switching cards while the drawer is open. Reopening during the exit SHALL cancel the exit, and reduced-motion preferences SHALL disable these animations.
@@ -780,6 +804,7 @@ Opening a task drawer from a card SHALL use a short slide-and-fade transition. C
 - **WHEN** the user prefers reduced motion
 - **THEN** the drawer opens and closes without the entrance or exit transition
 
+
 ### Requirement: Narrower board columns
 The board SHALL render workflow columns with a 240px default width, 20% narrower than the previous 300px default, and a 208px minimum. Content-driven column heights and horizontal board scrolling SHALL remain available.
 
@@ -787,6 +812,7 @@ The board SHALL render workflow columns with a 240px default width, 20% narrower
 - **WHEN** the board renders a workflow column slot at its default width
 - **THEN** the slot is 240px wide
 - **AND** the column keeps its content-driven height and the board scrolls horizontally when needed
+
 
 ### Requirement: Board header clears collapsed-sidebar window chrome
 When the host sidebar is fully collapsed on macOS, the Kanban board header SHALL offset its leading content by the host-published frame leading clearance so the title, subtitle, and toolbar do not overlap the window traffic lights or the shell's sidebar and new-session controls. The header SHALL use its normal leading inset when the clearance is absent, SHALL use the fullscreen clearance when the host reports fullscreen, and SHALL wrap its content without clipping at supported widths.
@@ -808,6 +834,7 @@ When the host sidebar is fully collapsed on macOS, the Kanban board header SHALL
 - **WHEN** the board header is narrower than its title, subtitle, and toolbar together
 - **THEN** the header content wraps or reflows without clipping or overlapping the window chrome
 
+
 ### Requirement: Multiple boards within a Hub
 The product SHALL provide multiple boards inside each Hub. A board SHALL have a required nonempty name and its own workflow. Board names SHALL be unique after trimming, compared case-insensitively within the Hub. The board tabs SHALL list only the boards of the active Hub.
 
@@ -824,9 +851,10 @@ The product SHALL provide multiple boards inside each Hub. A board SHALL have a 
 - **WHEN** the user changes the workflow of one board
 - **THEN** the workflows and tasks of every other board are unchanged
 
+
 ### Requirement: Board creation and lifecycle
 
-Creating a board SHALL require a name and SHALL initialize it with the default workflow. Renaming a board SHALL NOT change its tasks, workflow, conversations, or worktrees. A board SHALL be deletable only when it contains no tasks. Deleting a board that is bound to the published configuration SHALL require choosing whether the removal applies only to this installation or to the team. A local-only removal SHALL remove the board locally and SHALL keep it out of later team updates. A team-wide removal SHALL remove the board locally and SHALL be included in a later publish. Deleting the last board SHALL leave the Hub with no boards and SHALL present the Hub's create-board empty state. Deleting a board SHALL NOT delete its projects, project directories, worktrees, branches, native conversations, or native workspaces.
+Creating a board SHALL require a name and SHALL initialize it with the default workflow. Renaming a board SHALL NOT change its tasks, workflow, conversations, or worktrees. A board SHALL be deletable only when it contains no tasks. Deleting a board that is bound to the team's shared configuration SHALL require choosing whether the removal applies only to this installation or to the team. A local-only removal SHALL remove the board locally and SHALL keep it out of later team updates. A team-wide removal SHALL remove the board locally and SHALL be included in the team's shared configuration on the next synchronization: the next explicit publish for Git, or the next automatic synchronization for Google Drive. Deleting the last board SHALL leave the Hub with no boards and SHALL present the Hub's create-board empty state. Deleting a board SHALL NOT delete its projects, project directories, worktrees, branches, native conversations, or native workspaces.
 
 #### Scenario: Create a board with the default workflow
 
@@ -847,7 +875,7 @@ Creating a board SHALL require a name and SHALL initialize it with the default w
 
 #### Scenario: Choose the scope of a board removal
 
-- **WHEN** the user deletes a board that is bound to the published configuration and the board has no tasks
+- **WHEN** the user deletes a board that is bound to the team's shared configuration and the board has no tasks
 - **THEN** the confirmation offers removing it only from this installation or for the team
 - **AND** no deletion happens before one of those choices
 
@@ -855,19 +883,26 @@ Creating a board SHALL require a name and SHALL initialize it with the default w
 
 - **WHEN** the user confirms removing a published board only from this installation
 - **THEN** the board disappears from this installation
-- **AND** the published document is unchanged
+- **AND** the shared document is unchanged
 - **AND** later team updates do not recreate the board here
 
 #### Scenario: Remove a board for the team
 
-- **WHEN** the user confirms removing a published board for the team
+- **WHEN** the user confirms removing a published board for the team on a Git binding
 - **THEN** the board disappears from this installation
 - **AND** the removal is included in the next publish of that Hub
+
+#### Scenario: Remove a board for the team on Google Drive
+
+- **WHEN** the user confirms removing a published board for the team on a Google Drive binding
+- **THEN** the board disappears from this installation
+- **AND** the removal is included in the team's shared configuration on the next automatic synchronization
 
 #### Scenario: Delete the last board
 
 - **WHEN** the user confirms deletion of the only board in a Hub and that board has no tasks
 - **THEN** the board is removed and the Hub presents its create-board empty state
+
 
 ### Requirement: Board selection and persistence
 The Kanban page SHALL present the boards of the active Hub as tabs below the Hub tabs. The active board SHALL be retained per Hub across reloads in browser local storage. When the remembered board no longer exists, the plugin SHALL select the first available board. Switching boards SHALL reset board-scoped search, project filter, selection mode, and the open task drawer. Switching boards SHALL NOT stop, move, or otherwise affect task execution or a pending timed stage instruction armed for a task on either board.
@@ -891,6 +926,7 @@ The Kanban page SHALL present the boards of the active Hub as tabs below the Hub
 - **THEN** the countdown keeps running
 - **AND** the instruction is sent when the remaining time elapses unless it is canceled
 - **AND** the switch does not send, cancel, or duplicate the instruction
+
 
 ### Requirement: Board attention aggregation
 The board tab SHALL present aggregated attention for all tasks on that board. Attention SHALL consist of the unread indicator, the awaiting-reply indicator, the failure indicator, and a running-task indicator. The unread, awaiting-reply, and failure indicators SHALL be presented first, in that order, and the running-task indicator SHALL follow them. The running-task indicator SHALL be presented as a pulsing ring in the host accent with an adjacent numeral, and SHALL be present whenever at least one task on the board is running, including when exactly one task is running. The numeral SHALL be the number of running tasks, counting each task once regardless of how many agents, subagents, jobs, or schedules it owns. A task SHALL count as running while it has a running agent turn, an owned subagent still running after the turn ends, or unsettled background work such as jobs or schedules. The numeral SHALL be legible in the host's light and dark appearances, SHALL use tabular figures so the board label does not shift as the count changes, and SHALL remain visible without animation when the host prefers reduced motion. Hovering the indicator SHALL expose the titles of the running tasks. The board tab's accessible name SHALL include the running-task count. The unread, awaiting-reply, and failure indicators SHALL coexist with the running-task indicator. The running-task indicator SHALL communicate both the presence and the number of running tasks rather than a static status color alone. The running count SHALL clear when no task on the board is running. Attention on a board that is not active SHALL remain visible on its tab.
@@ -949,6 +985,7 @@ The board tab SHALL present aggregated attention for all tasks on that board. At
 - **WHEN** a task on a board in the active Hub gains unread activity, awaits a reply, or starts running while another board is active
 - **THEN** the inactive board's tab presents the corresponding indicator
 
+
 ### Requirement: Explicit confirmation for a restricted transition
 
 When a user requests a transition that the active board's workflow does not permit, the system SHALL require explicit confirmation before moving the task. The confirmation SHALL identify the task, the source stage, and the destination stage, and SHALL state that the override affects only that card and does not change that board's workflow configuration. Cancel SHALL receive the initial action focus. Canceling SHALL leave the task's stage and position unchanged and SHALL NOT send an agent instruction. Confirming SHALL move the task and SHALL NOT modify the workflow configuration or initiate an agent execution. When the confirmed destination would start the task's first execution, the execution preparation defined by Execution preparation before a task's first execution SHALL be presented after the confirmation and before the move; canceling that preparation SHALL leave the task in its current stage and position. If the confirmed move fails, the confirmation SHALL remain the active context, present the failure, and offer a retry that revalidates the task and the active board's workflow; it SHALL NOT present the task as moved. When the task or destination no longer matches the confirmed context, the system SHALL report the failure without offering a retry that cannot succeed.
@@ -998,6 +1035,7 @@ When a user requests a transition that the active board's workflow does not perm
 - **WHEN** the task has left the confirmed source stage or the destination stage no longer exists
 - **THEN** the confirmation reports the changed context
 - **AND** it does not offer a retry that cannot succeed
+
 
 ### Requirement: Timed stage instruction after a move
 
@@ -1127,6 +1165,7 @@ When a permitted move changes a task's stage to a stage with an entry instructio
 - **AND** the entry remains unresolved
 - **AND** the card exposes the run action after reload
 
+
 ### Requirement: Stable board frame during commands
 
 The active board SHALL keep its frame stable while a command is in flight. Command progress SHALL NOT insert, remove, or resize any element between the board header and the task columns, and the board SHALL NOT present a global saving indicator, either visually or through a live region. A task move or same-stage reorder SHALL be reflected in its destination position immediately, and that immediate placement SHALL be the board-level feedback for the move. Progress that a specific action needs SHALL be reported inside the surface that started it, and a command failure SHALL remain a board-level notice.
@@ -1151,6 +1190,7 @@ The active board SHALL keep its frame stable while a command is in flight. Comma
 - **WHEN** a board command fails
 - **THEN** a board-level notice states the failure
 - **AND** no global saving indicator or live save announcement is added for that command
+
 
 ### Requirement: Board destructive-operation notice
 
@@ -1180,6 +1220,7 @@ The active board SHALL present one persistent notice above the board body while 
 - **WHEN** every tracked queued or failed destructive operation resolves or is cleared
 - **THEN** the notice no longer presents that operation
 - **AND** the card and drawer status remain the authoritative per-task surfaces
+
 
 ### Requirement: Pending user work
 
@@ -1221,6 +1262,7 @@ Pending user work SHALL be derived from the conversations' durable state and SHA
 - **THEN** no automatic advance is admitted for that evaluation
 - **AND** the failure is reported
 - **AND** the control is not required to present a pending-work kind for it
+
 
 ### Requirement: Auto mode on a task card
 
@@ -1267,6 +1309,7 @@ Enabling auto mode SHALL arm the task and SHALL NOT move it, change its position
 #### Scenario: Reading does not change auto mode
 - **WHEN** the user opens and reads a task conversation
 - **THEN** auto mode keeps its setting and paused state
+
 
 ### Requirement: Automatic advance after a completed turn
 
@@ -1349,6 +1392,7 @@ The host SHALL NOT replay a turn that ended while it was not observing the task'
 - **THEN** no advance is admitted for that turn
 - **AND** the task remains in its stage until its next completed turn
 
+
 ### Requirement: Automatic advance destination and dispatch
 
 The automatic advance destination SHALL be the first entry of the current stage's configured `allowed_transitions` when that list is configured, otherwise the stage that follows the current stage in workflow order. There SHALL be no destination when the configured list is empty or the resolved stage is the current stage.
@@ -1401,6 +1445,7 @@ The task SHALL be placed in the destination as a permitted move places it, at th
 - **AND** the destination entry remains unresolved
 - **AND** the card exposes the stage run action for that entry
 
+
 ### Requirement: Automatic advance pause and failure
 
 A pause SHALL be recorded with the task when a turn ends for a reason other than `completed`, or when an advance cannot be admitted before a durable transition exists. The pause SHALL identify its reason, SHALL be presented on the card and in the task drawer, SHALL persist across reloads and restarts, and SHALL NOT be cleared by reading or acknowledging a conversation. The pause SHALL be cleared when an advance is admitted, when auto mode is disabled, or when the task moves.
@@ -1438,6 +1483,7 @@ An admitted advance that fails SHALL be reported through the task's transition s
 - **WHEN** an admitted advance fails
 - **THEN** the plugin does not retry it automatically
 - **AND** the task presents the failure with its existing recovery actions
+
 
 ### Requirement: Bulk deletion fan-out
 

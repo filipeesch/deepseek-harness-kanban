@@ -95,6 +95,7 @@ async function runtime() {
   } as never);
   root.provide('sandboxPolicy', { resolve: vi.fn(() => { throw new Error('No native executor is used.'); }) } as never);
   root.provide('tools', { get: () => undefined, register: () => () => {} } as never);
+  root.provide('credentials', { readRecord: async () => undefined, describeRecord: async () => ({ configured: false }), modifyRecord: async () => {}, deleteRecord: async () => {} } as never);
   root.on('workspace/session-activity', async ({ sessionId }, next) => {
     const rest = await next();
     const active = families.get(sessionId) ?? [];

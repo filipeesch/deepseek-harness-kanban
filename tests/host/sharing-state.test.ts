@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { Context } from '@deepseek-ai/cordis';
 import type { SharedHubDocument } from '../../src/domain/sharing/document.js';
-import { openSharingStorage, type HubSharingRecord } from '../../src/host/sharing/state.js';
+import { migrateSharingRecord, openSharingStorage, type HubSharingRecord } from '../../src/host/sharing/state.js';
 
 const NOW = '2026-01-01T00:00:00.000Z';
 const document: SharedHubDocument = { version: 1, boards: [{ key: 'kanban', name: 'Kanban', workflow: 'name: Flow\ninitial_column: backlog\ncolumns:\n  - id: backlog\n    label: Backlog\n' }] };
 function record(hubId: string): HubSharingRecord {
   return {
-    version: 1, hubId,
-    binding: { provider: 'git', repository: '/team/repo', intervalMinutes: 5 },
+    version: 2, hubId,
+    binding: { provider: 'git', intervalMinutes: 5, settings: { repository: '/team/repo' } },
+    providerState: {}, syncedRevision: null,
     base: { token: 'base', document }, seen: { token: 'seen', document },
     bindings: { board: 'kanban' }, orphans: {}, removed: {}, pendingRemovals: [], preview: null,
     lastCheck: { at: NOW, token: 'seen' }, lastError: null,
@@ -92,7 +93,26 @@ describe('publishing state storage', () => {
   it('refuses to persist an invalid record', async () => {
     const { ctx } = facility();
     const opened = await openSharingStorage(ctx);
-    await expect(opened.storage.save({ ...record('hub'), version: 2 as never })).rejects.toMatchObject({ code: 'SHARING_STORAGE_INVALID' });
+    await expect(opened.storage.save({ ...record('hub'), hubId: '' })).rejects.toMatchObject({ code: 'SHARING_STORAGE_INVALID' });
     await opened.close();
+  });
+});
+
+
+describe('publishing state migration', () => {
+  it('migrates a v1 Git record without losing state', () => {
+    const legacy = {
+      version: 1, hubId: 'hub',
+      binding: { provider: 'git', repository: '/team/repo', intervalMinutes: 5 },
+      base: { token: 'base', document }, seen: { token: 'seen', document },
+      bindings: { board: 'kanban' }, orphans: {}, removed: {}, pendingRemovals: [], preview: null,
+      lastCheck: { at: NOW, token: 'seen' }, lastError: null,
+    };
+    expect(migrateSharingRecord(legacy)).toMatchObject({
+      version: 2, hubId: 'hub',
+      binding: { provider: 'git', intervalMinutes: 5, settings: { repository: '/team/repo' } },
+      providerState: {}, syncedRevision: null,
+      bindings: { board: 'kanban' }, lastCheck: { at: NOW, token: 'seen' },
+    });
   });
 });
