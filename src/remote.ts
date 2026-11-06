@@ -3,7 +3,7 @@ import { createTypertRemoteInfo } from '@deepseek-ai/dsh-typert-protocol/remote-
 import type { RemoteResult, RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol';
 import type { TypertContribution } from '@deepseek-ai/dsh-typert-registry';
 import { KanbanStateSchema } from './domain/hub-schema.js';
-import type { Command, HostSnapshot, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound } from './shared/types.js';
+import type { Command, HostSnapshot, HubSharingView, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingCommand } from './shared/types.js';
 export const PACKAGE_NAME = 'dsh-kanban';
 const id=z.string().min(1).max(200);
 const revision=z.number().int().nonnegative().optional();
@@ -20,7 +20,7 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('hub.delete'),hubId:id,confirmed:z.boolean()}).strict(),
  z.object({type:z.literal('board.create'),hubId:id,name:z.string().min(1)}).strict(),
  z.object({type:z.literal('board.rename'),hubId:id,boardId:id,name:z.string().min(1),expectedRevision:revision}).strict(),
- z.object({type:z.literal('board.delete'),hubId:id,boardId:id,confirmed:z.boolean(),expectedRevision:revision}).strict(),
+ z.object({type:z.literal('board.delete'),hubId:id,boardId:id,confirmed:z.boolean(),expectedRevision:revision,sharing:z.enum(['local','team']).optional()}).strict(),
  z.object({type:z.literal('board.workflow.save'),hubId:id,boardId:id,yaml:z.string(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('project.save'),hubId,project,expectedRevision:revision}).strict(),
  z.object({type:z.literal('project.delete'),hubId,projectId:id,confirmed:z.boolean(),expectedRevision:revision}).strict(),
@@ -50,8 +50,33 @@ const SettledTurnSchema=z.object({seq:z.number().int().nonnegative(),outcome:z.e
 const BackgroundActivitySchema=z.object({kind:z.enum(['job','schedule']),label:z.string()}).strict();
 const PendingUserWorkSchema=z.object({kinds:z.array(z.enum(['decision-question','native-question','approval','queued-prompt'])),queuedPrompts:z.number().int().nonnegative()}).strict();
 const ConversationFactsSchema=z.object({running:z.boolean(),background:z.array(BackgroundActivitySchema),pending:PendingUserWorkSchema,settledTurn:SettledTurnSchema.nullable()}).strict();
-export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note']),id}).strict().optional(),state:KanbanStateSchema,conversations:z.record(z.string(),ConversationFactsSchema),sequence:z.number().int().nonnegative()}).strict();
 const ProblemSchema=z.object({code:z.string(),message:z.string(),details:z.record(z.string(),z.unknown()).optional()}).strict();
+const sharingBoardState=z.enum(['in-sync','draft','updates-available','needs-review','orphan']);
+const sharingHubStatus=z.enum(['not-published','preview','published','updates-available','needs-review','unavailable']);
+const sharingBlocker=z.object({code:z.string(),message:z.string(),boardId:id.optional(),boardName:z.string().optional(),columnId:id.optional(),tasks:z.number().int().nonnegative().optional()}).strict();
+const sharingBoardView=z.object({boardId:id,key:id.optional(),name:z.string().min(1),state:sharingBoardState,bound:z.boolean(),pending:z.boolean(),detail:z.object({local:z.string(),team:z.string(),localName:z.string(),teamName:z.string()}).strict().optional()}).strict();
+export const HubSharingViewSchema:z.ZodType<HubSharingView>=z.object({
+ status:sharingHubStatus,provider:z.literal('git').optional(),repository:z.string().optional(),intervalMinutes:z.number().int().nonnegative(),
+ lastCheckedAt:z.string().optional(),error:ProblemSchema.optional(),drafts:z.number().int().nonnegative(),updates:z.number().int().nonnegative(),conflicts:z.number().int().nonnegative(),orderChanged:z.boolean(),
+ boards:z.array(sharingBoardView),incoming:z.array(z.object({key:id,name:z.string().min(1)}).strict()),
+ removed:z.array(z.object({boardId:id,key:id,name:z.string().min(1)}).strict()),blockers:z.array(sharingBlocker),
+ preview:z.object({publishedBoards:z.number().int().nonnegative(),localBoards:z.number().int().nonnegative()}).strict().optional(),
+ removing:z.array(z.object({boardId:id,name:z.string().min(1)}).strict()),
+}).strict();
+export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note']),id}).strict().optional(),state:KanbanStateSchema,conversations:z.record(z.string(),ConversationFactsSchema),sharing:z.record(z.string(),HubSharingViewSchema),sequence:z.number().int().nonnegative()}).strict();
+export const SharingCommandSchema:z.ZodType<SharingCommand>=z.discriminatedUnion('type',[
+ z.object({type:z.literal('sharing.connect'),hubId:id,repository:z.string().min(1).max(2048),intervalMinutes:z.number().int().min(0).max(1440).optional()}).strict(),
+ z.object({type:z.literal('sharing.receive'),hubId:id}).strict(),
+ z.object({type:z.literal('sharing.publishInitial'),hubId:id,confirmed:z.boolean()}).strict(),
+ z.object({type:z.literal('sharing.check'),hubId:id}).strict(),
+ z.object({type:z.literal('sharing.getUpdates'),hubId:id}).strict(),
+ z.object({type:z.literal('sharing.resolve'),hubId:id,boardId:id,choice:z.enum(['local','team'])}).strict(),
+ z.object({type:z.literal('sharing.publish'),hubId:id}).strict(),
+ z.object({type:z.literal('sharing.setInterval'),hubId:id,intervalMinutes:z.number().int().min(0).max(1440)}).strict(),
+ z.object({type:z.literal('sharing.disconnect'),hubId:id}).strict(),
+ z.object({type:z.literal('sharing.restore'),hubId:id,boardId:id}).strict(),
+ z.object({type:z.literal('sharing.publishOrphan'),hubId:id,boardId:id}).strict(),
+]);
 const outcome=<T extends z.ZodType>(value:T)=>z.discriminatedUnion('ok',[z.object({ok:z.literal(true),value}).strict(),z.object({ok:z.literal(false),error:ProblemSchema}).strict()]);
 const codec=(name:string,create:()=>z.ZodType)=>({mode:'strict' as const,typeSymbol:PACKAGE_NAME+'#'+name,create});
 const parameter=(name:string,schema:z.ZodType,typeName:string)=>({name,source:'json' as const,codec:codec(typeName,()=>schema),strictCodec:codec(typeName,()=>schema)});
@@ -59,6 +84,7 @@ const base={service:'kanbanController',invocation:{kind:'direct' as const}};
 export const TYPERT_REMOTE=createTypertRemoteInfo({package:PACKAGE_NAME,methods:{
  'kanban/snapshot':{...base,parameters:[],result:codec('SnapshotOutcome',()=>outcome(SnapshotSchema))},
  'kanban/command':{...base,parameters:[parameter('request',CommandSchema,'Command')],result:codec('CommandOutcome',()=>outcome(SnapshotSchema))},
+ 'kanban/sharing':{...base,parameters:[parameter('request',SharingCommandSchema,'SharingCommand')],result:codec('SharingOutcome',()=>outcome(SnapshotSchema))},
  'kanban/branches':{...base,parameters:[parameter('request',z.object({taskId:id}).strict(),'TaskLookup')],result:codec('BranchesOutcome',()=>outcome(z.array(z.string())))},
  'kanban/worktreeDefault':{...base,parameters:[parameter('request',z.object({taskId:id}).strict(),'TaskLookup')],result:codec('WorktreeDefaultOutcome',()=>outcome(worktreeDefault))},
  'kanban/detectProject':{...base,parameters:[parameter('request',z.object({path:z.string().min(1)}).strict(),'ProjectPathLookup')],result:codec('ProjectLocationOutcome',()=>outcome(projectLocation))},
@@ -70,6 +96,7 @@ export const TYPERT_HOST:TypertContribution={package:PACKAGE_NAME,face:'host',sc
 export interface KanbanRemote {
  snapshot():Promise<RemoteResult<Outcome<HostSnapshot>>>;
  command(request:Command):Promise<RemoteResult<Outcome<HostSnapshot>>>;
+ sharing(request:SharingCommand):Promise<RemoteResult<Outcome<HostSnapshot>>>;
  branches(request:{taskId:string}):Promise<RemoteResult<Outcome<string[]>>>;
  worktreeDefault(request:{taskId:string}):Promise<RemoteResult<Outcome<{branchName:string;path:string}>>>;
  detectProject(request:{path:string}):Promise<RemoteResult<Outcome<ProjectLocation>>>;
@@ -80,7 +107,7 @@ export interface KanbanRemote {
 declare module '@deepseek-ai/dsh-typert-protocol' {
  interface TypertRemoteNamespaceMap {kanban:KanbanRemote}
  interface TypertRemoteMap {
-  'kanban/snapshot':KanbanRemote['snapshot']; 'kanban/command':KanbanRemote['command'];
+  'kanban/snapshot':KanbanRemote['snapshot']; 'kanban/command':KanbanRemote['command']; 'kanban/sharing':KanbanRemote['sharing'];
   'kanban/branches':KanbanRemote['branches']; 'kanban/worktreeDefault':KanbanRemote['worktreeDefault']; 'kanban/detectProject':KanbanRemote['detectProject']; 'kanban/dismissQuestions':KanbanRemote['dismissQuestions']; 'kanban/questionsFollow':KanbanRemote['questionsFollow']; 'kanban/follow':KanbanRemote['follow'];
  }
 }

@@ -7,6 +7,10 @@ import { TYPERT_HOST } from './remote.js';
 import { HubRepository } from './host/hub-repository.js';
 import { openKanbanStorage } from './host/storage.js';
 import { openQuestionStorage } from './host/question-storage.js';
+import { openSharingStorage } from './host/sharing/state.js';
+import { HubSharingService } from './host/sharing/service.js';
+import { SharingPollScheduler } from './host/sharing/scheduler.js';
+import { GitSharedConfigStoreFactory, sharingRoot, type SharingCommandRunner } from './host/sharing/git-store.js';
 import { createNativePorts } from './host/native.js';
 import { registerConversationFacts } from './host/conversation-facts.js';
 import { GitAdapter } from './host/git.js';
@@ -52,19 +56,40 @@ export function registerTaskExecutionGuards(ctx:Context,locator:Pick<TaskLocator
  });
  return()=>{offRequest();offStep();};
 }
+export interface HubSharingRuntime {
+ service:HubSharingService;
+ scheduler:SharingPollScheduler;
+ setNotify:(notify:()=>void)=>void;
+ close:()=>Promise<void>;
+}
+/** Compose the publishing runtime over its own storage domain so it can be closed as one unit. */
+export async function openHubSharing(ctx:Context,hubs:HubRepository,options:{report?:(error:unknown)=>void;root?:string;runner?:SharingCommandRunner}={}):Promise<HubSharingRuntime>{
+ const storage=await openSharingStorage(ctx,{...(options.report===undefined?{}:{report:options.report})});
+ let notify=()=>{};
+ const service=new HubSharingService({hubs,store:storage.storage,providers:new GitSharedConfigStoreFactory({root:options.root??sharingRoot(),...(options.runner===undefined?{}:{runner:options.runner})}),notify:()=>notify(),...(options.report===undefined?{}:{report:options.report})});
+ const scheduler=new SharingPollScheduler({service,...(options.report===undefined?{}:{report:options.report})});
+ return {
+  service,scheduler,
+  setNotify:(next)=>{notify=next;},
+  close:async()=>{scheduler.dispose();try{await service.close();}finally{await storage.close();}},
+ };
+}
 export const name='kanban';
 export const inject=['storageDomain','sessionController','sessions','agents','workingDirectory','workspaceRegistry','sandboxPolicy','tools','typert'];
 export async function apply(ctx:Context):Promise<void>{
+ const report=(error:unknown)=>ctx.logger.warn(error instanceof Error?error.message:String(error));
  const opened=await openKanbanStorage(ctx);
  const storage={close:opened.close};
  let questions:{storage:import('./host/question-storage.js').QuestionStore;close:()=>Promise<void>};
  try{questions=await openQuestionStorage(ctx);}catch(error){await storage.close();throw error;}
  const lifetime=new AbortController();
  const conversationFacts=registerConversationFacts(ctx);ctx.effect(()=>()=>conversationFacts.dispose());const native=createNativePorts(ctx,{conversationFacts});const hubs=await HubRepository.open(opened.storage);
- const report=(error:unknown)=>ctx.logger.warn(error instanceof Error?error.message:String(error));
- const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await ctx.sessionController.inspect(SessionId(id),lifetime.signal)).events,questionStore:questions.storage,probe:native.probe},native.workspaces);
+ let sharing:HubSharingRuntime;
+ try{sharing=await openHubSharing(ctx,hubs,{report});}catch(error){await hubs.close();await questions.close();await storage.close();throw error;}
+ const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await ctx.sessionController.inspect(SessionId(id),lifetime.signal)).events,questionStore:questions.storage,probe:native.probe,sharing:sharing.service,scheduler:sharing.scheduler},native.workspaces);
+ sharing.setNotify(()=>app.sharingChanged());
  let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offSignals:(()=>void)|undefined;
- ctx.effect(()=>async()=>{lifetime.abort();offTools?.();offWire?.();offGuards?.();offContext?.();offSignals?.();try{await app.close();}finally{try{await hubs.close();}finally{await questions.close();}}});
+ ctx.effect(()=>async()=>{lifetime.abort();offTools?.();offWire?.();offGuards?.();offContext?.();offSignals?.();try{await app.close();}finally{try{await sharing.close();}finally{try{await hubs.close();}finally{await questions.close();}}}});
  offWire=ctx.typert.register(TYPERT_HOST);
  ctx.plugin(KanbanController,app);
  offTools=registerProductTools(ctx,app);
@@ -73,4 +98,5 @@ export async function apply(ctx:Context):Promise<void>{
  offGuards=registerTaskExecutionGuards(ctx,app.locator,app);
  offContext=registerTaskContextInjection(ctx,app.locator,{report});
  await app.initialize();
+ sharing.scheduler.sync();
 }

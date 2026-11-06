@@ -6,20 +6,50 @@ import { Configuration } from '../../src/client/settings/configuration.js';
 import { ProjectEditorDialog } from '../../src/client/projects/project-editor-dialog.js';
 import { DirectoryPickerProvider } from '../../src/client/services.js';
 import { QuestionForm } from '../../src/questions/QuestionForm.js';
-import type { Command, QuestionRound, RoundPage } from '../../src/shared/types.js';
-import { createHarnessApi, type TestSnapshot } from './fake-api.js';
+import type { Command, HubSharingView, QuestionRound, RoundPage } from '../../src/shared/types.js';
+import { createHarnessApi, workflowYaml, type TestSnapshot } from './fake-api.js';
 import { themeFixture } from './theme-fixture.js';
 
 const scenario = new URLSearchParams(window.location.search).get('scenario') ?? 'board';
-const harness = createHarnessApi({ attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs', hubs: scenario === 'hubs' ? 2 : 1, restricted: scenario === 'move' || scenario === 'prepare-restricted', persist: scenario === 'board', pending: scenario === 'appearance', auto: scenario === 'auto', notes: scenario === 'notes', detect: scenario === 'project-editor' ? 'git' : 'folder', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}) });
-(window as unknown as { __harness: unknown }).__harness = { commands: harness.commands, snapshot: harness.snapshot };
+const sharingCase = new URLSearchParams(window.location.search).get('sharing');
+const sharingViews: Record<string, HubSharingView> = sharingCase === null ? {} : { hub: harnessSharing(sharingCase) };
+const harness = createHarnessApi({ attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs', hubs: scenario === 'hubs' ? 2 : 1, restricted: scenario === 'move' || scenario === 'prepare-restricted', persist: scenario === 'board', pending: scenario === 'appearance', auto: scenario === 'auto', detect: scenario === 'project-editor' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}) });
+
+function harnessSharing(kind: string): HubSharingView {
+  const view: HubSharingView = {
+    status: 'published', provider: 'git', repository: 'https://example.test/team.git', intervalMinutes: 5, lastCheckedAt: '2026-10-21T00:05:00Z',
+    drafts: 0, updates: 0, conflicts: 0, orderChanged: false,
+    boards: [{ boardId: 'board', key: 'harness-board', name: 'Harness board', state: 'in-sync', bound: true, pending: false }],
+    incoming: [], removed: [], blockers: [], removing: [],
+  };
+  if (kind === 'draft') return { ...view, drafts: 1, boards: [{ ...view.boards[0]!, state: 'draft' }] };
+  if (kind === 'updates') return { ...view, status: 'updates-available', updates: 2, boards: [{ ...view.boards[0]!, state: 'updates-available', pending: true }], incoming: [{ key: 'team-board', name: 'Team board' }] };
+  if (kind === 'review') return { ...view, status: 'needs-review', conflicts: 1, boards: [{ ...view.boards[0]!, state: 'needs-review', detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }] };
+  if (kind === 'orphan') return { ...view, boards: [{ ...view.boards[0]!, state: 'orphan' }] };
+  if (kind === 'pending-orphan') return { ...view, status: 'updates-available', updates: 1, boards: [{ ...view.boards[0]!, state: 'orphan', pending: true }] };
+  if (kind === 'collision') return { ...view, status: 'needs-review', conflicts: 1, boards: [{ boardId: 'board', name: 'Harness board', state: 'needs-review', bound: false, pending: false }] };
+  if (kind === 'mixed') return { ...view, status: 'updates-available', updates: 1, drafts: 1, boards: [{ ...view.boards[0]!, state: 'draft' }] };
+  if (kind === 'removal') return { ...view, status: 'updates-available', updates: 1, removing: [{ boardId: 'old-board', name: 'Old board' }] };
+  if (kind === 'removed') return { ...view, removed: [{ boardId: 'old-board', key: 'old-board', name: 'Old board' }] };
+  if (kind === 'unavailable') return { ...view, status: 'unavailable', error: { code: 'SHARING_UNREACHABLE', message: 'The team repository could not be reached.' } };
+  if (kind === 'preview') return { ...view, status: 'preview', updates: 1, drafts: 1, boards: [{ ...view.boards[0]!, state: 'updates-available', pending: true, detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }], preview: { publishedBoards: 2, localBoards: 1 } };
+  if (kind === 'refuse-error') return { ...view, status: 'updates-available', updates: 1 };
+  return view;
+}
+(window as unknown as { __harness: unknown }).__harness = { commands: harness.commands, snapshot: harness.snapshot, sharingCommands: harness.sharingCommands };
 
 function WorkflowScenario() {
   const [snapshot, setSnapshot] = useState<TestSnapshot>(harness.snapshot());
   const run = async (command: Command) => { const next = await harness.api.command(command); setSnapshot(next as TestSnapshot); return next; };
-  return <Configuration state={snapshot.state} hub={snapshot.state.hubs[0]!} board={snapshot.state.hubs[0]!.boards[0]!} hubCount={1} settings={snapshot.state.settings} settingsRevision={snapshot.state.settings.revision} run={run} api={harness.api} initial="Board" onClose={() => {}} />;
+  return <Configuration state={snapshot.state} hub={snapshot.state.hubs[0]!} board={snapshot.state.hubs[0]!.boards[0]!} hubCount={1} settings={snapshot.state.settings} settingsRevision={snapshot.state.settings.revision} run={run} api={harness.api} {...(sharingViews.hub === undefined ? {} : { sharing: sharingViews.hub })} initial="Board" onClose={() => {}} />;
 }
 
+
+function PublishingScenario() {
+  const [snapshot, setSnapshot] = useState<TestSnapshot>(harness.snapshot());
+  const run = async (command: Command) => { const next = await harness.api.command(command); setSnapshot(next as TestSnapshot); return next; };
+  return <Configuration state={snapshot.state} hub={snapshot.state.hubs[0]!} board={snapshot.state.hubs[0]!.boards[0]!} hubCount={1} settings={snapshot.state.settings} settingsRevision={snapshot.state.settings.revision} run={run} api={harness.api} {...(sharingViews.hub === undefined ? {} : { sharing: sharingViews.hub })} initial="Publishing" onClose={() => {}} />;
+}
 
 function ProjectEditorScenario() {
   const [, setSnapshot] = useState<TestSnapshot>(harness.snapshot());
@@ -78,6 +108,8 @@ function App() {
   if (scenario === 'project-editor') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><ProjectEditorScenario /></div></>;
   if (scenario === 'native-composer') return <><style>{styles}</style><NativeComposerScenario /></>;
   if (scenario === 'workflow') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario /></div></>;
+  if (scenario === 'publishing') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><PublishingScenario /></div></>;
+  if (scenario === 'sharing') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;
   if (scenario === 'question') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban"><QuestionScenario /></div></>;
   return <BoardView api={harness.api} renderConversation={id => <div data-native={id} />} />;
 }

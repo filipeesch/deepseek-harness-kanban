@@ -1,6 +1,6 @@
 # DSH Kanban
 
-An independent host/client plugin for **DeepSeek Harness (DSH) 0.2.1-rc.2**: Hub-scoped Kanban boards, per-board workflows, optional Git worktrees, shared task notes, and task drawers that reuse native DSH conversations. It does not replace the DSH core, start another server, or clone the chat/agent runtime.
+An independent host/client plugin for **DeepSeek Harness (DSH) 0.2.1-rc.2**: Hub-scoped Kanban boards, per-board workflows, optional team publishing, optional Git worktrees, shared task notes, and task drawers that reuse native DSH conversations. It does not replace the DSH core, start another server, or clone the chat/agent runtime.
 
 > **Verification boundary:** this plugin is checked through public DSH extension-point contracts, real temporary Git repositories, client integration tests, and the existing DSH GUI. Native conversation/model/scheduler engines remain DSH responsibilities. Acceptance uses a deterministic, test-only model adapter; no real-model request is part of the acceptance path. See [verification status and limitations](<docs/operations.md#verification-status>).
 
@@ -164,6 +164,20 @@ While the task owes the user input, the **Auto** chip shows a held state (its ac
 The advance is a host action: it works while the Kanban panel is hidden or another board or Hub is active, and reloading the UI neither cancels nor duplicates it. It does not arm the five-second countdown, requires no confirmation, and never asks for a worktree choice. Only a completed turn advances: `error`, `blocked`, `aborted`, and `max-tokens` endings leave the card in place and show a pause reason on the card and in the drawer, and the next completed turn re-evaluates the task. An advance that cannot be admitted before a durable transition pauses with an admission-failure reason. An admitted advance that fails is reported through its transition state, keeps auto mode enabled, and is not retried automatically: the card play action remains available for the unresolved entry, and the drawer offers an explicit retry or a dismiss of the failed record. Sending the stage instruction manually also clears the failed record. Reading a conversation does not clear a pause. Disabling auto mode stops future advances, forgets a turn that has not settled yet, and does not retract an advance that was already admitted.
 
 The host does not catch up: a turn that ended while the plugin was not observing its conversations is not replayed after a restart, and the chain resumes on the next completed turn. An advance that was already persisted is still dispatched after a restart, exactly like a confirmed transition.
+
+## Team publishing
+
+Publishing is optional and applies per Hub. **Configuration → Publishing** connects the active Hub to a Git repository. The plugin creates a managed clone under the DSH data root (`$DSH_HOME/kanban/shared/<hubId>`, by default `~/.dsh/kanban/shared/<hubId>`), commits there, and never stores credentials: Git supplies them from the machine's own configuration. Without a connection, no clone, check, or publishing state exists and the rest of the product behaves exactly as before.
+
+The shared document is `kanban-hub.yaml`. It contains a format version and one ordered entry per board: a stable key, the board name, and the board's workflow YAML exactly as authored. Projects, tasks, notes, conversations, worktrees, Hub names, and settings stay on the local machine, and the board key survives renames.
+
+Saving a board or workflow changes only local state and marks that board as a **Draft**. The workflow editor offers a quiet **Save workflow** and a primary **Save and share**; a share that fails leaves the local save in place and reports the failure. **Publish** sends every draft of the Hub as one document, and it is unavailable while team updates are unapplied.
+
+**Get updates** compares the last received document, the local Hub, and the team document. Boards changed only by the team are applied, boards changed only locally stay drafts, and a board changed on both sides requires a per-board choice between the team version and the local version. Applying is all-or-nothing for the Hub: if a team workflow would leave a task in a column it does not define, or a new team board would collide with an unpublished local board name, nothing is applied and the Publishing section names the blocking boards, columns, and task counts. There is no override.
+
+When the team removes a board, an empty board disappears locally, while a board with tasks or unpublished changes stays as an **orphan** with an indicator on its board tab. An orphan can be published again as a new board with a new key, deleted locally, or reconnected automatically when the team publishes a board with the same key or the same name. Removing a board that belongs to the published configuration asks whether the removal applies only here or for the team; a local-only removal is not published and is not recreated by later updates, while a team-wide removal is sent with the next publish.
+
+Each published Hub checks the repository every five minutes by default. The interval is editable per Hub (minimum one minute; `0` disables automatic checks and leaves **Refresh**), and a check never blocks the board. Publishing state appears in the host snapshot, so the Hub tab and each board tab show their own indicators and the board shows a banner when team changes need review. **Disconnect** removes the binding and the managed clone and keeps every local board, workflow, task, note, project, conversation, and worktree.
 
 ## Worktrees and native boundaries
 

@@ -86,8 +86,45 @@ export const EMPTY_CONVERSATION_FACTS: ConversationFacts = { running: false, bac
 export interface Attention { running: boolean; background: BackgroundActivity[]; unread: boolean; awaitingReply: boolean; failed: boolean; pending: PendingUserWork }
 /** Transient identity of the entity created by this exact command, never persisted. */
 export interface CommandReceipt { kind: 'hub' | 'board' | 'project' | 'task' | 'conversation' | 'note'; id: string }
-/** Host snapshot: durable state plus per-conversation attention facts. */
-export interface HostSnapshot { commandReceipt?: CommandReceipt; state: KanbanState; conversations: Record<string, ConversationFacts>; sequence: number }
+/** One board's publishing state, projected from the stored sharing record. */
+export type SharingBoardState = 'in-sync' | 'draft' | 'updates-available' | 'needs-review' | 'orphan';
+export type SharingHubStatus = 'not-published' | 'preview' | 'published' | 'updates-available' | 'needs-review' | 'unavailable';
+export interface SharingBlockerView { code: string; message: string; boardId?: string; boardName?: string; columnId?: string; tasks?: number }
+export interface SharingBoardView { boardId: string; key?: string; name: string; state: SharingBoardState; bound: boolean; /** The decision still requires Get updates. */ pending: boolean; /** Both workflow versions, present for a board that needs a choice. */ detail?: { local: string; team: string; localName: string; teamName: string } }
+export interface HubSharingView {
+  status: SharingHubStatus;
+  provider?: 'git';
+  repository?: string;
+  intervalMinutes: number;
+  lastCheckedAt?: string;
+  error?: Problem;
+  drafts: number;
+  updates: number;
+  conflicts: number;
+  orderChanged: boolean;
+  boards: SharingBoardView[];
+  incoming: Array<{ key: string; name: string }>;
+  removed: Array<{ boardId: string; key: string; name: string }>;
+  blockers: SharingBlockerView[];
+  preview?: { publishedBoards: number; localBoards: number };
+  /** Board a team update would remove locally because it holds no local work. */
+  removing: Array<{ boardId: string; name: string }>;
+}
+/** Actions that operate a Hub's publishing binding. They are not board commands. */
+export type SharingCommand =
+  | { type: 'sharing.connect'; hubId: string; repository: string; intervalMinutes?: number }
+  | { type: 'sharing.receive'; hubId: string }
+  | { type: 'sharing.publishInitial'; hubId: string; confirmed: boolean }
+  | { type: 'sharing.check'; hubId: string }
+  | { type: 'sharing.getUpdates'; hubId: string }
+  | { type: 'sharing.resolve'; hubId: string; boardId: string; choice: 'local' | 'team' }
+  | { type: 'sharing.publish'; hubId: string }
+  | { type: 'sharing.setInterval'; hubId: string; intervalMinutes: number }
+  | { type: 'sharing.disconnect'; hubId: string }
+  | { type: 'sharing.restore'; hubId: string; boardId: string }
+  | { type: 'sharing.publishOrphan'; hubId: string; boardId: string };
+/** Host snapshot: durable state plus per-conversation attention facts and per-Hub publishing. */
+export interface HostSnapshot { commandReceipt?: CommandReceipt; state: KanbanState; conversations: Record<string, ConversationFacts>; sharing: Record<string, HubSharingView>; sequence: number }
 /** Client snapshot: host facts plus the client-owned attention projection. */
 export interface KanbanSnapshot extends Omit<HostSnapshot, 'conversations'> { attention: Record<string, Attention>; conversationAttention: Record<string, Attention>; clientEpoch?: number }
 export const EMPTY_ATTENTION: Attention = { running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
@@ -99,7 +136,7 @@ export type Command =
   | { type: 'hub.delete'; hubId: string; confirmed: boolean }
   | { type: 'board.create'; hubId: string; name: string }
   | { type: 'board.rename'; hubId: string; boardId: string; name: string; expectedRevision?: number }
-  | { type: 'board.delete'; hubId: string; boardId: string; confirmed: boolean; expectedRevision?: number }
+  | { type: 'board.delete'; hubId: string; boardId: string; confirmed: boolean; expectedRevision?: number; sharing?: 'local' | 'team' }
   | { type: 'board.workflow.save'; hubId: string; boardId: string; yaml: string; expectedRevision?: number }
   | { type: 'project.save'; hubId?: string; project: ProjectInput; expectedRevision?: number }
   | { type: 'project.delete'; hubId?: string; projectId: string; confirmed: boolean; expectedRevision?: number }
@@ -126,6 +163,7 @@ export type Outcome<T> = { ok: true; value: T } | { ok: false; error: Problem };
 export interface ClientApi {
   snapshot(): Promise<KanbanSnapshot>;
   command(command: Command): Promise<KanbanSnapshot>;
+  sharing(command: SharingCommand): Promise<KanbanSnapshot>;
   branches(taskId: string): Promise<string[]>;
   worktreeDefault(taskId: string): Promise<{ branchName: string; path: string }>;
   detectProject(path: string): Promise<ProjectLocation>;
