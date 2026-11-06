@@ -391,7 +391,8 @@ describe('shared notes and reversible archive', () => {
     expect(note.content).toBe(content);
     expect(note.tags).toEqual(['api', 'review']);
     const edited = await store.saveNote(first.id, { id: note.id, content: '# Updated', tags: [] });
-    expect(edited).toMatchObject({ taskId: first.id, content: '# Updated', tags: [] });
+    expect(edited).toMatchObject({ taskId: first.id, content: '# Updated' });
+    expect(edited.tags).toBeUndefined();
     expect(store.snapshot().notes).toHaveLength(1);
     await expect(store.saveNote(second.id, { id: note.id, content: 'Wrong owner' })).rejects.toMatchObject({ code: 'NOTE_NOT_FOUND' });
     await expect(store.saveNote('missing', { content: 'No target' })).rejects.toMatchObject({ code: 'TASK_NOT_FOUND' });

@@ -40,7 +40,8 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('worktree.remove'),hubId,taskId:id,confirmed:z.boolean(),expectedWorktreePath:z.string().nullable(),discardChanges:z.boolean().optional(),force:z.boolean().optional()}).strict(),
  z.object({type:z.enum(['operation.retry','operation.return']),hubId,taskId:id}).strict(),
  z.object({type:z.literal('operation.dismiss'),hubId,taskId:id}).strict(),
- z.object({type:z.literal('note.save'),hubId,taskId:id,noteId:id.optional(),content:z.string(),tags:z.array(z.string()).optional()}).strict(),
+ z.object({type:z.literal('note.save'),hubId,taskId:id,noteId:id.optional(),content:z.string().optional(),tags:z.array(z.string()).optional()}).strict(),
+  z.object({type:z.literal('note.delete'),hubId,taskId:id,noteId:id}).strict(),
 ]);
 export const QuestionPageSchema=z.object({question:z.string(),type:z.enum(['exclusive','non_exclusive','freetext']),context:z.string().optional(),options:z.array(z.object({title:z.string(),description:z.string()}).strict()).optional(),weight:z.enum(['critical','medium','easy']).optional(),model_lean:z.string().optional(),model_lean_reason:z.string().optional(),answers_affect_followup:z.boolean().optional()}).strict();
 export const QuestionRoundSchema=z.object({id:z.string(),sessionId:z.string(),turnId:z.string(),pages:z.array(z.object({callId:z.string(),sequence:z.number(),page:QuestionPageSchema}).strict()),complete:z.boolean(),answered:z.boolean()}).strict();

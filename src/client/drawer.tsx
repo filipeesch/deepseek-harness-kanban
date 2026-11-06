@@ -2,7 +2,8 @@ import React, { useEffect, useId, useRef, useState, type ReactNode } from 'react
 import { EMPTY_ATTENTION, type Attention, type BoardState, type ClientApi, type Column, type Task } from '../shared/types.js';
 import { isGitProject } from '../shared/project.js';
 import { requiresWorktreeDecision } from '../shared/worktree-decision.js';
-import { InfoPanel, NotesPanel } from './forms.js';
+import { InfoPanel } from './forms.js';
+import { NotesPanel } from './notes/notes-panel.js';
 import { GitPanel, PendingTransitionStatus } from './git.js';
 import { OperationStatus } from './operation-status.js';
 import { WorktreeNotice } from './worktree-notice.js';

@@ -9,8 +9,9 @@ import { parseWorkflow } from './workflow.js';
 import { entryInstruction, nextEnteredAt } from './stage-entry.js';
 import { assertId, assertRevision, isAbsolutePath } from './validation.js';
 import { assertProjectConversion, buildProject } from './project-registration.js';
+import { applyNoteTags, validateNoteWrite, type NoteInput } from './note.js';
 
-export interface NoteInput { id?: string; content: string; tags?: string[] }
+export type { NoteInput } from './note.js';
 export interface TaskTextPatch { title?: string; description?: string }
 export type BoardListener = (state: BoardState) => void;
 
@@ -302,25 +303,22 @@ export class BoardStore {
   }
 
   async saveNote(taskId: string, input: NoteInput): Promise<Note> {
-    const value = clone(input);
-    invariant(value && typeof value === 'object' && !Array.isArray(value), 'INVALID_INPUT', 'Note input must be a mapping.');
-    requiredText(value.content, 'Note content');
-    if (value.id !== undefined) assertId(value.id, 'Note ID');
-    if (value.tags !== undefined) invariant(Array.isArray(value.tags) && value.tags.every(tag => typeof tag === 'string' && tag.trim()), 'INVALID_INPUT', 'Note tags must be nonempty text values.');
+    const write = validateNoteWrite(clone(input));
     return this.transact(state => {
       this.requireTask(taskId, state);
       const timestamp = new Date().toISOString();
       let note: Note;
-      if (value.id !== undefined) {
-        const current = state.notes.find(item => item.id === value.id && item.taskId === taskId);
+      if (write.kind === 'update') {
+        const current = state.notes.find(item => item.id === write.id && item.taskId === taskId);
         invariant(current, 'NOTE_NOT_FOUND', 'Note does not exist for the target task.');
-        note = { ...current, content: value.content, updatedAt: timestamp };
+        note = { ...current, ...(write.content !== undefined ? { content: write.content } : {}), updatedAt: timestamp };
+        if (write.tags !== undefined) applyNoteTags(note, write.tags);
         state.notes[state.notes.indexOf(current)] = note;
       } else {
-        note = { id: nextId(state.notes), taskId, content: value.content, createdAt: timestamp, updatedAt: timestamp };
+        note = { id: nextId(state.notes), taskId, content: write.content, createdAt: timestamp, updatedAt: timestamp };
+        if (write.tags !== undefined) applyNoteTags(note, write.tags);
         state.notes.push(note);
       }
-      if (value.tags !== undefined) note.tags = [...new Set(value.tags.map(tag => tag.trim()))];
       return note;
     });
   }

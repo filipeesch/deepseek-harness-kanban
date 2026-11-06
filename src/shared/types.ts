@@ -157,7 +157,8 @@ export type Command =
   | { type: 'worktree.remove'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; force?: boolean }
   | { type: 'operation.retry' | 'operation.return'; hubId?: string; taskId: string }
   | { type: 'operation.dismiss'; hubId?: string; taskId: string }
-  | { type: 'note.save'; hubId?: string; taskId: string; noteId?: string; content: string; tags?: string[] };
+  | { type: 'note.save'; hubId?: string; taskId: string; noteId?: string; content?: string; tags?: string[] }
+  | { type: 'note.delete'; hubId?: string; taskId: string; noteId: string };
 export type Outcome<T> = { ok: true; value: T } | { ok: false; error: Problem };
 export interface ClientApi {
   snapshot(): Promise<KanbanSnapshot>;

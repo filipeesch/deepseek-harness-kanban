@@ -428,6 +428,9 @@ export class HubStore {
   async saveNote(taskId: string, input: NoteInput): Promise<Note> {
     return this.transact(draft => operations.saveNote(draft, taskId, input, this.deps()));
   }
+  async deleteNote(taskId: string, noteId: string): Promise<Note> {
+    return this.transact(draft => operations.deleteNote(draft, taskId, noteId, this.deps()));
+  }
   async deleteTask(taskId: string): Promise<HubTask> {
     return this.transact(draft => operations.deleteTask(draft, taskId));
   }

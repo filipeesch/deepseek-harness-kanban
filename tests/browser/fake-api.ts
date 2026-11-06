@@ -1,4 +1,4 @@
-import type { BoardState, ClientApi, Command, HubSharingView, HubState, HubTask, KanbanSnapshot, KanbanState, SharingCommand } from '../../src/shared/types.js';
+import type { BoardState, ClientApi, Command, HubSharingView, HubState, HubTask, KanbanSnapshot, KanbanState, Note, SharingCommand } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import { taskTitleSlug, worktreePathForBranch } from '../../src/shared/worktree-name.js';
@@ -12,7 +12,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean }
+export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -72,7 +72,10 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
       { id: 'p2', name: 'A very long project name that must truncate inside the card', projectPath: '/repo/long', gitRootPath: '/repo', defaultBranch: 'main' },
     ],
     boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(options.restricted, options.prepare !== undefined), workflow: { name: 'Harness flow', initialColumnId: 'explore', columns: [{ id: 'explore', name: 'Explore', ...(options.restricted ? { allowedTransitions: ['propose'] } : {}) }, { id: 'propose', name: 'Propose', ...(options.restricted ? {} : { onEnterPrompt: 'Plan this task.' }) }, { id: 'apply', name: 'Apply', ...(options.prepare === undefined ? {} : { onEnterPrompt: 'Apply the plan.' }) }], groups: [{ id: 'planning', name: 'Planning', columnIds: ['explore', 'propose'] }] }, createdAt: now, updatedAt: now }],
-    tasks, notes: [], createdAt: now, updatedAt: now,
+    tasks, notes: options.notes ? [
+      { id: 'n1', taskId: 'short', content: 'Design note with **bold** text', tags: ['design'], createdAt: now, updatedAt: now },
+      { id: 'n2', taskId: 'short', content: 'Todo note', tags: ['todo'], createdAt: now, updatedAt: now },
+    ] satisfies Note[] : [], createdAt: now, updatedAt: now,
   };
   const settings = { revision: 1, worktreeBasePath: '/worktrees' };
   const raw: KanbanSnapshot = { sequence: 1, attention, conversationAttention, sharing: options.sharing ?? {}, state: { hubs: [hub], settings } };
@@ -120,6 +123,24 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
       if (command.type === 'conversation.create') {
         const task = value.state.hubs.flatMap(item => item.tasks).find(item => item.id === command.taskId);
         if (task) { const id = 's-created-' + task.sessionIds.length + '-' + commands.length; task.sessionIds.push(id); receipt = { kind: 'conversation', id }; }
+      }
+      if (command.type === 'note.save') {
+        const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);
+        const hub = task ? value.state.hubs.find(item => item.tasks.some(candidate => candidate.id === task.id)) : undefined;
+        const current = command.noteId ? hub?.notes.find(item => item.id === command.noteId) : undefined;
+        if (hub !== undefined && current !== undefined) {
+          if (command.content !== undefined) current.content = command.content;
+          if (command.tags !== undefined) { if (command.tags.length === 0) delete current.tags; else current.tags = [...command.tags]; }
+        } else if (hub !== undefined && task !== undefined) {
+          const id = 'note-' + (commands.length + 1);
+          hub.notes.push({ id, taskId: task.id, content: command.content ?? '', ...(command.tags !== undefined && command.tags.length > 0 ? { tags: [...command.tags] } : {}), createdAt: now, updatedAt: now });
+          receipt = { kind: 'note', id };
+        }
+      }
+      if (command.type === 'note.delete') {
+        const hub = value.state.hubs.find(item => item.notes.some(note => note.id === command.noteId));
+        if (hub !== undefined) hub.notes = hub.notes.filter(note => !(note.id === command.noteId && note.taskId === command.taskId));
+        receipt = { kind: 'note', id: command.noteId };
       }
       if (command.type === 'board.create') { const hub = value.state.hubs.find(item => item.id === command.hubId); if (hub) { const board = { id: 'board-' + (commands.length + 1), name: command.name, workflowYaml: workflowYaml(), workflow: structuredClone(firstBoard.workflow), createdAt: now, updatedAt: now }; hub.boards.push(board); receipt = { kind: 'board', id: board.id }; } }
       if (command.type === 'hub.create') { const created: HubState = { id: 'hub-' + (commands.length + 1), name: command.name, revision: 0, projects: [], boards: [], tasks: [], notes: [], createdAt: now, updatedAt: now }; value.state.hubs.push(created); receipt = { kind: 'hub', id: created.id }; }
