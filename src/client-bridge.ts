@@ -7,7 +7,7 @@ import { allTasks } from './client/hub-view.js';
 import { ConversationReadState } from './client/conversation-read-state.js';
 import type { KeyValueStorage } from './client/key-value-storage.js';
 import type { KanbanRemote } from './remote.js';
-import type { ClientApi, Command, HostSnapshot, KanbanSnapshot, Outcome, Problem, QuestionFeedFrame, QuestionRound } from './shared/types.js';
+import type { ClientApi, Command, HostSnapshot, KanbanSnapshot, Outcome, Problem, QuestionFeedFrame, QuestionRound, SharingCommand } from './shared/types.js';
 import { QuestionRoundCache, type QuestionRoundView } from './client/question-round-cache.js';
 
 export interface BridgeStatus { error: Problem | null; connected: boolean }
@@ -69,6 +69,7 @@ export class ClientBridge {
     this.api = {
       snapshot: () => this.unarySnapshot(() => remote.kanban.snapshot()),
       command: (command: Command) => this.unarySnapshot(() => remote.kanban.command(command)),
+      sharing: (command: SharingCommand) => this.unarySnapshot(() => remote.kanban.sharing(command)),
       branches: async (taskId: string) => unwrap(await remote.kanban.branches({ taskId })),
       worktreeDefault: async (taskId: string) => unwrap(await remote.kanban.worktreeDefault({ taskId })),
       detectProject: async (path: string) => unwrap(await remote.kanban.detectProject({ path })),

@@ -33,7 +33,7 @@ class Feed<T> implements RemoteStreamHandle<T, never>, AsyncIterator<T> {
 }
 const task = (id: string, sessionIds: string[], closedSessionIds: string[] = []): HubTask => ({ id, boardId: 'board', projectId: 'p', title: id, description: '', columnId: 'backlog', position: 0, sessionIds, closedSessionIds, effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' });
 function hostSnapshot(sequence = 1, conversations: Record<string, ConversationFacts> = {}): HostSnapshot {
-  return { sequence, conversations, state: { hubs: [{ id: 'hub', name: 'Hub', revision: sequence, projects: [], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], tasks: [task('t1', ['a', 'b']), task('t2', ['c'])], notes: [], createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], settings: { revision: 0 } } };
+  return { sequence, conversations, sharing: {}, state: { hubs: [{ id: 'hub', name: 'Hub', revision: sequence, projects: [], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], tasks: [task('t1', ['a', 'b']), task('t2', ['c'])], notes: [], createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], settings: { revision: 0 } } };
 }
 function closed(closedSessionIds: string[], conversations: Record<string, ConversationFacts> = {}, sequence = 1): HostSnapshot {
   const value = hostSnapshot(sequence, conversations);
@@ -60,6 +60,7 @@ function fixture(options: { storage?: KeyValueStorage } = {}) {
     kanban: {
       snapshot: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: hostSnapshot() } }),
       command: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: hostSnapshot(2) } }),
+      sharing: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: hostSnapshot(2) } }),
       branches: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['main'] } }),
       worktreeDefault: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { branchName: 'task', path: '' } } }),
       detectProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { kind: 'git', projectPath: '/repo/apps/web', gitRootPath: '/repo', defaultBranch: 'main' } } }),

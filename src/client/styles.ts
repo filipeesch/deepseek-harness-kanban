@@ -1,5 +1,6 @@
 import { activityStyles } from './activity-styles.js';
 import { cardStyles } from './card-styles.js';
+import { sharingStyles } from './sharing/styles.js';
 /** Every selector is scoped to plugin-owned classes; native chat controls retain their host styles. */
 export const styles = String.raw`
 .dsh-kanban{position:relative;display:flex;flex-direction:column;min-height:420px;height:100%;max-width:100%;overflow:hidden;font:inherit;color:inherit;color-scheme:inherit;--kb-surface:var(--color-background,var(--background-color,Canvas));--kb-line:color-mix(in srgb,currentColor 20%,transparent);--kb-soft:color-mix(in srgb,currentColor 5%,var(--kb-surface))}
@@ -180,4 +181,4 @@ export const styles = String.raw`
 .dsh-kanban .kb-worktree-preview dd{margin:0;min-width:0;overflow-wrap:anywhere}
 .dsh-kanban .kb-worktree-preview code{white-space:pre-wrap;overflow-wrap:anywhere}
 @media(prefers-reduced-motion:reduce){.dsh-kanban .kb-drawer[data-entering=true],.dsh-kanban .kb-drawer[data-closing=true]{animation:none}}
-` + activityStyles + cardStyles;
+` + activityStyles + cardStyles + sharingStyles;

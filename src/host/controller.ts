@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis';
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
-import type { Command, HostSnapshot, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound } from '../shared/types.js';
+import type { Command, HostSnapshot, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingCommand } from '../shared/types.js';
 import { problem, KanbanError } from '../shared/errors.js';
 import type { KanbanApp } from './app.js';
 export class KanbanController extends TypertRemoteService {
@@ -9,6 +9,7 @@ export class KanbanController extends TypertRemoteService {
  private async attempt<T>(fn:()=>Promise<T>):Promise<Outcome<T>>{try{this.owner();return {ok:true,value:await fn()};}catch(error){return {ok:false,error:problem(error)};}}
  @Remote async snapshot():Promise<Outcome<HostSnapshot>>{return this.attempt(()=>this.app.snapshot(true));}
  @Remote async command(request:Command):Promise<Outcome<HostSnapshot>>{return this.attempt(()=>this.app.command(request));}
+ @Remote async sharing(request:SharingCommand):Promise<Outcome<HostSnapshot>>{return this.attempt(()=>this.app.sharingCommand(request));}
  @Remote async branches(request:{taskId:string}):Promise<Outcome<string[]>>{return this.attempt(()=>this.app.branches(request.taskId));}
  @Remote async worktreeDefault(request:{taskId:string}):Promise<Outcome<{branchName:string;path:string}>>{return this.attempt(()=>this.app.worktreeDefault(request.taskId));}
  @Remote async detectProject(request:{path:string}):Promise<Outcome<ProjectLocation>>{return this.attempt(()=>this.app.detectProject(request.path));}

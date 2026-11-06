@@ -8,7 +8,7 @@ import type { AutoAdvancePlan } from '../domain/auto-advance.js';
 import { admitAutoAdvance } from './auto-advance-admission.js';
 import { readPendingUserWork, withQuestionPending } from './pending-source.js';
 import type { ConversationFactsSource } from './native-facts.js';
-import type { AutoModePauseReason, BoardSettings, Command, HostSnapshot, HubState, HubTask, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound } from '../shared/types.js';
+import type { AutoModePauseReason, BoardSettings, Command, HostSnapshot, HubState, HubTask, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, SharingCommand } from '../shared/types.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionStore } from './question-storage.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
@@ -17,7 +17,6 @@ import { bindingMatches } from './destructive-admission.js';
 import { AttentionCoordinator } from './attention.js';
 import { PendingWorkRunner } from './pending-work.js';
 import { PublishScheduler } from './publish-scheduler.js';
-import { isAbsolutePath } from '../domain/validation.js';
 import { isGitProject, requireGitProject } from '../shared/project.js';
 import { containsPath } from './git.js';
 import { taskTitleSlug, worktreePathForBranch } from '../shared/worktree-name.js';
@@ -30,6 +29,8 @@ import type { LocatedTask } from './hub-repository.js';
 import { RepositoryWorktreeStore, TaskLocator } from './task-locator.js';
 import { QuestionIndex } from '../questions/indexer.js';
 import * as operations from '../domain/hub-operations.js';
+import type { HubSharingService } from './sharing/service.js';
+import type { SharingPollScheduler } from './sharing/scheduler.js';
 
 async function pathExists(value:string):Promise<boolean>{try{await lstat(value);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}}
 function isEvent(value:unknown):value is {type:string;seq:number;data:unknown}{return Boolean(value&&typeof value==='object'&&'type'in value&&typeof value.type==='string'&&'seq'in value&&typeof value.seq==='number'&&Number.isSafeInteger(value.seq)&&'data'in value);}
@@ -40,7 +41,7 @@ function userPromptTime(event:unknown):number|undefined{
  const time=(event as {time?:unknown}).time;
  return typeof time==='number'&&Number.isFinite(time)?time:Date.now();
 }
-export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore; probe?:ProjectProbe }
+export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore; probe?:ProjectProbe; sharing?:HubSharingService; scheduler?:SharingPollScheduler }
 /** Coordinates Hub-scoped commands while the host continues to own sessions and execution. */
 export class KanbanApp {
  readonly questions=new QuestionIndex();
@@ -196,7 +197,17 @@ export class KanbanApp {
   if(refreshAttention){this.attention.invalidate();this.sequence++;}
   const sequence=this.sequence;const state=this.stateCache??=this.hubs.snapshot();
   const conversations=await this.attention.project(this.locator.all().map(located=>({id:located.task.id,sessionIds:located.task.sessionIds})));
-  return {state,conversations,sequence};
+  return {state,conversations,sharing:this.options.sharing?.views()??{},sequence};
+ }
+ /** Publish a new snapshot after publishing state changed outside a board command. */
+ sharingChanged():void{this.markChanged();}
+ /** Execute one publishing action, then reconcile automatic checks and return a fresh snapshot. */
+ async sharingCommand(command:SharingCommand):Promise<HostSnapshot>{
+  invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');
+  const sharing=this.options.sharing;invariant(sharing,'SHARING_UNAVAILABLE','Publishing is unavailable in this host.');
+  await sharing.command(command);
+  this.options.scheduler?.sync();
+  return this.snapshot();
  }
  async branches(taskId:string):Promise<string[]>{const located=this.locatedTask(taskId);return this.git.branches(requireGitProject(located.project),located.task.sessionIds);}
  async worktreeDefault(taskId:string):Promise<{branchName:string;path:string}>{
@@ -232,10 +243,9 @@ export class KanbanApp {
   invariant(latest&&latest.hubId===located.hubId&&latest.task.projectId===task.projectId&&latest.project.projectPath===project.projectPath&&latest.project.gitRootPath===project.gitRootPath&&latest.task.sessionIds.includes(sessionId)&&latest.task.effectiveCwd===expected,'CONTEXT_CHANGED','The task context changed while execution was being validated. Review its directory before retrying.');
  }
  private async settings(input:BoardSettings,expectedRevision?:number):Promise<BoardSettings>{
-  invariant(input&&typeof input==='object'&&!Array.isArray(input),'INVALID_INPUT','Settings input must be a mapping.');
-  invariant(Object.keys(input).every(key=>key==='worktreeBasePath'),'INVALID_INPUT','Unsupported board setting.');
-  const raw=input.worktreeBasePath;if(raw===undefined||(typeof raw==='string'&&!raw.trim()))return this.hubs.saveSettings({},expectedRevision);
-  invariant(typeof raw==='string','INVALID_INPUT','Worktree base path must be text.');const base=raw.trim();invariant(isAbsolutePath(base),'INVALID_INPUT','Worktree base path must be an absolute path.');
+  // One shared shape rule keeps the command path and the domain normalizer from diverging.
+  const normalized=operations.normalizeSettings(input);const base=normalized.worktreeBasePath;
+  if(base===undefined)return this.hubs.saveSettings({},expectedRevision);
   let resolved:string;try{resolved=await realpath(base);}catch{throw new KanbanError('INVALID_WORKTREE_BASE_PATH','Worktree base path must be an existing directory.',{path:base});}
   invariant((await stat(resolved)).isDirectory(),'INVALID_WORKTREE_BASE_PATH','Worktree base path must be an existing directory.');
   return this.hubs.saveSettings({worktreeBasePath:resolved},expectedRevision);
@@ -327,10 +337,26 @@ export class KanbanApp {
   switch(command.type){
    case 'hub.create':{const hub=await this.hubs.createHub(command.name);commandReceipt={kind:'hub',id:hub.id};break;}
    case 'hub.rename':{await this.hubs.renameHub(command.hubId,command.name,command.expectedRevision);break;}
-   case 'hub.delete':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the Hub and its task-free projects.');await this.hubs.deleteHub(command.hubId);break;
+   case 'hub.delete':{
+    invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the Hub and its task-free projects.');
+    await this.hubs.deleteHub(command.hubId);
+    try{await this.options.sharing?.removeHub(command.hubId);}catch(error){this.options.report?.(error);}
+    this.options.scheduler?.sync();
+    break;
+   }
    case 'board.create':{const board=await this.hubStore(command.hubId).addBoard(command.name);commandReceipt={kind:'board',id:board.id};break;}
    case 'board.rename':{await this.hubStore(command.hubId).renameBoard(command.boardId,command.name,command.expectedRevision);break;}
-   case 'board.delete':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the board.');await this.hubStore(command.hubId).deleteBoard(command.boardId,command.expectedRevision);break;
+   case 'board.delete':{
+    invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the board.');
+    const located=this.hubs.findBoard(command.boardId);invariant(located,'BOARD_NOT_FOUND','Board does not exist.');
+    const bound=this.options.sharing?.isBound(located.hubId,command.boardId)===true;
+    if(bound)invariant(command.sharing==='local'||command.sharing==='team','SHARING_SCOPE_REQUIRED','Choose whether this board removal applies only here or to the team.');
+    await this.hubStore(command.hubId).deleteBoard(command.boardId,command.expectedRevision);
+    // An orphan board has no binding; this still forgets its orphan anchor so a later
+    // team board with the same key cannot resurrect a comparison for a missing board.
+    if(this.options.sharing)await this.options.sharing.removeBoard(located.hubId,command.boardId,command.sharing==='team'?'team':'local',located.board.name);
+    break;
+   }
    case 'board.workflow.save':await this.hubStore(command.hubId).saveBoardWorkflow(command.boardId,command.yaml,command.expectedRevision);break;
    case 'project.save':{const store=this.hubStore(command.hubId);const value=await store.saveProject(await this.project(command.project),command.expectedRevision);commandReceipt={kind:'project',id:value.id};break;}
    case 'project.delete':{const store=this.hubStore(command.hubId);invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the project registration.');await store.deleteProject(command.projectId,command.expectedRevision);break;}

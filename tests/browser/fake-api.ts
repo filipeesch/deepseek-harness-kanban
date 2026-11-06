@@ -1,4 +1,4 @@
-import type { BoardState, ClientApi, Command, HubState, HubTask, KanbanSnapshot, KanbanState } from '../../src/shared/types.js';
+import type { BoardState, ClientApi, Command, HubSharingView, HubState, HubTask, KanbanSnapshot, KanbanState, SharingCommand } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import { taskTitleSlug, worktreePathForBranch } from '../../src/shared/worktree-name.js';
@@ -8,10 +8,11 @@ export interface HarnessApi {
   api: ClientApi;
   snapshot(): TestSnapshot;
   commands(): readonly Command[];
+  sharingCommands(): readonly SharingCommand[];
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted' }
+export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -74,11 +75,12 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     tasks, notes: [], createdAt: now, updatedAt: now,
   };
   const settings = { revision: 1, worktreeBasePath: '/worktrees' };
-  const raw: KanbanSnapshot = { sequence: 1, attention, conversationAttention, state: { hubs: [hub], settings } };
+  const raw: KanbanSnapshot = { sequence: 1, attention, conversationAttention, sharing: options.sharing ?? {}, state: { hubs: [hub], settings } };
   let value = withLegacy(raw);
   if ((options.hubs ?? 1) > 1) value.state.hubs.push({ id: 'hub-2', name: 'Second Hub', revision: 0, projects: [], boards: [], tasks: [], notes: [], createdAt: now, updatedAt: now });
   const listeners = new Set<(snapshot: TestSnapshot) => void>();
   const commands: Command[] = [];
+  const sharingCommands: SharingCommand[] = [];
   if (options.persist) { try { const stored = sessionStorage.getItem('dsh-kanban.harness'); if (stored) value = withLegacy(JSON.parse(stored) as KanbanSnapshot); } catch { /* storage is optional */ } }
   const publish = () => { value = withLegacy(clone(value)); value.sequence++; if (options.persist) { try { sessionStorage.setItem('dsh-kanban.harness', JSON.stringify(value)); } catch { /* storage is optional */ } } const copy = withLegacy(clone(value)); for (const listener of listeners) listener(copy); return withLegacy(clone(value)); };
   const api: ClientApi = {
@@ -129,9 +131,18 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     detectProject: async (pathValue: string) => options.detect === 'git'
       ? { kind: 'git' as const, projectPath: pathValue, gitRootPath: '/repo', defaultBranch: 'main' }
       : { kind: 'folder' as const, projectPath: pathValue },
+    sharing: async (command: SharingCommand) => {
+      sharingCommands.push(structuredClone(command));
+      if (options.shareFailure) throw { code: 'SHARING_FAILED', message: 'The publishing operation could not be completed.' };
+      if (options.shareRefusal) throw { code: 'SHARING_REFUSED', message: 'The team configuration cannot be applied until these boards are resolved.', details: { blockers: [{ code: 'SHARING_ORPHAN_COLUMNS', message: 'Board "Harness board" would leave 2 tasks in column "plan", which the team workflow does not define.' }] } };
+      const current = value.sharing[command.hubId];
+      if (current) value.sharing[command.hubId] = { ...current, drafts: Math.max(0, current.drafts - 1), ...(command.type === 'sharing.check' ? { lastCheckedAt: '2026-10-21T00:05:00Z' } : {}) };
+      if (command.type === 'sharing.disconnect') delete value.sharing[command.hubId];
+      return publish();
+    },
     subscribe: listener => { const wrapped = (snapshot: TestSnapshot) => listener(snapshot); listeners.add(wrapped); return () => listeners.delete(wrapped); },
   };
-  return { api, snapshot: () => withLegacy(clone(value)), commands: () => structuredClone(commands) };
+  return { api, snapshot: () => withLegacy(clone(value)), commands: () => structuredClone(commands), sharingCommands: () => structuredClone(sharingCommands) };
 }
 
 export function workflowYaml(restricted = false, applyInstruction = false): string {
@@ -148,7 +159,7 @@ function blockedBindingTask(): HubTask {
   };
 }
 
-function clone(value: KanbanSnapshot): KanbanSnapshot { const normalized = withLegacy(value); return structuredClone({ sequence: normalized.sequence, attention: normalized.attention, conversationAttention: normalized.conversationAttention, state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } } }); }
+function clone(value: KanbanSnapshot): KanbanSnapshot { const normalized = withLegacy(value); return structuredClone({ sequence: normalized.sequence, attention: normalized.attention, conversationAttention: normalized.conversationAttention, sharing: normalized.sharing ?? {}, state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } } }); }
 function withLegacy(snapshot: KanbanSnapshot): TestSnapshot {
   const state = { hubs: snapshot.state.hubs } as KanbanState & Omit<BoardState, 'settings'> & { settings: any };
   let settingsValue = structuredClone(snapshot.state.settings);
