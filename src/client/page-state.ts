@@ -3,7 +3,7 @@ import { openSessionIds } from '../shared/conversations.js';
 
 export type DrawerSection = 'Conversations' | 'Info' | 'Git' | 'Notes';
 export interface InfoDraft { title: string; description: string }
-export interface TaskPageState { section: DrawerSection; conversationId: string | null; conversationSelectionRequired?: boolean; infoDraft?: InfoDraft }
+export interface TaskPageState { section: DrawerSection; conversationId: string | null; conversationSelectionRequired?: boolean; infoDraft?: InfoDraft; noteTagFilter?: string }
 /** Plugin-lifetime UI bookmarks only: never store native views, transports, or session references here. */
 export interface BoardPageState {
   search: string;

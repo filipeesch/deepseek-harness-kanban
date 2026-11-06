@@ -237,8 +237,8 @@ describe('scoped Kanban page', () => {
   });
 
   it('shares notes across tabs and strips unsafe raw HTML and javascript links', async () => {
-    const { user, command } = mount(); await openAlpha(user); await user.click(screen.getByRole('tab', { name: 'Notes' }));
-    await user.type(screen.getByRole('textbox', { name: 'New note Markdown' }), '**Shared** <img src=x onerror=alert(1)> [bad](javascript:alert)'); await user.click(screen.getByRole('button', { name: 'Save note' })); await screen.findByText('Shared');
+    const { user, command } = mount(); await openAlpha(user); await user.click(screen.getByRole('tab', { name: 'Notes' })); await user.click(screen.getByRole('button', { name: 'New note' }));
+    await user.type(screen.getByRole('textbox', { name: 'Markdown' }), '**Shared** <img src=x onerror=alert(1)> [bad](javascript:alert)'); await user.click(screen.getByRole('button', { name: 'Save note' })); await screen.findByText('Shared');
     expect(document.querySelector('img[onerror]')).toBeNull(); expect(document.querySelector('a[href^="javascript:"]')).toBeNull(); expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'note.save', taskId: 't1' }));
     await user.click(screen.getByRole('tab', { name: 'Conversations' })); await user.click(screen.getByRole('tab', { name: 'Agent 2' })); await user.click(screen.getByRole('tab', { name: 'Notes' })); expect(screen.getByText('Shared')).toBeTruthy();
   });

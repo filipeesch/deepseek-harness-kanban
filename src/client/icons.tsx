@@ -9,6 +9,9 @@ export function SettingsIcon({ size = 16, className }: IconProps) {
 export function TrashIcon({ size = 16, className }: IconProps) {
   return <svg {...base(size)} className={className}><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" /></svg>;
 }
+export function PencilIcon({ size = 16, className }: IconProps) {
+  return <svg {...base(size)} className={className}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" /></svg>;
+}
 export function CloseIcon({ size = 16, className }: IconProps) {
   return <svg {...base(size)} className={className}><path d="M18 6 6 18M6 6l12 12" /></svg>;
 }
