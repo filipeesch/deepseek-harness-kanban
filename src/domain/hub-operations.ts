@@ -5,8 +5,9 @@ import { createBoard } from './hub-schema.js';
 import { parseWorkflow } from './workflow.js';
 import { entryInstruction, nextEnteredAt } from './stage-entry.js';
 import { assertProjectConversion, buildProject } from './project-registration.js';
+import { applyNoteTags, validateNoteWrite, type NoteInput } from './note.js';
 
-export interface NoteInput { id?: string; content: string; tags?: string[] }
+export type { NoteInput } from './note.js';
 export interface TaskTextPatch { title?: string; description?: string }
 export interface OperationDeps { id: () => string; now: () => string }
 
@@ -263,25 +264,33 @@ function changeSessionVisibility(hub: HubState, taskId: string, sessionId: strin
 }
 
 export function saveNote(hub: HubState, taskId: string, input: NoteInput, deps: OperationDeps): Note {
-  const value = clone(input);
-  invariant(value && typeof value === 'object' && !Array.isArray(value), 'INVALID_INPUT', 'Note input must be a mapping.');
-  requiredText(value.content, 'Note content');
-  if (value.id !== undefined) assertId(value.id, 'Note ID');
-  if (value.tags !== undefined) invariant(Array.isArray(value.tags) && value.tags.every(tag => typeof tag === 'string' && tag.trim()), 'INVALID_INPUT', 'Note tags must be nonempty text values.');
+  const write = validateNoteWrite(clone(input));
   requireTask(hub, taskId);
   const at = timestamp(deps);
   let note: Note;
-  if (value.id !== undefined) {
-    const current = hub.notes.find(item => item.id === value.id && item.taskId === taskId);
+  if (write.kind === 'update') {
+    const current = hub.notes.find(item => item.id === write.id && item.taskId === taskId);
     invariant(current, 'NOTE_NOT_FOUND', 'Note does not exist for the target task.');
-    note = { ...current, content: value.content, updatedAt: at };
+    note = { ...current, ...(write.content !== undefined ? { content: write.content } : {}), updatedAt: at };
+    if (write.tags !== undefined) applyNoteTags(note, write.tags);
     hub.notes[hub.notes.indexOf(current)] = note;
   } else {
-    note = { id: nextId(hub.notes, deps.id), taskId, content: value.content, createdAt: at, updatedAt: at };
+    note = { id: nextId(hub.notes, deps.id), taskId, content: write.content, createdAt: at, updatedAt: at };
+    if (write.tags !== undefined) applyNoteTags(note, write.tags);
     hub.notes.push(note);
   }
-  if (value.tags !== undefined) note.tags = [...new Set(value.tags.map(tag => tag.trim()))];
   hub.updatedAt = at;
+  return note;
+}
+
+export function deleteNote(hub: HubState, taskId: string, noteId: string, deps: OperationDeps): Note {
+  assertId(noteId, 'Note ID');
+  requireTask(hub, taskId);
+  const index = hub.notes.findIndex(item => item.id === noteId && item.taskId === taskId);
+  invariant(index >= 0, 'NOTE_NOT_FOUND', 'Note does not exist for the target task.');
+  const note = hub.notes[index]!;
+  hub.notes.splice(index, 1);
+  hub.updatedAt = timestamp(deps);
   return note;
 }
 

@@ -168,6 +168,29 @@ describe('host command orchestration',()=>{
  it('leaves unassociated ordinary sessions outside the task-context guard',async()=>{
   const f=await setup();Object.assign(f.sessions,{async validateDirectory(){throw new Error('Should not validate an unrelated native session.');}});await expect(f.app.assertExecutionContext('ordinary-chat')).resolves.toBeUndefined();
  });
+ it('saves note tags without rewriting content and deletes one note through commands',async()=>{
+  const f=await setup();const t=await task(f);
+  const created=await f.app.command({type:'note.save',taskId:t.id,content:'Shared',tags:[' Design ']});
+  expect(created.commandReceipt).toMatchObject({kind:'note'});
+  const noteId=created.commandReceipt!.id;
+  expect(f.store.snapshot().notes.find(note=>note.id===noteId)?.tags).toEqual(['design']);
+  const tagged=await f.app.command({type:'note.save',taskId:t.id,noteId,tags:['review','Design']});
+  expect(tagged.commandReceipt?.id).toBe(noteId);
+  expect(f.store.snapshot().notes.find(note=>note.id===noteId)).toMatchObject({content:'Shared',tags:['review','design']});
+  await expect(f.app.command({type:'note.save',taskId:t.id,noteId})).rejects.toMatchObject({code:'INVALID_INPUT'});
+  const removed=await f.app.command({type:'note.delete',taskId:t.id,noteId});
+  expect(removed.commandReceipt).toMatchObject({kind:'note',id:noteId});
+  expect(f.store.snapshot().notes).toEqual([]);
+  await expect(f.app.command({type:'note.delete',taskId:t.id,noteId})).rejects.toMatchObject({code:'NOTE_NOT_FOUND'});
+ });
+ it('accepts the note tag and delete wire commands',()=>{
+  const save={type:'note.save' as const,taskId:'task-1',noteId:'note-1',tags:['design']};
+  expect(CommandSchema.parse(save)).toEqual(save);
+  const remove={type:'note.delete' as const,taskId:'task-1',noteId:'note-1'};
+  expect(CommandSchema.parse(remove)).toEqual(remove);
+  expect(()=>CommandSchema.parse({type:'note.delete',taskId:'task-1'})).toThrow();
+  expect(()=>CommandSchema.parse({...save,extra:true})).toThrow();
+ });
  it('accepts the new move and run wire commands and rejects legacy fields',()=>{
   const move={type:'task.move' as const,taskId:'task-1',columnId:'plan'};
   expect(CommandSchema.parse(move)).toEqual(move);

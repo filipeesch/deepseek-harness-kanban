@@ -78,4 +78,24 @@ describe('Hub operations', () => {
     expect(edited.title).toBe('After'); expect(note.taskId).toBe(task.id);
     expect(() => operations.editTask(hub, 'missing', { title: 'No' }, deps)).toThrowError(/does not exist/);
   });
+
+  it('normalizes, replaces, preserves, and clears note tags without rewriting content', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Notes', description: '' }, deps);
+    const other = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Other', description: '' }, deps);
+    const note = operations.saveNote(hub, task.id, { content: 'Shared', tags: [' Design ', 'DESIGN', 'todo'] }, deps);
+    expect(note.tags).toEqual(['design', 'todo']);
+    const kept = operations.saveNote(hub, task.id, { id: note.id, content: 'Shared v2' }, deps);
+    expect(kept).toMatchObject({ content: 'Shared v2', tags: ['design', 'todo'] });
+    const tagsOnly = operations.saveNote(hub, task.id, { id: note.id, tags: ['review', 'Design'] }, deps);
+    expect(tagsOnly).toMatchObject({ content: 'Shared v2', tags: ['review', 'design'] });
+    const cleared = operations.saveNote(hub, task.id, { id: note.id, tags: [] }, deps);
+    expect(cleared.content).toBe('Shared v2'); expect(cleared.tags).toBeUndefined();
+    expect(() => operations.saveNote(hub, task.id, { id: note.id }, deps)).toThrowError(/content or tags/);
+    expect(() => operations.saveNote(hub, task.id, { content: 'Invalid', tags: [4 as unknown as string] }, deps)).toThrowError(/text values/);
+    const foreign = operations.saveNote(hub, other.id, { content: 'Foreign' }, deps);
+    expect(operations.deleteNote(hub, task.id, note.id, deps).id).toBe(note.id);
+    expect(hub.notes.map(value => value.id)).toEqual([foreign.id]);
+    expect(() => operations.deleteNote(hub, task.id, 'missing', deps)).toThrowError(/does not exist/);
+  });
 });

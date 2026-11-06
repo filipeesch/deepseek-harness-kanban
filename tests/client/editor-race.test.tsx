@@ -4,7 +4,8 @@ import {afterEach, describe, expect, it, vi} from 'vitest';
 import {act, cleanup, render, screen, waitFor} from '@testing-library/react';
 import {userEvent} from '@testing-library/user-event';
 import {Configuration} from '../../src/client/settings/configuration.js';
-import {InfoPanel, NotesPanel} from '../../src/client/forms.js';
+import {InfoPanel} from '../../src/client/forms.js';
+import {NotesPanel} from '../../src/client/notes/notes-panel.js';
 import type {KanbanSnapshot} from '../../src/shared/types.js';
 import {fixture} from './helpers.js';
 
@@ -41,23 +42,36 @@ describe('editor save draft lifetime',()=>{
   await act(async()=>{if(outcome==='failure')p.reject({code:'OLD_A_FAILURE',message:'Old editor failure'});else p.resolve(value);});
   expect((screen.getByRole('textbox',{name:'Title'}) as HTMLInputElement).value).toBe('B DRAFT');expect(screen.queryByText('OLD_A_FAILURE')).toBeNull();
  });
- it('locks note selection and content so an old save cannot erase another note draft',async()=>{
+ it('locks the note overlay controls until a save completes',async()=>{
   const value=fixture();value.state.notes=['a','b'].map(id=>({id,taskId:'t1',content:'note '+id,createdAt:'now',updatedAt:'now'}));
   const p=pending(),user=userEvent.setup();render(<NotesPanel task={value.state.tasks[0]!} state={value.state} run={p.run}/>);
-  await user.click(screen.getByRole('button',{name:'Edit note a'}));await user.click(screen.getByRole('button',{name:'Save note'}));
-  for(const name of ['New note','Edit note a','Edit note b'])expect((screen.getByRole('button',{name}) as HTMLButtonElement).disabled).toBe(true);
-  const editor=screen.getByRole('textbox',{name:'Edit note Markdown'}) as HTMLTextAreaElement;expect(editor.disabled).toBe(true);
-  await user.click(screen.getByRole('button',{name:'Edit note b'}));await user.type(editor,'UNSAVED B DRAFT');expect(editor.value).toBe('note a');
-  await act(async()=>p.resolve(value));await screen.findByText('Note saved for all task conversations.');
-  await user.click(screen.getByRole('button',{name:'Edit note b'}));await user.type(screen.getByRole('textbox',{name:'Edit note Markdown'}),' B DRAFT');
-  expect((screen.getByRole('textbox',{name:'Edit note Markdown'}) as HTMLTextAreaElement).value).toBe('note b B DRAFT');expect(p.run).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole('button',{name:'Edit note a'}));
+  const editor=screen.getByRole('textbox',{name:'Markdown'}) as HTMLTextAreaElement;expect(editor.value).toBe('note a');
+  const save=screen.getByRole('button',{name:'Save note'}) as HTMLButtonElement;
+  const cancel=screen.getByRole('button',{name:'Cancel'}) as HTMLButtonElement;
+  const remove=screen.getByRole('button',{name:'Delete note'}) as HTMLButtonElement;
+  await user.type(editor,' draft');await user.click(save);
+  expect(editor.disabled).toBe(true);expect(save.disabled).toBe(true);expect(cancel.disabled).toBe(true);expect(remove.disabled).toBe(true);
+  await act(async()=>p.resolve(value));await waitFor(()=>expect(screen.queryByRole('dialog')).toBeNull());
+  await user.click(screen.getByRole('button',{name:'Edit note b'}));
+  expect((screen.getByRole('textbox',{name:'Markdown'}) as HTMLTextAreaElement).value).toBe('note b');
+ });
+ it('discards an unsaved draft when the overlay closes',async()=>{
+  const value=fixture();value.state.notes=[{id:'a',taskId:'t1',content:'note a',createdAt:'now',updatedAt:'now'}];const p=pending(),user=userEvent.setup();
+  render(<NotesPanel task={value.state.tasks[0]!} state={value.state} run={p.run}/>);
+  await user.click(screen.getByRole('button',{name:'Edit note a'}));await user.type(screen.getByRole('textbox',{name:'Markdown'}),' draft');
+  await user.click(screen.getByRole('button',{name:'Cancel'}));expect(screen.queryByRole('dialog')).toBeNull();
+  await user.click(screen.getByRole('button',{name:'Edit note a'}));
+  expect((screen.getByRole('textbox',{name:'Markdown'}) as HTMLTextAreaElement).value).toBe('note a');
  });
  it('does not carry a selected note or a late success into another task',async()=>{
   const value=fixture();value.state.notes=[{id:'a',taskId:'t1',content:'note a',createdAt:'now',updatedAt:'now'}];const p=pending(),user=userEvent.setup();
-  const view=render(<NotesPanel task={value.state.tasks[0]!} state={value.state} run={p.run}/>);await user.click(screen.getByRole('button',{name:'Edit note a'}));await user.click(screen.getByRole('button',{name:'Save note'}));
+  const view=render(<NotesPanel task={value.state.tasks[0]!} state={value.state} run={p.run}/>);await user.click(screen.getByRole('button',{name:'Edit note a'}));await user.type(screen.getByRole('textbox',{name:'Markdown'}),' edited');await user.click(screen.getByRole('button',{name:'Save note'}));
   view.rerender(<NotesPanel task={value.state.tasks[1]!} state={value.state} run={p.run}/>);
-  const editor=screen.getByRole('textbox',{name:'New note Markdown'}) as HTMLTextAreaElement;await user.type(editor,'B NEW NOTE');
-  await act(async()=>p.resolve(value));expect(editor.value).toBe('B NEW NOTE');expect(screen.queryByText('Note saved for all task conversations.')).toBeNull();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await user.click(screen.getByRole('button',{name:'New note'}));
+  const editor=screen.getByRole('textbox',{name:'Markdown'}) as HTMLTextAreaElement;await user.type(editor,'B NEW NOTE');
+  await act(async()=>p.resolve(value));expect(editor.value).toBe('B NEW NOTE');expect(screen.getByRole('dialog')).not.toBeNull();
  });
  it('locks workflow text while its approved version is being saved',async()=>{
   const value=fixture(),p=pending(),user=userEvent.setup();render(<Configuration state={value.state} hub={value.state.hubs[0]!} board={value.state.hubs[0]!.boards[0]!} hubCount={1} settings={value.state.settings} settingsRevision={value.state.settings.revision} run={p.run} onClose={()=>{}} initial="Board"/>);
@@ -65,9 +79,9 @@ describe('editor save draft lifetime',()=>{
   expect(editor.disabled).toBe(true);await user.type(editor,'NEW UNSAVED YAML');expect(editor.value).toBe(value.state.workflowYaml);
   await act(async()=>p.resolve(value));await waitFor(()=>expect(editor.disabled).toBe(false));
  });
- it('unlocks a failed note save without changing its selected note or Markdown draft',async()=>{
+ it('unlocks a failed note save without changing its Markdown draft',async()=>{
   const value=fixture();value.state.notes=[{id:'a',taskId:'t1',content:'note a',createdAt:'now',updatedAt:'now'}];const p=pending(),user=userEvent.setup();render(<NotesPanel task={value.state.tasks[0]!} state={value.state} run={p.run}/>);
-  await user.click(screen.getByRole('button',{name:'Edit note a'}));const editor=screen.getByRole('textbox',{name:'Edit note Markdown'}) as HTMLTextAreaElement;await user.type(editor,' draft');await user.click(screen.getByRole('button',{name:'Save note'}));
-  await act(async()=>p.reject({code:'SAVE_FAILED',message:'Retry this draft.'}));await screen.findByText('SAVE_FAILED');expect(editor.value).toBe('note a draft');expect(editor.disabled).toBe(false);expect((screen.getByRole('button',{name:'New note'}) as HTMLButtonElement).disabled).toBe(false);
+  await user.click(screen.getByRole('button',{name:'Edit note a'}));const editor=screen.getByRole('textbox',{name:'Markdown'}) as HTMLTextAreaElement;await user.type(editor,' draft');await user.click(screen.getByRole('button',{name:'Save note'}));
+  await act(async()=>p.reject({code:'SAVE_FAILED',message:'Retry this draft.'}));await screen.findByText('SAVE_FAILED');expect(editor.value).toBe('note a draft');expect(editor.disabled).toBe(false);expect((screen.getByRole('button',{name:'Save note'}) as HTMLButtonElement).disabled).toBe(false);
  });
 });
