@@ -156,9 +156,10 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
       sharingCommands.push(structuredClone(command));
       if (options.shareFailure) throw { code: 'SHARING_FAILED', message: 'The publishing operation could not be completed.' };
       if (options.shareRefusal) throw { code: 'SHARING_REFUSED', message: 'The team configuration cannot be applied until these boards are resolved.', details: { blockers: [{ code: 'SHARING_ORPHAN_COLUMNS', message: 'Board "Harness board" would leave 2 tasks in column "plan", which the team workflow does not define.' }] } };
-      const current = value.sharing[command.hubId];
-      if (current) value.sharing[command.hubId] = { ...current, drafts: Math.max(0, current.drafts - 1), ...(command.type === 'sharing.check' ? { lastCheckedAt: '2026-10-21T00:05:00Z' } : {}) };
-      if (command.type === 'sharing.disconnect') delete value.sharing[command.hubId];
+      const hubId = 'hubId' in command ? command.hubId : undefined;
+      const current = hubId === undefined ? undefined : value.sharing[hubId];
+      if (current && hubId !== undefined) value.sharing[hubId] = { ...current, drafts: Math.max(0, current.drafts - 1), ...(command.type === 'sharing.check' ? { lastCheckedAt: '2026-10-21T00:05:00Z' } : {}) };
+      if (command.type === 'sharing.disconnect' && hubId !== undefined) delete value.sharing[hubId];
       return publish();
     },
     subscribe: listener => { const wrapped = (snapshot: TestSnapshot) => listener(snapshot); listeners.add(wrapped); return () => listeners.delete(wrapped); },

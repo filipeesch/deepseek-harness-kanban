@@ -19,6 +19,7 @@ A Hub SHALL group a project registry and zero or more boards. A Hub SHALL have a
 - **THEN** its native DSH workspace behavior is the same as before Hubs existed
 - **AND** the Hub does not become a native workspace boundary
 
+
 ### Requirement: Hub-owned projects and boards
 
 Each project SHALL belong to exactly one Hub. Each board SHALL belong to exactly one Hub. Every task SHALL belong to exactly one board and one project in that same Hub. A project, board, or task SHALL NOT be shared with or moved to another Hub.
@@ -38,6 +39,7 @@ Each project SHALL belong to exactly one Hub. Each board SHALL belong to exactly
 #### Scenario: Do not move a task between Hubs
 - **WHEN** the user requests moving a task to a board in another Hub
 - **THEN** the operation is not offered and the task remains in its original board and Hub
+
 
 ### Requirement: Hub creation and naming
 
@@ -60,9 +62,10 @@ The plugin SHALL create a Hub from a required nonempty name. Hub names SHALL be 
 - **THEN** the Hub tabs show the new name
 - **AND** the Hub's boards, projects, tasks, conversations, and worktrees are unchanged
 
+
 ### Requirement: Hub deletion
 
-The plugin SHALL allow deleting a Hub only when none of its boards contains a task. The last remaining Hub SHALL NOT be deleted. Deleting an eligible Hub SHALL remove the Hub, its empty boards, and its task-free project registrations, and SHALL retain project directories, worktrees, Git branches, native conversations, and native workspaces. The confirmation SHALL identify the Hub, its board count, and its project count before the user confirms. When the Hub is published, deletion SHALL also remove its publishing binding and managed clone and SHALL stop its automatic checks, and SHALL leave the published document untouched; the confirmation SHALL state that the team's published configuration is not removed.
+The plugin SHALL allow deleting a Hub only when none of its boards contains a task. The last remaining Hub SHALL NOT be deleted. Deleting an eligible Hub SHALL remove the Hub, its empty boards, and its task-free project registrations, and SHALL retain project directories, worktrees, Git branches, native conversations, and native workspaces. The confirmation SHALL identify the Hub, its board count, and its project count before the user confirms. When the Hub is published, deletion SHALL also remove its storage binding and any plugin-managed local workspace, stop its automatic checks, and leave the team's shared document untouched; the confirmation SHALL state that the team's shared configuration is not removed. Deleting a Google Drive-published Hub SHALL NOT delete the Google account authorization that other Hubs may use.
 
 #### Scenario: Delete an empty Hub
 
@@ -88,10 +91,19 @@ The plugin SHALL allow deleting a Hub only when none of its boards contains a ta
 #### Scenario: Delete a published Hub
 
 - **WHEN** the user deletes a published Hub
-- **THEN** the Hub, its publishing binding, and its managed clone are removed locally
+- **THEN** the Hub, its storage binding, and any plugin-managed local workspace are removed locally
 - **AND** its automatic checks stop
-- **AND** the published document and the team's configuration are unchanged
-- **AND** the confirmation states that the team's published configuration is not removed
+- **AND** the team's shared document and configuration are unchanged
+- **AND** the confirmation states that the team's shared configuration is not removed
+
+#### Scenario: Delete a Google Drive-published Hub
+
+- **WHEN** the user deletes a Hub published to Google Drive
+- **THEN** the Hub and its Drive binding are removed locally
+- **AND** its automatic checks stop
+- **AND** the team document is unchanged
+- **AND** the Google account authorization remains available to other Hubs
+
 
 ### Requirement: Hub selection and persistence
 
@@ -115,6 +127,7 @@ The Kanban page SHALL present Hubs as tabs above the active board. The active Hu
 - **WHEN** the user switches from one Hub to another while a task is running
 - **THEN** the task continues running
 - **AND** its conversations and worktree are unchanged
+
 
 ### Requirement: Hub attention aggregation
 
@@ -173,6 +186,7 @@ The Hub tab SHALL present aggregated attention for all tasks in all of its board
 #### Scenario: Show attention for an inactive Hub
 - **WHEN** a task in a Hub that is not active gains unread activity, awaits a reply, or starts running
 - **THEN** that Hub's tab presents the corresponding indicator without requiring the user to select it
+
 
 ### Requirement: Hub bootstrap and migration
 

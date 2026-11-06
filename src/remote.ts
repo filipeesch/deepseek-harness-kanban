@@ -3,7 +3,7 @@ import { createTypertRemoteInfo } from '@deepseek-ai/dsh-typert-protocol/remote-
 import type { RemoteResult, RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol';
 import type { TypertContribution } from '@deepseek-ai/dsh-typert-registry';
 import { KanbanStateSchema } from './domain/hub-schema.js';
-import type { Command, HostSnapshot, HubSharingView, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingCommand } from './shared/types.js';
+import type { Command, HostSnapshot, HubSharingView, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingAuthView, SharingCommand } from './shared/types.js';
 export const PACKAGE_NAME = 'dsh-kanban';
 const id=z.string().min(1).max(200);
 const revision=z.number().int().nonnegative().optional();
@@ -53,19 +53,29 @@ const ConversationFactsSchema=z.object({running:z.boolean(),background:z.array(B
 const ProblemSchema=z.object({code:z.string(),message:z.string(),details:z.record(z.string(),z.unknown()).optional()}).strict();
 const sharingBoardState=z.enum(['in-sync','draft','updates-available','needs-review','orphan']);
 const sharingHubStatus=z.enum(['not-published','preview','published','updates-available','needs-review','unavailable']);
+const sharingStorage=z.enum(['git','google-drive']);
+const sharingSyncMode=z.enum(['explicit','continuous']);
+const sharingAuthStatus=z.enum(['not-connected','authorizing','connected','error','reconnect-required']);
 const sharingBlocker=z.object({code:z.string(),message:z.string(),boardId:id.optional(),boardName:z.string().optional(),columnId:id.optional(),tasks:z.number().int().nonnegative().optional()}).strict();
 const sharingBoardView=z.object({boardId:id,key:id.optional(),name:z.string().min(1),state:sharingBoardState,bound:z.boolean(),pending:z.boolean(),detail:z.object({local:z.string(),team:z.string(),localName:z.string(),teamName:z.string()}).strict().optional()}).strict();
+export const SharingAuthViewSchema:z.ZodType<SharingAuthView>=z.object({
+ status:sharingAuthStatus,authorizationUrl:z.string().optional(),email:z.string().optional(),error:ProblemSchema.optional(),
+ drives:z.array(z.object({id:id,name:z.string().min(1)}).strict()).optional(),
+ folders:z.array(z.object({id:id,name:z.string().min(1)}).strict()).optional(),
+}).strict();
 export const HubSharingViewSchema:z.ZodType<HubSharingView>=z.object({
- status:sharingHubStatus,provider:z.literal('git').optional(),repository:z.string().optional(),intervalMinutes:z.number().int().nonnegative(),
- lastCheckedAt:z.string().optional(),error:ProblemSchema.optional(),drafts:z.number().int().nonnegative(),updates:z.number().int().nonnegative(),conflicts:z.number().int().nonnegative(),orderChanged:z.boolean(),
+ status:sharingHubStatus,provider:sharingStorage,providerLabel:z.string().min(1),address:z.string(),repository:z.string().optional(),syncMode:sharingSyncMode,
+ authorization:sharingAuthStatus.optional(),
+ intervalMinutes:z.number().int().nonnegative(),lastCheckedAt:z.string().optional(),lastSyncedAt:z.string().optional(),error:ProblemSchema.optional(),
+ drafts:z.number().int().nonnegative(),pending:z.number().int().nonnegative(),updates:z.number().int().nonnegative(),conflicts:z.number().int().nonnegative(),orderChanged:z.boolean(),syncing:z.boolean(),
  boards:z.array(sharingBoardView),incoming:z.array(z.object({key:id,name:z.string().min(1)}).strict()),
  removed:z.array(z.object({boardId:id,key:id,name:z.string().min(1)}).strict()),blockers:z.array(sharingBlocker),
  preview:z.object({publishedBoards:z.number().int().nonnegative(),localBoards:z.number().int().nonnegative()}).strict().optional(),
  removing:z.array(z.object({boardId:id,name:z.string().min(1)}).strict()),
 }).strict();
-export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note']),id}).strict().optional(),state:KanbanStateSchema,conversations:z.record(z.string(),ConversationFactsSchema),sharing:z.record(z.string(),HubSharingViewSchema),sequence:z.number().int().nonnegative()}).strict();
+export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note']),id}).strict().optional(),state:KanbanStateSchema,conversations:z.record(z.string(),ConversationFactsSchema),sharing:z.record(z.string(),HubSharingViewSchema),sharingAuth:SharingAuthViewSchema.optional(),sequence:z.number().int().nonnegative()}).strict();
 export const SharingCommandSchema:z.ZodType<SharingCommand>=z.discriminatedUnion('type',[
- z.object({type:z.literal('sharing.connect'),hubId:id,repository:z.string().min(1).max(2048),intervalMinutes:z.number().int().min(0).max(1440).optional()}).strict(),
+ z.object({type:z.literal('sharing.connect'),hubId:id,provider:sharingStorage.optional(),settings:z.record(z.string(),z.string()).optional(),repository:z.string().min(1).max(2048).optional(),intervalMinutes:z.number().int().min(0).max(1440).optional()}).strict(),
  z.object({type:z.literal('sharing.receive'),hubId:id}).strict(),
  z.object({type:z.literal('sharing.publishInitial'),hubId:id,confirmed:z.boolean()}).strict(),
  z.object({type:z.literal('sharing.check'),hubId:id}).strict(),
@@ -76,6 +86,12 @@ export const SharingCommandSchema:z.ZodType<SharingCommand>=z.discriminatedUnion
  z.object({type:z.literal('sharing.disconnect'),hubId:id}).strict(),
  z.object({type:z.literal('sharing.restore'),hubId:id,boardId:id}).strict(),
  z.object({type:z.literal('sharing.publishOrphan'),hubId:id,boardId:id}).strict(),
+ z.object({type:z.literal('sharing.auth.start')}).strict(),
+ z.object({type:z.literal('sharing.auth.cancel')}).strict(),
+ z.object({type:z.literal('sharing.auth.disconnect')}).strict(),
+ z.object({type:z.literal('sharing.auth.switch')}).strict(),
+ z.object({type:z.literal('sharing.drives')}).strict(),
+ z.object({type:z.literal('sharing.folders'),driveId:id.optional(),parentId:id.optional()}).strict(),
 ]);
 const outcome=<T extends z.ZodType>(value:T)=>z.discriminatedUnion('ok',[z.object({ok:z.literal(true),value}).strict(),z.object({ok:z.literal(false),error:ProblemSchema}).strict()]);
 const codec=(name:string,create:()=>z.ZodType)=>({mode:'strict' as const,typeSymbol:PACKAGE_NAME+'#'+name,create});

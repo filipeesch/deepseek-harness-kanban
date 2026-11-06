@@ -13,12 +13,13 @@ import { themeFixture } from './theme-fixture.js';
 const scenario = new URLSearchParams(window.location.search).get('scenario') ?? 'board';
 const sharingCase = new URLSearchParams(window.location.search).get('sharing');
 const sharingViews: Record<string, HubSharingView> = sharingCase === null ? {} : { hub: harnessSharing(sharingCase) };
+const sharingAuth = sharingCase?.startsWith('drive') ? { status: 'connected' as const, email: 'member@example.test' } : undefined;
 const harness = createHarnessApi({ attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs', hubs: scenario === 'hubs' ? 2 : 1, restricted: scenario === 'move' || scenario === 'prepare-restricted', persist: scenario === 'board', pending: scenario === 'appearance', auto: scenario === 'auto', detect: scenario === 'project-editor' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}) });
 
 function harnessSharing(kind: string): HubSharingView {
   const view: HubSharingView = {
-    status: 'published', provider: 'git', repository: 'https://example.test/team.git', intervalMinutes: 5, lastCheckedAt: '2026-10-21T00:05:00Z',
-    drafts: 0, updates: 0, conflicts: 0, orderChanged: false,
+    status: 'published', provider: 'git', providerLabel: 'Git repository', repository: 'https://example.test/team.git', address: 'https://example.test/team.git', syncMode: 'explicit', intervalMinutes: 5, lastCheckedAt: '2026-10-21T00:05:00Z',
+    drafts: 0, pending: 0, updates: 0, conflicts: 0, orderChanged: false, syncing: false,
     boards: [{ boardId: 'board', key: 'harness-board', name: 'Harness board', state: 'in-sync', bound: true, pending: false }],
     incoming: [], removed: [], blockers: [], removing: [],
   };
@@ -33,6 +34,12 @@ function harnessSharing(kind: string): HubSharingView {
   if (kind === 'removed') return { ...view, removed: [{ boardId: 'old-board', key: 'old-board', name: 'Old board' }] };
   if (kind === 'unavailable') return { ...view, status: 'unavailable', error: { code: 'SHARING_UNREACHABLE', message: 'The team repository could not be reached.' } };
   if (kind === 'preview') return { ...view, status: 'preview', updates: 1, drafts: 1, boards: [{ ...view.boards[0]!, state: 'updates-available', pending: true, detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }], preview: { publishedBoards: 2, localBoards: 1 } };
+  if (kind.startsWith('drive')) {
+    const drive = { ...view, provider: 'google-drive' as const, providerLabel: 'Google Drive', address: 'Team drive / Hub', syncMode: 'continuous' as const, authorization: 'connected' as const, pending: 0, lastSyncedAt: '2026-10-21T00:05:00Z' };
+    if (kind === 'drive-preview') return { ...drive, status: 'preview', updates: 1, drafts: 1, boards: [{ ...drive.boards[0]!, state: 'updates-available', pending: true, detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }], preview: { publishedBoards: 2, localBoards: 1 } };
+    if (kind === 'drive-review') return { ...drive, status: 'needs-review', conflicts: 1, boards: [{ ...drive.boards[0]!, state: 'needs-review', detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }] };
+    return drive;
+  }
   if (kind === 'refuse-error') return { ...view, status: 'updates-available', updates: 1 };
   return view;
 }
@@ -45,10 +52,10 @@ function WorkflowScenario() {
 }
 
 
-function PublishingScenario() {
+function PublishingScenario({ auth }: { auth?: { status: 'connected'; email: string } }) {
   const [snapshot, setSnapshot] = useState<TestSnapshot>(harness.snapshot());
   const run = async (command: Command) => { const next = await harness.api.command(command); setSnapshot(next as TestSnapshot); return next; };
-  return <Configuration state={snapshot.state} hub={snapshot.state.hubs[0]!} board={snapshot.state.hubs[0]!.boards[0]!} hubCount={1} settings={snapshot.state.settings} settingsRevision={snapshot.state.settings.revision} run={run} api={harness.api} {...(sharingViews.hub === undefined ? {} : { sharing: sharingViews.hub })} initial="Publishing" onClose={() => {}} />;
+  return <Configuration state={snapshot.state} hub={snapshot.state.hubs[0]!} board={snapshot.state.hubs[0]!.boards[0]!} hubCount={1} settings={snapshot.state.settings} settingsRevision={snapshot.state.settings.revision} run={run} api={harness.api} {...(sharingViews.hub === undefined ? {} : { sharing: sharingViews.hub })} {...(auth === undefined ? {} : { sharingAuth: auth })} initial="Team Settings" onClose={() => {}} />;
 }
 
 function ProjectEditorScenario() {
@@ -108,7 +115,7 @@ function App() {
   if (scenario === 'project-editor') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><ProjectEditorScenario /></div></>;
   if (scenario === 'native-composer') return <><style>{styles}</style><NativeComposerScenario /></>;
   if (scenario === 'workflow') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario /></div></>;
-  if (scenario === 'publishing') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><PublishingScenario /></div></>;
+  if (scenario === 'publishing') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><PublishingScenario auth={sharingAuth} /></div></>;
   if (scenario === 'sharing') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;
   if (scenario === 'question') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban"><QuestionScenario /></div></>;
   return <BoardView api={harness.api} renderConversation={id => <div data-native={id} />} />;

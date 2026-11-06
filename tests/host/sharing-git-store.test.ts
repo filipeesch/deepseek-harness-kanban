@@ -98,7 +98,7 @@ describe('Git publishing store', () => {
   });
 
   it('rejects an unsupported provider before any operation', () => {
-    expect(() => new GitSharedConfigStoreFactory({ root: path.join(root, 'shared') }).create('hub', { provider: 'folder' as never, repository: '/team/repo', intervalMinutes: 5 })).toThrow(/not supported/);
+    expect(() => new GitSharedConfigStoreFactory({ root: path.join(root, 'shared') }).create('hub', { provider: 'folder' as never, intervalMinutes: 5, settings: { repository: '/team/repo' } })).toThrow(/not supported/);
   });
 
   it('removes the managed clone on destroy', async () => {

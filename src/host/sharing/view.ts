@@ -1,8 +1,9 @@
-import type { HubState, HubSharingView, Problem, SharingBoardState, SharingBoardView } from '../../shared/types.js';
+import type { HubSharingView, HubState, Problem, SharingAuthStatus, SharingBoardState, SharingBoardView } from '../../shared/types.js';
 import { displayState, type BoardDecision, type SharingComparison } from '../../domain/sharing/plan.js';
 import { compareSharing } from '../../domain/sharing/plan.js';
 import { projectSharingBoards } from '../../domain/sharing/projection.js';
 import type { SharedHubDocument } from '../../domain/sharing/document.js';
+import type { ProviderDescription } from './provider.js';
 import type { HubSharingRecord } from './state.js';
 
 export function publishedDocument(record: HubSharingRecord): SharedHubDocument {
@@ -25,8 +26,14 @@ function boardState(decision: BoardDecision): SharingBoardState {
   return displayState(decision);
 }
 
+export interface SharingViewContext {
+  provider: ProviderDescription;
+  authorization?: SharingAuthStatus;
+  syncing?: boolean;
+}
+
 /** Project stored publishing state plus the current Hub into the snapshot view. */
-export function buildSharingView(record: HubSharingRecord, hub: HubState): HubSharingView {
+export function buildSharingView(record: HubSharingRecord, hub: HubState, context: SharingViewContext): HubSharingView {
   const comparison = sharingComparison(record, hub);
   const boards: SharingBoardView[] = comparison.boards
     .filter(board => board.boardId !== undefined && board.decision !== 'create')
@@ -54,14 +61,21 @@ export function buildSharingView(record: HubSharingRecord, hub: HubState): HubSh
   return {
     status,
     provider: record.binding.provider,
-    repository: record.binding.repository,
+    providerLabel: context.provider.label,
+    address: context.provider.address,
+    ...(record.binding.provider === 'git' ? { repository: context.provider.address } : {}),
+    syncMode: context.provider.syncMode,
+    ...(record.binding.provider === 'google-drive' ? { authorization: context.authorization ?? 'not-connected' } : {}),
     intervalMinutes: record.binding.intervalMinutes,
     ...(record.lastCheck === null ? {} : { lastCheckedAt: record.lastCheck.at }),
+    ...(record.lastSyncedAt === null || record.lastSyncedAt === undefined ? {} : { lastSyncedAt: record.lastSyncedAt }),
     ...(error === undefined ? {} : { error }),
     drafts: comparison.drafts,
+    pending: comparison.drafts,
     updates: comparison.updates,
     conflicts: comparison.conflicts,
     orderChanged: comparison.orderChanged,
+    syncing: context.syncing === true,
     boards,
     incoming,
     removed: comparison.removed,

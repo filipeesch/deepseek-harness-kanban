@@ -28,6 +28,7 @@ export function isPubliclyEditable(view: HubSharingView | undefined): boolean {
 /** Sharing is available only when the comparison has nothing blocking or unapplied. */
 export function canShareFromEditor(view: HubSharingView | undefined, boardId: string): boolean {
   if (!isPubliclyEditable(view)) return false;
+  if (view!.syncMode === 'continuous') return false;
   if (view!.updates > 0 || view!.conflicts > 0 || view!.blockers.length > 0) return false;
   return view!.boards.find(board => board.boardId === boardId)?.state !== 'orphan';
 }
