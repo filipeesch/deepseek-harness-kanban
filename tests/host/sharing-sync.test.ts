@@ -7,6 +7,7 @@ import type { SharedConfigStore, SharedDocumentSnapshot } from '../../src/host/s
 import type { HubSharingRecord, HubSharingStore } from '../../src/host/sharing/state.js';
 import type { ProviderDescription, SharingBinding, SharingProviderId, SharingProviderResolver } from '../../src/host/sharing/provider.js';
 import type { GoogleDriveAuthService } from '../../src/host/sharing/google-drive-auth.js';
+import { createGoogleDriveProviderDescriptor } from '../../src/host/sharing/google-drive-store.js';
 import { MemoryHubStorage } from './helpers.js';
 
 const NOW = '2026-01-01T00:00:00.000Z';
@@ -48,9 +49,16 @@ function memorySharingStore(): HubSharingStore {
   };
 }
 
+const driveDescriptor = createGoogleDriveProviderDescriptor({ auth: { accessToken: async () => 'test-token' } });
+
 const resolver = (store: FakeStore): SharingProviderResolver => ({
   create: () => store,
-  describe: (binding: SharingBinding): ProviderDescription => ({ id: binding.provider, label: binding.provider === 'git' ? 'Git repository' : 'Google Drive', address: binding.provider === 'git' ? 'repo' : 'drive/folder', syncMode: binding.provider === 'google-drive' ? 'continuous' : 'explicit', defaultIntervalMinutes: binding.provider === 'google-drive' ? 1 : 5 }),
+  describe: (binding: SharingBinding): ProviderDescription => ({ id: binding.provider, label: binding.provider === 'git' ? 'Git repository' : 'Google Drive', address: binding.provider === 'git' ? 'repo' : 'drive/folder', syncMode: binding.provider === 'google-drive' ? 'continuous' : 'explicit', defaultIntervalMinutes: binding.provider === 'google-drive' ? 1 : 5, requiresAuthorization: binding.provider === 'google-drive' }),
+  prepare: async (hubId, binding, existing) => {
+    const prepare = driveDescriptor.prepareBinding;
+    if (binding.provider !== 'google-drive' || prepare === undefined) return binding;
+    return { ...binding, settings: await prepare({ hubId, provider: binding.provider, settings: binding.settings }, existing) };
+  },
   normalize: (_provider: SharingProviderId, settings) => settings,
   defaultInterval: provider => provider === 'google-drive' ? 1 : 5,
 });

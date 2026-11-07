@@ -1,4 +1,4 @@
-import type { HubSharingView, HubState, Problem, SharingAuthStatus, SharingBoardState, SharingBoardView } from '../../shared/types.js';
+import type { HubSharingView, HubState, Problem, SharingAuthStatus, SharingBlockerView, SharingBoardState, SharingBoardView } from '../../shared/types.js';
 import { displayState, type BoardDecision, type SharingComparison } from '../../domain/sharing/plan.js';
 import { compareSharing } from '../../domain/sharing/plan.js';
 import { projectSharingBoards } from '../../domain/sharing/projection.js';
@@ -49,11 +49,15 @@ export function buildSharingView(record: HubSharingRecord, hub: HubState, contex
   const incoming = comparison.boards.filter(board => board.decision === 'create' && board.key !== undefined).map(board => ({ key: board.key!, name: board.name }));
   const removing = comparison.boards.filter(board => board.decision === 'remove' && board.boardId !== undefined).map(board => ({ boardId: board.boardId!, name: board.name }));
   const error: Problem | undefined = record.lastError ? { code: record.lastError.code, message: record.lastError.message } : undefined;
+  // A storage-level review is a fact about the document, so it precedes the per-board comparison.
+  const storageBlockers: SharingBlockerView[] = record.storageReview
+    ? [{ code: record.storageReview.code, message: record.storageReview.message }]
+    : [];
   const status = record.preview
     ? 'preview'
     : record.lastError
       ? 'unavailable'
-      : comparison.conflicts > 0
+      : record.storageReview != null || comparison.conflicts > 0
         ? 'needs-review'
         : comparison.updates > 0
           ? 'updates-available'
@@ -65,7 +69,7 @@ export function buildSharingView(record: HubSharingRecord, hub: HubState, contex
     address: context.provider.address,
     ...(record.binding.provider === 'git' ? { repository: context.provider.address } : {}),
     syncMode: context.provider.syncMode,
-    ...(record.binding.provider === 'google-drive' ? { authorization: context.authorization ?? 'not-connected' } : {}),
+    ...(context.provider.requiresAuthorization ? { authorization: context.authorization ?? 'not-connected' } : {}),
     intervalMinutes: record.binding.intervalMinutes,
     ...(record.lastCheck === null ? {} : { lastCheckedAt: record.lastCheck.at }),
     ...(record.lastSyncedAt === null || record.lastSyncedAt === undefined ? {} : { lastSyncedAt: record.lastSyncedAt }),
@@ -79,7 +83,7 @@ export function buildSharingView(record: HubSharingRecord, hub: HubState, contex
     boards,
     incoming,
     removed: comparison.removed,
-    blockers: comparison.blockers,
+    blockers: [...storageBlockers, ...comparison.blockers],
     ...(record.preview === null ? {} : { preview: { publishedBoards: record.preview.document.boards.length, localBoards: hub.boards.length } }),
     removing,
   };

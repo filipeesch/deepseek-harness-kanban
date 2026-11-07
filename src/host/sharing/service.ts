@@ -9,8 +9,8 @@ import { buildPublishDocument, buildUpdatePlan, publishIsDirty, type SharingBloc
 import { projectSharingBoards } from '../../domain/sharing/projection.js';
 import type { HubRepository } from '../hub-repository.js';
 import type { GoogleDriveAuthService } from './google-drive-auth.js';
-import type { ProviderState, SharingBinding, SharingProviderId, SharingProviderResolver } from './provider.js';
-import type { SharedConfigStore } from './store.js';
+import type { BindingCandidate, ProviderState, SharingBinding, SharingProviderId, SharingProviderResolver } from './provider.js';
+import type { SharedConfigStore, SharedDocumentSnapshot } from './store.js';
 import type { HubSharingRecord, HubSharingStore } from './state.js';
 import { buildSharingView, publishedDocument, sharingComparison } from './view.js';
 
@@ -109,9 +109,33 @@ export class HubSharingService {
     const provider = this.options.providers.describe(record.binding);
     return buildSharingView(record, hub, {
       provider,
-      ...(provider.id === 'google-drive' ? { authorization: this.authState.status } : {}),
+      ...(provider.requiresAuthorization ? { authorization: this.authState.status } : {}),
       syncing: this.inflight.has(record.hubId),
     });
+  }
+
+  /**
+   * Ask a fresh store whether the storage now requires a review. An automatic
+   * operation that gets `true` must not touch the Hub or the storage: the
+   * review is recorded and the user decides.
+   */
+  private async storageBlocksAutomatic(record: HubSharingRecord): Promise<boolean> {
+    const provider = this.storeFor(record.hubId, record.binding, record.providerState);
+    await provider.ensure();
+    const review = this.storageReviewOf(provider);
+    if (review === null) return false;
+    await this.save({ ...record, storageReview: review, providerState: provider.state?.() ?? record.providerState });
+    return true;
+  }
+
+  /** The review the storage itself requires, when it reports one. */
+  private storageReviewOf(provider: SharedConfigStore): HubSharingRecord['storageReview'] {
+    return provider.review?.() ?? null;
+  }
+
+  /** Every stored binding, so a provider can refuse an address another Hub owns. */
+  private candidates(): BindingCandidate[] {
+    return this.options.store.list().map(record => ({ hubId: record.hubId, provider: record.binding.provider, settings: record.binding.settings }));
   }
 
   publishedHubs(): Array<{ hubId: string; intervalMinutes: number }> {
@@ -172,28 +196,27 @@ export class HubSharingService {
       const hub = this.options.hubs.requireHub(command.hubId);
       const providerId: SharingProviderId = command.provider ?? (command.repository ? 'git' : 'google-drive');
       const rawSettings = command.settings ?? (command.repository ? { repository: command.repository } : {});
-      const binding: SharingBinding = {
+      const candidate: SharingBinding = {
         provider: providerId,
         intervalMinutes: normalizeSharingInterval(command.intervalMinutes, this.options.providers.defaultInterval(providerId)),
         settings: this.options.providers.normalize(providerId, rawSettings),
       };
-      if (providerId === 'google-drive') {
+      if (this.options.providers.describe(candidate).requiresAuthorization) {
         await this.refreshAuth();
-        invariant(this.authState.status === 'connected', 'SHARING_RECONNECT_REQUIRED', 'Connect the Google account before choosing a folder.');
-        const folderId = binding.settings.folderId;
-        const occupied = this.options.store.list().find(record => record.hubId !== command.hubId && record.binding.provider === 'google-drive' && record.binding.settings.folderId === folderId);
-        invariant(!occupied, 'SHARING_ADDRESS_IN_USE', 'The selected Google Drive folder is already bound to another Hub.');
+        invariant(this.authState.status === 'connected', 'SHARING_RECONNECT_REQUIRED', 'Connect the account for this team storage before choosing its location.');
       }
+      const binding = await this.options.providers.prepare(command.hubId, candidate, this.candidates());
       const provider = this.storeFor(command.hubId, binding, {});
       await provider.ensure();
       const remote = await provider.read();
       const providerState = provider.state?.() ?? {};
+      const storageReview = this.storageReviewOf(provider);
       const at = this.now();
       if (remote === null) {
         const publish = buildPublishDocument({ base: null, local: projectSharingBoards(hub, {}), bindings: {}, orphans: {}, pendingRemovals: [] });
         const written = await provider.write(publish.document, { expectedToken: null, message: COMMIT_MESSAGE });
         await this.save({
-          version: 2, hubId: command.hubId, binding, providerState: provider.state?.() ?? providerState, syncedRevision: hub.revision,
+          version: 2, hubId: command.hubId, binding, providerState: provider.state?.() ?? providerState, storageReview, syncedRevision: hub.revision,
           base: stored({ ...publish.document, boards: publish.document.boards.map(entry => ({ ...entry })) }),
           seen: stored({ ...publish.document, boards: publish.document.boards.map(entry => ({ ...entry })) }),
           bindings: publish.bindings, orphans: {}, removed: {}, pendingRemovals: [], preview: null,
@@ -202,7 +225,7 @@ export class HubSharingService {
         return;
       }
       await this.save({
-        version: 2, hubId: command.hubId, binding, providerState, syncedRevision: null,
+        version: 2, hubId: command.hubId, binding, providerState, storageReview, syncedRevision: null,
         base: null, seen: { token: remote.token, document: remote.document }, bindings: {}, orphans: {}, removed: {}, pendingRemovals: [],
         preview: { token: remote.token, document: remote.document }, lastCheck: { at, token: remote.token }, lastError: null,
       });
@@ -232,6 +255,7 @@ export class HubSharingService {
       await this.save({
         ...record,
         providerState: provider.state?.() ?? record.providerState,
+        storageReview: this.storageReviewOf(provider),
         base: { token: written.token, document: publish.document },
         seen: { token: written.token, document: publish.document },
         bindings: publish.bindings,
@@ -253,23 +277,15 @@ export class HubSharingService {
   private async checkNow(hubId: string, manual: boolean): Promise<void> {
     const record = this.requireRecord(hubId);
     const provider = this.storeFor(hubId, record.binding, record.providerState);
-    let remote;
-    try { remote = await provider.read(undefined, record.seen); }
-    catch (error) {
-      await this.persistFailure(record, error);
-      throw error;
-    }
-    if (remote === null && record.seen !== null) {
-      const failure = new KanbanError('SHARING_DOCUMENT_MISSING', 'The team configuration document is missing from the team storage. It was not removed by this installation.', { address: this.options.providers.describe(record.binding).address });
-      await this.save({ ...record, providerState: provider.state?.() ?? record.providerState, lastError: { code: failure.code, message: failure.message } });
-      throw failure;
-    }
+    const remote = await this.readRemote(record, provider);
+    const storageReview = this.storageReviewOf(provider);
     const at = this.now();
     const published = remote ?? { token: sharedDocumentToken(EMPTY_DOCUMENT), document: EMPTY_DOCUMENT };
     const reviewLatch = !manual && (record.reviewRequired != null);
     const fresh: HubSharingRecord = {
       ...record,
       providerState: provider.state?.() ?? record.providerState,
+      storageReview,
       seen: remote,
       preview: record.preview === null ? null : remote,
       lastCheck: { at, token: published.token },
@@ -277,26 +293,16 @@ export class HubSharingService {
       lastError: manual ? null : reviewLatch ? record.lastError ?? record.reviewRequired ?? null : null,
     };
     await this.save(fresh);
-    if (!reviewLatch && fresh.preview === null && this.options.providers.describe(record.binding).syncMode === 'continuous') await this.autoSyncNow(hubId);
+    if (!reviewLatch && fresh.storageReview == null && fresh.preview === null && this.options.providers.describe(record.binding).syncMode === 'continuous') await this.autoSyncNow(hubId);
   }
 
   getUpdates(hubId: string): Promise<void> {
     return this.run(hubId, async () => {
       const record = this.requireRecord(hubId);
       const provider = this.storeFor(hubId, record.binding, record.providerState);
-      let remote;
-      try { remote = await provider.read(undefined, record.seen); }
-      catch (error) {
-        await this.persistFailure(record, error);
-        throw error;
-      }
-      if (remote === null && record.seen !== null) {
-        const failure = new KanbanError('SHARING_DOCUMENT_MISSING', 'The team configuration document is missing from the team storage. It was not removed by this installation.', { address: this.options.providers.describe(record.binding).address });
-        await this.save({ ...record, providerState: provider.state?.() ?? record.providerState, lastError: { code: failure.code, message: failure.message } });
-        throw failure;
-      }
+      const remote = await this.readRemote(record, provider);
       const published = remote ?? { token: sharedDocumentToken(EMPTY_DOCUMENT), document: EMPTY_DOCUMENT };
-      const fresh: HubSharingRecord = { ...record, providerState: provider.state?.() ?? record.providerState, seen: remote, lastCheck: { at: this.now(), token: published.token }, reviewRequired: null, lastError: null };
+      const fresh: HubSharingRecord = { ...record, providerState: provider.state?.() ?? record.providerState, storageReview: this.storageReviewOf(provider), seen: remote, lastCheck: { at: this.now(), token: published.token }, reviewRequired: null, lastError: null };
       await this.save(fresh);
       await this.applyUpdatesNow(fresh);
     });
@@ -320,19 +326,20 @@ export class HubSharingService {
     let record = this.requireRecord(hubId);
     if (record.preview !== null) return;
     if (record.reviewRequired != null) return;
+    if (record.storageReview != null) return;
     if (this.options.providers.describe(record.binding).syncMode !== 'continuous') return;
     let hub = this.options.hubs.requireHub(hubId);
     let comparison = sharingComparison(record, hub);
     if (comparison.blockers.length > 0 || comparison.conflicts > 0) return;
     if (comparison.updates > 0) {
-      await this.applyUpdatesNow(record);
+      await this.applyUpdatesNow(record, true);
       record = this.requireRecord(hubId);
       hub = this.options.hubs.requireHub(hubId);
       comparison = sharingComparison(record, hub);
     }
     if (comparison.drafts === 0 && record.pendingRemovals.length === 0) return;
     if (comparison.updates > 0 || comparison.conflicts > 0 || comparison.blockers.length > 0) return;
-    await this.publishNow(hubId);
+    await this.publishNow(hubId, [], true);
   }
 
   resolve(hubId: string, boardId: string, choice: 'local' | 'team'): Promise<void> {
@@ -496,7 +503,8 @@ export class HubSharingService {
   }
 
   /** Apply the non-conflicting team changes in one Hub transaction, then record the merged base. */
-  private async applyUpdatesNow(record: HubSharingRecord): Promise<void> {
+  private async applyUpdatesNow(record: HubSharingRecord, automatic = false): Promise<void> {
+    if (automatic && await this.storageBlocksAutomatic(record)) return;
     const hub = this.options.hubs.requireHub(record.hubId);
     const plan = buildUpdatePlan({
       base: record.base?.document ?? null,
@@ -531,7 +539,7 @@ export class HubSharingService {
     });
   }
 
-  private async publishNow(hubId: string, reserved: Iterable<string> = []): Promise<void> {
+  private async publishNow(hubId: string, reserved: Iterable<string> = [], automatic = false): Promise<void> {
     const record = this.requireRecord(hubId);
     const hub = this.options.hubs.requireHub(hubId);
     const comparison = sharingComparison(record, hub);
@@ -547,11 +555,22 @@ export class HubSharingService {
     });
     if (!publishIsDirty(publish.document, record.base?.document ?? null) && record.pendingRemovals.length === 0) return;
     const provider = this.storeFor(hubId, record.binding, record.providerState);
+    if (automatic) {
+      // Inspect the review on the very instance that will write: a copy detected by
+      // its own ensure() must stop the automatic write instead of being ignored.
+      await provider.ensure();
+      const review = this.storageReviewOf(provider);
+      if (review !== null) {
+        await this.save({ ...record, storageReview: review, providerState: provider.state?.() ?? record.providerState });
+        return;
+      }
+    }
     try {
       const written = await provider.write(publish.document, { expectedToken: record.seen?.token ?? null, message: COMMIT_MESSAGE });
       await this.save({
         ...record,
         providerState: provider.state?.() ?? record.providerState,
+        storageReview: this.storageReviewOf(provider),
         base: { token: written.token, document: publish.document },
         seen: { token: written.token, document: publish.document },
         bindings: publish.bindings,
@@ -575,6 +594,25 @@ export class HubSharingService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Read the stored document and record availability and integrity failures on
+   * the record, so every caller reports the same facts.
+   */
+  private async readRemote(record: HubSharingRecord, provider: SharedConfigStore): Promise<SharedDocumentSnapshot | null> {
+    let remote: SharedDocumentSnapshot | null;
+    try { remote = await provider.read(undefined, record.seen); }
+    catch (error) {
+      await this.persistFailure(record, error);
+      throw error;
+    }
+    if (remote === null && record.seen !== null) {
+      const failure = new KanbanError('SHARING_DOCUMENT_MISSING', 'The team configuration document is missing from the team storage. It was not removed by this installation.', { address: this.options.providers.describe(record.binding).address });
+      await this.save({ ...record, providerState: provider.state?.() ?? record.providerState, lastError: { code: failure.code, message: failure.message } });
+      throw failure;
+    }
+    return remote;
   }
 
   /** Any read or write failure is an availability/integrity fact the interface must show. */

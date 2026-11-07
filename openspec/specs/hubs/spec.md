@@ -65,7 +65,7 @@ The plugin SHALL create a Hub from a required nonempty name. Hub names SHALL be 
 
 ### Requirement: Hub deletion
 
-The plugin SHALL allow deleting a Hub only when none of its boards contains a task. The last remaining Hub SHALL NOT be deleted. Deleting an eligible Hub SHALL remove the Hub, its empty boards, and its task-free project registrations, and SHALL retain project directories, worktrees, Git branches, native conversations, and native workspaces. The confirmation SHALL identify the Hub, its board count, and its project count before the user confirms. When the Hub is published, deletion SHALL also remove its storage binding and any plugin-managed local workspace, stop its automatic checks, and leave the team's shared document untouched; the confirmation SHALL state that the team's shared configuration is not removed. Deleting a Google Drive-published Hub SHALL NOT delete the Google account authorization that other Hubs may use.
+The plugin SHALL allow deleting a Hub only when none of its boards contains a task. The last remaining Hub SHALL NOT be deleted. Deleting an eligible Hub SHALL remove the Hub, its empty boards, and its task-free project registrations, and SHALL retain project directories, worktrees, Git branches, native conversations, and native workspaces. The confirmation SHALL identify the Hub, its board count, and its project count before the user confirms. When the Hub is published, deletion SHALL also remove its storage binding and any storage-owned local workspace, stop its automatic checks, and leave the team's shared document untouched; the confirmation SHALL state that the team's shared configuration is not removed. Deleting a Google Drive-published Hub SHALL NOT delete the Google account authorization that other Hubs may use. Deleting a local-folder-published Hub SHALL NOT delete the bound folder, its `kanban-hub.yaml` document, or any other file in it.
 
 #### Scenario: Delete an empty Hub
 
@@ -91,7 +91,7 @@ The plugin SHALL allow deleting a Hub only when none of its boards contains a ta
 #### Scenario: Delete a published Hub
 
 - **WHEN** the user deletes a published Hub
-- **THEN** the Hub, its storage binding, and any plugin-managed local workspace are removed locally
+- **THEN** the Hub, its storage binding, and any storage-owned local workspace are removed locally
 - **AND** its automatic checks stop
 - **AND** the team's shared document and configuration are unchanged
 - **AND** the confirmation states that the team's shared configuration is not removed
@@ -104,6 +104,12 @@ The plugin SHALL allow deleting a Hub only when none of its boards contains a ta
 - **AND** the team document is unchanged
 - **AND** the Google account authorization remains available to other Hubs
 
+#### Scenario: Delete a local folder-published Hub
+
+- **WHEN** the user deletes a Hub published to a local folder
+- **THEN** the Hub and its folder binding are removed locally
+- **AND** its automatic checks stop
+- **AND** the folder, its `kanban-hub.yaml` document, and every other file in it remain unchanged
 
 ### Requirement: Hub selection and persistence
 

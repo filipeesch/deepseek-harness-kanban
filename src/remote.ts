@@ -4,6 +4,7 @@ import type { RemoteResult, RemoteStreamHandle } from '@deepseek-ai/dsh-typert-p
 import type { TypertContribution } from '@deepseek-ai/dsh-typert-registry';
 import { KanbanStateSchema } from './domain/hub-schema.js';
 import type { Command, HostSnapshot, HubSharingView, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingAuthView, SharingCommand } from './shared/types.js';
+import { SHARING_STORAGES } from './shared/types.js';
 export const PACKAGE_NAME = 'dsh-kanban';
 const id=z.string().min(1).max(200);
 const revision=z.number().int().nonnegative().optional();
@@ -53,7 +54,7 @@ const ConversationFactsSchema=z.object({running:z.boolean(),background:z.array(B
 const ProblemSchema=z.object({code:z.string(),message:z.string(),details:z.record(z.string(),z.unknown()).optional()}).strict();
 const sharingBoardState=z.enum(['in-sync','draft','updates-available','needs-review','orphan']);
 const sharingHubStatus=z.enum(['not-published','preview','published','updates-available','needs-review','unavailable']);
-const sharingStorage=z.enum(['git','google-drive']);
+const sharingStorage=z.enum(SHARING_STORAGES);
 const sharingSyncMode=z.enum(['explicit','continuous']);
 const sharingAuthStatus=z.enum(['not-connected','authorizing','connected','error','reconnect-required']);
 const sharingBlocker=z.object({code:z.string(),message:z.string(),boardId:id.optional(),boardName:z.string().optional(),columnId:id.optional(),tasks:z.number().int().nonnegative().optional()}).strict();

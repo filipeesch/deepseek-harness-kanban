@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parseSharedDocument, serializeSharedDocument, type SharedHubDocument } from '../../src/domain/sharing/document.js';
-import { GitSharedConfigStore, GitSharedConfigStoreFactory } from '../../src/host/sharing/git-store.js';
+import { GitSharedConfigStore, createGitProviderDescriptor } from '../../src/host/sharing/git-store.js';
 
 const flow = (column = 'backlog'): string => ['name: Flow', 'initial_column: ' + column, 'columns:', '  - id: ' + column, '    label: ' + column, ''].join('\n');
 const documentOf = (name: string): SharedHubDocument => ({ version: 1, boards: [{ key: 'flow', name, workflow: flow() }] });
@@ -98,7 +98,8 @@ describe('Git publishing store', () => {
   });
 
   it('rejects an unsupported provider before any operation', () => {
-    expect(() => new GitSharedConfigStoreFactory({ root: path.join(root, 'shared') }).create('hub', { provider: 'folder' as never, intervalMinutes: 5, settings: { repository: '/team/repo' } })).toThrow(/not supported/);
+    const descriptor = createGitProviderDescriptor({ root: path.join(root, 'shared') });
+    expect(() => descriptor.createStore('hub', { provider: 'folder' as never, intervalMinutes: 5, settings: { repository: '/team/repo' } }, {})).toThrow(/not supported/);
   });
 
   it('removes the managed clone on destroy', async () => {

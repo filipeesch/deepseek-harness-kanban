@@ -5,6 +5,7 @@ import type { SharedHubDocument } from '../../domain/sharing/document.js';
 import { parseSharedDocument, serializeSharedDocument, SharedHubDocumentSchema } from '../../domain/sharing/document.js';
 import type { OrphanMap, BoardBindings } from '../../domain/sharing/identity.js';
 import { KanbanError } from '../../shared/errors.js';
+import { SHARING_STORAGES } from '../../shared/types.js';
 import type { ProviderState, SharingBinding } from './provider.js';
 import { isSharingProviderId } from './provider.js';
 
@@ -36,12 +37,14 @@ export interface HubSharingRecord {
   lastSyncedAt?: string | null;
   /** A concurrent write that still requires an explicit review, independent of transient errors. */
   reviewRequired?: { code: string; message: string } | null;
+  /** A review the storage itself requires, such as a synchronization conflict copy. */
+  storageReview?: { code: string; message: string; files: string[] } | null;
   lastError: { code: string; message: string } | null;
 }
 
 const storedDocument = z.strictObject({ token: z.string().min(1), document: SharedHubDocumentSchema });
 const binding = z.strictObject({
-  provider: z.enum(['git', 'google-drive']),
+  provider: z.enum(SHARING_STORAGES),
   intervalMinutes: z.number().int().min(0).max(1440),
   settings: z.record(z.string(), z.string()),
 });
@@ -61,6 +64,7 @@ const v2Record = z.strictObject({
   lastCheck: z.strictObject({ at: z.string().min(1), token: z.string().min(1) }).nullable(),
   lastSyncedAt: z.string().min(1).nullable().optional(),
   reviewRequired: z.strictObject({ code: z.string().min(1), message: z.string() }).nullable().optional(),
+  storageReview: z.strictObject({ code: z.string().min(1), message: z.string(), files: z.array(z.string()) }).nullable().optional(),
   lastError: z.strictObject({ code: z.string().min(1), message: z.string() }).nullable(),
 });
 const v1Binding = z.strictObject({ provider: z.literal('git'), repository: z.string().min(1), intervalMinutes: z.number().int().min(0).max(1440) });
@@ -106,6 +110,7 @@ export function migrateSharingRecord(raw: unknown): HubSharingRecord | undefined
     lastCheck: legacy.data.lastCheck,
     lastSyncedAt: null,
     reviewRequired: null,
+    storageReview: null,
     lastError: legacy.data.lastError,
   };
 }

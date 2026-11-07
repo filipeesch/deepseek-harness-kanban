@@ -1,4 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis';
+import os from 'node:os';
 import type {} from '@deepseek-ai/dsh-typert-registry';
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-subagent';
@@ -15,6 +16,7 @@ import { sharingRoot } from './host/sharing/root.js';
 import type { SharingCommandRunner } from './host/sharing/command-runner.js';
 import { GoogleDriveAuthService } from './host/sharing/google-drive-auth.js';
 import { createGoogleDriveProviderDescriptor } from './host/sharing/google-drive-store.js';
+import { createLocalFolderProviderDescriptor } from './host/sharing/local-folder-store.js';
 import { credentialStoreFromContext, type CredentialStore } from './host/sharing/credentials.js';
 import { SharingProviderRegistry } from './host/sharing/provider.js';
 import { createNativePorts } from './host/native.js';
@@ -77,6 +79,10 @@ export interface HubSharingOpenOptions {
  clientSecret?:string;
  fetch?:typeof fetch;
  credentials?:CredentialStore;
+ /** Home directory that owns the suggested per-Hub team folders. */
+ home?:string;
+ /** Delay between a local change and an automatic synchronization. */
+ debounceMs?:number;
 }
 export async function openHubSharing(ctx:Context,hubs:HubRepository,options:HubSharingOpenOptions={}):Promise<HubSharingRuntime>{
  const storage=await openSharingStorage(ctx,{...(options.report===undefined?{}:{report:options.report})});
@@ -87,8 +93,9 @@ export async function openHubSharing(ctx:Context,hubs:HubRepository,options:HubS
  const providers=new SharingProviderRegistry([
   createGitProviderDescriptor({root,...(options.runner===undefined?{}:{runner:options.runner})}),
   createGoogleDriveProviderDescriptor({auth,...(options.fetch===undefined?{}:{fetch:options.fetch})}),
+  createLocalFolderProviderDescriptor({home:options.home??os.homedir(),managedRoot:root}),
  ]);
- const service=new HubSharingService({hubs,store:storage.storage,providers,auth,notify:()=>notify(),...(options.report===undefined?{}:{report:options.report})});
+ const service=new HubSharingService({hubs,store:storage.storage,providers,auth,notify:()=>notify(),...(options.report===undefined?{}:{report:options.report}),...(options.debounceMs===undefined?{}:{debounceMs:options.debounceMs})});
  await service.refreshAuth();
  const scheduler=new SharingPollScheduler({service,...(options.report===undefined?{}:{report:options.report})});
  return {
