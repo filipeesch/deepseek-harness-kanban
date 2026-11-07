@@ -167,7 +167,7 @@ The host does not catch up: a turn that ended while the plugin was not observing
 
 ## Team Settings
 
-Team sharing is optional and applies per Hub. **Configuration → Team Settings** starts with a **Storage** choice: a Git repository or Google Drive. The section then renders that storage's surface. A Hub binds exactly one storage, and changing the storage requires **Disconnect**.
+Team sharing is optional and applies per Hub. **Configuration → Team Settings** starts with a **Storage** choice: a Git repository, Google Drive, or a local folder. The section then renders that storage's surface. A Hub binds exactly one storage, and changing the storage requires **Disconnect**.
 
 ### Git repository
 
@@ -189,13 +189,25 @@ Google Drive synchronizes automatically and in both directions. Saving a board, 
 
 A Drive write compares the document token before writing and verifies the written content after writing. Google Drive provides no server-enforced conditional write, so a concurrent change can be detected but not prevented; the previous content remains in the Drive revision history, and the local changes stay pending for review. Git keeps its atomic stale-write refusal.
 
+### Local folder
+
+With Local folder selected, the Hub publishes into one directory on this machine. That directory is normally one that a desktop client already synchronizes: Google Drive for desktop, OneDrive, Dropbox, or any other. The plugin reads and writes `kanban-hub.yaml` there and never touches another file, so the desktop client carries the document between machines and the plugin needs no account, credential, network call, or managed workspace.
+
+The path field is pre-filled with `~/.dsh-kanban/<hubId>`. Connecting to exactly that path creates the folder; connecting to any other path requires a folder that already exists and is writable. A path that is missing, is a file, cannot be written, is already bound to another Hub, or sits inside the plugin's own managed publishing workspace is refused with the specific condition named. The folder picker fills the field when the host provides one, and typing a path always remains available. Symlinks are resolved before the binding is stored, so two spellings of one directory cannot bind two Hubs.
+
+The local folder synchronizes automatically and in both directions, exactly like Google Drive: saving a board, board name, order, or workflow marks the Hub pending and synchronizes after a short debounce; a check every minute compares the document's last-modified time and size and reads the content only when they changed; team-only changes apply automatically in one Hub transaction; a board changed on both sides, a blocker, or a concurrent write requires review. Offline changes stay pending, retry on later checks, and survive a restart. A local folder has no Publish or Get updates action; **Sync now** retries immediately.
+
+A write compares the document token, writes a temporary sibling file, renames it over the document, and verifies the written content. A reader therefore sees either the previous complete document or the new one, never a partial file, but the filesystem cannot make "compare and replace" atomic against another process: the guarantee is the same as Google Drive's, not Git's atomic refusal. Because the desktop client uploads asynchronously, a change made on another machine is only visible here once the client downloads it, and two machines writing close together can produce a conflict copy.
+
+When the client creates a conflict copy, the check reports it as a storage review that names the copies, blocks automatic synchronization, and never merges, renames, deletes, or prefers a version. Decide which version is current, delete or rename the other copies in the folder, and the next check clears the review and resumes synchronization. Disconnecting, deleting the Hub, or rebinding never deletes the folder, the document, or any other file.
+
 ### Shared document and board rules
 
 The shared document is `kanban-hub.yaml`. It contains a format version and one ordered entry per board: a stable key, the board name, and the board's workflow YAML exactly as authored. Projects, tasks, notes, conversations, worktrees, Hub names, and settings stay on the local machine, and the board key survives renames.
 
-When the team removes a board, an empty board disappears locally, while a board with tasks or unpublished changes stays as an **orphan** with an indicator on its board tab. An orphan can be published again as a new board with a new key, deleted locally, or reconnected automatically when the team publishes a board with the same key or the same name. Removing a board that belongs to the published configuration asks whether the removal applies only here or for the team; a local-only removal is not included in later updates, while a team-wide removal is sent with the next publish (Git) or automatic synchronization (Google Drive).
+When the team removes a board, an empty board disappears locally, while a board with tasks or unpublished changes stays as an **orphan** with an indicator on its board tab. An orphan can be published again as a new board with a new key, deleted locally, or reconnected automatically when the team publishes a board with the same key or the same name. Removing a board that belongs to the published configuration asks whether the removal applies only here or for the team; a local-only removal is not included in later updates, while a team-wide removal is sent with the next publish (Git) or automatic synchronization (Google Drive or a local folder).
 
-A published Hub checks its storage automatically: every five minutes by default for Git and every minute for Google Drive. The interval is editable per Hub (minimum one minute; `0` disables automatic checks and leaves **Refresh** or **Sync now**), and a check never blocks the board. Sharing state appears in the host snapshot, so the Hub tab and each board tab show their own indicators and the board shows a banner when team changes need review. **Disconnect** removes the binding and any plugin-managed workspace (the Git clone) and keeps every local board, workflow, task, note, project, conversation, and worktree; the Drive account authorization remains available to other Hubs, and the team document is unchanged.
+A published Hub checks its storage automatically: every five minutes by default for Git and every minute for Google Drive or a local folder. The interval is editable per Hub (minimum one minute; `0` disables automatic checks and leaves **Refresh** or **Sync now**), and a check never blocks the board. Sharing state appears in the host snapshot, so the Hub tab and each board tab show their own indicators and the board shows a banner when team changes need review. **Disconnect** removes the binding and any plugin-managed workspace (the Git clone) and keeps every local board, workflow, task, note, project, conversation, and worktree; the Drive account authorization remains available to other Hubs, and the team document and the bound folder are unchanged.
 
 ## Worktrees and native boundaries
 

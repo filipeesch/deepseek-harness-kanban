@@ -1,5 +1,6 @@
 import { sharedDocumentToken, parseSharedDocument, serializeSharedDocument, type SharedHubDocument } from '../../domain/sharing/document.js';
-import { KanbanError } from '../../shared/errors.js';
+import { KanbanError, invariant } from '../../shared/errors.js';
+import { assertExpectedToken, assertWrittenToken } from './verified-write.js';
 import { GoogleDriveClient, type GoogleDriveFile } from './google-drive-client.js';
 import { type ProviderState, type SharingBinding, type SharingProviderDescriptor } from './provider.js';
 import type { SharedConfigStore, SharedDocumentSnapshot } from './store.js';
@@ -134,31 +135,23 @@ export class GoogleDriveSharedConfigStore implements SharedConfigStore {
     const token = sharedDocumentToken(document);
     let fileId = this.fileId;
     if (!fileId) {
-      if (options.expectedToken !== null) throw new KanbanError('SHARING_STALE_TOKEN', 'The team document changed since it was read. Get the team updates before publishing.');
+      assertExpectedToken(options.expectedToken, null);
       // Observe from before the create so a concurrent change cannot slip behind a cursor
       // that was obtained after the snapshot we claim to have synchronized.
       const cursor = this.stateValue.changesPageToken ?? await this.client.getStartPageToken(this.driveId);
       const created = await this.client.createDocument(this.folderId, written);
       this.setWrittenFile(created);
       const verified = await this.client.getContent(created.id);
-      if (sharedDocumentToken(parseSharedDocument(verified.content)) !== token) {
-        throw new KanbanError('SHARING_CONCURRENT_WRITE', 'The team document changed while it was being created. Review the team changes before retrying.', { expected: token });
-      }
+      assertWrittenToken(token, sharedDocumentToken(parseSharedDocument(verified.content)));
       this.stateValue.changesPageToken = cursor;
       return { token };
     }
     const before = await this.client.getContent(fileId);
-    const currentToken = sharedDocumentToken(parseSharedDocument(before.content));
-    if (currentToken !== options.expectedToken) {
-      throw new KanbanError('SHARING_STALE_TOKEN', 'The team document changed since it was read. Get the team updates before publishing.', { expected: options.expectedToken ?? 'none', actual: currentToken });
-    }
+    assertExpectedToken(options.expectedToken, sharedDocumentToken(parseSharedDocument(before.content)));
     const updated = await this.client.updateContent(fileId, written);
     this.setWrittenFile(updated);
     const after = await this.client.getContent(fileId);
-    const verified = sharedDocumentToken(parseSharedDocument(after.content));
-    if (verified !== token) {
-      throw new KanbanError('SHARING_CONCURRENT_WRITE', 'Another member wrote the team document during this synchronization. Review the team changes before retrying.', { expected: token, actual: verified });
-    }
+    assertWrittenToken(token, sharedDocumentToken(parseSharedDocument(after.content)));
     return { token };
   }
 
@@ -188,6 +181,7 @@ export function createGoogleDriveProviderDescriptor(options: GoogleDriveProvider
     label: 'Google Drive',
     syncMode: 'continuous',
     defaultIntervalMinutes: 1,
+    requiresAuthorization: true,
     normalizeSettings(settings) {
       const folderId = normalizeFolderAddress(settings.folderId ?? settings.folder ?? settings.address ?? '');
       if (!/^[A-Za-z0-9_-]{10,}$/.test(folderId)) throw new KanbanError('INVALID_INPUT', 'A Google Drive folder link or id is required.');
@@ -202,6 +196,11 @@ export function createGoogleDriveProviderDescriptor(options: GoogleDriveProvider
       const folder = binding.settings.folderName ?? binding.settings.folderId ?? 'Google Drive folder';
       const drive = binding.settings.driveName;
       return drive ? drive + ' / ' + folder : folder;
+    },
+    async prepareBinding(candidate, existing) {
+      const folderId = candidate.settings.folderId;
+      invariant(!existing.some(record => record.hubId !== candidate.hubId && record.provider === 'google-drive' && record.settings.folderId === folderId), 'SHARING_ADDRESS_IN_USE', 'The selected Google Drive folder is already bound to another Hub.');
+      return candidate.settings;
     },
     createStore(hubId, binding, state) {
       if (binding.provider !== 'google-drive') throw new KanbanError('SHARING_UNSUPPORTED_STORAGE', 'The configured team storage is not Google Drive.', { provider: binding.provider });

@@ -6,7 +6,7 @@ import { KanbanError } from '../../shared/errors.js';
 import type { CommandResult } from '../../shared/ports.js';
 import { defaultSharingCommandRunner, type SharingCommandRunner } from './command-runner.js';
 import type { ProviderState, SharingBinding, SharingProviderDescriptor } from './provider.js';
-import type { SharedConfigStore, SharedConfigStoreFactory, SharedDocumentSnapshot } from './store.js';
+import type { SharedConfigStore, SharedDocumentSnapshot } from './store.js';
 
 export { SHARED_DOCUMENT_FILE } from '../../domain/sharing/document.js';
 export { sharingRoot } from './root.js';
@@ -166,21 +166,6 @@ export class GitSharedConfigStore implements SharedConfigStore {
   }
 }
 
-export class GitSharedConfigStoreFactory implements SharedConfigStoreFactory {
-  constructor(private readonly options: { root: string; runner?: SharingCommandRunner }) {}
-  create(hubId: string, binding: SharingBinding): SharedConfigStore {
-    if (binding.provider !== 'git') throw new KanbanError('SHARING_UNSUPPORTED_STORAGE', 'The configured team storage is not supported by the Git provider.', { provider: binding.provider });
-    const repository = binding.settings.repository;
-    if (!repository) throw new KanbanError('INVALID_INPUT', 'A repository address is required.');
-    return new GitSharedConfigStore({
-      root: this.options.root,
-      hubId,
-      repository,
-      ...(this.options.runner === undefined ? {} : { runner: this.options.runner }),
-    });
-  }
-}
-
 /** The Git storage descriptor: explicit publish, repository address, managed clone. */
 export function createGitProviderDescriptor(options: { root: string; runner?: SharingCommandRunner }): SharingProviderDescriptor {
   return {
@@ -188,6 +173,7 @@ export function createGitProviderDescriptor(options: { root: string; runner?: Sh
     label: 'Git repository',
     syncMode: 'explicit',
     defaultIntervalMinutes: 5,
+    requiresAuthorization: false,
     normalizeSettings(settings) {
       const repository = (settings.repository ?? '').trim();
       if (repository.length === 0 || repository.length > 2048 || /[\0\r\n]/.test(repository)) throw new KanbanError('INVALID_INPUT', 'A repository address is required.');

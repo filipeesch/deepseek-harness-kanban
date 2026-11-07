@@ -4,6 +4,7 @@ import { DEFAULT_WORKFLOW_YAML } from '../../src/domain/workflow.js';
 import { placeTask } from '../../src/domain/hub-operations.js';
 import { KanbanError } from '../../src/shared/errors.js';
 import { HubRepository } from '../../src/host/hub-repository.js';
+import type { SharingBinding } from '../../src/host/sharing/provider.js';
 import type { SharedConfigStore, SharedConfigStoreFactory } from '../../src/host/sharing/store.js';
 import type { HubSharingRecord, HubSharingStore } from '../../src/host/sharing/state.js';
 import { HubSharingService } from '../../src/host/sharing/service.js';
@@ -54,7 +55,8 @@ class FakeFactory implements SharedConfigStoreFactory {
   readonly stores = new Map<string, FakeStore>();
   constructor(private readonly seed?: SharedHubDocument) {}
   create(hubId: string): SharedConfigStore { return this.storeFor(hubId); }
-  describe(binding: { settings: Record<string, string> }) { return { id: 'git' as const, label: 'Git repository', address: binding.settings.repository ?? '', syncMode: 'explicit' as const, defaultIntervalMinutes: 5 }; }
+  describe(binding: { settings: Record<string, string> }) { return { id: 'git' as const, label: 'Git repository', address: binding.settings.repository ?? '', syncMode: 'explicit' as const, defaultIntervalMinutes: 5, requiresAuthorization: false }; }
+  async prepare(_hubId: string, binding: SharingBinding) { return binding; }
   normalize(_provider: string, settings: Record<string, string>) { return settings; }
   defaultInterval() { return 5; }
   storeFor(hubId: string): FakeStore {

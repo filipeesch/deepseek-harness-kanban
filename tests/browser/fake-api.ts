@@ -12,7 +12,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean }
+export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -155,6 +155,7 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     sharing: async (command: SharingCommand) => {
       sharingCommands.push(structuredClone(command));
       if (options.shareFailure) throw { code: 'SHARING_FAILED', message: 'The publishing operation could not be completed.' };
+      if (options.folderRefusal && command.type === 'sharing.connect') throw { code: 'SHARING_FOLDER_MISSING', message: 'The selected folder does not exist.' };
       if (options.shareRefusal) throw { code: 'SHARING_REFUSED', message: 'The team configuration cannot be applied until these boards are resolved.', details: { blockers: [{ code: 'SHARING_ORPHAN_COLUMNS', message: 'Board "Harness board" would leave 2 tasks in column "plan", which the team workflow does not define.' }] } };
       const hubId = 'hubId' in command ? command.hubId : undefined;
       const current = hubId === undefined ? undefined : value.sharing[hubId];

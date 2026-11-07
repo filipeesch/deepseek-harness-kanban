@@ -33,7 +33,8 @@ async function fixture() {
   const store = new Store();
   const sharing = new HubSharingService({ hubs, store: memoryStore(), providers: {
       create: () => store,
-      describe: (binding: SharingBinding): ProviderDescription => ({ id: binding.provider, label: 'Git repository', address: binding.settings.repository ?? '', syncMode: 'explicit', defaultIntervalMinutes: 5 }),
+      describe: (binding: SharingBinding): ProviderDescription => ({ id: binding.provider, label: 'Git repository', address: binding.settings.repository ?? '', syncMode: 'explicit', defaultIntervalMinutes: 5, requiresAuthorization: false }),
+      prepare: async (_hubId, binding) => binding,
       normalize: (_provider: SharingProviderId, settings: Record<string, string>) => settings,
       defaultInterval: () => 5,
     } satisfies SharingProviderResolver, now: () => NOW });

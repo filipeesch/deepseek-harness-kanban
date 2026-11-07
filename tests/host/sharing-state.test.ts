@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Context } from '@deepseek-ai/cordis';
 import type { SharedHubDocument } from '../../src/domain/sharing/document.js';
+import { SHARING_STORAGES } from '../../src/shared/types.js';
 import { migrateSharingRecord, openSharingStorage, type HubSharingRecord } from '../../src/host/sharing/state.js';
 
 const NOW = '2026-01-01T00:00:00.000Z';
@@ -95,6 +96,17 @@ describe('publishing state storage', () => {
     const opened = await openSharingStorage(ctx);
     await expect(opened.storage.save({ ...record('hub'), hubId: '' })).rejects.toMatchObject({ code: 'SHARING_STORAGE_INVALID' });
     await opened.close();
+  });
+
+  it('accepts every declared storage and refuses an undeclared one', () => {
+    for (const provider of SHARING_STORAGES) {
+      const value = record('hub');
+      value.binding = { provider, intervalMinutes: 1, settings: {} };
+      expect(migrateSharingRecord(value)).toMatchObject({ binding: { provider } });
+    }
+    const unknown = record('hub');
+    unknown.binding = { provider: 'ftp' as never, intervalMinutes: 1, settings: {} };
+    expect(migrateSharingRecord(unknown)).toBeUndefined();
   });
 });
 

@@ -2,18 +2,16 @@ import React, { useEffect, useState } from 'react';
 import type { HubSharingView, HubState, SharingAuthView } from '../../../shared/types.js';
 import { ErrorNotice } from '../../ui.js';
 import type { Act } from './shared.js';
-import { Blockers, BoardReview, RemovedBoards, StatusLine, VersionDiff } from './shared.js';
+import { ConnectedStorageSurface, ConnectionPreview } from './shared.js';
+
+const DISCONNECT_NOTE = "Disconnecting stops automatic synchronization and removes this Hub's binding. The team document and every other file in the folder remain, and local boards, workflows, tasks, notes, and projects stay on this machine.";
 
 export function GoogleDriveStoragePanel({ hub, sharing, auth, act, pending }: { hub: HubState; sharing?: HubSharingView; auth?: SharingAuthView; act: Act; pending: string | null }) {
   const [folderAddress, setFolderAddress] = useState('');
   const [driveId, setDriveId] = useState('');
   const [folderId, setFolderId] = useState('');
   const [folderName, setFolderName] = useState('');
-  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
-  const [confirmReplace, setConfirmReplace] = useState(false);
-  const [interval, setIntervalMinutes] = useState(String(sharing?.intervalMinutes ?? 1));
-  useEffect(() => { setConfirmDisconnect(false); setConfirmReplace(false); }, [sharing?.status, sharing?.address, auth?.status]);
-  useEffect(() => { if (sharing) setIntervalMinutes(String(sharing.intervalMinutes)); }, [sharing?.intervalMinutes]);
+  useEffect(() => { setFolderId(''); setFolderName(''); }, [driveId, auth?.status]);
   const status = auth?.status ?? 'not-connected';
   const account = auth?.email;
   const selectedDrive = auth?.drives?.find(value => value.id === driveId);
@@ -79,50 +77,28 @@ export function GoogleDriveStoragePanel({ hub, sharing, auth, act, pending }: { 
     {status === 'authorizing' && <button type="button" className="kb-button" disabled={pending !== null} onClick={() => void act('auth-cancel', { type: 'sharing.auth.cancel' })}>Cancel</button>}
   </div>;
   const authHint = status === 'connected' ? null : <p className="kb-hint" role="status">{status === 'authorizing' ? 'Finish signing in to Google in the browser. This page updates when Google returns.' : 'Google Drive needs authorization before this Hub can synchronize. Local boards, workflows, and pending changes are kept.'}</p>;
-
-  if (sharing.status === 'preview') {
-    return <>
-      <p className="kb-hint">This folder already contains a published configuration with {sharing.preview?.publishedBoards ?? 0} board{sharing.preview?.publishedBoards === 1 ? '' : 's'}. This Hub has {sharing.preview?.localBoards ?? hub.boards.length}. Choose which configuration becomes the shared one.</p>
-      <p className="kb-share-meta"><span>{sharing.address}</span>{account && <span>{account}</span>}</p>
-      <ul className="kb-share-boards" aria-label="Differences from the team configuration">
-        {sharing.boards.filter(board => board.state === 'updates-available').map(board => <li key={board.boardId} className="kb-share-board"><div className="kb-share-board-main"><span className="kb-share-board-name">{board.name}</span><span className="kb-share-board-state">In both; the team version replaces the local one</span><VersionDiff detail={board.detail} /></div></li>)}
-        {sharing.incoming.map(board => <li key={board.key} className="kb-share-board"><div className="kb-share-board-main"><span className="kb-share-board-name">{board.name}</span><span className="kb-share-board-state">Only in the team</span></div></li>)}
-        {sharing.boards.filter(board => board.state === 'draft').map(board => <li key={board.boardId} className="kb-share-board"><div className="kb-share-board-main"><span className="kb-share-board-name">{board.name}</span><span className="kb-share-board-state">Only in this Hub</span></div></li>)}
-      </ul>
-      {authReminder}{authHint}
-      {auth?.error && <ErrorNotice problem={auth.error} />}
-      <div className="kb-share-actions">
-        <button type="button" className="kb-button kb-primary" disabled={pending !== null || status !== 'connected'} onClick={() => void act('receive', { type: 'sharing.receive', hubId: hub.id })}>{pending === 'receive' ? 'Getting…' : 'Get the team configuration'}</button>
-        {!confirmReplace ? <button type="button" className="kb-button" disabled={pending !== null || status !== 'connected'} onClick={() => setConfirmReplace(true)}>Publish this Hub instead</button>
-          : <><button type="button" className="kb-button kb-danger" disabled={pending !== null || status !== 'connected'} onClick={() => void act('initial', { type: 'sharing.publishInitial', hubId: hub.id, confirmed: true })}>{pending === 'initial' ? 'Publishing…' : 'Replace the team configuration'}</button><button type="button" className="kb-button" onClick={() => setConfirmReplace(false)}>Cancel</button></>}
-        <button type="button" className="kb-button" disabled={pending !== null} onClick={() => void act('disconnect', { type: 'sharing.disconnect', hubId: hub.id })}>Cancel connection</button>
-      </div>
-      {confirmReplace && <p className="kb-hint" role="status">Replacing the team configuration overwrites the published boards with this Hub's boards.</p>}
-      <Blockers blockers={sharing.blockers} />
-      {sharing.error && <ErrorNotice problem={sharing.error} />}
-    </>;
-  }
-
-  return <>
-    <StatusLine sharing={sharing} />
-    <p className="kb-share-meta">{account && <span>{account}</span>}{sharing.pending > 0 && <span>{sharing.pending} pending</span>}{sharing.conflicts > 0 && <span>{sharing.conflicts} to review</span>}{sharing.lastSyncedAt && <span>Last sync {new Date(sharing.lastSyncedAt).toLocaleString()}</span>}</p>
+  const notice = <>
+    {account && <p className="kb-share-meta"><span>{account}</span></p>}
     {authReminder}{authHint}
     {auth?.error && <ErrorNotice problem={auth.error} />}
-    {sharing.error && <ErrorNotice problem={sharing.error} />}
-    <Blockers blockers={sharing.blockers} />
-    <div className="kb-share-actions">
+  </>;
+
+  if (sharing.status === 'preview') {
+    return <ConnectionPreview
+      hub={hub} sharing={sharing} act={act} pending={pending} noun="folder"
+      notice={notice} disabled={status !== 'connected'}
+    />;
+  }
+
+  return <ConnectedStorageSurface
+    hub={hub} sharing={sharing} act={act} pending={pending}
+    summary={<>{account && <span>{account}</span>}{sharing.pending > 0 && <span>{sharing.pending} pending</span>}{sharing.conflicts > 0 && <span>{sharing.conflicts} to review</span>}{sharing.lastSyncedAt && <span>Last sync {new Date(sharing.lastSyncedAt).toLocaleString()}</span>}</>}
+    notice={status === 'connected' && !auth?.error ? null : notice}
+    actions={<>
       <button type="button" className={'kb-button ' + (sharing.pending > 0 || sharing.updates > 0 ? 'kb-primary' : '')} disabled={pending !== null || status !== 'connected'} onClick={() => void act('sync', { type: 'sharing.check', hubId: hub.id })}>{pending === 'sync' ? 'Syncing…' : 'Sync now'}</button>
       {sharing.conflicts > 0 && <span className="kb-share-board-state">Review the boards below.</span>}
       <button type="button" className="kb-button" disabled={pending !== null} onClick={() => void act('auth-switch', { type: 'sharing.auth.switch' })}>Switch account</button>
-      {!confirmDisconnect ? <button type="button" className="kb-button kb-danger" disabled={pending !== null} onClick={() => setConfirmDisconnect(true)}>Disconnect</button>
-        : <><button type="button" className="kb-button kb-danger" disabled={pending !== null} onClick={() => void act('disconnect', { type: 'sharing.disconnect', hubId: hub.id })}>{pending === 'disconnect' ? 'Disconnecting…' : 'Confirm disconnect'}</button><button type="button" className="kb-button" onClick={() => setConfirmDisconnect(false)}>Cancel</button></>}
-    </div>
-    {confirmDisconnect && <p className="kb-hint" role="status">Disconnecting stops automatic synchronization and removes this Hub's binding. The team document and every other file in the folder remain, and local boards, workflows, tasks, notes, and projects stay on this machine.</p>}
-    <form className="kb-share-form" onSubmit={event => { event.preventDefault(); void act('interval', { type: 'sharing.setInterval', hubId: hub.id, intervalMinutes: Number(interval) }); }}>
-      <label className="kb-field kb-share-interval">Check every (minutes)<input className="kb-input" aria-label="Check interval in minutes" type="number" min={0} max={1440} value={interval} disabled={pending !== null} onChange={event => setIntervalMinutes(event.target.value)} /></label>
-      <button type="submit" className="kb-button" disabled={pending !== null}>{pending === 'interval' ? 'Saving…' : 'Save interval'}</button>
-    </form>
-    <BoardReview hubId={hub.id} sharing={sharing} act={act} pending={pending} />
-    <RemovedBoards hubId={hub.id} sharing={sharing} act={act} pending={pending} />
-  </>;
+    </>}
+    disconnectNote={DISCONNECT_NOTE}
+  />;
 }

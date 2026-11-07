@@ -854,7 +854,7 @@ The product SHALL provide multiple boards inside each Hub. A board SHALL have a 
 
 ### Requirement: Board creation and lifecycle
 
-Creating a board SHALL require a name and SHALL initialize it with the default workflow. Renaming a board SHALL NOT change its tasks, workflow, conversations, or worktrees. A board SHALL be deletable only when it contains no tasks. Deleting a board that is bound to the team's shared configuration SHALL require choosing whether the removal applies only to this installation or to the team. A local-only removal SHALL remove the board locally and SHALL keep it out of later team updates. A team-wide removal SHALL remove the board locally and SHALL be included in the team's shared configuration on the next synchronization: the next explicit publish for Git, or the next automatic synchronization for Google Drive. Deleting the last board SHALL leave the Hub with no boards and SHALL present the Hub's create-board empty state. Deleting a board SHALL NOT delete its projects, project directories, worktrees, branches, native conversations, or native workspaces.
+Creating a board SHALL require a name and SHALL initialize it with the default workflow. Renaming a board SHALL NOT change its tasks, workflow, conversations, or worktrees. A board SHALL be deletable only when it contains no tasks. Deleting a board that is bound to the team's shared configuration SHALL require choosing whether the removal applies only to this installation or to the team. A local-only removal SHALL remove the board locally and SHALL keep it out of later team updates. A team-wide removal SHALL remove the board locally and SHALL be included in the team's shared configuration on the next synchronization: the next explicit publish for Git, or the next automatic synchronization for Google Drive or a local folder. Deleting the last board SHALL leave the Hub with no boards and SHALL present the Hub's create-board empty state. Deleting a board SHALL NOT delete its projects, project directories, worktrees, branches, native conversations, or native workspaces.
 
 #### Scenario: Create a board with the default workflow
 
@@ -898,11 +898,16 @@ Creating a board SHALL require a name and SHALL initialize it with the default w
 - **THEN** the board disappears from this installation
 - **AND** the removal is included in the team's shared configuration on the next automatic synchronization
 
+#### Scenario: Remove a board for the team on a local folder
+
+- **WHEN** the user confirms removing a published board for the team on a local folder binding
+- **THEN** the board disappears from this installation
+- **AND** the removal is written into `kanban-hub.yaml` on the next automatic synchronization
+
 #### Scenario: Delete the last board
 
 - **WHEN** the user confirms deletion of the only board in a Hub and that board has no tasks
 - **THEN** the board is removed and the Hub presents its create-board empty state
-
 
 ### Requirement: Board selection and persistence
 The Kanban page SHALL present the boards of the active Hub as tabs below the Hub tabs. The active board SHALL be retained per Hub across reloads in browser local storage. When the remembered board no longer exists, the plugin SHALL select the first available board. Switching boards SHALL reset board-scoped search, project filter, selection mode, and the open task drawer. Switching boards SHALL NOT stop, move, or otherwise affect task execution or a pending timed stage instruction armed for a task on either board.

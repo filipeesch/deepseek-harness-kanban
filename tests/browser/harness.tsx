@@ -12,9 +12,12 @@ import { themeFixture } from './theme-fixture.js';
 
 const scenario = new URLSearchParams(window.location.search).get('scenario') ?? 'board';
 const sharingCase = new URLSearchParams(window.location.search).get('sharing');
+const query = new URLSearchParams(window.location.search);
+const themed = query.get('theme') === 'host';
+const refuse = query.get('refuse');
 const sharingViews: Record<string, HubSharingView> = sharingCase === null ? {} : { hub: harnessSharing(sharingCase) };
 const sharingAuth = sharingCase?.startsWith('drive') ? { status: 'connected' as const, email: 'member@example.test' } : undefined;
-const harness = createHarnessApi({ attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs', hubs: scenario === 'hubs' ? 2 : 1, restricted: scenario === 'move' || scenario === 'prepare-restricted', persist: scenario === 'board', pending: scenario === 'appearance', auto: scenario === 'auto', detect: scenario === 'project-editor' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}) });
+const harness = createHarnessApi({ attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs', hubs: scenario === 'hubs' ? 2 : 1, restricted: scenario === 'move' || scenario === 'prepare-restricted', persist: scenario === 'board', pending: scenario === 'appearance', auto: scenario === 'auto', detect: scenario === 'project-editor' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', folderRefusal: refuse === 'folder', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}) });
 
 function harnessSharing(kind: string): HubSharingView {
   const view: HubSharingView = {
@@ -39,6 +42,18 @@ function harnessSharing(kind: string): HubSharingView {
     if (kind === 'drive-preview') return { ...drive, status: 'preview', updates: 1, drafts: 1, boards: [{ ...drive.boards[0]!, state: 'updates-available', pending: true, detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }], preview: { publishedBoards: 2, localBoards: 1 } };
     if (kind === 'drive-review') return { ...drive, status: 'needs-review', conflicts: 1, boards: [{ ...drive.boards[0]!, state: 'needs-review', detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }] };
     return drive;
+  }
+  if (kind.startsWith('folder')) {
+    const { repository: _repository, ...base } = view;
+    const folder = { ...base, provider: 'local-folder' as const, providerLabel: 'Local folder', address: '~/.dsh-kanban/hub', syncMode: 'continuous' as const, intervalMinutes: 1, pending: 0, lastSyncedAt: '2026-10-21T00:05:00Z' };
+    if (kind === 'folder-preview') return { ...folder, status: 'preview', updates: 1, drafts: 1, boards: [{ ...folder.boards[0]!, state: 'updates-available', pending: true, detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }], preview: { publishedBoards: 2, localBoards: 1 } };
+    if (kind === 'folder-review') return { ...folder, status: 'needs-review', blockers: [{ code: 'SHARING_CONFLICT_COPY', message: 'Another copy of the team document is in this folder: kanban-hub (1).yaml. Review the copies before synchronizing.' }] };
+    return folder;
+  }
+  if (kind === 'unavailable-conflict') return { ...view, status: 'unavailable', conflicts: 1, error: { code: 'SHARING_UNREACHABLE', message: 'The team repository could not be reached.' }, boards: [{ ...view.boards[0]!, state: 'needs-review', detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }] };
+  if (kind === 'unavailable-folder-review') {
+    const { repository: _repository, ...base } = view;
+    return { ...base, provider: 'local-folder' as const, providerLabel: 'Local folder', address: '~/.dsh-kanban/hub', syncMode: 'continuous' as const, intervalMinutes: 1, status: 'unavailable', error: { code: 'SHARING_FOLDER_MISSING', message: 'The selected folder is not accessible.' }, blockers: [{ code: 'SHARING_CONFLICT_COPY', message: 'Another copy of the team document is in this folder: kanban-hub (1).yaml. Review the copies before synchronizing.' }] };
   }
   if (kind === 'refuse-error') return { ...view, status: 'updates-available', updates: 1 };
   return view;
@@ -115,6 +130,7 @@ function App() {
   if (scenario === 'project-editor') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><ProjectEditorScenario /></div></>;
   if (scenario === 'native-composer') return <><style>{styles}</style><NativeComposerScenario /></>;
   if (scenario === 'workflow') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario /></div></>;
+  if (scenario === 'publishing' && themed) return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><PublishingScenario auth={sharingAuth} /></div></>;
   if (scenario === 'publishing') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><PublishingScenario auth={sharingAuth} /></div></>;
   if (scenario === 'sharing') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;
   if (scenario === 'question') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban"><QuestionScenario /></div></>;

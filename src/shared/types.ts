@@ -89,7 +89,9 @@ export interface CommandReceipt { kind: 'hub' | 'board' | 'project' | 'task' | '
 /** One board's publishing state, projected from the stored sharing record. */
 export type SharingBoardState = 'in-sync' | 'draft' | 'updates-available' | 'needs-review' | 'orphan';
 export type SharingHubStatus = 'not-published' | 'preview' | 'published' | 'updates-available' | 'needs-review' | 'unavailable';
-export type SharingStorage = 'git' | 'google-drive';
+/** Every team storage the product supports. This tuple is the single declared source of truth. */
+export const SHARING_STORAGES = ['git', 'google-drive', 'local-folder'] as const;
+export type SharingStorage = (typeof SHARING_STORAGES)[number];
 export type SharingSyncMode = 'explicit' | 'continuous';
 export type SharingAuthStatus = 'not-connected' | 'authorizing' | 'connected' | 'error' | 'reconnect-required';
 export interface SharingAuthView {

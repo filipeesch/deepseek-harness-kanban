@@ -1,9 +1,9 @@
-import type { z } from 'zod';
 import { KanbanError } from '../../shared/errors.js';
+import { SHARING_STORAGES, type SharingStorage } from '../../shared/types.js';
 import type { SharedConfigStore } from './store.js';
 
-/** Storage identifiers supported by the sharing boundary. */
-export type SharingProviderId = 'git' | 'google-drive';
+/** Storage identifiers supported by the sharing boundary, derived from the shared list. */
+export type SharingProviderId = SharingStorage;
 /** The local transport binding; publishing content never lives in this record. */
 export interface SharingBinding {
   provider: SharingProviderId;
@@ -14,12 +14,21 @@ export interface SharingBinding {
 export type ProviderState = Record<string, unknown>;
 export type SharingSyncMode = 'explicit' | 'continuous';
 
+/** A binding as stored by any Hub, used to refuse an address another Hub already owns. */
+export interface BindingCandidate {
+  hubId: string;
+  provider: SharingProviderId;
+  settings: Record<string, string>;
+}
+
 export interface ProviderDescription {
   id: SharingProviderId;
   label: string;
   address: string;
   syncMode: SharingSyncMode;
   defaultIntervalMinutes: number;
+  /** The storage needs an external authorization before a binding is accepted. */
+  requiresAuthorization: boolean;
 }
 
 /**
@@ -31,12 +40,20 @@ export interface SharingProviderDescriptor {
   label: string;
   syncMode: SharingSyncMode;
   defaultIntervalMinutes: number;
+  /** The storage needs an external authorization before a binding is accepted. */
+  requiresAuthorization: boolean;
   /** Validate and normalize the stored string settings for this provider. */
   normalizeSettings(settings: Record<string, string>): Record<string, string>;
   describe(binding: SharingBinding): string;
   createStore(hubId: string, binding: SharingBinding, state: ProviderState): SharedConfigStore;
   /** Validate the persisted provider state; an unusable state falls back to empty. */
   normalizeState(state: ProviderState): ProviderState;
+  /**
+   * Validate a candidate binding before it is stored and return the settings to
+   * persist. A storage may resolve its address to a canonical form, refuse an
+   * address another Hub already owns, or create the location it suggested.
+   */
+  prepareBinding?(candidate: BindingCandidate, existing: readonly BindingCandidate[]): Promise<Record<string, string>>;
 }
 
 /** The service-facing resolver; tests can provide a small fake implementation. */
@@ -45,6 +62,8 @@ export interface SharingProviderResolver {
   describe(binding: SharingBinding): ProviderDescription;
   normalize(provider: SharingProviderId, settings: Record<string, string>): Record<string, string>;
   defaultInterval(provider: SharingProviderId): number;
+  /** Apply the provider's own connection rules and return the binding to store. */
+  prepare(hubId: string, binding: SharingBinding, existing: readonly BindingCandidate[]): Promise<SharingBinding>;
 }
 
 export class SharingProviderRegistry implements SharingProviderResolver {
@@ -78,17 +97,22 @@ export class SharingProviderRegistry implements SharingProviderResolver {
       address: descriptor.describe(binding),
       syncMode: descriptor.syncMode,
       defaultIntervalMinutes: descriptor.defaultIntervalMinutes,
+      requiresAuthorization: descriptor.requiresAuthorization,
     };
   }
 
   defaultInterval(id: SharingProviderId): number {
     return this.get(id).defaultIntervalMinutes;
   }
+
+  async prepare(hubId: string, binding: SharingBinding, existing: readonly BindingCandidate[]): Promise<SharingBinding> {
+    const descriptor = this.get(binding.provider);
+    if (!descriptor.prepareBinding) return binding;
+    return { ...binding, settings: await descriptor.prepareBinding({ hubId, provider: binding.provider, settings: binding.settings }, existing) };
+  }
 }
 
 /** Narrow a stored provider id without trusting the record. */
 export function isSharingProviderId(value: unknown): value is SharingProviderId {
-  return value === 'git' || value === 'google-drive';
+  return typeof value === 'string' && (SHARING_STORAGES as readonly string[]).includes(value);
 }
-
-export type ProviderStateSchema = z.ZodType<ProviderState>;

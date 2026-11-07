@@ -3,6 +3,14 @@ import type { ProviderState, SharingBinding } from './provider.js';
 
 export interface SharedDocumentSnapshot { token: string; document: SharedHubDocument }
 
+/** A decision the storage itself requires before it may synchronize. */
+export interface StorageReview {
+  code: string;
+  message: string;
+  /** Entries that require the decision, when the storage can name them. */
+  files: string[];
+}
+
 /**
  * Transport boundary. A provider reads and writes one whole document with an
  * opaque version token; it never decides merges and never exposes its
@@ -15,6 +23,8 @@ export interface SharedConfigStore {
   destroy(): Promise<void>;
   /** State the service must persist beside the binding, when the provider needs one. */
   state?(): ProviderState;
+  /** A review the storage requires before it may synchronize, when it has one. */
+  review?(): StorageReview | null;
 }
 
 export interface SharedConfigStoreFactory {
