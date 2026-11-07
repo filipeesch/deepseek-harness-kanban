@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis';
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
-import type { Command, HostSnapshot, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingCommand } from '../shared/types.js';
+import type { Command, HostSnapshot, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingCommand } from '../shared/types.js';
 import { problem, KanbanError } from '../shared/errors.js';
 import type { KanbanApp } from './app.js';
 export class KanbanController extends TypertRemoteService {
@@ -13,6 +13,7 @@ export class KanbanController extends TypertRemoteService {
  @Remote async branches(request:{taskId:string}):Promise<Outcome<string[]>>{return this.attempt(()=>this.app.branches(request.taskId));}
  @Remote async worktreeDefault(request:{taskId:string}):Promise<Outcome<{branchName:string;path:string}>>{return this.attempt(()=>this.app.worktreeDefault(request.taskId));}
  @Remote async detectProject(request:{path:string}):Promise<Outcome<ProjectLocation>>{return this.attempt(()=>this.app.detectProject(request.path));}
+ @Remote async localDrive(request:LocalDriveRequest):Promise<Outcome<LocalDriveResult>>{return this.attempt(()=>this.app.localDrive(request));}
  @Remote async dismissQuestions(request:{sessionId:string;roundId:string}):Promise<Outcome<QuestionRound[]>>{return this.attempt(()=>this.app.dismissQuestions(request.sessionId,request.roundId));}
  @Remote({mode:'stream'}) async *follow(signal:AbortSignal):AsyncGenerator<HostSnapshot>{
   this.owner();let dirty=true;let wake:(()=>void)|undefined;

@@ -15,8 +15,13 @@ import { createGitProviderDescriptor } from './host/sharing/git-store.js';
 import { sharingRoot } from './host/sharing/root.js';
 import type { SharingCommandRunner } from './host/sharing/command-runner.js';
 import { GoogleDriveAuthService } from './host/sharing/google-drive-auth.js';
+import { GoogleDriveAuthCoordinator } from './host/sharing/auth-coordinator.js';
 import { createGoogleDriveProviderDescriptor } from './host/sharing/google-drive-store.js';
 import { createLocalFolderProviderDescriptor } from './host/sharing/local-folder-store.js';
+import { GoogleDriveLocalDiscovery } from './host/sharing/google-drive-local/discovery.js';
+import { createDriveDiscoveryAdapter } from './host/sharing/google-drive-local/platform.js';
+import { createGoogleDriveLocalProviderDescriptor } from './host/sharing/google-drive-local/descriptor.js';
+import { nodeDiscoveryFs, type DiscoveryFs } from './host/sharing/google-drive-local/filesystem.js';
 import { credentialStoreFromContext, type CredentialStore } from './host/sharing/credentials.js';
 import { SharingProviderRegistry } from './host/sharing/provider.js';
 import { createNativePorts } from './host/native.js';
@@ -67,6 +72,8 @@ export function registerTaskExecutionGuards(ctx:Context,locator:Pick<TaskLocator
 export interface HubSharingRuntime {
  service:HubSharingService;
  scheduler:SharingPollScheduler;
+ auth:GoogleDriveAuthCoordinator;
+ discovery:GoogleDriveLocalDiscovery;
  setNotify:(notify:()=>void)=>void;
  close:()=>Promise<void>;
 }
@@ -81,6 +88,14 @@ export interface HubSharingOpenOptions {
  credentials?:CredentialStore;
  /** Home directory that owns the suggested per-Hub team folders. */
  home?:string;
+ /** Platform used to pick the Drive discovery adapter; injectable for tests. */
+ platform?:NodeJS.Platform;
+ /** Filesystem used by Drive discovery; injectable for tests. */
+ discoveryFs?:DiscoveryFs;
+ /** Environment used to expand Windows mount variables. */
+ env?:NodeJS.ProcessEnv;
+ /** A fully composed discovery service, when the host already owns one. */
+ discovery?:GoogleDriveLocalDiscovery;
  /** Delay between a local change and an automatic synchronization. */
  debounceMs?:number;
 }
@@ -88,20 +103,28 @@ export async function openHubSharing(ctx:Context,hubs:HubRepository,options:HubS
  const storage=await openSharingStorage(ctx,{...(options.report===undefined?{}:{report:options.report})});
  let notify=()=>{};
  const credentials=options.credentials??credentialStoreFromContext(ctx);
- const auth=new GoogleDriveAuthService({...(credentials===undefined?{}:{credentials}),...(options.clientId===undefined?{}:{clientId:options.clientId}),...(options.clientSecret===undefined?{}:{clientSecret:options.clientSecret}),...(options.fetch===undefined?{}:{fetch:options.fetch}),onChange:()=>notify()});
+ const authService=new GoogleDriveAuthService({...(credentials===undefined?{}:{credentials}),...(options.clientId===undefined?{}:{clientId:options.clientId}),...(options.clientSecret===undefined?{}:{clientSecret:options.clientSecret}),...(options.fetch===undefined?{}:{fetch:options.fetch}),onChange:()=>notify()});
+ const auth=new GoogleDriveAuthCoordinator({auth:authService,onChange:()=>notify()});
  const root=options.root??sharingRoot();
+ const home=options.home??os.homedir();
+ const discoveryFs=options.discoveryFs??nodeDiscoveryFs;
+ const discovery=options.discovery??new GoogleDriveLocalDiscovery({
+  adapter:createDriveDiscoveryAdapter({platform:options.platform??process.platform,home,fs:discoveryFs,...(options.runner===undefined?{}:{runner:options.runner}),...(options.env===undefined?{}:{env:options.env})}),
+  fs:discoveryFs,
+ });
  const providers=new SharingProviderRegistry([
   createGitProviderDescriptor({root,...(options.runner===undefined?{}:{runner:options.runner})}),
-  createGoogleDriveProviderDescriptor({auth,...(options.fetch===undefined?{}:{fetch:options.fetch})}),
-  createLocalFolderProviderDescriptor({home:options.home??os.homedir(),managedRoot:root}),
+  createGoogleDriveProviderDescriptor({auth:authService,...(options.fetch===undefined?{}:{fetch:options.fetch})}),
+  createLocalFolderProviderDescriptor({home,managedRoot:root}),
+  createGoogleDriveLocalProviderDescriptor({discovery,home,managedRoot:root}),
  ]);
  const service=new HubSharingService({hubs,store:storage.storage,providers,auth,notify:()=>notify(),...(options.report===undefined?{}:{report:options.report}),...(options.debounceMs===undefined?{}:{debounceMs:options.debounceMs})});
- await service.refreshAuth();
+ await auth.refresh();
  const scheduler=new SharingPollScheduler({service,...(options.report===undefined?{}:{report:options.report})});
  return {
-  service,scheduler,
+  service,scheduler,auth,discovery,
   setNotify:(next)=>{notify=next;},
-  close:async()=>{scheduler.dispose();try{await service.close();}finally{await storage.close();}},
+  close:async()=>{scheduler.dispose();try{await service.close();await auth.close();}finally{await storage.close();}},
  };
 }
 export const name='kanban';
@@ -116,7 +139,7 @@ export async function apply(ctx:Context):Promise<void>{
  const conversationFacts=registerConversationFacts(ctx);ctx.effect(()=>()=>conversationFacts.dispose());const native=createNativePorts(ctx,{conversationFacts});const hubs=await HubRepository.open(opened.storage);
  let sharing:HubSharingRuntime;
  try{sharing=await openHubSharing(ctx,hubs,{report});}catch(error){await hubs.close();await questions.close();await storage.close();throw error;}
- const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await ctx.sessionController.inspect(SessionId(id),lifetime.signal)).events,questionStore:questions.storage,probe:native.probe,sharing:sharing.service,scheduler:sharing.scheduler},native.workspaces);
+ const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await ctx.sessionController.inspect(SessionId(id),lifetime.signal)).events,questionStore:questions.storage,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler},native.workspaces);
  sharing.setNotify(()=>app.sharingChanged());
  let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offSignals:(()=>void)|undefined;
  ctx.effect(()=>async()=>{lifetime.abort();offTools?.();offWire?.();offGuards?.();offContext?.();offSignals?.();try{await app.close();}finally{try{await sharing.close();}finally{try{await hubs.close();}finally{await questions.close();}}}});

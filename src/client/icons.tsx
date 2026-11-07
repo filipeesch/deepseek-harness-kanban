@@ -1,6 +1,6 @@
 import React from 'react';
 
-type IconProps = { size?: number; className?: string };
+export type IconProps = { size?: number; className?: string };
 const base = (size: number) => ({ width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true, focusable: false });
 
 export function SettingsIcon({ size = 16, className }: IconProps) {
@@ -38,4 +38,25 @@ export function ReopenIcon({ size = 16, className }: IconProps) {
 }
 export function AutoModeIcon({ size = 16, className }: IconProps) {
   return <svg {...base(size)} className={className}><path d="M6 6l5 6-5 6" /><path d="M13 6l5 6-5 6" /></svg>;
+}
+export function GitBranchIcon({ size = 16, className }: IconProps) {
+  return <svg {...base(size)} className={className}><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10M18 9c0 3-3 5-8 5" /></svg>;
+}
+export function CloudIcon({ size = 16, className }: IconProps) {
+  return <svg {...base(size)} className={className}><path d="M7 18h9a4 4 0 0 0 .7-7.9A5.5 5.5 0 0 0 6.2 9.4 3.6 3.6 0 0 0 7 18Z" /></svg>;
+}
+export function DriveIcon({ size = 16, className }: IconProps) {
+  return <svg {...base(size)} className={className}><rect x="3" y="13" width="18" height="7" rx="2" /><path d="M7 16.5h.01M11 16.5h6" /><path d="m6 13 3-9h6l3 9" /></svg>;
+}
+export function FolderIcon({ size = 16, className }: IconProps) {
+  return <svg {...base(size)} className={className}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></svg>;
+}
+export function ChevronRightIcon({ size = 16, className }: IconProps) {
+  return <svg {...base(size)} className={className}><path d="m9 6 6 6-6 6" /></svg>;
+}
+export function ArrowLeftIcon({ size = 16, className }: IconProps) {
+  return <svg {...base(size)} className={className}><path d="M19 12H5" /><path d="m12 19-7-7 7-7" /></svg>;
+}
+export function SearchIcon({ size = 16, className }: IconProps) {
+  return <svg {...base(size)} className={className}><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>;
 }

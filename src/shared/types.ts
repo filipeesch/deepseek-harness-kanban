@@ -90,7 +90,7 @@ export interface CommandReceipt { kind: 'hub' | 'board' | 'project' | 'task' | '
 export type SharingBoardState = 'in-sync' | 'draft' | 'updates-available' | 'needs-review' | 'orphan';
 export type SharingHubStatus = 'not-published' | 'preview' | 'published' | 'updates-available' | 'needs-review' | 'unavailable';
 /** Every team storage the product supports. This tuple is the single declared source of truth. */
-export const SHARING_STORAGES = ['git', 'google-drive', 'local-folder'] as const;
+export const SHARING_STORAGES = ['git', 'google-drive', 'google-drive-local', 'local-folder'] as const;
 export type SharingStorage = (typeof SHARING_STORAGES)[number];
 export type SharingSyncMode = 'explicit' | 'continuous';
 export type SharingAuthStatus = 'not-connected' | 'authorizing' | 'connected' | 'error' | 'reconnect-required';
@@ -151,7 +151,55 @@ export type SharingCommand =
   | { type: 'sharing.auth.disconnect' }
   | { type: 'sharing.auth.switch' }
   | { type: 'sharing.drives' }
-  | { type: 'sharing.folders'; driveId?: string; parentId?: string };
+  | { type: 'sharing.folders'; driveId?: string; parentId?: string }
+  | { type: 'sharing.changeLocation'; hubId: string; settings: Record<string, string>; confirmed: boolean };
+/** One Google Drive for desktop location discovered on this machine. */
+export interface DriveLocationView {
+  id: string;
+  rootPath: string;
+  kind: 'account' | 'legacy';
+  status: 'available' | 'unavailable';
+  /** Display labels only; the root path is the identity. */
+  account?: string;
+  driveName?: string;
+  reason?: string;
+}
+/** Why discovery has no locations, when it has none. */
+export type DriveDiscoveryState = 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'failed';
+export interface DriveDiscoverySourceView {
+  id: string;
+  ok: boolean;
+  reason?: string;
+}
+export interface DriveDiscoveryView {
+  state: DriveDiscoveryState;
+  locations: DriveLocationView[];
+  /** Every local source consulted, including the ones that failed. */
+  sources?: DriveDiscoverySourceView[];
+  reason?: Problem;
+}
+/** One folder in the Drive browser. */
+export interface DriveFolderEntry {
+  name: string;
+  path: string;
+  /** Present only when the folder name matches a recognized Drive structure. */
+  group?: { id: 'my-drive' | 'shared-drives'; label: string };
+}
+export interface DriveBrowseView {
+  rootId: string;
+  path: string;
+  parent: string | null;
+  entries: DriveFolderEntry[];
+  /** Whether the browsed folder already contains the published document. */
+  hasDocument: boolean;
+  truncated: boolean;
+  /** How many folders this page returned. */
+  shown: number;
+}
+export type LocalDriveRequest = { action: 'roots'; refresh?: boolean } | { action: 'list'; path: string };
+export type LocalDriveResult =
+  | { action: 'roots'; discovery: DriveDiscoveryView }
+  | { action: 'list'; page: DriveBrowseView };
 /** Host snapshot: durable state plus per-conversation attention facts and per-Hub publishing. */
 export interface HostSnapshot { commandReceipt?: CommandReceipt; state: KanbanState; conversations: Record<string, ConversationFacts>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; sequence: number }
 /** Client snapshot: host facts plus the client-owned attention projection. */
@@ -193,6 +241,7 @@ export interface ClientApi {
   snapshot(): Promise<KanbanSnapshot>;
   command(command: Command): Promise<KanbanSnapshot>;
   sharing(command: SharingCommand): Promise<KanbanSnapshot>;
+  localDrive(request: LocalDriveRequest): Promise<LocalDriveResult>;
   branches(taskId: string): Promise<string[]>;
   worktreeDefault(taskId: string): Promise<{ branchName: string; path: string }>;
   detectProject(path: string): Promise<ProjectLocation>;

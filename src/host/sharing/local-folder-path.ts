@@ -49,6 +49,32 @@ export function folderIdentity(resolved: string, platform: NodeJS.Platform = pro
   return platform === 'darwin' || platform === 'win32' ? trimmed.toLocaleLowerCase() : trimmed;
 }
 
+/**
+ * Whether one resolved path is the root itself or lies inside it, using the
+ * same identity rule as a binding comparison. Both inputs are expected to be
+ * resolved already; lexical `..` escapes are collapsed by `path.resolve`.
+ */
+export function isWithinPath(root: string, candidate: string, platform: NodeJS.Platform = process.platform): boolean {
+  const normalize = (value: string): string => {
+    const unified = value.replace(/\\/g, '/');
+    const absolute = unified.startsWith('/');
+    const parts: string[] = [];
+    for (const part of unified.split('/')) {
+      if (part === '' || part === '.') continue;
+      if (part === '..') { parts.pop(); continue; }
+      parts.push(part);
+    }
+    const normalized = (absolute ? '/' : '') + parts.join('/');
+    return platform === 'darwin' || platform === 'win32' ? normalized.toLocaleLowerCase() : normalized;
+  };
+  const base = normalize(root);
+  const value = normalize(candidate);
+  // Both spellings are compared after collapsing separators and dot segments,
+  // so a Windows-style path can be reasoned about on any host.
+  if (base === '/') return value.startsWith('/');
+  return value === base || value.startsWith(base + '/');
+}
+
 export interface InspectedFolder {
   /** The canonical path with symbolic links resolved. */
   path: string;

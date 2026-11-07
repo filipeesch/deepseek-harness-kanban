@@ -8,7 +8,7 @@ import type { AutoAdvancePlan } from '../domain/auto-advance.js';
 import { admitAutoAdvance } from './auto-advance-admission.js';
 import { readPendingUserWork, withQuestionPending } from './pending-source.js';
 import type { ConversationFactsSource } from './native-facts.js';
-import type { AutoModePauseReason, BoardSettings, Command, HostSnapshot, HubState, HubTask, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, SharingCommand } from '../shared/types.js';
+import type { AutoModePauseReason, BoardSettings, Command, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, SharingCommand } from '../shared/types.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionStore } from './question-storage.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
@@ -31,6 +31,8 @@ import { QuestionIndex } from '../questions/indexer.js';
 import * as operations from '../domain/hub-operations.js';
 import type { HubSharingService } from './sharing/service.js';
 import type { SharingPollScheduler } from './sharing/scheduler.js';
+import type { GoogleDriveLocalDiscovery } from './sharing/google-drive-local/discovery.js';
+import { isAuthorizationCommand, type GoogleDriveAuthCoordinator } from './sharing/auth-coordinator.js';
 
 async function pathExists(value:string):Promise<boolean>{try{await lstat(value);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}}
 function isEvent(value:unknown):value is {type:string;seq:number;data:unknown}{return Boolean(value&&typeof value==='object'&&'type'in value&&typeof value.type==='string'&&'seq'in value&&typeof value.seq==='number'&&Number.isSafeInteger(value.seq)&&'data'in value);}
@@ -41,7 +43,7 @@ function userPromptTime(event:unknown):number|undefined{
  const time=(event as {time?:unknown}).time;
  return typeof time==='number'&&Number.isFinite(time)?time:Date.now();
 }
-export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore; probe?:ProjectProbe; sharing?:HubSharingService; scheduler?:SharingPollScheduler }
+export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore; probe?:ProjectProbe; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler }
 /** Coordinates Hub-scoped commands while the host continues to own sessions and execution. */
 export class KanbanApp {
  readonly questions=new QuestionIndex();
@@ -196,18 +198,23 @@ export class KanbanApp {
  sessionActivity(sessionId?:string):void{if(this.disposed)return;if(sessionId!==undefined&&!this.locator.hasSession(sessionId))return;this.attention.touch(sessionId);this.markChanged();}
  async snapshot(refreshAttention=false):Promise<HostSnapshot>{
   if(refreshAttention){this.attention.invalidate();this.sequence++;}
-  if(this.options.sharing)await this.options.sharing.refreshAuth();
+  if(this.options.sharingAuth)await this.options.sharingAuth.refresh();
   const sequence=this.sequence;const state=this.stateCache??=this.hubs.snapshot();
   const conversations=await this.attention.project(this.locator.all().map(located=>({id:located.task.id,sessionIds:located.task.sessionIds})));
-  return {state,conversations,sharing:this.options.sharing?.views()??{},sharingAuth:this.options.sharing?.authView()??{status:'not-connected'},sequence};
+  return {state,conversations,sharing:this.options.sharing?.views()??{},sharingAuth:this.options.sharingAuth?.view()??{status:'not-connected'},sequence};
  }
  /** Publish a new snapshot after publishing state changed outside a board command. */
  sharingChanged():void{this.markChanged();}
  /** Execute one publishing action, then reconcile automatic checks and return a fresh snapshot. */
  async sharingCommand(command:SharingCommand):Promise<HostSnapshot>{
   invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');
-  const sharing=this.options.sharing;invariant(sharing,'SHARING_UNAVAILABLE','Team settings are unavailable in this host.');
-  await sharing.command(command);
+  if(isAuthorizationCommand(command)){
+   const auth=this.options.sharingAuth;invariant(auth,'SHARING_UNAVAILABLE','Google Drive authorization is unavailable in this host.');
+   await auth.command(command);
+  }else{
+   const sharing=this.options.sharing;invariant(sharing,'SHARING_UNAVAILABLE','Team settings are unavailable in this host.');
+   await sharing.command(command);
+  }
   this.options.scheduler?.sync();
   return this.snapshot();
  }
@@ -224,6 +231,12 @@ export class KanbanApp {
   throw new KanbanError('WORKTREE_NAME_UNAVAILABLE','Could not derive an available worktree name from the task title.');
  }
  async detectProject(pathValue:string):Promise<ProjectLocation>{const probe=this.options.probe;invariant(probe,'PROJECT_PROBE_UNAVAILABLE','Project detection is unavailable in this host.');return probe.inspect(pathValue);}
+ async localDrive(request:LocalDriveRequest):Promise<LocalDriveResult>{
+  const discovery=this.options.localDrive;invariant(discovery,'SHARING_UNAVAILABLE','Google Drive discovery is unavailable in this host.');
+  return request.action==='roots'
+   ? {action:'roots',discovery:request.refresh===true?await discovery.refresh():await discovery.roots()}
+   : {action:'list',page:await discovery.browse(request.path)};
+ }
  async assertExecutionContext(sessionId:string):Promise<void>{
   const located=this.locator.bySession(sessionId);if(!located)return;const task=located.task;const project=located.project;
   if(!isGitProject(project)){

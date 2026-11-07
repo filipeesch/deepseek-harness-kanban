@@ -64,6 +64,7 @@ function fixture(options: { storage?: KeyValueStorage } = {}) {
       branches: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['main'] } }),
       worktreeDefault: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { branchName: 'task', path: '' } } }),
       detectProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { kind: 'git', projectPath: '/repo/apps/web', gitRootPath: '/repo', defaultBranch: 'main' } } }),
+      localDrive: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { action: 'roots', discovery: { state: 'empty', locations: [] } } } }),
       questionsFollow: vi.fn((_request: { sessionId: string }, signal?: AbortSignal) => { const feed = new Feed<QuestionFeedFrame>(); questionFeeds.push(feed); signal?.addEventListener('abort', () => feed.dispose(), { once: true }); return feed; }),
       dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
       follow: vi.fn((signal?: AbortSignal) => { const feed = new Feed<HostSnapshot>(); feeds.push(feed); signal?.addEventListener('abort', () => feed.dispose(), { once: true }); return feed; }),
