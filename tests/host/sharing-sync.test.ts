@@ -6,7 +6,7 @@ import { HubSharingService } from '../../src/host/sharing/service.js';
 import type { SharedConfigStore, SharedDocumentSnapshot } from '../../src/host/sharing/store.js';
 import type { HubSharingRecord, HubSharingStore } from '../../src/host/sharing/state.js';
 import type { ProviderDescription, SharingBinding, SharingProviderId, SharingProviderResolver } from '../../src/host/sharing/provider.js';
-import type { GoogleDriveAuthService } from '../../src/host/sharing/google-drive-auth.js';
+import type { SharingAuthorizationPort } from '../../src/host/sharing/auth-coordinator.js';
 import { createGoogleDriveProviderDescriptor } from '../../src/host/sharing/google-drive-store.js';
 import { MemoryHubStorage } from './helpers.js';
 
@@ -63,7 +63,7 @@ const resolver = (store: FakeStore): SharingProviderResolver => ({
   defaultInterval: provider => provider === 'google-drive' ? 1 : 5,
 });
 
-const auth = { status: async () => ({ status: 'connected' as const, email: 'member@example.test' }) } as unknown as GoogleDriveAuthService;
+const auth = { status: () => 'connected' as const, ensureConnected: async () => {}, cancel: async () => {} } satisfies SharingAuthorizationPort;
 
 async function fixture() {
   const hubs = await HubRepository.open(new MemoryHubStorage(), { id: (() => { let n = 0; return () => 'id-' + (++n); })(), now: () => NOW });

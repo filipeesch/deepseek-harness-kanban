@@ -3,7 +3,7 @@ import { createTypertRemoteInfo } from '@deepseek-ai/dsh-typert-protocol/remote-
 import type { RemoteResult, RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol';
 import type { TypertContribution } from '@deepseek-ai/dsh-typert-registry';
 import { KanbanStateSchema } from './domain/hub-schema.js';
-import type { Command, HostSnapshot, HubSharingView, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingAuthView, SharingCommand } from './shared/types.js';
+import type { Command, DriveBrowseView, DriveDiscoveryView, HostSnapshot, HubSharingView, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingAuthView, SharingCommand } from './shared/types.js';
 import { SHARING_STORAGES } from './shared/types.js';
 export const PACKAGE_NAME = 'dsh-kanban';
 const id=z.string().min(1).max(200);
@@ -74,6 +74,18 @@ export const HubSharingViewSchema:z.ZodType<HubSharingView>=z.object({
  preview:z.object({publishedBoards:z.number().int().nonnegative(),localBoards:z.number().int().nonnegative()}).strict().optional(),
  removing:z.array(z.object({boardId:id,name:z.string().min(1)}).strict()),
 }).strict();
+const drivePath=z.string().min(1).max(4096);
+export const DriveLocationViewSchema=z.object({id:drivePath,rootPath:drivePath,kind:z.enum(['account','legacy']),status:z.enum(['available','unavailable']),account:z.string().optional(),driveName:z.string().optional(),reason:z.string().optional()}).strict();
+export const DriveDiscoveryViewSchema:z.ZodType<DriveDiscoveryView>=z.object({state:z.enum(['ready','empty','app-missing','unsupported','failed']),locations:z.array(DriveLocationViewSchema),sources:z.array(z.object({id:z.string().min(1).max(200),ok:z.boolean(),reason:z.string().max(500).optional()}).strict()).optional(),reason:ProblemSchema.optional()}).strict();
+export const DriveBrowseViewSchema:z.ZodType<DriveBrowseView>=z.object({rootId:drivePath,path:drivePath,parent:drivePath.nullable(),entries:z.array(z.object({name:z.string().min(1),path:drivePath,group:z.object({id:z.enum(['my-drive','shared-drives']),label:z.string().min(1)}).strict().optional()}).strict()),hasDocument:z.boolean(),truncated:z.boolean(),shown:z.number().int().nonnegative()}).strict();
+export const LocalDriveRequestSchema:z.ZodType<LocalDriveRequest>=z.discriminatedUnion('action',[
+ z.object({action:z.literal('roots'),refresh:z.boolean().optional()}).strict(),
+ z.object({action:z.literal('list'),path:z.string().min(1).max(4096)}).strict(),
+]);
+export const LocalDriveResultSchema:z.ZodType<LocalDriveResult>=z.discriminatedUnion('action',[
+ z.object({action:z.literal('roots'),discovery:DriveDiscoveryViewSchema}).strict(),
+ z.object({action:z.literal('list'),page:DriveBrowseViewSchema}).strict(),
+]);
 export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note']),id}).strict().optional(),state:KanbanStateSchema,conversations:z.record(z.string(),ConversationFactsSchema),sharing:z.record(z.string(),HubSharingViewSchema),sharingAuth:SharingAuthViewSchema.optional(),sequence:z.number().int().nonnegative()}).strict();
 export const SharingCommandSchema:z.ZodType<SharingCommand>=z.discriminatedUnion('type',[
  z.object({type:z.literal('sharing.connect'),hubId:id,provider:sharingStorage.optional(),settings:z.record(z.string(),z.string()).optional(),repository:z.string().min(1).max(2048).optional(),intervalMinutes:z.number().int().min(0).max(1440).optional()}).strict(),
@@ -93,6 +105,7 @@ export const SharingCommandSchema:z.ZodType<SharingCommand>=z.discriminatedUnion
  z.object({type:z.literal('sharing.auth.switch')}).strict(),
  z.object({type:z.literal('sharing.drives')}).strict(),
  z.object({type:z.literal('sharing.folders'),driveId:id.optional(),parentId:id.optional()}).strict(),
+ z.object({type:z.literal('sharing.changeLocation'),hubId:id,settings:z.record(z.string(),z.string()),confirmed:z.boolean()}).strict(),
 ]);
 const outcome=<T extends z.ZodType>(value:T)=>z.discriminatedUnion('ok',[z.object({ok:z.literal(true),value}).strict(),z.object({ok:z.literal(false),error:ProblemSchema}).strict()]);
 const codec=(name:string,create:()=>z.ZodType)=>({mode:'strict' as const,typeSymbol:PACKAGE_NAME+'#'+name,create});
@@ -105,6 +118,7 @@ export const TYPERT_REMOTE=createTypertRemoteInfo({package:PACKAGE_NAME,methods:
  'kanban/branches':{...base,parameters:[parameter('request',z.object({taskId:id}).strict(),'TaskLookup')],result:codec('BranchesOutcome',()=>outcome(z.array(z.string())))},
  'kanban/worktreeDefault':{...base,parameters:[parameter('request',z.object({taskId:id}).strict(),'TaskLookup')],result:codec('WorktreeDefaultOutcome',()=>outcome(worktreeDefault))},
  'kanban/detectProject':{...base,parameters:[parameter('request',z.object({path:z.string().min(1)}).strict(),'ProjectPathLookup')],result:codec('ProjectLocationOutcome',()=>outcome(projectLocation))},
+ 'kanban/localDrive':{...base,parameters:[parameter('request',LocalDriveRequestSchema,'LocalDriveRequest')],result:codec('LocalDriveOutcome',()=>outcome(LocalDriveResultSchema))},
  'kanban/dismissQuestions':{...base,parameters:[parameter('request',z.object({sessionId:id,roundId:id}).strict(),'QuestionDismissal')],result:codec('QuestionDismissalOutcome',()=>outcome(z.array(QuestionRoundSchema)))},
  'kanban/questionsFollow':{...base,mode:'stream',parameters:[parameter('request',z.object({sessionId:id}).strict(),'SessionLookup')],cancellation:{parameter:'signal'},result:codec('QuestionFeedFrame',()=>QuestionFeedFrameSchema)},
  'kanban/follow':{...base,mode:'stream',parameters:[],cancellation:{parameter:'signal'},result:codec('Snapshot',()=>SnapshotSchema)},
@@ -117,6 +131,7 @@ export interface KanbanRemote {
  branches(request:{taskId:string}):Promise<RemoteResult<Outcome<string[]>>>;
  worktreeDefault(request:{taskId:string}):Promise<RemoteResult<Outcome<{branchName:string;path:string}>>>;
  detectProject(request:{path:string}):Promise<RemoteResult<Outcome<ProjectLocation>>>;
+ localDrive(request:LocalDriveRequest):Promise<RemoteResult<Outcome<LocalDriveResult>>>;
  dismissQuestions(request:{sessionId:string;roundId:string}):Promise<RemoteResult<Outcome<QuestionRound[]>>>;
  questionsFollow(request:{sessionId:string},signal?:AbortSignal):RemoteStreamHandle<QuestionFeedFrame,never>;
  follow(signal?:AbortSignal):RemoteStreamHandle<HostSnapshot, never>;
@@ -125,7 +140,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
  interface TypertRemoteNamespaceMap {kanban:KanbanRemote}
  interface TypertRemoteMap {
   'kanban/snapshot':KanbanRemote['snapshot']; 'kanban/command':KanbanRemote['command']; 'kanban/sharing':KanbanRemote['sharing'];
-  'kanban/branches':KanbanRemote['branches']; 'kanban/worktreeDefault':KanbanRemote['worktreeDefault']; 'kanban/detectProject':KanbanRemote['detectProject']; 'kanban/dismissQuestions':KanbanRemote['dismissQuestions']; 'kanban/questionsFollow':KanbanRemote['questionsFollow']; 'kanban/follow':KanbanRemote['follow'];
+  'kanban/branches':KanbanRemote['branches']; 'kanban/worktreeDefault':KanbanRemote['worktreeDefault']; 'kanban/detectProject':KanbanRemote['detectProject']; 'kanban/localDrive':KanbanRemote['localDrive']; 'kanban/dismissQuestions':KanbanRemote['dismissQuestions']; 'kanban/questionsFollow':KanbanRemote['questionsFollow']; 'kanban/follow':KanbanRemote['follow'];
  }
 }
 export default TYPERT_REMOTE;

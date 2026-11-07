@@ -9,6 +9,7 @@ import type { ProviderDescription, SharingBinding, SharingProviderId, SharingPro
 import type { SharedConfigStore, SharedConfigStoreFactory } from '../../src/host/sharing/store.js';
 import type { HubSharingRecord, HubSharingStore } from '../../src/host/sharing/state.js';
 import { KanbanApp } from '../../src/host/app.js';
+import type { GoogleDriveLocalDiscovery } from '../../src/host/sharing/google-drive-local/discovery.js';
 import { MemoryHubStorage, TestGit, TestSessions } from './helpers.js';
 
 const NOW = '2026-01-01T00:00:00.000Z';
@@ -72,5 +73,40 @@ describe('publishing controller', () => {
     const controller = new KanbanController(foreign as never, app);
     const result = await controller.sharing({ type: 'sharing.check', hubId });
     expect(result).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
+  });
+});
+
+describe('local Drive query', () => {
+  it('serves roots and browsing through the host controller', async () => {
+    const { hubs } = await fixture();
+    const roots = { state: 'ready' as const, locations: [{ id: '/drive', rootPath: '/drive', kind: 'account' as const, status: 'available' as const }] };
+    const page = { rootId: '/drive', path: '/drive', parent: null, entries: [], hasDocument: false, truncated: false, total: 0 };
+    const discovery = {
+      roots: async () => roots,
+      refresh: async () => roots,
+      browse: async () => page,
+    } as unknown as GoogleDriveLocalDiscovery;
+    const app = new KanbanApp(hubs, new TestSessions(), new TestGit(), { localDrive: discovery });
+    const controller = new KanbanController(new Context(), app);
+    await expect(controller.localDrive({ action: 'roots' })).resolves.toMatchObject({ ok: true, value: { action: 'roots' } });
+    await expect(controller.localDrive({ action: 'list', path: '/drive' })).resolves.toMatchObject({ ok: true, value: { action: 'list', page: { path: '/drive' } } });
+  });
+
+  it('rejects a caller that is not the native host owner', async () => {
+    const { hubs } = await fixture();
+    const discovery = {
+      roots: async () => ({ state: 'empty' as const, locations: [] }),
+      refresh: async () => ({ state: 'empty' as const, locations: [] }),
+      browse: async () => { throw new Error('unused'); },
+    } as unknown as GoogleDriveLocalDiscovery;
+    const app = new KanbanApp(hubs, new TestSessions(), new TestGit(), { localDrive: discovery });
+    const foreign = new Proxy(new Context(), {
+      get(target, property, receiver) {
+        if (property === 'invocation') return { peer: { principal: { kind: 'agent' } } };
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const controller = new KanbanController(foreign as never, app);
+    await expect(controller.localDrive({ action: 'roots' })).resolves.toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
   });
 });

@@ -1,26 +1,22 @@
 import React, { useEffect, useState } from 'react';
 import type { ClientApi, HubSharingView, HubState, Problem, SharingAuthView, SharingCommand, SharingStorage } from '../../../shared/types.js';
-import { SHARING_STORAGES } from '../../../shared/types.js';
 import { asProblem } from '../../ui.js';
 import { GitStoragePanel } from './git-panel.js';
 import { GoogleDriveStoragePanel } from './google-drive-panel.js';
+import { GoogleDriveLocalStoragePanel } from './google-drive-local-panel.js';
 import { LocalFolderStoragePanel } from './local-folder-panel.js';
 import { Blockers, ErrorBlock, type Act } from './shared.js';
+import { STORAGE_META, StorageCards } from './storage-cards.js';
 
 /** One connection surface per storage, so the selector never branches on the storage id. */
-const STORAGE_PANELS: Record<SharingStorage, React.ComponentType<{ hub: HubState; sharing?: HubSharingView; auth?: SharingAuthView; act: Act; pending: string | null }>> = {
+const STORAGE_PANELS: Record<SharingStorage, React.ComponentType<{ hub: HubState; sharing?: HubSharingView; auth?: SharingAuthView; act: Act; pending: string | null; api?: ClientApi }>> = {
   git: GitStoragePanel,
   'google-drive': GoogleDriveStoragePanel,
+  'google-drive-local': GoogleDriveLocalStoragePanel,
   'local-folder': LocalFolderStoragePanel,
 };
 
-const STORAGE_LABELS: Record<SharingStorage, string> = {
-  git: 'Git repository',
-  'google-drive': 'Google Drive',
-  'local-folder': 'Local folder',
-};
-
-/** The Team Settings surface: one storage selector over per-storage panels. */
+/** The Team Settings surface: one card per storage over per-storage panels. */
 export function TeamSettings({ hub, sharing, auth, api }: { hub: HubState; sharing?: HubSharingView; auth?: SharingAuthView; api?: ClientApi }) {
   const [storage, setStorage] = useState<SharingStorage>(sharing?.provider ?? 'git');
   const [pending, setPending] = useState<string | null>(null);
@@ -42,11 +38,9 @@ export function TeamSettings({ hub, sharing, auth, api }: { hub: HubState; shari
   return <div className="kb-form" aria-label="Team settings">
     <h3>Team Settings</h3>
     <p className="kb-hint">Choose where this Hub's boards and workflows are shared. Projects, tasks, notes, and Hub names stay on this machine.</p>
-    <label className="kb-field">Storage<select className="kb-input" aria-label="Team storage" value={storage} disabled={bound || pending !== null} onChange={event => setStorage(event.target.value as SharingStorage)}>
-      {SHARING_STORAGES.map(value => <option key={value} value={value}>{STORAGE_LABELS[value]}</option>)}
-    </select></label>
-    {bound && <p className="kb-hint">This Hub is connected to {sharing.providerLabel}. Disconnect to switch storage.</p>}
-    <Panel hub={hub} sharing={sharing} auth={auth} act={act} pending={pending} />
+    <StorageCards value={storage} onChange={setStorage} locked={bound} busy={pending !== null} />
+    {bound && <p className="kb-hint">This Hub is connected to {STORAGE_META[sharing.provider].label}. Disconnect to switch storage.</p>}
+    <Panel hub={hub} sharing={sharing} auth={auth} act={act} pending={pending} api={api} />
     {errorBlockers.length > 0 && <Blockers blockers={errorBlockers} />}
     <ErrorBlock error={error} />
   </div>;

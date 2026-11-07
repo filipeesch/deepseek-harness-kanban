@@ -1,4 +1,4 @@
-import type { BoardState, ClientApi, Command, HubSharingView, HubState, HubTask, KanbanSnapshot, KanbanState, Note, SharingCommand } from '../../src/shared/types.js';
+import type { BoardState, ClientApi, Command, DriveBrowseView, DriveDiscoveryView, HubSharingView, HubState, HubTask, KanbanSnapshot, KanbanState, LocalDriveRequest, LocalDriveResult, Note, SharingCommand } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import { taskTitleSlug, worktreePathForBranch } from '../../src/shared/worktree-name.js';
@@ -12,7 +12,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean }
+export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error' }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -84,6 +84,41 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
   const listeners = new Set<(snapshot: TestSnapshot) => void>();
   const commands: Command[] = [];
   const sharingCommands: SharingCommand[] = [];
+  const driveRoot = '/Users/member/Library/CloudStorage/GoogleDrive-member@example.test';
+  const driveDiscovery: DriveDiscoveryView = options.drive === 'app-missing'
+    ? { state: 'app-missing', locations: [] }
+    : options.drive === 'unsupported'
+      ? { state: 'unsupported', locations: [] }
+      : options.drive === 'empty'
+        ? { state: 'empty', locations: [] }
+        : { state: 'ready', locations: [{ id: driveRoot, rootPath: driveRoot, kind: 'account', status: 'available', account: 'member@example.test' }] };
+  function drivePage(request: LocalDriveRequest): LocalDriveResult {
+    if (request.action === 'roots') return { action: 'roots', discovery: driveDiscovery };
+    const atRoot = request.path === driveRoot;
+    const name = request.path.split('/').pop() ?? '';
+    const entries = atRoot
+      ? [{ name: 'Meu Drive', path: driveRoot + '/Meu Drive', group: { id: 'my-drive' as const, label: 'My Drive' } }, { name: 'Drives compartilhados', path: driveRoot + '/Drives compartilhados', group: { id: 'shared-drives' as const, label: 'Shared drives' } }]
+      : name === 'Meu Drive'
+        ? [{ name: 'Projetos', path: request.path + '/Projetos' }, { name: 'Time', path: request.path + '/Time' }]
+        : name === 'Drives compartilhados'
+          ? [{ name: 'Design', path: request.path + '/Design' }]
+          : name === 'Projetos'
+            ? [{ name: 'Website', path: request.path + '/Website' }]
+            : [];
+    const page: DriveBrowseView = { rootId: driveRoot, path: request.path, parent: atRoot ? null : request.path.slice(0, request.path.lastIndexOf('/')), entries, hasDocument: name === 'Projetos', truncated: false, shown: entries.length };
+    return { action: 'list', page };
+  }
+  function localDriveSharing(pathValue: string, status: 'preview' | 'published'): HubSharingView {
+    const folder = pathValue.slice(pathValue.lastIndexOf('/') + 1);
+    return {
+      status, provider: 'google-drive-local', providerLabel: 'Google Drive Local', address: 'member@example.test / ' + folder,
+      syncMode: 'continuous', intervalMinutes: 1, lastSyncedAt: '2026-10-21T00:05:00Z',
+      drafts: 0, pending: 0, updates: 0, conflicts: 0, orderChanged: false, syncing: false,
+      boards: [{ boardId: 'board', key: 'harness-board', name: 'Harness board', state: 'in-sync', bound: true, pending: false }],
+      incoming: [], removed: [], blockers: [], removing: [],
+      ...(status === 'preview' ? { preview: { publishedBoards: 1, localBoards: 1 }, boards: [{ boardId: 'board', key: 'harness-board', name: 'Harness board', state: 'updates-available' as const, bound: true, pending: true }] } : {}),
+    };
+  }
   if (options.persist) { try { const stored = sessionStorage.getItem('dsh-kanban.harness'); if (stored) value = withLegacy(JSON.parse(stored) as KanbanSnapshot); } catch { /* storage is optional */ } }
   const publish = () => { value = withLegacy(clone(value)); value.sequence++; if (options.persist) { try { sessionStorage.setItem('dsh-kanban.harness', JSON.stringify(value)); } catch { /* storage is optional */ } } const copy = withLegacy(clone(value)); for (const listener of listeners) listener(copy); return withLegacy(clone(value)); };
   const api: ClientApi = {
@@ -161,7 +196,17 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
       const current = hubId === undefined ? undefined : value.sharing[hubId];
       if (current && hubId !== undefined) value.sharing[hubId] = { ...current, drafts: Math.max(0, current.drafts - 1), ...(command.type === 'sharing.check' ? { lastCheckedAt: '2026-10-21T00:05:00Z' } : {}) };
       if (command.type === 'sharing.disconnect' && hubId !== undefined) delete value.sharing[hubId];
+      if (command.type === 'sharing.connect' && command.provider === 'google-drive-local' && command.settings?.path !== undefined) {
+        value.sharing.hub = localDriveSharing(command.settings.path, command.settings.path.endsWith('/Projetos') ? 'preview' : 'published');
+      }
+      if (command.type === 'sharing.changeLocation' && command.settings.path !== undefined) {
+        value.sharing.hub = localDriveSharing(command.settings.path, command.settings.path.endsWith('/Projetos') || command.settings.path.endsWith('/Website') ? 'preview' : 'published');
+      }
       return publish();
+    },
+    localDrive: async (request: LocalDriveRequest) => {
+      if (options.drive === 'error') throw { code: 'SHARING_DRIVE_DISCOVERY_FAILED', message: 'Google Drive discovery could not be completed.' };
+      return drivePage(request);
     },
     subscribe: listener => { const wrapped = (snapshot: TestSnapshot) => listener(snapshot); listeners.add(wrapped); return () => listeners.delete(wrapped); },
   };

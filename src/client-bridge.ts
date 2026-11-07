@@ -70,6 +70,7 @@ export class ClientBridge {
       snapshot: () => this.unarySnapshot(() => remote.kanban.snapshot()),
       command: (command: Command) => this.unarySnapshot(() => remote.kanban.command(command)),
       sharing: (command: SharingCommand) => this.unarySnapshot(() => remote.kanban.sharing(command)),
+      localDrive: async request => unwrap(await remote.kanban.localDrive(request)),
       branches: async (taskId: string) => unwrap(await remote.kanban.branches({ taskId })),
       worktreeDefault: async (taskId: string) => unwrap(await remote.kanban.worktreeDefault({ taskId })),
       detectProject: async (path: string) => unwrap(await remote.kanban.detectProject({ path })),

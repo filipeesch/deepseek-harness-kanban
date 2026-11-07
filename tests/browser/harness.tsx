@@ -6,7 +6,7 @@ import { Configuration } from '../../src/client/settings/configuration.js';
 import { ProjectEditorDialog } from '../../src/client/projects/project-editor-dialog.js';
 import { DirectoryPickerProvider } from '../../src/client/services.js';
 import { QuestionForm } from '../../src/questions/QuestionForm.js';
-import type { Command, HubSharingView, QuestionRound, RoundPage } from '../../src/shared/types.js';
+import type { ClientApi, Command, HubSharingView, QuestionRound, RoundPage } from '../../src/shared/types.js';
 import { createHarnessApi, workflowYaml, type TestSnapshot } from './fake-api.js';
 import { themeFixture } from './theme-fixture.js';
 
@@ -16,8 +16,9 @@ const query = new URLSearchParams(window.location.search);
 const themed = query.get('theme') === 'host';
 const refuse = query.get('refuse');
 const sharingViews: Record<string, HubSharingView> = sharingCase === null ? {} : { hub: harnessSharing(sharingCase) };
-const sharingAuth = sharingCase?.startsWith('drive') ? { status: 'connected' as const, email: 'member@example.test' } : undefined;
-const harness = createHarnessApi({ attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs', hubs: scenario === 'hubs' ? 2 : 1, restricted: scenario === 'move' || scenario === 'prepare-restricted', persist: scenario === 'board', pending: scenario === 'appearance', auto: scenario === 'auto', detect: scenario === 'project-editor' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', folderRefusal: refuse === 'folder', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}) });
+const driveCase = query.get('drive') as 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error' | null;
+const sharingAuth = sharingCase?.startsWith('drive') === true && !sharingCase.startsWith('drive-local') ? { status: 'connected' as const, email: 'member@example.test' } : undefined;
+const harness = createHarnessApi({ attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs', hubs: scenario === 'hubs' ? 2 : 1, restricted: scenario === 'move' || scenario === 'prepare-restricted', persist: scenario === 'board', pending: scenario === 'appearance', auto: scenario === 'auto', detect: scenario === 'project-editor' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, ...(driveCase === null ? {} : { drive: driveCase }), shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', folderRefusal: refuse === 'folder', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}) });
 
 function harnessSharing(kind: string): HubSharingView {
   const view: HubSharingView = {
@@ -37,6 +38,12 @@ function harnessSharing(kind: string): HubSharingView {
   if (kind === 'removed') return { ...view, removed: [{ boardId: 'old-board', key: 'old-board', name: 'Old board' }] };
   if (kind === 'unavailable') return { ...view, status: 'unavailable', error: { code: 'SHARING_UNREACHABLE', message: 'The team repository could not be reached.' } };
   if (kind === 'preview') return { ...view, status: 'preview', updates: 1, drafts: 1, boards: [{ ...view.boards[0]!, state: 'updates-available', pending: true, detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }], preview: { publishedBoards: 2, localBoards: 1 } };
+  if (kind.startsWith('drive-local')) {
+    const local = { ...view, provider: 'google-drive-local' as const, providerLabel: 'Google Drive Local', address: 'member@example.test / Projetos', syncMode: 'continuous' as const, intervalMinutes: 1, pending: 0, lastSyncedAt: '2026-10-21T00:05:00Z' };
+    if (kind === 'drive-local-unavailable') return { ...local, status: 'unavailable', error: { code: 'SHARING_DRIVE_MOUNT_UNAVAILABLE', message: 'The Google Drive location is no longer mounted on this machine.' } };
+    if (kind === 'drive-local-review') return { ...local, status: 'needs-review', conflicts: 1, blockers: [{ code: 'SHARING_CONFLICT_COPY', message: 'Another copy of the team document is in this folder: kanban-hub (1).yaml. Review the copies before synchronizing.' }], boards: [{ ...local.boards[0]!, state: 'needs-review' }] };
+    return local;
+  }
   if (kind.startsWith('drive')) {
     const drive = { ...view, provider: 'google-drive' as const, providerLabel: 'Google Drive', address: 'Team drive / Hub', syncMode: 'continuous' as const, authorization: 'connected' as const, pending: 0, lastSyncedAt: '2026-10-21T00:05:00Z' };
     if (kind === 'drive-preview') return { ...drive, status: 'preview', updates: 1, drafts: 1, boards: [{ ...drive.boards[0]!, state: 'updates-available', pending: true, detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }], preview: { publishedBoards: 2, localBoards: 1 } };
@@ -69,8 +76,20 @@ function WorkflowScenario() {
 
 function PublishingScenario({ auth }: { auth?: { status: 'connected'; email: string } }) {
   const [snapshot, setSnapshot] = useState<TestSnapshot>(harness.snapshot());
+  const [sharing, setSharing] = useState<HubSharingView | undefined>(sharingViews.hub);
   const run = async (command: Command) => { const next = await harness.api.command(command); setSnapshot(next as TestSnapshot); return next; };
-  return <Configuration state={snapshot.state} hub={snapshot.state.hubs[0]!} board={snapshot.state.hubs[0]!.boards[0]!} hubCount={1} settings={snapshot.state.settings} settingsRevision={snapshot.state.settings.revision} run={run} api={harness.api} {...(sharingViews.hub === undefined ? {} : { sharing: sharingViews.hub })} {...(auth === undefined ? {} : { sharingAuth: auth })} initial="Team Settings" onClose={() => {}} />;
+  // The fake host models connect and change-location outcomes; mirror them into
+  // the rendered surface so the preview and connected states are exercised.
+  const api: ClientApi = {
+    ...harness.api,
+    sharing: async command => {
+      const next = await harness.api.sharing(command);
+      setSnapshot(next as TestSnapshot);
+      setSharing(next.sharing.hub);
+      return next;
+    },
+  };
+  return <Configuration state={snapshot.state} hub={snapshot.state.hubs[0]!} board={snapshot.state.hubs[0]!.boards[0]!} hubCount={1} settings={snapshot.state.settings} settingsRevision={snapshot.state.settings.revision} run={run} api={api} {...(sharing === undefined ? {} : { sharing })} {...(auth === undefined ? {} : { sharingAuth: auth })} initial="Team Settings" onClose={() => {}} />;
 }
 
 function ProjectEditorScenario() {

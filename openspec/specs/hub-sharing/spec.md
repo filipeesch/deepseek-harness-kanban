@@ -8,7 +8,7 @@ Let a team keep a Hub's boards and workflows aligned through an optional, storag
 
 ### Requirement: Optional publishing per Hub
 
-Publishing SHALL be opt-in for each Hub and SHALL bind that Hub to exactly one storage: a Git repository, a Google Drive folder, or a local folder. A Hub that has not been published SHALL have no storage binding, managed local workspace, scheduled check, or publishing state, and every existing board, workflow, and task behavior SHALL remain unchanged. Enabling publishing SHALL require a valid binding for the chosen storage: a Git binding SHALL create a plugin-managed local clone of the repository, a Google Drive binding SHALL use the selected folder and its `kanban-hub.yaml` document, and a local folder binding SHALL use the selected directory and its `kanban-hub.yaml` document. Disabling publishing SHALL remove the binding and any plugin-managed local workspace, SHALL stop automatic checks, and SHALL retain every local board, workflow, task, note, project, conversation, and worktree. Disabling publishing SHALL NOT remove the team's shared document, the Google account authorization that other Hubs may use, or the bound folder and its document.
+Publishing SHALL be opt-in for each Hub and SHALL bind that Hub to exactly one storage: a Git repository, a Google Drive Cloud folder, a Google Drive Local folder, or a local folder. A Hub that has not been published SHALL have no storage binding, managed local workspace, scheduled check, or publishing state, and every existing board, workflow, and task behavior SHALL remain unchanged. Enabling publishing SHALL require a valid binding for the chosen storage: a Git binding SHALL create a plugin-managed local clone of the repository, a Google Drive Cloud binding SHALL use the selected folder and its `kanban-hub.yaml` document, a Google Drive Local binding SHALL use the selected folder inside a discovered Google Drive location and its `kanban-hub.yaml` document, and a local folder binding SHALL use the selected directory and its `kanban-hub.yaml` document. Disabling publishing SHALL remove the binding and any plugin-managed local workspace, SHALL stop automatic checks, and SHALL retain every local board, workflow, task, note, project, conversation, and worktree. Disabling publishing SHALL NOT remove the team's shared document, the Google account authorization that other Hubs may use, the Google Drive for desktop installation or its local cache, or the bound folder and its document.
 
 #### Scenario: Unpublished Hub keeps current behavior
 
@@ -27,6 +27,13 @@ Publishing SHALL be opt-in for each Hub and SHALL bind that Hub to exactly one s
 - **WHEN** the user enables publishing for a Hub with a connected Google account and a selected folder
 - **THEN** the plugin creates or adopts the `kanban-hub.yaml` document in that folder
 - **AND** Team Settings presents the Hub as connected
+
+#### Scenario: Enable Google Drive Local publishing
+
+- **WHEN** the user enables publishing for a Hub with a folder selected inside a discovered Google Drive location
+- **THEN** the plugin creates or adopts the `kanban-hub.yaml` document in that folder
+- **AND** Team Settings presents the Hub as connected
+- **AND** no account authorization is requested
 
 #### Scenario: Enable local folder publishing
 
@@ -69,6 +76,8 @@ The published document SHALL contain a format version and one entry per board wi
 - **THEN** the published workflow text matches the authored text without normalization
 
 
+
+
 ### Requirement: Drafts and explicit publishing
 
 Saving a board, a board name, a board order, or a workflow SHALL change local state only and SHALL mark that board as a draft or pending change. A storage that requires explicit publishing (Git) SHALL send every draft of the Hub as one document only when the user publishes. Publishing SHALL NOT be available while the Hub has unapplied team updates for that storage. When the published document changed since the last received document, a publish SHALL publish nothing, keep every local draft, and report the new team updates. A storage that supports continuous synchronization (Google Drive or a local folder) SHALL follow the Continuous synchronization requirement instead of an explicit publish action.
@@ -105,6 +114,8 @@ Saving a board, a board name, a board order, or a workflow SHALL change local st
 - **WHEN** the published document changed after the last check and the user publishes
 - **THEN** nothing is published and every local draft is retained
 - **AND** the Hub reports the new team updates
+
+
 
 ### Requirement: Team updates and three-way application
 
@@ -150,6 +161,8 @@ Applying team changes SHALL compare the published document with the last receive
 - **WHEN** applying an update set would be refused for any board
 - **THEN** no board, workflow, or board order changes locally
 
+
+
 ### Requirement: Refusal of destructive application
 
 Get updates SHALL refuse the entire application and apply nothing when a workflow in the published document would leave an existing task in a column that the workflow does not define, or when a published board would collide with a local board that has not been published. The refusal SHALL name the blocking board, the missing column, and the number of affected tasks, and SHALL NOT offer an override action.
@@ -170,6 +183,8 @@ Get updates SHALL refuse the entire application and apply nothing when a workflo
 - **WHEN** a published board has the same name as a local board that has not been published
 - **THEN** no update is applied
 - **AND** the interface explains that the local board must be renamed or published first
+
+
 
 
 ### Requirement: Board removal and orphan handling
@@ -223,6 +238,8 @@ When the team removes a board, the plugin SHALL remove it locally only when the 
 - **THEN** the local Hub has the same number of boards as before the reconnection
 
 
+
+
 ### Requirement: Locally removed boards
 
 When the user removes a published board only from this installation, the plugin SHALL record that board as locally removed, SHALL NOT apply that board from later team updates, and SHALL offer restoring it while the stored team document still contains it. A team-wide removal SHALL remove the board from the team document on the next synchronization: the next explicit publish for Git, or the next automatic synchronization for Google Drive. A team-wide removal SHALL NOT be recorded as locally removed.
@@ -250,9 +267,11 @@ When the user removes a published board only from this installation, the plugin 
 - **THEN** the board is absent from the team document after the next successful synchronization
 
 
+
+
 ### Requirement: Automatic checks and published status
 
-The host SHALL check each published Hub automatically at its configured interval. The default interval SHALL be five minutes for a Git binding and one minute for a Google Drive or local folder binding, the minimum interval one minute, and a zero interval SHALL disable automatic checks while leaving manual refresh available. A check SHALL NOT start while a publish, synchronization, or update application for the same Hub is in progress. A check against Google Drive SHALL use the Drive change feed with a persisted cursor and SHALL read the document content only when the document revision changed; an expired or invalid cursor SHALL trigger a full document read. A check against a local folder SHALL observe the document's last-modified time and size and SHALL read the document content only when either differs from the previous observation, when no previous observation exists, or when the observation cannot be read. A failed check SHALL NOT block local editing and SHALL be reported as unavailable together with the last successful check time. The host snapshot SHALL expose, per published Hub, the storage, the storage address, the synchronization mode, the publication status, the configured interval, the last successful check time, the current failure, the draft or pending count, the number of team changes a synchronization would apply, the conflict count, the per-board publishing state, and any review the storage itself requires.
+The host SHALL check each published Hub automatically at its configured interval. The default interval SHALL be five minutes for a Git binding and one minute for a Google Drive Cloud, Google Drive Local, or local folder binding, the minimum interval one minute, and a zero interval SHALL disable automatic checks while leaving manual refresh available. A check SHALL NOT start while a publish, synchronization, or update application for the same Hub is in progress. A check against Google Drive Cloud SHALL use the Drive change feed with a persisted cursor and SHALL read the document content only when the document revision changed; an expired or invalid cursor SHALL trigger a full document read. A check against a local folder or a Google Drive Local folder SHALL observe the document's last-modified time and size and SHALL read the document content only when either differs from the previous observation, when no previous observation exists, or when the observation cannot be read. A failed check SHALL NOT block local editing and SHALL be reported as unavailable together with the last successful check time. The host snapshot SHALL expose, per published Hub, the storage, the storage address, the synchronization mode, the publication status, the configured interval, the last successful check time, the current failure, the draft or pending count, the number of team changes a synchronization would apply, the conflict count, the per-board publishing state, and any review the storage itself requires.
 
 #### Scenario: Default interval
 
@@ -261,7 +280,12 @@ The host SHALL check each published Hub automatically at its configured interval
 
 #### Scenario: Default interval for Google Drive
 
-- **WHEN** a Google Drive-published Hub is configured without an interval
+- **WHEN** a Google Drive Cloud-published Hub is configured without an interval
+- **THEN** the host checks it every minute
+
+#### Scenario: Default interval for Google Drive Local
+
+- **WHEN** a Google Drive Local-published Hub is configured without an interval
 - **THEN** the host checks it every minute
 
 #### Scenario: Default interval for a local folder
@@ -283,7 +307,7 @@ The host SHALL check each published Hub automatically at its configured interval
 
 #### Scenario: A failed check does not block work
 
-- **WHEN** a check fails because Google Drive, the repository, or the bound local folder is unreachable
+- **WHEN** a check fails because Google Drive Cloud, Google Drive Local, the repository, or the bound local folder is unreachable
 - **THEN** local editing, saving, and task work remain available
 - **AND** the Hub reports the failure and the last successful check time
 
@@ -300,24 +324,24 @@ The host SHALL check each published Hub automatically at its configured interval
 
 #### Scenario: Read content only when the document changed
 
-- **WHEN** a Google Drive check finds no change to the document revision
+- **WHEN** a Google Drive Cloud check finds no change to the document revision
 - **THEN** the plugin does not read the document content
 
 #### Scenario: Read the file only when its observation changed
 
-- **WHEN** a local folder check finds that the document's last-modified time and size are unchanged
+- **WHEN** a local folder or Google Drive Local check finds that the document's last-modified time and size are unchanged
 - **THEN** the plugin does not read the document content
 - **AND** it does not reapply team updates
 
 #### Scenario: Recover from an expired change cursor
 
-- **WHEN** the stored Google Drive change cursor is rejected
+- **WHEN** the stored Google Drive Cloud change cursor is rejected
 - **THEN** the next check reads the document content in full
 - **AND** the new cursor is stored after a successful read
 
 ### Requirement: Team Settings interface
 
-Configuration SHALL include a **Team Settings** section for the active Hub. That section SHALL present a storage selector with Git, Google Drive, and Local folder and SHALL render the selected storage's surface. For a Git binding the section SHALL present the repository address, the check interval, the Hub status, the per-board states, the locally removed boards, and the actions Connect, Publish, Get updates, Refresh, and Disconnect. For a Google Drive binding the section SHALL present the connected account, the Drive and folder location, the synchronization status, the pending and conflict counts, the last successful synchronization, the current failure, the per-board states, the locally removed boards, and the actions Connect, Sync now, Review, Disconnect, and Switch account. For a local folder binding the section SHALL present the folder path, a folder selection surface that accepts a typed path or the host's folder picker, the suggested default folder, the check interval, the synchronization status, the pending and conflict counts, the last successful synchronization, the current failure, any storage-level review together with the step that clears it, the per-board states, the locally removed boards, and the actions Connect, Sync now, and Disconnect. A refused connection SHALL name the specific condition that prevented it. The storage selector SHALL change the rendered surface while the Hub has no binding and SHALL show the bound storage without changing it while the Hub is published; changing storage SHALL require Disconnect. The board SHALL present a banner when team changes are available or a review is required. The Hub tab SHALL indicate available team changes, pending changes, and conflicts without opening Configuration, and SHALL show them simultaneously when more than one applies. Each board tab SHALL indicate its own publishing state. A refusal SHALL present the blocking boards, columns, and task counts and SHALL NOT offer an override. The interface SHALL NOT require knowledge of revision-control concepts: it SHALL NOT present commit, branch, remote, fetch, or push wording.
+Configuration SHALL include a **Team Settings** section for the active Hub. That section SHALL present the team storages as selectable cards, each with an icon, a name, and a one-line description — Git, Google Drive Cloud, Google Drive Local, and Local folder — and SHALL render the selected storage's surface. For a Git binding the section SHALL present the repository address, the check interval, the Hub status, the per-board states, the locally removed boards, and the actions Connect, Publish, Get updates, Refresh, and Disconnect. For a Google Drive Cloud binding the section SHALL present the connected account, the Drive and folder location, the synchronization status, the pending and conflict counts, the last successful synchronization, the current failure, the per-board states, the locally removed boards, and the actions Connect, Sync now, Review, Disconnect, and Switch account. For a Google Drive Local binding the section SHALL present the Google account and the folder location, the check interval, a **Choose folder** or **Change folder** action, the synchronization status, the pending and conflict counts, the last successful synchronization, the current failure, any storage-level review together with the step that clears it, the per-board states, the locally removed boards, and the actions Sync now and Disconnect. The Google Drive Local folder browser SHALL present the discovered accounts and locations, a breadcrumb of the current location, the folders of that location, a filter for that location, and the host's native folder picker as an alternative. When no Google Drive for desktop location is detected, or the platform does not support it, the section SHALL explain that condition, SHALL offer a rescan action together with the native folder picker, and SHALL NOT create a binding. For a local folder binding the section SHALL present the folder path, a folder selection surface that accepts a typed path or the host's folder picker, the suggested default folder, the check interval, the synchronization status, the pending and conflict counts, the last successful synchronization, the current failure, any storage-level review together with the step that clears it, the per-board states, the locally removed boards, and the actions Connect, Sync now, and Disconnect. A refused connection SHALL name the specific condition that prevented it. The storage cards SHALL change the rendered surface while the Hub has no binding and SHALL show the bound storage without changing it while the Hub is published; changing storage SHALL require Disconnect. The board SHALL present a banner when team changes are available or a review is required. The Hub tab SHALL indicate available team changes, pending changes, and conflicts without opening Configuration, and SHALL show them simultaneously when more than one applies. Each board tab SHALL indicate its own publishing state. A refusal SHALL present the blocking boards, columns, and task counts and SHALL NOT offer an override. The interface SHALL NOT require knowledge of revision-control concepts: it SHALL NOT present commit, branch, remote, fetch, or push wording.
 
 #### Scenario: Open the Publishing section
 
@@ -326,26 +350,57 @@ Configuration SHALL include a **Team Settings** section for the active Hub. That
 
 #### Scenario: Open Team Settings for Google Drive
 
-- **WHEN** the user opens Team Settings for a Google Drive-published Hub
+- **WHEN** the user opens Team Settings for a Google Drive Cloud-published Hub
 - **THEN** the section presents the account, Drive and folder location, synchronization status, pending and conflict counts, last successful synchronization, current failure, per-board states, locally removed boards, and the Drive actions
+
+#### Scenario: Open Team Settings for Google Drive Local
+
+- **WHEN** the user opens Team Settings for a Google Drive Local-published Hub
+- **THEN** the section presents the account, folder location, interval, synchronization status, pending and conflict counts, last successful synchronization, current failure, any storage-level review, per-board states, locally removed boards, and the Drive Local actions
 
 #### Scenario: Open Team Settings for a local folder
 
 - **WHEN** the user opens Team Settings for a local-folder-published Hub
 - **THEN** the section presents the folder path, synchronization status, pending and conflict counts, last successful synchronization, current failure, any storage-level review, per-board states, locally removed boards, and the local folder actions
 
+#### Scenario: Storage cards identify the storage
+
+- **WHEN** the user opens Team Settings
+- **THEN** each storage card presents an icon, a storage name, and a one-line description
+- **AND** the selected card is distinguishable without opening it
+
 #### Scenario: Select a storage while unpublished
 
-- **WHEN** the Hub has no binding and the user selects Git, Google Drive, or Local folder in the storage selector
+- **WHEN** the Hub has no binding and the user selects one of the storage cards
 - **THEN** the section renders that storage's connection surface
 - **AND** no binding is created before the user connects
 
 #### Scenario: Choose a folder with the folder picker
 
-- **WHEN** the host provides a folder picker and the user selects a directory
+- **WHEN** the host provides a folder picker for a local folder binding and the user selects a directory
 - **THEN** the chosen path fills the path field
 - **AND** connecting uses that path
 - **AND** typing a path remains available when the host provides no picker
+
+#### Scenario: Browse for a Google Drive Local folder
+
+- **WHEN** the user opens the Google Drive Local folder browser and navigates into a discovered location
+- **THEN** the browser presents the folders of the current location and a breadcrumb of the path
+- **AND** the user can select the current folder without typing a path
+- **AND** the browser reports whether `kanban-hub.yaml` is already present there
+
+#### Scenario: Use the native picker for Google Drive Local
+
+- **WHEN** the user chooses the native folder picker instead of the browser
+- **THEN** the selected folder is validated against the discovered Google Drive locations
+- **AND** connecting uses that folder when it is inside a discovered location
+
+#### Scenario: Google Drive Local is not available
+
+- **WHEN** the Drive for desktop application is not detected or the platform does not support it
+- **THEN** the section explains the condition and offers a rescan action
+- **AND** it does not create a binding
+- **AND** the native folder picker remains reachable
 
 #### Scenario: Name the refused condition
 
@@ -353,10 +408,16 @@ Configuration SHALL include a **Team Settings** section for the active Hub. That
 - **THEN** the section reports that specific condition
 - **AND** it does not create a binding
 
+#### Scenario: Name the refused Google Drive Local condition
+
+- **WHEN** a Google Drive Local connection is refused because the folder is not inside a discovered location, the application is not detected, the location is unavailable, or the operating system denies access
+- **THEN** the section reports that specific condition
+- **AND** it does not create a binding
+
 #### Scenario: The bound storage is not changed by the selector
 
-- **WHEN** the Hub is published and the user opens the storage selector
-- **THEN** the selector shows the bound storage
+- **WHEN** the Hub is published and the user opens the storage cards
+- **THEN** the cards show the bound storage
 - **AND** changing storage requires Disconnect
 
 #### Scenario: Show a board banner
@@ -439,9 +500,11 @@ Connecting a storage that already contains a published document while the Hub ha
 - **THEN** the published document is replaced after explicit confirmation
 - **AND** the Hub becomes published
 
+
+
 ### Requirement: Storage-provider boundary
 
-Access to the shared document SHALL go through a storage-provider boundary that reads a whole document with a version token and writes a whole document while the expected token matches. A provider that supports an atomic conditional write (Git) SHALL refuse a stale write without modifying the document. A provider that does not support an atomic conditional write (Google Drive and a local folder) SHALL compare the token before writing, verify the written content after writing, and report a concurrent change without claiming an atomic guarantee; the previous content SHALL remain recoverable from the storage's own history or conflict copies. The supported storages SHALL be Git, Google Drive, and a local folder; any other storage SHALL be rejected with an explicit error. The document format, the merge rules, and the interface states SHALL NOT depend on the storage. Provider-specific connection, location, and synchronization state SHALL be exposed through the storage's own surface, and provider-specific connection rules SHALL be applied through the storage descriptor rather than by branching on the storage inside the publishing service.
+Access to the shared document SHALL go through a storage-provider boundary that reads a whole document with a version token and writes a whole document while the expected token matches. A provider that supports an atomic conditional write (Git) SHALL refuse a stale write without modifying the document. A provider that does not support an atomic conditional write (Google Drive Cloud, Google Drive Local, and a local folder) SHALL compare the token before writing, verify the written content after writing, and report a concurrent change without claiming an atomic guarantee; the previous content SHALL remain recoverable from the storage's own history or conflict copies. The supported storages SHALL be Git, Google Drive Cloud, Google Drive Local, and a local folder; any other storage SHALL be rejected with an explicit error. The document format, the merge rules, and the interface states SHALL NOT depend on the storage. Provider-specific connection, location, and synchronization state SHALL be exposed through the storage's own surface, and provider-specific connection rules SHALL be applied through the storage descriptor rather than by branching on the storage inside the publishing service.
 
 #### Scenario: Read and write a document with its token
 
@@ -455,8 +518,14 @@ Access to the shared document SHALL go through a storage-provider boundary that 
 
 #### Scenario: Detect a stale write on Google Drive
 
-- **WHEN** a Google Drive write supplies a token that no longer matches the document
+- **WHEN** a Google Drive Cloud write supplies a token that no longer matches the document
 - **THEN** the write is not presented as a success
+- **AND** the local changes remain pending for review
+
+#### Scenario: Detect a stale write on Google Drive Local
+
+- **WHEN** a Google Drive Local write supplies a token that no longer matches the document on disk
+- **THEN** the write is refused without replacing the document
 - **AND** the local changes remain pending for review
 
 #### Scenario: Detect a stale write on a local folder
@@ -467,7 +536,7 @@ Access to the shared document SHALL go through a storage-provider boundary that 
 
 #### Scenario: Reject an unsupported provider
 
-- **WHEN** a Hub is configured with a storage other than Git, Google Drive, or a local folder
+- **WHEN** a Hub is configured with a storage other than Git, Google Drive Cloud, Google Drive Local, or a local folder
 - **THEN** the plugin reports an explicit unsupported-storage error
 - **AND** no publishing operation starts
 
@@ -519,6 +588,8 @@ Google Drive SHALL be available as a team storage only after the user authorizes
 
 - **WHEN** the plugin reports status or a failure
 - **THEN** no access token, refresh token, or authorization code appears in the snapshot, logs, or the published document
+
+
 
 
 ### Requirement: Google Drive storage location
@@ -573,15 +644,111 @@ A Google Drive binding SHALL identify its location by the Drive, folder, and doc
 - **AND** no document is created or modified
 
 
+
+
+### Requirement: Google Drive local storage location
+
+**Google Drive Local** SHALL be available as a team storage only through the folders that Google Drive for desktop exposes on this computer, SHALL require no account authorization and no Google Drive API call, and SHALL synchronize continuously. A binding SHALL identify its storage by the resolved absolute path of the selected folder together with display-only account and drive labels, and the plugin SHALL accept the folder only when that resolved path lies inside a discovered Google Drive location. Connecting SHALL refuse a folder that does not exist, resolves to a file rather than a directory, is not writable by the plugin, is already bound to another Hub, lies inside the plugin's managed publishing workspace, or resolves outside every discovered location, and each refusal SHALL name its specific condition. The plugin SHALL own exactly one file in the selected folder, `kanban-hub.yaml`, SHALL NOT read, create, modify, or delete any other entry, and SHALL create the document only when it is absent. A folder SHALL bind at most one Hub and a Hub SHALL bind at most one folder, and two paths that resolve to the same directory SHALL be treated as the same folder. The user SHALL select the folder through the folder browser or the host's native folder picker; the connection surface SHALL NOT require a typed path, and both selection routes SHALL be validated by the same rules. The first-connection rules of this capability SHALL apply to the selected folder exactly as they apply to a local folder. A bound Hub SHALL offer a **Change folder** action while it is connected; after an explicit confirmation the action SHALL select another Google Drive Local folder, SHALL keep every local board, task, note, project, conversation, and worktree, SHALL discard the previous board keys, bindings, orphans, removals, and pending removals, and SHALL then follow the first-connection rules for the new folder. When the bound location or the folder is missing, unreadable, no longer discovered, or no longer provided by the application at check time, the Hub SHALL report an unavailable state with a typed failure, SHALL keep every local change pending, SHALL NOT delete the folder or the document, and SHALL resume normal operation without a new selection when the same resolved path becomes readable again. The plugin SHALL NOT relocate a binding to a different discovered path on its own. The conflict-copy, concurrent-write, draft and pending, team-update, board-removal, and locally-removed-board guarantees that this capability states for a local folder SHALL apply unchanged to a Google Drive Local folder. Disconnecting the Hub or deleting it SHALL remove the binding and SHALL NOT delete the folder, `kanban-hub.yaml`, any other entry, or the Google Drive for desktop installation.
+
+#### Scenario: Connect a discovered empty folder
+
+- **WHEN** the user selects a folder inside a discovered location that contains no `kanban-hub.yaml`
+- **THEN** the plugin creates the document from the local Hub
+- **AND** the Hub becomes connected
+- **AND** no account authorization is requested
+
+#### Scenario: Adopt an existing document
+
+- **WHEN** the selected folder already contains `kanban-hub.yaml`
+- **THEN** the plugin presents the first-connection choice before connecting
+- **AND** the Hub stays unpublished until the user chooses
+
+#### Scenario: Refuse a folder outside the discovered locations
+
+- **WHEN** the user selects a folder that resolves outside every discovered Google Drive location
+- **THEN** no binding is created and the section reports that the folder is not inside a Google Drive location
+
+#### Scenario: Refuse an unavailable mount
+
+- **WHEN** the user selects a folder whose discovered location is currently unavailable
+- **THEN** no binding is created and the section reports that the Drive location is unavailable
+
+#### Scenario: Refuse a folder already bound to another Hub
+
+- **WHEN** the user selects a folder that already belongs to another Hub's binding
+- **THEN** no binding is created and the section reports that the folder is already in use
+
+#### Scenario: Leave other files untouched
+
+- **WHEN** the selected folder contains files that are not `kanban-hub.yaml`
+- **THEN** the plugin does not read, modify, or delete them
+
+#### Scenario: Change the folder keeps local work
+
+- **WHEN** a connected Google Drive Local Hub changes its folder and the new folder contains a published document
+- **THEN** the user confirms the change before it starts
+- **AND** every local board, task, note, project, conversation, and worktree remains
+- **AND** the first-connection choice is presented for the new document
+
+#### Scenario: Change the folder to an empty folder
+
+- **WHEN** a connected Google Drive Local Hub changes to a folder with no `kanban-hub.yaml`
+- **THEN** the previous publishing keys, bindings, orphans, removals, and pending removals are discarded
+- **AND** the local configuration is published into the new folder
+- **AND** the local boards, tasks, and notes remain
+
+#### Scenario: The mount disappears
+
+- **WHEN** the bound Google Drive location becomes unreachable or is no longer discovered
+- **THEN** the Hub reports an unavailable state with a typed failure
+- **AND** every local change remains pending
+- **AND** no local board, workflow, or task is deleted
+
+#### Scenario: The mount returns
+
+- **WHEN** the same resolved path becomes readable and discovered again
+- **THEN** the Hub resumes synchronization without a new folder selection
+
+#### Scenario: The application is removed after connecting
+
+- **WHEN** Google Drive for desktop is uninstalled or stops mounting the bound folder
+- **THEN** the Hub reports the location as unavailable
+- **AND** the plugin does not move the binding to another folder
+
+#### Scenario: Disconnect keeps the folder and the document
+
+- **WHEN** the user disconnects or deletes a Google Drive Local Hub
+- **THEN** the binding is removed and automatic checks stop
+- **AND** the folder, `kanban-hub.yaml`, every other entry, and the installed application remain unchanged
+
+#### Scenario: Unsupported platform cannot connect
+
+- **WHEN** the host runs on a platform where Google Drive for desktop does not exist
+- **THEN** no Google Drive Local binding can be created
+- **AND** the local Hub state is unchanged
+
+#### Scenario: A conflict copy blocks automatic synchronization
+
+- **WHEN** a Google Drive Local check finds a conflict copy next to `kanban-hub.yaml`
+- **THEN** the Hub presents the review and applies and publishes nothing automatically
+- **AND** the plugin does not choose, rename, merge, or delete either version
+
 ### Requirement: Continuous synchronization
 
-For a storage that supports continuous synchronization (Google Drive or a local folder), saving a board, a board name, a board order, or a workflow SHALL mark the Hub as pending and SHALL synchronize automatically after a short debounce without a Publish action. A synchronization SHALL apply team changes that only the team made in one Hub transaction. A board changed on both sides, a blocker, a concurrent write, or a storage-level review SHALL require explicit review and SHALL NOT be applied or published automatically. A local change SHALL NOT overwrite a team change that arrived since the last received document; the plugin SHALL keep the local change pending and require review. Offline or transient failures SHALL keep every local change pending and SHALL retry on later checks without losing edits; the interface SHALL show the pending state and the failure. Synchronization SHALL be serialized per Hub and SHALL survive a plugin restart; a pending change SHALL synchronize after the restart or after the connection returns. A Git binding SHALL keep explicit publishing and SHALL NOT synchronize automatically.
+For a storage that supports continuous synchronization (Google Drive Cloud, Google Drive Local, or a local folder), saving a board, a board name, a board order, or a workflow SHALL mark the Hub as pending and SHALL synchronize automatically after a short debounce without a Publish action. A synchronization SHALL apply team changes that only the team made in one Hub transaction. A board changed on both sides, a blocker, a concurrent write, or a storage-level review SHALL require explicit review and SHALL NOT be applied or published automatically. A local change SHALL NOT overwrite a team change that arrived since the last received document; the plugin SHALL keep the local change pending and require review. Offline or transient failures SHALL keep every local change pending and SHALL retry on later checks without losing edits; the interface SHALL show the pending state and the failure. Synchronization SHALL be serialized per Hub and SHALL survive a plugin restart; a pending change SHALL synchronize after the restart or after the connection returns. A Git binding SHALL keep explicit publishing and SHALL NOT synchronize automatically.
 
 #### Scenario: Save a workflow and synchronize
 
-- **WHEN** the user saves a workflow on a Google Drive binding
+- **WHEN** the user saves a workflow on a Google Drive Cloud binding
 - **THEN** the local save completes first
 - **AND** the pending change synchronizes automatically
+- **AND** the board stops being pending after a successful synchronization
+
+#### Scenario: Save a workflow and synchronize through Google Drive Local
+
+- **WHEN** the user saves a workflow on a Google Drive Local binding
+- **THEN** the local save completes first
+- **AND** the pending change synchronizes automatically into `kanban-hub.yaml`
 - **AND** the board stops being pending after a successful synchronization
 
 #### Scenario: Save a workflow and synchronize through a local folder
@@ -611,7 +778,7 @@ For a storage that supports continuous synchronization (Google Drive or a local 
 
 #### Scenario: Offline changes stay pending and retry
 
-- **WHEN** a local change is saved while Google Drive is unreachable or the bound local folder is unavailable
+- **WHEN** a local change is saved while Google Drive Cloud is unreachable, or while the bound Google Drive Local or local folder is unavailable
 - **THEN** the local change is retained as pending
 - **AND** the interface reports the unavailable state
 - **AND** the change synchronizes after the connection returns
@@ -655,6 +822,8 @@ A Google Drive write SHALL compare the document token read before the write, SHA
 - **WHEN** a concurrent write is reported
 - **THEN** the local version is retained
 - **AND** the previous document content remains available in the Drive revision history
+
+
 ### Requirement: Local folder storage location
 
 A local folder binding SHALL identify the storage by an absolute directory path. The plugin SHALL accept an absolute path or a path beginning with `~`, SHALL resolve symbolic links, and SHALL store the resolved path. The selected directory SHALL already exist and SHALL be writable by the plugin; connecting SHALL refuse a path that does not exist, a path that resolves to a file rather than a directory, a directory the plugin cannot write, a directory already bound to another Hub, and a directory inside the plugin's managed publishing workspace. The plugin SHALL own exactly one file in that directory, `kanban-hub.yaml`, SHALL NOT read, create, modify, or delete any other entry, and SHALL create the document only when it is absent. A folder SHALL bind at most one Hub and a Hub SHALL bind at most one folder. Two paths that resolve to the same directory SHALL be treated as the same folder, compared case-insensitively on a case-insensitive filesystem. Team Settings SHALL suggest the default folder `~/.dsh-kanban/<Hub id>` and SHALL pre-fill it in the path field. Connecting to exactly the suggested path SHALL create that directory when it is absent; connecting to any other path SHALL NOT create a directory. Disconnecting a Hub, deleting a Hub, or replacing the binding SHALL NOT delete the folder, the document, or any other entry. When the bound directory or the document is missing or unreadable at check time, the Hub SHALL report an unavailable state with a typed failure, SHALL keep every local change pending, and SHALL resume normal operation without a new binding when the directory and the document become readable again.
@@ -732,6 +901,8 @@ A local folder binding SHALL identify the storage by an absolute directory path.
 - **THEN** the binding is removed and automatic checks stop
 - **AND** the folder, `kanban-hub.yaml`, and every other entry remain unchanged
 
+
+
 ### Requirement: Conflict copies in a local folder
 
 A local-folder check SHALL inspect the bound directory for entries whose name begins with the published document's base name and is not the published document itself, including the copies a synchronization client creates when two machines change the same document. When such an entry exists, the Hub SHALL present a review that names the entries found, SHALL NOT apply team updates automatically, SHALL NOT publish automatically, and SHALL NOT choose, rename, merge, or delete any of them. The review SHALL clear on the next successful check after those entries are no longer present. The plugin's own temporary files SHALL be excluded from that detection.
@@ -765,6 +936,8 @@ A local-folder check SHALL inspect the bound directory for entries whose name be
 - **WHEN** a check finds a temporary file written by the plugin itself
 - **THEN** it is not reported as a conflict copy
 
+
+
 ### Requirement: Concurrent writes on a local folder
 
 A local-folder write SHALL compare the document token read before the write, SHALL replace the document through a temporary sibling file and a rename within the same directory, and SHALL verify the written document after the write, reporting a concurrent change when either check differs. A reader SHALL observe either the previous complete document or the new complete document, never a partially written file. The plugin SHALL NOT promise an atomic conditional write on a local folder, because the synchronization client may introduce a change between the read and the replacement. A detected concurrent change SHALL keep the local changes pending and SHALL require review; it SHALL NOT be presented as a successful synchronization and SHALL NOT silently discard the local or the team version. A successful write SHALL leave no temporary sibling behind.
@@ -791,4 +964,5 @@ A local-folder write SHALL compare the document token read before the write, SHA
 - **WHEN** a write is interrupted before its replacement completes
 - **THEN** the previous document remains the readable document
 - **AND** the next successful write leaves no temporary sibling behind
+
 

@@ -1,14 +1,14 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { KanbanError, invariant } from '../../shared/errors.js';
-import type { HubSharingView, Problem, SharingAuthView, SharingCommand } from '../../shared/types.js';
+import type { HubSharingView, SharingCommand } from '../../shared/types.js';
 import { applySharingPlan, type ApplySharingResult } from '../../domain/sharing/apply.js';
 import { sharedDocumentToken, type SharedBoardEntry, type SharedHubDocument } from '../../domain/sharing/document.js';
 import { normalizeBoardName } from '../../domain/sharing/identity.js';
 import { buildPublishDocument, buildUpdatePlan, publishIsDirty, type SharingBlocker, type SharingPlan } from '../../domain/sharing/plan.js';
 import { projectSharingBoards } from '../../domain/sharing/projection.js';
 import type { HubRepository } from '../hub-repository.js';
-import type { GoogleDriveAuthService } from './google-drive-auth.js';
+import { isAuthorizationCommand, type SharingAuthorizationPort } from './auth-coordinator.js';
 import type { BindingCandidate, ProviderState, SharingBinding, SharingProviderId, SharingProviderResolver } from './provider.js';
 import type { SharedConfigStore, SharedDocumentSnapshot } from './store.js';
 import type { HubSharingRecord, HubSharingStore } from './state.js';
@@ -23,7 +23,8 @@ export interface HubSharingOptions {
   hubs: HubRepository;
   store: HubSharingStore;
   providers: SharingProviderResolver;
-  auth?: GoogleDriveAuthService;
+  /** Device-level authorization, when the host supports a storage that needs it. */
+  auth?: SharingAuthorizationPort;
   now?: () => string;
   id?: () => string;
   notify?: () => void;
@@ -64,29 +65,12 @@ export class HubSharingService {
   private readonly now: () => string;
   private readonly id: () => string;
   private readonly debounceMs: number;
-  private authState: SharingAuthView = { status: 'not-connected' };
   private disposed = false;
 
   constructor(private readonly options: HubSharingOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
     this.id = options.id ?? randomUUID;
     this.debounceMs = options.debounceMs ?? 2_000;
-  }
-
-  authView(): SharingAuthView {
-    return { ...this.authState };
-  }
-
-  async refreshAuth(): Promise<void> {
-    if (!this.options.auth) { this.authState = { status: 'not-connected' }; return; }
-    try { this.authState = await this.options.auth.status(); }
-    catch (error) { this.authState = { status: 'error', error: this.problemOf(error) }; }
-  }
-
-  private get auth(): GoogleDriveAuthService {
-    const auth = this.options.auth;
-    invariant(auth, 'SHARING_UNAVAILABLE', 'Google Drive authorization is unavailable in this host.');
-    return auth;
   }
 
   views(): Record<string, HubSharingView> {
@@ -109,7 +93,7 @@ export class HubSharingService {
     const provider = this.options.providers.describe(record.binding);
     return buildSharingView(record, hub, {
       provider,
-      ...(provider.requiresAuthorization ? { authorization: this.authState.status } : {}),
+      ...(provider.requiresAuthorization ? { authorization: this.options.auth?.status() ?? 'not-connected' } : {}),
       syncing: this.inflight.has(record.hubId),
     });
   }
@@ -151,12 +135,7 @@ export class HubSharingService {
   busy(hubId: string): boolean { return this.inflight.has(hubId); }
 
   command(command: SharingCommand): Promise<void> {
-    if (command.type === 'sharing.auth.start') return this.authCommand('start');
-    if (command.type === 'sharing.auth.cancel') return this.authCommand('cancel');
-    if (command.type === 'sharing.auth.disconnect') return this.authCommand('disconnect');
-    if (command.type === 'sharing.auth.switch') return this.authCommand('switch');
-    if (command.type === 'sharing.drives') return this.authCommand('drives');
-    if (command.type === 'sharing.folders') return this.authCommand('folders', command);
+    if (isAuthorizationCommand(command)) throw new KanbanError('SHARING_UNAVAILABLE', 'Authorization is handled outside the publishing service.');
     if (command.type === 'sharing.setInterval') return this.setInterval(command.hubId, command.intervalMinutes);
     if (command.type === 'sharing.resolve') return this.resolve(command.hubId, command.boardId, command.choice);
     if (command.type === 'sharing.restore') return this.restore(command.hubId, command.boardId);
@@ -164,72 +143,93 @@ export class HubSharingService {
     if (command.type === 'sharing.disconnect') return this.disconnect(command.hubId);
     if (command.type === 'sharing.publishInitial') return this.publishInitial(command.hubId, command.confirmed);
     if (command.type === 'sharing.connect') return this.connect(command);
+    if (command.type === 'sharing.changeLocation') return this.changeLocation(command);
     if (command.type === 'sharing.receive') return this.receive(command.hubId);
     if (command.type === 'sharing.check') return this.check(command.hubId, true);
     if (command.type === 'sharing.getUpdates') return this.getUpdates(command.hubId);
     return this.publish(command.hubId);
   }
 
-  private authCommand(action: 'start' | 'cancel' | 'disconnect' | 'switch' | 'drives' | 'folders', command?: Extract<SharingCommand, { type: 'sharing.folders' }>): Promise<void> {
-    return this.run('__auth__', async () => {
-      const auth = this.auth;
-      if (action === 'start') await auth.start();
-      else if (action === 'cancel') await auth.cancel();
-      else if (action === 'disconnect') await auth.disconnect();
-      else if (action === 'switch') { await auth.disconnect(); await auth.start(); }
-      else if (action === 'drives') await auth.listDrives();
-      else if (action === 'folders') await auth.listFolders({ ...(command?.driveId === undefined ? {} : { driveId: command.driveId }), ...(command?.parentId === undefined ? {} : { parentId: command.parentId }) });
-      await this.refreshAuth();
-      this.options.notify?.();
-    });
+  connect(command: Extract<SharingCommand, { type: 'sharing.connect' }>): Promise<void> {
+    return this.serializeLocation(() => this.run(command.hubId, async () => this.connectNow(command)));
   }
 
-  connect(command: Extract<SharingCommand, { type: 'sharing.connect' }>): Promise<void> {
-    const operation = this.connectTail.then(() => this.run(command.hubId, async () => this.connectNow(command)));
-    this.connectTail = operation.then(() => undefined, () => undefined);
-    return operation;
+  /**
+   * Connecting and re-pointing a storage share one global lane: both validate a
+   * folder against every stored binding and then persist it, so they must not
+   * interleave or two Hubs could claim one folder.
+   */
+  private serializeLocation<T>(operation: () => Promise<T>): Promise<T> {
+    const execution = this.connectTail.then(operation);
+    this.connectTail = execution.then(() => undefined, () => undefined);
+    return execution;
   }
 
   private connectNow(command: Extract<SharingCommand, { type: 'sharing.connect' }>): Promise<void> {
-    return (async () => {
-      invariant(this.options.store.load(command.hubId) === undefined, 'SHARING_ALREADY_CONNECTED', 'This Hub is already connected to a team storage.');
-      const hub = this.options.hubs.requireHub(command.hubId);
-      const providerId: SharingProviderId = command.provider ?? (command.repository ? 'git' : 'google-drive');
-      const rawSettings = command.settings ?? (command.repository ? { repository: command.repository } : {});
-      const candidate: SharingBinding = {
-        provider: providerId,
-        intervalMinutes: normalizeSharingInterval(command.intervalMinutes, this.options.providers.defaultInterval(providerId)),
-        settings: this.options.providers.normalize(providerId, rawSettings),
-      };
-      if (this.options.providers.describe(candidate).requiresAuthorization) {
-        await this.refreshAuth();
-        invariant(this.authState.status === 'connected', 'SHARING_RECONNECT_REQUIRED', 'Connect the account for this team storage before choosing its location.');
-      }
-      const binding = await this.options.providers.prepare(command.hubId, candidate, this.candidates());
-      const provider = this.storeFor(command.hubId, binding, {});
-      await provider.ensure();
-      const remote = await provider.read();
-      const providerState = provider.state?.() ?? {};
-      const storageReview = this.storageReviewOf(provider);
-      const at = this.now();
-      if (remote === null) {
-        const publish = buildPublishDocument({ base: null, local: projectSharingBoards(hub, {}), bindings: {}, orphans: {}, pendingRemovals: [] });
-        const written = await provider.write(publish.document, { expectedToken: null, message: COMMIT_MESSAGE });
-        await this.save({
-          version: 2, hubId: command.hubId, binding, providerState: provider.state?.() ?? providerState, storageReview, syncedRevision: hub.revision,
-          base: stored({ ...publish.document, boards: publish.document.boards.map(entry => ({ ...entry })) }),
-          seen: stored({ ...publish.document, boards: publish.document.boards.map(entry => ({ ...entry })) }),
-          bindings: publish.bindings, orphans: {}, removed: {}, pendingRemovals: [], preview: null,
-          lastCheck: { at, token: written.token }, lastSyncedAt: at, lastError: null,
-        });
-        return;
-      }
+    return this.openLocation(command, false);
+  }
+
+  /** Re-point a Google Drive Local Hub at another folder, keeping every local board and task. */
+  private changeLocation(command: Extract<SharingCommand, { type: 'sharing.changeLocation' }>): Promise<void> {
+    return this.serializeLocation(() => this.run(command.hubId, async () => {
+      invariant(command.confirmed, 'CONFIRMATION_REQUIRED', 'Confirm changing the folder for this Hub.');
+      const record = this.requireRecord(command.hubId);
+      invariant(record.binding.provider === 'google-drive-local', 'SHARING_UNSUPPORTED_STORAGE', 'Only a Google Drive Local Hub can change its folder.');
+      await this.openLocation(command, true, record);
+    }));
+  }
+
+  /**
+   * Validate a location, read its document, and either publish the local
+   * configuration or store a first-connection preview. Connecting and changing
+   * a folder share every rule; only the stored record they replace differs.
+   */
+  private async openLocation(
+    command: { hubId: string; settings?: Record<string, string>; repository?: string; provider?: SharingProviderId; intervalMinutes?: number },
+    replace: boolean,
+    existing?: HubSharingRecord,
+  ): Promise<void> {
+    if (!replace) invariant(this.options.store.load(command.hubId) === undefined, 'SHARING_ALREADY_CONNECTED', 'This Hub is already connected to a team storage.');
+    else invariant(existing !== undefined, 'SHARING_NOT_PUBLISHED', 'This Hub is not connected to a team storage.');
+    const hub = this.options.hubs.requireHub(command.hubId);
+    const providerId: SharingProviderId = existing?.binding.provider ?? command.provider ?? (command.repository ? 'git' : 'google-drive');
+    if (existing !== undefined) invariant(providerId === existing.binding.provider, 'SHARING_UNSUPPORTED_STORAGE', 'The team storage cannot change without disconnecting.');
+    const rawSettings = command.settings ?? (command.repository ? { repository: command.repository } : {});
+    const candidate: SharingBinding = {
+      provider: providerId,
+      // Re-pointing keeps the Hub's configured cadence; the provider default only applies on first connection.
+      intervalMinutes: normalizeSharingInterval(command.intervalMinutes, existing?.binding.intervalMinutes ?? this.options.providers.defaultInterval(providerId)),
+      settings: this.options.providers.normalize(providerId, rawSettings),
+    };
+    if (this.options.providers.describe(candidate).requiresAuthorization) {
+      const auth = this.options.auth;
+      invariant(auth, 'SHARING_UNAVAILABLE', 'Google Drive authorization is unavailable in this host.');
+      await auth.ensureConnected();
+    }
+    const binding = await this.options.providers.prepare(command.hubId, candidate, this.candidates());
+    const provider = this.storeFor(command.hubId, binding, {});
+    await provider.ensure();
+    const remote = await provider.read();
+    const providerState = provider.state?.() ?? {};
+    const storageReview = this.storageReviewOf(provider);
+    const at = this.now();
+    if (remote === null) {
+      const publish = buildPublishDocument({ base: null, local: projectSharingBoards(hub, {}), bindings: {}, orphans: {}, pendingRemovals: [] });
+      const written = await provider.write(publish.document, { expectedToken: null, message: COMMIT_MESSAGE });
       await this.save({
-        version: 2, hubId: command.hubId, binding, providerState, storageReview, syncedRevision: null,
-        base: null, seen: { token: remote.token, document: remote.document }, bindings: {}, orphans: {}, removed: {}, pendingRemovals: [],
-        preview: { token: remote.token, document: remote.document }, lastCheck: { at, token: remote.token }, lastError: null,
+        version: 2, hubId: command.hubId, binding, providerState: provider.state?.() ?? providerState, storageReview, syncedRevision: hub.revision,
+        base: stored({ ...publish.document, boards: publish.document.boards.map(entry => ({ ...entry })) }),
+        seen: stored({ ...publish.document, boards: publish.document.boards.map(entry => ({ ...entry })) }),
+        bindings: publish.bindings, orphans: {}, removed: {}, pendingRemovals: [], preview: null,
+        lastCheck: { at, token: written.token }, lastSyncedAt: at, lastError: null,
       });
-    })();
+      return;
+    }
+    await this.save({
+      version: 2, hubId: command.hubId, binding, providerState, storageReview, syncedRevision: null,
+      base: null, seen: { token: remote.token, document: remote.document }, bindings: {}, orphans: {}, removed: {}, pendingRemovals: [],
+      preview: { token: remote.token, document: remote.document }, lastCheck: { at, token: remote.token }, lastError: null,
+    });
   }
 
   receive(hubId: string): Promise<void> {
@@ -475,7 +475,7 @@ export class HubSharingService {
     this.disposed = true;
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
-    try { await this.options.auth?.cancel(); } catch { /* authorization is best effort on shutdown */ }
+    await this.options.auth?.cancel();
     await Promise.allSettled([...this.tails.values()]);
     this.tails.clear();
   }
@@ -632,10 +632,6 @@ export class HubSharingService {
 
   private refused(blockers: SharingBlocker[]): KanbanError {
     return new KanbanError('SHARING_REFUSED', 'The team configuration cannot be applied until these boards are resolved.', { blockers });
-  }
-
-  private problemOf(error: unknown): Problem {
-    return { code: error instanceof KanbanError ? error.code : 'SHARING_FAILED', message: error instanceof Error ? error.message : String(error) };
   }
 
   private run<T>(hubId: string, operation: () => Promise<T>): Promise<T> {

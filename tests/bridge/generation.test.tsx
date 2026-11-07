@@ -40,6 +40,7 @@ function fixture() {
       branches: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
       worktreeDefault: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { branchName: 'task', path: '' } } }),
       detectProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { kind: 'git', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' } } }),
+      localDrive: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { action: 'roots', discovery: { state: 'empty', locations: [] } } } }),
       questionsFollow: vi.fn(() => { throw new Error('Question feed is not used in this test'); }) as unknown as BridgeRemote['kanban']['questionsFollow'],
       dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
       follow: (signal?: AbortSignal) => { const feed = new Feed(); feeds.push(feed); signal?.addEventListener('abort', () => feed.dispose(), { once: true }); return feed; },

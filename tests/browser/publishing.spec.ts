@@ -169,17 +169,29 @@ test('switches the Team Settings surface to the selected storage', async ({ page
   await page.goto(HARNESS + '?scenario=publishing');
   await expect(page.getByRole('tab', { name: 'Team Settings' })).toHaveAttribute('aria-selected', 'true');
   await page.screenshot({ path: '.verification/team-settings.png', fullPage: true });
-  await page.getByLabel('Team storage').selectOption('google-drive');
+  await page.getByRole('radio', { name: 'Google Drive Cloud' }).click();
   await expect(page.getByRole('button', { name: 'Connect Google Drive' })).toBeVisible();
   await expect(page.getByLabel('Repository address')).toHaveCount(0);
+});
+
+test('offers one card per storage with an icon and a description', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=publishing');
+  const cards = page.getByRole('radiogroup', { name: 'Team storage' }).getByRole('radio');
+  await expect(cards).toHaveCount(4);
+  await expect(page.getByRole('radio', { name: 'Google Drive Local' })).toContainText('Use a folder from the Google Drive app installed here.');
+  await expect(page.getByRole('radio', { name: 'Google Drive Local' })).toHaveAttribute('aria-checked', 'false');
+  await expect(page.getByRole('radio', { name: 'Git repository' })).toHaveAttribute('aria-checked', 'true');
+  await page.getByRole('radio', { name: 'Google Drive Local' }).click();
+  await expect(page.getByRole('radio', { name: 'Google Drive Local' })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByRole('radio', { name: 'Git repository' })).toHaveAttribute('aria-checked', 'false');
 });
 
 
 test('renders a connected Google Drive surface and hides Git actions', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing&sharing=drive');
   await expect(page.getByRole('tab', { name: 'Team Settings' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByLabel('Team storage')).toHaveValue('google-drive');
-  await expect(page.getByLabel('Team storage')).toBeDisabled();
+  await expect(page.getByRole('radio', { name: 'Google Drive Cloud' })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByRole('radio', { name: 'Google Drive Cloud' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Sync now' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Publish' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Get updates' })).toHaveCount(0);
@@ -208,7 +220,7 @@ test('shows Google Drive preview differences and stages the replace action', asy
 
 test('offers the suggested local folder and connects a typed path', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing');
-  await page.getByLabel('Team storage').selectOption('local-folder');
+  await page.getByRole('radio', { name: 'Local folder' }).click();
   await expect(page.getByLabel('Team folder path')).toHaveValue('~/.dsh-kanban/hub');
   await expect(page.getByText('~/.dsh-kanban/hub', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Repository address')).toHaveCount(0);
@@ -221,7 +233,7 @@ test('offers the suggested local folder and connects a typed path', async ({ pag
 
 test('names the condition that refused a local folder connection', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing&refuse=folder');
-  await page.getByLabel('Team storage').selectOption('local-folder');
+  await page.getByRole('radio', { name: 'Local folder' }).click();
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByText('The selected folder does not exist.')).toBeVisible();
   await expect(page.getByText('SHARING_FOLDER_MISSING')).toBeVisible();
@@ -229,8 +241,8 @@ test('names the condition that refused a local folder connection', async ({ page
 
 test('renders a connected local folder surface and disconnects', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing&sharing=folder');
-  await expect(page.getByLabel('Team storage')).toHaveValue('local-folder');
-  await expect(page.getByLabel('Team storage')).toBeDisabled();
+  await expect(page.getByRole('radio', { name: 'Local folder' })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByRole('radio', { name: 'Local folder' })).toBeDisabled();
   await expect(page.getByText('~/.dsh-kanban/hub')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Sync now' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Publish' })).toHaveCount(0);
@@ -323,4 +335,91 @@ test('keeps the review badge while the storage is unavailable', async ({ page })
   await page.goto(HARNESS + '?scenario=sharing&sharing=unavailable-folder-review');
   await expect(page.getByRole('img', { name: 'Team updates unavailable' })).toBeVisible();
   await expect(page.getByRole('img', { name: 'Team review needed' })).toBeVisible();
+});
+
+test('browses a Google Drive Local folder and connects it', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=publishing&drive=ready');
+  await page.getByRole('radio', { name: 'Google Drive Local' }).click();
+  await expect(page.getByText(/1 Google Drive location detected/)).toBeVisible();
+  await page.getByRole('button', { name: 'Choose folder' }).click();
+  await expect(page.getByRole('dialog', { name: 'Choose a Google Drive folder' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Choose a Google Drive folder' })).toBeVisible();
+  await page.getByRole('button', { name: /member@example.test/ }).click();
+  await expect(page.getByText('My Drive')).toBeVisible();
+  await expect(page.getByText('Shared drives')).toBeVisible();
+  await page.getByRole('button', { name: 'Meu Drive' }).click();
+  await page.getByRole('button', { name: 'Projetos' }).click();
+  await expect(page.getByText(/kanban-hub.yaml is already here/)).toBeVisible();
+  await page.getByRole('button', { name: 'Select this folder' }).click();
+  await expect.poll(async () => (await sharingCommands(page))[0]).toMatchObject({ type: 'sharing.connect', provider: 'google-drive-local', settings: { path: '/Users/member/Library/CloudStorage/GoogleDrive-member@example.test/Meu Drive/Projetos' } });
+  // The fake host adopts a folder that already holds the document and asks for the first-connection choice.
+  await expect(page.getByText(/already contains a published configuration with 1 board/)).toBeVisible();
+});
+
+test('explains when Google Drive for desktop is not detected', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=publishing&drive=app-missing');
+  await page.getByRole('radio', { name: 'Google Drive Local' }).click();
+  await expect(page.getByText(/Google Drive for desktop was not detected on this computer/)).toBeVisible();
+  await expect(page.getByRole('button', { name: /Rescan/ })).toBeVisible();
+  await page.getByRole('button', { name: /Rescan/ }).click();
+  await expect(page.getByText(/Google Drive for desktop was not detected on this computer/)).toBeVisible();
+});
+
+test('renders a connected Drive Local surface and changes the folder', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=publishing&sharing=drive-local&drive=ready');
+  await expect(page.getByRole('radio', { name: 'Google Drive Local' })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByRole('radio', { name: 'Google Drive Local' })).toBeDisabled();
+  await expect(page.getByText('member@example.test / Projetos').first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Publish' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Change folder' }).click();
+  await expect(page.getByText(/Local boards, tasks, and notes stay on this machine/)).toBeVisible();
+  await page.getByRole('button', { name: 'Continue to folder browser' }).click();
+  await page.getByRole('button', { name: /member@example.test/ }).click();
+  await page.getByRole('button', { name: 'Meu Drive' }).click();
+  await page.getByRole('button', { name: 'Time' }).click();
+  await page.getByRole('button', { name: 'Select this folder' }).click();
+  await expect.poll(async () => (await sharingCommands(page))[0]).toMatchObject({ type: 'sharing.changeLocation', confirmed: true, hubId: 'hub' });
+  await expect(page.getByText('member@example.test / Time').first()).toBeVisible();
+});
+
+test('explains the step that clears a Drive Local conflict copy', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=publishing&sharing=drive-local-review');
+  await expect(page.getByText('SHARING_CONFLICT_COPY')).toBeVisible();
+  await expect(page.getByText(/Decide which version is current, then delete or rename the other copies/)).toBeVisible();
+});
+
+test('keeps recovery controls after the initial discovery request fails', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=publishing&drive=error');
+  await page.getByRole('radio', { name: 'Google Drive Local' }).click();
+  await expect(page.getByText('SHARING_DRIVE_DISCOVERY_FAILED')).toBeVisible();
+  await expect(page.getByText(/Google Drive discovery could not be completed/).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: /Rescan/ })).toBeVisible();
+});
+
+test('keeps the storage cards and picker on host surface tokens', async ({ page }) => {
+  const probe = async (dark: boolean): Promise<{ dark: boolean; surface: string; folder: string }> => {
+    await page.emulateMedia({ colorScheme: dark ? 'dark' : 'light' });
+    await page.goto(HARNESS + '?scenario=publishing&theme=host&drive=ready');
+    await page.getByRole('radio', { name: 'Google Drive Local' }).click();
+    await page.getByRole('button', { name: 'Choose folder' }).click();
+    await page.getByRole('dialog', { name: 'Choose a Google Drive folder' }).waitFor();
+    return page.evaluate(() => {
+      const card = document.querySelector('.kb-storage-card');
+      const dialog = document.querySelector('.kb-picker')?.closest('.kb-dialog');
+      return {
+        dark: document.body.hasAttribute('data-ds-dark-theme'),
+        surface: card ? getComputedStyle(card).backgroundColor : '',
+        folder: dialog ? getComputedStyle(dialog).backgroundColor : '',
+      };
+    });
+  };
+  const light = await probe(false);
+  const dark = await probe(true);
+  expect(light.dark).toBe(false);
+  expect(dark.dark).toBe(true);
+  // Both surfaces are painted from the host tokens, so the theme changes their color.
+  expect(light.surface).not.toBe(dark.surface);
+  expect(light.folder).not.toBe(dark.folder);
+  expect(light.surface).not.toBe('');
+  expect(light.folder).not.toBe('');
 });
