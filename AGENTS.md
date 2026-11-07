@@ -5,6 +5,16 @@
 - Write all specifications and OpenSpec planning artifacts in US English (`en-US`).
 - Write source code, identifiers, and code comments in US English (`en-US`).
 
+## Releases
+
+- Bump `version` in `package.json` in the pull request that changes the published
+  artifact. A released version is never reused.
+- The release workflow publishes one immutable release per version and fails
+  instead of overwriting an existing tag or asset.
+- Keep `releases/latest/download/dsh-kanban.tgz` as the documented install
+  address; document pinning an exact tag and updating an installed profile when
+  installation guidance changes.
+
 ## Verification
 
 ### Fresh isolated web instance

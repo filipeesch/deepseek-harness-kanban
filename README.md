@@ -1,12 +1,12 @@
 # DSH Kanban
 
-An independent host/client plugin for **DeepSeek Harness (DSH) 0.2.1-rc.2**: Hub-scoped Kanban boards, per-board workflows, optional team publishing, optional Git worktrees, shared task notes, and task drawers that reuse native DSH conversations. It does not replace the DSH core, start another server, or clone the chat/agent runtime.
+An independent host/client plugin for **DeepSeek Harness (DSH) 0.2 release candidates from 0.2.1-rc.2**: Hub-scoped Kanban boards, per-board workflows, optional team publishing, optional Git worktrees, shared task notes, and task drawers that reuse native DSH conversations. It does not replace the DSH core, start another server, or clone the chat/agent runtime.
 
 > **Verification boundary:** this plugin is checked through public DSH extension-point contracts, real temporary Git repositories, client integration tests, and the existing DSH GUI. Native conversation/model/scheduler engines remain DSH responsibilities. Acceptance uses a deterministic, test-only model adapter; no real-model request is part of the acceptance path. See [verification status and limitations](<docs/operations.md#verification-status>).
 
 ## Requirements
 
-- DSH **0.2.1-rc.2**, the release candidate the plugin is built against. The DSH SDK packages are peer dependencies in the `^0.2.1-rc.2` line, the host installation provides them, and hosts on `0.2.1-rc.5` were verified.
+- DSH **0.2.1-rc.2** or newer inside the `0.2` line. The manifest declares `engines.dsh: ">=0.2.1-rc.2 <0.3.0-0"`, so DSH refuses a bundle outside that range with its own incompatibility report instead of failing later at import time. `0.2.1-rc.5` is the verified host; the range also admits later `0.2` release candidates such as `0.2.2-rc.1`, and the `<0.3.0-0` bound excludes every `0.3` prerelease and release.
 - Plugin runtime: **Node.js >=20.19**. Use a normal development Node installation; **Node.js 22+** is required for the optional Inspector helpers' native WebSocket support.
 - **pnpm 10.15.1**, as declared by `packageManager` in [the package manifest](<package.json>).
 - Git available to the host for worktree operations, and an existing local project/Git repository.
@@ -18,7 +18,7 @@ The package is private and marked `UNLICENSED`; these instructions do not grant 
 
 ### Install the released plugin
 
-Every release publishes one installable file, `dsh-kanban.tgz`, built from the commit that landed on `main`. Its name is fixed and is part of the install contract, so the install specification never changes between versions. The release is created for the version in the manifest; a later merge republishes that release when the version did not change.
+Every release publishes one installable file, `dsh-kanban.tgz`, built from the commit that landed on `main`. Its name is fixed and is part of the install contract, so the install specification never changes between versions. Releases are immutable: each manifest version is published once, and a merge that does not bump the version fails instead of overwriting an existing release.
 
 1. Open **Plugins → Add plugin**.
 2. Paste the release asset address into the package field:
@@ -30,7 +30,25 @@ Every release publishes one installable file, `dsh-kanban.tgz`, built from the c
 3. Enable **dsh-kanban** and inspect the native installation/application result.
 4. Refresh the **existing** GUI URL, then select **Kanban** in its sidebar. Use the URL the host printed on launch.
 
-The asset already contains the compiled entries, so this path runs no build and needs no dependency build-script approval. The host treats the address as a tarball, not as a repository, and installs it without scripts. The plugin declares the DSH SDK packages as peer dependencies, so the host installation provides them and the profile never gains a second, version-skewed copy of them. pnpm still downloads the artifact's own runtime dependencies (`zod`, `yaml`, and the editor packages) from the registry, so the installation needs registry access but no build.
+The asset already contains the compiled entries, so this path runs no build and needs no dependency build-script approval. The host treats the address as a tarball, not as a repository, and installs it without scripts. Most DSH SDK packages are peer dependencies that the host installation provides, so the profile does not need its own copy of them. The Typert protocol helper is compiled into the published entries instead: a profile can hoist an older copy of that package, and Node resolves the profile copy before the host installation (see [installation failure signatures](<docs/operations.md#installation-failure-signatures>)). pnpm still downloads the artifact's own runtime dependencies (`zod`, `yaml`, and the editor packages) from the registry, so the installation needs registry access but no build.
+
+### Update an installed plugin
+
+A profile keeps the version it resolved, so adding the same address again does not refresh an existing copy. Update it explicitly from the checkout-independent CLI:
+
+```sh
+dsh plugin --profile <profile> update dsh-kanban
+```
+
+The command runs pnpm in `$DSH_HOME/profiles/<profile>` (by default `~/.dsh/profiles/<profile>`), fetches the artifact from its release address again, and reports the new manifest version in **Plugins**. Use `--profile desktop` only through the Desktop-owned CLI, which manages that reserved profile.
+
+### Install or pin an exact version
+
+`releases/latest/download/dsh-kanban.tgz` moves to the newest published version. To install a fixed build, use the tag address instead, where the tag is `v` followed by the manifest version:
+
+```text
+https://github.com/filipeesch/deepseek-harness-kanban/releases/download/v0.1.2/dsh-kanban.tgz
+```
 
 No standalone web server is needed. Do not start Vite or a replacement DSH instance to make this plugin visible. The plugin adds navigation beside Automation tasks and Plugins; it does not configure a startup-page override.
 
