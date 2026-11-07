@@ -188,6 +188,16 @@ describe('continuous Google Drive synchronization', () => {
     expect(second.fake.document?.boards).toHaveLength(0);
   });
 
+  it('synchronizes a team board removal scheduled inside a lane', async () => {
+    const f = await fixture();
+    await f.hubs.hub(f.hubId).deleteBoard(f.boardId);
+    await f.service.removeBoard(f.hubId, f.boardId, 'team', 'Kanban');
+    // The debounce timer is scheduled inside the removal lane; it must still run
+    // the check outside that lane instead of failing as reentrant.
+    await new Promise(resolve => setTimeout(resolve, 80));
+    expect(f.fake.document?.boards).toHaveLength(0);
+  });
+
   it('keeps the local change pending when the team storage is unavailable', async () => {
     const f = await fixture();
     const failing = f.service;

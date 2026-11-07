@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile, symlink, realpath } from 'node:fs/promis
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { inspectFolder, isWithinPath } from '../../src/host/sharing/local-folder-path.js';
+import { folderIdentity, inspectFolder, isWithinPath } from '../../src/host/sharing/local-folder-path.js';
 
 const roots: string[] = [];
 async function tempRoot(): Promise<string> {
@@ -19,7 +19,7 @@ describe('folder inspection codes', () => {
     await mkdir(folder);
     const inspected = await inspectFolder(folder);
     expect(inspected.path).toBe(await realpath(folder));
-    expect(inspected.identity).toBe(inspected.path.toLocaleLowerCase());
+    expect(inspected.identity).toBe(folderIdentity(inspected.path));
   });
 
   it('names a missing directory', async () => {
