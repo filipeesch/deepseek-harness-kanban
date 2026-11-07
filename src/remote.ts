@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createTypertRemoteInfo } from '@deepseek-ai/dsh-typert-protocol/remote-info';
+import { createTypertContribution } from './sdk/typert.js';
 import type { RemoteResult, RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol';
 import type { TypertContribution } from '@deepseek-ai/dsh-typert-registry';
 import { KanbanStateSchema } from './domain/hub-schema.js';
@@ -111,7 +111,7 @@ const outcome=<T extends z.ZodType>(value:T)=>z.discriminatedUnion('ok',[z.objec
 const codec=(name:string,create:()=>z.ZodType)=>({mode:'strict' as const,typeSymbol:PACKAGE_NAME+'#'+name,create});
 const parameter=(name:string,schema:z.ZodType,typeName:string)=>({name,source:'json' as const,codec:codec(typeName,()=>schema),strictCodec:codec(typeName,()=>schema)});
 const base={service:'kanbanController',invocation:{kind:'direct' as const}};
-export const TYPERT_REMOTE=createTypertRemoteInfo({package:PACKAGE_NAME,methods:{
+const contribution=createTypertContribution({package:PACKAGE_NAME,methods:{
  'kanban/snapshot':{...base,parameters:[],result:codec('SnapshotOutcome',()=>outcome(SnapshotSchema))},
  'kanban/command':{...base,parameters:[parameter('request',CommandSchema,'Command')],result:codec('CommandOutcome',()=>outcome(SnapshotSchema))},
  'kanban/sharing':{...base,parameters:[parameter('request',SharingCommandSchema,'SharingCommand')],result:codec('SharingOutcome',()=>outcome(SnapshotSchema))},
@@ -123,7 +123,8 @@ export const TYPERT_REMOTE=createTypertRemoteInfo({package:PACKAGE_NAME,methods:
  'kanban/questionsFollow':{...base,mode:'stream',parameters:[parameter('request',z.object({sessionId:id}).strict(),'SessionLookup')],cancellation:{parameter:'signal'},result:codec('QuestionFeedFrame',()=>QuestionFeedFrameSchema)},
  'kanban/follow':{...base,mode:'stream',parameters:[],cancellation:{parameter:'signal'},result:codec('Snapshot',()=>SnapshotSchema)},
 }},z);
-export const TYPERT_HOST:TypertContribution={package:PACKAGE_NAME,face:'host',schemas:[],get invocations(){return TYPERT_REMOTE.descriptors;},model:{services:[],events:[],objects:[]}};
+export const TYPERT_REMOTE=contribution.remote;
+export const TYPERT_HOST:TypertContribution=contribution.host;
 export interface KanbanRemote {
  snapshot():Promise<RemoteResult<Outcome<HostSnapshot>>>;
  command(request:Command):Promise<RemoteResult<Outcome<HostSnapshot>>>;

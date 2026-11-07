@@ -3,7 +3,9 @@ name: Release
 # Publishes the installable plugin artifact whenever a pull request lands on
 # main. The asset name is part of the public install contract: the README
 # installs from /releases/latest/download/dsh-kanban.tgz, so every release
-# must publish exactly that file name.
+# must publish exactly that file name. A release is immutable: the workflow
+# refuses to publish a version whose tag already exists, so the manifest
+# version must be bumped in the pull request that changes the artifact.
 on:
   push:
     branches:
@@ -12,6 +14,8 @@ on:
 
 jobs:
   release:
+    # Only the merged main commit is published, including manual dispatches.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -32,6 +36,28 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Refuse an already published version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          tag="v$version"
+          refusal="Bump \"version\" in package.json in the pull request that changes the artifact and merge again."
+          tag_status=0
+          git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1 || tag_status=$?
+          if [ "$tag_status" -eq 0 ]; then
+            echo "::error::Tag $tag already exists. $refusal"
+            exit 1
+          fi
+          if [ "$tag_status" -ne 2 ]; then
+            echo "::error::Could not determine whether tag $tag exists (git ls-remote exited $tag_status)."
+            exit 1
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "::error::Release $tag already exists. $refusal"
+            exit 1
+          fi
+
       - name: Verify
         run: pnpm check
 
@@ -47,10 +73,7 @@ jobs:
         run: |
           version=$(node -p "require('./package.json').version")
           tag="v$version"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" dsh-kanban.tgz --clobber
-          else
-            gh release create "$tag" dsh-kanban.tgz \
-              --title "$tag" \
-              --generate-notes
-          fi
+          gh release create "$tag" dsh-kanban.tgz \
+            --target "$GITHUB_SHA" \
+            --title "$tag" \
+            --generate-notes
