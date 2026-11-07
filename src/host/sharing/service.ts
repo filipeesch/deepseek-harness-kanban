@@ -316,7 +316,9 @@ export class HubSharingService {
     if (existing !== undefined) clearTimeout(existing);
     const timer = setTimeout(() => {
       this.timers.delete(hubId);
-      void this.check(hubId).catch(error => this.options.report?.(error));
+      // This timer is scheduled inside a lane; leave its async context so the
+      // check is not rejected as reentrant, and keep the rejection reported.
+      this.active.exit(() => { void this.check(hubId).catch(error => this.options.report?.(error)); });
     }, this.debounceMs);
     timer.unref?.();
     this.timers.set(hubId, timer);
