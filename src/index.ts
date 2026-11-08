@@ -33,6 +33,7 @@ import { registerProductTools } from './host/tools.js';
 import { KanbanError } from './shared/errors.js';
 import { registerTaskContextInjection } from './host/task-context.js';
 import { createSessionHistory } from './host/session-history.js';
+import { abortableSleep, ForkAdopter } from './host/conversation-adoption.js';
 import type { TaskLocator } from './host/task-locator.js';
 
 // The optional public schedule module emits this payloadless event; listening does not require its service.
@@ -71,6 +72,34 @@ export function registerTaskExecutionGuards(ctx:Context,locator:Pick<TaskLocator
   yield* next();
  });
  return()=>{offStream();offStep();};
+}
+export interface ForkAdoptionRegistrationOptions {
+ signal?:AbortSignal;
+ report?:(error:unknown)=>void;
+}
+/**
+ * Adopt a native fork of a task conversation as another conversation of that task.
+ * The listener returns synchronously and runs adoption detached: agent/created is a
+ * serial hook that creation awaits, so a rejection here would fail agent creation.
+ */
+export function registerForkAdoption(ctx:Pick<Context,'on'>,adopter:Pick<ForkAdopter,'adopt'>,options:ForkAdoptionRegistrationOptions={}):()=>void{
+ const lifetime=new AbortController();
+ const onAbort=()=>lifetime.abort();
+ if(options.signal?.aborted)lifetime.abort();else options.signal?.addEventListener('abort',onAbort,{once:true});
+ const report=(error:unknown)=>{try{options.report?.(error);}catch{/* a failing reporter must not escape */}};
+ const off=ctx.on('agent/created',({agent})=>{
+  if(lifetime.signal.aborted)return undefined;
+  const header=agent.session.header;
+  try{
+   void adopter.adopt({
+    sessionId:String(agent.session.id),
+    ...(header.parentSession===undefined?{}:{parentSessionId:String(header.parentSession)}),
+    ...(header.origin===undefined?{}:{origin:header.origin}),
+   },lifetime.signal).catch(report);
+  }catch(error){report(error);}
+  return undefined;
+ });
+ return()=>{off();options.signal?.removeEventListener('abort',onAbort);lifetime.abort();};
 }
 export interface HubSharingRuntime {
  service:HubSharingService;
@@ -147,8 +176,8 @@ export async function apply(ctx:Context):Promise<void>{
  try{sharing=await openHubSharing(ctx,hubs,{report});}catch(error){await hubs.close();await questions.close();await storage.close();throw error;}
  const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler},native.workspaces);
  sharing.setNotify(()=>app.sharingChanged());
- let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offSignals:(()=>void)|undefined;
- ctx.effect(()=>async()=>{lifetime.abort();offTools?.();offWire?.();offGuards?.();offContext?.();offSignals?.();try{await app.close();}finally{try{await sharing.close();}finally{try{await hubs.close();}finally{await questions.close();}}}});
+ let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offSignals:(()=>void)|undefined;let offAdoption:(()=>void)|undefined;
+ ctx.effect(()=>async()=>{lifetime.abort();offTools?.();offWire?.();offGuards?.();offContext?.();offSignals?.();offAdoption?.();try{await app.close();}finally{try{await sharing.close();}finally{try{await hubs.close();}finally{await questions.close();}}}});
  offWire=ctx.typert.register(TYPERT_HOST);
  ctx.plugin(KanbanController,app);
  offTools=registerProductTools(ctx,app);
@@ -156,6 +185,15 @@ export async function apply(ctx:Context):Promise<void>{
  offSignals=registerAttentionSignals(ctx,app);
  offGuards=registerTaskExecutionGuards(ctx,app.locator,app);
  offContext=registerTaskContextInjection(ctx,app.locator,{history,report});
+ const adopter=new ForkAdopter({
+  locate:sessionId=>{const located=app.locator.bySession(sessionId);return located===undefined?undefined:{hubId:located.hubId,taskId:located.task.id,effectiveCwd:located.task.effectiveCwd};},
+  directory:sessionId=>native.sessions.directory(sessionId),
+  setDirectory:(sessionId,directory,signal)=>native.sessions.setDirectory(sessionId,directory,signal),
+  attach:(hubId,taskId,sessionId,expectedEffectiveCwd)=>hubs.hub(hubId).addSession(taskId,sessionId,expectedEffectiveCwd).then(()=>undefined),
+  sleep:abortableSleep,
+  report,
+ });
+ offAdoption=registerForkAdoption(ctx,adopter,{signal:lifetime.signal,report});
  await app.initialize();
  sharing.scheduler.sync();
 }

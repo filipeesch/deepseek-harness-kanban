@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ownedSessionIds } from '../../src/domain/session-lineage.js';
+import { isForkLineage, ownedSessionIds } from '../../src/domain/session-lineage.js';
 
 const lineage = [
   { sessionId: 'a' },
@@ -33,5 +33,25 @@ describe('ownedSessionIds', () => {
 
   it('returns the roots when the lineage is empty', () => {
     expect([...ownedSessionIds(['a', 'b'], [])]).toEqual(['a', 'b']);
+  });
+});
+
+describe('isForkLineage', () => {
+  it('recognizes a direct parent without a subagent origin as a fork', () => {
+    expect(isForkLineage({ parentSessionId: 'a' })).toBe(true);
+  });
+
+  it('does not treat a subagent delegation as a fork', () => {
+    expect(isForkLineage({ parentSessionId: 'a', origin: 'subagent' })).toBe(false);
+  });
+
+  it('does not treat a root session as a fork', () => {
+    expect(isForkLineage({})).toBe(false);
+    expect(isForkLineage({ origin: 'subagent' })).toBe(false);
+  });
+
+  it('narrows a recognized fork to its direct parent', () => {
+    const facts: { parentSessionId?: string; origin?: 'subagent' } = { parentSessionId: 'a' };
+    expect(isForkLineage(facts) ? facts.parentSessionId : undefined).toBe('a');
   });
 });

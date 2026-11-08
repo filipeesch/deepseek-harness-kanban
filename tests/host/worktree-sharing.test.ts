@@ -71,6 +71,13 @@ describe('WorktreeSharingGuard', () => {
     await expect(guard.assertExclusive('task', f.root)).rejects.toMatchObject({ code: 'SHARED_WORKTREE', details: { sessionId: 'fork' } });
   });
 
+  it('ignores a fork the task already adopted', async () => {
+    const f = await fixture();
+    const sessions: SessionTopologyPort = { topology: vi.fn(async () => ({ related: [{ sessionId: 'a', directory: f.root }, { sessionId: 'fork', directory: path.join(f.root, 'sub') }], lineage: [{ sessionId: 'fork', parentSessionId: 'a' }] })) };
+    const guard = new WorktreeSharingGuard(store([task({ sessionIds: ['a', 'fork'] })], f.root), sessions);
+    await expect(guard.assertExclusive('task', f.root)).resolves.toBeUndefined();
+  });
+
   it('fails closed when a subagent parent is unknown', async () => {
     const f = await fixture();
     const sessions: SessionTopologyPort = { topology: vi.fn(async () => ({ related: [{ sessionId: 'child', directory: path.join(f.root, 'sub') }], lineage: [{ sessionId: 'child', parentSessionId: 'missing', origin: 'subagent' as const }] })) };
