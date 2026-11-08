@@ -11,6 +11,7 @@ import { DestructiveAdmission } from './destructive-admission.js';
 import { OperationQueue } from './operation-queue.js';
 import { OperationJournal, requireTask } from './operation-journal.js';
 import { repositoryLane } from './repository-lane.js';
+import { replaceableByDeletion } from '../shared/context-operation.js';
 
 export interface WorktreeStore {
   locate(taskId: string): { hubId: string; hub: HubState; task: Task; project: Project };
@@ -142,7 +143,11 @@ export class WorktreeCoordinator {
       if (normalized.kind === 'create' || normalized.kind === 'attach') normalized.path = await canonicalPath(normalized.path, true);
       const { task } = this.read(taskId);
       this.confirmationMatches(task, normalized);
-      if (task.operation) {
+      if (task.operation && normalized.kind === 'delete' && !this.sameRequest(task.operation.request, normalized) && replaceableByDeletion(task.operation)) {
+        // The deletion replaces an abandoned failed journal; it owns the checkout binding
+        // and will retain anything it cannot verify.
+        await this.start(taskId, normalized);
+      } else if (task.operation) {
         if (!this.sameRequest(task.operation.request, normalized)) throw new KanbanError('OPERATION_PENDING', 'Resolve the existing operation before starting a different operation.', { kind: task.operation.request.kind });
         this.recordedTargetMatches(task.operation, normalized);
         await this.update(taskId, task.operation.id, (_task, operation) => {
@@ -236,6 +241,15 @@ export class WorktreeCoordinator {
       this.assertOpen();
       const { task, project } = this.read(taskId);
       const gitProject = requireGitProject(project);
+      // Resolve the base before replacing the journal: a return must never discard a
+      // failed operation when its target directory cannot be reached.
+      try { await this.git.projectDirectory(gitProject); }
+      catch (error) {
+        if (error instanceof KanbanError && (error.code === 'PATH_UNAVAILABLE' || error.code === 'INVALID_PATH')) {
+          throw new KanbanError('PROJECT_PATH_UNAVAILABLE', 'The project directory cannot be resolved. Delete the task or relocate the project before returning its conversations.', { path: project.projectPath, cause: error.code });
+        }
+        throw error;
+      }
       const old = task.operation;
       if (old?.request.kind === 'delete' && (old.archivedSessionIds.length > 0 || old.phase === 'archiving' || old.error?.details?.failedPhase === 'archiving')) throw new KanbanError('DELETE_IN_PROGRESS', 'Retry the partially completed deletion; archived native conversations cannot be silently restored.');
       // A Git create may have succeeded immediately before a persistence failure.

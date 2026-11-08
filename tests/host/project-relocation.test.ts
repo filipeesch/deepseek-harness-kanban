@@ -368,4 +368,30 @@ describe('project relocation', () => {
     await f.app.relocations.settle();
     expect(await f.sessions.directory(sessionId)).toBe(target.projectPath);
   });
+
+  it('relocates a task with a failed return and lets the return complete afterwards', async () => {
+    const f = await setup();
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Failed return relocation', description: '' });
+    await f.store.transact(draft => {
+      draft.tasks.find(value => value.id === task.id)!.operation = {
+        id: 'failed-return', request: { kind: 'return' }, phase: 'failed',
+        previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        error: { code: 'PATH_UNAVAILABLE', message: 'The directory cannot be resolved.', details: { failedPhase: 'preflight' } },
+      };
+    });
+    const target = await moveRepository(f);
+
+    await relocate(f, target);
+    await f.app.relocations.settle();
+    const project = f.store.requireProject(f.project.id);
+    expect(project.projectPath).toBe(target.projectPath);
+    expect(project.operation).toBeUndefined();
+    expect(f.store.requireTask(task.id).operation?.request.kind).toBe('return');
+    expect(await f.sessions.directory(task.sessionIds[0]!)).toBe(target.projectPath);
+
+    await f.app.command({ type: 'operation.retry', taskId: task.id });
+    expect(f.store.requireTask(task.id).operation).toBeNull();
+    expect(await f.sessions.directory(task.sessionIds[0]!)).toBe(target.projectPath);
+  });
 });
