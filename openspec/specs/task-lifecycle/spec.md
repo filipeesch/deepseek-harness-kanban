@@ -63,7 +63,7 @@ The plugin SHALL NOT provide task archive, task restore, or an archived-task vie
 
 ### Requirement: Successful task deletion archives conversations and keeps its branch
 
-A successfully completed task deletion SHALL remove the task card and its shared notes and archive every retained top-level native DSH conversation associated with the task without erasing their histories. Native subagent descendants of those conversations SHALL belong to the task's conversation lineage for ownership decisions but SHALL NOT be moved or archived individually; archiving a parent conversation SHALL gate descendant execution according to native behavior. Before removing an associated worktree, the plugin SHALL return every retained task conversation to the base project path through the all-idle directory coordinator. If that return fails, the plugin SHALL retain the worktree and recovery information rather than report deletion success. Successful deletion SHALL remove an eligible associated worktree, including an externally attached checkout, preserve the task's associated Git branch, and SHALL NOT delete native conversation log files directly.
+A successfully completed task deletion SHALL remove the task card and its shared notes and archive every retained top-level native DSH conversation associated with the task, including a fork the task adopted, without erasing their histories. Native subagent descendants of those conversations SHALL belong to the task's conversation lineage for ownership decisions but SHALL NOT be moved or archived individually; archiving a parent conversation SHALL gate descendant execution according to native behavior. Before removing an associated worktree, the plugin SHALL return every retained task conversation to the base project path through the all-idle directory coordinator. If that return fails, the plugin SHALL retain the worktree and recovery information rather than report deletion success. Successful deletion SHALL remove an eligible associated worktree, including an externally attached checkout, preserve the task's associated Git branch, and SHALL NOT delete native conversation log files directly.
 
 #### Scenario: Permanently delete an idle task with a clean unshared worktree
 
@@ -74,6 +74,12 @@ A successfully completed task deletion SHALL remove the task card and its shared
 
 - **WHEN** an idle task has no associated worktree and the user confirms its permanent deletion
 - **THEN** successful deletion removes the card and notes and archives the associated conversations with their histories retained, without removing the base project directory
+
+#### Scenario: Delete a task with an adopted fork
+
+- **WHEN** an idle task has a fork it adopted and the user confirms permanent deletion
+- **THEN** the deletion confirmation counts that fork with the task's conversations
+- **AND** successful deletion archives the fork with the task's other conversations while retaining its history
 
 #### Scenario: Delete a task whose subagent child uses the worktree
 

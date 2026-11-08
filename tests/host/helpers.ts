@@ -52,6 +52,8 @@ export class TestSessions implements SessionPort {
  async facts(id:string):Promise<ConversationFacts>{const kinds:PendingUserWorkKind[]=[];if(this.awaiting.has(id))kinds.push('native-question');if(this.approvals.has(id))kinds.push('approval');return {running:this.busy.has(id),background:[],pending:pendingUserWork(kinds,this.queued.has(id)?1:0),settledTurn:this.settled.get(id)??null};}
  async directories(){return [...this.dirs].map(([sessionId,directory])=>({sessionId,directory}));}
  seedSubagent(parent:string,child:string,directory:string,origin:'subagent'|undefined='subagent'){this.dirs.set(child,directory);this.lineage.set(child,{parentSessionId:parent,...(origin?{origin}:{})});return child;}
+ /** Seed a fork of a task conversation: a direct parent link with no subagent origin. */
+ seedFork(parent:string,child:string,directory:string){this.dirs.set(child,directory);this.lineage.set(child,{parentSessionId:parent});return child;}
  async topology(within?:string){
   const related=within===undefined?[]:[...this.dirs].filter(([,directory])=>inside(within,directory)).map(([sessionId,directory])=>({sessionId,directory}));
   return {related,lineage:[...this.dirs.keys()].map(sessionId=>({sessionId,...(this.lineage.get(sessionId)??{})}))};

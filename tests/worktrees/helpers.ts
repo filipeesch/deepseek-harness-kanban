@@ -104,10 +104,16 @@ export class Sessions implements SessionPort {
   async archive(id: string): Promise<void> { await this.beforeArchive?.(id); this.archiveCalls.push(id); }
   async facts(): Promise<ConversationFacts> { return { running: false, background: [], pending: NO_PENDING_USER_WORK, settledTurn: null }; }
   async directories(): Promise<Array<{ sessionId: string; directory: string }>> { return [...this.dirs].map(([sessionId, directory]) => ({ sessionId, directory })); }
-  /** Add a real-child-like session for ownership tests. Pass `origin: undefined` for a fork. */
+  /** Add a real-child-like session for ownership tests. Defaults to a subagent child; use `seedFork` for a fork. */
   seedSubagent(parent: string, child: string, directory: string, origin: 'subagent' | undefined = 'subagent'): string {
     this.dirs.set(child, directory);
     this.lineage.set(child, { parentSessionId: parent, ...(origin ? { origin } : {}) });
+    return child;
+  }
+  /** Add a fork of a task conversation: a direct parent link with no subagent origin. */
+  seedFork(parent: string, child: string, directory: string): string {
+    this.dirs.set(child, directory);
+    this.lineage.set(child, { parentSessionId: parent });
     return child;
   }
   async topology(within?: string) {
