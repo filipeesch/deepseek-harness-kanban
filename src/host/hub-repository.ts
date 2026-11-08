@@ -10,6 +10,26 @@ import { assertRevision, isDomainId } from '../domain/validation.js';
 
 export interface HubRepositoryOptions { id?: () => string; now?: () => string }
 export interface LocatedTask { hubId: string; hub: HubState; board: Board; project: Project; task: HubTask }
+/**
+ * One task's identity and conversation ids without cloning the Hub that owns it. The
+ * arrays belong to the stored snapshot and MUST be treated as read-only.
+ */
+export interface TaskSummary {
+  readonly hubId: string;
+  readonly boardId: string;
+  readonly projectId: string;
+  readonly taskId: string;
+  readonly sessionIds: readonly string[];
+  readonly closedSessionIds: readonly string[];
+  readonly autoModeEnabled: boolean;
+  readonly instructionPending: { readonly columnId: string; readonly enteredAt: number } | null;
+  readonly hasOperation: boolean;
+  readonly hasPendingTransition: boolean;
+  readonly worktreePath: string | null;
+  readonly unclaimedWorktreePaths: readonly string[];
+  readonly operationAttemptPath: string | null;
+  readonly pendingWorktreePath: string | null;
+}
 
 function storageFailure(operation: 'load' | 'save' | 'delete', error: unknown): KanbanError {
   const detail = error instanceof Error ? error.message : String(error);
@@ -30,6 +50,7 @@ function parseHub(value: unknown, message: string): HubState {
  */
 export class HubRepository {
   private readonly hubs = new Map<string, HubState>();
+  private summaries: readonly TaskSummary[] | undefined;
   private meta: KanbanMeta;
   private readonly listeners = new Set<() => void>();
   private readonly mutationContext = new AsyncLocalStorage<{ active: boolean }>();
@@ -141,6 +162,7 @@ export class HubRepository {
   }
 
   private changed(): void {
+    this.summaries = undefined;
     for (const listener of [...this.listeners]) {
       try { listener(); } catch { /* An observer cannot roll back or poison a durable commit. */ }
     }
@@ -253,6 +275,38 @@ export class HubRepository {
       }
     }
     return result;
+  }
+
+  /**
+   * The lightweight board read: task identity, conversation ids, and the few task
+   * fields hot paths need, rebuilt once per repository change instead of cloning the
+   * owning Hub per task. Consumers MUST NOT mutate the returned values.
+   */
+  taskSummaries(): readonly TaskSummary[] {
+    if (this.summaries !== undefined) return this.summaries;
+    const summaries: TaskSummary[] = [];
+    for (const hub of this.hubs.values()) {
+      for (const task of hub.tasks) {
+        summaries.push({
+          hubId: hub.id,
+          boardId: task.boardId,
+          projectId: task.projectId,
+          taskId: task.id,
+          sessionIds: task.sessionIds,
+          closedSessionIds: task.closedSessionIds,
+          autoModeEnabled: task.autoMode?.enabled === true,
+          instructionPending: task.instructionPending === undefined ? null : { columnId: task.instructionPending.columnId, enteredAt: task.instructionPending.enteredAt },
+          hasOperation: task.operation !== null,
+          hasPendingTransition: task.pendingTransition !== undefined,
+          worktreePath: task.worktree?.path ?? null,
+          unclaimedWorktreePaths: (task.unclaimedWorktrees ?? []).map(entry => entry.path),
+          operationAttemptPath: task.operation?.createAttempt?.path ?? null,
+          pendingWorktreePath: task.pendingTransition?.worktreeRequest?.path ?? null,
+        });
+      }
+    }
+    this.summaries = summaries;
+    return summaries;
   }
 
   async createHub(name: string): Promise<HubState> {

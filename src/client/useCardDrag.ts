@@ -159,5 +159,7 @@ export function useCardDrag(options: CardDragOptions) {
     active?.removeListeners?.();
   }, []);
 
-  return { drag, begin, shouldSuppressClick: () => Date.now() < suppressClickUntil.current };
+  const shouldSuppressClick = useCallback(() => Date.now() < suppressClickUntil.current, []);
+
+  return { drag, begin, shouldSuppressClick };
 }

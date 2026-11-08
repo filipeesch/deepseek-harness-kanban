@@ -3,6 +3,7 @@ import path from 'node:path';
 import { mkdir, rm } from 'node:fs/promises';
 import { CommandSchema } from '../../src/remote.js';
 import { fixture, taskWithConversation } from './helpers.js';
+import { KanbanApp } from '../../src/host/app.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { call, result } from '../questions/fixtures.js';
 let active:Array<Awaited<ReturnType<typeof fixture>>>=[];
@@ -52,7 +53,7 @@ describe('host command orchestration',()=>{
   expect(f.sessions.sent).toHaveLength(1);
   expect(f.sessions.sent[0]).toMatchObject({id:created,text:'Plan this task.'});
  });
- it('forces a fresh conversation-fact projection when the client asks for one',async()=>{const f=await setup();const t=await task(f);let running=false;f.sessions.facts=async()=>({running,background:[],pending:NO_PENDING_USER_WORK,settledTurn:null});const idle=await f.app.snapshot();expect(idle.conversations[t.sessionIds[0]!]?.running).toBe(false);running=true;const cached=await f.app.snapshot();expect(cached.conversations[t.sessionIds[0]!]?.running).toBe(false);const fresh=await f.app.snapshot(true);expect(fresh.conversations[t.sessionIds[0]!]?.running).toBe(true);expect(fresh.sequence).toBeGreaterThan(cached.sequence);expect((await f.app.snapshot()).conversations[t.sessionIds[0]!]?.running).toBe(true);});
+ it('forces a fresh conversation-fact projection when the client asks for one',async()=>{const f=await setup();const t=await task(f);let running=false;f.sessions.facts=async()=>({running,background:[],pending:NO_PENDING_USER_WORK,settledTurn:null});const id0=t.sessionIds[0]!;const idle=await f.app.snapshot({refreshSessionIds:[id0]});expect(idle.conversations[id0]?.running).toBe(false);running=true;const cached=await f.app.snapshot();expect(cached.conversations[id0]?.running).toBe(false);const fresh=await f.app.snapshot({refreshSessionIds:[id0]});expect(fresh.conversations[id0]?.running).toBe(true);expect(fresh.sequence).toBeGreaterThan(cached.sequence);expect((await f.app.snapshot()).conversations[id0]?.running).toBe(true);});
  it('edits any stage without sending a hidden instruction',async()=>{const f=await setup();const t=await task(f);await f.store.transact(d=>{d.tasks[0]!.columnId=d.boards[0]!.workflow.columns[2]!.id;});await f.app.command({type:'task.edit',taskId:t.id,title:'Changed',description:'New text'});expect(f.store.requireTask(t.id).title).toBe('Changed');expect(f.sessions.sent).toEqual([]);});
  it('creates distinct tabs inheriting the effective monorepo directory',async()=>{const f=await setup();const t=await task(f);const id=await f.app.createConversation(t.id);expect(id).not.toBe(t.sessionIds[0]);expect(f.store.requireTask(t.id).sessionIds).toHaveLength(2);expect(await f.sessions.directory(id)).toBe(f.projectPath);});
  it('moves only into an instructed stage and records the entry',async()=>{const f=await setup();const columnId=await instructed(f);const t=await task(f);await f.app.command({type:'task.move',taskId:t.id,columnId});const moved=f.store.requireTask(t.id);expect(moved.columnId).toBe(columnId);expect(moved.instructionPending).toMatchObject({columnId});expect(f.sessions.sent).toEqual([]);expect(f.git.created).toBe(0);});
@@ -265,4 +266,132 @@ describe('task deletion lineage and workspace cleanup', () => {
     expect(f.sessions.archived).not.toContain(child);
     expect(f.git.removed).toEqual([root]);
   });
+});
+
+describe('responsive host reads', () => {
+ it('presents only resolved conversation facts and fills them when the batch resolves',async()=>{
+  const f=await setup();const t=await task(f);const id=t.sessionIds[0]!;
+  let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+  f.sessions.facts=async()=>{await gate;return {running:true,background:[],pending:NO_PENDING_USER_WORK,settledTurn:null};};
+  // Drain any publication window left by the task setup before observing this one.
+  await new Promise(resolve=>setTimeout(resolve,60));
+  const notify=vi.fn();f.app.subscribe(notify);
+  const early=await f.app.snapshot();
+  expect(early.conversations[id]).toBeUndefined();
+  release();
+  // The resolution itself publishes; the client never had to ask for another snapshot.
+  await vi.waitFor(()=>expect(notify).toHaveBeenCalled());
+  const filled=await f.app.snapshot();
+  expect(filled.conversations[id]?.running).toBe(true);
+ });
+ it('enables auto mode without dispatching pending work or re-reading conversation facts',async()=>{
+  const f=await setup();const t=await task(f);
+  // Let any read started by the task setup settle, then prove the command starts none.
+  await new Promise(resolve=>setTimeout(resolve,10));
+  const byTask=vi.spyOn(f.app.locator,'byTask');
+  const read=vi.spyOn(f.sessions,'facts');
+  const result=await f.app.command({type:'task.autoMode',taskId:t.id,enabled:true});
+  expect(result.state.hubs[0]!.tasks.find(value=>value.id===t.id)?.autoMode?.enabled).toBe(true);
+  expect(byTask).not.toHaveBeenCalled();
+  expect(read).not.toHaveBeenCalled();
+ });
+ it('does not read authorization or sharing views for an auto-mode command',async()=>{
+  const f=await setup();const t=await task(f);
+  const auth={refresh:vi.fn(async()=>{}),view:vi.fn(()=>({status:'not-connected' as const}))};
+  const views=vi.fn(()=>({}));
+  const app=new KanbanApp(f.hubs,f.sessions,f.git,{sharing:{views} as never,sharingAuth:auth as never},f.workspaces);
+  await app.snapshot();
+  auth.refresh.mockClear();views.mockClear();
+  await app.command({type:'task.autoMode',taskId:t.id,enabled:true});
+  expect(auth.refresh).not.toHaveBeenCalled();
+  expect(views).not.toHaveBeenCalled();
+  await app.close();
+ });
+ it('restores persisted questions before the board and defers history replay',async()=>{
+  const f=await setup();const t=await task(f);const id=t.sessionIds[0]!;
+  let release!:()=>void;const historyGate=new Promise<void>(resolve=>{release=resolve;});
+  const record={version:1 as const,sessionId:id,events:[
+   {kind:'call' as const,seq:1,turn:1,callId:'c1',name:'decision_request'},
+   {kind:'native-page' as const,seq:2,turn:1,callId:'c1',page:{question:'Which approach?',type:'freetext' as const}},
+  ]};
+  const questionStore={load:(sessionId:string)=>sessionId===id?record:undefined,save:async()=>{}};
+  const app=new KanbanApp(f.hubs,f.sessions,f.git,{questionStore,history:async()=>{await historyGate;return [];}},f.workspaces);
+  await app.initialize();
+  expect(app.questions.pending(id)).toBe(true);
+  expect((await app.snapshot()).state.hubs[0]!.id).toBe(f.hub.id);
+  let settled=false;const settledPromise=app.whenSettled().then(()=>{settled=true;});
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  release();
+  await settledPromise;
+  expect(settled).toBe(true);
+  await app.close();
+ });
+ it('waits for an in-flight background replay before the final question flush',async()=>{
+  const f=await setup();const t=await task(f);const id=t.sessionIds[0]!;
+  let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+  const saved:string[]=[];
+  const questionStore={load:()=>undefined,save:async(sessionId:string)=>{saved.push(sessionId);}};
+  const app=new KanbanApp(f.hubs,f.sessions,f.git,{questionStore,history:async()=>{await gate;return [call(1,1,'c1'),result(2,1,'c1')];}},f.workspaces);
+  await app.initialize();
+  let closed=false;const closing=app.close().then(()=>{closed=true;});
+  await Promise.resolve();
+  expect(closed).toBe(false);
+  release();
+  await closing;
+  expect(closed).toBe(true);
+  expect(saved).toContain(id);
+ });
+ it('holds an automatic advance while the background replay is still blocked',async()=>{
+  const f=await setup();const t=await task(f);const id=t.sessionIds[0]!;
+  await configuredInstruction(f,'Plan this task.');
+  let release!:()=>void;const historyGate=new Promise<void>(resolve=>{release=resolve;});
+  const record={version:1 as const,sessionId:id,events:[
+   {kind:'call' as const,seq:1,turn:1,callId:'c1',name:'decision_request'},
+   {kind:'native-page' as const,seq:2,turn:1,callId:'c1',page:{question:'Which approach?',type:'freetext' as const}},
+  ]};
+  const questionStore={load:(sessionId:string)=>sessionId===id?record:undefined,save:async()=>{}};
+  const app=new KanbanApp(f.hubs,f.sessions,f.git,{questionStore,history:async()=>{await historyGate;return [];}},f.workspaces);
+  await app.initialize();
+  await f.store.setAutoMode(t.id,true);
+  expect(f.store.requireTask(t.id).columnId).toBe('backlog');
+  vi.useFakeTimers();
+  try{
+   app.observe(id,{type:'turn/end',seq:1,time:1,data:{turn:1,reason:{kind:'completed'}}});
+   await vi.advanceTimersByTimeAsync(400);
+  }finally{vi.useRealTimers();}
+  expect(f.store.requireTask(t.id).columnId).toBe('backlog');
+  expect(f.store.requireTask(t.id).pendingTransition).toBeUndefined();
+  release();await app.whenSettled();
+  expect(f.store.requireTask(t.id).columnId).toBe('backlog');
+  await app.close();
+ });
+ it('reports a background reconciliation failure without blocking',async()=>{
+  const f=await setup();const t=await task(f);const id=t.sessionIds[0]!;
+  const report=vi.fn();
+  const app=new KanbanApp(f.hubs,f.sessions,f.git,{history:async()=>{throw new Error('history unavailable');},report},f.workspaces);
+  await app.initialize();
+  await app.whenSettled();
+  expect(report.mock.calls.some(([error])=>error instanceof Error&&error.message==='history unavailable')).toBe(true);
+  expect((await app.snapshot()).state.hubs[0]!.id).toBe(f.hub.id);
+  await app.close();
+ });
+});
+
+describe('conversation fact priority', () => {
+ it('resolves the conversations of the task the client opened first',async()=>{
+  const f=await setup();
+  const first=await taskWithConversation(f.app,{projectId:f.project.id,title:'First task',description:''});
+  const second=await taskWithConversation(f.app,{projectId:f.project.id,title:'Second task',description:''});
+  const secondSession=second.sessionIds[0]!;
+  const order:string[]=[];
+  f.sessions.facts=async(id:string)=>{order.push(id);return {running:false,background:[],pending:NO_PENDING_USER_WORK,settledTurn:null};};
+  // A fresh app starts with an empty fact cache, so the priority order is observable.
+  const app=new KanbanApp(f.hubs,f.sessions,f.git,{},f.workspaces);
+  await app.snapshot({priorityTaskIds:[second.id]});
+  await new Promise(resolve=>setTimeout(resolve,10));
+  expect(order[0]).toBe(secondSession);
+  expect(order).toContain(first.sessionIds[0]!);
+  await app.close();
+ });
 });

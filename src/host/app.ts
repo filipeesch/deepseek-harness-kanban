@@ -8,13 +8,16 @@ import type { AutoAdvancePlan } from '../domain/auto-advance.js';
 import { admitAutoAdvance } from './auto-advance-admission.js';
 import { readPendingUserWork, withQuestionPending } from './pending-source.js';
 import type { ConversationFactsSource } from './native-facts.js';
-import type { AutoModePauseReason, BoardSettings, Command, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, SharingCommand } from '../shared/types.js';
+import type { AutoModePauseReason, BoardSettings, Command, ConversationFacts, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, SharingCommand, SnapshotRequest } from '../shared/types.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionStore } from './question-storage.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
 import { WorktreeCoordinator } from './worktrees.js';
 import { bindingMatches } from './destructive-admission.js';
-import { AttentionCoordinator } from './attention.js';
+import { AttentionCoordinator, type AttentionTask } from './attention.js';
+import { SnapshotAssembler } from './snapshot-assembler.js';
+import { PendingTransitionIndex } from './pending-transition-index.js';
+import { StartupReconciler } from './startup-reconciler.js';
 import { PendingWorkRunner } from './pending-work.js';
 import { PublishScheduler } from './publish-scheduler.js';
 import { isGitProject, requireGitProject } from '../shared/project.js';
@@ -25,7 +28,7 @@ import { firstOpenSessionId } from '../shared/conversations.js';
 import { admitStageInstruction, type StageInstructionDeps } from './stage-instruction.js';
 import { requiresWorktreeDecision, unresolvedWorktreeBinding } from '../shared/worktree-decision.js';
 import { HubRepository, HubStore } from './hub-repository.js';
-import type { LocatedTask } from './hub-repository.js';
+import type { LocatedTask, TaskSummary } from './hub-repository.js';
 import { RepositoryWorktreeStore, TaskLocator } from './task-locator.js';
 import { QuestionIndex } from '../questions/indexer.js';
 import * as operations from '../domain/hub-operations.js';
@@ -52,10 +55,12 @@ export class KanbanApp {
  private readonly listeners=new Set<()=>void>();
  private readonly prepared=new Map<string,Promise<void>>();
  private readonly attention:AttentionCoordinator;
+ private readonly assembler:SnapshotAssembler;
+ private readonly pendingTransitions=new PendingTransitionIndex();
+ private readonly startup:StartupReconciler;
  private readonly pendingWork:PendingWorkRunner;
  private readonly publisher=new PublishScheduler({publish:()=>this.changed()});
  private readonly disposers:Array<()=>void>=[];
- private stateCache:HostSnapshot['state']|undefined;
  private sequence=0; private disposed=false; private driving=false; private driveAgain=false; private drivePromise:Promise<void>|undefined; private commandTail:Promise<void>=Promise.resolve();
  private readonly saveTimers=new Map<string,ReturnType<typeof setTimeout>>();
  private readonly autoAdvance:AutoAdvanceCoordinator;
@@ -66,7 +71,7 @@ export class KanbanApp {
   this.factsSource=withQuestionPending({read:id=>this.sessions.facts(id)},this.questions);
   this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,onTaskDeleted:async task=>{try{await this.cleanupWorktreeWorkspace(task as HubTask);}catch(error){this.options.report?.(error);}}});
   this.pendingWork=new PendingWorkRunner({resumeWorktrees:async()=>{await this.worktrees.resumePending();},dispatchPending:async()=>{await this.dispatchPending();},report:error=>this.options.report?.(error)});
-  this.attention=new AttentionCoordinator({source:this.factsSource,tasks:()=>this.locator.all().map(located=>({id:located.task.id,sessionIds:located.task.sessionIds})),runPendingWork:async()=>{await this.pendingWork.run();},onChange:()=>this.attentionChanged(),report:error=>this.options.report?.(error)});
+  this.attention=new AttentionCoordinator({source:this.factsSource,tasks:()=>this.attentionTasks(),runPendingWork:async()=>{await this.pendingWork.run();},onChange:()=>this.attentionChanged(),onFacts:()=>this.markChanged(),report:error=>this.options.report?.(error)});
   this.autoAdvance=new AutoAdvanceCoordinator({
    locateBySession:sessionId=>{const located=this.locator.bySession(sessionId);return located?{task:located.task,board:located.board}:undefined;},
    locate:taskId=>{const located=this.locator.byTask(taskId);return located?{task:located.task,board:located.board}:undefined;},
@@ -77,7 +82,10 @@ export class KanbanApp {
    cancel:handle=>clearTimeout(handle as ReturnType<typeof setTimeout>),
    report:error=>this.options.report?.(error),
   });
-  this.disposers.push(hubs.subscribe(()=>{this.stateCache=undefined;this.markChanged();void this.dispatchPending().catch(error=>options.report?.(error));}));
+  this.assembler=new SnapshotAssembler({hubs,onChange:()=>this.markChanged(),...(options.report===undefined?{}:{report:options.report}),...(options.sharing===undefined?{}:{sharing:()=>options.sharing!.views()}),...(options.sharingAuth===undefined?{}:{sharingAuth:options.sharingAuth})});
+  this.startup=new StartupReconciler({...(options.signal===undefined?{}:{signal:options.signal}),...(options.report===undefined?{}:{report:options.report})});
+  this.pendingTransitions.refresh(this.locator.summaries());
+  this.disposers.push(hubs.subscribe(()=>{this.assembler.invalidateState();this.pendingTransitions.refresh(this.locator.summaries());this.markChanged();void this.dispatchPending().catch(error=>options.report?.(error));}));
  }
  /** The first/default Hub facade retained for single-Hub callers and tests. */
  get store():HubStore{return this.hubs.defaultHub();}
@@ -99,20 +107,48 @@ export class KanbanApp {
  private markChanged():void{if(this.disposed)return;this.sequence++;this.publisher.request();}
  private attentionChanged():void{if(this.disposed)return;this.sequence++;this.publisher.request();this.publisher.flush();}
  subscribe(listener:()=>void):()=>void{this.listeners.add(listener);return()=>this.listeners.delete(listener);}
+ private attentionTasks():AttentionTask[]{
+  return this.locator.summaries().map(summary=>({id:summary.taskId,sessionIds:summary.sessionIds,closedSessionIds:summary.closedSessionIds,...(summary.autoModeEnabled?{priority:'active' as const}:{})}));
+ }
+ /**
+  * Startup recovery: history-free repairs stay awaited, while the persisted question
+  * projection is restored synchronously so an unanswered question still holds an
+  * automatic advance. History replay and workspace reconciliation run in background.
+  */
  async initialize():Promise<void>{
-  await this.reconcileWorkspaces();
-  const tasks=this.locator.all();
-  await Promise.allSettled([...new Set(tasks.flatMap(l=>l.task.sessionIds))].map(id=>this.prepareQuestions(id)));
-  await this.reconcileInstructionPending();
-  for(const located of tasks){const task=located.task;if(task.pendingTransition?.status==='sending')await this.hubStore(located.hubId).transact(d=>{const t=d.tasks.find(t=>t.id===task.id);if(t?.pendingTransition?.status==='sending'){t.pendingTransition.status='failed';t.pendingTransition.error={code:'DELIVERY_UNCERTAIN',message:'A prior prompt admission was interrupted. Retry explicitly; the same native request identity will be reused.'};}});}
-  for(const located of this.locator.all()){const task=located.task;const p=task.pendingTransition;if(p?.status==='waiting'&&p.worktreeRequest&&!task.operation&&task.worktree?.status!=='ready'){try{await this.worktrees.request(task.id,{kind:'create',...p.worktreeRequest});}catch(error){await this.failPending(located.hubId,task.id,p.id,error);}}}
-  await this.worktrees.resumePending();await this.dispatchPending();
+  const summaries=this.locator.summaries();
+  for(const summary of summaries)for(const sessionId of summary.sessionIds)this.restoreQuestionProjection(sessionId);
+  for(const summary of summaries){if(summary.hasPendingTransition)await this.repairInterruptedTransition(summary);}
+  await this.worktrees.resumePending();
+  await this.dispatchPending();
+  this.scheduleStartupReconciliation(summaries);
+ }
+ /** Resolves when the background startup reconciliation has finished; used by tests and shutdown. */
+ whenSettled():Promise<void>{return this.startup.whenSettled();}
+ private async repairInterruptedTransition(summary:TaskSummary):Promise<void>{
+  const located=this.locator.byTask(summary.taskId);const task=located?.task;if(!located||!task)return;
+  if(task.pendingTransition?.status==='sending')await this.hubStore(located.hubId).transact(d=>{const t=d.tasks.find(t=>t.id===task.id);if(t?.pendingTransition?.status==='sending'){t.pendingTransition.status='failed';t.pendingTransition.error={code:'DELIVERY_UNCERTAIN',message:'A prior prompt admission was interrupted. Retry explicitly; the same native request identity will be reused.'};}});
+  const p=task.pendingTransition;
+  if(p?.status==='waiting'&&p.worktreeRequest&&!task.operation&&task.worktree?.status!=='ready'){try{await this.worktrees.request(task.id,{kind:'create',...p.worktreeRequest});}catch(error){await this.failPending(located.hubId,task.id,p.id,error);}}
+ }
+ private scheduleStartupReconciliation(summaries:readonly TaskSummary[]):void{
+  const jobs:Array<()=>Promise<void>>=[];
+  for(const summary of summaries){
+   for(const sessionId of summary.sessionIds)jobs.push(()=>this.prepareQuestions(sessionId));
+   jobs.push(()=>this.reconcileTaskWorkspace(summary.hubId,summary.taskId));
+   if(summary.instructionPending!==null)jobs.push(()=>this.reconcileTaskInstructionPending(summary.taskId));
+  }
+  this.startup.run(jobs);
+ }
+ private restoreQuestionProjection(sessionId:string):void{
+  const record=this.options.questionStore?.load(sessionId);
+  if(record===undefined)return;
+  try{this.questions.restoreSession(record);}catch(error){this.options.report?.(error);}
  }
  async prepareQuestions(sessionId:string):Promise<void>{
   if(this.prepared.has(sessionId))return this.prepared.get(sessionId);
   const work=(async()=>{
-   const record=this.options.questionStore?.load(sessionId);
-   if(record!==undefined){try{this.questions.restoreSession(record);}catch(error){this.options.report?.(error);}}
+   this.restoreQuestionProjection(sessionId);
    if(this.options.history){for(const event of await this.options.history(sessionId))if(isEvent(event))this.questions.apply(sessionId,event);}
    // A restored or replayed unanswered round changes the pending user work the
    // attention snapshot and the auto-mode hold derive from, without a live event.
@@ -182,31 +218,42 @@ export class KanbanApp {
   if(!located||!task||!marker||marker.columnId!==task.columnId||marker.enteredAt>time)return;
   void this.hubStore(located.hubId).transact(draft=>{const current=draft.tasks.find(value=>value.id===task.id);const pending=current?.instructionPending;if(!current||!pending||pending.columnId!==current.columnId||pending.enteredAt>time)return;delete current.instructionPending;}).catch(error=>this.options.report?.(error));
  }
- private async reconcileInstructionPending():Promise<void>{
+ private async reconcileTaskInstructionPending(taskId:string):Promise<void>{
   if(!this.options.history)return;
-  for(const located of this.locator.all()){
-   const task=located.task;const marker=task.instructionPending;if(!marker||marker.columnId!==task.columnId)continue;
-   let prompted=false;
-   for(const sessionId of task.sessionIds){
-    try{const events=await this.options.history(sessionId);if(events.some(event=>{const time=userPromptTime(event);return time!==undefined&&time>=marker.enteredAt;})){prompted=true;break;}}
-    catch(error){this.options.report?.(error);}
-   }
-   if(prompted)await this.hubStore(located.hubId).transact(draft=>{const current=draft.tasks.find(value=>value.id===task.id);if(current?.instructionPending?.enteredAt===marker.enteredAt)delete current.instructionPending;});
+  const located=this.locator.byTask(taskId);if(!located)return;
+  const task=located.task;const marker=task.instructionPending;if(!marker||marker.columnId!==task.columnId)return;
+  let prompted=false;
+  for(const sessionId of task.sessionIds){
+   try{const events=await this.options.history(sessionId);if(events.some(event=>{const time=userPromptTime(event);return time!==undefined&&time>=marker.enteredAt;})){prompted=true;break;}}
+   catch(error){this.options.report?.(error);}
   }
+  if(prompted)await this.hubStore(located.hubId).transact(draft=>{const current=draft.tasks.find(value=>value.id===task.id);if(current?.instructionPending?.enteredAt===marker.enteredAt)delete current.instructionPending;});
  }
  activityChanged():void{if(this.disposed)return;this.attention.touch();this.markChanged();}
  sessionActivity(sessionId?:string):void{if(this.disposed)return;if(sessionId!==undefined&&!this.locator.hasSession(sessionId))return;this.attention.touch(sessionId);this.markChanged();}
- async snapshot(refreshAttention=false):Promise<HostSnapshot>{
-  if(refreshAttention){this.attention.invalidate();this.sequence++;}
-  if(this.options.sharingAuth)await this.options.sharingAuth.refresh();
-  const sequence=this.sequence;const state=this.stateCache??=this.hubs.snapshot();
-  const conversations=await this.attention.project(this.locator.all().map(located=>({id:located.task.id,sessionIds:located.task.sessionIds})));
-  return {state,conversations,sharing:this.options.sharing?.views()??{},sharingAuth:this.options.sharingAuth?.view()??{status:'not-connected'},sequence};
+ /**
+  * One snapshot request. Presentation projects only resolved facts and schedules the
+  * rest; an explicit refresh awaits only the conversations it was asked to re-read.
+  */
+ async snapshot(request:SnapshotRequest={},mode:'full'|'cache'='full'):Promise<FullHostSnapshot>{
+  const tasks=this.attentionTasks();
+  if(mode==='full'&&request.priorityTaskIds!==undefined&&request.priorityTaskIds.length>0){
+   const wanted=new Set(request.priorityTaskIds);
+   this.attention.prioritize(tasks.filter(task=>wanted.has(task.id)).flatMap(task=>task.sessionIds));
+  }
+  // The sequence belongs to this request: an older in-flight snapshot must not adopt a
+  // newer revision just because it resolved later.
+  let conversations:Record<string,ConversationFacts>;let sequence:number;
+  if(mode==='cache'){sequence=this.sequence;conversations=this.attention.presentCache(tasks);}
+  else if(request.refreshSessionIds!==undefined&&request.refreshSessionIds.length>0){sequence=++this.sequence;conversations=await this.attention.refresh(request.refreshSessionIds,tasks);}
+  else{sequence=this.sequence;conversations=this.attention.present(tasks);}
+  const parts=await this.assembler.assemble(conversations,{refreshAuth:request.refreshAuth===true,allowAuthRefresh:mode==='full'});
+  return {...parts,sequence};
  }
- /** Publish a new snapshot after publishing state changed outside a board command. */
- sharingChanged():void{this.markChanged();}
+ /** Publish a new snapshot after publishing or authorization state changed outside a board command. */
+ sharingChanged():void{this.assembler.invalidateAuth();this.assembler.invalidateSharing();this.markChanged();}
  /** Execute one publishing action, then reconcile automatic checks and return a fresh snapshot. */
- async sharingCommand(command:SharingCommand):Promise<HostSnapshot>{
+ async sharingCommand(command:SharingCommand):Promise<FullHostSnapshot>{
   invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');
   if(isAuthorizationCommand(command)){
    const auth=this.options.sharingAuth;invariant(auth,'SHARING_UNAVAILABLE','Google Drive authorization is unavailable in this host.');
@@ -216,13 +263,20 @@ export class KanbanApp {
    await sharing.command(command);
   }
   this.options.scheduler?.sync();
-  return this.snapshot();
+  this.assembler.invalidateAuth();
+  this.assembler.invalidateSharing();
+  return this.snapshot({refreshAuth:true});
  }
  async branches(taskId:string):Promise<string[]>{const located=this.locatedTask(taskId);return this.git.branches(requireGitProject(located.project),located.task.sessionIds);}
  async worktreeDefault(taskId:string):Promise<{branchName:string;path:string}>{
   const located=this.locatedTask(taskId);const project=requireGitProject(located.project);const state=this.hubs.snapshot();const basePath=state.settings.worktreeBasePath;const slug=taskTitleSlug(located.task.title);
   const branches=await this.git.branches(project,located.task.sessionIds);const occupied=new Set<string>();
-  for(const other of this.locator.all().map(value=>value.task)){if(other.worktree?.path)occupied.add(other.worktree.path);for(const entry of other.unclaimedWorktrees??[])occupied.add(entry.path);const attempt=other.operation?.createAttempt;if(attempt?.path)occupied.add(attempt.path);const pending=other.pendingTransition?.worktreeRequest;if(pending?.path)occupied.add(pending.path);}
+  for(const other of this.locator.summaries()){
+   if(other.worktreePath)occupied.add(other.worktreePath);
+   for(const pathValue of other.unclaimedWorktreePaths)occupied.add(pathValue);
+   if(other.operationAttemptPath)occupied.add(other.operationAttemptPath);
+   if(other.pendingWorktreePath)occupied.add(other.pendingWorktreePath);
+  }
   for(let index=1;index<=100;index++){
    const branchName=index===1?slug:slug+'-'+index;if(branches.includes(branchName))continue;if(!basePath)return {branchName,path:''};
    const pathValue=worktreePathForBranch(basePath,branchName);if(!pathValue)throw new KanbanError('INVALID_WORKTREE_PATH','The task title cannot be converted into a usable worktree path.');
@@ -298,18 +352,17 @@ export class KanbanApp {
   if(task.worktreeWorkspaceId!==ensured.workspace.id||task.worktreeWorkspaceOwned!==ensured.owned)await this.hubStore(hubId).setTaskWorktreeWorkspace(task.id,ensured.workspace.id,ensured.owned);
   return ensured.workspace.id;
  }
- private async reconcileWorkspaces():Promise<void>{
+ private async reconcileTaskWorkspace(hubId:string,taskId:string):Promise<void>{
   if(!this.workspaces)return;
-  for(const located of this.locator.all()){
-   const {task,project,hubId}=located;
-   if(task.sessionIds.length>0){try{await this.ensureProjectWorkspace(hubId,project);await this.ensureWorktreeWorkspace(hubId,task,project);}
-   catch(error){this.options.report?.(error);}}
-   for(const sessionId of task.sessionIds){
-    try{
-     const directory=await this.sessions.directory(sessionId);
-     if(directory!==project.projectPath)await this.workspaces.ensure(directory,project.name+' · '+path.basename(directory));
-    }catch(error){this.options.report?.(error);}
-   }
+  const located=this.locator.byTask(taskId);if(!located)return;
+  const {task,project}=located;
+  if(task.sessionIds.length>0){try{await this.ensureProjectWorkspace(hubId,project);await this.ensureWorktreeWorkspace(hubId,task,project);}
+  catch(error){this.options.report?.(error);}}
+  for(const sessionId of task.sessionIds){
+   try{
+    const directory=await this.sessions.directory(sessionId);
+    if(directory!==project.projectPath)await this.workspaces.ensure(directory,project.name+' · '+path.basename(directory));
+   }catch(error){this.options.report?.(error);}
   }
  }
  private async cleanupWorktreeWorkspace(task:HubTask):Promise<void>{
@@ -346,8 +399,8 @@ export class KanbanApp {
  saveNote(input:Extract<Command,{type:'note.save'}>){return this.serial(()=>this.saveNoteNow(input));}
  private async saveNoteNow(input:Extract<Command,{type:'note.save'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).saveNote(input.taskId,{id:input.noteId,content:input.content,tags:input.tags});}
  private async deleteNoteNow(input:Extract<Command,{type:'note.delete'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).deleteNote(input.taskId,input.noteId);}
- command(command:Command):Promise<HostSnapshot>{return this.serial(()=>this.execute(command));}
- private async execute(command:Command):Promise<HostSnapshot>{
+ command(command:Command):Promise<FullHostSnapshot>{return this.serial(()=>this.execute(command));}
+ private async execute(command:Command):Promise<FullHostSnapshot>{
   invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');
   let commandReceipt:HostSnapshot['commandReceipt'];
   switch(command.type){
@@ -400,7 +453,7 @@ export class KanbanApp {
    case 'task.autoMode':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).setAutoMode(command.taskId,command.enabled);if(!command.enabled)this.autoAdvance.forget(command.taskId);break;}
    case 'task.runInstruction':await this.runInstruction(command);break;
   }
-  await this.dispatchPending();const snapshot=await this.snapshot();return {...snapshot,...(commandReceipt?{commandReceipt}:{})};
+  await this.dispatchPending();const snapshot=await this.snapshot({},'cache');return {...snapshot,...(commandReceipt?{commandReceipt}:{})};
  }
  /**
   * The in-memory command guard. It runs before any pending transition is cleared,
@@ -472,6 +525,8 @@ export class KanbanApp {
  private async failPending(hubId:string,taskId:string,id:string,error:unknown):Promise<void>{await this.hubs.hub(hubId).transact(d=>{const t=d.tasks.find(t=>t.id===taskId);if(t?.pendingTransition?.id===id){t.pendingTransition.status='failed';t.pendingTransition.error=problem(error);}});}
  private dispatchPending():Promise<void>{
   if(this.disposed)return Promise.resolve();
+  this.pendingTransitions.refresh(this.locator.summaries());
+  if(this.pendingTransitions.empty&&this.drivePromise===undefined)return Promise.resolve();
   if(this.drivePromise){this.driveAgain=true;return this.drivePromise;}
   const running=Promise.resolve().then(()=>this.drainPending());
   this.drivePromise=running.finally(()=>{this.drivePromise=undefined;});
@@ -479,7 +534,7 @@ export class KanbanApp {
  }
  private async drainPending():Promise<void>{
   if(this.disposed)return;if(this.driving){this.driveAgain=true;return;}this.driving=true;
-  try{do{this.driveAgain=false;for(const located of this.locator.all()){const task=located.task;const pending=task.pendingTransition;if(!pending||pending.status!=='waiting'||task.operation||(pending.worktreeRequest&&task.worktree?.status!=='ready'))continue;const store=this.hubs.hub(located.hubId);
+  try{do{this.driveAgain=false;this.pendingTransitions.refresh(this.locator.summaries());for(const taskId of [...this.pendingTransitions.list()]){const located=this.locator.byTask(taskId);const task=located?.task;const pending=task?.pendingTransition;if(!located||!task||!pending||pending.status!=='waiting'||task.operation||(pending.worktreeRequest&&task.worktree?.status!=='ready'))continue;const store=this.hubs.hub(located.hubId);
    try{
     await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');operations.placeTask(d,t.id,pending.columnId,pending.beforeTaskId??null,nextEnteredAt());if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});
     if(pending.mode==='run'){
@@ -490,5 +545,10 @@ export class KanbanApp {
    }catch(error){await this.failPending(located.hubId,task.id,pending.id,error);this.options.report?.(error);}
   }}while(this.driveAgain&&!this.disposed);}finally{this.driving=false;}
  }
- async close():Promise<void>{if(this.disposed)return;await this.flushQuestions();this.publisher.flush();this.disposed=true;this.publisher.dispose();this.attention.dispose();this.autoAdvance.dispose();for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.worktrees.settle();}
+ async close():Promise<void>{
+  if(this.disposed)return;
+  // Let the background reconciliation finish (or abort) before flushing question
+  // persistence, so no replay can schedule a write after the final flush.
+  this.startup.dispose();await this.startup.whenSettled();
+  await this.flushQuestions();this.publisher.flush();this.disposed=true;this.publisher.dispose();this.attention.dispose();this.autoAdvance.dispose();for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.worktrees.settle();}
 }

@@ -2,12 +2,13 @@ import { RemoteSnapshotStream, RemoteStreamCarrierError, type ClientRemote } fro
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots';
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client';
-import { projectTaskAttention, RunningSessions } from './client/kanban-attention.js';
+import { AttentionProjector, RunningSessions } from './client/kanban-attention.js';
 import { allTasks } from './client/hub-view.js';
+import { mergeSnapshotFrame, type MergedHostSnapshot } from './client/snapshot-merge.js';
 import { ConversationReadState } from './client/conversation-read-state.js';
 import type { KeyValueStorage } from './client/key-value-storage.js';
 import type { KanbanRemote } from './remote.js';
-import type { ClientApi, Command, HostSnapshot, KanbanSnapshot, Outcome, Problem, QuestionFeedFrame, QuestionRound, SharingCommand } from './shared/types.js';
+import type { ClientApi, Command, HostSnapshot, KanbanSnapshot, Outcome, Problem, QuestionFeedFrame, QuestionRound, SharingCommand, SnapshotRequest } from './shared/types.js';
 import { QuestionRoundCache, type QuestionRoundView } from './client/question-round-cache.js';
 
 export interface BridgeStatus { error: Problem | null; connected: boolean }
@@ -20,7 +21,7 @@ function problem(error: unknown): Problem {
   }
   return { code: 'CLIENT_ERROR', message: String(error) };
 }
-function closedSessions(snapshot: Pick<HostSnapshot, 'state'>): Set<string> {
+function closedSessions(snapshot: Pick<MergedHostSnapshot, 'state'>): Set<string> {
   return new Set(allTasks(snapshot).flatMap(task => task.closedSessionIds));
 }
 /** Native transport result wraps the plugin's independent business Outcome. Unwrap BOTH. */
@@ -43,7 +44,8 @@ export class ClientBridge {
   readonly questionsView: HostObservable<QuestionRoundView>;
   private readonly snapshots = new Set<(snapshot: KanbanSnapshot) => void>();
   private readonly running = new RunningSessions();
-  private host: HostSnapshot | undefined;
+  private readonly projector = new AttentionProjector();
+  private host: MergedHostSnapshot | undefined;
   private merged: KanbanSnapshot | undefined;
   private clientEpoch = 0;
   private readonly readState: ConversationReadState;
@@ -64,17 +66,26 @@ export class ClientBridge {
     this.running.sync(this.nativeStatus.getSnapshot());
     this.stopStatus = nativeStatus.subscribe(() => {
       this.publish();
-      if (this.running.sync(this.nativeStatus.getSnapshot())) this.refreshAttention();
+      const rising = this.running.sync(this.nativeStatus.getSnapshot());
+      if (rising.length > 0) this.refreshAttention(rising);
     });
     this.api = {
-      snapshot: () => this.unarySnapshot(() => remote.kanban.snapshot()),
+      snapshot: (request?: SnapshotRequest) => this.unarySnapshot(() => remote.kanban.snapshot(request ?? {})),
       command: (command: Command) => this.unarySnapshot(() => remote.kanban.command(command)),
       sharing: (command: SharingCommand) => this.unarySnapshot(() => remote.kanban.sharing(command)),
       localDrive: async request => unwrap(await remote.kanban.localDrive(request)),
       branches: async (taskId: string) => unwrap(await remote.kanban.branches({ taskId })),
       worktreeDefault: async (taskId: string) => unwrap(await remote.kanban.worktreeDefault({ taskId })),
       detectProject: async (path: string) => unwrap(await remote.kanban.detectProject({ path })),
-      subscribe: (listener) => { this.snapshots.add(listener); return () => this.snapshots.delete(listener); },
+      subscribe: (listener) => {
+        this.snapshots.add(listener);
+        // A late-mounted surface paints from the snapshot the client already holds instead
+        // of waiting for a host round trip; the bridge remains the only source of truth.
+        if (this.merged !== undefined) {
+          try { listener(this.merged); } catch { /* One consumer cannot take down the replay. */ }
+        }
+        return () => this.snapshots.delete(listener);
+      },
     };
   }
   private async unarySnapshot(request: () => Promise<RemoteResult<Outcome<HostSnapshot>>>): Promise<KanbanSnapshot> {
@@ -126,18 +137,29 @@ export class ClientBridge {
   private accept(snapshot: HostSnapshot, baseline = false): void {
     if (this.disposed || (!baseline && this.host && snapshot.sequence < this.host.sequence)) return;
     const previous = this.host;
+    let merged: MergedHostSnapshot;
+    try {
+      merged = mergeSnapshotFrame(previous, snapshot, baseline);
+    } catch (error) {
+      // A frame that cannot be merged must not leave the board presenting a stale state:
+      // report it, ask for one fresh unary snapshot, and restart the live stream.
+      this.fail(error);
+      void this.unarySnapshot(() => this.remote.kanban.snapshot({})).catch(() => undefined);
+      this.retry();
+      return;
+    }
     if (baseline) this.clientEpoch++;
     // A close transition uses the facts the reader last saw, so a turn that settles
     // after the close is still presented as unread.
-    this.acknowledgeClosed(previous, snapshot);
-    this.host = snapshot;
-    if (baseline) this.readState.prune(new Set(allTasks(snapshot).flatMap(task => task.sessionIds)));
+    this.acknowledgeClosed(previous, merged);
+    this.host = merged;
+    if (baseline) this.readState.prune(new Set(allTasks(merged).flatMap(task => task.sessionIds)));
     this.readState.flush();
     this.health.set({ error: null, connected: true });
     this.publish();
   }
   /** A conversation whose tab just closed acknowledges the turn that had already settled. */
-  private acknowledgeClosed(previous: HostSnapshot | undefined, next: HostSnapshot): void {
+  private acknowledgeClosed(previous: MergedHostSnapshot | undefined, next: MergedHostSnapshot): void {
     // A conversation already closed before this bridge started has no observed close
     // transition; its settled turn stays unread until the conversation is reopened and read.
     if (previous === undefined) return;
@@ -152,14 +174,14 @@ export class ClientBridge {
   private publish(): void {
     if (this.disposed || !this.host) return;
     this.readState.sync(this.host.conversations);
-    const { attention, conversationAttention } = projectTaskAttention(this.host, this.nativeStatus.getSnapshot(), sessionId => this.readState.acknowledged(sessionId));
+    const { attention, conversationAttention } = this.projector.project(this.host, this.nativeStatus.getSnapshot(), sessionId => this.readState.acknowledged(sessionId));
     const { conversations: _conversations, ...base } = this.host;
     this.merged = { ...base, attention, conversationAttention, clientEpoch: this.clientEpoch };
     for (const listener of [...this.snapshots]) { try { listener(this.merged); } catch { /* Keep sibling consumers alive. */ } }
   }
-  /** A conversation started running: ask the host for a freshly projected attention snapshot. */
-  private refreshAttention(): void {
-    void this.unarySnapshot(() => this.remote.kanban.snapshot()).catch(() => undefined);
+  /** Conversations started running: re-read only those conversations on the host. */
+  private refreshAttention(sessionIds: readonly string[]): void {
+    void this.unarySnapshot(() => this.remote.kanban.snapshot({ refreshSessionIds: [...sessionIds] })).catch(() => undefined);
   }
   /** Acknowledge only the actually mounted/read drawer session, without native mainView writes. */
   viewSession(id: string): () => void {

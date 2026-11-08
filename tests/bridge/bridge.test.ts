@@ -7,7 +7,7 @@ import type { SessionStatus, SessionStatusSnapshot } from '@deepseek-ai/dsh-clie
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import { ClientBridge, unwrap, type BridgeRemote } from '../../src/client-bridge.js';
 import type { KeyValueStorage } from '../../src/client/key-value-storage.js';
-import type { ConversationFacts, HostSnapshot, HubTask, KanbanSnapshot, QuestionFeedFrame, QuestionRound } from '../../src/shared/types.js';
+import type { ConversationFacts, FullHostSnapshot, HostSnapshot, HubTask, KanbanSnapshot, QuestionFeedFrame, QuestionRound } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 function source<T>(initial: T) {
   let value = initial; const listeners = new Set<() => void>();
@@ -32,10 +32,10 @@ class Feed<T> implements RemoteStreamHandle<T, never>, AsyncIterator<T> {
   [Symbol.asyncIterator](): AsyncIterator<T> { return this; }
 }
 const task = (id: string, sessionIds: string[], closedSessionIds: string[] = []): HubTask => ({ id, boardId: 'board', projectId: 'p', title: id, description: '', columnId: 'backlog', position: 0, sessionIds, closedSessionIds, effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' });
-function hostSnapshot(sequence = 1, conversations: Record<string, ConversationFacts> = {}): HostSnapshot {
-  return { sequence, conversations, sharing: {}, state: { hubs: [{ id: 'hub', name: 'Hub', revision: sequence, projects: [], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], tasks: [task('t1', ['a', 'b']), task('t2', ['c'])], notes: [], createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], settings: { revision: 0 } } };
+function hostSnapshot(sequence = 1, conversations: Record<string, ConversationFacts> = {}): FullHostSnapshot {
+  return { sequence, stateRevision: sequence, conversations, sharing: {}, state: { hubs: [{ id: 'hub', name: 'Hub', revision: sequence, projects: [], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], tasks: [task('t1', ['a', 'b']), task('t2', ['c'])], notes: [], createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], settings: { revision: 0 } } };
 }
-function closed(closedSessionIds: string[], conversations: Record<string, ConversationFacts> = {}, sequence = 1): HostSnapshot {
+function closed(closedSessionIds: string[], conversations: Record<string, ConversationFacts> = {}, sequence = 1): FullHostSnapshot {
   const value = hostSnapshot(sequence, conversations);
   value.state.hubs[0]!.tasks[0] = task('t1', ['a', 'b'], closedSessionIds);
   return value;
@@ -127,8 +127,40 @@ describe('real native stream bridge', () => {
     f.status.set(states([['a', native(true, true)]]));
     await vi.waitFor(() => expect(accepted).toHaveBeenCalled());
     expect(f.remote.kanban.snapshot).toHaveBeenCalledTimes(1);
+    expect(f.remote.kanban.snapshot).toHaveBeenCalledWith({ refreshSessionIds: ['a'] });
   });
 
+
+  it('replays the snapshot it already holds to a late subscriber', async () => {
+    const f = fixture(); f.bridge.start();
+    await vi.waitFor(() => expect(f.feeds).toHaveLength(1));
+    f.feeds[0]!.push(hostSnapshot(7));
+    await vi.waitFor(() => expect(f.bridge.status.getSnapshot().connected).toBe(true));
+    const listener = vi.fn();
+    f.bridge.api.subscribe(listener);
+    expect(listener).toHaveBeenCalledOnce();
+    expect(listener.mock.calls[0]![0]).toMatchObject({ sequence: 7, state: { hubs: [{ id: 'hub' }] } });
+  });
+
+  it('merges an update that omits the unchanged board state', async () => {
+    const f = fixture(); const accepted = vi.fn(); f.bridge.api.subscribe(accepted); f.bridge.start();
+    await vi.waitFor(() => expect(f.feeds).toHaveLength(1));
+    f.feeds[0]!.push(hostSnapshot(1));
+    await vi.waitFor(() => expect(accepted).toHaveBeenCalled());
+    const { state: _state, ...update } = hostSnapshot(2);
+    f.feeds[0]!.push({ ...update, stateRevision: 1 });
+    await vi.waitFor(() => expect(accepted.mock.calls.at(-1)?.[0].sequence).toBe(2));
+    expect(accepted.mock.calls.at(-1)?.[0].state.hubs[0]!.id).toBe('hub');
+  });
+
+  it('recovers from a baseline that forgot the board state instead of presenting a stale board', async () => {
+    const f = fixture(); f.bridge.start();
+    await vi.waitFor(() => expect(f.feeds).toHaveLength(1));
+    const { state: _state, ...baselineWithoutState } = hostSnapshot(1);
+    f.feeds[0]!.push(baselineWithoutState);
+    await vi.waitFor(() => expect(f.remote.kanban.snapshot).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(f.feeds).toHaveLength(2));
+  });
   it('returns the exact command receipt even when a newer feed model supersedes its snapshot', async () => {
     const f = fixture(); const accepted = vi.fn(); f.bridge.api.subscribe(accepted); f.bridge.start();
     await vi.waitFor(() => expect(f.feeds).toHaveLength(1)); f.feeds[0]!.push(hostSnapshot(10));

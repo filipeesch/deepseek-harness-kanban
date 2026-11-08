@@ -537,11 +537,11 @@ describe('automatic advance gates', () => {
     f.app.observe(sessionId, result(2, 1, 'c1'));
     const rounds = await f.app.rounds(sessionId);
     await delay(80);
-    expect((await f.app.snapshot()).conversations[sessionId]?.pending.kinds).toEqual(['decision-question']);
+    expect((await f.app.snapshot({refreshSessionIds:[sessionId]})).conversations[sessionId]?.pending.kinds).toEqual(['decision-question']);
     // Prepared already, so only the dismissal itself can re-project the derived state.
     await f.app.dismissQuestions(sessionId, rounds[0]!.id);
     await delay(80);
-    expect((await f.app.snapshot()).conversations[sessionId]?.pending.kinds).toEqual([]);
+    expect((await f.app.snapshot({refreshSessionIds:[sessionId]})).conversations[sessionId]?.pending.kinds).toEqual([]);
     expect(f.store.requireTask(task.id).columnId).toBe('backlog');
   });
 
@@ -554,13 +554,13 @@ describe('automatic advance gates', () => {
     const idle = { running: false, background: [], pending: pendingUserWork([]), settledTurn: null };
     let reads = 0;
     const original = f.sessions.facts.bind(f.sessions);
-    // Read order inside the window: the attention debounce (50 ms), the advance settle
-    // (250 ms), then the admission re-read immediately after. Only the admission sees
-    // the queued prompt, so the assertion is about the re-check, not the settle gate.
+    // The idle conversation has no active facts, so the reconcile tick starts no read.
+    // The advance settle is the first read and the admission re-check is the second;
+    // only the admission sees the queued prompt, so the assertion is about the re-check.
     f.sessions.facts = async (id: string) => {
       if (id !== sessionId) return original(id);
       reads += 1;
-      return reads <= 2 ? idle : { ...idle, pending: pendingUserWork(['queued-prompt'], 1) };
+      return reads <= 1 ? idle : { ...idle, pending: pendingUserWork(['queued-prompt'], 1) };
     };
     await endTurn(f.app, sessionId, 1);
     await delay(100);

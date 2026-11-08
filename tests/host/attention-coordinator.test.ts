@@ -46,6 +46,64 @@ describe('conversation facts cache', () => {
     expect(f.source.read.mock.calls.filter(([id]) => id === 's2')).toHaveLength(2);
   });
 
+  it('awaits only the requested conversations on an explicit refresh', async () => {
+    const f = fixture({ tasks: () => tasks('s1', 's2') });
+    await f.coordinator.project();
+    f.source.read.mockClear();
+    const projected = await f.coordinator.refresh(['s2']);
+    expect(projected.s2).toEqual(facts());
+    expect(f.source.read).toHaveBeenCalledTimes(1);
+    expect(f.source.read).toHaveBeenCalledWith('s2');
+  });
+
+  it('refreshes the requested conversation without waiting for a cold unrelated one', async () => {
+    const gate = deferred<ConversationFacts>();
+    const source = { read: vi.fn((sessionId: string) => sessionId === 's1' ? gate.promise : Promise.resolve(facts())) };
+    const f = fixture({ tasks: () => tasks('s1', 's2'), source });
+    const projected = await f.coordinator.refresh(['s2']);
+    expect(projected.s2).toEqual(facts());
+    expect(projected.s1).toBeUndefined();
+    expect(source.read).toHaveBeenCalledWith('s2');
+  });
+
+  it('re-reads a touched idle conversation on the debounce and publishes each edge', async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    expect((await f.coordinator.project()).s1).toEqual(facts());
+    f.onChange.mockClear();
+    f.values.set('s1', facts({ pending: pendingUserWork(['native-question']) }));
+    f.coordinator.touch('s1');
+    await vi.advanceTimersByTimeAsync(50);
+    expect(f.onChange).toHaveBeenCalledOnce();
+    expect(f.coordinator.present().s1?.pending.kinds).toEqual(['native-question']);
+    f.values.set('s1', facts());
+    f.coordinator.touch('s1');
+    await vi.advanceTimersByTimeAsync(50);
+    expect(f.onChange).toHaveBeenCalledTimes(2);
+    expect(f.coordinator.present().s1?.pending).toEqual(NO_PENDING_USER_WORK);
+  });
+
+  it('publishes reconciled batches before a slow conversation resolves', async () => {
+    vi.useFakeTimers();
+    const values = new Map<string, ConversationFacts>();
+    const gates = new Map<string, ReturnType<typeof deferred<ConversationFacts>>>();
+    const source = { read: vi.fn((sessionId: string) => gates.get(sessionId)?.promise ?? Promise.resolve(values.get(sessionId) ?? facts())) };
+    const f = fixture({ tasks: () => tasks('s1', 's2', 's3', 's4', 's5'), source });
+    for (const sessionId of ['s1', 's2', 's3', 's4', 's5']) values.set(sessionId, facts({ running: true }));
+    await f.coordinator.project();
+    for (const sessionId of ['s1', 's2', 's3', 's4', 's5']) gates.set(sessionId, deferred<ConversationFacts>());
+    f.onChange.mockClear();
+    await vi.advanceTimersByTimeAsync(2_000);
+    // The FIRST conversation hangs; the other workers must still start and publish.
+    for (const sessionId of ['s2', 's3', 's4', 's5']) gates.get(sessionId)!.resolve(facts());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.onChange).toHaveBeenCalled();
+    const callsBeforeSlowRead = f.onChange.mock.calls.length;
+    gates.get('s1')!.resolve(facts());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.onChange.mock.calls.length).toBeGreaterThan(callsBeforeSlowRead);
+  });
+
   it('prunes conversations no longer present on the board', async () => {
     const f = fixture({ tasks: () => tasks('s1', 's2') });
     await f.coordinator.project();

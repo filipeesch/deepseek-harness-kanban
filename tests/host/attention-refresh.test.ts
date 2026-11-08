@@ -50,7 +50,7 @@ describe('coalesced public attention refresh', () => {
     const f = await fixture();
     f.sessions.busy.add(f.sessionId);
     if (source === 'observe') event(f.app, f.sessionId); else f.app.activityChanged();
-    const early = await f.app.snapshot();
+    const early = await f.app.snapshot({ refreshSessionIds: [f.sessionId] });
     expect(early.conversations[f.sessionId]?.running).toBe(true);
     f.notify.mockClear();
     f.sessions.busy.clear();
@@ -68,7 +68,7 @@ describe('coalesced public attention refresh', () => {
   it('CR11 recovers a rejected initial read on the bounded retry without an event', async () => {
     const f = await fixture();
     f.facts.mockRejectedValueOnce(new Error('Initial memory-port failure'));
-    expect((await f.app.snapshot()).conversations[f.sessionId]).toEqual(idleFacts);
+    expect((await f.app.snapshot({ refreshSessionIds: [f.sessionId] })).conversations[f.sessionId]).toEqual(idleFacts);
     expect(f.notify).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(1);
     f.notify.mockClear();
@@ -83,14 +83,14 @@ describe('coalesced public attention refresh', () => {
     const f = await fixture();
     const old = deferred<ConversationFacts>();
     f.facts.mockImplementationOnce(() => old.promise).mockResolvedValue(idleFacts);
-    const pending = f.app.snapshot();
+    const pending = f.app.snapshot({ refreshSessionIds: [f.sessionId] });
     f.app.activityChanged();
-    const fresh = await f.app.snapshot();
+    const fresh = f.app.snapshot({ refreshSessionIds: [f.sessionId] });
     old.reject(new Error('Old memory-port rejection'));
     const stale = await pending;
     expect(stale.conversations[f.sessionId]).toEqual(idleFacts);
-    expect(stale.sequence).toBeLessThan(fresh.sequence);
-    expect(fresh.conversations[f.sessionId]).toEqual(idleFacts);
+    expect((await fresh).conversations[f.sessionId]).toEqual(idleFacts);
+    expect(stale.sequence).toBeLessThan((await fresh).sequence);
     expect((await f.app.snapshot()).conversations[f.sessionId]).toEqual(idleFacts);
     expect(f.facts).toHaveBeenCalledTimes(2);
   });
@@ -99,7 +99,7 @@ describe('coalesced public attention refresh', () => {
     const f = await fixture();
     f.facts.mockRejectedValueOnce(new Error('Transient memory-port failure'));
     event(f.app, f.sessionId);
-    expect((await f.app.snapshot()).conversations[f.sessionId]).toEqual(idleFacts);
+    expect((await f.app.snapshot({ refreshSessionIds: [f.sessionId] })).conversations[f.sessionId]).toEqual(idleFacts);
     f.notify.mockClear();
     await vi.advanceTimersByTimeAsync(50);
     expect(f.notify).not.toHaveBeenCalled();
@@ -112,9 +112,9 @@ describe('coalesced public attention refresh', () => {
     const old = deferred<ConversationFacts>();
     f.facts.mockImplementationOnce(() => old.promise).mockResolvedValue(idleFacts);
     event(f.app, f.sessionId);
-    const pending = f.app.snapshot();
+    const pending = f.app.snapshot({ refreshSessionIds: [f.sessionId] });
     await vi.advanceTimersByTimeAsync(50);
-    const refreshed = f.app.snapshot();
+    const refreshed = f.app.snapshot({ refreshSessionIds: [f.sessionId] });
     old.resolve({ ...idleFacts, running: true });
     const [stale, fresh] = await Promise.all([pending, refreshed]);
     expect(stale.conversations[f.sessionId]?.running).toBe(true);
@@ -150,7 +150,7 @@ describe('coalesced public attention refresh', () => {
     vi.spyOn(f.app.worktrees, 'resumePending').mockRejectedValueOnce(failure);
     f.sessions.busy.add(f.sessionId);
     event(f.app, f.sessionId);
-    await f.app.snapshot();
+    await f.app.snapshot({ refreshSessionIds: [f.sessionId] });
     f.sessions.busy.clear();
     f.notify.mockClear();
     await vi.advanceTimersByTimeAsync(50);
@@ -164,14 +164,15 @@ describe('coalesced public attention refresh', () => {
     const retry = deferred<void>();
     vi.spyOn(f.app.worktrees, 'resumePending').mockImplementationOnce(() => retry.promise);
     event(f.app, f.sessionId);
-    const before = await f.app.snapshot();
+    await f.app.snapshot();
     await vi.advanceTimersByTimeAsync(50);
     await f.app.close();
     const notifications = f.notify.mock.calls.length;
+    const closedSequence = (await f.app.snapshot()).sequence;
     retry.resolve();
     await vi.advanceTimersByTimeAsync(0);
     expect(f.notify).toHaveBeenCalledTimes(notifications);
-    expect((await f.app.snapshot()).sequence).toBe(before.sequence);
+    expect((await f.app.snapshot()).sequence).toBe(closedSequence);
     expect(f.facts).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
   });

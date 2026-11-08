@@ -4,12 +4,12 @@ import { Context, type Fiber } from '@deepseek-ai/cordis';
 import { TypertRegistry } from '@deepseek-ai/dsh-typert-registry';
 import * as Gateway from '@deepseek-ai/dsh-api-gateway/client';
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client';
-import type { HostSnapshot, ClientApi } from '../../src/shared/types.js';
+import type { FullHostSnapshot, ClientApi } from '../../src/shared/types.js';
 import { TYPERT_REMOTE } from '../../src/remote.js';
 import * as KanbanClient from '../../src/client.js';
 const fibers: Fiber[] = [];
 afterEach(async () => { for (const fiber of fibers.splice(0).reverse()) await fiber.dispose(); });
-const board: HostSnapshot = { sequence: 0, conversations: {}, sharing: {}, state: { hubs: [{ id: 'hub', name: 'Hub', revision: 0, projects: [], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], tasks: [], notes: [], createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], settings: { revision: 0 } } };
+const board: FullHostSnapshot = { sequence: 0, stateRevision: 0, conversations: {}, sharing: {}, state: { hubs: [{ id: 'hub', name: 'Hub', revision: 0, projects: [], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], tasks: [], notes: [], createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }], settings: { revision: 0 } } };
 async function runtime() {
   const root = new Context();
   const call = vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: board } });
@@ -40,7 +40,7 @@ describe('real Cordis + real gateway namespace injection', () => {
         const unmount = await ctx.remote.$mount(TYPERT_REMOTE);
         expect(() => ctx.remote.kanban).toThrow('cannot get property "remote.kanban" without inject');
         const consumer = ctx.inject(['remote.kanban'], async scoped => {
-          const result = await scoped.remote.kanban.snapshot();
+          const result = await scoped.remote.kanban.snapshot({});
           expect(result).toEqual({ ok: true, value: { ok: true, value: board } });
         });
         await consumer;
@@ -48,7 +48,7 @@ describe('real Cordis + real gateway namespace injection', () => {
       },
     });
     fibers.push(owner); await owner;
-    expect(call).toHaveBeenCalledWith('/api', 'kanban/snapshot', { args: {} }, expect.any(AbortSignal));
+    expect(call).toHaveBeenCalledWith('/api', 'kanban/snapshot', { args: { request: {} } }, expect.any(AbortSignal));
   });
   it('withdraws and restarts the injected consumer when the actual gateway namespace is replaced', async () => {
     const { root } = await runtime();
@@ -98,7 +98,7 @@ describe('real Cordis + real gateway namespace injection', () => {
     if (!isValidElement<{ children: ReactNode }>(page)) throw new Error('Expected Kanban page element');
     const boardPage = React.Children.toArray(page.props.children).find(child => isValidElement<{ api?: ClientApi }>(child) && child.props.api) as ReactElement<{ api: ClientApi }> | undefined;
     expect(boardPage).toBeDefined(); await expect(boardPage!.props.api.snapshot()).resolves.toMatchObject({ sequence: 0, attention: {}, conversationAttention: {}, clientEpoch: 0 });
-    expect(call).toHaveBeenCalledWith('/api', 'kanban/snapshot', { args: {} }, expect.any(AbortSignal));
+    expect(call).toHaveBeenCalledWith('/api', 'kanban/snapshot', { args: { request: {} } }, expect.any(AbortSignal));
     await client.dispose();
   });
 

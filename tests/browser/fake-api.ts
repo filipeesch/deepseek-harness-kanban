@@ -78,7 +78,7 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     ] satisfies Note[] : [], createdAt: now, updatedAt: now,
   };
   const settings = { revision: 1, worktreeBasePath: '/worktrees' };
-  const raw: KanbanSnapshot = { sequence: 1, attention, conversationAttention, sharing: options.sharing ?? {}, state: { hubs: [hub], settings } };
+  const raw: KanbanSnapshot = { sequence: 1, stateRevision: 1, attention, conversationAttention, sharing: options.sharing ?? {}, state: { hubs: [hub], settings } };
   let value = withLegacy(raw);
   if ((options.hubs ?? 1) > 1) value.state.hubs.push({ id: 'hub-2', name: 'Second Hub', revision: 0, projects: [], boards: [], tasks: [], notes: [], createdAt: now, updatedAt: now });
   const listeners = new Set<(snapshot: TestSnapshot) => void>();
@@ -227,7 +227,7 @@ function blockedBindingTask(): HubTask {
   };
 }
 
-function clone(value: KanbanSnapshot): KanbanSnapshot { const normalized = withLegacy(value); return structuredClone({ sequence: normalized.sequence, attention: normalized.attention, conversationAttention: normalized.conversationAttention, sharing: normalized.sharing ?? {}, state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } } }); }
+function clone(value: KanbanSnapshot): KanbanSnapshot { const normalized = withLegacy(value); return structuredClone({ sequence: normalized.sequence, stateRevision: normalized.stateRevision, attention: normalized.attention, conversationAttention: normalized.conversationAttention, sharing: normalized.sharing ?? {}, state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } } }); }
 function withLegacy(snapshot: KanbanSnapshot): TestSnapshot {
   const state = { hubs: snapshot.state.hubs } as KanbanState & Omit<BoardState, 'settings'> & { settings: any };
   let settingsValue = structuredClone(snapshot.state.settings);

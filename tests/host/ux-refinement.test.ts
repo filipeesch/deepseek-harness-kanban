@@ -129,6 +129,7 @@ describe('native workspace binding', () => {
     const { KanbanApp } = await import('../../src/host/app.js');
     const app = new KanbanApp(f.hubs, f.sessions, f.git, {}, f.workspaces);
     await app.initialize();
+    await app.whenSettled();
     const project = f.store.requireProject(f.project.id);
     expect(project.workspaceId).toBeTruthy();
     expect(f.workspaces.byPath.get(f.projectPath)?.id).toBe(project.workspaceId);
