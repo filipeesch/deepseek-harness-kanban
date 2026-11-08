@@ -285,3 +285,19 @@ describe('conversation tab attention', () => {
     expect(reopen.textContent).not.toContain('Agent failure');
   });
 });
+
+describe('conversation tab selection', () => {
+  it('keeps the selected conversation when another one is appended asynchronously', async () => {
+    const { publish, get } = mount();
+    const tabs = await screen.findByRole('tablist', { name: 'Agent conversations' });
+    await waitFor(() => expect(within(tabs).getByRole('tab', { name: 'Agent 1' }).getAttribute('aria-selected')).toBe('true'));
+
+    const next = get();
+    next.state.tasks[0]!.sessionIds.push('s3');
+    act(() => { publish(next); });
+
+    await within(tabs).findByRole('tab', { name: 'Agent 3' });
+    expect(within(tabs).getByRole('tab', { name: 'Agent 1' }).getAttribute('aria-selected')).toBe('true');
+    expect(within(tabs).getByRole('tab', { name: 'Agent 3' }).getAttribute('aria-selected')).toBe('false');
+  });
+});

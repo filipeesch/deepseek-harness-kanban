@@ -577,6 +577,18 @@ describe('task lineage and destructive sharing', () => {
     expect((await stat(f.tree)).isDirectory()).toBe(true);
   });
 
+  it('treats an adopted fork as owned and archives it with the task', async () => {
+    const f = await setup(); await create(f);
+    const target = path.join(f.tree, 'packages/api');
+    const fork = f.sessions.seedFork('a', 'fork', target);
+    f.store.state.tasks[0]!.sessionIds.push(fork);
+    await f.coordinator.request('task', { kind: 'delete', discardChanges: false });
+    expect(f.store.snapshot().tasks).toEqual([]);
+    expect([...new Set(f.sessions.archiveCalls)]).toEqual(['a', 'b', 'fork']);
+    expect(f.sessions.setCalls.map(call => call.id)).toContain(fork);
+    await expect(stat(f.tree)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('still blocks a foreign native session outside the task lineage', async () => {
     const f = await setup(); await create(f);
     f.sessions.seedSubagent('outside-parent', 'peer', path.join(f.tree, 'packages/api'));

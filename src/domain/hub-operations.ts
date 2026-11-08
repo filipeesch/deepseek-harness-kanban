@@ -235,10 +235,18 @@ export function editTask(hub: HubState, taskId: string, patch: TaskTextPatch, de
   return task;
 }
 
-export function addSession(hub: HubState, taskId: string, sessionId: string, deps: OperationDeps): HubTask {
+/**
+ * Retain one native session as a conversation of the task.
+ *
+ * `expectedEffectiveCwd` makes the attachment conditional on the task context
+ * the caller aligned the conversation for, so a directory switch that completed
+ * in between cannot attach a conversation to the wrong directory.
+ */
+export function addSession(hub: HubState, taskId: string, sessionId: string, deps: OperationDeps, expectedEffectiveCwd?: string): HubTask {
   assertId(sessionId, 'Session ID');
   const task = requireTask(hub, taskId);
   invariant(!task.operation, 'TASK_BUSY', 'Cannot add a conversation during a context operation.');
+  invariant(expectedEffectiveCwd === undefined || task.effectiveCwd === expectedEffectiveCwd, 'CONTEXT_CHANGED', 'The task directory changed before the conversation was attached.');
   assertAvailableSession(hub, sessionId);
   task.sessionIds.push(sessionId);
   task.updatedAt = timestamp(deps);

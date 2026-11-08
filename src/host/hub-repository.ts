@@ -470,8 +470,8 @@ export class HubStore {
   async pauseAutoMode(taskId: string, pause: AutoModePause, expectedColumnId?: string): Promise<HubTask> {
     return this.transact(draft => operations.pauseAutoMode(draft, taskId, pause, this.deps(), expectedColumnId));
   }
-  async addSession(taskId: string, sessionId: string): Promise<HubTask> {
-    return this.transact(draft => operations.addSession(draft, taskId, sessionId, this.deps()));
+  async addSession(taskId: string, sessionId: string, expectedEffectiveCwd?: string): Promise<HubTask> {
+    return this.transact(draft => operations.addSession(draft, taskId, sessionId, this.deps(), expectedEffectiveCwd));
   }
   async closeSession(taskId: string, sessionId: string): Promise<HubTask> {
     return this.transact(draft => operations.closeSession(draft, taskId, sessionId, this.deps()));

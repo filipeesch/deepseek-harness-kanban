@@ -111,6 +111,16 @@ describe('HubRepository', () => {
     })).rejects.toMatchObject({ code: 'SESSION_IN_USE' });
   });
 
+  it('refuses to attach a conversation after the task directory changed', async () => {
+    const { store } = await repo();
+    await store.saveProject({ name: 'Web', projectPath: '/repo', gitRootPath: '/repo' });
+    const task = await store.createTask({ projectId: store.snapshot().projects[0]!.id, title: 'Task', description: '' });
+    await expect(store.addSession(task.id, 'late-fork', '/old')).rejects.toMatchObject({ code: 'CONTEXT_CHANGED' });
+    expect(store.requireTask(task.id).sessionIds).toEqual([]);
+    await store.addSession(task.id, 'late-fork', '/repo');
+    expect(store.requireTask(task.id).sessionIds).toEqual(['late-fork']);
+  });
+
   it('rejects a project identifier shared by two Hubs', async () => {
     const { hubs, store } = await repo();
     await store.saveProject({ id: 'shared-project', name: 'A', projectPath: '/a', gitRootPath: '/a' });
