@@ -142,7 +142,6 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
       const firstHub = value.state.hubs[0]!; const firstBoard = firstHub.boards[0]!;
       let receipt: KanbanSnapshot['commandReceipt'];
       if (command.type === 'board.workflow.save') { const hub = value.state.hubs.find(item => item.id === command.hubId); const board = hub?.boards.find(item => item.id === command.boardId); if (board) { board.workflowYaml = command.yaml; if (hub) hub.revision += 1; } }
-      if (command.type === 'workflow.save') { firstBoard.workflowYaml = command.yaml; firstHub.revision += 1; }
       if (command.type === 'task.move') {
         const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);
         const hub = task ? value.state.hubs.find(item => item.tasks.some(candidate => candidate.id === task.id)) : undefined;

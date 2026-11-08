@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
 import { isGitProject } from '../shared/project.js';
 import type { GitPort, SessionPort } from '../shared/ports.js';
-import type { Project, ProjectInput, ProjectLocationPaths, ProjectRelocation, ProjectRelocationPhase, Task } from '../shared/types.js';
+import type { ContextOperation, Project, ProjectInput, ProjectLocationPaths, ProjectRelocation, ProjectRelocationPhase, Task } from '../shared/types.js';
 import { planProjectRelocation } from '../domain/project-registration.js';
 import { repositoryLane } from './repository-lane.js';
 import type { OperationQueue } from './operation-queue.js';
@@ -56,12 +56,23 @@ function assertKindPreserved(project: Project, input: RelocationTarget): void {
   invariant((project.gitRootPath !== undefined) === targetIsGit, 'PROJECT_ASSOCIATION_CHANGE', 'Adding or removing a Git association is a project save, not a relocation.');
 }
 
+function blocksRelocation(operation: ContextOperation | null): boolean {
+  if (!operation) return false;
+  if (operation.phase !== 'failed') return true;
+  // A failed create that may own an unclaimed checkout needs its original root to
+  // recover. A failed deletion that already archived a conversation is resumable only
+  // against the current task state. Every other failure is not in-flight work.
+  if (operation.createAttempt !== undefined) return true;
+  if (operation.request.kind === 'delete' && (operation.archivedSessionIds.length > 0 || operation.error?.details?.failedPhase === 'archiving')) return true;
+  return false;
+}
+
 function hasUnresolvedTaskWork(tasks: Task[]): boolean {
-  return tasks.some(task => task.operation !== null || task.pendingTransition !== undefined);
+  return tasks.some(task => task.pendingTransition !== undefined || blocksRelocation(task.operation));
 }
 
 function assertTasksIdle(tasks: Task[]): void {
-  invariant(tasks.every(task => task.operation === null), 'PROJECT_BUSY', 'Resolve the context operation of every task in this project before relocating it.');
+  invariant(tasks.every(task => !blocksRelocation(task.operation)), 'PROJECT_BUSY', 'Resolve the in-flight context operation of every task in this project before relocating it.');
   invariant(tasks.every(task => task.pendingTransition === undefined), 'PROJECT_BUSY', 'Resolve the confirmed transition of every task in this project before relocating it.');
 }
 

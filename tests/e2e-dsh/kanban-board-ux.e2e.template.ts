@@ -28,7 +28,7 @@ it('edits a grouped workflow, grows columns, and animates the drawer', async () 
   await expect(projectDialog.getByText('No Git repository found')).toBeVisible();
   await projectDialog.getByRole('button', { name: 'Save project' }).click();
   await expect(page.getByText('Project saved.')).toBeVisible();
-  await page.getByRole('tab', { name: 'Workflow' }).click();
+  await page.getByRole('tab', { name: 'Board' }).click();
   const editor = page.locator('.cm-content');
   await editor.click();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
@@ -41,8 +41,15 @@ it('edits a grouped workflow, grows columns, and animates the drawer', async () 
   for (let index = 0; index < 10; index += 1) {
     await page.getByRole('button', { name: 'New task' }).first().click();
     await page.getByRole('textbox', { name: 'Title' }).fill('Real task ' + index);
+    await page.getByRole('dialog', { name: 'New task' }).getByRole('combobox', { name: 'Project' }).selectOption({ label: 'Harness' });
     await page.getByRole('button', { name: 'Create task' }).click();
     await expect(page.getByRole('button', { name: 'Open task Real task ' + index })).toBeVisible();
+  }
+  // Creating a task opens its drawer; close it so the final open is an entry transition.
+  const createdDrawer = page.locator('.kb-drawer');
+  if (await createdDrawer.isVisible()) {
+    await page.getByRole('button', { name: 'Close task details' }).click();
+    await expect(createdDrawer).toBeHidden({ timeout: 2_000 });
   }
   const geometry = await page.evaluate(() => {
     const columns = [...document.querySelectorAll<HTMLElement>('.kb-column')].map(column => {

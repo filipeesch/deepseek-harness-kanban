@@ -41,7 +41,7 @@ it('cancels and confirms a restricted drawer move without a model call', async (
   await expect(projectDialog.getByText('No Git repository found')).toBeVisible();
   await projectDialog.getByRole('button', { name: 'Save project' }).click();
   await expect(page.getByText('Project saved.')).toBeVisible();
-  await page.getByRole('tab', { name: 'Workflow' }).click();
+  await page.getByRole('tab', { name: 'Board' }).click();
   const editor = page.locator('.cm-content');
   await editor.click();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');

@@ -32,7 +32,7 @@ const saveButton = () => screen.getByRole('button', { name: 'Save workflow' }) a
 
 describe('workflow editor', () => {
   it('blocks Save while the YAML is invalid and enables it after correction', async () => {
-    const { user } = mount(vi.fn(async (command: Command) => snapshotFor((command as Extract<Command, { type: 'workflow.save' }>).yaml)));
+    const { user } = mount(vi.fn(async (command: Command) => snapshotFor((command as Extract<Command, { type: 'board.workflow.save' }>).yaml)));
     fireEvent.change(editor(), { target: { value: 'columns: []' } });
     await waitFor(() => expect(saveButton().disabled).toBe(true));
     expect(await screen.findByText(/INVALID_WORKFLOW/)).toBeTruthy();
@@ -42,13 +42,13 @@ describe('workflow editor', () => {
   });
 
   it('saves the displayed draft with the base revision and reports success', async () => {
-    const run = vi.fn(async (command: Command) => snapshotFor((command as Extract<Command, { type: 'workflow.save' }>).yaml));
+    const run = vi.fn(async (command: Command) => snapshotFor((command as Extract<Command, { type: 'board.workflow.save' }>).yaml));
     const { user } = mount(run);
     const next = valid.replace('name: Delivery', 'name: Host Save');
     await user.clear(editor()); await user.type(editor(), next);
     await waitFor(() => expect(saveButton().disabled).toBe(false));
     await user.click(saveButton());
-    await waitFor(() => expect(run).toHaveBeenCalledWith({ type: 'workflow.save', yaml: next, expectedRevision: 1 }));
+    await waitFor(() => expect(run).toHaveBeenCalledWith({ type: 'board.workflow.save', hubId: 'hub-1', boardId: 'board-1', yaml: next, expectedRevision: 1 }));
     expect(await screen.findByText('Workflow saved.')).toBeTruthy();
   });
 
@@ -64,7 +64,7 @@ describe('workflow editor', () => {
   });
 
   it('confirms before discarding a dirty draft with Reload', async () => {
-    const { user } = mount(vi.fn(async (command: Command) => snapshotFor((command as Extract<Command, { type: 'workflow.save' }>).yaml)));
+    const { user } = mount(vi.fn(async (command: Command) => snapshotFor((command as Extract<Command, { type: 'board.workflow.save' }>).yaml)));
     await user.type(editor(), String.fromCharCode(10) + '# dirty');
     await user.click(screen.getByRole('button', { name: 'Reload saved workflow' }));
     const confirm = screen.getByRole('alertdialog', { name: 'Discard workflow draft' });
@@ -76,7 +76,7 @@ describe('workflow editor', () => {
   });
 
   it('requires a close confirmation for an unsaved workflow draft', async () => {
-    const { user, onClose } = mount(vi.fn(async (command: Command) => snapshotFor((command as Extract<Command, { type: 'workflow.save' }>).yaml)));
+    const { user, onClose } = mount(vi.fn(async (command: Command) => snapshotFor((command as Extract<Command, { type: 'board.workflow.save' }>).yaml)));
     await user.type(editor(), String.fromCharCode(10) + '# unsaved');
     await user.click(screen.getByRole('button', { name: 'Close Kanban configuration' }));
     expect(screen.getByRole('alertdialog', { name: 'Discard workflow changes' })).toBeTruthy();
@@ -88,7 +88,7 @@ describe('workflow editor', () => {
   });
 
   it('preserves the draft across Configuration tabs', async () => {
-    const { user } = mount(vi.fn(async (command: Command) => snapshotFor((command as Extract<Command, { type: 'workflow.save' }>).yaml)));
+    const { user } = mount(vi.fn(async (command: Command) => snapshotFor((command as Extract<Command, { type: 'board.workflow.save' }>).yaml)));
     await user.type(editor(), String.fromCharCode(10) + '# tab draft');
     await user.click(screen.getByRole('tab', { name: 'General' }));
     await user.click(screen.getByRole('tab', { name: 'Board' }));
