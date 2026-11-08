@@ -4,12 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client';
 import { RetainedConversation, type ConversationSurfaceOwner, type ConversationSurfaceServices } from '../../src/client/conversation-surface.js';
-import type { DrawerSubagentAddress } from '../../src/client/conversation-navigation.js';
 import { ConversationLeaseRegistry, type ConversationLeaseSessions } from '../../src/client/conversation-leases.js';
 import { ConversationLeasesProvider } from '../../src/client/conversation-lease-context.js';
 
 afterEach(cleanup);
-const child: DrawerSubagentAddress = { parentSessionId: 'root-1', childSessionId: 'child-1', mode: 'continuable' };
 
 function reference(sessionId: string): SessionReference {
   return {
@@ -34,14 +32,11 @@ function sessions(retain: (target: unknown) => SessionReference, catalog: string
         projectionsBySession: {},
       }),
     },
-    subagentAddress: (sessionId: string) => sessionId === 'child-1'
-      ? { parentSessionId: 'root-1', childSessionId: 'child-1', mode: 'continuable' as const }
-      : undefined,
   } as unknown as ConversationLeaseSessions;
 }
 
-function harness(retainTarget?: unknown) {
-  const retained = reference('child-1');
+function harness() {
+  const retained = reference('root-1');
   const retain = vi.fn((target: unknown) => { void target; return retained; });
   const refresh = vi.fn(async () => {});
   const claimComposer = vi.fn(() => () => {});
@@ -53,30 +48,28 @@ function harness(retainTarget?: unknown) {
     SessionProvider: ({ session, children }) => <div data-testid="provider" data-session={session.sessionId}>{children}</div>,
     renderSlot: key => <div data-testid={'slot-' + key} />,
   };
-  void retainTarget;
   return { retained, retain, refresh, claimComposer, port, registry, owner, services };
 }
 
-function surface(f: ReturnType<typeof harness>, props: { id: string; target?: DrawerSubagentAddress }) {
+function surface(f: ReturnType<typeof harness>, props: { id: string }) {
   return <ConversationLeasesProvider registry={f.registry}>
     <RetainedConversation {...props} owner={f.owner} services={f.services} />
   </ConversationLeasesProvider>;
 }
 
 describe('retained conversation surface', () => {
-  it('retains a peeked subagent by address and renders the hosted header before content', async () => {
+  it('retains the root conversation and renders the window slot inside the provider', async () => {
     const f = harness();
-    const view = render(surface(f, { id: 'root-1', target: child }));
+    const view = render(surface(f, { id: 'root-1' }));
     const provider = await screen.findByTestId('provider');
-    expect(provider.getAttribute('data-session')).toBe('child-1');
-    expect(f.retain).toHaveBeenCalledWith(child, expect.objectContaining({ source: 'kanbanTaskDrawer' }));
-    const header = screen.getByTestId('slot-kanban.session.header');
-    const conversation = screen.getByTestId('slot-kanban.conversation');
-    expect(header.compareDocumentPosition(conversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(f.claimComposer).toHaveBeenCalledWith('child-1');
+    expect(provider.getAttribute('data-session')).toBe('root-1');
+    expect(f.retain).toHaveBeenCalledWith('root-1', expect.objectContaining({ source: 'kanbanTaskDrawer' }));
+    expect(screen.getByTestId('slot-kanban.conversation')).toBeTruthy();
+    expect(f.claimComposer).toHaveBeenCalledWith('root-1');
     view.unmount();
-    expect(f.retained.release).toHaveBeenCalledOnce();
+    expect(f.retained.release).not.toHaveBeenCalled();
     f.registry.dispose();
+    expect(f.retained.release).toHaveBeenCalledOnce();
   });
 
   it('keeps a visited root conversation warm across unmount and reuses it on return', async () => {
@@ -118,7 +111,6 @@ describe('retained conversation surface', () => {
         subscribe: () => () => {},
         getSnapshot: () => ({ ids: catalog, byId: Object.fromEntries(catalog.map(id => [id, { id }])), phase: 'ready' as const, projectionsBySession: {} }),
       },
-      subagentAddress: () => undefined,
     } as unknown as ConversationLeaseSessions;
     const registry = new ConversationLeaseRegistry({ sessions: port, lifetime: new AbortController().signal });
     render(<ConversationLeasesProvider registry={registry}><RetainedConversation id="root-1" owner={f.owner} services={f.services} /></ConversationLeasesProvider>);

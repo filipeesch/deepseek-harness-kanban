@@ -23,16 +23,7 @@ export function orderNativeListEntries(entries: readonly StoredEntry[]): readonl
 export function renderableNativeEntries(
   entries: readonly StoredEntry[],
   kind: NativeSlotKind,
-  options: { exclude?: (entry: StoredEntry) => boolean; allowStore?: boolean } = {},
 ): readonly StoredEntry[] {
-  const renderable = entries.filter(entry => entry.component !== undefined
-    && (options.allowStore === true || entry.store === undefined)
-    && !options.exclude?.(entry));
-  const ordered = orderNativeListEntries(renderable);
-  return kind === 'list' ? ordered : ordered.slice(0, 1);
-}
-
-/** Select the one native session-header entry; its own store seat is replaced by the host. */
-export function selectNativeSessionHeaderEntry(entries: readonly StoredEntry[]): StoredEntry | undefined {
-  return renderableNativeEntries(entries, 'single', { allowStore: true })[0];
+  const renderable = orderNativeListEntries(entries.filter(entry => entry.component !== undefined && entry.store === undefined));
+  return kind === 'list' ? renderable : renderable.slice(0, 1);
 }

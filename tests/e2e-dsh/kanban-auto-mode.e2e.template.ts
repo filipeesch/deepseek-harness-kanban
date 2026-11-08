@@ -111,7 +111,7 @@ it('advances the card and dispatches the next instruction after a completed turn
 
   await openTask.click();
   const drawer = page.locator('.kb-drawer');
-  const conversation = drawer.locator('.kb-native-conversation');
+  const conversation = drawer.locator('.kb-conversation-window');
   await contains(conversation.getByText(REVIEW, { exact: false }), REVIEW);
   await contains(conversation.getByText(PLAN, { exact: false }), PLAN);
   await count(drawer.getByRole('tablist', { name: 'Agent conversations' }).getByRole('tab'), 1);

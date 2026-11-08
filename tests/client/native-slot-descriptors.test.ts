@@ -20,8 +20,8 @@ describe('native slot descriptors', () => {
     expect(renderableNativeEntries([entry('a', 0), entry('b', 0)], 'single').map(value => value.options.id)).toEqual(['a']);
   });
 
-  it('supports exclusion and the native hook-name convention', () => {
-    expect(renderableNativeEntries([entry('agent-preset', -10), entry('job-list', 20)], 'list', { exclude: value => value.options.id === 'agent-preset' }).map(value => value.options.id)).toEqual(['job-list']);
+  it('keeps list order and the native hook-name convention', () => {
+    expect(renderableNativeEntries([entry('agent-preset', -10), entry('job-list', 20)], 'list').map(value => value.options.id)).toEqual(['agent-preset', 'job-list']);
     expect(nativeHookPropName('agentPresets')).toBe('useAgentPresets');
   });
 });

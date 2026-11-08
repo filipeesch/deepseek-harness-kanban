@@ -6,8 +6,8 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { chromium } from 'playwright';
 import { SessionId } from '@deepseek-ai/dsh-session';
-import { expect } from 'playwright/test';
-import { it, onTestFinished } from 'vitest';
+import { expect, it, onTestFinished } from 'vitest';
+import './kanban-e2e-setup.ts';
 import { launchWebScaffold } from './scaffold.ts';
 import { newEnglishPage } from './support.ts';
 
@@ -130,8 +130,9 @@ it('relocates a project whose directory moved and keeps its task conversation', 
   await notice.waitFor({ state: 'visible' });
   await notice.getByRole('button', { name: 'Continue in base project' }).click();
   await notice.waitFor({ state: 'hidden' });
-  await page.getByRole('button', { name: 'Start conversation' }).click();
+  await page.locator('.kb-preset-cards').getByRole('button', { name: /^Standard mode/ }).click();
   await page.locator('.kb-agent-tabs [role="tab"]').first().waitFor({ state: 'visible' });
+  await page.locator('[data-kanban-conversation-window]').waitFor({ state: 'visible' });
   const tabId = await page.locator('.kb-agent-tabs [role="tab"]').first().getAttribute('id');
   const conversationId = SessionId(tabId?.split('-tab-').at(-1)!);
   await page.getByRole('button', { name: 'Close task details' }).click();

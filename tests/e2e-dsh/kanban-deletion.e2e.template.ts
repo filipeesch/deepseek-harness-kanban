@@ -10,8 +10,8 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { Browser } from 'playwright';
 import { chromium } from 'playwright';
-import { expect } from 'playwright/test';
-import { it, onTestFinished } from 'vitest';
+import { expect, it, onTestFinished } from 'vitest';
+import './kanban-e2e-setup.ts';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import type { SubagentPromptRequestId } from '@deepseek-ai/dsh-subagent';
 import { prepareSessionSnapshotFixtureForComparison } from '@deepseek-ai/dsh-llm-replay';
@@ -122,8 +122,9 @@ it('deletes a task whose own deterministic subagent child uses the worktree', as
   await notice.getByRole('button', { name: 'Create worktree' }).click();
   await notice.waitFor({ state: 'hidden', timeout: 20_000 });
   expect(await page.getByRole('tab', { name: 'Conversations' }).getAttribute('aria-selected')).toBe('true');
-  await page.getByRole('button', { name: 'Start conversation' }).click();
+  await page.locator('.kb-preset-cards').getByRole('button', { name: /^Standard mode/ }).click();
   await page.locator('.kb-agent-tabs [role="tab"]').first().waitFor({ state: 'visible' });
+  await page.locator('[data-kanban-conversation-window]').waitFor({ state: 'visible' });
 
   const worktreePath = join(basePath, BRANCH);
   await expect.poll(async () => existsSync(worktreePath), { timeout: 20_000 }).toBe(true);
@@ -134,6 +135,10 @@ it('deletes a task whose own deterministic subagent child uses the worktree', as
   if (rawParentId === undefined) throw new Error('task conversation tab id is unavailable');
   const parentId = SessionId(rawParentId);
   await expect.poll(() => scaffold.ctx.agents.get(parentId), { timeout: 20_000 }).not.toBeUndefined();
+  await expect.poll(async () => {
+    const projection = await scaffold.ctx.sessionController.projections({ sessionId: parentId }, new AbortController().signal);
+    return projection?.kind === 'sequenced' ? projection.values.agentPreset : undefined;
+  }, { timeout: 20_000 }).toBe('standard');
   const parent = scaffold.ctx.agents.get(parentId)!;
   const started = await scaffold.ctx.subagents.startActivation({
     delivery: 'parent',
@@ -258,8 +263,9 @@ it('deletes a task after its project directory moved and retains the unverifiabl
   await notice.waitFor({ state: 'visible' });
   await notice.getByRole('button', { name: 'Create worktree' }).click();
   await notice.waitFor({ state: 'hidden', timeout: 20_000 });
-  await page.getByRole('button', { name: 'Start conversation' }).click();
+  await page.locator('.kb-preset-cards').getByRole('button', { name: /^Standard mode/ }).click();
   await page.locator('.kb-agent-tabs [role="tab"]').first().waitFor({ state: 'visible' });
+  await page.locator('[data-kanban-conversation-window]').waitFor({ state: 'visible' });
   const worktreePath = join(worktreeRoot, branch);
   await expect.poll(async () => existsSync(worktreePath), { timeout: 20_000 }).toBe(true);
   const tabId = await page.locator('.kb-agent-tabs [role="tab"]').first().getAttribute('id');

@@ -34,19 +34,17 @@ describe('board and editor style contracts', () => {
   });
 });
 
-  it('hosts the native session header and removes the task-context overlay layout', () => {
-    expect(styles).toContain('.dsh-kanban .kb-native-session-header{');
-    expect(styles).toContain('.dsh-kanban .kb-native-conversation [data-conversation-scroll]>[data-composer-seat]{margin-top:auto}');
-    expect(styles).toContain('--dsh-frame-leading-clearance:0px');
+  it('hosts the conversation window and removes the task-context overlay layout', () => {
+    expect(styles).toContain('.dsh-kanban .kb-conversation-window{');
+    expect(styles).toContain('.dsh-kanban .kb-conversation-window>[data-kanban-conversation-window]{');
     expect(styles).toContain('.dsh-kanban .kb-task-context-fallback{');
-    expect(styles).not.toContain('.kb-native-conversation>.kb-task-context{position:absolute');
+    expect(styles).not.toContain('.kb-task-context{position:absolute');
     expect(styles).not.toContain('[data-conversation-content]>div>div:last-child');
   });
 
-  it('replaces the inline closed block with the chip, popover, and header row', () => {
+  it('replaces the inline closed block with the chip and popover', () => {
     expect(styles).toContain('.dsh-kanban .kb-closed-chip{');
     expect(styles).toContain('.dsh-kanban .kb-closed-popover{');
-    expect(styles).toContain('.dsh-kanban .kb-session-header-row{');
     expect(styles).not.toContain('.dsh-kanban .kb-closed{');
   });
 

@@ -1,22 +1,22 @@
-/** Native agent-preset roster and selection behind the drawer's mode seat. */
+/** Native agent-preset roster and selection behind the drawer's preset cards. */
 
-export interface ModeOption {
+export interface AgentPresetOption {
   readonly id: string;
   readonly name?: string;
   readonly description?: string;
   readonly isDefault?: boolean;
 }
 
-export interface ModeSelectResult {
+export interface AgentPresetSelectResult {
   readonly ok: boolean;
   /** The id the host actually accepted, when it returns one. */
   readonly id?: string;
   readonly message?: string;
 }
 
-export interface ModePort {
-  list(): Promise<readonly ModeOption[]>;
-  select(sessionId: string, id: string): Promise<ModeSelectResult>;
+export interface AgentPresetPort {
+  list(): Promise<readonly AgentPresetOption[]>;
+  select(sessionId: string, id: string): Promise<AgentPresetSelectResult>;
 }
 
 interface RemoteResult<Value> {
@@ -39,31 +39,31 @@ interface AgentPresetsRemote {
 }
 
 /** Minimal native config read for the coding-tools gate; deployment data stays optional. */
-export interface ModeConfigSource {
+export interface AgentPresetConfigSource {
   developerTools(): boolean;
 }
 
-export interface ModePortSource {
-  getSnapshot(): ModePort | null;
+export interface AgentPresetPortSource {
+  getSnapshot(): AgentPresetPort | null;
   subscribe(listener: () => void): () => void;
 }
 
-/** Let the hosted seat start before an optional Remote namespace is mounted. */
-export function createModePortSource(initialNamespace: unknown, config: ModeConfigSource): ModePortSource & { set(namespace: unknown): void } {
-  let port = createModePort({ agentPresets: initialNamespace }, config);
+/** Let the card picker start before an optional Remote namespace is mounted. */
+export function createAgentPresetPortSource(initialNamespace: unknown, config: AgentPresetConfigSource): AgentPresetPortSource & { set(namespace: unknown): void } {
+  let port = createAgentPresetPort({ agentPresets: initialNamespace }, config);
   const listeners = new Set<() => void>();
   return {
     getSnapshot: () => port,
     subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     set(namespace) {
-      port = createModePort({ agentPresets: namespace }, config);
+      port = createAgentPresetPort({ agentPresets: namespace }, config);
       for (const listener of listeners) listener();
     },
   };
 }
 
-export class ModePortError extends Error {
-  constructor(message: string) { super(message); this.name = 'ModePortError'; }
+export class AgentPresetPortError extends Error {
+  constructor(message: string) { super(message); this.name = 'AgentPresetPortError'; }
 }
 
 function codingToolsRequired(preset: RemotePreset): boolean {
@@ -84,17 +84,17 @@ function errorMessage(error: RemoteResult<unknown>['error']): string {
 }
 
 /**
- * Adapt the native remote namespace into the small port the mode seat owns.
+ * Adapt the native remote namespace into the small port the preset cards own.
  * Array order is preserved; broken presets and coding-tools-gated entries are
  * removed exactly where the native picker would filter them.
  */
-export function createModePort(remote: unknown, config: ModeConfigSource = { developerTools: () => true }): ModePort | null {
+export function createAgentPresetPort(remote: unknown, config: AgentPresetConfigSource = { developerTools: () => true }): AgentPresetPort | null {
   const presets = remoteOf(remote);
   if (presets === undefined) return null;
   return {
-    async list(): Promise<readonly ModeOption[]> {
+    async list(): Promise<readonly AgentPresetOption[]> {
       const result = await presets.list();
-      if (!result.ok || result.value === undefined) throw new ModePortError(errorMessage(result.error));
+      if (!result.ok || result.value === undefined) throw new AgentPresetPortError(errorMessage(result.error));
       const developerTools = config.developerTools();
       return result.value.presets
         .filter(preset => preset.broken === undefined && (developerTools || !codingToolsRequired(preset)))
@@ -105,7 +105,7 @@ export function createModePort(remote: unknown, config: ModeConfigSource = { dev
           ...(preset.isDefault === true ? { isDefault: true } : {}),
         }));
     },
-    async select(sessionId: string, id: string): Promise<ModeSelectResult> {
+    async select(sessionId: string, id: string): Promise<AgentPresetSelectResult> {
       const result = await presets.select(sessionId, id);
       if (result.ok) return { ok: true, ...(typeof result.value === 'string' ? { id: result.value } : {}) };
       return { ok: false, message: errorMessage(result.error) };

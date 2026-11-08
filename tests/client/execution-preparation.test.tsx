@@ -46,7 +46,8 @@ function seatEnvironment(): { seat: PreparationSeat; leases: ConversationLeaseEn
   const sessions = {
     retain: (target: string) => ({ sessionId: target, binding: {}, ready: Promise.resolve({}), release: () => {} }),
     refresh: async () => {},
-    list: { getSnapshot: () => ({ ids: [], byId: {}, phase: 'ready', projectionsBySession: {} }), subscribe: () => () => {} },
+    // The lease catalog check must see the freshly created Session, as the native client does.
+    list: { getSnapshot: () => ({ ids: [], byId: new Proxy({}, { get: (_target, key) => typeof key === 'string' ? { id: key } : undefined }), phase: 'ready', projectionsBySession: {} }), subscribe: () => () => {} },
     subagentAddress: () => ({ parentSessionId: 'parent', childSessionId: 'child', mode: 'unknown' }),
   };
   return { seat, leases: { sessions: sessions as never, lifetime: new AbortController().signal } };

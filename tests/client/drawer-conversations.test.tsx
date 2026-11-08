@@ -3,26 +3,22 @@ import React, { useEffect, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { TaskDrawer } from '../../src/client/drawer.js';
-import { ConversationCloseAction } from '../../src/client/conversation-actions.js';
 import { createTaskPageState } from '../../src/client/page-state.js';
-import type { DrawerSubagentAddress } from '../../src/client/conversation-navigation.js';
 import type { Attention } from '../../src/shared/types.js';
 import { deferred, fakeApi, fixture, type TestSnapshot } from './helpers.js';
+import { PresetProvider, presetPort } from './agent-preset-fixture.js';
+import type { AgentPresetPort } from '../../src/client/agent-preset-port.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 
 afterEach(cleanup);
-const child: DrawerSubagentAddress = { parentSessionId: 's1', childSessionId: 'child-1', mode: 'continuable' };
-function mount(options: { initialPeek?: DrawerSubagentAddress; onPeek?: (target: DrawerSubagentAddress | null) => void; onMove?: () => Promise<boolean>; data?: TestSnapshot; renderConversation?: (id: string, target?: DrawerSubagentAddress) => React.ReactNode } = {}) {
+function mount(options: { onMove?: () => Promise<boolean>; data?: TestSnapshot; renderConversation?: (id: string) => React.ReactNode; preset?: AgentPresetPort } = {}) {
   const data = options.data ?? fixture(); const mock = fakeApi(data); const renderConversation = options.renderConversation === undefined
-    ? vi.fn((id: string, target?: DrawerSubagentAddress) => <div data-testid={'native-' + id} data-target={target?.childSessionId}><ConversationCloseAction /></div>)
+    ? vi.fn((id: string) => <div data-testid={'native-' + id} />)
     : vi.fn(options.renderConversation);
-  const onPeek = options.onPeek ?? vi.fn();
   function Harness() {
     const [live, setLive] = useState<TestSnapshot>(data);
     const [viewState] = useState(createTaskPageState);
-    const [peek, setPeek] = useState<DrawerSubagentAddress | null>(options.initialPeek ?? null);
     useEffect(() => mock.api.subscribe(snapshot => setLive(snapshot as TestSnapshot)), []);
-    const update = (target: DrawerSubagentAddress | null) => { onPeek(target); setPeek(target); };
     return <TaskDrawer
       task={live.state.tasks[0]!}
       state={live.state}
@@ -33,68 +29,27 @@ function mount(options: { initialPeek?: DrawerSubagentAddress; onPeek?: (target:
       onMove={options.onMove ?? (async () => true)}
       onDanger={() => {}}
       viewState={viewState}
-      peek={peek}
-      onPeek={update}
     />;
   }
-  const view = render(<Harness />);
-  return { ...mock, renderConversation, onPeek, ...view };
+  const preset = options.preset ?? presetPort();
+  const view = render(<PresetProvider port={preset}><Harness /></PresetProvider>);
+  return { ...mock, renderConversation, preset, ...view };
 }
 function agentTabs() { return within(screen.getByRole('tablist', { name: 'Agent conversations' })); }
 
-describe('drawer conversation peek', () => {
-  it('clears the peek when the drawer closes or switches task identity', async () => {
-    const data = fixture(); const mock = fakeApi(data); const onPeek = vi.fn();
-    const renderConversation = vi.fn((id: string) => <div data-testid={'native-' + id} />);
-    function Harness() {
-      const [taskIndex, setTaskIndex] = useState(0); const [peek, setPeek] = useState<DrawerSubagentAddress | null>(child); const [closing, setClosing] = useState(false);
-      const update = (target: DrawerSubagentAddress | null) => { onPeek(target); setPeek(target); };
-      return <><button onClick={() => setTaskIndex(1)}>Switch task</button><button onClick={() => setClosing(true)}>Start close</button><TaskDrawer
-        task={data.state.tasks[taskIndex]!}
-        state={data.state}
-        api={mock.api}
-        run={mock.api.command}
-        renderConversation={renderConversation}
-        onClose={() => {}}
-        onMove={async () => true}
-        onDanger={() => {}}
-        viewState={createTaskPageState()}
-        peek={peek}
-        onPeek={update}
-        closing={closing}
-      /></>;
-    }
-    render(<Harness />);
+describe('drawer conversation tabs and close action', () => {
+  it('keeps the close action inside the active tab only', async () => {
+    mount();
     await screen.findByRole('tab', { name: 'Agent 1' });
-    fireEvent.click(screen.getByRole('button', { name: 'Switch task' }));
-    await waitFor(() => expect(onPeek).toHaveBeenCalledWith(null));
-    fireEvent.click(screen.getByRole('button', { name: 'Start close' }));
-    await waitFor(() => expect(onPeek).toHaveBeenCalledTimes(2));
+    const activeTab = agentTabs().getByRole('tab', { name: 'Agent 1' });
+    const inactiveTab = agentTabs().getByRole('tab', { name: 'Agent 2' });
+    expect(within(activeTab.parentElement!).getByRole('button', { name: 'Close Agent 1' })).toBeTruthy();
+    expect(within(inactiveTab.parentElement!).queryByRole('button', { name: /^Close / })).toBeNull();
   });
 
-  it('renders an owned child in place while keeping root task tabs', async () => {
-    const { renderConversation, command } = mount({ initialPeek: child });
+  it('closes the active conversation from its tab without selecting another conversation', async () => {
+    const { command, get } = mount();
     await screen.findByRole('tab', { name: 'Agent 1' });
-    expect(renderConversation).toHaveBeenCalledWith('child-1', child);
-    expect(command).not.toHaveBeenCalled();
-    expect(screen.getByTestId('native-child-1').getAttribute('data-target')).toBe('child-1');
-    expect(agentTabs().getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Agent 1', 'Agent 2']);
-  });
-
-  it('exits the peek when a root tab is selected', async () => {
-    const { renderConversation, onPeek } = mount({ initialPeek: child });
-    await screen.findByRole('tab', { name: 'Agent 1' });
-    fireEvent.click(agentTabs().getByRole('tab', { name: 'Agent 1' }));
-    expect(onPeek).toHaveBeenCalledWith(null);
-    await waitFor(() => expect(renderConversation).toHaveBeenLastCalledWith('s1', undefined));
-  });
-
-  it('hides the close action during a peek and closes the active root after exiting it', async () => {
-    const { onPeek, command, get } = mount({ initialPeek: child });
-    await screen.findByRole('tab', { name: 'Agent 1' });
-    expect(screen.queryByRole('button', { name: 'Close Agent 1' })).toBeNull();
-    fireEvent.click(agentTabs().getByRole('tab', { name: 'Agent 1' }));
-    expect(onPeek).toHaveBeenCalledWith(null);
     const before = [...get().state.tasks[0]!.sessionIds];
     fireEvent.click(await screen.findByRole('button', { name: 'Close Agent 1' }));
     await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'conversation.close', taskId: 't1', sessionId: 's1' }));
@@ -111,7 +66,7 @@ describe('drawer conversation peek', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Reopen Agent 2' }));
     await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'conversation.reopen', taskId: 't1', sessionId: 's2' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Closed conversations' })).toBeNull());
-    await waitFor(() => expect(renderConversation).toHaveBeenLastCalledWith('s2', undefined));
+    await waitFor(() => expect(renderConversation).toHaveBeenLastCalledWith('s2'));
     await waitFor(() => expect(document.activeElement).toBe(agentTabs().getByRole('tab', { name: 'Agent 2' })));
   });
 
@@ -160,7 +115,7 @@ describe('drawer conversation peek', () => {
     expect(screen.getByRole('button', { name: '1 closed conversation' })).toBeTruthy();
   });
 
-  it('disables the header close action while a close command is pending', async () => {
+  it('disables the tab close action while a close command is pending', async () => {
     const { command } = mount();
     await screen.findByRole('tab', { name: 'Agent 1' });
     const pending = deferred<TestSnapshot>();
@@ -196,6 +151,7 @@ describe('drawer conversation peek', () => {
     await screen.findByRole('tab', { name: 'Agent 1' });
     vi.mocked(command).mockResolvedValueOnce(fixture());
     fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Standard/ }));
     await waitFor(() => expect(screen.getByText('CREATION_RECEIPT_REQUIRED')).toBeTruthy());
     fireEvent.click(screen.getByRole('tab', { name: 'Info' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Conversations' }));
@@ -204,11 +160,65 @@ describe('drawer conversation peek', () => {
     expect((screen.getByRole('button', { name: 'New conversation' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('starts a conversation from a preset card and records the chosen preset', async () => {
+    const select = vi.fn(async () => ({ ok: true }));
+    const { command, renderConversation } = mount({ preset: presetPort({ select }) });
+    await screen.findByRole('tab', { name: 'Agent 1' });
+    fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+    fireEvent.click(await screen.findByRole('button', { name: /PTC/ }));
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'conversation.create', taskId: 't1' }));
+    await waitFor(() => expect(select).toHaveBeenCalledWith('s3', 'ptc'));
+    await waitFor(() => expect(renderConversation).toHaveBeenLastCalledWith('s3'));
+    await waitFor(() => expect(document.activeElement).toBe(agentTabs().getByRole('tab', { name: 'Agent 3' })));
+  });
+
+  it('cancels the plus choice without creating a conversation', async () => {
+    const { command } = mount();
+    await screen.findByRole('tab', { name: 'Agent 1' });
+    fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+    await screen.findByRole('button', { name: /^Standard/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('button', { name: /^Standard/ })).toBeNull();
+    expect(command.mock.calls.some(([value]) => value.type === 'conversation.create')).toBe(false);
+    expect(agentTabs().getByRole('tab', { name: 'Agent 1' }).getAttribute('aria-selected')).toBe('true');
+    await waitFor(() => expect(document.activeElement).toBe(agentTabs().getByRole('tab', { name: 'Agent 1' })));
+  });
+
+  it('discards an in-flight preset selection when another tab is selected', async () => {
+    const pending = deferred<{ ok: boolean; message?: string }>();
+    const select = vi.fn(() => pending.promise);
+    const { command } = mount({ preset: presetPort({ select }) });
+    await screen.findByRole('tab', { name: 'Agent 1' });
+    fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^PTC/ }));
+    await waitFor(() => expect(select).toHaveBeenCalledOnce());
+    fireEvent.click(agentTabs().getByRole('tab', { name: 'Agent 1' }));
+    await act(async () => { pending.reject(new Error('That preset is unavailable.')); await Promise.resolve(); });
+    expect(screen.queryByText('That preset is unavailable.')).toBeNull();
+    expect(command.mock.calls.filter(([value]) => value.type === 'conversation.create')).toHaveLength(1);
+  });
+
+  it('keeps the cards and retries the preset selection on the created conversation', async () => {
+    const select = vi.fn()
+      .mockResolvedValueOnce({ ok: false, message: 'That preset is unavailable.' })
+      .mockResolvedValueOnce({ ok: true });
+    const { command, renderConversation } = mount({ preset: presetPort({ select }) });
+    await screen.findByRole('tab', { name: 'Agent 1' });
+    fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+    fireEvent.click(await screen.findByRole('button', { name: /PTC/ }));
+    expect(await screen.findByText('That preset is unavailable.')).toBeTruthy();
+    fireEvent.click(await screen.findByRole('button', { name: /PTC/ }));
+    await waitFor(() => expect(select).toHaveBeenCalledTimes(2));
+    expect(command.mock.calls.filter(([value]) => value.type === 'conversation.create')).toHaveLength(1);
+    await waitFor(() => expect(renderConversation).toHaveBeenLastCalledWith('s3'));
+  });
+
   it('shows the all-closed empty state without duplicating the reopen list', async () => {
     const data = fixture(); data.state.tasks[0]!.closedSessionIds = ['s1', 's2'];
     mount({ data });
     await screen.findByRole('button', { name: '2 closed conversations' });
-    expect(screen.getByText('All conversations are closed. Use + to start a new one, or reopen one from the closed conversations above.')).toBeTruthy();
+    expect(screen.getByText('All conversations are closed. Choose a preset to start a new one, or reopen one from the closed conversations above.')).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /^Standard/ })).toBeTruthy();
     expect(screen.queryByRole('dialog', { name: 'Closed conversations' })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Reopen / })).toBeNull();
   });
@@ -236,20 +246,11 @@ describe('drawer conversation peek', () => {
     await screen.findByRole('tab', { name: 'Agent 1' });
     vi.mocked(command).mockResolvedValueOnce(fixture());
     fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Standard/ }));
     await waitFor(() => expect(screen.getByText('CREATION_RECEIPT_REQUIRED')).toBeTruthy());
     expect((screen.getByRole('button', { name: 'New conversation' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('clears the peek when the drawer leaves Conversations or creates another conversation', async () => {
-    const { onPeek } = mount({ initialPeek: child });
-    await screen.findByRole('tab', { name: 'Agent 1' });
-    fireEvent.click(screen.getByRole('tab', { name: 'Info' }));
-    expect(onPeek).toHaveBeenCalledWith(null);
-    fireEvent.click(screen.getByRole('tab', { name: 'Conversations' }));
-    await screen.findByRole('tab', { name: 'Agent 1' });
-    fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
-    await waitFor(() => expect(onPeek).toHaveBeenCalledWith(null));
-  });
 });
 
 describe('conversation tab attention', () => {

@@ -144,22 +144,6 @@ function ProjectEditorScenario() {
   return <DirectoryPickerProvider picker={{ pick: async () => '/repo/apps/web' }}><ProjectEditorDialog api={harness.api} run={run} onClose={() => {}} onSaved={() => {}} /></DirectoryPickerProvider>;
 }
 
-function NativeComposerScenario() {
-  return <div className="dsh-kanban" style={{ height: 600 }}>
-    <div className="kb-session-frame" style={{ height: '100%' }}>
-      <div className="kb-native-session-header" style={{ height: 52 }}>header</div>
-      <div className="kb-native-conversation">
-        <div data-conversation-content="" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-          <div data-conversation-scroll="" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflowY: 'auto' }}>
-            <div data-conversation-session="" style={{ flex: '1 0 auto', minHeight: 0 }} />
-            <div data-composer-seat="" style={{ flex: 'none', height: 80 }}>composer</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>;
-}
-
 const questionCase = new URLSearchParams(window.location.search).get('case') ?? 'default';
 const round: QuestionRound = {
   id: 'round-1', sessionId: 'session-1', turnId: '1', complete: true, answered: false,
@@ -195,7 +179,6 @@ function App() {
   if (scenario === 'project-relocation') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><RelocationEditorScenario /></div></>;
   if (scenario === 'relocation-list') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><RelocationListScenario /></>;
   if (scenario === 'project-editor') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><ProjectEditorScenario /></div></>;
-  if (scenario === 'native-composer') return <><style>{styles}</style><NativeComposerScenario /></>;
   if (scenario === 'workflow') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario /></div></>;
   if (scenario === 'publishing' && themed) return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><PublishingScenario auth={sharingAuth} /></div></>;
   if (scenario === 'publishing') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><PublishingScenario auth={sharingAuth} /></div></>;
