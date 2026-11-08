@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BoardStateSchema, initialState } from '../../src/domain/schema.js';
+import { parseWorkflow } from '../../src/domain/workflow.js';
 import { populatedState, sampleTask } from './helpers.js';
 
 describe('persisted board schema', () => {
@@ -52,6 +53,27 @@ describe('persisted board schema', () => {
     delete state.schemaVersion;
     expect(BoardStateSchema.safeParse(state).success).toBe(false);
     expect(BoardStateSchema.safeParse({ ...initialState(), engine: 'legacy' }).success).toBe(false);
+  });
+
+  it('persists the default presentation and authored stage positions', () => {
+    const yaml = 'name: Flow\ndefault_view: workflow\ncolumns:\n  - id: todo\n    label: To do\n    position: {x: 10, y: 20}\n  - id: done\n    label: Done\n';
+    const state = populatedState();
+    state.tasks[0]!.columnId = 'todo';
+    state.workflowYaml = yaml;
+    state.workflow = parseWorkflow(yaml);
+    expect(BoardStateSchema.safeParse(state).success).toBe(true);
+  });
+
+  it('rejects an unknown default presentation in the stored workflow', () => {
+    const state = initialState();
+    (state.workflow as { defaultView?: string }).defaultView = 'diagram';
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+
+  it('rejects a stored stage position that the authored YAML does not carry', () => {
+    const state = initialState();
+    state.workflow.columns[0]!.position = { x: 1, y: 2 };
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
   });
 
   it('accepts reordered object keys without confusing them with workflow changes', () => {

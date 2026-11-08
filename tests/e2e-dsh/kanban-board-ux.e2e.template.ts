@@ -68,6 +68,15 @@ it('edits a grouped workflow, grows columns, and animates the drawer', async () 
   expect(explore.overflow).toBeLessThanOrEqual(0);
   expect(geometry.scroll).toBe(true);
 
+  // The workflow diagram is the other presentation of the same board.
+  await page.getByRole('button', { name: 'Workflow', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Workflow diagram' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Explore stage' })).toBeVisible();
+  await expect(page.locator('.kb-flow-edge')).toHaveCount(2);
+  await expect(page.getByRole('button', { name: 'Organize' })).toBeVisible();
+  await page.getByRole('button', { name: 'Board', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Explore column' })).toBeVisible();
+
   await page.getByRole('button', { name: 'Open task Real task 0' }).click();
   const drawer = page.locator('.kb-drawer');
   await expect(drawer).toHaveAttribute('data-entering', 'true');

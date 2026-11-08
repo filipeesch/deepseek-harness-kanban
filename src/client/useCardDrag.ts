@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { boardDropResolver, type CardDropResolver } from './card-drop.js';
 
 export interface CardDragState {
   taskId: string;
@@ -13,6 +14,8 @@ export interface CardDragOptions {
   enabled: boolean;
   canDrop: (columnId: string, taskId: string) => boolean;
   onDrop: (taskId: string, columnId: string, beforeTaskId: string | null) => void;
+  /** Injected so the same gesture serves the board and the diagram. */
+  resolver?: CardDropResolver;
 }
 
 interface PointerDrag {
@@ -34,7 +37,15 @@ export function useCardDrag(options: CardDragOptions) {
   const pendingDrop = useRef<{ columnId: string; beforeTaskId: string | null } | null>(null);
   const optionsRef = useRef(options);
   optionsRef.current = options;
+  const fallbackResolver = useRef<CardDropResolver | null>(null);
   const suppressClickUntil = useRef(0);
+
+  const resolver = (): CardDropResolver => {
+    const injected = optionsRef.current.resolver;
+    if (injected !== undefined) return injected;
+    if (fallbackResolver.current === null) fallbackResolver.current = boardDropResolver();
+    return fallbackResolver.current;
+  };
 
   const cleanup = useCallback(() => {
     const active = current.current as (PointerDrag & { removeListeners?: () => void }) | null;
@@ -77,8 +88,6 @@ export function useCardDrag(options: CardDragOptions) {
         const sourceRect = dragState.source.getBoundingClientRect();
         // The preview stays inside the plugin root so the board's scoped card styles
         // and theme tokens apply to it; fixed positioning keeps it out of the layout.
-        // Outside that root the preview would be unstyled, so the board always
-        // supplies the layer and a missing one simply leaves the drag without a copy.
         const layer = dragState.source.closest('.dsh-kanban');
         if (layer !== null) {
           const ghost = dragState.source.cloneNode(true) as HTMLElement;
@@ -97,42 +106,17 @@ export function useCardDrag(options: CardDragOptions) {
         dragState.ghost.style.top = (moveEvent.clientY - dragState.offsetY) + 'px';
         dragState.ghost.style.display = 'none';
       }
-      const hit = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
+      const point = { x: moveEvent.clientX, y: moveEvent.clientY };
+      const target = resolver().resolve(point, dragState.taskId);
       if (dragState.ghost) dragState.ghost.style.display = '';
-      const column = hit?.closest<HTMLElement>('[data-column-id]');
-      if (!column) { pendingDrop.current = null; setDrag(null); return; }
-      const columnId = column.dataset.columnId ?? '';
-      if (!columnId || !optionsRef.current.canDrop(columnId, dragState.taskId)) { pendingDrop.current = null; setDrag(null); return; }
-      const list = column.querySelector<HTMLElement>('.kb-card-list');
-      if (!list) { pendingDrop.current = null; setDrag(null); return; }
-      const cards = Array.from(list.querySelectorAll<HTMLElement>('.kb-card')).filter(card => card.dataset.taskId !== dragState.taskId);
-      let index = cards.length;
-      for (let i = 0; i < cards.length; i++) {
-        const cardRect = cards[i]!.getBoundingClientRect();
-        if (moveEvent.clientY < cardRect.top + cardRect.height / 2) { index = i; break; }
-      }
-      const listRect = list.getBoundingClientRect();
-      let indicatorY = 4;
-      if (cards.length > 0 && index === 0) indicatorY = cards[0]!.getBoundingClientRect().top - listRect.top - 1;
-      else if (cards.length > 0 && index >= cards.length) indicatorY = cards[cards.length - 1]!.getBoundingClientRect().bottom - listRect.top + 1;
-      else if (cards.length > 0) {
-        const previous = cards[index - 1]!.getBoundingClientRect();
-        const next = cards[index]!.getBoundingClientRect();
-        indicatorY = (previous.bottom + next.top) / 2 - listRect.top;
-      }
-      const beforeTaskId = cards[index]?.dataset.taskId ?? null;
-      pendingDrop.current = { columnId, beforeTaskId };
+      if (!target || !optionsRef.current.canDrop(target.columnId, dragState.taskId)) { pendingDrop.current = null; setDrag(null); return; }
+      pendingDrop.current = { columnId: target.columnId, beforeTaskId: target.beforeTaskId };
       setDrag({
         taskId: dragState.taskId, sourceColumnId: dragState.sourceColumnId,
-        overColumnId: columnId, overColumnName: column.querySelector('.kb-column-header h2')?.textContent ?? columnId,
-        indicatorY, beforeTaskId,
+        overColumnId: target.columnId, overColumnName: target.columnName,
+        indicatorY: target.indicatorY, beforeTaskId: target.beforeTaskId,
       });
-      const board = document.querySelector<HTMLElement>('.kb-columns');
-      if (board) {
-        const boardRect = board.getBoundingClientRect();
-        if (moveEvent.clientX < boardRect.left + 60) board.scrollLeft -= 12;
-        else if (moveEvent.clientX > boardRect.right - 60) board.scrollLeft += 12;
-      }
+      resolver().autoScroll?.(point);
     };
 
     const finish = (drop: boolean) => {
@@ -159,7 +143,6 @@ export function useCardDrag(options: CardDragOptions) {
       dragState.ghost = null;
       dragState.source.style.opacity = '';
     };
-    // Store the listener cleanup on the drag instance; the outer cleanup calls it through the ghost/source fields.
     (dragState as PointerDrag & { removeListeners?: () => void }).removeListeners = cleanupListeners;
   }, [cleanup]);
 

@@ -3,6 +3,7 @@ import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import { taskTitleSlug, worktreePathForBranch } from '../../src/shared/worktree-name.js';
 import { applyMove, applyRunInstruction, createEnteredAtSource } from '../support/in-memory-board.js';
+import { parseWorkflow } from '../../src/domain/workflow.js';
 
 export interface HarnessApi {
   api: ClientApi;
@@ -143,7 +144,7 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
       commands.push(structuredClone(command));
       const firstHub = value.state.hubs[0]!; const firstBoard = firstHub.boards[0]!;
       let receipt: KanbanSnapshot['commandReceipt'];
-      if (command.type === 'board.workflow.save') { const hub = value.state.hubs.find(item => item.id === command.hubId); const board = hub?.boards.find(item => item.id === command.boardId); if (board) { board.workflowYaml = command.yaml; if (hub) hub.revision += 1; } }
+      if (command.type === 'board.workflow.save') { const hub = value.state.hubs.find(item => item.id === command.hubId); const board = hub?.boards.find(item => item.id === command.boardId); if (board) { board.workflowYaml = command.yaml; board.workflow = parseWorkflow(command.yaml); if (hub) hub.revision += 1; } }
       if (command.type === 'task.move') {
         const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);
         const hub = task ? value.state.hubs.find(item => item.tasks.some(candidate => candidate.id === task.id)) : undefined;

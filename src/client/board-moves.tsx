@@ -1,7 +1,7 @@
 import React, { useCallback, useRef, type ReactNode } from 'react';
 import type { BoardState, Column, Command, KanbanSnapshot, Task } from '../shared/types.js';
 import { entryInstruction, hasUnresolvedEntry } from '../domain/stage-entry.js';
-import { normalizeSnapshot } from './hub-view.js';
+import { normalizeSnapshot } from './snapshot-normalize.js';
 import { useCardDrag, type CardDragState } from './useCardDrag.js';
 import { useMoveRequest, type MoveIntent, type OptimisticMove } from './useMoveRequest.js';
 import { TransitionOverrideDialog } from './transition-override-dialog.js';

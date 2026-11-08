@@ -73,7 +73,7 @@ export function WorkflowEditor({ state, run, hubId, boardId, yaml, baseRevision,
     <div className="kb-workflow-editor-head">
       <div>
         <h3>Workflow YAML</h3>
-        <p className="kb-hint" id={hintId}>Configure columns, groups, transitions, and optional entry instructions. WIP limits are not supported.</p>
+        <p className="kb-hint" id={hintId}>Configure columns, groups, transitions, optional entry instructions, the default view, and stage positions. WIP limits are not supported.</p>
       </div>
       <span className={'kb-editor-status ' + (checking ? 'is-checking' : analysis.status === 'valid' ? 'is-valid' : 'is-invalid')} role="status">
         {checking ? 'Checking…' : analysis.status === 'valid' ? 'Valid workflow' : analysis.issues.length + (analysis.issues.length === 1 ? ' issue' : ' issues')}

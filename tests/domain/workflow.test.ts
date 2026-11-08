@@ -22,6 +22,18 @@ describe('workflow configuration', () => {
     expect(canTransition(result, 'doing', 'todo')).toBe(false);
   });
 
+  it('accepts the default presentation and authored stage positions', () => {
+    const result = parseWorkflow('default_view: workflow\ncolumns:\n  - id: todo\n    label: To do\n    position: {x: 40, y: 120}\n  - id: done\n    label: Done\n');
+    expect(result.defaultView).toBe('workflow');
+    expect(result.columns[0]?.position).toEqual({ x: 40, y: 120 });
+    expect(result.columns[1]?.position).toBeUndefined();
+  });
+
+  it('keeps an explicit board default and omits an absent one', () => {
+    expect(parseWorkflow('default_view: board\n' + minimal).defaultView).toBe('board');
+    expect(parseWorkflow(minimal).defaultView).toBeUndefined();
+  });
+
   it('defaults an omitted initial column to the first configured stage, not backlog', () => {
     expect(parseWorkflow(minimal).initialColumnId).toBe('todo');
   });
@@ -56,6 +68,12 @@ describe('workflow configuration', () => {
     'columns: [{id: one, label: One, allowed_transitions: [one, one]}]',
     'columns: [{id: one, label: One, allowed_transitions: null}]',
     'columns: [{id: one, label: One, on_enter_prompt: 3}]',
+    'default_view: maybe\n' + minimal,
+    'columns: [{id: one, label: One, position: 3}]',
+    'columns: [{id: one, label: One, position: {x: 1}}]',
+    'columns: [{id: one, label: One, position: {x: \"1\", y: 2}}]',
+    'columns: [{id: one, label: One, position: {x: 1, y: 2, z: 3}}]',
+    'columns: [{id: one, label: One, position: {x: .inf, y: 2}}]',
     'columns: [{id: one, label: One, limit: 2}]',
     'columns: [{id: one, label: One, tools: [shell]}]',
     'columns: [{id: one, label: One, stage_instructions: Execute}]',

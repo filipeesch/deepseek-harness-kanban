@@ -48,12 +48,14 @@ export const autoModePause = z.strictObject({
   message: z.string().optional(),
 });
 export const autoMode = z.strictObject({ enabled: z.boolean(), pause: autoModePause.optional() });
+/** An authored stage position; the workflow parser owns the accepted range. */
+export const stagePosition = z.strictObject({ x: z.number().finite(), y: z.number().finite() });
 export const column = z.strictObject({
-  id, name: nonempty, onEnterPrompt: z.string().optional(), allowedTransitions: z.array(id).optional(),
+  id, name: nonempty, onEnterPrompt: z.string().optional(), allowedTransitions: z.array(id).optional(), position: stagePosition.optional(),
 });
 export const group = z.strictObject({ id, name: nonempty, columnIds: z.array(id).min(1) });
 export const workflow = z.strictObject({
-  name: nonempty, initialColumnId: id, columns: z.array(column).min(1), groups: z.array(group),
+  name: nonempty, initialColumnId: id, defaultView: z.enum(['board', 'workflow']).optional(), columns: z.array(column).min(1), groups: z.array(group),
 });
 export const note = z.strictObject({
   id, taskId: id, content: nonempty, createdAt: timestamp, updatedAt: timestamp, tags: z.array(nonempty).optional(),
@@ -95,13 +97,27 @@ export const baseTask = z.strictObject({
 /** The task fields the shared invariant check reads. */
 export type TaskCheckValue = Pick<Task, 'projectId' | 'columnId' | 'sessionIds' | 'closedSessionIds' | 'operation' | 'pendingTransition' | 'instructionPending'>;
 
-export function canonicalWorkflow(value: Workflow): string {
+function workflowShape(value: Workflow, includePosition: boolean): string {
   return JSON.stringify({
     name: value.name,
+    defaultView: value.defaultView,
     initialColumnId: value.initialColumnId,
-    columns: value.columns.map(item => ({ id: item.id, name: item.name, onEnterPrompt: item.onEnterPrompt, allowedTransitions: item.allowedTransitions })),
+    columns: value.columns.map(item => ({
+      id: item.id, name: item.name, onEnterPrompt: item.onEnterPrompt, allowedTransitions: item.allowedTransitions,
+      ...(includePosition ? { position: item.position } : {}),
+    })),
     groups: value.groups.map(item => ({ id: item.id, name: item.name, columnIds: item.columnIds })),
   });
+}
+
+/** The persisted workflow identity, including its diagram placement. */
+export function canonicalWorkflow(value: Workflow): string {
+  return workflowShape(value, true);
+}
+
+/** The workflow without its diagram placement: the flow two versions must share to merge. */
+export function workflowMeaning(value: Workflow): string {
+  return workflowShape(value, false);
 }
 
 type Issue = (path: (string | number)[], message: string) => void;

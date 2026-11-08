@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Workflow } from '../../src/shared/types.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
-import { canTransition, nextStage, transitionAccess, transitionDestinations } from '../../src/domain/transitions.js';
+import { authoredTransitions, canTransition, nextStage, transitionAccess, transitionDestinations } from '../../src/domain/transitions.js';
 
 const workflow: Workflow = {
   name: 'Flow',
@@ -29,6 +29,13 @@ describe('transition access policy', () => {
     expect(transitionAccess(workflow, 'plan', 'archive')).toBe('allowed');
     expect(transitionAccess(workflow, 'archive', 'backlog')).toBe('restricted');
     expect(transitionAccess(workflow, 'archive', 'done')).toBe('restricted');
+  });
+
+  it('exposes the authored rule for one stage', () => {
+    expect(authoredTransitions(workflow, 'backlog')).toEqual({ targets: ['plan'], next: workflow.columns[1] });
+    expect(authoredTransitions(workflow, 'plan')).toEqual({ targets: null, next: workflow.columns[2] });
+    expect(authoredTransitions(workflow, 'archive')).toEqual({ targets: [], next: undefined });
+    expect(authoredTransitions(workflow, 'missing')).toBeNull();
   });
 
   it('returns every workflow stage in workflow order with its access', () => {

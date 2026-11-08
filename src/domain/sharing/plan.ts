@@ -3,6 +3,7 @@ import { parseWorkflow } from '../workflow.js';
 import { boardContentKey, sameSharedDocument, type SharedBoardEntry, type SharedHubDocument } from './document.js';
 import { boardKeyFromName, normalizeBoardName, type BoardBindings, type OrphanMap } from './identity.js';
 import type { LocalSharedBoard } from './projection.js';
+import { mergeWorkflowPlacements } from './workflow-merge.js';
 
 /** Display states shared with the client. */
 export type BoardSharingState = 'in-sync' | 'draft' | 'updates-available' | 'needs-review' | 'orphan';
@@ -29,6 +30,8 @@ export interface BoardComparison {
   local?: SharingContent;
   published?: SharingContent;
   base?: SharingContent;
+  /** The content applying should store instead of the published content. */
+  resolved?: SharingContent;
   tasks: number;
 }
 
@@ -133,12 +136,22 @@ export function compareSharing(input: SharingInput): SharingComparison {
       const publishedContent = content(entry);
       const baseContent = baseEntry ? content(baseEntry) : undefined;
       let decision: BoardDecision;
+      let resolved: SharingContent | undefined;
       if (sameContent(localContent, publishedContent)) decision = 'in-sync';
       else if (baseContent === undefined) decision = 'updates-available';
-      else if (sameContent(localContent, baseContent)) decision = 'updates-available';
-      else if (sameContent(publishedContent, baseContent)) decision = 'draft';
-      else decision = 'needs-review';
-      boards.push({ decision, pending: decision === 'updates-available', boardId: local.boardId, key: entry.key, name: local.name, local: localContent, published: publishedContent, ...(baseContent ? { base: baseContent } : {}), tasks: local.tasks });
+      else {
+        // A difference limited to stage placement merges instead of asking for a
+        // choice; only a meaning changed differently on both sides still does.
+        const merge = mergeWorkflowPlacements({ base: baseContent, local: localContent, published: publishedContent });
+        if (merge !== null) {
+          const merged: SharingContent = { name: merge.name, workflow: merge.workflow };
+          decision = sameContent(merged, localContent) ? 'draft' : 'updates-available';
+          if (!sameContent(merged, publishedContent)) resolved = merged;
+        } else if (sameContent(localContent, baseContent)) decision = 'updates-available';
+        else if (sameContent(publishedContent, baseContent)) decision = 'draft';
+        else decision = 'needs-review';
+      }
+      boards.push({ decision, pending: decision === 'updates-available', boardId: local.boardId, key: entry.key, name: local.name, local: localContent, published: publishedContent, ...(baseContent ? { base: baseContent } : {}), ...(resolved === undefined ? {} : { resolved }), tasks: local.tasks });
       continue;
     }
     const orphan = matchOrphan(entry, input.local, input.orphans, claimedOrphans);
@@ -184,7 +197,7 @@ export function compareSharing(input: SharingInput): SharingComparison {
     if (!isApplyDecision(board.decision) || board.boardId === undefined || board.published === undefined) continue;
     const local = localById.get(board.boardId);
     if (!local || local.taskColumns.length === 0) continue;
-    const columns = new Set(parseWorkflow(board.published.workflow).columns.map(column => column.id));
+    const columns = new Set(parseWorkflow((board.resolved ?? board.published).workflow).columns.map(column => column.id));
     for (const entry of local.taskColumns) {
       if (columns.has(entry.columnId)) continue;
       blockers.push({
@@ -201,11 +214,14 @@ export function compareSharing(input: SharingInput): SharingComparison {
   const removalIds = new Set(boards.filter(board => board.decision === 'remove').map(board => board.boardId!));
   for (const board of boards) {
     if (!isApplyDecision(board.decision) || board.published === undefined) continue;
-    const wanted = normalizeBoardName(board.published.name);
+    // The applied name can differ from the published one after a local rename
+    // merged with a placement update; the blocker must judge the resolved name.
+    const target = board.resolved ?? board.published;
+    const wanted = normalizeBoardName(target.name);
     for (const other of input.local) {
       if (other.boardId === board.boardId || removalIds.has(other.boardId)) continue;
       if (normalizeBoardName(other.name) !== wanted) continue;
-      blockers.push({ code: 'SHARING_NAME_CONFLICT', message: 'Applying the team board "' + board.published.name + '" would duplicate the local board name.', ...(board.boardId === undefined ? {} : { boardId: board.boardId }), boardName: board.published.name });
+      blockers.push({ code: 'SHARING_NAME_CONFLICT', message: 'Applying the team board "' + target.name + '" would duplicate the local board name.', ...(board.boardId === undefined ? {} : { boardId: board.boardId }), boardName: target.name });
     }
   }
 
@@ -246,12 +262,15 @@ export function buildUpdatePlan(input: SharingInput): SharingPlan {
   const comparison = compareSharing(input);
   const apply = comparison.boards
     .filter(board => isApplyDecision(board.decision) && board.published !== undefined && (board.key !== undefined || board.decision === 'create'))
-    .map(board => ({
-      ...(board.boardId === undefined ? {} : { boardId: board.boardId }),
-      key: board.key!,
-      name: board.published!.name,
-      workflow: board.published!.workflow,
-    }));
+    .map(board => {
+      const source = board.resolved ?? board.published!;
+      return {
+        ...(board.boardId === undefined ? {} : { boardId: board.boardId }),
+        key: board.key!,
+        name: source.name,
+        workflow: source.workflow,
+      };
+    });
   const removals = comparison.boards.filter(board => board.decision === 'remove' && board.boardId !== undefined).map(board => board.boardId!);
   const orphans = comparison.boards
     .filter(board => board.decision === 'orphan' && board.boardId !== undefined && board.key !== undefined)
