@@ -1,22 +1,13 @@
-import { realpath, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { KanbanError } from '../shared/errors.js';
 import type { GitExecutor, GitPort, GitTree } from '../shared/ports.js';
 import type { CreateWorktree, GitProject } from '../shared/types.js';
+import { resolveCanonicalPath } from './path-resolution.js';
 
-/** Resolve aliases, including the existing parent of a not-yet-created path. */
-export async function canonicalPath(value: string, allowMissing = false): Promise<string> {
-  if (!path.isAbsolute(value) || /[\0\r\n]/.test(value)) throw new KanbanError('INVALID_PATH', 'An absolute path without control characters is required.', { path: value });
-  const candidate = path.resolve(value);
-  try { return await realpath(candidate); }
-  catch (error) {
-    if (allowMissing && (error as NodeJS.ErrnoException).code === 'ENOENT') {
-      const parent = path.dirname(candidate);
-      if (parent !== candidate) return path.join(await canonicalPath(parent, true), path.basename(candidate));
-    }
-    throw new KanbanError('PATH_UNAVAILABLE', 'The directory cannot be resolved.', { path: candidate, cause: (error as NodeJS.ErrnoException).code });
-  }
-}
+/** Canonical resolution lives in one place; the alias keeps the historical Git-facing name. */
+export { resolveCanonicalPath as canonicalPath } from './path-resolution.js';
+const canonicalPath = resolveCanonicalPath;
 
 export function containsPath(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
@@ -150,6 +141,19 @@ export class GitAdapter implements GitPort {
       await this.checked(project, ['-C', root, 'worktree', 'add', '--', target, request.branchName], sessionIds, signal, true);
     }
     return this.inspect(project, target, sessionIds);
+  }
+
+  async repair(project: GitProject, worktreePaths: string[], sessionIds: string[], signal?: AbortSignal): Promise<void> {
+    const { root, common } = await this.roots(project, sessionIds);
+    const existing: string[] = [];
+    for (const value of worktreePaths) {
+      const target = await canonicalPath(value, true);
+      if (await exists(target)) existing.push(target);
+    }
+    // A checkout that no longer exists cannot be repaired; its binding records the error instead.
+    if (existing.length === 0) return;
+    await this.assertPolicy(project, [common, ...existing], sessionIds, true);
+    await this.checked(project, ['-C', root, 'worktree', 'repair', ...existing], sessionIds, signal, true);
   }
 
   async remove(project: GitProject, value: string, discardChanges: boolean, sessionIds: string[], signal?: AbortSignal): Promise<void> {

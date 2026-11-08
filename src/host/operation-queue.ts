@@ -1,7 +1,8 @@
 export interface OperationQueueJob {
-  /** Destructive work is serialized inside a lane and may overlap across lanes. */
+  /** Slow context work is serialized inside a lane and may overlap across lanes. */
   lane: string;
-  taskId: string;
+  /** The entity that owns the journal: a task id or a project id. */
+  ownerId: string;
   operationId: string;
   run: () => Promise<void>;
 }
@@ -32,7 +33,7 @@ export class OperationQueue {
   /** Returns false when the queue is disposed; a duplicate operation is already queued and returns true. */
   enqueue(job: OperationQueueJob): boolean {
     if (this.disposed) return false;
-    const key = job.taskId + ':' + job.operationId;
+    const key = job.ownerId + ':' + job.operationId;
     if (this.keys.has(key)) return true;
     this.keys.add(key);
     this.laneFor(job.lane).pending.push(job);
@@ -70,7 +71,7 @@ export class OperationQueue {
     if (!job) { this.forget(name, lane); this.settleIdle(); return; }
     lane.running = Promise.resolve().then(() => job.run()).catch(() => {}).finally(() => {
       lane.running = undefined;
-      this.keys.delete(job.taskId + ':' + job.operationId);
+      this.keys.delete(job.ownerId + ':' + job.operationId);
       this.drain(name);
       this.settleIdle();
     });

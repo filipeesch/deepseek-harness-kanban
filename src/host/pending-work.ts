@@ -1,6 +1,7 @@
 /** Runs the pending-work steps that must precede an attention projection tick. */
 export interface PendingWorkOptions {
   resumeWorktrees: () => Promise<void>;
+  resumeRelocations: () => Promise<void>;
   dispatchPending: () => Promise<void>;
   report?: (error: unknown) => void;
 }
@@ -15,6 +16,11 @@ export class PendingWorkRunner {
   async run(): Promise<void> {
     try {
       await this.options.resumeWorktrees();
+    } catch (error) {
+      this.options.report?.(error);
+    }
+    try {
+      await this.options.resumeRelocations();
     } catch (error) {
       this.options.report?.(error);
     }

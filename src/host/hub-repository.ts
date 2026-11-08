@@ -10,6 +10,8 @@ import { assertRevision, isDomainId } from '../domain/validation.js';
 
 export interface HubRepositoryOptions { id?: () => string; now?: () => string }
 export interface LocatedTask { hubId: string; hub: HubState; board: Board; project: Project; task: HubTask }
+/** One project's identity and whether it holds a relocation journal. */
+export interface ProjectSummary { readonly hubId: string; readonly projectId: string; readonly hasOperation: boolean }
 /**
  * One task's identity and conversation ids without cloning the Hub that owns it. The
  * arrays belong to the stored snapshot and MUST be treated as read-only.
@@ -51,6 +53,7 @@ function parseHub(value: unknown, message: string): HubState {
 export class HubRepository {
   private readonly hubs = new Map<string, HubState>();
   private summaries: readonly TaskSummary[] | undefined;
+  private projectSummaryCache: readonly ProjectSummary[] | undefined;
   private meta: KanbanMeta;
   private readonly listeners = new Set<() => void>();
   private readonly mutationContext = new AsyncLocalStorage<{ active: boolean }>();
@@ -163,6 +166,7 @@ export class HubRepository {
 
   private changed(): void {
     this.summaries = undefined;
+    this.projectSummaryCache = undefined;
     for (const listener of [...this.listeners]) {
       try { listener(); } catch { /* An observer cannot roll back or poison a durable commit. */ }
     }
@@ -235,6 +239,25 @@ export class HubRepository {
       return { hubId: hub.id, hub: structuredClone(hub), board: structuredClone(board), project: structuredClone(project), task: structuredClone(task) };
     }
     return undefined;
+  }
+
+  findProject(projectId: string): { hubId: string; hub: HubState; project: Project } | undefined {
+    for (const hub of this.hubs.values()) {
+      const project = hub.projects.find(value => value.id === projectId);
+      if (project) return { hubId: hub.id, hub: structuredClone(hub), project: structuredClone(project) };
+    }
+    return undefined;
+  }
+
+  /** The lightweight project read used by relocation resume, without cloning a Hub per project. */
+  projectSummaries(): readonly ProjectSummary[] {
+    if (this.projectSummaryCache !== undefined) return this.projectSummaryCache;
+    const summaries: ProjectSummary[] = [];
+    for (const hub of this.hubs.values()) {
+      for (const project of hub.projects) summaries.push({ hubId: hub.id, projectId: project.id, hasOperation: project.operation !== undefined });
+    }
+    this.projectSummaryCache = summaries;
+    return summaries;
   }
 
   findBoard(boardId: string): { hubId: string; hub: HubState; board: Board } | undefined {

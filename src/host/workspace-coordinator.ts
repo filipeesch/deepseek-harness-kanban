@@ -40,6 +40,11 @@ export class WorkspaceCoordinator {
         return existing;
       }
     }
+    return this.rebindProject(hubId, project);
+  }
+
+  /** Bind the project to a workspace for its current path even when the previous binding still resolves. */
+  async rebindProject(hubId: string, project: Project): Promise<string | undefined> {
     const ensured = await this.options.workspaces.ensure(project.projectPath, { title: project.name });
     if (ensured.workspace.hidden) await this.setVisibility(ensured.workspace.id, false);
     if (project.workspaceId !== ensured.workspace.id || project.workspaceOwned !== ensured.owned) {

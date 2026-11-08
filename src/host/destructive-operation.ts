@@ -4,6 +4,7 @@ import type { GitPort, SessionPort } from '../shared/ports.js';
 import { isGitProject } from '../shared/project.js';
 import type { ContextOperation, GitProject, HubState, Project, Task } from '../shared/types.js';
 import { canonicalPath, containsPath } from './git.js';
+import { resolveDeletionTarget } from './deletion-target.js';
 import { requireTask, type OperationJournal } from './operation-journal.js';
 import { WorktreeSharingGuard } from './worktree-sharing.js';
 
@@ -27,6 +28,8 @@ export interface DestructiveOperationOptions {
   now?: () => string;
   sharing?: WorktreeSharingGuard;
   onTaskDeleted?: (task: Task, project: Project) => Promise<void>;
+  /** Reports a checkout left on disk because the deletion could not resolve its project context. */
+  onCheckoutRetained?: (task: Task, project: Project, path: string) => void;
 }
 
 type DestructiveRequest = Extract<ContextOperation['request'], { kind: 'delete' | 'remove' }>;
@@ -51,6 +54,7 @@ export class DestructiveExecution {
   private readonly now: () => string;
   private readonly sharing: WorktreeSharingGuard;
   private readonly onTaskDeleted?: (task: Task, project: Project) => Promise<void>;
+  private readonly onCheckoutRetained?: (task: Task, project: Project, path: string) => void;
   readonly signal: AbortSignal;
 
   constructor(
@@ -64,6 +68,7 @@ export class DestructiveExecution {
     this.now = options.now ?? (() => new Date().toISOString());
     this.sharing = options.sharing ?? new WorktreeSharingGuard(store, sessions);
     this.onTaskDeleted = options.onTaskDeleted;
+    this.onCheckoutRetained = options.onCheckoutRetained;
     this.signal = host.signal;
   }
 
@@ -95,21 +100,30 @@ export class DestructiveExecution {
       if (currentTarget !== confirmedTarget) throw new KanbanError('OPERATION_TARGET_CHANGED', 'The confirmed worktree target changed; it will not be removed.');
     }
 
+    // Delete tolerates a project context that no longer resolves; a worktree-only
+    // removal still needs its base directory to return the conversations to.
+    const disposition = request.kind === 'delete'
+      ? await resolveDeletionTarget({ task, project, git: this.git })
+      : { directoryTarget: gitProject === undefined ? undefined : await this.git.projectDirectory(gitProject), checkout: 'remove' as const };
     let checkoutRemoved = false;
-    let target: string = task.effectiveCwd;
-    if (gitProject !== undefined) target = await this.git.projectDirectory(gitProject);
-    if (task.worktree && !operation.gitCompleted) {
+    if (task.worktree && !operation.gitCompleted && disposition.checkout === 'remove') {
       await this.assertPreRemoval(taskId, task, gitProject, request);
     }
 
     this.host.sourceUnchanged(taskId, project);
-    if (gitProject !== undefined && !await this.host.switchDirectories(taskId, operationId, target, false, gitProject)) return 'waiting';
-    ({ task, project } = this.host.read(taskId));
+    if (disposition.directoryTarget !== undefined) {
+      if (gitProject === undefined) throw new KanbanError('PROJECT_NOT_GIT', 'This project is not a Git repository; Git and worktree actions are unavailable.', { projectId: project.id });
+      if (!await this.host.switchDirectories(taskId, operationId, disposition.directoryTarget, false, gitProject)) return 'waiting';
+      ({ task, project } = this.host.read(taskId));
+    }
 
     if (!task.operation!.gitCompleted) {
       if (!await this.idle(taskId, operationId)) return 'waiting';
-      if (gitProject === undefined) {
-        await this.update(taskId, operationId, (draft, current) => { draft.worktree = null; current.gitCompleted = true; });
+      if (gitProject === undefined || disposition.checkout !== 'remove') {
+        await this.update(taskId, operationId, (draft, current) => {
+          if (disposition.checkout === 'retain' && disposition.retainedPath !== undefined) current.retainedCheckoutPath = disposition.retainedPath;
+          draft.worktree = null; current.gitCompleted = true;
+        });
       } else if (task.worktree) {
         await this.assertPreRemoval(taskId, task, gitProject, request);
         await this.update(taskId, operationId, (_draft, current) => { current.phase = 'removing'; });
@@ -129,7 +143,11 @@ export class DestructiveExecution {
       await this.update(taskId, operationId, (draft, current) => { draft.worktree = null; current.gitCompleted = true; });
     }
 
-    const removedCheckout = checkoutRemoved || (operation.gitCompleted && gitProject !== undefined);
+    const settled = this.host.read(taskId).task.operation!;
+    const retainedPath = settled.retainedCheckoutPath;
+    // A checkout recorded as retained was never removed, so it cannot count as removed
+    // on a resumed execution either.
+    const removedCheckout = checkoutRemoved || (settled.gitCompleted && settled.targetPath !== undefined && retainedPath === undefined && gitProject !== undefined);
     if (request.kind === 'remove') {
       if (request.force === true && removedCheckout) await this.markAffectedBindings(taskId, operation.targetPath!);
       await this.update(taskId, operationId, draft => { draft.operation = null; });
@@ -155,6 +173,9 @@ export class DestructiveExecution {
       state.tasks = state.tasks.filter(item => item.id !== taskId);
     });
     try { await this.onTaskDeleted?.(deleted.task, deleted.project); } catch { /* cleanup is reported by the callback owner */ }
+    if (retainedPath !== undefined) {
+      try { this.onCheckoutRetained?.(deleted.task, deleted.project, retainedPath); } catch { /* reporting is best effort */ }
+    }
     return 'done';
   }
 

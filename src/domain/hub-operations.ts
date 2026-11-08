@@ -4,7 +4,7 @@ import { assertId, isAbsolutePath } from './validation.js';
 import { createBoard } from './hub-schema.js';
 import { parseWorkflow } from './workflow.js';
 import { entryInstruction, nextEnteredAt } from './stage-entry.js';
-import { assertProjectConversion, buildProject } from './project-registration.js';
+import { assertProjectSave, buildProject } from './project-registration.js';
 import { applyNoteTags, validateNoteWrite, type NoteInput } from './note.js';
 import { placementIndex, type Placement } from './placement.js';
 import { compareTaskOrder } from './task-order.js';
@@ -121,7 +121,7 @@ export function saveProject(hub: HubState, input: ProjectInput, deps: OperationD
   if (value.id !== undefined) assertId(value.id, 'Project ID');
   const projectId = value.id ?? nextId(hub.projects, deps.id);
   const current = hub.projects.find(project => project.id === projectId);
-  assertProjectConversion(hub, projectId, value);
+  assertProjectSave(hub, projectId, value);
   const project = buildProject(projectId, value, current);
   if (current) hub.projects[hub.projects.indexOf(current)] = project;
   else hub.projects.push(project);
@@ -131,6 +131,7 @@ export function saveProject(hub: HubState, input: ProjectInput, deps: OperationD
 
 export function deleteProject(hub: HubState, projectId: string, deps: OperationDeps): Project {
   const project = requireProject(hub, projectId);
+  invariant(!project.operation, 'PROJECT_BUSY', 'Resolve the project relocation before deleting the project.');
   invariant(!hub.tasks.some(task => task.projectId === projectId), 'PROJECT_IN_USE', 'Delete the tasks in this project before deleting the project.');
   hub.projects.splice(hub.projects.indexOf(project), 1);
   hub.updatedAt = timestamp(deps);

@@ -61,12 +61,13 @@ export class TestSessions implements SessionPort {
 }
 function inside(root:string,candidate:string):boolean{const part=path.relative(root,candidate);return part===''||(!path.isAbsolute(part)&&part!=='..'&&!part.startsWith('..'+path.sep));}
 export class TestGit implements GitPort {
- trees=new Map<string,GitTree>();created=0;removed:string[]=[];branchNames=['main','feature'];
+ trees=new Map<string,GitTree>();created=0;removed:string[]=[];repaired:string[]=[];repairCalls:Array<{paths:string[];sessionIds:string[]}>=[];projectDirectoryCalls=0;projectDirectoryFailure:KanbanError|undefined;branchNames=['main','feature'];
  async branches(){return [...this.branchNames];}
- async projectDirectory(project:GitProject,root?:string){return root?path.join(root,path.relative(project.gitRootPath,project.projectPath)):project.projectPath;}
+ async projectDirectory(project:GitProject,root?:string){this.projectDirectoryCalls++;if(this.projectDirectoryFailure)throw this.projectDirectoryFailure;return root?path.join(root,path.relative(project.gitRootPath,project.projectPath)):project.projectPath;}
  async inspect(_project:GitProject,root:string){const tree=this.trees.get(root);if(!tree)throw new KanbanError('NOT_WORKTREE','Not a test worktree.');return {...tree};}
  async create(project:GitProject,request:CreateWorktree){this.created++;await mkdir(await this.projectDirectory(project,request.path),{recursive:true});const tree={path:request.path,branch:request.branchName,dirty:false,commonDirectory:path.join(project.gitRootPath,'.git')};this.trees.set(request.path,tree);return tree;}
  async remove(_project:GitProject,root:string,discard:boolean){const tree=this.trees.get(root);if(tree?.dirty&&!discard)throw new KanbanError('DISCARD_REQUIRED','Confirm discard.',{path:root});this.trees.delete(root);this.removed.push(root);}
+ async repair(_project:GitProject,roots:string[],sessionIds:string[]){this.repaired.push(...roots);this.repairCalls.push({paths:[...roots],sessionIds:[...sessionIds]});}
  async assertPolicy(){}
 }
 export class TestProjectProbe implements ProjectProbe {

@@ -1,10 +1,10 @@
-import { realpath, stat } from 'node:fs/promises';
-import path from 'node:path';
+import { stat } from 'node:fs/promises';
 import { KanbanError } from '../shared/errors.js';
 import type { CommandResult, ProjectProbe } from '../shared/ports.js';
 import type { ProjectLocation } from '../shared/types.js';
 import { containsPath } from './git.js';
 import { runHostCommand } from './host-command.js';
+import { resolveCanonicalPath } from './path-resolution.js';
 
 /** One plugin-owned command invocation; injectable so probes run without a subprocess in tests. */
 export type ProbeRunner = (argv: string[], cwd: string) => Promise<CommandResult>;
@@ -27,18 +27,11 @@ export interface DefaultBranchProbe {
 export function createDirectoryProbe(): DirectoryProbe {
   return {
     async resolve(value: string): Promise<string> {
-      if (!path.isAbsolute(value) || /[\0\r\n]/.test(value)) {
-        throw new KanbanError('INVALID_PATH', 'An absolute path without control characters is required.', { path: value });
-      }
-      let canonical: string;
-      try { canonical = await realpath(path.resolve(value)); }
-      catch (error) {
-        throw new KanbanError('PATH_UNAVAILABLE', 'The selected folder cannot be resolved.', { path: value, cause: (error as NodeJS.ErrnoException).code });
-      }
+      const canonical = await resolveCanonicalPath(value);
       let info: Awaited<ReturnType<typeof stat>>;
       try { info = await stat(canonical); }
       catch (error) {
-        throw new KanbanError('PATH_UNAVAILABLE', 'The selected folder cannot be resolved.', { path: canonical, cause: (error as NodeJS.ErrnoException).code });
+        throw new KanbanError('PATH_UNAVAILABLE', 'The directory cannot be resolved.', { path: canonical, cause: (error as NodeJS.ErrnoException).code });
       }
       if (!info.isDirectory()) throw new KanbanError('PATH_UNAVAILABLE', 'The selected path is not a directory.', { path: canonical });
       return canonical;

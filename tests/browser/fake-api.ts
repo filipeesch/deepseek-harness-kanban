@@ -12,7 +12,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error' }
+export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error' }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -77,8 +77,22 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
       { id: 'n2', taskId: 'short', content: 'Todo note', tags: ['todo'], createdAt: now, updatedAt: now },
     ] satisfies Note[] : [], createdAt: now, updatedAt: now,
   };
+  if (options.extraProject) hub.projects.push({ id: 'p3', name: 'Relocation-only project', projectPath: '/repo/free', gitRootPath: '/repo', defaultBranch: 'main' });
+  options.relocation?.forEach((state, index) => {
+    const project = hub.projects[index];
+    if (!project || state === null || state === undefined) return;
+    project.operation = {
+      id: 'relocation-' + project.id,
+      request: { from: { projectPath: project.projectPath, gitRootPath: project.gitRootPath }, to: { name: project.name, projectPath: '/moved/' + project.id, gitRootPath: '/moved' } },
+      phase: state,
+      migratedSessionIds: [],
+      started: state !== 'waiting',
+      createdAt: now,
+      ...(state === 'failed' ? { error: { code: 'DIRECTORY_SWITCH_FAILED', message: 'A conversation directory could not be changed.' } } : {}),
+    };
+  });
   const settings = { revision: 1, worktreeBasePath: '/worktrees' };
-  const raw: KanbanSnapshot = { sequence: 1, stateRevision: 1, attention, conversationAttention, sharing: options.sharing ?? {}, state: { hubs: [hub], settings } };
+  const raw: KanbanSnapshot = { sequence: 1, stateRevision: 1, attention, conversationAttention, sharing: options.sharing ?? {}, ...(options.retained === undefined ? {} : { retainedCheckouts: options.retained }), state: { hubs: [hub], settings } };
   let value = withLegacy(raw);
   if ((options.hubs ?? 1) > 1) value.state.hubs.push({ id: 'hub-2', name: 'Second Hub', revision: 0, projects: [], boards: [], tasks: [], notes: [], createdAt: now, updatedAt: now });
   const listeners = new Set<(snapshot: TestSnapshot) => void>();
@@ -179,6 +193,13 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
       }
       if (command.type === 'board.create') { const hub = value.state.hubs.find(item => item.id === command.hubId); if (hub) { const board = { id: 'board-' + (commands.length + 1), name: command.name, workflowYaml: workflowYaml(), workflow: structuredClone(firstBoard.workflow), createdAt: now, updatedAt: now }; hub.boards.push(board); receipt = { kind: 'board', id: board.id }; } }
       if (command.type === 'hub.create') { const created: HubState = { id: 'hub-' + (commands.length + 1), name: command.name, revision: 0, projects: [], boards: [], tasks: [], notes: [], createdAt: now, updatedAt: now }; value.state.hubs.push(created); receipt = { kind: 'hub', id: created.id }; }
+      const relocatedProject = command.type === 'project.relocationRetry' || command.type === 'project.relocationCancel'
+        ? value.state.hubs.flatMap(hub => hub.projects).find(project => project.id === command.projectId)
+        : undefined;
+      if (relocatedProject?.operation !== undefined) {
+        if (command.type === 'project.relocationRetry') { relocatedProject.operation.phase = 'queued'; delete relocatedProject.operation.error; }
+        if (command.type === 'project.relocationCancel') delete relocatedProject.operation;
+      }
       const snapshot = publish();
       return receipt ? { ...snapshot, commandReceipt: receipt } : snapshot;
     },
@@ -227,7 +248,17 @@ function blockedBindingTask(): HubTask {
   };
 }
 
-function clone(value: KanbanSnapshot): KanbanSnapshot { const normalized = withLegacy(value); return structuredClone({ sequence: normalized.sequence, stateRevision: normalized.stateRevision, attention: normalized.attention, conversationAttention: normalized.conversationAttention, sharing: normalized.sharing ?? {}, state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } } }); }
+function clone(value: KanbanSnapshot): KanbanSnapshot {
+  const normalized = withLegacy(value);
+  return structuredClone({
+    sequence: normalized.sequence, stateRevision: normalized.stateRevision,
+    attention: normalized.attention, conversationAttention: normalized.conversationAttention,
+    sharing: normalized.sharing ?? {},
+    ...(normalized.sharingAuth === undefined ? {} : { sharingAuth: normalized.sharingAuth }),
+    ...(normalized.retainedCheckouts === undefined ? {} : { retainedCheckouts: normalized.retainedCheckouts }),
+    state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } },
+  });
+}
 function withLegacy(snapshot: KanbanSnapshot): TestSnapshot {
   const state = { hubs: snapshot.state.hubs } as KanbanState & Omit<BoardState, 'settings'> & { settings: any };
   let settingsValue = structuredClone(snapshot.state.settings);

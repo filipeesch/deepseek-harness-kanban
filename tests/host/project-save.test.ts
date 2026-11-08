@@ -51,6 +51,20 @@ describe('project save repository validation', () => {
     expect(project.gitRootPath).toBeUndefined();
   });
 
+  it('changes a project location directly when the project has no tasks', async () => {
+    const f = await setup();
+    const moved = path.join(f.gitRoot, 'apps', 'moved');
+    await (await import('node:fs/promises')).mkdir(moved);
+    f.probe.locations.set(moved, { kind: 'git', projectPath: moved, gitRootPath: f.gitRoot, defaultBranch: 'main' });
+    const result = await f.app.command({ type: 'project.save', project: { id: f.project.id, name: f.project.name, projectPath: moved, gitRootPath: f.gitRoot } });
+    expect(result.state.hubs[0]!.projects.find(value => value.id === f.project.id)?.projectPath).toBe(moved);
+  });
+
+  it('reports an unavailable project path as PATH_UNAVAILABLE', async () => {
+    const f = await setup();
+    await expect(f.app.command({ type: 'project.save', project: { name: 'Gone', projectPath: path.join(f.root, 'missing') } })).rejects.toMatchObject({ code: 'PATH_UNAVAILABLE' });
+  });
+
   it('removes a Git association while the project still has tasks', async () => {
     const f = await setup();
     await addTask(f);
