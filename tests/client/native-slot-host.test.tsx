@@ -27,12 +27,12 @@ const locale: NativeLocaleSource = {
 const standard = { sessionId: 'a', useSession: (select: (value: object) => unknown) => select({ openState: 'open', blank: true }) };
 
 describe('NativeSlotHost', () => {
-  it('renders native entries in order with inject faces, hooks, owner props, and locale', () => {
+  it('renders native entries in order with inject faces, hooks, and locale', () => {
     const hook = { value: 3, getSnapshot() { return this.value; }, subscribe: () => () => {} };
     const first = entry('first', {
-      component: (props: Record<string, unknown>) => createElement('span', { 'data-testid': 'first' }, String((props.t as (key: string) => string)('label')) + ':' + String(props.ownerValue)),
+      component: (props: Record<string, unknown>) => createElement('span', { 'data-testid': 'first' }, String((props.t as (key: string) => string)('label'))),
       locale: 'settings.agentPreset',
-      inject: () => ({ ownerValue: 'owner', hooks: { counter: hook } }),
+      inject: () => ({ hooks: { counter: hook } }),
       options: { id: 'first', order: -10 },
     });
     const second = entry('second', {
@@ -43,10 +43,10 @@ describe('NativeSlotHost', () => {
       inject: () => ({ hooks: { counter: hook } }),
       options: { id: 'second', order: 10 },
     });
-    render(<NativeSlotHost slot="actions" kind="list" source={source([second, first]).source} locale={locale} standard={standard} owner={{ ownerValue: 'owner' }} />);
+    render(<NativeSlotHost slot="actions" kind="list" source={source([second, first]).source} locale={locale} standard={standard} />);
     const firstNode = screen.getByTestId('first');
     const secondNode = screen.getByTestId('second');
-    expect(firstNode.textContent).toBe('settings.agentPreset:label:owner');
+    expect(firstNode.textContent).toBe('settings.agentPreset:label');
     expect(secondNode.textContent).toBe('3');
     expect(firstNode.compareDocumentPosition(secondNode) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });

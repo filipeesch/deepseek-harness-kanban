@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
 import { expect, it, onTestFinished } from 'vitest';
+import './kanban-e2e-setup.ts';
 import { launchWebScaffold } from './scaffold.ts';
 import { newEnglishPage } from './support.ts';
 
@@ -53,7 +54,7 @@ it('runs an instructed move after five seconds, cancels, survives reload, and pr
   await projectDialog.getByRole('button', { name: 'Save project' }).click();
   await expect(page.getByText('Project saved.')).toBeVisible();
 
-  await page.getByRole('tab', { name: 'Workflow' }).click();
+  await page.getByRole('tab', { name: 'Board' }).click();
   const editor = page.locator('.cm-content');
   await editor.click();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
@@ -65,9 +66,10 @@ it('runs an instructed move after five seconds, cancels, survives reload, and pr
 
   const createTask = async (title: string) => {
     await page.getByRole('button', { name: 'New task' }).first().click();
-    await page.getByRole('textbox', { name: 'Title' }).fill(title);
-    await page.getByRole('combobox', { name: 'Project' }).selectOption({ label: 'Auto run' });
-    await page.getByRole('button', { name: 'Create task' }).click();
+    const dialog = page.getByRole('dialog', { name: 'New task' });
+    await dialog.getByRole('textbox', { name: 'Title' }).fill(title);
+    await dialog.getByRole('combobox').selectOption({ label: 'Auto run' });
+    await dialog.getByRole('button', { name: 'Create task' }).click();
     await expect(page.getByRole('button', { name: 'Open task ' + title })).toBeVisible();
   };
   const openTask = async (title: string) => {
@@ -82,7 +84,7 @@ it('runs an instructed move after five seconds, cancels, survives reload, and pr
     await page.getByRole('combobox', { name: 'Move task to' }).selectOption('plan');
     await expect(page.locator('.kb-drawer-autorun')).toBeVisible();
   };
-  const conversation = page.locator('.kb-native-conversation');
+  const conversation = page.locator('.kb-conversation-window');
 
   await createTask('Auto run send');
   await createTask('Auto run cancel');

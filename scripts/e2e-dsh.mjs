@@ -66,15 +66,21 @@ const scenarioTemplates = new Map([
 ]);
 if (only !== undefined && !scenarioTemplates.has(only)) fail('unknown --only value: ' + only);
 const scenarios = only === undefined ? [...scenarioTemplates.values()] : [scenarioTemplates.get(only)];
+const setupTarget = join(checkout, 'apps/web/tests', 'kanban-e2e-setup.ts');
 const copied = [];
+const testFiles = [];
 try {
+  if (existsSync(setupTarget)) throw new Error('Refusing to overwrite existing DSH test file: ' + setupTarget);
+  copyFileSync(join(root, 'tests/e2e-dsh', 'kanban-e2e-setup.ts'), setupTarget);
+  copied.push(setupTarget);
   for (const [template, target] of scenarios) {
     const destination = join(checkout, 'apps/web/tests', target);
     if (existsSync(destination)) throw new Error('Refusing to overwrite existing DSH test file: ' + destination);
     copyFileSync(join(root, 'tests/e2e-dsh', template), destination);
     copied.push(destination);
+    testFiles.push(destination);
   }
-  execFileSync(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', '--config', 'vitest.web.config.ts', ...copied.map(file => file.slice(checkout.length + 1))], {
+  execFileSync(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', '--config', 'vitest.web.config.ts', ...testFiles.map(file => file.slice(checkout.length + 1))], {
     cwd: checkout, stdio: 'inherit',
     env: { ...process.env, DSH_SNAPSHOT: 'replay', KANBAN_ROOT: root, KANBAN_QUESTION_FIXTURE: join(root, 'tests/e2e-dsh/question-round.jsonl'), KANBAN_TASK_CONTEXT_FIXTURE: join(root, 'tests/e2e-dsh/task-context.jsonl'), KANBAN_AUTORUN_OVERRIDE: join(root, 'tests/e2e-dsh/auto-run.replay.override.json'), KANBAN_AUTOMODE_OVERRIDE: join(root, 'tests/e2e-dsh/auto-mode.replay.override.json') },
   });

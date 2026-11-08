@@ -57,6 +57,8 @@ it('keeps the board usable while a deletion is still queued', async () => {
   await firstTaskDialog.getByRole('button', { name: 'Create task' }).click();
   await page.getByRole('button', { name: 'Open task ' + TASK_TITLE }).click();
   await page.getByRole('button', { name: 'New conversation' }).click();
+  await page.locator('.kb-preset-cards').getByRole('button', { name: /^Standard mode/ }).click();
+  await page.locator('.kb-agent-tabs [role="tab"]').first().waitFor({ state: 'visible' });
   const tabId = await page.locator('.kb-agent-tabs [role="tab"]').first().getAttribute('id');
   const rawSessionId = tabId?.split('-tab-').at(-1);
   if (rawSessionId === undefined || rawSessionId === '') throw new Error('task conversation tab id is unavailable');

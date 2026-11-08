@@ -134,7 +134,8 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
       $stream<Item>(options: RemoteStreamOptions<Item>) { return new RemoteStream({ generation: { getSnapshot: () => ({ id: 1, host: { home: '/home' } }), subscribe: () => () => {} } }, options); },
     },
     inject(dependencies: string[], initialize: (scoped: Context) => () => Promise<void>) {
-      expect(mounted).toBe(true); expect(dependencies).toEqual(['remote.kanban']);
+      expect(mounted).toBe(true);
+      expect(dependencies).toEqual(dependencies[0] === 'remote.agentPresets' ? ['remote.agentPresets'] : ['remote.kanban']);
       const scoped = Object.create(ctx) as Context;
       Object.defineProperty(scoped, 'remote', { value: Object.create(ctx.remote, { kanban: { get: () => remote } }) });
       const cleanup = initialize(scoped); let active = true;
@@ -170,17 +171,15 @@ describe('public SDK plugin binding contracts', () => {
     expect(f.taskContextDisposer).toHaveBeenCalledOnce();
   });
 
-  it('renders the native session header before the conversation content inside the retained provider', async () => {
+  it('renders the conversation window seat inside the retained provider', async () => {
     const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;
     const provider = ({ children }: { children: ReactNode }) => <div data-testid="frame-provider">{children}</div>;
     const renderSlot = vi.fn((name: string) => <div data-testid={'slot-' + name} />);
     render(<Main usePanelInfo={(select: (info: { activePanelId: string }) => unknown) => select({ activePanelId: 'kanban' })} SessionProvider={provider} renderSlot={renderSlot} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Open task Native task' }));
     const providerNode = await screen.findByTestId('frame-provider');
-    const header = within(providerNode).getByTestId('slot-kanban.session.header');
-    const conversation = within(providerNode).getByTestId('slot-kanban.conversation');
-    expect(header.compareDocumentPosition(conversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(renderSlot).toHaveBeenCalledWith('kanban.session.header', {});
+    expect(within(providerNode).getByTestId('slot-kanban.conversation')).toBeTruthy();
+    expect(within(providerNode).queryByTestId('slot-kanban.session.header')).toBeNull();
     expect(renderSlot).toHaveBeenCalledWith('kanban.conversation', {});
   });
 
@@ -189,8 +188,8 @@ describe('public SDK plugin binding contracts', () => {
     expect(f.mount).toHaveBeenCalledWith(TYPERT_REMOTE); expect(f.entries.size).toBe(0);
     f.openMount(); const dispose = await pending; disposers.push(dispose);
     expect(inject).toContain('remote'); expect(inject).toContain('uiConversation'); expect(inject).not.toContain('remote.kanban');
-    expect([...f.entries.keys()]).toEqual(['main:kanban', 'kanban.conversation:', 'kanban.session.header:', 'conversation.chat.node:kanban-task-context', 'sidebar.panellist:kanban', 'conversation.input.dock:kanban-decision-questions', 'tool.call.toolview:decision_request']);
-    expect(f.entries.get('main:kanban')?.options.children).toEqual({ 'kanban.conversation': { kind: 'single', scope: 'session' }, 'kanban.session.header': { kind: 'single', scope: 'session' } });
+    expect([...f.entries.keys()]).toEqual(['main:kanban', 'kanban.conversation:', 'conversation.chat.node:kanban-task-context', 'sidebar.panellist:kanban', 'conversation.input.dock:kanban-decision-questions', 'tool.call.toolview:decision_request']);
+    expect(f.entries.get('main:kanban')?.options.children).toEqual({ 'kanban.conversation': { kind: 'single', scope: 'session' } });
     expect(f.uiConversation.events.register).toHaveBeenCalledOnce();
     expect(f.entries.get('sidebar.panellist:kanban')?.options).toMatchObject({ label: 'Kanban', order: 80 });
     expect(f.nativeSelect).not.toHaveBeenCalled(); await dispose(); expect(f.unmount).toHaveBeenCalledOnce();
@@ -325,24 +324,24 @@ describe('public SDK plugin binding contracts', () => {
   it('owns native reference/provider binding, keeps visited conversations warm across tabs and sections, and releases with the drawer', async () => {
     const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;
     const provider = vi.fn(({ session, children }: { session: SessionReference; children: ReactNode }) => <div data-testid="provided-session" data-session={session.sessionId}>{children}</div>);
-    const headerMounts = vi.fn(); const headerUnmounts = vi.fn();
-    function HeaderProbe() { useEffect(() => { headerMounts(); return () => headerUnmounts(); }, []); return <div>Native header slot</div>; }
-    const renderSlot = vi.fn((key: string) => key === 'kanban.session.header' ? <HeaderProbe /> : <div>Native slot body</div>);
+    const conversationMounts = vi.fn(); const conversationUnmounts = vi.fn();
+    function ConversationProbe() { useEffect(() => { conversationMounts(); return () => conversationUnmounts(); }, []); return <div>Conversation slot</div>; }
+    const renderSlot = vi.fn(() => <ConversationProbe />);
     const rendered = render(<Main usePanelInfo={(select: (info: { activePanelId: string }) => unknown) => select({ activePanelId: 'kanban' })} SessionProvider={provider} renderSlot={renderSlot} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Open task Native task' }));
     await waitFor(() => expect(screen.getByTestId('provided-session').getAttribute('data-session')).toBe('a'));
     expect(f.retain.mock.calls[0]?.[0]).toBe('a');
     // Lazy warmth: the unvisited second tab is not opened in the background.
-    expect(f.retain).toHaveBeenCalledTimes(1); expect(renderSlot).toHaveBeenCalledWith('kanban.conversation', {}); expect(renderSlot).toHaveBeenCalledWith('kanban.session.header', {});
-    expect(headerMounts).toHaveBeenCalledTimes(1);
+    expect(f.retain).toHaveBeenCalledTimes(1); expect(renderSlot).toHaveBeenCalledWith('kanban.conversation', {});
+    expect(conversationMounts).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('tab', { name: 'Agent 2' }));
     await waitFor(() => expect(screen.getByTestId('provided-session').getAttribute('data-session')).toBe('b'));
-    expect(headerMounts).toHaveBeenCalledTimes(2); expect(headerUnmounts).toHaveBeenCalledTimes(1);
+    expect(conversationMounts).toHaveBeenCalledTimes(2); expect(conversationUnmounts).toHaveBeenCalledTimes(1);
     // A visited conversation stays retained while the drawer is open.
     expect(f.references[0]?.release).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('tab', { name: 'Info' }));
     await waitFor(() => expect(screen.queryByTestId('provided-session')).toBeNull());
-    expect(headerMounts).toHaveBeenCalledTimes(2); expect(headerUnmounts).toHaveBeenCalledTimes(2);
+    expect(conversationMounts).toHaveBeenCalledTimes(2); expect(conversationUnmounts).toHaveBeenCalledTimes(2);
     expect(f.references[0]?.release).not.toHaveBeenCalled();
     expect(f.references[1]?.release).not.toHaveBeenCalled();
     expect(f.nativeSelect).not.toHaveBeenCalled();
@@ -459,19 +458,20 @@ describe('public SDK plugin binding contracts', () => {
     await screen.findByTestId('retained-body');
     expect(f.retain).toHaveBeenCalledTimes(2); expect(f.nativeSelect).not.toHaveBeenCalled();
   });
-  it('keeps a blank standalone task session editable without choosing a native workspace', async () => {
-    const f = await installed(); const Embedded = f.entries.get('kanban.conversation:')!.Component; const factory = vi.fn(() => null);
-    render(<Embedded sessionId="a" useSession={(select: (value: object) => unknown) => select({ openState: 'open', blank: true, running: false, promptAttempted: false })} useConversation={(select: (value: object) => unknown) => select({ activeTargets: new Set() })} renderFactorySlot={factory} />);
-    expect(factory).toHaveBeenCalledWith('conversation.content', { variant: 'embedded', phase: 'active', hero: false }, { slots: { views: expect.any(Function) } });
+  it('renders the public conversation window for a retained task session', async () => {
+    const f = await installed(); const Seat = f.entries.get('kanban.conversation:')!.Component;
+    const factory = vi.fn((_name: unknown, _input: unknown, _options: unknown) => <div>Native conversation window</div>);
+    render(<Seat sessionId="a" useSession={(select: (value: object) => unknown) => select({ openState: 'open', blank: true })} renderFactorySlot={factory} />);
+    expect(factory).toHaveBeenCalledWith('conversation.window', { variant: 'embedded' }, { fallback: expect.anything() });
+    expect(screen.getByText('Native conversation window')).toBeTruthy();
     expect(f.nativeSelect).not.toHaveBeenCalled();
   });
-  it('uses the published embedded factory with fixed native Chat rather than a private composer', async () => {
-    const f = await installed(); const Embedded = f.entries.get('kanban.conversation:')!.Component;
-    const factory = vi.fn((_name: unknown, _props: unknown, _options: unknown) => <div>Native content factory</div>);
-    render(<Embedded sessionId="a" useSession={(select: (value: object) => unknown) => select({ openState: 'open', blank: false, running: false, promptAttempted: true })} useConversation={(select: (value: object) => unknown) => select({ activeTargets: new Set(['chat']) })} renderFactorySlot={factory} />);
-    expect(factory).toHaveBeenCalledWith('conversation.content', { variant: 'embedded', phase: 'active', hero: false }, { slots: { views: expect.any(Function) } });
-    const options = factory.mock.calls[0]?.[2] as unknown as { slots: { views: (props: { renderSlot: (key: string, owner: object) => ReactNode }) => ReactNode } };
-    const slot = vi.fn(() => null); options.slots.views({ renderSlot: slot }); expect(slot).toHaveBeenCalledWith('conversation.session', { view: 'chat' });
+  it('reports an open failure instead of mounting the window', async () => {
+    const f = await installed(); const Seat = f.entries.get('kanban.conversation:')!.Component;
+    const factory = vi.fn(() => <div>Native conversation window</div>);
+    render(<Seat sessionId="a" useSession={(select: (value: object) => unknown) => select({ openState: 'error', openError: { message: 'history unavailable' } })} renderFactorySlot={factory} />);
+    expect(factory).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert').textContent).toContain('history unavailable');
   });
 
   it('dismisses the question round through the bridge without sending a native message', async () => {

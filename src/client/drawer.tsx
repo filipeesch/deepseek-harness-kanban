@@ -18,14 +18,13 @@ import { DrawerAutoRunNotice } from './auto-run-view.js';
 import { autoModeView, AutoModeNotice, DrawerAutoModeToggle } from './auto-mode.js';
 import { DrawerConversations } from './drawer-conversations.js';
 import type { SessionTitles } from './conversation-label.js';
-import type { ConversationLineagePort, DrawerSubagentAddress } from './conversation-navigation.js';
 import { ConversationLeaseRegistry, type ConversationLeaseEnvironment } from './conversation-leases.js';
 import { ConversationLeasesProvider } from './conversation-lease-context.js';
 import { openSessionIds } from '../shared/conversations.js';
 
 interface DrawerProps {
   task: Task; attention?: Attention; conversationAttention?: Readonly<Record<string, Attention>>; state: BoardState; api: ClientApi; run: RunCommand; autoRun?: AutoRunController;
-  renderConversation: (id: string, target?: DrawerSubagentAddress) => ReactNode;
+  renderConversation: (id: string) => ReactNode;
   onClose: () => void;
   onMove: (task: Task, column: Column, beforeTaskId?: string | null) => Promise<boolean>;
   onDanger: (task: Task, type: 'task.delete' | 'worktree.remove') => void;
@@ -35,10 +34,6 @@ interface DrawerProps {
   viewState?: TaskPageState; sessionTitles?: SessionTitles;
   /** Lease scope for this drawer; omitted only by isolated render harnesses. */
   conversationLeases?: ConversationLeaseEnvironment;
-  lineage?: ConversationLineagePort;
-  /** Controlled investigation target; omitted keeps the drawer's transient local state. */
-  peek?: DrawerSubagentAddress | null;
-  onPeek?: (target: DrawerSubagentAddress | null) => void;
   entering?: boolean; closing?: boolean;
 }
 
@@ -47,13 +42,9 @@ const DRAWER_DEFAULT_WIDTH = 620;
 function clampWidth(value: number): number { const max = Math.max(360, (typeof window === 'undefined' ? 1200 : window.innerWidth) * 0.9); return Math.min(Math.max(value, 360), max); }
 function storedWidth(): number { try { const value = Number(window.localStorage.getItem(DRAWER_WIDTH_KEY)); if (Number.isFinite(value) && value > 0) return clampWidth(value === 560 ? DRAWER_DEFAULT_WIDTH : value); } catch { /* storage is optional */ } return clampWidth(DRAWER_DEFAULT_WIDTH); }
 
-export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAttention, state, api, run, autoRun, renderConversation, onClose, onMove, onDanger, onForce, onToggleAutoMode, autoModePending = false, viewState, sessionTitles, conversationLeases, lineage, peek: controlledPeek, onPeek, entering = false, closing = false }: DrawerProps) {
+export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAttention, state, api, run, autoRun, renderConversation, onClose, onMove, onDanger, onForce, onToggleAutoMode, autoModePending = false, viewState, sessionTitles, conversationLeases, entering = false, closing = false }: DrawerProps) {
   const [localViewState] = useState(createTaskPageState); const preferences = viewState ?? localViewState;
   const [section, setSection] = usePageField(preferences, 'section'); const id = useId(); const close = useRef<HTMLButtonElement>(null);
-  const [localPeek, setLocalPeek] = useState<DrawerSubagentAddress | null>(null);
-  const peek = controlledPeek === undefined ? localPeek : controlledPeek;
-  const setPeek = onPeek ?? setLocalPeek;
-  const taskId = useRef(task.id);
   const [width, setWidth] = useState(storedWidth); const widthRef = useRef(width); widthRef.current = width;
   const aside = useRef<HTMLElement>(null);
   const [leases] = useState<ConversationLeaseRegistry | null>(() => conversationLeases === undefined ? null : new ConversationLeaseRegistry(conversationLeases));
@@ -65,12 +56,6 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
     return () => { alive.current = false; };
   }, []);
   useEffect(() => { const element = aside.current; if (!element) return; if (closing) element.setAttribute('inert', ''); else element.removeAttribute('inert'); return () => element.removeAttribute('inert'); }, [closing]);
-  useEffect(() => { if (closing || section !== 'Conversations') setPeek(null); }, [closing, section]);
-  useEffect(() => {
-    if (taskId.current === task.id) return;
-    taskId.current = task.id;
-    setPeek(null);
-  }, [task.id, setPeek]);
   const project = state.projects.find(value => value.id === task.projectId); const blocked = Boolean(task.operation || task.pendingTransition);
   // The task-level attention already merges every conversation's pending user work,
   // including a closed one, so the control reads that instead of re-merging.
@@ -120,7 +105,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
     {autoRun && <DrawerAutoRunNotice task={task} controller={autoRun} columns={state.workflow.columns} sessionTitles={sessionTitles} />}
     {onToggleAutoMode && (!task.pendingTransition || task.pendingTransition.origin !== 'auto') && <AutoModeNotice view={autoMode} />}
     <section className={'kb-drawer-panel ' + (section === 'Conversations' ? 'kb-chat-panel' : '')} role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>
-      {section === 'Conversations' && <>{!gitBacked && task.worktree && <p className="kb-hint" role="note" aria-label="Plain checkout">This checkout is no longer Git-managed. Git actions are unavailable and the directory is kept when the task is deleted.</p>}{gitBacked && !task.worktree && !task.worktreeDismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} />}<DrawerConversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} peek={peek} onPeek={setPeek} lineage={lineage} worktreeDecisionRequired={worktreeDecisionRequired} projectUnavailable={project === undefined} conversationAttention={conversationAttention} /></>}
+      {section === 'Conversations' && <>{!gitBacked && task.worktree && <p className="kb-hint" role="note" aria-label="Plain checkout">This checkout is no longer Git-managed. Git actions are unavailable and the directory is kept when the task is deleted.</p>}{gitBacked && !task.worktree && !task.worktreeDismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} />}<DrawerConversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} worktreeDecisionRequired={worktreeDecisionRequired} projectUnavailable={project === undefined} conversationAttention={conversationAttention} /></>}
       {section === 'Info' && <InfoPanel task={task} state={state} run={run} viewState={preferences} />}
       {section === 'Git' && gitBacked && <GitPanel task={task} project={project} api={api} run={run} worktreeBasePath={state.settings?.worktreeBasePath} draft={worktreeDraft} />}
       {section === 'Notes' && <NotesPanel task={task} state={state} run={run} viewState={preferences} />}
