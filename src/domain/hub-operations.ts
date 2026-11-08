@@ -3,6 +3,7 @@ import type { AutoModePause, Board, BoardSettings, HubState, HubTask, Note, Proj
 import { assertId, isAbsolutePath } from './validation.js';
 import { createBoard } from './hub-schema.js';
 import { parseWorkflow } from './workflow.js';
+import { applyWorkflowEdits, type WorkflowTextEdit } from './workflow-edit.js';
 import { entryInstruction, nextEnteredAt } from './stage-entry.js';
 import { assertProjectSave, buildProject } from './project-registration.js';
 import { applyNoteTags, validateNoteWrite, type NoteInput } from './note.js';
@@ -112,6 +113,12 @@ export function saveBoardWorkflow(hub: HubState, boardId: string, yaml: string, 
   board.updatedAt = timestamp(deps);
   hub.updatedAt = timestamp(deps);
   return workflow;
+}
+
+/** Apply literal text edits to the authored YAML, then validate the result through the one save path. */
+export function editBoardWorkflow(hub: HubState, boardId: string, edits: readonly WorkflowTextEdit[], deps: OperationDeps): Workflow {
+  const board = requireBoard(hub, boardId);
+  return saveBoardWorkflow(hub, boardId, applyWorkflowEdits(board.workflowYaml, edits), deps);
 }
 
 export function saveProject(hub: HubState, input: ProjectInput, deps: OperationDeps): Project {

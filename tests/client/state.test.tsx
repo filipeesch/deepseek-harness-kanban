@@ -79,7 +79,7 @@ describe('plugin-owned page bookmarks', () => {
     render(<BoardView api={mock.api} pageState={pageState} renderConversation={renderNative} />);
     await screen.findByRole('button', { name: 'Close task details' });
     expect(screen.getByRole('tab', { name: 'Notes' }).getAttribute('aria-selected')).toBe('true'); expect(screen.queryByTestId('native-s2')).toBeNull();
-    await user.click(screen.getByRole('tab', { name: 'Conversations' })); await screen.findByTestId('native-s2');
+    await user.click(screen.getByRole('tab', { name: /^Conversations/ })); await screen.findByTestId('native-s2');
     expect(screen.getByRole('tab', { name: 'Agent 2' }).getAttribute('aria-selected')).toBe('true');
   });
 

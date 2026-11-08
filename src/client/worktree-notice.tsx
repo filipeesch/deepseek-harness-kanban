@@ -10,6 +10,9 @@ export function WorktreeNotice({ task, project, draft, run, disabled, onReview }
   const value = draft.value;
   const hasPath = Boolean(value.path.trim());
   const source = value.sourceBranch?.trim() || project?.defaultBranch?.trim() || 'HEAD';
+  const branch = value.branchName || 'Not set';
+  const path = value.path || 'No destination configured';
+  const tooltip = 'Branch ' + branch + ' → ' + path + '. Source: ' + source;
 
   async function create() {
     if (disabled || action.pending || !hasPath) return;
@@ -28,19 +31,20 @@ export function WorktreeNotice({ task, project, draft, run, disabled, onReview }
     await action.execute({ type: 'worktree.dismiss', taskId: task.id });
   }
 
-  return <div className="kb-notice kb-worktree-notice" role="note" aria-label="Worktree not created">
-    <strong>No worktree has been created</strong>
-    <p>{task.sessionIds.length === 0 ? 'Choose an isolated worktree or continue in the base project before starting the first conversation.' : 'Agents are working in the base project directory. Isolation is optional.'}</p>
-    <dl className="kb-worktree-preview">
-      <div><dt>Branch</dt><dd><code>{value.branchName || 'Not set'}</code></dd></div>
-      <div><dt>Path</dt><dd><code>{value.path || 'No destination configured'}</code></dd></div>
-      <div><dt>Source</dt><dd><code>{source}</code></dd></div>
-    </dl>
+  return <div className="kb-notice kb-worktree-line" role="note" aria-label="Worktree not created">
+    <div className="kb-worktree-line-summary" title={tooltip}>
+      <strong>No worktree</strong>
+      <span className="kb-worktree-line-facts">
+        <code>{branch}</code>
+        <span aria-hidden="true"> → </span>
+        <code>{path}</code>
+      </span>
+    </div>
     {draft.suggestionPending && <p className="kb-hint" role="status">Resolving worktree defaults…</p>}
     <ErrorNotice problem={draft.suggestionError} />
     <ErrorNotice problem={action.error} />
     {draft.suggestionError && <button type="button" className="kb-button" disabled={draft.suggestionPending} onClick={draft.reloadSuggestion}>Retry defaults</button>}
-    <div className="kb-actions">
+    <div className="kb-actions kb-worktree-line-actions">
       {hasPath
         ? <button type="button" className="kb-button kb-primary" disabled={disabled || action.pending || !validWorktree(value)} onClick={() => void create()}>{action.pending ? 'Preparing…' : 'Create worktree'}</button>
         : <button type="button" className="kb-button kb-primary" onClick={onReview}>Set destination in Git</button>}

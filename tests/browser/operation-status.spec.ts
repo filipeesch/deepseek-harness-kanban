@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 const HARNESS = new URL('./.tmp/index.html', import.meta.url).href;
 
-test('failed deletion recovery is visible above the tabs from Info', async ({ page }) => {
+test('failed deletion recovery is visible from Info and Notes', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=board');
   await page.getByRole('button', { name: 'Open task Failed delete' }).click();
   await page.getByRole('tab', { name: 'Info' }).click();
@@ -15,10 +15,10 @@ test('failed deletion recovery is visible above the tabs from Info', async ({ pa
   await expect(status).toBeVisible();
   await expect(status.getByText('Task deletion needs attention').first()).toBeVisible();
   const statusBox = await status.boundingBox();
-  const tabsBox = await page.locator('.kb-drawer-toolbar').boundingBox();
+  const headerBox = await page.locator('.kb-drawer-header').boundingBox();
   expect(statusBox).not.toBeNull();
-  expect(tabsBox).not.toBeNull();
-  expect(statusBox!.y).toBeLessThan(tabsBox!.y);
+  expect(headerBox).not.toBeNull();
+  expect(statusBox!.y).toBeGreaterThanOrEqual(headerBox!.y + headerBox!.height - 1);
   await expect(page.locator('.kb-drawer-panel .kb-operation')).toHaveCount(0);
 });
 

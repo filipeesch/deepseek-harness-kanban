@@ -18,8 +18,8 @@ export interface AutoModeView {
   toggleLabel: string;
   title: string;
   status?: AutoModeStatus;
-  /** The drawer's sentence for the current state; absent when there is nothing to say. */
-  notice?: string;
+  /** The sentence for a state that the control itself must communicate. */
+  stateLabel?: string;
   destinationName?: string;
   reason?: AutoModePauseReason;
   /** The held state's sentence naming what the user still owes the task; absent outside that state. */
@@ -45,7 +45,7 @@ export function pendingWorkLabel(pending: PendingUserWork): string {
   return 'Auto mode is waiting for you: ' + parts.join(', ') + '.';
 }
 
-/** The short pause sentence shared by the card status strip and the drawer notice. */
+/** The short pause sentence shared by the card status strip and the auto-mode control. */
 export function pauseLabel(reason: AutoModePauseReason, message?: string): string {
   const detail = message !== undefined && message.trim() ? ': ' + message.trim() : '';
   switch (reason) {
@@ -57,7 +57,7 @@ export function pauseLabel(reason: AutoModePauseReason, message?: string): strin
   }
 }
 
-/** One derivation for the card chip, the status strip, and the drawer notice. */
+/** One derivation for the card chip, the drawer chip, and the card status strip. */
 export function autoModeView(task: Task, workflow: Workflow, pendingWork: PendingUserWork = NO_PENDING_USER_WORK): AutoModeView {
   const enabled = task.autoMode?.enabled === true;
   const base = {
@@ -72,86 +72,74 @@ export function autoModeView(task: Task, workflow: Workflow, pendingWork: Pendin
     const name = stageName(workflow, pending.columnId);
     if (pending.status === 'failed') {
       const label = 'Automatic advance failed' + (pending.error?.message ? ': ' + pending.error.message : '');
-      return { ...base, state: 'failed', destinationName: name, status: { tone: 'danger', label, alert: true }, notice: label };
+      return { ...base, state: 'failed', destinationName: name, status: { tone: 'danger', label, alert: true }, stateLabel: label, title: label };
     }
     const label = 'Advancing to ' + name + '…';
-    return { ...base, state: 'advancing', destinationName: name, status: { tone: 'pending', label }, notice: label };
+    return { ...base, state: 'advancing', destinationName: name, status: { tone: 'pending', label }, stateLabel: label, title: label };
   }
   if (!enabled) return { ...base, state: 'off' };
   const pause = task.autoMode?.pause;
   if (pause !== undefined) {
     const label = pauseLabel(pause.reason, pause.message);
     const tone: AutoModeStatus['tone'] = pause.reason === 'turn-error' || pause.reason === 'advance-failed' ? 'danger' : 'pending';
-    return { ...base, state: 'paused', reason: pause.reason, status: { tone, label, ...(pause.reason === 'advance-failed' ? { alert: true } : {}) }, notice: label };
+    return { ...base, state: 'paused', reason: pause.reason, status: { tone, label, ...(pause.reason === 'advance-failed' ? { alert: true } : {}) }, stateLabel: label, title: label };
   }
   // The held state is derived from pending user work, so it is presented by the control
-  // alone and never adds a status-strip or drawer entry.
+  // alone and never adds a status-strip entry.
   if (hasPendingUserWork(pendingWork)) {
     const waitLabel = pendingWorkLabel(pendingWork);
     return { ...base, state: 'held', waitLabel, title: waitLabel + ' The next completed turn advances once nothing of yours is pending.' };
   }
   if (hasUnresolvedEntry(task)) {
     const label = 'Auto mode is waiting for the ' + stageName(workflow, task.columnId) + ' instruction';
-    return { ...base, state: 'instruction', status: { tone: 'pending', label }, notice: label };
+    return { ...base, state: 'instruction', status: { tone: 'pending', label }, stateLabel: label, title: label };
   }
   const destination = resolveAutoAdvance(workflow, task.columnId).destination;
   if (destination === undefined) {
     const label = 'Auto mode: no next stage';
-    return { ...base, state: 'dead-end', status: { tone: 'pending', label }, notice: 'Auto mode is on. No next stage is configured.' };
+    return { ...base, state: 'dead-end', status: { tone: 'pending', label }, stateLabel: label, title: 'Auto mode is on. No next stage is configured.' };
   }
-  return { ...base, state: 'armed', destinationName: destination.name, notice: 'Auto mode is on: the next completed turn moves to ' + destination.name + '.' };
+  return { ...base, state: 'armed', destinationName: destination.name, title: 'Auto mode is on: the next completed turn moves to ' + destination.name + '.' };
 }
 
-/** The control's accessible name: a held control states the wait before its action. */
+const STATEFUL_LABEL: ReadonlySet<AutoModeState> = new Set(['advancing', 'failed', 'paused', 'instruction', 'dead-end']);
+
+/** End a sentence with punctuation only when it does not already have some. */
+function sentence(label: string): string {
+  return /[.!?…]$/.test(label) ? label : label + '.';
+}
+
+/** The control's accessible name: a held or stateful control states its situation before its action. */
 function controlLabel(view: AutoModeView, action: string): string {
-  return view.waitLabel === undefined ? action : view.waitLabel + ' ' + action;
+  if (view.waitLabel !== undefined) return view.waitLabel + ' ' + action;
+  if (view.stateLabel !== undefined && STATEFUL_LABEL.has(view.state)) return sentence(view.stateLabel) + ' ' + action;
+  return action;
 }
 
-/** The card's always-visible toggle and state indicator. */
-export function CardAutoModeControl({ view, pending = false, onToggle }: { view: AutoModeView; pending?: boolean; onToggle?: (enabled: boolean) => void }) {
+/**
+ * The one automatic-mode control: the card chip and the drawer header chip share
+ * every state, the state sentence in the tooltip and accessible name, and the
+ * same toggle behavior. Only their size differs.
+ */
+export function AutoModeControl({ view, variant = 'card', pending = false, onToggle }: {
+  view: AutoModeView; variant?: 'card' | 'header'; pending?: boolean; onToggle?: (enabled: boolean) => void;
+}) {
   const paused = view.state === 'paused' || view.state === 'failed';
   const advancing = view.state === 'advancing';
   const held = view.state === 'held';
   return <button
     type="button"
-    className={'kb-auto-chip' + (view.enabled ? ' is-on' : '') + (paused ? ' is-paused' : '') + (advancing ? ' is-advancing' : '') + (held ? ' is-held' : '')}
+    className={'kb-auto-chip' + (variant === 'header' ? ' kb-auto-chip-header' : '') + (view.enabled ? ' is-on' : '') + (paused ? ' is-paused' : '') + (advancing ? ' is-advancing' : '') + (held ? ' is-held' : '')}
     data-auto-state={view.state}
     aria-pressed={view.enabled}
     aria-label={controlLabel(view, view.toggleLabel)}
     title={view.title}
     aria-busy={pending ? true : undefined}
     disabled={pending}
-    onPointerDown={event => event.stopPropagation()}
-    onClick={event => { event.stopPropagation(); if (!pending) onToggle?.(!view.enabled); }}
+    onPointerDown={variant === 'card' ? event => event.stopPropagation() : undefined}
+    onClick={event => { if (variant === 'card') event.stopPropagation(); if (!pending) onToggle?.(!view.enabled); }}
   >
-    <AutoModeIcon size={11} />
+    <AutoModeIcon size={variant === 'card' ? 11 : 13} />
     <span>Auto</span>
   </button>;
-}
-
-/** The drawer header's mirrored toggle, presenting the same state as the card control. */
-export function DrawerAutoModeToggle({ view, pending = false, disabled = false, onToggle }: { view: AutoModeView; pending?: boolean; disabled?: boolean; onToggle?: (enabled: boolean) => void }) {
-  return <button
-    type="button"
-    className={'kb-button kb-drawer-auto' + (view.enabled ? ' is-on' : '') + (view.state === 'paused' || view.state === 'failed' ? ' is-paused' : '') + (view.state === 'held' ? ' is-held' : '')}
-    data-auto-state={view.state}
-    aria-pressed={view.enabled}
-    aria-label={controlLabel(view, view.enabled ? 'Auto mode: on' : 'Auto mode: off')}
-    title={view.title}
-    aria-busy={pending ? true : undefined}
-    disabled={disabled || pending}
-    onClick={() => onToggle?.(!view.enabled)}
-  >
-    <AutoModeIcon size={13} />
-    <span>{view.enabled ? 'Auto mode: on' : 'Auto mode: off'}</span>
-  </button>;
-}
-
-/** The drawer's automatic-advance notice, shown above the section panel. */
-export function AutoModeNotice({ view }: { view: AutoModeView }) {
-  if (view.notice === undefined) return null;
-  const failure = view.status?.tone === 'danger';
-  return <div className={'kb-drawer-automode' + (failure ? ' kb-drawer-automode-failed' : '')} data-auto-state={view.state}>
-    <p role={view.status?.alert ? 'alert' : undefined}>{view.notice}</p>
-  </div>;
 }

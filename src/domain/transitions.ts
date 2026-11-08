@@ -21,6 +21,15 @@ export function transitionDestinations(workflow: Workflow, from: string): Transi
   return workflow.columns.map(column => ({ column, access: transitionAccess(workflow, from, column.id) }));
 }
 
+/** The stage after `from` in workflow order, or undefined when `from` is the last stage or unknown. */
+export function nextStage(workflow: Workflow, from: string): TransitionDestination | undefined {
+  const index = workflow.columns.findIndex(column => column.id === from);
+  if (index < 0) return undefined;
+  const column = workflow.columns[index + 1];
+  if (column === undefined) return undefined;
+  return { column, access: transitionAccess(workflow, from, column.id) };
+}
+
 /** A transition enters a different existing stage; same-stage ordering is separate. */
 export function canTransition(workflow: Workflow, from: string, to: string): boolean {
   return transitionAccess(workflow, from, to) === 'allowed';

@@ -1,5 +1,5 @@
 import React from 'react';
-import type { Attention, BackgroundActivity, BackgroundKind } from '../shared/types.js';
+import type { BackgroundActivity, BackgroundKind } from '../shared/types.js';
 
 const UNITS: Record<BackgroundKind, readonly [string, string]> = {
   job: ['job', 'jobs'],
@@ -41,15 +41,4 @@ export function WorkingBadge({ decorative = false }: { decorative?: boolean }) {
 /** Persistent live region: mounted empty while idle, its text changes once when a turn starts. */
 export function WorkingAnnouncement({ running, label }: { running: boolean; label?: string }) {
   return <span className="kb-sr" role="status" aria-live="polite" aria-atomic="true">{running ? 'Working' + (label ? ' on ' + label : '') : ''}</span>;
-}
-
-/** The drawer header's turn execution and background labels, with no live region of its own. */
-export function TaskActivity({ attention }: { attention: Attention }) {
-  const { running, background } = attention;
-  const details = backgroundDetails(background);
-  if (!running && background.length === 0) return null;
-  return <div className="kb-execution kb-execution-drawer">
-    {running && <WorkingBadge />}
-    {background.length > 0 && <span className="kb-task-background" title={details}>Background: {details}</span>}
-  </div>;
 }
