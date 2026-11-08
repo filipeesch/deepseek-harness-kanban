@@ -7,6 +7,8 @@ import { asProblem, ErrorNotice, useAction, type RunCommand } from './ui.js';
 export interface WorkflowEditorProps {
   state: BoardState;
   run: RunCommand;
+  hubId: string;
+  boardId: string;
   yaml: string;
   baseRevision: number;
   onYamlChange: (yaml: string) => void;
@@ -17,7 +19,7 @@ export interface WorkflowEditorProps {
 }
 
 /** Rich workflow YAML editor backed by the shared parser and a controlled CodeMirror surface. */
-export function WorkflowEditor({ state, run, yaml, baseRevision, onYamlChange, onSaved, onReload, onShare }: WorkflowEditorProps) {
+export function WorkflowEditor({ state, run, hubId, boardId, yaml, baseRevision, onYamlChange, onSaved, onReload, onShare }: WorkflowEditorProps) {
   const action = useAction(run);
   const [analysis, setAnalysis] = useState(() => analyzeWorkflow(yaml));
   const [checking, setChecking] = useState(false);
@@ -49,7 +51,7 @@ export function WorkflowEditor({ state, run, yaml, baseRevision, onYamlChange, o
   }
   async function save(share = false) {
     if (!canSave) return;
-    const result = await action.execute({ type: 'workflow.save', yaml, expectedRevision: baseRevision });
+    const result = await action.execute({ type: 'board.workflow.save', hubId, boardId, yaml, expectedRevision: baseRevision });
     if (!result) return;
     setSaved(true);
     setAnalysis(analyzeWorkflow(yaml));

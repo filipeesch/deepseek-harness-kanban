@@ -148,7 +148,7 @@ test('Save and share publishes after the local save', async ({ page }) => {
   await expect.poll(async () => (await sharingCommands(page)).length).toBe(1);
   expect((await sharingCommands(page))[0]).toMatchObject({ type: 'sharing.publish' });
   const commands = await page.evaluate(() => (window as unknown as { __harness: { commands(): Array<{ type: string; yaml?: string }> } }).__harness.commands());
-  expect(commands.some(command => command.type === 'workflow.save' && command.yaml?.includes('Shared flow'))).toBe(true);
+  expect(commands.some(command => command.type === 'board.workflow.save' && command.yaml?.includes('Shared flow'))).toBe(true);
 });
 
 test('a failed share keeps the local save and reports the failure', async ({ page }) => {

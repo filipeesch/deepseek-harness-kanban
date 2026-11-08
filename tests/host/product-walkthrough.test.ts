@@ -68,7 +68,9 @@ async function setup() {
   await app.initialize();
   await app.command({ type: 'project.save', project: files.project });
   const workflow = app.store.snapshot().workflow;
-  await app.command({ type: 'workflow.save', yaml: stringify({
+  const walkthroughHubId = app.hubs.defaultHubId();
+  const walkthroughBoardId = app.store.snapshot().boards[0]!.id;
+  await app.command({ type: 'board.workflow.save', hubId: walkthroughHubId, boardId: walkthroughBoardId, yaml: stringify({
     name: workflow.name, initial_column: workflow.initialColumnId,
     columns: workflow.columns.map(column => ({ id: column.id, label: column.name,
       ...(column.id === 'plan' ? { on_enter_prompt: 'Plan only after explicit approval.' } : {}),

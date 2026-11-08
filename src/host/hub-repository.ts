@@ -6,6 +6,7 @@ import type { HubStorage } from '../shared/ports.js';
 import { HubStateSchema, initialHubState, defaultHubState } from '../domain/hub-schema.js';
 import type { NoteInput, OperationDeps, TaskTextPatch } from '../domain/hub-operations.js';
 import * as operations from '../domain/hub-operations.js';
+import type { WorkflowTextEdit } from '../domain/workflow-edit.js';
 import { assertRevision, isDomainId } from '../domain/validation.js';
 
 export interface HubRepositoryOptions { id?: () => string; now?: () => string }
@@ -520,6 +521,12 @@ export class HubStore {
   }
   async saveBoardWorkflow(boardId: string, yaml: string, expectedRevision?: number): Promise<Workflow> {
     return this.transact(draft => operations.saveBoardWorkflow(draft, boardId, yaml, this.deps()), expectedRevision);
+  }
+  async editBoardWorkflow(boardId: string, edits: readonly WorkflowTextEdit[], expectedRevision?: number): Promise<Board> {
+    return this.transact(draft => {
+      operations.editBoardWorkflow(draft, boardId, edits, this.deps());
+      return operations.requireBoard(draft, boardId);
+    }, expectedRevision);
   }
   async setWorkflow(yaml: string, expectedRevision?: number): Promise<Workflow> {
     return this.transact(draft => {

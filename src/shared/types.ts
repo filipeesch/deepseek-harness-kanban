@@ -255,8 +255,6 @@ export type Command =
   | { type: 'project.relocationRetry'; hubId?: string; projectId: string }
   | { type: 'project.relocationCancel'; hubId?: string; projectId: string }
   | { type: 'project.delete'; hubId?: string; projectId: string; confirmed: boolean; expectedRevision?: number }
-  /** @deprecated Saves the first board's workflow; the UI uses board.workflow.save. Kept for single-board callers. */
-  | { type: 'workflow.save'; hubId?: string; yaml: string; expectedRevision?: number }
   | { type: 'settings.save'; settings: BoardSettings; expectedRevision?: number }
   | ({ type: 'task.create'; hubId?: string } & NewTask)
   | { type: 'task.edit'; hubId?: string; taskId: string; title?: string; description?: string; expectedRevision?: number }
