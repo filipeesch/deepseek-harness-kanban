@@ -21,6 +21,16 @@
   address; document pinning an exact tag and updating an installed profile when
   installation guidance changes.
 
+## Host API deprecations
+
+- Before using or changing a DSH host API, check the pinned DSH source for
+  `@deprecated` on the service, method, event, type, or slot.
+- Prefer the documented replacement; never add a new use of a deprecated API.
+- When no replacement exists, treat it as a design problem: look for an adjacent
+  public hook, a local adapter, or another integration point, and record the
+  chosen alternative and its trade-offs in the change design. Keep the
+  deprecated use only as a temporary fallback until that alternative lands.
+
 ## Verification
 
 ### Fresh isolated web instance

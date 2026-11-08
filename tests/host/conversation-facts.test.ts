@@ -40,14 +40,14 @@ describe('conversation facts fold', () => {
 });
 
 describe('conversation facts projection registration', () => {
-  it('registers a host-only unit and reads its current state', () => {
+  it('awaits a legacy disposer registration and reads its current state', async () => {
     const expected: ConversationFactsFold = { lastTurnEndSeq: 3, lastTurnOutcome: 'ok', openApprovalIds: [] };
     const unregister = vi.fn();
     const registry = {
       register: vi.fn((_definition?: unknown) => unregister),
       stateOf: vi.fn(() => expected),
     };
-    const reader = registerConversationFacts(fakeContext(registry));
+    const reader = await registerConversationFacts(fakeContext(registry));
     expect(registry.register).toHaveBeenCalledWith(expect.objectContaining({
       key: CONVERSATION_FACTS_KEY,
       stateVersion: 1,
@@ -59,14 +59,32 @@ describe('conversation facts projection registration', () => {
     expect(unregister).toHaveBeenCalledOnce();
   });
 
-  it('degrades to the inspect fallback when the projection read fails', () => {
-    const registry = { register: vi.fn(), stateOf: vi.fn(() => { throw new Error('projection unavailable'); }) };
-    const reader = registerConversationFacts(fakeContext(registry));
+  it('uses the awaited handle state and disposal on a newer host', async () => {
+    const expected: ConversationFactsFold = { lastTurnEndSeq: 5, lastTurnOutcome: 'error', openApprovalIds: ['a'] };
+    const handle = { stateOf: vi.fn(() => expected), dispose: vi.fn(async () => {}) };
+    const registry = { register: vi.fn(async () => handle), stateOf: vi.fn() };
+    const reader = await registerConversationFacts(fakeContext(registry));
+    expect(reader.read({} as Session)).toEqual(expected);
+    expect(handle.stateOf).toHaveBeenCalledOnce();
+    expect(registry.stateOf).not.toHaveBeenCalled();
+    reader.dispose();
+    expect(handle.dispose).toHaveBeenCalledOnce();
+    expect(registry.stateOf).not.toHaveBeenCalled();
+  });
+
+  it('degrades to the history fallback when the projection read fails', async () => {
+    const registry = { register: vi.fn(() => vi.fn()), stateOf: vi.fn(() => { throw new Error('projection unavailable'); }) };
+    const reader = await registerConversationFacts(fakeContext(registry));
     expect(reader.read({} as Session)).toBeUndefined();
   });
 
-  it('falls back to no incremental facts when the projection registry is absent', () => {
-    const reader = registerConversationFacts(fakeContext(undefined));
+  it('falls back to no incremental facts when the projection registry is absent', async () => {
+    const reader = await registerConversationFacts(fakeContext(undefined));
     expect(reader.read({} as Session)).toBeUndefined();
+  });
+
+  it('rejects activation when registration fails', async () => {
+    const registry = { register: vi.fn(() => Promise.reject(new Error('projection conflict'))), stateOf: vi.fn() };
+    await expect(registerConversationFacts(fakeContext(registry))).rejects.toThrow('projection conflict');
   });
 });

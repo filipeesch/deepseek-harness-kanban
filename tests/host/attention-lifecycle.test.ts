@@ -12,6 +12,7 @@ import type { BoardState } from '../../src/shared/types.js';
 import type { GitPort } from '../../src/shared/ports.js';
 import { TestGit, taskWithConversation } from './helpers.js';
 import { fakeKanbanStorage } from './fake-kanban-storage.js';
+import { call, result } from '../questions/fixtures.js';
 
 type Family = { kind: string; items?: Array<{ id: string; label?: string }> };
 const cleanup: Array<() => Promise<void>> = [];
@@ -46,7 +47,7 @@ async function runtime() {
   const sessions = new Map<string, Session>();
   const directories = new Map<string, string>();
   const agents = new Map<string, { id: string; session: Session; status: 'idle' | 'running'; inbox: { nextTurn: unknown[]; nextStep: unknown[] } }>();
-  const inspections = new Map<string, { meta: { cwd: string }; events: unknown[]; inheritedEventCount: number }>();
+  const inspections = new Map<string, { header: { cwd: string }; events: unknown[]; inheritedEventCount: number }>();
   const families = new Map<string, Family[]>();
   let nextSession = 0;
   const prompt = vi.fn(async () => ({ accepted: true }));
@@ -64,7 +65,7 @@ async function runtime() {
     const session = Session.create(id, [], { id, version: SESSION_FORMAT_VERSION, createdAt: 1, isSeeded: false, cwd } as never);
     sessions.set(id, session);
     directories.set(id, cwd);
-    inspections.set(id, { meta: { cwd }, events: [], inheritedEventCount: 0 });
+    inspections.set(id, { header: { cwd }, events: [], inheritedEventCount: 0 });
     return session;
   };
   root.provide('sessionController', {
@@ -75,11 +76,18 @@ async function runtime() {
       agents.set(id, { id, session, status: 'idle', inbox: { nextTurn: [], nextStep: [] } });
       return { sessionId: id };
     },
-    inspect: async (id: string) => inspections.get(id) ?? { meta: { cwd: directory }, events: [], inheritedEventCount: 0 },
     projections: async () => ({ kind: 'sequenced', asOfSeq: -1, values: {} }),
     resolveAgent, prompt,
     list: async () => ({ items: [...sessions.keys()].map(sessionId => ({ sessionId })) }),
   } as never);
+  root.provide('sessionQuery', {
+    observeSession: async (id: string) => {
+      const value = inspections.get(id);
+      if (!value) throw new Error('session missing');
+      return { ...value, source: 'live', cursor: 0, retain() { return this; }, [Symbol.dispose]() {} };
+    },
+  } as never);
+  root.provide('llm', {} as never);
   root.provide('sessions', { get: (id: string) => sessions.get(id), list: () => [...sessions.values()] } as never);
   root.provide('agents', { get: (id: string) => agents.get(id) } as never);
   root.provide('workingDirectory', {
@@ -118,6 +126,24 @@ async function runtime() {
 }
 
 describe('attention activity lifecycle', () => {
+  it('serves a seeded question baseline without the removed sessionController.inspect entry point', async () => {
+    const f = await runtime();
+    f.app.questions.apply(f.sessionId, call(1, 1, 'question-call'));
+    f.app.questions.apply(f.sessionId, result(2, 1, 'question-call'));
+    const controller = (f.root as unknown as { get(name: string): unknown }).get('kanbanController') as {
+      questionsFollow(request: { sessionId: string }, signal: AbortSignal): AsyncGenerator<{ kind: string; rounds?: readonly unknown[] }>;
+    };
+    const abort = new AbortController();
+    let baseline: readonly unknown[] | undefined;
+    for await (const frame of controller.questionsFollow({ sessionId: f.sessionId }, abort.signal)) {
+      if (frame.kind === 'baseline') { baseline = frame.rounds; break; }
+    }
+    abort.abort();
+    expect(baseline).toHaveLength(1);
+    expect((baseline?.[0] as { answered?: boolean }).answered).toBe(false);
+    await expect(f.app.rounds(f.sessionId)).resolves.toHaveLength(1);
+  });
+
   it('clears the early running read only on the idle edge, with no further session event', async () => {
     const f = await runtime();
     const notify = vi.fn(); f.app.subscribe(notify);

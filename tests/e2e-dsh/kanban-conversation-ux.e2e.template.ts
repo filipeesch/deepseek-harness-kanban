@@ -38,20 +38,21 @@ it('quick-creates a real worktree and dismisses a seeded question round durably'
   await projectDialog.getByRole('textbox', { name: 'Project name' }).fill('Harness');
   await projectDialog.getByRole('textbox', { name: 'Project path' }).fill(repository);
   await projectDialog.getByRole('textbox', { name: 'Project path' }).press('Tab');
-  await expect(projectDialog.getByText('Git repository')).toBeVisible();
+  await projectDialog.getByText('Git repository').waitFor({ state: 'visible' });
   await projectDialog.getByRole('button', { name: 'Save project' }).click();
-  await expect(page.getByText('Project saved.')).toBeVisible();
+  await page.getByText('Project saved.').waitFor({ state: 'visible' });
   await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
   await page.getByRole('button', { name: 'New task' }).first().click();
   await page.getByRole('textbox', { name: 'Title' }).fill('Worktree task');
+  await page.getByRole('dialog', { name: 'New task' }).getByRole('combobox', { name: 'Project' }).selectOption({ label: 'Harness' });
   await page.getByRole('button', { name: 'Create task' }).click();
   await page.getByRole('button', { name: 'Open task Worktree task' }).click();
   const notice = page.getByRole('note', { name: 'Worktree not created' });
-  await expect(notice).toBeVisible();
-  await expect(notice).toContainText('worktree-task');
+  await notice.waitFor({ state: 'visible' });
+  expect(await notice.textContent()).toContain('worktree-task');
   await notice.getByRole('button', { name: 'Create worktree' }).click();
-  await expect(notice).toBeHidden({ timeout: 20_000 });
-  await expect(page.getByRole('tab', { name: 'Conversations' })).toHaveAttribute('aria-selected', 'true');
+  await notice.waitFor({ state: 'hidden', timeout: 20_000 });
+  expect(await page.getByRole('tab', { name: 'Conversations' }).getAttribute('aria-selected')).toBe('true');
   const worktrees = await exec('git', ['worktree', 'list', '--porcelain'], { cwd: repository });
   expect(worktrees.stdout).toContain('branch refs/heads/worktree-task');
   expect((await stat(join(basePath, 'worktree-task'))).isDirectory()).toBe(true);
@@ -62,13 +63,27 @@ it('quick-creates a real worktree and dismisses a seeded question round durably'
   const workspace = await scaffold.ctx.workspaceRegistry.create(repository);
   await workspace.attachSession(sessionId);
   await page.reload({ waitUntil: 'load' });
-  await page.getByText('Question fixture', { exact: true }).click();
+  await page.getByLabel('Sessions', { exact: true }).getByText('Question fixture', { exact: true }).click();
   const form = page.getByRole('form', { name: 'Questions from the agent' });
-  await expect(form).toBeVisible();
+  await form.waitFor({ state: 'visible' });
   await form.getByRole('button', { name: 'Dismiss' }).click();
-  await expect(form).toBeHidden();
+  await form.waitFor({ state: 'hidden' });
   await page.reload({ waitUntil: 'load' });
-  await page.getByText('Question fixture', { exact: true }).click();
-  await expect(page.getByText('decision_request').first()).toBeVisible();
-  await expect(page.getByRole('form', { name: 'Questions from the agent' })).toHaveCount(0);
+  await page.getByLabel('Sessions', { exact: true }).getByText('Question fixture', { exact: true }).click();
+  await page.getByLabel('Session hierarchy').getByText('Question fixture', { exact: true }).waitFor({ state: 'visible' });
+  // Wait for the feed baseline, not merely for the session chrome: the dock is
+  // asynchronous, so an immediate count()===0 could pass before a round arrives.
+  const controller = (scaffold.ctx as unknown as { get(name: string): unknown }).get('kanbanController') as {
+    questionsFollow(request: { sessionId: string }, signal: AbortSignal): AsyncGenerator<{ kind: string; rounds?: readonly unknown[] }>;
+  } | undefined;
+  if (!controller) throw new Error('kanban controller is unavailable for the feed assertion');
+  const feedAbort = new AbortController();
+  let baseline: readonly unknown[] | undefined;
+  for await (const frame of controller.questionsFollow({ sessionId }, feedAbort.signal)) {
+    if (frame.kind === 'baseline') { baseline = frame.rounds ?? []; break; }
+  }
+  feedAbort.abort();
+  expect(baseline).toEqual([]);
+  await expect.poll(() => form.count()).toBe(0);
+  await expect.poll(() => page.getByRole('alert').filter({ hasText: 'Question rounds are unavailable' }).count()).toBe(0);
 });

@@ -229,8 +229,9 @@ function installNativeLifecycleTransaction(options, outside) {
       cancelled();
       manager = ctx.get("pluginManager");
       jobs = ctx.get("jobs");
-      const fs = ctx.get("fs"), sessions = ctx.get("sessionController");
-      if (!manager || typeof manager.listBundles !== "function" || typeof manager.setBundleEnabled !== "function" || !jobs || ["get", "list", "wait"].some((key) => typeof jobs[key] !== "function") || typeof jobs.events?.subscribe !== "function" || !fs || ["resolve", "processPath", "contains", "stat"].some((key) => typeof fs[key] !== "function") || typeof sessions?.inspect !== "function") failure("PUBLIC_CAPABILITY_REQUIRED");
+      const fs = ctx.get("fs"), query = ctx.get("sessionQuery");
+      if (!manager || typeof manager.listBundles !== "function" || typeof manager.setBundleEnabled !== "function" || !jobs || ["get", "list", "wait"].some((key) => typeof jobs[key] !== "function") || typeof jobs.events?.subscribe !== "function" || !fs || ["resolve", "processPath", "contains", "stat"].some((key) => typeof fs[key] !== "function") || typeof query?.observeSession !== "function") failure("PUBLIC_CAPABILITY_REQUIRED");
+      const readSession = async (id) => { const observation = await query.observeSession(id); try { return { header: observation.header, events: observation.events, inheritedEventCount: observation.inheritedEventCount }; } finally { observation[Symbol.dispose](); } };
       lease = await outside.gate.acquire(cfg.transactionId);
       state.operational.leaseRetained = true;
       const quiet = lease.status();
@@ -259,9 +260,9 @@ function installNativeLifecycleTransaction(options, outside) {
       const runPath = await fs.resolve(cfg.fixture.run), basePath = await fs.resolve(cfg.fixture.base);
       if (fs.processPath(runPath) !== cfg.fixture.run || fs.processPath(basePath) !== cfg.fixture.base || !fs.contains(runPath, basePath) || (await fs.stat(runPath))?.type !== "directory" || (await fs.stat(basePath))?.type !== "directory") failure("FIXTURE_CANONICAL_PATH_UNVERIFIED");
       for (const owner of cfg.ownedSessionIds) {
-        const snapshot = await sessions.inspect(owner);
-        if (snapshot.meta?.cwd !== cfg.fixture.base || !Array.isArray(snapshot.events)) failure("OWN_SESSION_ORIGIN_UNVERIFIED");
-        let current = snapshot.meta.cwd;
+        const snapshot = await readSession(owner);
+        if (snapshot.header?.cwd !== cfg.fixture.base || !Array.isArray(snapshot.events)) failure("OWN_SESSION_ORIGIN_UNVERIFIED");
+        let current = snapshot.header.cwd;
         for (const event of snapshot.events) if (event.type === "working-directory/change") current = event.data?.cwd;
         if (current !== cfg.fixture.base) failure("OWN_SESSION_CONTEXT_UNVERIFIED");
         for (const spec of cfg.jobs.filter((spec2) => spec2.owner === owner)) {

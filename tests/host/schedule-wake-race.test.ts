@@ -77,11 +77,17 @@ async function runtime() {
       agents.set(id, { id, session, status: 'idle', inbox: { nextTurn: [], nextStep: [] } });
       return { sessionId: id };
     },
-    inspect: async (id: string) => ({ meta: { cwd: directories.get(id) }, events: [], inheritedEventCount: 0 }),
     projections: async () => ({ kind: 'sequenced', asOfSeq: -1, values: {} }),
     resolveAgent, prompt,
     list: async () => ({ items: [...sessions.keys()].map(sessionId => ({ sessionId })) }),
   } as never);
+  root.provide('sessionQuery', {
+    observeSession: async (id: string) => ({
+      header: { cwd: directories.get(id) }, events: [], inheritedEventCount: 0,
+      source: 'live', cursor: 0, retain() { return this; }, [Symbol.dispose]() {},
+    }),
+  } as never);
+  root.provide('llm', {} as never);
   root.provide('sessions', { get: (id: string) => sessions.get(id), list: () => [...sessions.values()] } as never);
   root.provide('agents', { get: (id: string) => agents.get(id) } as never);
   root.provide('workingDirectory', {

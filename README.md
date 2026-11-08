@@ -30,6 +30,8 @@ Every release publishes one installable file, `dsh-kanban.tgz`, built from the c
 3. Enable **dsh-kanban** and inspect the native installation/application result.
 4. Refresh the **existing** GUI URL, then select **Kanban** in its sidebar. Use the URL the host printed on launch.
 
+If the item is missing after a reinstall, check for a stale user-layer override before treating it as an activation failure: a `- id: kanban` entry with `disabled: true` in the profile's `cordis.patch.yml` survives reinstalls and hides the row. Enable Kanban in the plugin manager or remove that override, then restart. Confirm with `dsh --profile <profile> --dump-config | grep -A2 'id: kanban'`; see [installation failure signatures](<docs/operations.md#installation-failure-signatures>).
+
 The asset already contains the compiled entries, so this path runs no build and needs no dependency build-script approval. The host treats the address as a tarball, not as a repository, and installs it without scripts. Most DSH SDK packages are peer dependencies that the host installation provides, so the profile does not need its own copy of them. The Typert protocol helper is compiled into the published entries instead: a profile can hoist an older copy of that package, and Node resolves the profile copy before the host installation (see [installation failure signatures](<docs/operations.md#installation-failure-signatures>)). pnpm still downloads the artifact's own runtime dependencies (`zod`, `yaml`, and the editor packages) from the registry, so the installation needs registry access but no build.
 
 ### Update an installed plugin

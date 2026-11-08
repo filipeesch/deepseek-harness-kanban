@@ -32,7 +32,8 @@ function makeRealmRoot(){
   const wd={get(session:{id:string}){if(session.id!==owner)throw new Error('Unknown native actor');return actor.current;}};
   const fs={async resolve(value:string){return value;},processPath(value:string){return value;},contains(parent:string,child:string){return child.startsWith(parent+'/');},async stat(){return{type:'directory'};}};
   const manager={async listBundles(){listCount++;if(listCount===2)await wait('final-list');return[{name:'dsh-kanban',enabled}];},async setBundleEnabled(name:string,on:boolean){if(name!=='dsh-kanban')throw new Error('Wrong bundle');trace.push(on?'on-enter':'off-enter');await wait(on?'on':'off');enabled=on;currentFacade=on?facade():undefined;trace.push(on?'on-commit':'off-commit');if(on&&hooks.migrateOnRestore&&job.status==='completed'){actor.current=run+'/journal-tree/apps/api';task.effectiveCwd=actor.current;task.operation=null;history.push({type:'working-directory/change',data:{cwd:actor.current}});}return{stage:'enable',target:name,enabled:on,changed:true,application:on?hooks.onApplication:hooks.offApplication};}};
-  const services:any={pluginManager:manager,jobs,fs,sessionController:sessions,workingDirectory:wd,agents:{get(id:string){return id===owner?actor:undefined;}}};
+  const sessionQuery={async observeSession(id:string){const value=await sessions.inspect(id);return{header:value.meta,events:value.events,inheritedEventCount:0,source:'live',cursor:0,retain(){return this;},[Symbol.dispose](){}};}};
+  const services:any={pluginManager:manager,jobs,fs,sessionController:sessions,sessionQuery,workingDirectory:wd,agents:{get(id:string){return id===owner?actor:undefined;}}};
   const coreServiceReads:string[]=[];
   const root:any={get(name:string){if(name!=='kanbanController')coreServiceReads.push(name);return name==='kanbanController'?currentFacade:services[name];}};root.root=root;
   const makeController=(wrongRoot=false)=>{

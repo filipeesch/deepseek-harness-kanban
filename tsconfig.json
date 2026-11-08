@@ -7,7 +7,8 @@
       "ES2023",
       "DOM",
       "DOM.Iterable",
-      "ESNext.Decorators"
+      "ESNext.Decorators",
+      "ESNext.Disposable"
     ],
     "jsx": "react-jsx",
     "strict": true,

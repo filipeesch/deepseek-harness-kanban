@@ -3,7 +3,7 @@ import os from 'node:os';
 import type {} from '@deepseek-ai/dsh-typert-registry';
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-subagent';
-import { SessionId } from '@deepseek-ai/dsh-session';
+import type {} from '@deepseek-ai/dsh-llm';
 import { TYPERT_HOST } from './remote.js';
 import { HubRepository } from './host/hub-repository.js';
 import { openKanbanStorage } from './host/storage.js';
@@ -32,6 +32,7 @@ import { KanbanController } from './host/controller.js';
 import { registerProductTools } from './host/tools.js';
 import { KanbanError } from './shared/errors.js';
 import { registerTaskContextInjection } from './host/task-context.js';
+import { createSessionHistory } from './host/session-history.js';
 import type { TaskLocator } from './host/task-locator.js';
 
 // The optional public schedule module emits this payloadless event; listening does not require its service.
@@ -57,17 +58,19 @@ export function registerTaskExecutionGuards(ctx:Context,locator:Pick<TaskLocator
   if(task){await app.assertExecutionContext(payload.agent.id);payload.signal.throwIfAborted();if(changing(taskFor(payload.agent.id)))return {kind:'reject'};}
   return next();
  });
- const offRequest=ctx.on('agent/request',async(payload,next)=>{
-  // next() resolves frozen request configuration, not a model invocation. Validate after downstream config middleware.
-  const config=await next();
-  if(taskFor(payload.agent.id)){
-   if(changing(taskFor(payload.agent.id)))throw new KanbanError('CONTEXT_OPERATION_PENDING','Wait for the task directory operation before requesting a model.');
-   await app.assertExecutionContext(payload.agent.id);payload.signal.throwIfAborted();
-   if(changing(taskFor(payload.agent.id)))throw new KanbanError('CONTEXT_OPERATION_PENDING','The task directory operation changed before its model request.');
+ const offStream=ctx.on('llm/stream',async function*(options,next){
+  // The stream boundary runs after request configuration and before the provider call.
+  const id=options.sessionId===undefined?undefined:String(options.sessionId);
+  const task=id===undefined?undefined:taskFor(id);
+  if(task&&id!==undefined&&options.purpose===undefined){
+   options.signal?.throwIfAborted();
+   if(changing(task))throw new KanbanError('CONTEXT_OPERATION_PENDING','Wait for the task directory operation before requesting a model.');
+   await app.assertExecutionContext(id);options.signal?.throwIfAborted();
+   if(changing(taskFor(id)))throw new KanbanError('CONTEXT_OPERATION_PENDING','The task directory operation changed before its model request.');
   }
-  return config;
+  yield* next();
  });
- return()=>{offRequest();offStep();};
+ return()=>{offStream();offStep();};
 }
 export interface HubSharingRuntime {
  service:HubSharingService;
@@ -128,7 +131,7 @@ export async function openHubSharing(ctx:Context,hubs:HubRepository,options:HubS
  };
 }
 export const name='kanban';
-export const inject=['storageDomain','sessionController','sessions','agents','workingDirectory','workspaceRegistry','sandboxPolicy','tools','typert','credentials'];
+export const inject=['storageDomain','sessionController','sessionQuery','sessions','agents','workingDirectory','workspaceRegistry','sandboxPolicy','tools','typert','credentials','llm'];
 export async function apply(ctx:Context):Promise<void>{
  const report=(error:unknown)=>ctx.logger.warn(error instanceof Error?error.message:String(error));
  const opened=await openKanbanStorage(ctx);
@@ -136,10 +139,13 @@ export async function apply(ctx:Context):Promise<void>{
  let questions:{storage:import('./host/question-storage.js').QuestionStore;close:()=>Promise<void>};
  try{questions=await openQuestionStorage(ctx);}catch(error){await storage.close();throw error;}
  const lifetime=new AbortController();
- const conversationFacts=registerConversationFacts(ctx);ctx.effect(()=>()=>conversationFacts.dispose());const native=createNativePorts(ctx,{conversationFacts});const hubs=await HubRepository.open(opened.storage);
+ const history=createSessionHistory(ctx);
+ let conversationFacts!:Awaited<ReturnType<typeof registerConversationFacts>>;
+ try{conversationFacts=await registerConversationFacts(ctx);ctx.effect(()=>()=>conversationFacts.dispose());}catch(error){conversationFacts?.dispose();await questions.close().catch(()=>undefined);await storage.close().catch(()=>undefined);throw error;}
+ const native=createNativePorts(ctx,{conversationFacts,history});const hubs=await HubRepository.open(opened.storage);
  let sharing:HubSharingRuntime;
  try{sharing=await openHubSharing(ctx,hubs,{report});}catch(error){await hubs.close();await questions.close();await storage.close();throw error;}
- const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await ctx.sessionController.inspect(SessionId(id),lifetime.signal)).events,questionStore:questions.storage,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler},native.workspaces);
+ const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler},native.workspaces);
  sharing.setNotify(()=>app.sharingChanged());
  let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offSignals:(()=>void)|undefined;
  ctx.effect(()=>async()=>{lifetime.abort();offTools?.();offWire?.();offGuards?.();offContext?.();offSignals?.();try{await app.close();}finally{try{await sharing.close();}finally{try{await hubs.close();}finally{await questions.close();}}}});
@@ -149,7 +155,7 @@ export async function apply(ctx:Context):Promise<void>{
  ctx.on('session/event',(session,event)=>{app.observe(session.id,event);});
  offSignals=registerAttentionSignals(ctx,app);
  offGuards=registerTaskExecutionGuards(ctx,app.locator,app);
- offContext=registerTaskContextInjection(ctx,app.locator,{report});
+ offContext=registerTaskContextInjection(ctx,app.locator,{history,report});
  await app.initialize();
  sharing.scheduler.sync();
 }

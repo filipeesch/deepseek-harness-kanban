@@ -1,9 +1,9 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm';
-import { SessionId } from '@deepseek-ai/dsh-session';
 import type { Board, Task, Workflow } from '../shared/types.js';
 import type { TaskLocator } from './task-locator.js';
+import { createSessionHistory, type SessionEventsReader } from './session-history.js';
 
 /** Producer marker for the model-facing task context injected on a conversation's first turn. */
 export interface KanbanTaskContextSource {
@@ -16,10 +16,8 @@ declare module '@deepseek-ai/dsh-llm' {
   }
 }
 
-export type TaskContextInspect = (sessionId: string, signal?: AbortSignal) => Promise<{ events: readonly unknown[] }>;
-
 export interface TaskContextOptions {
-  inspect?: TaskContextInspect;
+  history?: SessionEventsReader;
   report?: (error: unknown) => void;
 }
 
@@ -57,7 +55,7 @@ function isUserMessage(event: unknown): boolean {
  */
 export function registerTaskContextInjection(ctx: Context, locator: Pick<TaskLocator, 'bySession'>, options: TaskContextOptions = {}): () => void {
   const checked = new WeakSet<Agent>();
-  const inspect: TaskContextInspect = options.inspect ?? ((sessionId, signal) => ctx.sessionController.inspect(SessionId(sessionId), signal));
+  const history = options.history ?? createSessionHistory(ctx);
   const report = options.report ?? ((error: unknown) => {
     try { ctx.logger?.warn?.(`Kanban task context injection failed: ${error instanceof Error ? error.message : String(error)}`); }
     catch { /* logging is best effort */ }
@@ -73,7 +71,7 @@ export function registerTaskContextInjection(ctx: Context, locator: Pick<TaskLoc
 
     let events: readonly unknown[];
     try {
-      events = (await inspect(payload.agent.id, payload.signal)).events;
+      events = (await history.read(payload.agent.id, { signal: payload.signal })).events;
     } catch (error) {
       report(error);
       return decision;
