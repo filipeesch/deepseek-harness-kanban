@@ -3,6 +3,7 @@ import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { canTransition, transitionAccess } from '../domain/transitions.js';
 import { nextEnteredAt } from '../domain/stage-entry.js';
+import { placementFromAnchor } from '../domain/placement.js';
 import { AUTO_ADVANCE_SETTLE_MS, AutoAdvanceCoordinator } from './auto-advance.js';
 import type { AutoAdvancePlan } from '../domain/auto-advance.js';
 import { admitAutoAdvance } from './auto-advance-admission.js';
@@ -23,7 +24,6 @@ import { PublishScheduler } from './publish-scheduler.js';
 import { isGitProject, requireGitProject } from '../shared/project.js';
 import { containsPath } from './git.js';
 import { taskTitleSlug, worktreePathForBranch } from '../shared/worktree-name.js';
-import { ownedSessionIds } from '../domain/session-lineage.js';
 import { firstOpenSessionId } from '../shared/conversations.js';
 import { admitStageInstruction, type StageInstructionDeps } from './stage-instruction.js';
 import { requiresWorktreeDecision, unresolvedWorktreeBinding } from '../shared/worktree-decision.js';
@@ -36,6 +36,7 @@ import type { HubSharingService } from './sharing/service.js';
 import type { SharingPollScheduler } from './sharing/scheduler.js';
 import type { GoogleDriveLocalDiscovery } from './sharing/google-drive-local/discovery.js';
 import { isAuthorizationCommand, type GoogleDriveAuthCoordinator } from './sharing/auth-coordinator.js';
+import { WorkspaceCoordinator } from './workspace-coordinator.js';
 
 async function pathExists(value:string):Promise<boolean>{try{await lstat(value);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}}
 function isEvent(value:unknown):value is {type:string;seq:number;data:unknown}{return Boolean(value&&typeof value==='object'&&'type'in value&&typeof value.type==='string'&&'seq'in value&&typeof value.seq==='number'&&Number.isSafeInteger(value.seq)&&'data'in value);}
@@ -66,10 +67,19 @@ export class KanbanApp {
  private readonly autoAdvance:AutoAdvanceCoordinator;
  /** The one conversation-fact read every host consumer shares; the question projection is folded in here. */
  private readonly factsSource:ConversationFactsSource;
+ private readonly workspaceCoordinator?:WorkspaceCoordinator;
  constructor(readonly hubs:HubRepository,readonly sessions:SessionPort,readonly git:GitPort,private readonly options:AppOptions={},private readonly workspaces?:WorkspacePort){
   this.locator=new TaskLocator(hubs);
   this.factsSource=withQuestionPending({read:id=>this.sessions.facts(id)},this.questions);
-  this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,onTaskDeleted:async task=>{try{await this.cleanupWorktreeWorkspace(task as HubTask);}catch(error){this.options.report?.(error);}}});
+  if(workspaces)this.workspaceCoordinator=new WorkspaceCoordinator({
+   workspaces,sessions,store:{
+    all:()=>this.locator.all().map(located=>({hubId:located.hubId,task:located.task,project:located.project})),
+    setProjectWorkspace:async(hubId,projectId,workspaceId,owned)=>{await this.hubs.hub(hubId).setProjectWorkspace(projectId,workspaceId,owned);},
+    setTaskWorktreeWorkspace:async(hubId,taskId,workspaceId,owned)=>{await this.hubs.hub(hubId).setTaskWorktreeWorkspace(taskId,workspaceId,owned);},
+   },
+   ...(options.report?{report:options.report}:{}),
+  });
+  this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,onTaskDeleted:async task=>{try{await this.workspaceCoordinator?.cleanup(task as HubTask);}catch(error){this.options.report?.(error);}}});
   this.pendingWork=new PendingWorkRunner({resumeWorktrees:async()=>{await this.worktrees.resumePending();},dispatchPending:async()=>{await this.dispatchPending();},report:error=>this.options.report?.(error)});
   this.attention=new AttentionCoordinator({source:this.factsSource,tasks:()=>this.attentionTasks(),runPendingWork:async()=>{await this.pendingWork.run();},onChange:()=>this.attentionChanged(),onFacts:()=>this.markChanged(),report:error=>this.options.report?.(error)});
   this.autoAdvance=new AutoAdvanceCoordinator({
@@ -133,9 +143,11 @@ export class KanbanApp {
  }
  private scheduleStartupReconciliation(summaries:readonly TaskSummary[]):void{
   const jobs:Array<()=>Promise<void>>=[];
+  // Workspace provisioning and session-directory repair are background recovery;
+  // the board must not wait for the workspace registry before its first snapshot.
+  if(this.workspaceCoordinator)jobs.push(()=>this.workspaceCoordinator!.reconcile());
   for(const summary of summaries){
    for(const sessionId of summary.sessionIds)jobs.push(()=>this.prepareQuestions(sessionId));
-   jobs.push(()=>this.reconcileTaskWorkspace(summary.hubId,summary.taskId));
    if(summary.instructionPending!==null)jobs.push(()=>this.reconcileTaskInstructionPending(summary.taskId));
   }
   this.startup.run(jobs);
@@ -336,44 +348,6 @@ export class KanbanApp {
   if(location.gitRootPath!==gitRootPath)throw new KanbanError('INVALID_GIT_ROOT','The Git root must be the repository top-level directory.',{configured:gitRootPath,actual:location.gitRootPath});
   return {...input,projectPath,gitRootPath};
  }
- private async ensureProjectWorkspace(hubId:string,project:Project):Promise<string|undefined>{
-  if(!this.workspaces)return undefined;
-  if(project.workspaceId&&this.workspaces.get(project.workspaceId))return project.workspaceId;
-  const ensured=await this.workspaces.ensure(project.projectPath,project.name);
-  if(project.workspaceId!==ensured.workspace.id||project.workspaceOwned!==ensured.owned)await this.hubStore(hubId).setProjectWorkspace(project.id,ensured.workspace.id,ensured.owned);
-  return ensured.workspace.id;
- }
- private async ensureWorktreeWorkspace(hubId:string,task:HubTask,project:Project):Promise<string|undefined>{
-  if(!this.workspaces)return undefined;
-  if(task.effectiveCwd===project.projectPath)return this.ensureProjectWorkspace(hubId,project);
-  if(task.worktreeWorkspaceId&&this.workspaces.get(task.worktreeWorkspaceId))return task.worktreeWorkspaceId;
-  const title=project.name+' · '+(task.worktree?.branch??path.basename(task.effectiveCwd));
-  const ensured=await this.workspaces.ensure(task.effectiveCwd,title);
-  if(task.worktreeWorkspaceId!==ensured.workspace.id||task.worktreeWorkspaceOwned!==ensured.owned)await this.hubStore(hubId).setTaskWorktreeWorkspace(task.id,ensured.workspace.id,ensured.owned);
-  return ensured.workspace.id;
- }
- private async reconcileTaskWorkspace(hubId:string,taskId:string):Promise<void>{
-  if(!this.workspaces)return;
-  const located=this.locator.byTask(taskId);if(!located)return;
-  const {task,project}=located;
-  if(task.sessionIds.length>0){try{await this.ensureProjectWorkspace(hubId,project);await this.ensureWorktreeWorkspace(hubId,task,project);}
-  catch(error){this.options.report?.(error);}}
-  for(const sessionId of task.sessionIds){
-   try{
-    const directory=await this.sessions.directory(sessionId);
-    if(directory!==project.projectPath)await this.workspaces.ensure(directory,project.name+' · '+path.basename(directory));
-   }catch(error){this.options.report?.(error);}
-  }
- }
- private async cleanupWorktreeWorkspace(task:HubTask):Promise<void>{
-  if(!this.workspaces||!task.worktreeWorkspaceId||!task.worktreeWorkspaceOwned)return;
-  const info=this.workspaces.get(task.worktreeWorkspaceId);
-  if(!info)return;
-  const owned=ownedSessionIds(task.sessionIds,(await this.sessions.topology()).lineage);
-  if(info.sessionIds.some(id=>!owned.has(id)))return;
-  if(this.locator.all().some(other=>other.task.id!==task.id&&other.task.worktreeWorkspaceId===task.worktreeWorkspaceId))return;
-  await this.workspaces.delete(task.worktreeWorkspaceId);
- }
  private assertContext(taskId:string):void{const task=this.locatedTask(taskId).task;invariant(!task.operation,'CONTEXT_OPERATION_PENDING','Resolve the task context operation before admitting another conversation or execution.');}
  private serial<T>(run:()=>Promise<T>):Promise<T>{const result=this.commandTail.then(run);this.commandTail=result.then(()=>undefined,()=>undefined);return result;}
  createConversation(taskId:string):Promise<string>{return this.serial(()=>this.createConversationNow(taskId));}
@@ -381,7 +355,7 @@ export class KanbanApp {
   this.assertContext(taskId);const located=this.locatedTask(taskId);const store=this.hubs.hub(located.hubId);const before=located.task;const project=located.project;
   invariant(!(options.allowUndecided===true&&before.sessionIds.length===0&&unresolvedWorktreeBinding(before,project)),'WORKTREE_BINDING_UNRESOLVED','Resolve the worktree binding in the Git section before starting the first conversation.');
   invariant(options.allowUndecided===true||!requiresWorktreeDecision(before,project),'WORKTREE_DECISION_REQUIRED','Choose whether to create a worktree or continue in the base project before starting the first conversation.');
-  const workspaceId=await this.ensureWorktreeWorkspace(located.hubId,before,project);const id=await this.sessions.create(project.projectPath,workspaceId);
+  const workspaceId=await this.workspaceCoordinator?.ensureTaskWorkspace(located.hubId,before,project);const id=await this.sessions.create(project.projectPath,workspaceId);
   try{if(before.effectiveCwd!==project.projectPath)await this.sessions.setDirectory(id,before.effectiveCwd);this.assertContext(taskId);const current=store.requireTask(taskId);invariant(current.effectiveCwd===before.effectiveCwd,'CONTEXT_CHANGED','Task directory changed while the conversation was being created.');await store.addSession(taskId,id);return id;}
   catch(error){try{await this.sessions.archive(id);}catch(archiveError){this.options.report?.(archiveError);}throw error;}
  }
@@ -536,7 +510,7 @@ export class KanbanApp {
   if(this.disposed)return;if(this.driving){this.driveAgain=true;return;}this.driving=true;
   try{do{this.driveAgain=false;this.pendingTransitions.refresh(this.locator.summaries());for(const taskId of [...this.pendingTransitions.list()]){const located=this.locator.byTask(taskId);const task=located?.task;const pending=task?.pendingTransition;if(!located||!task||!pending||pending.status!=='waiting'||task.operation||(pending.worktreeRequest&&task.worktree?.status!=='ready'))continue;const store=this.hubs.hub(located.hubId);
    try{
-    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');operations.placeTask(d,t.id,pending.columnId,pending.beforeTaskId??null,nextEnteredAt());if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});
+    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');operations.placeTask(d,t.id,pending.columnId,placementFromAnchor(pending.beforeTaskId),nextEnteredAt());if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});
     if(pending.mode==='run'){
      invariant(pending.sessionId&&pending.text,'INVALID_TARGET','Confirmed execution is missing its target or instruction.');
      await admitStageInstruction(this.stageInstructionDeps(),{taskId:task.id,columnId:pending.columnId,instruction:pending.text,sessionId:pending.sessionId,requestId:pending.id});

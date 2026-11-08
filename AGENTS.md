@@ -5,6 +5,12 @@
 - Write all specifications and OpenSpec planning artifacts in US English (`en-US`).
 - Write source code, identifiers, and code comments in US English (`en-US`).
 
+## Workspaces
+
+- Register task worktree and session-directory workspaces hidden by default when the host exposes workspace visibility. Keep the shared base-project workspace visible.
+- Hide a pre-existing worktree workspace once, at its first binding. Never hide workspaces retroactively and never re-hide one after a reader reveals hidden workspaces; startup reconciliation only repairs workspaces.
+- Use the positional workspace API and keep workspaces visible on hosts without visibility support. A failed hide is reported and never blocks conversation creation.
+
 ## Releases
 
 - Bump `version` in `package.json` in the pull request that changes the published

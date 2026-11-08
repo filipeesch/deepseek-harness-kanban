@@ -6,6 +6,8 @@ import { parseWorkflow } from './workflow.js';
 import { entryInstruction, nextEnteredAt } from './stage-entry.js';
 import { assertProjectConversion, buildProject } from './project-registration.js';
 import { applyNoteTags, validateNoteWrite, type NoteInput } from './note.js';
+import { placementIndex, type Placement } from './placement.js';
+import { compareTaskOrder } from './task-order.js';
 
 export type { NoteInput } from './note.js';
 export interface TaskTextPatch { title?: string; description?: string }
@@ -167,7 +169,7 @@ export function createTask(hub: HubState, input: { boardId: string; projectId: s
   const peers = hub.tasks.filter(task => task.boardId === board.id && task.columnId === board.workflow.initialColumnId);
   let position = peers.length ? peers.reduce((minimum, task) => Math.min(minimum, task.position), Infinity) - 1 : 0;
   if (!Number.isFinite(position) || peers.some(task => task.position === position)) {
-    peers.sort((left, right) => left.position - right.position).forEach((task, index) => { task.position = index; });
+    peers.sort(compareTaskOrder).forEach((task, index) => { task.position = index; });
     position = -1;
   }
   const at = timestamp(deps);
@@ -294,14 +296,13 @@ export function deleteNote(hub: HubState, taskId: string, noteId: string, deps: 
   return note;
 }
 
-export function placeTask(hub: HubState, taskId: string, columnId: string, beforeTaskId: string | null, enteredAt: number): void {
+export function placeTask(hub: HubState, taskId: string, columnId: string, placement: Placement, enteredAt: number): void {
   const task = requireTask(hub, taskId);
   const board = boardForTask(hub, task);
   const sourceColumnId = task.columnId;
   const destination = hub.tasks.filter(value => value.boardId === board.id && value.columnId === columnId && value.id !== taskId)
-    .sort((left, right) => left.position - right.position || left.createdAt.localeCompare(right.createdAt));
-  const requestedIndex = beforeTaskId ? destination.findIndex(value => value.id === beforeTaskId) : -1;
-  const index = requestedIndex >= 0 ? requestedIndex : destination.length;
+    .sort(compareTaskOrder);
+  const index = placementIndex(placement, destination);
   task.columnId = columnId;
   if (task.autoMode?.pause !== undefined) delete task.autoMode.pause;
   if (sourceColumnId !== columnId) {
@@ -313,7 +314,7 @@ export function placeTask(hub: HubState, taskId: string, columnId: string, befor
   destination.forEach((value, position) => { value.position = position; });
   if (sourceColumnId !== columnId) {
     hub.tasks.filter(value => value.boardId === board.id && value.columnId === sourceColumnId)
-      .sort((left, right) => left.position - right.position || left.createdAt.localeCompare(right.createdAt))
+      .sort(compareTaskOrder)
       .forEach((value, position) => { value.position = position; });
   }
 }

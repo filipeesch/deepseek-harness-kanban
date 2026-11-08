@@ -63,6 +63,35 @@ function fixture() {
   const getDirectory = vi.fn<Context['workingDirectory']['get']>().mockImplementation(() => cwd);
   const ensure = vi.fn<Context['workingDirectory']['ensure']>().mockImplementation(async () => cwd);
   const archiveSession = vi.fn<Context['workspaceRegistry']['archiveSession']>().mockResolvedValue(undefined);
+  type TestWorkspaceRecord = {
+    id: string; path: string; title: string; sessionIds: string[]; hidden: boolean;
+    setTitle: (title: string) => Promise<void>;
+    setHidden: (hidden: boolean) => Promise<void>;
+  };
+  const workspaceByPath = new Map<string, TestWorkspaceRecord>();
+  let workspaceCount = 0;
+  const makeWorkspace = (path: string, title: string, hidden = false): TestWorkspaceRecord => {
+    const value: TestWorkspaceRecord = {
+      id: 'workspace-' + (++workspaceCount), path, title, sessionIds: [], hidden,
+      setTitle: async next => { value.title = next; },
+      setHidden: async next => { value.hidden = next; },
+    };
+    return value;
+  };
+  const resolveWorkspace = vi.fn(async (path: string) => workspaceByPath.get(path));
+  const createWorkspace = vi.fn(async (path: string, options?: { title?: string; hidden?: boolean } | string) => {
+    const existing = workspaceByPath.get(path);
+    if (existing) return existing;
+    // The visibility-capable registry reads a positional argument as its options object.
+    const title = typeof options === 'string' ? path.split('/').filter(Boolean).pop() ?? path : options?.title ?? path;
+    const hidden = typeof options === 'object' && options?.hidden === true;
+    const value = makeWorkspace(path, title, hidden);
+    workspaceByPath.set(path, value);
+    return value;
+  });
+  const getWorkspace = vi.fn((id: string) => [...workspaceByPath.values()].find(value => value.id === id));
+  const listWorkspaces = vi.fn(() => [...workspaceByPath.values()]);
+  const workspaceRegistry = { archiveSession, resolveByPath: resolveWorkspace, create: createWorkspace, get: getWorkspace, list: listWorkspaces };
   const policies = new Map<string, SandboxExecutionPolicy>([['a', { mode: 'workspace-write', workspaceRoot: root, sessionId: id }]]);
   const fallback: SandboxExecutionPolicy = { mode: 'read-only', workspaceRoot: root };
   const resolvePolicy = vi.fn<Context['sandboxPolicy']['resolve']>().mockImplementation((request) =>
@@ -74,11 +103,11 @@ function fixture() {
     sessionController: { create, inspect, projections: projection, resolveAgent, prompt, list },
     sessions: { get: (key: string) => live.get(key), list: () => [...live.values()] },
     agents: { get: (key: string) => key === 'a' ? agent : undefined },
-    workingDirectory: { get: getDirectory, set, ensure }, workspaceRegistry: { archiveSession },
+    workingDirectory: { get: getDirectory, set, ensure }, workspaceRegistry,
     waterfall, get: (key: string) => services[key],
   } as unknown as Context;
   return { ...createNativePorts(ctx), ctx, agent, session, live, inspections, projection, create, inspect,
-    resolveAgent, prompt, list, waterfall, set, getDirectory, ensure, archiveSession, resolvePolicy, policies, fallback, wrapped, confine, services };
+    resolveAgent, prompt, list, waterfall, set, getDirectory, ensure, archiveSession, workspaceByPath, makeWorkspace, createWorkspace, getWorkspace, listWorkspaces, resolveWorkspace, workspaceRegistry, resolvePolicy, policies, fallback, wrapped, confine, services };
 }
 
 beforeEach(async () => {
@@ -501,5 +530,84 @@ describe('confined exact-argv Git execution', () => {
     spawnMock.mockImplementation(() => { const child = new Child(); queueMicrotask(() => { child.emit('error', Object.assign(new Error('runner missing'), { code: 'ENOENT', path: 'native-runner', syscall: 'spawn native-runner' })); child.emit('close', -2, null); }); return child; });
     await expect(f.executor.run(project, ['status'], ['a'])).rejects.toMatchObject({ code: 'SANDBOX_UNAVAILABLE' });
     expect(spawnMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe('native workspace visibility adapter', () => {
+  it('creates a hidden workspace with the options form when the host supports visibility', async () => {
+    const f = fixture();
+    f.workspaceByPath.set('/probe', f.makeWorkspace('/probe', 'Probe'));
+
+    const ensured = await f.workspaces.ensure('/repo/apps/web', { title: 'Web', hidden: true });
+
+    expect(ensured.owned).toBe(true);
+    expect(ensured.workspace.hidden).toBe(true);
+    expect(f.workspaces.supportsHidden).toBe(true);
+    expect(f.createWorkspace).toHaveBeenCalledWith('/repo/apps/web', { title: 'Web', hidden: true });
+  });
+
+  it('creates positionally on an unknown-capable host and hides the entity once support is detected', async () => {
+    const f = fixture();
+
+    const first = await f.workspaces.ensure('/repo/apps/web', { title: 'Web', hidden: true });
+
+    expect(f.createWorkspace).toHaveBeenCalledWith('/repo/apps/web', 'Web');
+    expect(first.workspace.title).toBe('Web');
+    expect(first.workspace.hidden).toBe(true);
+    expect(f.workspaces.supportsHidden).toBe(true);
+
+    f.createWorkspace.mockClear();
+    const second = await f.workspaces.ensure('/repo/other', { title: 'Other', hidden: true });
+    expect(f.createWorkspace).toHaveBeenCalledWith('/repo/other', { title: 'Other', hidden: true });
+    expect(second.workspace.hidden).toBe(true);
+  });
+
+  it('reuses an existing workspace without changing its visibility', async () => {
+    const f = fixture();
+    f.workspaceByPath.set('/repo/apps/web', f.makeWorkspace('/repo/apps/web', 'Web'));
+
+    const ensured = await f.workspaces.ensure('/repo/apps/web', { title: 'Renamed', hidden: true });
+
+    expect(ensured.owned).toBe(false);
+    expect(ensured.workspace.hidden).toBe(false);
+    expect(f.createWorkspace).not.toHaveBeenCalled();
+  });
+
+  it('maps hidden on get and delegates setHidden to the workspace entity', async () => {
+    const f = fixture();
+    const record = f.makeWorkspace('/repo/apps/web', 'Web', true);
+    f.workspaceByPath.set('/repo/apps/web', record);
+
+    expect(f.workspaces.get(record.id)?.hidden).toBe(true);
+    await f.workspaces.setHidden(record.id, false);
+
+    expect(f.getWorkspace).toHaveBeenCalledWith(record.id);
+    expect(record.hidden).toBe(false);
+  });
+
+  it('falls back to the positional create on a host without visibility support', async () => {
+    const f = fixture();
+    const legacyByPath = new Map<string, { id: string; path: string; title: string; sessionIds: string[]; hidden: boolean }>();
+    const legacyCreate = vi.fn(async (path: string, title?: string) => {
+      const value = { id: 'legacy-1', path, title: title ?? path, sessionIds: [], hidden: false };
+      legacyByPath.set(path, value);
+      return value;
+    });
+    const legacyRegistry = {
+      archiveSession: f.archiveSession,
+      resolveByPath: async (path: string) => legacyByPath.get(path),
+      create: legacyCreate,
+      get: (id: string) => [...legacyByPath.values()].find(value => value.id === id),
+      list: () => [...legacyByPath.values()],
+    };
+    const legacy = createNativePorts({ ...f.ctx, workspaceRegistry: legacyRegistry } as unknown as Context).workspaces;
+
+    const ensured = await legacy.ensure('/repo/apps/web', { title: 'Web', hidden: true });
+
+    expect(legacy.supportsHidden).toBe(false);
+    expect(ensured.workspace.hidden).toBe(false);
+    expect(legacyCreate).toHaveBeenCalledWith('/repo/apps/web', 'Web');
+    await legacy.setHidden(ensured.workspace.id, true);
+    expect(ensured.workspace.hidden).toBe(false);
   });
 });

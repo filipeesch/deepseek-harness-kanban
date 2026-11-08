@@ -23,7 +23,7 @@ export function applyMove(state: BoardState, taskId: string, columnId: string, b
     if (entryInstruction(state.workflow.columns.find(value => value.id === columnId)) !== undefined) task.instructionPending = { columnId, enteredAt: nextEnteredAt() };
     else delete task.instructionPending;
   }
-  const requested = beforeTaskId === null || beforeTaskId === undefined ? -1 : destination.findIndex(value => value.id === beforeTaskId);
+  const requested = beforeTaskId === undefined ? 0 : beforeTaskId === null ? destination.length : destination.findIndex(value => value.id === beforeTaskId);
   destination.splice(requested >= 0 ? requested : destination.length, 0, task);
   destination.forEach((value, index) => { value.position = index; });
   if (sourceColumnId !== columnId) source.forEach((value, index) => { value.position = index; });

@@ -209,7 +209,7 @@ describe('Hub publishing service', () => {
     expect(context.hubs.requireHub(context.hubId).boards[0]!.workflowYaml).toBe(DEFAULT_WORKFLOW_YAML);
     await context.hubs.hub(context.hubId).transact(draft => {
       const task = draft.tasks.find(candidate => candidate.title === 'Task')!;
-      placeTask(draft, task.id, 'done', null, Date.now());
+      placeTask(draft, task.id, 'done', 'end', Date.now());
     });
     await context.service.getUpdates(context.hubId);
     expect(context.hubs.requireHub(context.hubId).boards[0]!.workflowYaml).toBe(flow(['done']));
