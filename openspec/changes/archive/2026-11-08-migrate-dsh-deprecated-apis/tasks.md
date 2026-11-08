@@ -6,7 +6,7 @@
 - [x] 1.2 Add `ESNext.Disposable` to the `lib` array in `tsconfig.json` and verify `Symbol.dispose` typechecks when the adapter is compiled.
 - [x] 1.3 Implement `src/host/session-history.ts` with `SessionHistory`, `SessionHistoryReader`, and `createSessionHistory`; verify a focused test asserts `header`/`events`/`inheritedEventCount` mapping, signal forwarding, default timeout, and lease disposal on success and error.
 - [x] 1.4 Add `sessionQuery` to the plugin `inject` list and verify every test that composes `apply` provides the service.
-- [x] 1.5 Bump `package.json` to `0.1.6`, update the lockfile, and verify `pnpm install --frozen-lockfile` succeeds.
+- [x] 1.5 Bump `package.json` to `0.1.7`, update the lockfile, and verify `pnpm install --frozen-lockfile` succeeds.
 
 ## 2. Session-history consumers
 

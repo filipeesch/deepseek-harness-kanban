@@ -125,7 +125,7 @@ The real-composition template uses `scaffold.ctx.sessionQuery.observeSession` wi
 
 ### 8. Version and manifest
 
-Bump the manifest to `0.1.6` in the pull request. Add the session-query package as a dev-only dependency, update the lockfile, and add `ESNext.Disposable` to the TypeScript lib for `Symbol.dispose`. No runtime peer or storage schema changes.
+Bump the manifest to `0.1.7` in the pull request. Add the session-query package as a dev-only dependency, update the lockfile, and add `ESNext.Disposable` to the TypeScript lib for `Symbol.dispose`. No runtime peer or storage schema changes.
 
 ### 9. Deprecation inventory
 
