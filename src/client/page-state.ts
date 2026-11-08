@@ -1,4 +1,5 @@
 import { useCallback, useState, type Dispatch, type SetStateAction } from 'react';
+import type { WorkflowView } from '../shared/types.js';
 import { openSessionIds } from '../shared/conversations.js';
 
 export type DrawerSection = 'Conversations' | 'Info' | 'Git' | 'Notes';
@@ -10,10 +11,12 @@ export interface BoardPageState {
   projectFilter: string;
   selectedTaskId: string | null;
   drawers: Record<string, TaskPageState>;
+  /** The presentation in use; the board resets it to the active board's default. */
+  view: WorkflowView;
 }
 
 export function createBoardPageState(): BoardPageState {
-  return { search: '', projectFilter: '', selectedTaskId: null, drawers: Object.create(null) as Record<string, TaskPageState> };
+  return { search: '', projectFilter: '', selectedTaskId: null, drawers: Object.create(null) as Record<string, TaskPageState>, view: 'board' };
 }
 
 export function createTaskPageState(): TaskPageState { return { section: 'Conversations', conversationId: null }; }

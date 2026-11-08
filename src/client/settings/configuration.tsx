@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useState } from 'react';
 import type { Attention, Board, BoardState, ClientApi, HubSharingView, HubState, KanbanSettings, Project, SharingAuthView, Task } from '../../shared/types.js';
-import { hubProjectView } from '../hub-view.js';
+import { hubProjectView } from '../board-projection.js';
 import { ProjectEditorDialog } from '../projects/project-editor-dialog.js';
 import { ProjectList } from '../projects/project-list.js';
 import { Modal, Tabs, type RunCommand } from '../ui.js';

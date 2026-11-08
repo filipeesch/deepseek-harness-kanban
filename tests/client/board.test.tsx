@@ -7,7 +7,7 @@ import { userEvent } from '@testing-library/user-event';
 import { BoardView } from '../../src/client/board.js';
 import { columnLayout } from '../../src/client/board-columns.js';
 import type { KanbanSnapshot, ClientApi, Command } from '../../src/shared/types.js';
-import { styles } from '../../src/client/styles.js';
+import { styles } from '../../src/client/styles/index.js';
 import { deferred, fakeApi, fixture, restrictedFixture } from './helpers.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';

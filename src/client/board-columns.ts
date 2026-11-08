@@ -15,13 +15,24 @@ export interface PlannedSlot { readonly key: string; readonly group?: ColumnGrou
  * column that a group already claimed is not rendered twice.
  */
 export function columnLayout(workflow: Workflow): ColumnSlot[] {
+  const byId = new Map(workflow.columns.map(column => [column.id, column]));
+  const groupOf = new Map<string, ColumnGroup>();
+  for (const group of workflow.groups) {
+    for (const id of group.columnIds) if (!groupOf.has(id)) groupOf.set(id, group);
+  }
   const result: ColumnSlot[] = []; const seen = new Set<string>();
   for (const column of workflow.columns) {
     if (seen.has(column.id)) continue;
-    const group = workflow.groups.find(value => value.columnIds.includes(column.id));
-    const columns = group ? group.columnIds.map(id => workflow.columns.find(value => value.id === id)).filter((value): value is Column => Boolean(value) && !seen.has(value!.id)) : [column];
-    const unique = columns.filter((value, index) => columns.findIndex(item => item.id === value.id) === index);
-    unique.forEach(value => seen.add(value.id)); result.push({ key: group ? 'group-' + group.id : 'column-' + column.id, ...(group ? { group } : {}), columns: unique });
+    const group = groupOf.get(column.id);
+    const columns: Column[] = [];
+    for (const id of group === undefined ? [column.id] : group.columnIds) {
+      if (seen.has(id)) continue;
+      const member = byId.get(id);
+      if (member === undefined) continue;
+      seen.add(id); columns.push(member);
+    }
+    if (columns.length === 0) continue;
+    result.push({ key: group === undefined ? 'column-' + column.id : 'group-' + group.id, ...(group === undefined ? {} : { group }), columns });
   }
   return result;
 }

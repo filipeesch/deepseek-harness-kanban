@@ -1,24 +1,26 @@
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BoardView } from '../../src/client/board.js';
-import { styles } from '../../src/client/styles.js';
+import { styles } from '../../src/client/styles/index.js';
 import { Configuration } from '../../src/client/settings/configuration.js';
 import { ProjectEditorDialog } from '../../src/client/projects/project-editor-dialog.js';
 import { DirectoryPickerProvider } from '../../src/client/services.js';
 import { QuestionForm } from '../../src/questions/QuestionForm.js';
 import type { BoardState, ClientApi, Command, HubSharingView, QuestionRound, RoundPage } from '../../src/shared/types.js';
 import { createHarnessApi, workflowYaml, type TestSnapshot } from './fake-api.js';
+import { parseWorkflow } from '../../src/domain/workflow.js';
 import { themeFixture } from './theme-fixture.js';
 
 const scenario = new URLSearchParams(window.location.search).get('scenario') ?? 'board';
 const sharingCase = new URLSearchParams(window.location.search).get('sharing');
+const flowScenario = scenario === 'flow' || scenario === 'flow-restricted';
 const query = new URLSearchParams(window.location.search);
 const themed = query.get('theme') === 'host';
 const refuse = query.get('refuse');
 const sharingViews: Record<string, HubSharingView> = sharingCase === null ? {} : { hub: harnessSharing(sharingCase) };
 const driveCase = query.get('drive') as 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error' | null;
 const sharingAuth = sharingCase?.startsWith('drive') === true && !sharingCase.startsWith('drive-local') ? { status: 'connected' as const, email: 'member@example.test' } : undefined;
-const harness = createHarnessApi({ attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs' || scenario === 'project-relocation', hubs: scenario === 'hubs' ? 2 : 1, restricted: scenario === 'move' || scenario === 'prepare-restricted', ...(scenario === 'restricted-next' ? { restrictedNext: true } : {}), persist: scenario === 'board' || scenario === 'relocation-board', pending: scenario === 'appearance', auto: scenario === 'auto', detect: scenario === 'project-editor' || scenario === 'project-relocation' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, ...(driveCase === null ? {} : { drive: driveCase }), shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', folderRefusal: refuse === 'folder', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}), ...(scenario === 'retained' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo' }] } : {}), ...(scenario === 'relocation-list' ? { relocation: ['waiting', 'failed', 'waiting'] as Array<'waiting' | 'failed' | null> } : scenario === 'relocation-board' ? { relocation: ['waiting', 'failed'] as Array<'waiting' | 'failed' | null> } : {}), ...(scenario === 'relocation-list' ? { extraProject: true } : {}) });
+const harness = createHarnessApi({ attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs' || scenario === 'project-relocation', hubs: scenario === 'hubs' ? 2 : 1, restricted: scenario === 'move' || scenario === 'prepare-restricted' || scenario === 'flow-restricted', ...(scenario === 'restricted-next' ? { restrictedNext: true } : {}), persist: scenario === 'board' || scenario === 'relocation-board', pending: scenario === 'appearance', auto: scenario === 'auto', detect: scenario === 'project-editor' || scenario === 'project-relocation' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, ...(driveCase === null ? {} : { drive: driveCase }), shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', folderRefusal: refuse === 'folder', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}), ...(scenario === 'retained' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo' }] } : {}), ...(scenario === 'relocation-list' ? { relocation: ['waiting', 'failed', 'waiting'] as Array<'waiting' | 'failed' | null> } : scenario === 'relocation-board' ? { relocation: ['waiting', 'failed'] as Array<'waiting' | 'failed' | null> } : {}), ...(scenario === 'relocation-list' ? { extraProject: true } : {}) });
 
 function harnessSharing(kind: string): HubSharingView {
   const view: HubSharingView = {
@@ -66,6 +68,13 @@ function harnessSharing(kind: string): HubSharingView {
   return view;
 }
 (window as unknown as { __harness: unknown }).__harness = { commands: harness.commands, snapshot: harness.snapshot, sharingCommands: harness.sharingCommands, mutate: harness.mutate };
+if (flowScenario) {
+  harness.mutate(state => {
+    const board = state.hubs[0]!.boards[0]!;
+    board.workflowYaml = 'default_view: workflow' + String.fromCharCode(10) + board.workflowYaml;
+    board.workflow = parseWorkflow(board.workflowYaml);
+  });
+}
 
 function WorkflowScenario() {
   const [snapshot, setSnapshot] = useState<TestSnapshot>(harness.snapshot());
@@ -180,6 +189,9 @@ function App() {
   if (scenario === 'relocation-list') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><RelocationListScenario /></>;
   if (scenario === 'project-editor') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><ProjectEditorScenario /></div></>;
   if (scenario === 'workflow') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario /></div></>;
+  if (flowScenario) return themed
+    ? <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>
+    : <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;
   if (scenario === 'publishing' && themed) return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><PublishingScenario auth={sharingAuth} /></div></>;
   if (scenario === 'publishing') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><PublishingScenario auth={sharingAuth} /></div></>;
   if (scenario === 'relocation-board') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;

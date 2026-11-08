@@ -44,7 +44,7 @@ describe('plugin-owned page bookmarks', () => {
   it('creates independent preference objects with no native resources', () => {
     const first = createBoardPageState(); const second = createBoardPageState();
     expect(first).not.toBe(second); expect(first.drawers).not.toBe(second.drawers);
-    expect(first).toEqual({ search: '', projectFilter: '', selectedTaskId: null, drawers: {} });
+    expect(first).toEqual({ search: '', projectFilter: '', selectedTaskId: null, drawers: {}, view: 'board' });
     expect(Object.getPrototypeOf(first.drawers)).toBeNull();
   });
 

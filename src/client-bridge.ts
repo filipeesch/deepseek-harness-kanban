@@ -3,7 +3,7 @@ import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots';
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client';
 import { AttentionProjector, RunningSessions } from './client/kanban-attention.js';
-import { allTasks } from './client/hub-view.js';
+import { allTasks } from './client/snapshot-normalize.js';
 import { mergeSnapshotFrame, type MergedHostSnapshot } from './client/snapshot-merge.js';
 import { ConversationReadState } from './client/conversation-read-state.js';
 import type { KeyValueStorage } from './client/key-value-storage.js';

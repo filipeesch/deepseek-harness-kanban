@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { styles } from '../../src/client/styles.js';
+import { styles } from '../../src/client/styles/index.js';
 
 describe('board and editor style contracts', () => {
   it('gives workflow columns content-driven heights instead of an equal share', () => {

@@ -26,6 +26,22 @@ describe('workflow diagnostics', () => {
     expect(result.diagnostics[0]).toMatchObject({ from: 0, to: 1, severity: 'error' });
   });
 
+  it('accepts the default view and stage positions', () => {
+    const result = analyzeWorkflow('default_view: workflow' + String.fromCharCode(10) + 'columns:' + String.fromCharCode(10) + '  - id: one' + String.fromCharCode(10) + '    label: One' + String.fromCharCode(10) + '    position: {x: 10, y: 20}');
+    expect(result.status).toBe('valid');
+    expect(result.workflow?.defaultView).toBe('workflow');
+    expect(result.workflow?.columns[0]?.position).toEqual({ x: 10, y: 20 });
+  });
+
+  it('reports an invalid default view or stage position as a schema failure', () => {
+    const view = analyzeWorkflow('default_view: diagram' + String.fromCharCode(10) + 'columns:' + String.fromCharCode(10) + '  - id: one' + String.fromCharCode(10) + '    label: One');
+    expect(view.status).toBe('invalid');
+    expect(view.issues[0]?.code).toBe('INVALID_WORKFLOW');
+    const position = analyzeWorkflow('columns:' + String.fromCharCode(10) + '  - id: one' + String.fromCharCode(10) + '    label: One' + String.fromCharCode(10) + '    position: {x: 1}');
+    expect(position.status).toBe('invalid');
+    expect(position.issues[0]?.code).toBe('INVALID_WORKFLOW');
+  });
+
   it('keeps a locally valid workflow valid even when only the host can detect an orphaned column', () => {
     const result = analyzeWorkflow(valid);
     expect(result.status).toBe('valid');

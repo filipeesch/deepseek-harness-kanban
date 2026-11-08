@@ -8,12 +8,32 @@ export interface TransitionDestination {
   access: TransitionAccess | null;
 }
 
+/**
+ * The authored transition rule for one stage: the configured targets, or null
+ * when the stage omits restrictions and therefore allows any other stage.
+ * `next` is the stage after it in workflow order, which the diagram draws as
+ * the default path when nothing is configured.
+ */
+export interface AuthoredTransitions {
+  readonly targets: readonly string[] | null;
+  readonly next?: Column;
+}
+
+export function authoredTransitions(workflow: Workflow, columnId: string): AuthoredTransitions | null {
+  const index = workflow.columns.findIndex(column => column.id === columnId);
+  if (index < 0) return null;
+  const column = workflow.columns[index]!;
+  const next = workflow.columns[index + 1];
+  return { targets: column.allowedTransitions ?? null, ...(next === undefined ? {} : { next }) };
+}
+
 /** Classifies a move between existing stages without applying any policy beyond the workflow. */
 export function transitionAccess(workflow: Workflow, from: string, to: string): TransitionAccess | null {
-  const source = workflow.columns.find(column => column.id === from);
-  if (!source || !workflow.columns.some(column => column.id === to)) return null;
+  if (!workflow.columns.some(column => column.id === to)) return null;
   if (from === to) return 'reorder';
-  return source.allowedTransitions === undefined || source.allowedTransitions.includes(to) ? 'allowed' : 'restricted';
+  const authored = authoredTransitions(workflow, from);
+  if (authored === null) return null;
+  return authored.targets === null || authored.targets.includes(to) ? 'allowed' : 'restricted';
 }
 
 /** Every workflow stage in workflow order, paired with its access from `from`. */
