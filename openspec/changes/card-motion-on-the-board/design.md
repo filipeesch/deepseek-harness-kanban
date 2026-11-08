@@ -132,7 +132,7 @@ The Host values: 200 ms glide, 100 ms entry and exit fades, `ease-out`. No `fill
 ## Risks / Trade-offs
 
 - **Click and hover land on a moving card** → Keep cards interactive as the spec requires; the exit copy is inert, identity attributes are stripped, and the stacking index lives only for the glide. The click target is the card's current visual position, which is what the user sees.
-- **A commit interrupts a running animation** → Cancel before measuring, which snaps to layout, then restart from the new geometry. Short durations keep the snap small; the alternative (blending) costs more state than the board needs.
+- **A commit interrupts a running animation** → The pre-mutation read captures the visual origin, then running glides are cancelled before the target layout is read, so the new glide starts where the user sees the card and ends at the new layout. Short durations keep the change small; the alternative (blending) costs more state than the board needs.
 - **Geometry reads add layout work** → One batched read before and one after a commit that changes membership or order, with no interleaved writes; a commit that changes nothing reads nothing. Off-viewport cards are skipped.
 - **The overlay inside a scroll container could extend the scroll range or clip a scrolled exit** → The overlay is sized to the visible scrollport and clipped with `overflow:hidden`; browser tests compare `scrollWidth`/`scrollHeight` across an exit and assert a scrolled copy stays inside the board.
 - **A cascade on bulk deletion or a filter change not covered by `resetKey`** → The batch cap settles it; the cap is a constant, so tuning it does not change the spec.

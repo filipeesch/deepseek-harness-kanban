@@ -216,12 +216,17 @@ test('an exit copy stays visible after horizontal scrolling', async ({ page }) =
   await page.waitForFunction(() => document.querySelectorAll('.kb-motion-overlay > *').length === 1);
   const copy = await page.evaluate(() => {
     const list = document.querySelector<HTMLElement>('.kb-columns')!;
-    const element = document.querySelector<HTMLElement>('.kb-motion-overlay')!.firstElementChild as HTMLElement;
-    const listRect = list.getBoundingClientRect();
+    const overlay = document.querySelector<HTMLElement>('.kb-motion-overlay')!;
+    const element = overlay.firstElementChild as HTMLElement;
+    // Compare against the overlay's own box: that is the clip box the fade is
+    // painted through. Comparing against the scroller's box would pass even when
+    // the overlay still sat at the content origin and clipped the copy away.
+    const clip = overlay.getBoundingClientRect();
     const copyRect = element.getBoundingClientRect();
     return {
       width: copyRect.width,
-      inside: copyRect.left >= listRect.left - 1 && copyRect.right <= listRect.right + 1,
+      inside: copyRect.left >= clip.left - 1 && copyRect.right <= clip.right + 1
+        && copyRect.top >= clip.top - 1 && copyRect.bottom <= clip.bottom + 1,
       scrollWidth: list.scrollWidth,
     };
   });

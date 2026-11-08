@@ -29,10 +29,13 @@ function domRect(left: number, top: number, width = 240, height = 40): DOMRect {
 }
 
 let queues: Map<Element, DOMRect[]>;
+let fail: (() => never) | null = null;
 
 beforeEach(() => {
   queues = new Map();
+  fail = null;
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    if (fail !== null) fail();
     const queue = queues.get(this);
     if (queue === undefined || queue.length === 0) return domRect(0, 0, 800, 600);
     return queue.length > 1 ? queue.shift()! : queue[0]!;
@@ -209,6 +212,36 @@ describe('card motion frame', () => {
     queues.set(elements.get('b')!, [domRect(0, 60), domRect(0, 0)]);
     view.rerender(grid([['c', 'b'], ['c', 'a']], animator));
     view.unmount();
+    expect(animator.cancelAll).toHaveBeenCalled();
+  });
+
+  it('skips every card when the board has no size', () => {
+    const animator = fakeAnimator();
+    const view = render(grid([['left', 'a']], animator));
+    const elements = cards(view.container);
+    queues.set(view.container.querySelector('.grid')!, [domRect(0, 0, 0, 0)]);
+    queues.set(elements.get('a')!, [domRect(0, 0), domRect(240, 0)]);
+    view.rerender(grid([['right', 'a']], animator));
+    expect(animator.glide).not.toHaveBeenCalled();
+  });
+
+  it('settles instead of throwing when reading the pre-commit geometry fails', () => {
+    const animator = fakeAnimator();
+    const view = render(grid([['c', 'a'], ['c', 'b']], animator));
+    fail = () => { throw new Error('geometry failed'); };
+    expect(() => view.rerender(grid([['c', 'b'], ['c', 'a']], animator))).not.toThrow();
+    expect(animator.cancelAll).toHaveBeenCalled();
+    expect(animator.glide).not.toHaveBeenCalled();
+  });
+
+  it('settles instead of throwing when an animation call fails', () => {
+    const animator = fakeAnimator();
+    animator.glide.mockImplementationOnce(() => { throw new Error('animation failed'); });
+    const view = render(grid([['c', 'a'], ['c', 'b']], animator));
+    const elements = cards(view.container);
+    queues.set(elements.get('a')!, [domRect(0, 0), domRect(0, 60)]);
+    queues.set(elements.get('b')!, [domRect(0, 60), domRect(0, 0)]);
+    expect(() => view.rerender(grid([['c', 'b'], ['c', 'a']], animator))).not.toThrow();
     expect(animator.cancelAll).toHaveBeenCalled();
   });
 
