@@ -31,6 +31,7 @@ import { firstOpenSessionId } from '../shared/conversations.js';
 import { admitStageInstruction, type StageInstructionDeps } from './stage-instruction.js';
 import { requiresWorktreeDecision, unresolvedWorktreeBinding } from '../shared/worktree-decision.js';
 import { HubRepository, HubStore } from './hub-repository.js';
+import { BoardAdministration, type BoardSharingPort } from './board-administration.js';
 import type { LocatedTask, TaskSummary } from './hub-repository.js';
 import { RepositoryWorktreeStore, TaskLocator } from './task-locator.js';
 import { QuestionIndex } from '../questions/indexer.js';
@@ -51,6 +52,15 @@ function userPromptTime(event:unknown):number|undefined{
  const time=(event as {time?:unknown}).time;
  return typeof time==='number'&&Number.isFinite(time)?time:Date.now();
 }
+function boardSharingPort(sharing:HubSharingService):BoardSharingPort{
+ return {
+  view:hubId=>sharing.view(hubId),
+  isBound:(hubId,boardId)=>sharing.isBound(hubId,boardId),
+  noteLocalChange:hubId=>sharing.noteLocalChange(hubId),
+  removeBoard:(hubId,boardId,scope,name)=>sharing.removeBoard(hubId,boardId,scope,name),
+  publish:hubId=>sharing.publish(hubId),
+ };
+}
 export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore; probe?:ProjectProbe; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler }
 /** Coordinates Hub-scoped commands while the host continues to own sessions and execution. */
 export class KanbanApp {
@@ -59,6 +69,7 @@ export class KanbanApp {
  readonly relocations:ProjectRelocationCoordinator;
  private readonly operationQueue=new OperationQueue();
  readonly locator:TaskLocator;
+ readonly boards:BoardAdministration;
  private readonly listeners=new Set<()=>void>();
  private readonly prepared=new Map<string,Promise<void>>();
  private readonly attention:AttentionCoordinator;
@@ -78,6 +89,7 @@ export class KanbanApp {
  private readonly workspaceCoordinator?:WorkspaceCoordinator;
  constructor(readonly hubs:HubRepository,readonly sessions:SessionPort,readonly git:GitPort,private readonly options:AppOptions={},private readonly workspaces?:WorkspacePort){
   this.locator=new TaskLocator(hubs);
+  this.boards=new BoardAdministration({hubs,...(options.sharing?{sharing:boardSharingPort(options.sharing)}:{}),...(options.report?{report:options.report}:{})});
   this.factsSource=withQuestionPending({read:id=>this.sessions.facts(id)},this.questions);
   if(workspaces)this.workspaceCoordinator=new WorkspaceCoordinator({
    workspaces,sessions,store:{
@@ -109,7 +121,6 @@ export class KanbanApp {
  /** The first/default Hub facade retained for single-Hub callers and tests. */
  get store():HubStore{return this.hubs.defaultHub();}
  private hubStore(hubId?:string):HubStore{return this.hubs.hub(this.hubs.resolveHubId(hubId));}
- private noteSharingChange(hubId?:string):void{try{this.options.sharing?.noteLocalChange(this.hubs.resolveHubId(hubId));}catch(error){this.options.report?.(error);}}
  private locatedTask(taskId:string):LocatedTask{return this.hubs.requireTask(taskId);}
  private changed():void{if(this.disposed)return;for(const listener of this.listeners){try{listener();}catch(error){this.options.report?.(error);}}}
  /**
@@ -414,21 +425,10 @@ export class KanbanApp {
     this.options.scheduler?.sync();
     break;
    }
-   case 'board.create':{const board=await this.hubStore(command.hubId).addBoard(command.name);commandReceipt={kind:'board',id:board.id};this.noteSharingChange(command.hubId);break;}
-   case 'board.rename':{await this.hubStore(command.hubId).renameBoard(command.boardId,command.name,command.expectedRevision);this.noteSharingChange(command.hubId);break;}
-   case 'board.delete':{
-    invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the board.');
-    const located=this.hubs.findBoard(command.boardId);invariant(located,'BOARD_NOT_FOUND','Board does not exist.');
-    const bound=this.options.sharing?.isBound(located.hubId,command.boardId)===true;
-    if(bound)invariant(command.sharing==='local'||command.sharing==='team','SHARING_SCOPE_REQUIRED','Choose whether this board removal applies only here or to the team.');
-    await this.hubStore(command.hubId).deleteBoard(command.boardId,command.expectedRevision);
-    // An orphan board has no binding; this still forgets its orphan anchor so a later
-    // team board with the same key cannot resurrect a comparison for a missing board.
-    if(this.options.sharing)await this.options.sharing.removeBoard(located.hubId,command.boardId,command.sharing==='team'?'team':'local',located.board.name);
-    this.noteSharingChange(located.hubId);
-    break;
-   }
-   case 'board.workflow.save':await this.hubStore(command.hubId).saveBoardWorkflow(command.boardId,command.yaml,command.expectedRevision);this.noteSharingChange(command.hubId);break;
+   case 'board.create':{const value=await this.boards.create({hubId:command.hubId,name:command.name},'never');commandReceipt={kind:'board',id:value.board.id};break;}
+   case 'board.rename':{await this.boards.update({hubId:command.hubId,boardId:command.boardId,name:command.name,expectedRevision:command.expectedRevision},'never');break;}
+   case 'board.delete':{await this.boards.remove({hubId:command.hubId,boardId:command.boardId,confirmed:command.confirmed,expectedRevision:command.expectedRevision,sharing:command.sharing},'never');break;}
+   case 'board.workflow.save':await this.boards.saveWorkflow({hubId:command.hubId,boardId:command.boardId,yaml:command.yaml,expectedRevision:command.expectedRevision},'never');break;
    case 'project.save':{const store=this.hubStore(command.hubId);const state=this.hubs.requireHub(store.hubId);const existing=command.project.id===undefined?undefined:state.projects.find(project=>project.id===command.project.id);invariant(!existing?.operation,'PROJECT_BUSY','Resolve the recorded project relocation before saving the project.');const value=await store.saveProject(await this.project(command.project),command.expectedRevision);commandReceipt={kind:'project',id:value.id};break;}
    case 'project.relocate':{
     invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm the project relocation and its migration impact.');
@@ -441,7 +441,6 @@ export class KanbanApp {
    case 'project.relocationRetry':{const store=this.hubStore(command.hubId);const project=store.requireProject(command.projectId);invariant(project.id===command.projectId,'PROJECT_NOT_FOUND','Project does not exist in the selected Hub.');await this.relocations.retry(command.projectId);break;}
    case 'project.relocationCancel':{const store=this.hubStore(command.hubId);store.requireProject(command.projectId);await this.relocations.cancel(command.projectId);break;}
    case 'project.delete':{const store=this.hubStore(command.hubId);invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the project registration.');const project=store.requireProject(command.projectId);invariant(!project.operation,'PROJECT_BUSY','Resolve the project relocation before deleting the project.');await store.deleteProject(command.projectId,command.expectedRevision);break;}
-   case 'workflow.save':await this.hubStore(command.hubId).setWorkflow(command.yaml,command.expectedRevision);this.noteSharingChange(command.hubId);break;
    case 'settings.save':await this.settings(command.settings,command.expectedRevision);break;
    case 'task.create':{const value=await this.createTaskNow(command);commandReceipt={kind:'task',id:value.id};break;}
    case 'task.edit':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).editTask(command.taskId,{...(command.title!==undefined?{title:command.title}:{}),...(command.description!==undefined?{description:command.description}:{})},command.expectedRevision);break;}

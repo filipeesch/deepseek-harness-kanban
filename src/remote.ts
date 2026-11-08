@@ -29,7 +29,6 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('project.relocationRetry'),hubId,projectId:id}).strict(),
  z.object({type:z.literal('project.relocationCancel'),hubId,projectId:id}).strict(),
  z.object({type:z.literal('project.delete'),hubId,projectId:id,confirmed:z.boolean(),expectedRevision:revision}).strict(),
- z.object({type:z.literal('workflow.save'),hubId,yaml:z.string(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('settings.save'),settings:boardSettings,expectedRevision:revision}).strict(),
  z.object({type:z.literal('task.create'),hubId,boardId,projectId:id,title:z.string().min(1),description:z.string()}).strict(),
  z.object({type:z.literal('task.edit'),hubId,taskId:id,title:z.string().optional(),description:z.string().optional(),expectedRevision:revision}).strict(),

@@ -22,7 +22,7 @@ test('real CodeMirror validates YAML, saves, and expands', async ({ page }) => {
   await save.click();
   await expect(page.getByText('Workflow saved.')).toBeVisible();
   const commands = await page.evaluate(() => (window as unknown as { __harness: { commands(): Array<{ type: string }> } }).__harness.commands());
-  expect(commands.some(command => command.type === 'workflow.save')).toBe(true);
+  expect(commands.some(command => command.type === 'board.workflow.save')).toBe(true);
 
   const surface = page.locator('.kb-workflow-surface');
   const before = (await surface.boundingBox())!.height;
