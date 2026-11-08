@@ -75,12 +75,22 @@ export function useCardDrag(options: CardDragOptions) {
         dragState.active = true;
         try { dragState.source.setPointerCapture(moveEvent.pointerId); } catch { /* pointer capture is best effort */ }
         const sourceRect = dragState.source.getBoundingClientRect();
-        const ghost = dragState.source.cloneNode(true) as HTMLElement;
-        ghost.classList.add('kb-drag-ghost');
-        ghost.style.cssText = 'position:fixed;pointer-events:none;z-index:9999;width:' + sourceRect.width + 'px;opacity:.9;box-shadow:0 8px 24px #0000002e;transform:rotate(1.5deg);';
-        document.body.appendChild(ghost);
-        dragState.ghost = ghost;
-        dragState.source.style.opacity = '0';
+        // The preview stays inside the plugin root so the board's scoped card styles
+        // and theme tokens apply to it; fixed positioning keeps it out of the layout.
+        // Outside that root the preview would be unstyled, so the board always
+        // supplies the layer and a missing one simply leaves the drag without a copy.
+        const layer = dragState.source.closest('.dsh-kanban');
+        if (layer !== null) {
+          const ghost = dragState.source.cloneNode(true) as HTMLElement;
+          ghost.classList.add('kb-drag-ghost');
+          ghost.classList.remove('kb-card-gliding');
+          ghost.style.width = sourceRect.width + 'px';
+          ghost.style.left = (event.clientX - dragState.offsetX) + 'px';
+          ghost.style.top = (event.clientY - dragState.offsetY) + 'px';
+          layer.appendChild(ghost);
+          dragState.ghost = ghost;
+          dragState.source.style.opacity = '0';
+        }
       }
       if (dragState.ghost) {
         dragState.ghost.style.left = (moveEvent.clientX - dragState.offsetX) + 'px';

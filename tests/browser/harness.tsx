@@ -65,7 +65,7 @@ function harnessSharing(kind: string): HubSharingView {
   if (kind === 'refuse-error') return { ...view, status: 'updates-available', updates: 1 };
   return view;
 }
-(window as unknown as { __harness: unknown }).__harness = { commands: harness.commands, snapshot: harness.snapshot, sharingCommands: harness.sharingCommands };
+(window as unknown as { __harness: unknown }).__harness = { commands: harness.commands, snapshot: harness.snapshot, sharingCommands: harness.sharingCommands, mutate: harness.mutate };
 
 function WorkflowScenario() {
   const [snapshot, setSnapshot] = useState<TestSnapshot>(harness.snapshot());

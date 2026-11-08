@@ -30,6 +30,17 @@ describe('board and editor style contracts', () => {
     expect(styles).toMatch(/\.kb-card-project\{[^}]*white-space:nowrap/);
     expect(styles).not.toContain('line-clamp');
   });
+  it('defines the card motion overlay, glide stacking, and drag preview', () => {
+    for (const value of ['.kb-columns{position:relative}', '.kb-motion-overlay{', '.kb-card.kb-card-gliding{', '.kb-card.kb-drag-ghost{', '@keyframes kb-empty-column-enter', '.kb-empty-column{animation:kb-empty-column-enter']) expect(styles).toContain(value);
+    expect(styles).toMatch(/\.kb-motion-overlay\{[^}]*position:absolute/);
+    expect(styles).toMatch(/\.kb-motion-overlay\{[^}]*overflow:hidden/);
+    expect(styles).toMatch(/\.kb-motion-overlay\{[^}]*pointer-events:none/);
+  });
+  it('disables card motion under reduced motion', () => {
+    const start = styles.indexOf('@media (prefers-reduced-motion: reduce){.dsh-kanban .kb-motion-overlay');
+    expect(start).toBeGreaterThan(-1);
+    expect(styles.slice(start)).toContain('.kb-empty-column{animation:none}');
+  });
   it('defines the restricted-stage and override surface contract', () => {
     for (const value of ['.kb-stage-option-restricted{', '.kb-drop-restricted{', '.kb-drop-indicator-restricted{', '.kb-transition-dialog{', '.kb-transition-identity{']) expect(styles).toContain(value);
     expect(styles).not.toContain('.kb-drop-disabled');

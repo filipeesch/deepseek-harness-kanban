@@ -9,6 +9,8 @@ export interface HarnessApi {
   snapshot(): TestSnapshot;
   commands(): readonly Command[];
   sharingCommands(): readonly SharingCommand[];
+  /** Applies a host-driven board change and publishes it, as a team update or an automatic advance would. */
+  mutate(change: (state: TestSnapshot['state']) => void): void;
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
@@ -230,7 +232,8 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     },
     subscribe: listener => { const wrapped = (snapshot: TestSnapshot) => listener(snapshot); listeners.add(wrapped); return () => listeners.delete(wrapped); },
   };
-  return { api, snapshot: () => withLegacy(clone(value)), commands: () => structuredClone(commands), sharingCommands: () => structuredClone(sharingCommands) };
+  const mutate = (change: (state: TestSnapshot['state']) => void): void => { change(value.state); publish(); };
+  return { api, snapshot: () => withLegacy(clone(value)), commands: () => structuredClone(commands), sharingCommands: () => structuredClone(sharingCommands), mutate };
 }
 
 export function workflowYaml(restricted = false, applyInstruction = false, restrictedNext = false): string {
