@@ -12,7 +12,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error' }
+export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error' }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -71,7 +71,7 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
       { id: 'p', name: 'Project', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' },
       { id: 'p2', name: 'A very long project name that must truncate inside the card', projectPath: '/repo/long', gitRootPath: '/repo', defaultBranch: 'main' },
     ],
-    boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(options.restricted, options.prepare !== undefined), workflow: { name: 'Harness flow', initialColumnId: 'explore', columns: [{ id: 'explore', name: 'Explore', ...(options.restricted ? { allowedTransitions: ['propose'] } : {}) }, { id: 'propose', name: 'Propose', ...(options.restricted ? {} : { onEnterPrompt: 'Plan this task.' }) }, { id: 'apply', name: 'Apply', ...(options.prepare === undefined ? {} : { onEnterPrompt: 'Apply the plan.' }) }], groups: [{ id: 'planning', name: 'Planning', columnIds: ['explore', 'propose'] }] }, createdAt: now, updatedAt: now }],
+    boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(options.restricted, options.prepare !== undefined, options.restrictedNext), workflow: { name: 'Harness flow', initialColumnId: 'explore', columns: [{ id: 'explore', name: 'Explore', ...(options.restrictedNext ? { allowedTransitions: ['apply'] } : options.restricted ? { allowedTransitions: ['propose'] } : {}) }, { id: 'propose', name: 'Propose', ...(options.restricted ? {} : { onEnterPrompt: 'Plan this task.' }) }, { id: 'apply', name: 'Apply', ...(options.prepare === undefined ? {} : { onEnterPrompt: 'Apply the plan.' }) }], groups: [{ id: 'planning', name: 'Planning', columnIds: ['explore', 'propose'] }] }, createdAt: now, updatedAt: now }],
     tasks, notes: options.notes ? [
       { id: 'n1', taskId: 'short', content: 'Design note with **bold** text', tags: ['design'], createdAt: now, updatedAt: now },
       { id: 'n2', taskId: 'short', content: 'Todo note', tags: ['todo'], createdAt: now, updatedAt: now },
@@ -233,8 +233,8 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
   return { api, snapshot: () => withLegacy(clone(value)), commands: () => structuredClone(commands), sharingCommands: () => structuredClone(sharingCommands) };
 }
 
-export function workflowYaml(restricted = false, applyInstruction = false): string {
-  return ['name: Harness flow', 'initial_column: explore', 'columns:', '  - id: explore', '    label: Explore', ...(restricted ? ['    allowed_transitions: [propose]'] : []), '  - id: propose', '    label: Propose', ...(restricted ? [] : ['    on_enter_prompt: |', '      Plan this task.']), '  - id: apply', '    label: Apply', ...(applyInstruction ? ['    on_enter_prompt: |', '      Apply the plan.'] : []), 'groups:', '  - id: planning', '    label: Planning', '    columns: [explore, propose]', ''].join(String.fromCharCode(10));
+export function workflowYaml(restricted = false, applyInstruction = false, restrictedNext = false): string {
+  return ['name: Harness flow', 'initial_column: explore', 'columns:', '  - id: explore', '    label: Explore', ...(restrictedNext ? ['    allowed_transitions: [apply]'] : restricted ? ['    allowed_transitions: [propose]'] : []), '  - id: propose', '    label: Propose', ...(restricted ? [] : ['    on_enter_prompt: |', '      Plan this task.']), '  - id: apply', '    label: Apply', ...(applyInstruction ? ['    on_enter_prompt: |', '      Apply the plan.'] : []), 'groups:', '  - id: planning', '    label: Planning', '    columns: [explore, propose]', ''].join(String.fromCharCode(10));
 }
 
 function firstExecutionTask(): HubTask {

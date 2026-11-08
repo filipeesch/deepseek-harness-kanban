@@ -2,7 +2,8 @@
 import React from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
-import { backgroundAccessibleName, backgroundDetails, backgroundIndicatorText, backgroundSummary, TaskActivity } from '../../src/client/activity.js';
+import { backgroundAccessibleName, backgroundDetails, backgroundIndicatorText, backgroundSummary } from '../../src/client/activity.js';
+import { ActivityDot, activityFacts, sectionTabName } from '../../src/client/activity-dot.js';
 import type { Attention } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 
@@ -33,25 +34,32 @@ describe('background activity copy', () => {
   });
 });
 
-describe('task activity drawer variant', () => {
-  it('shows the agent execution status and background labels without a second live region', () => {
-    render(<TaskActivity attention={attention({ running: true, background: [job, schedule] })} />);
-    expect(screen.queryByRole('status')).toBeNull();
-    expect(screen.getByText('Working')).toBeTruthy();
-    const detail = screen.getByText('Background: Run tests · Wake later');
-    expect(detail.className).toBe('kb-task-background');
-    expect(detail.getAttribute('title')).toBe('Run tests · Wake later');
+describe('drawer activity indicator', () => {
+  it('names agent execution and every background label in the section tab', () => {
+    const value = attention({ running: true, background: [job, schedule] });
+    expect(activityFacts(value)).toEqual(['Agent running', 'Background activity: Run tests · Wake later']);
+    expect(sectionTabName('Conversations', value)).toBe('Conversations, Agent running. Background activity: Run tests · Wake later');
   });
 
-  it('shows background labels alone after the turn ends', () => {
-    render(<TaskActivity attention={attention({ background: [schedule] })} />);
-    expect(screen.queryByRole('status')).toBeNull();
-    expect(screen.queryByText('Working')).toBeNull();
-    expect(screen.getByText('Background: Wake later')).toBeTruthy();
+  it('names background alone and keeps the label alone when idle', () => {
+    expect(sectionTabName('Conversations', attention({ background: [schedule] }))).toBe('Conversations, Background activity: Wake later');
+    expect(sectionTabName('Conversations', attention())).toBe('Conversations');
   });
 
-  it('renders nothing while idle', () => {
-    const { container } = render(<TaskActivity attention={attention()} />);
-    expect(container.textContent).toBe('');
+  it('renders one dot for execution, background, or both, and nothing when settled', () => {
+    const { container, rerender } = render(<ActivityDot running background={[]} />);
+    expect(container.querySelectorAll('.kb-activity-dot')).toHaveLength(1);
+    rerender(<ActivityDot running={false} background={[job]} />);
+    expect(container.querySelectorAll('.kb-activity-dot')).toHaveLength(1);
+    rerender(<ActivityDot running background={[job]} />);
+    expect(container.querySelectorAll('.kb-activity-dot')).toHaveLength(1);
+    rerender(<ActivityDot running={false} background={[]} />);
+    expect(container.querySelector('.kb-activity-dot')).toBeNull();
+  });
+
+  it('adds no live region and keeps the dot decorative', () => {
+    const { container } = render(<ActivityDot running background={[job]} />);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(container.querySelector('.kb-activity-dot')?.getAttribute('aria-hidden')).toBe('true');
   });
 });

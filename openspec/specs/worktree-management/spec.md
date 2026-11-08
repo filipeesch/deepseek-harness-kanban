@@ -6,14 +6,15 @@ Support optional task worktrees with explicit creation and attachment controls, 
 
 ## Requirements
 
-### Requirement: Optional worktrees and prominent creation notice
+### Requirement: Optional worktrees and compact creation notice
 
-A worktree SHALL remain optional for a task whose project is Git-backed. When such a task has no associated worktree and its missing-worktree notice has not been dismissed, its conversation area SHALL show a prominent notice above the chat with a base-project choice. When a destination is configured, the notice SHALL offer Create and Review in Git; without a configured destination it SHALL route the user to the Git section to set one. Dismissing the notice SHALL record and persist the task's choice to continue in the base project; it SHALL NOT create a branch or worktree or change any conversation's effective directory. For such a task that also has no conversation, the conversation area SHALL withhold the explicit first-conversation start action, including the plus action, until the notice is dismissed or a created or attached worktree is ready. A worktree that is preparing or in error SHALL NOT satisfy that choice. A stage instruction that would create the task's first conversation SHALL NOT create it while the choice is pending; the execution preparation defined by Worktree choice before a card's first execution SHALL ask for that choice first. A task whose project is a folder project SHALL NOT show the notice and SHALL NOT offer any worktree action.
+A worktree SHALL remain optional for a task whose project is Git-backed. When such a task has no associated worktree and its missing-worktree notice has not been dismissed, its conversation area SHALL show a compact notice line above the chat with a base-project choice. The notice SHALL present the derived branch and destination in a compact line with its actions, wrapping the actions below the summary only when the drawer is too narrow to keep them inline, and SHALL NOT occupy a card-like block above the conversation. When a destination is configured, the notice SHALL offer Create and Review in Git; without a configured destination it SHALL route the user to the Git section to set one. Dismissing the notice SHALL record and persist the task's choice to continue in the base project; it SHALL NOT create a branch or worktree or change any conversation's effective directory. For such a task that also has no conversation, the conversation area SHALL withhold the explicit first-conversation start action, including the plus action, until the notice is dismissed or a created or attached worktree is ready. A worktree that is preparing or in error SHALL NOT satisfy that choice. A stage instruction that would create the task's first conversation SHALL NOT create it while the choice is pending; the execution preparation defined by Worktree choice before a card's first execution SHALL ask for that choice first. A task whose project is a folder project SHALL NOT show the notice and SHALL NOT offer any worktree action.
 
 #### Scenario: Open a task without a worktree
 
 - **WHEN** a user opens the conversation area of a Git-backed task that has no worktree and whose missing-worktree notice has not been dismissed
-- **THEN** a prominent notice above the chat offers a base-project choice
+- **THEN** a compact notice line above the chat offers a base-project choice
+- **AND** the notice line shows the derived branch and destination
 - **AND** when a destination is configured, the notice also offers Create and Review in Git
 - **AND** when no destination is configured, the notice offers a path to the Git section
 - **AND** if the task has no conversation, the explicit first-conversation start action is withheld
@@ -317,7 +318,14 @@ The Git section SHALL prefill the new-branch name and destination with the deriv
 - **THEN** the branch name and worktree destination remain unchanged
 
 ### Requirement: One-click worktree creation from the missing-worktree notice
-The missing-worktree notice SHALL offer a Create action that starts a new-branch worktree creation from derived defaults without requiring the user to visit the Git section. Before creation, the notice SHALL show the derived branch, destination, and source branch (the project default or HEAD) when available. Activating Create SHALL NOT start an agent.
+
+The missing-worktree notice SHALL offer a Create action that starts a new-branch worktree creation from derived defaults without requiring the user to visit the Git section. Before creation, the notice SHALL show the derived branch and destination, and SHALL expose the source branch (the project default or HEAD) in the notice's tooltip when available. Activating Create SHALL NOT start an agent.
+
+#### Scenario: Show the derived preview in one line
+
+- **WHEN** a task has no worktree and a worktree destination can be derived
+- **THEN** the notice line shows the derived branch and destination
+- **AND** the notice's tooltip exposes the source branch
 
 #### Scenario: Create from the notice with defaults
 - **WHEN** a task has no worktree, a worktree base path is configured, and the user activates Create in the notice

@@ -96,25 +96,39 @@ describe('scoped Kanban page', () => {
     expect(beta.getAttribute('data-working')).toBeNull();
   });
 
-  it('keeps the task execution status in the drawer header across sections', async () => {
+  it('keeps the task activity on the Conversations tab across sections', async () => {
     const { user } = mount(); await openAlpha(user);
     const drawer = screen.getByLabelText('Task details');
-    expect(within(drawer).getByText('Working')).toBeTruthy();
-    expect(within(drawer).getByText('Background: Run tests')).toBeTruthy();
+    const conversations = within(drawer).getByRole('tab', { name: 'Conversations, Agent running. Background activity: Run tests' });
+    expect(conversations.querySelector('.kb-activity-dot')).toBeTruthy();
+    expect(within(drawer).queryByText('Working')).toBeNull();
+    expect(within(drawer).queryByText(/Background:/)).toBeNull();
     await user.click(within(drawer).getByRole('tab', { name: 'Info' }));
-    expect(within(drawer).getByText('Working')).toBeTruthy();
-    expect(within(drawer).getByText('Background: Run tests')).toBeTruthy();
+    expect(within(drawer).getByRole('tab', { name: 'Conversations, Agent running. Background activity: Run tests' }).querySelector('.kb-activity-dot')).toBeTruthy();
   });
 
-  it('clears the drawer status and background detail without a reload when the task settles', async () => {
+  it('clears the drawer activity without a reload when the task settles', async () => {
     const { user, publish, get } = mount(); await openAlpha(user);
     const drawer = screen.getByLabelText('Task details');
-    expect(within(drawer).getByText('Working')).toBeTruthy();
+    expect(within(drawer).getByRole('tab', { name: /Agent running/ }).querySelector('.kb-activity-dot')).toBeTruthy();
     const next = get();
     next.attention.t1 = { running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
     act(() => { publish(next); });
-    expect(within(drawer).queryByText('Working')).toBeNull();
-    expect(within(drawer).queryByText(/Background:/)).toBeNull();
+    const settled = within(drawer).getByRole('tab', { name: 'Conversations' });
+    expect(settled.querySelector('.kb-activity-dot')).toBeNull();
+    expect(settled.getAttribute('title')).toBe('Conversations');
+  });
+
+  it('falls back to the project id in the drawer header when the project is unavailable', async () => {
+    const data = fixture();
+    data.state.hubs[0]!.tasks[0]!.projectId = 'missing-project';
+    const { user } = mount(data);
+    await loaded();
+    await user.click(screen.getByRole('button', { name: 'Open task Alpha task' }));
+    const drawer = screen.getByLabelText('Task details');
+    const chip = within(drawer).getByText('missing-project');
+    expect(chip.className).toBe('kb-drawer-project');
+    expect(chip.getAttribute('title')).toBe('missing-project');
   });
 
   it('creates from the top-level action without starting an agent or hardcoding backlog', async () => {
@@ -238,7 +252,7 @@ describe('scoped Kanban page', () => {
     const { user, command } = mount(); await openAlpha(user); await user.click(screen.getByRole('tab', { name: 'Notes' })); await user.click(screen.getByRole('button', { name: 'New note' }));
     await user.type(screen.getByRole('textbox', { name: 'Markdown' }), '**Shared** <img src=x onerror=alert(1)> [bad](javascript:alert)'); await user.click(screen.getByRole('button', { name: 'Save note' })); await screen.findByText('Shared');
     expect(document.querySelector('img[onerror]')).toBeNull(); expect(document.querySelector('a[href^="javascript:"]')).toBeNull(); expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'note.save', taskId: 't1' }));
-    await user.click(screen.getByRole('tab', { name: 'Conversations' })); await user.click(screen.getByRole('tab', { name: 'Agent 2' })); await user.click(screen.getByRole('tab', { name: 'Notes' })); expect(screen.getByText('Shared')).toBeTruthy();
+    await user.click(screen.getByRole('tab', { name: /^Conversations/ })); await user.click(screen.getByRole('tab', { name: 'Agent 2' })); await user.click(screen.getByRole('tab', { name: 'Notes' })); expect(screen.getByText('Shared')).toBeTruthy();
   });
 
   it('configures projects and YAML inside Kanban and reports host errors', async () => {
@@ -544,7 +558,7 @@ describe('Git controls and destructive actions', () => {
 
 describe('accessibility, pending, subscriptions and errors', () => {
   it('provides keyboard tabs, dialog focus and Escape without dispatching', async () => {
-    const { user, command } = mount(); await openAlpha(user); const tab = screen.getByRole('tab', { name: 'Conversations' }); tab.focus(); await user.keyboard('{ArrowRight}'); expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Info' })); await user.click(screen.getByRole('button', { name: 'New task' })); expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true); await user.keyboard('{Escape}'); expect(screen.queryByRole('dialog')).toBeNull(); expect(command).not.toHaveBeenCalled();
+    const { user, command } = mount(); await openAlpha(user); const tab = screen.getByRole('tab', { name: /^Conversations/ }); tab.focus(); await user.keyboard('{ArrowRight}'); expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Info' })); await user.click(screen.getByRole('button', { name: 'New task' })); expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true); await user.keyboard('{Escape}'); expect(screen.queryByRole('dialog')).toBeNull(); expect(command).not.toHaveBeenCalled();
   });
 
   it('shows initial load errors and permits retry, unsubscribing on unmount', async () => {
@@ -614,16 +628,17 @@ describe('auto mode on the board', () => {
     expect(within(card()).getByRole('button', { name: 'Turn on auto mode' }).getAttribute('aria-pressed')).toBe('false');
   });
 
-  it('mirrors the toggle in the drawer and shows the armed notice', async () => {
+  it('mirrors the toggle in the drawer and communicates the armed state through the chip', async () => {
     const mock = mount();
     const user = userEvent.setup();
     await loaded();
     await user.click(screen.getByRole('button', { name: 'Open task Alpha task' }));
     const drawer = document.querySelector('.kb-drawer') as HTMLElement;
-    fireEvent.click(within(drawer).getByRole('button', { name: 'Auto mode: off' }));
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Turn on auto mode' }));
     await waitFor(() => expect(mock.command).toHaveBeenCalledWith(expect.objectContaining({ type: 'task.autoMode', taskId: 't1', enabled: true })));
-    await waitFor(() => expect(within(drawer).getByRole('button', { name: 'Auto mode: on' })).toBeTruthy());
-    expect(within(drawer).getByText('Auto mode is on: the next completed turn moves to Review.')).toBeTruthy();
+    const chip = await waitFor(() => within(drawer).getByRole('button', { name: 'Turn off auto mode' }));
+    expect(chip.getAttribute('title')).toBe('Auto mode is on: the next completed turn moves to Review.');
+    expect(drawer.querySelector('.kb-drawer-automode')).toBeNull();
   });
 
   it('allows another card to toggle while one auto-mode command is in flight', async () => {
@@ -650,8 +665,10 @@ describe('auto mode on the board', () => {
     await loaded();
     await user.click(screen.getByRole('button', { name: 'Open task Alpha task' }));
     const drawer = document.querySelector('.kb-drawer') as HTMLElement;
-    expect(within(drawer).getByText('Auto mode paused: the turn failed')).toBeTruthy();
-    expect(within(drawer).getByRole('button', { name: 'Auto mode: on' }).getAttribute('aria-pressed')).toBe('true');
+    const chip = within(drawer).getByRole('button', { name: 'Auto mode paused: the turn failed. Turn off auto mode' });
+    expect(chip.getAttribute('aria-pressed')).toBe('true');
+    expect(chip.getAttribute('title')).toBe('Auto mode paused: the turn failed');
+    expect(drawer.querySelector('.kb-drawer-automode')).toBeNull();
     expect(mock.command).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'task.autoMode' }));
   });
 });

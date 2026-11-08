@@ -6,8 +6,10 @@ test('notice creates with displayed defaults without switching tabs', async ({ p
   await page.goto(HARNESS + '?scenario=board');
   await page.getByRole('button', { name: 'Open task Long column task 0' }).click();
   const notice = page.getByRole('note', { name: 'Worktree not created' });
+  await expect(notice).toContainText('No worktree');
   await expect(notice).toContainText('long-column-task-0');
   await expect(notice).toContainText('/worktrees/long-column-task-0');
+  await expect(notice.locator('.kb-worktree-line-summary')).toHaveAttribute('title', /Source: /);
   await notice.getByRole('button', { name: 'Create worktree' }).click();
   await expect(notice).toBeHidden();
   await expect(page.getByRole('tab', { name: 'Conversations' })).toHaveAttribute('aria-selected', 'true');

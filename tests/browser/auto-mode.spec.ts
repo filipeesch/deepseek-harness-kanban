@@ -33,6 +33,11 @@ async function appearance(page: Page) {
       const a = luminance(left); const b = luminance(right);
       return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
     };
+    const composite = (foreground: string, backdrop: string, alpha: number): string => {
+      const [red, green, blue] = channels(foreground);
+      const [backRed, backGreen, backBlue] = channels(backdrop);
+      return 'rgb(' + Math.round(red * alpha + backRed * (1 - alpha)) + ', ' + Math.round(green * alpha + backGreen * (1 - alpha)) + ', ' + Math.round(blue * alpha + backBlue * (1 - alpha)) + ')';
+    };
     const background = (element: Element): string => {
       let current: Element | null = element;
       while (current !== null) {
@@ -43,11 +48,12 @@ async function appearance(page: Page) {
       return getComputedStyle(document.body).backgroundColor;
     };
     const chip = document.querySelector<HTMLElement>('[data-task-id="long-0"] .kb-auto-chip')!;
-    const toggle = document.querySelector<HTMLElement>('.kb-drawer-auto')!;
+    const toggle = document.querySelector<HTMLElement>('.kb-drawer-header .kb-auto-chip')!;
+    const chipBackground = background(chip); const toggleBackground = background(toggle);
     return {
       theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light',
-      chip: contrast(getComputedStyle(chip).color, background(chip)),
-      toggle: contrast(getComputedStyle(toggle).color, background(toggle)),
+      chip: contrast(composite(getComputedStyle(chip).color, chipBackground, Number(getComputedStyle(chip).opacity)), chipBackground),
+      toggle: contrast(composite(getComputedStyle(toggle).color, toggleBackground, Number(getComputedStyle(toggle).opacity)), toggleBackground),
     };
   });
 }
@@ -58,6 +64,20 @@ async function openBoard(page: Page) {
 }
 
 test.beforeAll(async () => { await mkdir(OUT, { recursive: true }); });
+
+test('keeps the off-state drawer chip legible in both appearances', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light' });
+  await openBoard(page);
+  await page.getByRole('button', { name: 'Open task Long column task 3', exact: true }).click();
+  const light = await appearance(page);
+  expect(light.theme).toBe('light');
+  expect(light.toggle).toBeGreaterThanOrEqual(4.5);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('');
+  const dark = await appearance(page);
+  expect(dark.theme).toBe('dark');
+  expect(dark.toggle).toBeGreaterThanOrEqual(4.5);
+});
 
 test('presents the armed, paused, and advancing states on cards', async ({ page }) => {
   await openBoard(page);
@@ -85,7 +105,7 @@ test('presents the held state on the chip and in the drawer without a status ent
   await expect(page.locator('[data-task-id="other"] .kb-card-status-line')).toHaveCount(0);
   await page.getByRole('button', { name: 'Open task Other task', exact: true }).click();
   const drawer = page.locator('.kb-drawer');
-  await expect(drawer.locator('.kb-drawer-auto')).toHaveAttribute('data-auto-state', 'held');
+  await expect(drawer.locator('.kb-drawer-header .kb-auto-chip')).toHaveAttribute('data-auto-state', 'held');
   await expect(drawer.locator('.kb-drawer-automode')).toHaveCount(0);
 });
 
@@ -105,14 +125,15 @@ test('mirrors the toggle in the drawer without changing sections', async ({ page
   await page.getByRole('button', { name: 'Open task Long column task 0', exact: true }).click();
   await page.getByRole('tab', { name: 'Info' }).click();
   const drawer = page.locator('.kb-drawer');
-  const toggle = drawer.getByRole('button', { name: 'Auto mode: on' });
+  const toggle = drawer.getByRole('button', { name: 'Turn off auto mode' });
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
-  await expect(toggle).toContainText('Auto mode: on');
-  await expect(drawer.locator('.kb-drawer-automode')).toContainText('Auto mode is on: the next completed turn moves to Propose.');
+  await expect(toggle).toContainText('Auto');
+  await expect(toggle).toHaveAttribute('title', 'Auto mode is on: the next completed turn moves to Propose.');
+  await expect(drawer.locator('.kb-drawer-automode')).toHaveCount(0);
   await toggle.click();
   await expect.poll(async () => (await commands(page)).filter(command => command.type === 'task.autoMode').length).toBe(1);
   expect((await commands(page)).find(command => command.type === 'task.autoMode')).toMatchObject({ type: 'task.autoMode', taskId: 'long-0', enabled: false });
-  await expect(drawer.getByRole('button', { name: 'Auto mode: off' })).toHaveAttribute('aria-pressed', 'false');
+  await expect(drawer.getByRole('button', { name: 'Turn on auto mode' })).toHaveAttribute('aria-pressed', 'false');
   await expect(page.getByRole('tab', { name: 'Info' })).toHaveAttribute('aria-selected', 'true');
 });
 
@@ -123,6 +144,8 @@ test('presents an admitted advance without the user-confirmation copy', async ({
   const drawer = page.locator('.kb-drawer');
   await expect(drawer.locator('.kb-operation')).toContainText('The automatic advance is waiting to be dispatched.');
   await expect(drawer.locator('.kb-operation')).not.toContainText('confirmed');
+  await expect(drawer.locator('.kb-drawer-header .kb-auto-chip')).toHaveAttribute('data-auto-state', 'advancing');
+  await expect(drawer.locator('.kb-drawer-header .kb-auto-chip')).toHaveAttribute('title', /Advancing to /);
   await expect(drawer.locator('.kb-drawer-automode')).toHaveCount(0);
   await expect(drawer.getByRole('button', { name: 'Retry automatic advance' })).toHaveCount(0);
 });
@@ -133,6 +156,8 @@ test('presents a failed automatic advance with retry and dismiss recovery', asyn
   await page.getByRole('button', { name: 'Open task Long column task 2', exact: true }).click();
   const drawer = page.locator('.kb-drawer');
   await expect(drawer.locator('.kb-operation')).toContainText('The automatic advance needs attention.');
+  await expect(drawer.locator('.kb-drawer-header .kb-auto-chip')).toHaveAttribute('data-auto-state', 'failed');
+  await expect(drawer.locator('.kb-drawer-header .kb-auto-chip')).toHaveAttribute('title', /Automatic advance failed/);
   await expect(drawer.locator('.kb-drawer-automode')).toHaveCount(0);
   await expect(drawer.getByRole('button', { name: 'Retry automatic advance' })).toBeVisible();
   await expect(drawer.getByRole('button', { name: 'Dismiss failed advance' })).toBeVisible();
