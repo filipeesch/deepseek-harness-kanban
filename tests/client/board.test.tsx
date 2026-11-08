@@ -559,6 +559,15 @@ describe('accessibility, pending, subscriptions and errors', () => {
     const { user, command } = mount(); await loaded(); let reject!: (error: unknown) => void; command.mockImplementationOnce(() => new Promise((_resolve, failure) => { reject = failure; })); await user.click(screen.getByRole('button', { name: 'New task' })); await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Pending'); await user.selectOptions(screen.getByRole('combobox', { name: 'Project' }), 'p1'); await user.click(screen.getByRole('button', { name: 'Create task' })); expect((screen.getByRole('button', { name: 'Creating…' }) as HTMLButtonElement).disabled).toBe(true); expect((screen.getByRole('button', { name: 'Close New task' }) as HTMLButtonElement).disabled).toBe(true); await act(async () => { reject({ code: 'POLICY_DENIED', message: 'The destination is not permitted.' }); }); expect(await screen.findByText('The destination is not permitted.')).toBeTruthy(); expect((screen.getByRole('button', { name: 'Create task' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it('renders the workflow grid inside the card motion frame', async () => {
+    const { container } = mount();
+    await loaded();
+    const columns = container.querySelector('.kb-columns');
+    expect(columns).toBeTruthy();
+    expect(columns!.querySelector('.kb-motion-overlay')?.getAttribute('aria-hidden')).toBe('true');
+    expect(columns!.querySelectorAll('.kb-card').length).toBeGreaterThan(0);
+  });
+
   it('keeps styling scoped away from native chat controls and renders groups once', () => {
     expect(styles.includes('.dsh-kanban button')).toBe(false); expect(styles).not.toMatch(/(^|})\s*body\s*\{/m); const layout = columnLayout(fixture().state.workflow); expect(layout.flatMap(slot => slot.columns.map(column => column.id))).toEqual(['intake', 'review', 'doing']); expect(layout[0]!.group?.name).toBe('Planning');
   });

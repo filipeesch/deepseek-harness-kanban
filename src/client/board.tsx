@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { Board, ClientApi, Column, ColumnGroup, Command, KanbanSnapshot, Problem, Task, Workflow } from '../shared/types.js';
+import type { Board, ClientApi, Column, Command, KanbanSnapshot, Problem, Task, Workflow } from '../shared/types.js';
 import { EMPTY_ATTENTION } from '../shared/types.js';
 import { NewTaskDialog } from './forms.js';
 import { Configuration } from './settings/configuration.js';
@@ -10,9 +10,11 @@ import type { SessionTitles } from './conversation-label.js';
 import type { ConversationLeaseEnvironment } from './conversation-leases.js';
 import { transitionAccess } from '../domain/transitions.js';
 import { compareTaskOrder } from '../domain/task-order.js';
-import { placementIndex } from '../domain/placement.js';
 import { AutoRunController } from './auto-run.js';
 import { BoardCard } from './board-card.js';
+import { cardRowKeys, planColumns } from './board-columns.js';
+import { CardMotionFrame } from './card-motion/frame.js';
+import { prefersReducedMotion } from './card-motion/preference.js';
 import { ACTIVE_HUB_KEY, allTasks, boardView, normalizeSnapshot, readBoardPreferences, readStorage, scopedCommand, writeBoardPreference, writeStorage } from './hub-view.js';
 import { projectScopeActivity, type ScopeActivity } from './scope-activity.js';
 import { HubNav } from './hub-nav.js';
@@ -35,6 +37,7 @@ import type { PreparationSeat } from './execution-preparation/model-seat.js';
 import { createBoardPageState, taskPageState, usePageField, type BoardPageState } from './page-state.js';
 export { createBoardPageState } from './page-state.js';
 export type { BoardPageState } from './page-state.js';
+export { columnLayout } from './board-columns.js';
 
 export interface BoardViewProps {
   api: ClientApi;
@@ -48,21 +51,6 @@ export interface BoardViewProps {
   autoRun?: AutoRunController;
   /** Native slots and locale used by the first-execution model stage; absent in isolated harnesses. */
   nativeSeat?: PreparationSeat;
-}
-
-export function columnLayout(workflow: Workflow): Array<{ key: string; group?: ColumnGroup; columns: Column[] }> {  const result: Array<{ key: string; group?: ColumnGroup; columns: Column[] }> = []; const seen = new Set<string>();
-  for (const column of workflow.columns) {
-    if (seen.has(column.id)) continue;
-    const group = workflow.groups.find(value => value.columnIds.includes(column.id));
-    const columns = group ? group.columnIds.map(id => workflow.columns.find(value => value.id === id)).filter((value): value is Column => Boolean(value) && !seen.has(value!.id)) : [column];
-    const unique = columns.filter((value, index) => columns.findIndex(item => item.id === value.id) === index);
-    unique.forEach(value => seen.add(value.id)); result.push({ key: group ? 'group-' + group.id : 'column-' + column.id, ...(group ? { group } : {}), columns: unique });
-  }
-  return result;
-}
-
-function prefersReducedMotion(): boolean {
-  return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 export function BoardView({ api, renderConversation, pageState, sessionTitles, conversationLeases, picker = null, autoRun: providedAutoRun, nativeSeat }: BoardViewProps) {
@@ -226,16 +214,11 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     ...(retainedCheckout === null ? [] : [{ path: retainedCheckout, reason: 'plain' as const }]),
     ...(snapshot?.retainedCheckouts ?? []).map(value => ({ path: value.path, reason: 'unavailable' as const })),
   ].filter(value => !dismissedRetained.includes(value.path));
-  function tasksForColumn(columnId: string): Task[] {
-    const source = optimistic ? visible.filter(task => task.id !== optimistic.taskId) : visible;
-    const base = source.filter(task => task.columnId === columnId);
-    if (!optimistic || optimistic.columnId !== columnId) return base;
-    const moving = visible.find(task => task.id === optimistic.taskId);
-    if (!moving) return base;
-    const next = [...base];
-    next.splice(placementIndex(optimistic.placement, next), 0, moving);
-    return next;
-  }
+  // One projection feeds both the painted lists and the motion frame, so the order
+  // the frame compares is exactly the order the board renders.
+  const columnPlan = state === undefined ? [] : planColumns(state.workflow, visible, optimistic);
+  const rowKeys = cardRowKeys(columnPlan);
+  const motionResetKey = [activeHub?.id ?? '', activeBoard?.id ?? '', search, projectFilter].join('|');
 
   const toggleSelect = useCallback((taskId: string) => { setSelectedIds(previous => { const next = new Set(previous); if (next.has(taskId)) next.delete(taskId); else next.add(taskId); return next; }); }, []);
 
@@ -315,8 +298,8 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     {configuration && <Configuration key={configuration} state={state ?? null} hub={activeHub ?? null} board={activeBoard ?? null} hubCount={snapshot?.state.hubs.length ?? 1} settings={snapshot?.state.settings} settingsRevision={snapshot?.state.settings?.revision ?? 0} run={run} api={api} sharing={activeHub ? snapshot?.sharing?.[activeHub.id] : undefined} sharingAuth={snapshot?.sharingAuth} conversationAttention={snapshot?.conversationAttention} initial={configuration} onClose={() => setConfiguration(null)} onHubDeleted={() => { setConfiguration(null); setActiveHubIdState(null); writeStorage(ACTIVE_HUB_KEY, null); }} onBoardDeleted={() => { setConfiguration(null); }} onBoardCreated={id => { selectBoard(activeHub!.id, id); setConfiguration(null); }} />}
     <BoardNotices loadError={loadError} actionError={actionError} onRetryLoad={() => setLoadAttempt(value => value + 1)} />{state && <ProjectRelocationNotice projects={state.projects} onRetry={projectId => { void run({ type: 'project.relocationRetry', projectId }).catch(error => setActionError(asProblem(error))); }} />}{state && <DestructiveOperationsNotice tasks={state.tasks} retained={retainedNotices} onDismissRetained={path => { setDismissedRetained(previous => previous.includes(path) ? previous : [...previous, path]); setRetainedCheckout(current => current === path ? null : current); }} onOpen={openTask} onRetry={taskId => void destructive.retryTask(taskId)} onForce={destructive.openForce} onReturn={taskId => { void run({ type: 'operation.return', taskId }).catch(error => setActionError(asProblem(error))); }} />}{!snapshot && !loadError && <p className="kb-empty" role="status">Loading Kanban…</p>}{snapshot && !activeHub && <div className="kb-empty"><h2>No Hub available</h2><p>Create a Hub to continue.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewHub(true)}>Create Hub</button></div>}{snapshot && activeHub && !activeBoard && <div className="kb-empty"><h2>Create your first board</h2><p>Boards hold a workflow and their tasks inside this Hub.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewBoard(true)}>Create board</button></div>}
     {state && <><div className="kb-page-body" ref={boardBody} onPointerDown={onBoardPointerDown}>{state.projects.length === 0 && <div className="kb-empty"><h2>Add your first project</h2><p>Register a project folder, and its Git root when it is a repository, to create tasks.</p><button type="button" className="kb-button kb-primary" onClick={() => setConfiguration('Projects')}>Configure projects</button></div>}
-      <div className="kb-columns" aria-label="Workflow columns">{columnLayout(state.workflow).map(slot => <section key={slot.key} className={'kb-column-slot ' + (slot.group ? 'kb-column-group' : '')} aria-label={slot.group?.name}>{slot.group && <h2 className="kb-group-heading">{slot.group.name}</h2>}{slot.columns.map(column => { const tasks = tasksForColumn(column.id); const restricted = Boolean(drag && drag.overColumnId === column.id && transitionAccess(state.workflow, drag.sourceColumnId, column.id) === 'restricted');
-        return <section className={'kb-column' + (restricted ? ' kb-drop-restricted' : '')} key={column.id} aria-label={column.name + ' column'} data-column-id={column.id}><header className="kb-column-header"><h2>{column.name}</h2><span aria-label={tasks.length + ' tasks'}>{tasks.length}</span></header>{column.id === state.workflow.initialColumnId && renderNewTaskButton(column)}<div className="kb-card-list">{tasks.map(task => renderCard(task, column, state.workflow))}{drag?.overColumnId === column.id && <div className={'kb-drop-indicator' + (restricted ? ' kb-drop-indicator-restricted' : '')} style={{ top: drag.indicatorY }} aria-hidden="true" />}{tasks.length === 0 && <p className="kb-empty-column">No matching tasks</p>}</div></section>; })}</section>)}</div></div>
+      <CardMotionFrame className="kb-columns" label="Workflow columns" rowKeys={rowKeys} resetKey={motionResetKey} ready={Boolean(state)}>{columnPlan.map(slot => <section key={slot.key} className={'kb-column-slot ' + (slot.group ? 'kb-column-group' : '')} aria-label={slot.group?.name}>{slot.group && <h2 className="kb-group-heading">{slot.group.name}</h2>}{slot.columns.map(({ column, tasks }) => { const restricted = Boolean(drag && drag.overColumnId === column.id && transitionAccess(state.workflow, drag.sourceColumnId, column.id) === 'restricted');
+        return <section className={'kb-column' + (restricted ? ' kb-drop-restricted' : '')} key={column.id} aria-label={column.name + ' column'} data-column-id={column.id}><header className="kb-column-header"><h2>{column.name}</h2><span aria-label={tasks.length + ' tasks'}>{tasks.length}</span></header>{column.id === state.workflow.initialColumnId && renderNewTaskButton(column)}<div className="kb-card-list">{tasks.map(task => renderCard(task, column, state.workflow))}{drag?.overColumnId === column.id && <div className={'kb-drop-indicator' + (restricted ? ' kb-drop-indicator-restricted' : '')} style={{ top: drag.indicatorY }} aria-hidden="true" />}{tasks.length === 0 && <p className="kb-empty-column">No matching tasks</p>}</div></section>; })}</section>)}</CardMotionFrame></div>
       {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} conversationAttention={snapshot?.conversationAttention} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} onForce={destructive.openForce} onToggleAutoMode={toggleAutoMode} autoModePending={autoModePending.has(selected.id)} sessionTitles={sessionTitles} {...(conversationLeases === undefined ? {} : { conversationLeases })} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} />}
 
     {newTask && state && <NewTaskDialog state={state} run={run} onClose={() => setNewTask(false)} onCreated={openTask} />}

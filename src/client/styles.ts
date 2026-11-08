@@ -1,5 +1,6 @@
 import { activityStyles } from './activity-styles.js';
 import { cardStyles } from './card-styles.js';
+import { motionStyles } from './motion-styles.js';
 import { sharingStyles } from './sharing/styles.js';
 /** Every selector is scoped to plugin-owned classes; native chat controls retain their host styles. */
 export const styles = String.raw`
@@ -198,4 +199,4 @@ export const styles = String.raw`
 .dsh-kanban .kb-note-editor-panel{min-height:180px}
 .dsh-kanban .kb-note-editor-panel .kb-note-preview-full{min-height:180px}
 @media(prefers-reduced-motion:reduce){.dsh-kanban .kb-drawer[data-entering=true],.dsh-kanban .kb-drawer[data-closing=true]{animation:none}}
-` + activityStyles + cardStyles + sharingStyles;
+` + activityStyles + cardStyles + motionStyles + sharingStyles;
