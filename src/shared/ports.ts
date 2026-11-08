@@ -13,10 +13,14 @@ export interface LegacyStateReader {
   read(): Promise<BoardState>;
   close(): Promise<void>;
 }
-export interface WorkspaceInfo { id: string; path: string; title: string; sessionIds: string[] }
+export interface WorkspaceInfo { id: string; path: string; title: string; sessionIds: string[]; hidden: boolean }
+export interface WorkspaceEnsureOptions { title?: string; hidden?: boolean }
 export interface WorkspacePort {
-  ensure(path: string, title: string): Promise<{ workspace: WorkspaceInfo; owned: boolean }>;
+  /** Best-effort host capability; `setHidden` is safe to call and no-ops when the host cannot hide. */
+  readonly supportsHidden: boolean;
+  ensure(path: string, options?: WorkspaceEnsureOptions): Promise<{ workspace: WorkspaceInfo; owned: boolean }>;
   get(id: string): WorkspaceInfo | undefined;
+  setHidden(id: string, hidden: boolean): Promise<void>;
   delete(id: string): Promise<void>;
 }
 export interface SessionLineage { sessionId: string; parentSessionId?: string; origin?: 'subagent' }

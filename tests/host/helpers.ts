@@ -4,7 +4,7 @@ import { HubRepository } from '../../src/host/hub-repository.js';
 import { KanbanApp } from '../../src/host/app.js';
 import type { BoardState, ConversationFacts, CreateWorktree, GitProject, HubState, KanbanMeta, NewTask, PendingUserWorkKind, Project, ProjectLocation, SettledTurn, Task } from '../../src/shared/types.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
-import type { HubStorage, SessionPort, GitPort, GitTree, WorkspacePort, WorkspaceInfo, ProjectProbe } from '../../src/shared/ports.js';
+import type { HubStorage, SessionPort, GitPort, GitTree, WorkspacePort, WorkspaceInfo, WorkspaceEnsureOptions, ProjectProbe } from '../../src/shared/ports.js';
 import { KanbanError } from '../../src/shared/errors.js';
 import { isGitProject } from '../../src/shared/project.js';
 
@@ -72,9 +72,10 @@ export class TestProjectProbe implements ProjectProbe {
  async inspect(pathValue:string):Promise<ProjectLocation>{return this.locations.get(pathValue)??{kind:'folder',projectPath:pathValue};}
 }
 export class TestWorkspaces implements WorkspacePort {
- byPath=new Map<string,WorkspaceInfo>();byId=new Map<string,WorkspaceInfo>();deleted:string[]=[];private count=0;
- async ensure(path:string,title:string){const existing=this.byPath.get(path);if(existing)return {workspace:existing,owned:false};const workspace:WorkspaceInfo={id:'workspace-'+(++this.count),path,title,sessionIds:[]};this.byPath.set(path,workspace);this.byId.set(workspace.id,workspace);return {workspace,owned:true};}
+ byPath=new Map<string,WorkspaceInfo>();byId=new Map<string,WorkspaceInfo>();deleted:string[]=[];setHiddenCalls:Array<{id:string;hidden:boolean}>=[];supportsHidden=true;setHiddenFailure:Error|undefined;private count=0;
+ async ensure(path:string,options:WorkspaceEnsureOptions={}){const existing=this.byPath.get(path);if(existing)return {workspace:existing,owned:false};const workspace:WorkspaceInfo={id:'workspace-'+(++this.count),path,title:options.title??path,sessionIds:[],hidden:this.supportsHidden&&options.hidden===true};this.byPath.set(path,workspace);this.byId.set(workspace.id,workspace);return {workspace,owned:true};}
  get(id:string){return this.byId.get(id);}
+ async setHidden(id:string,hidden:boolean){if(!this.supportsHidden)return;this.setHiddenCalls.push({id,hidden});if(this.setHiddenFailure)throw this.setHiddenFailure;const value=this.byId.get(id);if(value)value.hidden=hidden;}
  async delete(id:string){this.deleted.push(id);const value=this.byId.get(id);if(value)this.byPath.delete(value.path);this.byId.delete(id);}
 }
 export async function fixture(){const root=await realpath(await mkdtemp(path.join(os.tmpdir(),'dsh-kanban-host-')));const gitRoot=path.join(root,'repo');const projectPath=path.join(gitRoot,'apps','web');await mkdir(projectPath,{recursive:true});const storage=new MemoryHubStorage();const hubs=await HubRepository.open(storage,{id:(()=>{let n=0;return()=>`test-${++n}`;})(),now:(()=>new Date().toISOString())});const store=hubs.defaultHub();const project=await store.saveProject({name:'Web',projectPath,gitRootPath:gitRoot}) as GitProject;const hub=hubs.requireHub(hubs.defaultHubId());const board=hub.boards[0]!;const sessions=new TestSessions();const git=new TestGit();const workspaces=new TestWorkspaces();const probe=new TestProjectProbe();probe.locations.set(projectPath,{kind:'git',projectPath,gitRootPath:gitRoot,defaultBranch:'main'});probe.locations.set(gitRoot,{kind:'git',projectPath:gitRoot,gitRootPath:gitRoot,defaultBranch:'main'});const app=new KanbanApp(hubs,sessions,git,{probe},workspaces);return {root,gitRoot,projectPath,storage,hubs,store,hub,board,project,sessions,git,workspaces,probe,app,async close(){await app.close();if(path.dirname(root)!==await realpath(os.tmpdir())||!path.basename(root).startsWith('dsh-kanban-host-')||await realpath(root)!==root)throw new Error('Unsafe test cleanup target');await rm(root,{recursive:true,force:true});}};}

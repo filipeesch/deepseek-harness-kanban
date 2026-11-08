@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import path from 'node:path';
 import { BoardStore } from '../../src/domain/store.js';
 import { initialState } from '../../src/domain/schema.js';
@@ -79,6 +79,7 @@ describe('native workspace binding', () => {
     expect(f.sessions.workspaceIds.get(first.sessionIds[0]!)).toBe(project.workspaceId);
     expect(f.sessions.workspaceIds.get(second.sessionIds[0]!)).toBe(project.workspaceId);
     expect(f.workspaces.byPath.get(f.projectPath)?.id).toBe(project.workspaceId);
+    expect(f.workspaces.get(project.workspaceId!)?.hidden).toBe(false);
   });
 
   it('creates a separate owned worktree workspace and cleans it up on deletion', async () => {
@@ -92,12 +93,66 @@ describe('native workspace binding', () => {
     expect(bound.worktreeWorkspaceId).toBeTruthy();
     expect(f.sessions.workspaceIds.get(conversation)).toBe(bound.worktreeWorkspaceId);
     expect(f.workspaces.get(bound.worktreeWorkspaceId!)?.path).toBe(worktreePath);
+    expect(f.workspaces.get(bound.worktreeWorkspaceId!)?.hidden).toBe(true);
     const baseWorkspace = f.store.requireProject(f.project.id).workspaceId;
     await f.app.command({ type: 'task.delete', taskId: task.id, confirmed: true, expectedWorktreePath: tree });
     await f.app.worktrees.settle();
     expect(f.store.snapshot().tasks).toHaveLength(0);
     expect(f.workspaces.deleted).toContain(bound.worktreeWorkspaceId);
     expect(f.workspaces.deleted).not.toContain(baseWorkspace);
+  });
+
+  it('reuses one hidden worktree workspace for later conversations', async () => {
+    const f = await setup(); const task = await f.app.createTask({ projectId: f.project.id, title: 'Reused tree', description: '' });
+    const tree = path.join(f.root, 'reused-tree');
+    await f.app.command({ type: 'worktree.create', taskId: task.id, mode: 'new', path: tree, branchName: 'task/reused', sourceBranch: 'main' });
+    const first = await f.app.createConversation(task.id);
+    const workspaceId = f.store.requireTask(task.id).worktreeWorkspaceId!;
+    const second = await f.app.createConversation(task.id);
+    expect(f.store.requireTask(task.id).worktreeWorkspaceId).toBe(workspaceId);
+    expect(f.sessions.workspaceIds.get(first)).toBe(workspaceId);
+    expect(f.sessions.workspaceIds.get(second)).toBe(workspaceId);
+    expect(f.workspaces.byPath.size).toBe(1);
+    expect(f.workspaces.get(workspaceId)?.hidden).toBe(true);
+  });
+
+  it('hides a pre-existing worktree workspace once when it is adopted', async () => {
+    const f = await setup(); const task = await f.app.createTask({ projectId: f.project.id, title: 'Adopted tree', description: '' });
+    const tree = path.join(f.root, 'adopted-tree');
+    await f.app.command({ type: 'worktree.create', taskId: task.id, mode: 'new', path: tree, branchName: 'task/adopted', sourceBranch: 'main' });
+    const worktreePath = path.join(tree, 'apps', 'web');
+    const adopted = await f.workspaces.ensure(worktreePath, { title: 'Web · task/adopted' });
+    expect(adopted.workspace.hidden).toBe(false);
+    await f.app.createConversation(task.id);
+    const bound = f.store.requireTask(task.id);
+    expect(bound.worktreeWorkspaceId).toBe(adopted.workspace.id);
+    expect(bound.worktreeWorkspaceOwned).toBe(false);
+    expect(f.workspaces.get(adopted.workspace.id)?.hidden).toBe(true);
+    expect(f.workspaces.setHiddenCalls).toEqual([{ id: adopted.workspace.id, hidden: true }]);
+  });
+
+  it('reports a failed hide, creates the conversation, and does not retry on restart', async () => {
+    const f = await setup(); const task = await f.app.createTask({ projectId: f.project.id, title: 'Failed hide', description: '' });
+    const tree = path.join(f.root, 'failed-hide-tree');
+    await f.app.command({ type: 'worktree.create', taskId: task.id, mode: 'new', path: tree, branchName: 'task/failed-hide', sourceBranch: 'main' });
+    const worktreePath = path.join(tree, 'apps', 'web');
+    const adopted = await f.workspaces.ensure(worktreePath, { title: 'Web · task/failed-hide' });
+    f.workspaces.setHiddenFailure = new Error('visibility write failed');
+    const report = vi.fn();
+    const { KanbanApp } = await import('../../src/host/app.js');
+    const app = new KanbanApp(f.hubs, f.sessions, f.git, { report }, f.workspaces);
+
+    const conversation = await app.createConversation(task.id);
+
+    expect(f.sessions.workspaceIds.get(conversation)).toBe(adopted.workspace.id);
+    expect(f.store.requireTask(task.id).worktreeWorkspaceId).toBe(adopted.workspace.id);
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(f.workspaces.get(adopted.workspace.id)?.hidden).toBe(false);
+
+    const callsAfterCreate = f.workspaces.setHiddenCalls.length;
+    await app.initialize();
+    expect(f.workspaces.setHiddenCalls.length).toBe(callsAfterCreate);
+    await app.close();
   });
 
   it('does not create a workspace or native session when a task is created', async () => {

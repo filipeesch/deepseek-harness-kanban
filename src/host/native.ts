@@ -361,17 +361,74 @@ export function createNativePorts(ctx: Context, options: NativePortsOptions = {}
       return executeCommand(argv, cwd, wrapped, lifetime, timeout);
     },
   };
-  const workspaceInfo = (value: { id: unknown; path: string; title: string; sessionIds: readonly unknown[] }) => ({ id: String(value.id), path: value.path, title: value.title, sessionIds: value.sessionIds.map(String) });
+  type WorkspaceRecord = {
+    id: unknown; path: string; title: string; sessionIds: readonly unknown[];
+    hidden?: boolean;
+    setTitle?: (title: string) => Promise<void>;
+    setHidden?: (hidden: boolean) => Promise<void>;
+  };
+  type WorkspaceCreateOptions = { title?: string; hidden?: boolean };
+  type WorkspaceOptionsRegistry = { create(path: string, options?: WorkspaceCreateOptions): Promise<WorkspaceRecord> };
+  const optionsRegistry = ctx.workspaceRegistry as unknown as WorkspaceOptionsRegistry;
+  let hiddenSupport: boolean | undefined;
+  /**
+   * Workspace visibility lives on the Workspace entity, not on the registry.
+   * Detect it from a resolved, listed, or created entity and cache the answer;
+   * an empty registry leaves it unknown until the first entity exists.
+   */
+  const detectHiddenSupport = (workspace?: WorkspaceRecord): boolean => {
+    if (hiddenSupport !== undefined) return hiddenSupport;
+    if (workspace) {
+      hiddenSupport = typeof workspace.setHidden === 'function';
+      return hiddenSupport;
+    }
+    const listed = typeof ctx.workspaceRegistry.list === 'function' ? ctx.workspaceRegistry.list() as unknown as WorkspaceRecord[] : [];
+    if (listed.length > 0) hiddenSupport = listed.some(value => typeof value.setHidden === 'function');
+    return hiddenSupport === true;
+  };
+  const workspaceInfo = (value: WorkspaceRecord) => ({ id: String(value.id), path: value.path, title: value.title, sessionIds: value.sessionIds.map(String), hidden: value.hidden === true });
   const workspaces: WorkspacePort = {
-    async ensure(path, title) {
+    get supportsHidden() { return detectHiddenSupport(); },
+    async ensure(path, options = {}) {
       const existing = await ctx.workspaceRegistry.resolveByPath(path);
-      if (existing) return { workspace: workspaceInfo(existing), owned: false };
-      const created = await ctx.workspaceRegistry.create(path, title);
+      if (existing) {
+        const value = existing as unknown as WorkspaceRecord;
+        detectHiddenSupport(value);
+        return { workspace: workspaceInfo(value), owned: false };
+      }
+      if (detectHiddenSupport()) {
+        const created = await optionsRegistry.create(path, {
+          ...(options.title !== undefined ? { title: options.title } : {}),
+          ...(options.hidden !== undefined ? { hidden: options.hidden } : {}),
+        });
+        return { workspace: workspaceInfo(created), owned: true };
+      }
+      const created = await ctx.workspaceRegistry.create(path, options.title) as unknown as WorkspaceRecord;
+      const canHide = typeof created.setHidden === 'function';
+      detectHiddenSupport(created);
+      if (canHide && options.title !== undefined && created.title !== options.title && typeof created.setTitle === 'function') {
+        // A capable registry reads a positional argument as its options object, so the
+        // requested title was ignored; repair it through the entity before hiding.
+        try { await created.setTitle(options.title); } catch { /* keep the fallback title */ }
+      }
+      if (canHide && options.hidden === true && created.setHidden) {
+        // The coordinator retries and reports a failed hide; creation itself still succeeds.
+        try { await created.setHidden(true); } catch { /* reported by WorkspaceCoordinator */ }
+      }
       return { workspace: workspaceInfo(created), owned: true };
     },
     get(id) {
-      const value = ctx.workspaceRegistry.get(id as never);
-      return value ? workspaceInfo(value) : undefined;
+      const value = ctx.workspaceRegistry.get(id as never) as unknown as WorkspaceRecord | undefined;
+      if (!value) return undefined;
+      detectHiddenSupport(value);
+      return workspaceInfo(value);
+    },
+    async setHidden(id, hidden) {
+      const value = ctx.workspaceRegistry.get(id as never) as unknown as WorkspaceRecord | undefined;
+      if (!value) return;
+      detectHiddenSupport(value);
+      if (typeof value.setHidden !== 'function') return;
+      await value.setHidden(hidden);
     },
     async delete(id) { await ctx.workspaceRegistry.delete(id as never); },
   };
