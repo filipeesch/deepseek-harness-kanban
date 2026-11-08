@@ -5,7 +5,6 @@
 Provide a task-centered drawer that contains continuous native DSH conversations while keeping every conversation aligned with the task's effective project directory and aware of its Hub and board context.
 
 ## Requirements
-
 ### Requirement: Task drawer sections
 
 Opening a task card SHALL display a task drawer with a header showing the task title, the project, and the task's execution status, and Conversations, Info, Git, and Notes sections. The execution status SHALL remain visible while the user inspects any of those sections. Conversations SHALL contain the task's native DSH chats, Info SHALL expose the task's title and Markdown description, Git SHALL expose its simplified worktree controls, and Notes SHALL expose its shared task notes. The workflow stage control SHALL be presented in the drawer's compact toolbar and SHALL list every workflow stage in workflow order, including the current stage. Stages that the active board's workflow does not permit from the current stage SHALL remain selectable and SHALL be presented with lower visual emphasis than permitted stages, with the restriction also available to assistive technology. Selecting a permitted stage SHALL move the task immediately; when the task has no conversation and the destination has an entry instruction, the execution preparation defined by Execution preparation before a task's first execution in `kanban-board` SHALL be presented first, and the task SHALL NOT move until that preparation completes. Selecting a restricted stage SHALL require the explicit confirmation defined by the Explicit confirmation for a restricted transition requirement; when the confirmed destination would start the task's first execution, that preparation SHALL follow the confirmation and precede the move. An instructed destination SHALL arm the timed stage instruction defined by the Timed stage instruction after a move requirement in `kanban-board`; the drawer SHALL present that countdown notice above its section panel and SHALL expose the same cancel action. The drawer SHALL NOT insert text into the composer for a stage change.
@@ -185,24 +184,26 @@ The task drawer SHALL be resizable within defined minimum and maximum bounds and
 
 ### Requirement: Nested native conversation tabs
 
-A task SHALL begin with no native DSH conversation in its Conversations section. The section SHALL provide an explicit start action that creates the first distinct native DSH conversation as a tab within the same task, and a plus action that creates another distinct native DSH conversation. The first conversation SHALL be created only by that explicit start action, by the execution preparation that precedes a task's first execution, or by a stage instruction that needs a conversation and finds none open, including a stage instruction dispatched from a card, a confirmed transition, or an automatic advance. When the execution preparation creates the first conversation, it SHALL do so after the worktree choice is resolved and before the move or run action is applied. For a Git-backed task without a worktree, the explicit start action SHALL remain unavailable until the worktree choice is resolved as defined by `worktree-management`. The first conversation SHALL use the task's current effective directory at creation time.
+A task SHALL begin with no native DSH conversation in its Conversations section. The section SHALL provide an explicit start action, presented as the agent-preset cards, that creates the first distinct native DSH conversation as a tab within the same task, and a plus action that opens the same preset choice to create another distinct native DSH conversation. The first conversation SHALL be created only by that explicit choice, by the execution preparation that precedes a task's first execution, or by a stage instruction that needs a conversation and finds none open, including a stage instruction dispatched from a card, a confirmed transition, or an automatic advance. When the execution preparation creates the first conversation, it SHALL do so after the worktree choice is resolved and before the move or run action is applied. For a Git-backed task without a worktree, the explicit start action SHALL remain unavailable until the worktree choice is resolved as defined by `worktree-management`. The first conversation SHALL use the task's current effective directory at creation time. A conversation created from a card SHALL receive the card's preset; conversations created by the execution preparation or a stage instruction use the host default.
 
 #### Scenario: Open a newly created task
 
 - **WHEN** a user opens a newly created task's Conversations section
 - **THEN** no native conversation tab exists
-- **AND** an explicit start action and a plus action are available, subject to the worktree choice
+- **AND** the agent-preset cards and the plus action are available, subject to the worktree choice
 
 #### Scenario: Start the first conversation
 
-- **WHEN** the user starts the first conversation
+- **WHEN** the user selects a preset card as the first conversation's start action
 - **THEN** a native DSH conversation tab is added
+- **AND** the card's preset is selected on that conversation
 - **AND** its native session uses the task's current effective directory
 
 #### Scenario: Add another continuous conversation
 
-- **WHEN** the user selects the plus action in a task that already has a conversation
+- **WHEN** the user selects the plus action in a task that already has a conversation and then selects a preset card
 - **THEN** a new native DSH conversation is added as another tab associated with that same task
+- **AND** the card's preset is selected on that conversation
 
 #### Scenario: Prepare the first conversation
 
@@ -232,7 +233,7 @@ A task SHALL begin with no native DSH conversation in its Conversations section.
 #### Scenario: Start the first conversation after a worktree choice
 
 - **WHEN** the task has a ready worktree, an attached worktree, or a recorded base-project choice
-- **THEN** the explicit start creates the first conversation at the task's current effective directory
+- **THEN** the card start creates the first conversation at the task's current effective directory
 
 ### Requirement: Model selection for the first conversation
 
@@ -298,16 +299,25 @@ Every conversation associated with a task SHALL use the same effective task dire
 - **THEN** every conversation uses the new task directory and retains the same native session identity and prior history
 
 ### Requirement: Reuse the native DSH conversation experience
-Task conversation tabs and their peeked subagent conversations SHALL reuse the native DSH session header, chat transcript, composer, and execution rather than introducing a replacement shell or agent runtime. Embedding those conversations in a drawer SHALL preserve the host's applicable tools, execution, permissions, mode selection, and native subagent navigation behavior.
+
+Task conversation tabs SHALL render the host's public native conversation window — its Session header, View tabs, transcript, composer, Session statistics, and execution — rather than introducing a replacement shell or agent runtime. Embedding the window in a drawer SHALL preserve the host's applicable tools, execution, permissions, mode selection, View selection, and native subagent navigation behavior.
 
 #### Scenario: Render the native conversation surface
+
 - **WHEN** a user opens a task conversation in the drawer
-- **THEN** the drawer presents the host's native session header, transcript, and composer
-- **AND** it does not present a plugin-owned replacement for those native components
+- **THEN** the drawer presents the host's native conversation window
+- **AND** it does not present a plugin-owned replacement for the header, transcript, or composer
 
 #### Scenario: Use native chat inside a task tab
+
 - **WHEN** a user sends a message through a task's embedded native conversation
 - **THEN** the request is handled as a native DSH conversation turn subject to the host's applicable execution and permission behavior
+
+#### Scenario: Follow native subagent navigation
+
+- **WHEN** the user selects a subagent in the window's native lineage or subagent catalog
+- **THEN** the host's native DSH navigation applies
+- **AND** the plugin does not open a drawer-local subagent peek
 
 ### Requirement: No new bidirectional main-chat shortcuts
 The plugin SHALL NOT add dedicated task-card-to-main-chat or main-chat-to-task-card navigation shortcuts as part of this capability. This exclusion SHALL NOT remove or disable existing native DSH navigation or the approved product tools in ordinary DSH chats.
@@ -368,39 +378,6 @@ The conversation SHALL present the context as an inline visible context row usin
 - **WHEN** a task conversation whose first message already exists is resumed
 - **THEN** no new task-context message is injected
 - **AND** the durable history and existing context row remain
-
-### Requirement: Native conversation lineage
-The plugin SHALL treat a task's native conversation lineage as its retained top-level conversation sessions plus their direct and nested native subagent descendants whose session header records `origin: subagent`. A top-level conversation session SHALL include a conversation created for the task and a fork the task adopted. It SHALL use this lineage for ownership decisions, including shared-worktree protection and owned worktree-workspace cleanup. It SHALL NOT add subagent descendants to the task's conversation tabs, retained session IDs, or closed-conversation list, and SHALL NOT attempt to move or archive them through generic session operations.
-
-A subagent descendant MAY be retained transiently and displayed as an in-drawer peek. That transient reference SHALL NOT be recorded as a task session ID, tab, or closed-conversation entry, and SHALL be released when the peek ends. Archiving a parent conversation SHALL gate its descendant sessions according to native DSH behavior. A fork the plugin has not adopted — including a fork of a subagent descendant and a fork of a session that no task retains — SHALL NOT be treated as owned by this lineage.
-
-#### Scenario: A subagent descendant is not a conversation tab
-- **WHEN** a task conversation has a native subagent child
-- **THEN** the task drawer still shows only the task's retained top-level conversation tabs
-- **AND** the child is not persisted as a task session ID or closed-conversation entry
-
-#### Scenario: An in-drawer peek does not persist the child
-- **WHEN** the user peeks a native subagent descendant and then leaves the peek
-- **THEN** the child's transient reference is released
-- **AND** the task's conversation tabs, session IDs, and closed-conversation list are unchanged
-
-#### Scenario: A direct or nested subagent descendant is owned
-- **WHEN** a task conversation spawns a subagent child, and that child spawns another subagent child
-- **THEN** both descendants belong to the task's conversation lineage for ownership decisions
-
-#### Scenario: An adopted fork is a top-level task conversation
-- **WHEN** the plugin has adopted a fork of a task conversation
-- **THEN** the fork is one of the task's retained top-level conversation sessions
-- **AND** it is owned for lineage, task deletion, and shared-worktree protection
-
-#### Scenario: A fork remains foreign
-- **WHEN** a fork was created from a subagent descendant or from a session that no task retains
-- **THEN** the plugin does not treat the fork as an owned descendant or conversation
-
-#### Scenario: Archiving a parent gates its descendants
-- **WHEN** task deletion archives a top-level task conversation that has subagent descendants
-- **THEN** the plugin does not archive or move those descendants individually
-- **AND** native archived-parent behavior gates their execution until the native lifecycle changes
 
 ### Requirement: Fork adoption into the task conversation
 When a native DSH conversation fork is created or resumed, the plugin SHALL adopt it as another conversation of the task that retains its direct parent conversation when the fork records a direct parent session, does not record `origin: subagent`, is not already associated with a task, and its direct parent is a retained conversation of that task. The plugin SHALL NOT adopt a fork of a subagent descendant, a fork of a session that no task retains, or a session already associated with a task. Adoption SHALL be idempotent and SHALL NOT attach the same session to a task twice.
@@ -503,129 +480,6 @@ The task drawer SHALL show the task's current context operation above its sectio
 - **WHEN** the current operation is a worktree creation, attachment, return, removal, or task deletion
 - **THEN** the status uses copy and recovery actions appropriate to that kind and phase
 - **AND** it does not describe a deletion as a "worktree operation" or report a "conversations switched" count as the primary explanation
-
-### Requirement: Native conversation session header
-In the Conversations section, the task drawer SHALL render the host's native session header for the active conversation above the native transcript and beneath the task conversation tab strip. The header SHALL use the host's native session title and ancestry, lineage control, header actions, and non-store utilities. It SHALL follow the active conversation, including a peeked subagent conversation, and SHALL update when that session's native header entries change. It SHALL NOT appear in the Info, Git, or Notes sections.
-
-The header SHALL use the host's native components and SHALL NOT reimplement their labels, counts, popovers, lineage, or navigation. When the native session-header entry is unavailable, the drawer SHALL fall back to the host's native header-action row rather than a plugin replica. A native header entry that requires a native store instance the drawer cannot access SHALL be omitted instead of being rendered against an isolated store.
-
-#### Scenario: Show the native session header for the active conversation
-- **WHEN** the user opens the Conversations section for a task conversation
-- **THEN** the drawer shows the host's native session title, ancestry, lineage control, header actions, and non-store utilities
-- **AND** the header sits beneath the task conversation tab strip and above the native transcript
-
-#### Scenario: Follow the active conversation
-- **WHEN** the user switches from one task conversation tab to another or peeks a subagent conversation
-- **THEN** the native session header shows the newly active session's native header entries
-- **AND** native header entries from the previous or other conversations are not merged into it
-
-#### Scenario: Keep task sections free of the header
-- **WHEN** the user opens the Info, Git, or Notes section
-- **THEN** the native session header is not shown
-
-#### Scenario: Open a native header popover
-- **WHEN** the user opens a native subagent, job, or other header popover
-- **THEN** the native popover renders as it does in an ordinary DSH chat
-- **AND** interacting with that popover does not close the task drawer
-
-#### Scenario: Fall back without a native header entry
-- **WHEN** the pinned host does not register the native session-header entry
-- **THEN** the drawer shows the compact native-action row as a fallback
-- **AND** it does not render a plugin-owned replica of a native label, count, or popover
-
-#### Scenario: Omit a store-backed header entry
-- **WHEN** a native header entry depends on a native store instance the drawer cannot access
-- **THEN** that entry is omitted
-- **AND** the drawer does not present a control backed by an isolated store that cannot affect the real native surface
-
-### Requirement: Native agent mode selection for blank conversations
-The drawer SHALL present the host's native agent-preset picker for a blank top-level task conversation. The picker SHALL select that conversation's preset through the host's native preset roster and selection behavior. It SHALL be available only while the conversation is blank; after the first turn starts, the drawer SHALL present the host's native read-only mode label for that conversation. The picker SHALL NOT appear for a started conversation or for a peeked subagent conversation.
-
-The plugin SHALL NOT store a task-level default mode or a plugin-owned preset. Each new conversation SHALL start from the host default or the mode selected for that blank conversation. A native selection refusal SHALL be reported through the host picker's native feedback.
-
-#### Scenario: Show the native picker on a blank task conversation
-- **WHEN** a top-level task conversation has not started its first turn
-- **THEN** the drawer shows the host's native agent-preset picker
-- **AND** the host's native read-only mode label is not shown simultaneously
-
-#### Scenario: Select the mode for that conversation
-- **WHEN** the user selects a preset in the native picker for a blank conversation
-- **THEN** the plugin invokes the host's native preset selection for that exact session
-- **AND** the native session's recorded mode reflects the accepted selection
-
-#### Scenario: Replace the picker after the first turn
-- **WHEN** the task conversation starts its first turn
-- **THEN** the picker is no longer shown
-- **AND** the drawer shows the host's native read-only mode label for that conversation
-
-#### Scenario: Keep the picker out of subagent peeks
-- **WHEN** the active view is a peeked subagent conversation
-- **THEN** the native mode picker is not shown
-- **AND** the drawer does not offer a mode change for the child
-
-#### Scenario: Do not persist a task default
-- **WHEN** the user selects a mode for one blank conversation and later creates another conversation
-- **THEN** the new conversation starts from the host default or its own native picker choice
-- **AND** the plugin has not written a task-level mode field
-
-### Requirement: In-drawer subagent conversation peek
-Selecting a subagent row from the host's native lineage or subagent catalog in the drawer SHALL open that child conversation in place inside the task drawer rather than changing the main DSH panel. The child view SHALL use the host's native session header, transcript, and composer. The native breadcrumb/lineage SHALL navigate the child's ancestors inside the drawer, and selecting a task conversation tab SHALL exit the peek.
-
-The peek SHALL be transient: closing the drawer, switching tasks, selecting a root tab, or leaving the Conversations section SHALL clear it. The peeked child SHALL NOT be added to the task's conversation tabs, persisted session IDs, or closed-conversation list, and the task's ownership and cleanup rules SHALL remain unchanged. A target outside the task's owned subagent lineage SHALL NOT be peeked; native DSH navigation SHALL remain in effect for it.
-
-The child view SHALL reuse the host's native composer election: a one-shot child SHALL be read-only, and a continuable child SHALL retain native follow-up and parent-offline behavior.
-
-#### Scenario: Open a subagent in the drawer
-- **WHEN** the user selects a subagent row from the active conversation's native lineage or subagent catalog
-- **THEN** the child conversation replaces the active transcript inside the task drawer
-- **AND** the main DSH panel does not change away from the Kanban board
-
-#### Scenario: Navigate back with the native breadcrumb
-- **WHEN** the user activates a parent or root ancestor in the child's native breadcrumb/lineage
-- **THEN** the drawer shows that ancestor conversation in place
-- **AND** the task tab strip remains the root-session surface
-
-#### Scenario: Exit the peek from a task tab
-- **WHEN** the user selects a task conversation tab while a subagent peek is active
-- **THEN** the drawer shows that task conversation and clears the peek
-
-#### Scenario: Reset the peek
-- **WHEN** the user closes the drawer, switches tasks, or leaves the Conversations section while a peek is active
-- **THEN** the next Conversations view does not reopen the peeked child
-- **AND** the active root conversation is the starting surface
-
-#### Scenario: Keep the child out of task persistence
-- **WHEN** the user peeks a subagent conversation
-- **THEN** the child is not added to the task's session IDs, conversation tabs, or closed-conversation list
-- **AND** the task's ownership and cleanup behavior is unchanged
-
-#### Scenario: Use the native child composer
-- **WHEN** the peeked child is a one-shot subagent
-- **THEN** its composer is the native read-only composer
-- **AND** when the child is continuable, the native follow-up and parent-offline behavior remains available
-
-#### Scenario: Leave foreign navigation to the host
-- **WHEN** a subagent navigation target is not an owned descendant of a task conversation
-- **THEN** the plugin does not open it as a drawer peek
-- **AND** the host's native DSH navigation remains in effect
-
-### Requirement: Native conversation header host without a DSH change
-The plugin SHALL render the host's native session-header, lineage, header-action, and non-store utility components in the drawer. It SHALL NOT reimplement their labels, counts, popovers, lineage, navigation, or mode display, and SHALL NOT require a DSH patch or a new DSH release for this surface. The host integration SHALL be compatible with the pinned DSH release and SHALL guard every native entry it reads.
-
-#### Scenario: Render the host's native components
-- **WHEN** the pinned DSH host registers the native session-header and child entries
-- **THEN** the drawer renders those native components rather than plugin replicas
-- **AND** their native popovers, navigation, and actions remain available
-
-#### Scenario: Guard missing native entries
-- **WHEN** an expected native entry is unavailable
-- **THEN** the drawer omits or falls back for that entry without crashing the Conversations section
-- **AND** it does not invent a plugin-owned replacement for that native component
-
-#### Scenario: Stay on the pinned host
-- **WHEN** the plugin is installed on its pinned DSH release
-- **THEN** the native session-header host works without a DSH patch or a new DSH release
-- **AND** the plugin does not claim support for a different host layout
 
 ### Requirement: Conversation tab attention indicators
 Each open conversation tab in the Conversations section SHALL present that conversation's blue unread, orange awaiting-reply, and red failure indicators, with the same meaning as the attention indicators defined by Coexisting attention indicators across task conversations in `kanban-board`. The indicators SHALL be scoped per conversation so a task with several conversations shows which conversation is pending, SHALL update live while the drawer is open, and SHALL be available to assistive technology as part of the tab's accessible name. Updates SHALL reflect the final state after a burst of activity, including while many conversations run concurrently; a bounded coalescing delay of no more than a few hundred milliseconds is permitted, and no update may be dropped. Closed-conversation entries SHALL NOT present attention indicators.
@@ -733,95 +587,36 @@ When every conversation is closed, the section SHALL present a short empty state
 - **THEN** the Conversations section presents a short empty state that points to the closed-conversations control
 - **AND** it does not repeat the closed list or add a second reopen action
 
-### Requirement: Close the active conversation from its session header
-The Conversations section SHALL present the close action for the active task conversation at the end of that conversation's native session header row. The action SHALL be an additional plugin action and SHALL NOT replace or reimplement the host's native header components. The action SHALL close the active root conversation and SHALL be absent while a subagent conversation is peeked. The action SHALL be disabled while a conversation command is pending. Its accessible name SHALL identify the conversation being closed.
-
-The close action SHALL remain reachable while the native conversation body is loading or has failed to open, so that the tab can still be closed. Closing SHALL only hide the conversation from the open-tab strip; it SHALL NOT archive the native session, delete its history, or change the task's session identifiers.
-
-#### Scenario: Close the active conversation
-- **WHEN** the user activates the close action in the native session header of the active root conversation
-- **THEN** that conversation moves to the closed state
-- **AND** its native session and history remain
-- **AND** the drawer selects the next open conversation or presents the all-closed empty state
-
-#### Scenario: Hide the close action during a subagent peek
-- **WHEN** the drawer is displaying a peeked subagent conversation
-- **THEN** the close action is not presented
-- **AND** the root conversation tabs are unchanged
-
-#### Scenario: Keep the close action available when the native body fails
-- **WHEN** the active conversation's native body is loading or fails to open
-- **THEN** the close action remains available in the conversation surface
-- **AND** activating it closes the conversation rather than trapping the user in the failed view
-
-#### Scenario: Disable the close action while a command is pending
-- **WHEN** a conversation close, reopen, or create command is pending
-- **THEN** the close action is disabled
-- **AND** it becomes available again when the command settles
-
 ### Requirement: Immediate native conversation opening
-Opening a task conversation SHALL present the host's native conversation surface without waiting for a Session-catalog refresh or for history opening to settle. The drawer SHALL acquire the native Session and present the native session header, the conversation region, and the conversation close action immediately; history settling and open failures SHALL be presented through the host's native conversation states rather than a plugin-owned blocking placeholder. A Session-catalog refresh SHALL be attempted only when the requested Session is unknown to the client catalog, and SHALL be attempted at most once per opening attempt before a failure is reported. The close action SHALL remain reachable while the native conversation body is settling or has failed to open.
+
+Opening a task conversation SHALL present the host's native conversation window without waiting for a Session-catalog refresh or for history opening to settle. The drawer SHALL acquire the native Session and present the hosted window and the conversation close action immediately; history settling SHALL be presented through the host window's native settling state rather than a plugin-owned blocking placeholder. A Session-catalog refresh SHALL be attempted only when the requested Session is unknown to the client catalog, and SHALL be attempted at most once per opening attempt before a failure is reported. A failed history or session opening SHALL be reported by the drawer with the close action available.
 
 #### Scenario: Open a conversation that is already open in DSH
+
 - **WHEN** a user opens a task conversation whose native Session is already open in the DSH main panel
-- **THEN** the drawer presents the native session header and conversation content immediately
+- **THEN** the drawer presents the hosted conversation window immediately
 - **AND** it does not acquire the session through a Session-catalog refresh
 - **AND** it does not make the history wait again before presenting the conversation
 
 #### Scenario: Open a conversation that is not open anywhere
+
 - **WHEN** a user opens a task conversation that no DSH surface has open
-- **THEN** the drawer presents the native session header and the host's native settling state immediately
+- **THEN** the drawer presents the hosted window and the host's native settling state immediately
 - **AND** the transcript is presented when history settles
 - **AND** the conversation tab and close action remain available while history settles
 
 #### Scenario: Open a Session missing from the client catalog
+
 - **WHEN** a requested task Session is unknown to the client catalog
 - **THEN** the drawer refreshes the catalog once and acquires the Session
-- **AND** it presents the native conversation surface instead of an indefinite placeholder
+- **AND** it presents the hosted conversation window instead of an indefinite placeholder
 - **AND** if the Session still cannot be acquired, the failure is reported without trapping the conversation tab
 
 #### Scenario: Close a conversation whose history failed
+
 - **WHEN** the native conversation reports that its history could not open
-- **THEN** the host's native failure state is presented in the drawer
-- **AND** the conversation's close action remains available
-
-### Requirement: Warm conversation surfaces within the open task drawer
-While a task drawer remains mounted, a conversation tab that has been opened SHALL remain retained when the user switches conversation tabs or moves between the Conversations, Info, Git, and Notes sections. Returning to a visited conversation within that drawer SHALL present the same native Session and its already-open history without re-opening the Session or downloading its history again. Warm retention SHALL start lazily at each conversation's first visit; a tab that was never opened SHALL NOT open its Session in the background. Closing the task drawer or closing the conversation tab SHALL release that retained conversation. Warm retention SHALL NOT acknowledge a settled turn for a conversation whose content is not visible, and leaving the Conversations section SHALL still clear a subagent peek as defined by In-drawer subagent conversation peek.
-
-#### Scenario: Return to a visited conversation tab
-- **WHEN** the user switches from one task conversation tab to another and then back to the first
-- **THEN** the first tab presents the same native Session and its prior messages
-- **AND** its history is not opened again before the transcript is presented
-
-#### Scenario: Return from another drawer section
-- **WHEN** the user opens a task conversation, moves to Info, Git, or Notes, and returns to Conversations
-- **THEN** the previously active conversation is presented with its prior messages
-- **AND** its history is not opened again before the transcript is presented
-
-#### Scenario: Warm lazily on first visit
-- **WHEN** a task has several open conversation tabs and the user has visited only one of them
-- **THEN** only the visited conversation is retained while the drawer remains mounted
-- **AND** an unvisited tab opens its Session when the user selects it
-
-#### Scenario: Release on drawer close
-- **WHEN** the user closes the task drawer and later reopens the task
-- **THEN** the task still provides its existing conversation sessions and histories
-- **AND** the conversations are acquired again for the reopened drawer
-
-#### Scenario: Release on tab close
-- **WHEN** the user closes a visited conversation tab and later reopens it from the closed-conversation list
-- **THEN** the reopened conversation keeps the same native Session identity and history
-- **AND** its content is acquired again when it becomes active
-
-#### Scenario: Keep an unread turn while warm but not visible
-- **WHEN** a retained conversation is not visible because another drawer section is open and its turn settles
-- **THEN** the conversation's unread or failure indicator remains
-- **AND** the hidden content does not acknowledge the settled turn
-
-#### Scenario: Leaving Conversations still clears a peek
-- **WHEN** a subagent conversation is being peeked and the user moves from Conversations to another drawer section
-- **THEN** the next Conversations view starts from the active root conversation
-- **AND** the peeked child is not reopened
+- **THEN** the drawer reports the failure in the conversation area
+- **AND** the conversation's close action remains available in its tab
 
 ### Requirement: Attention indicators fill after the drawer's first paint
 
@@ -848,3 +643,239 @@ The drawer SHALL present the conversation tabs and the selected conversation wit
 
 - **WHEN** several conversations of the open task change attention in quick succession
 - **THEN** every affected tab eventually presents that conversation's final attention state without a reload
+
+### Requirement: Native conversation window in the task drawer
+
+In the Conversations section, the task drawer SHALL render one occurrence of the host's public native conversation window for the active task conversation instead of assembling the conversation chrome itself. The occurrence SHALL use the embedded variant and SHALL take its Session from the retained Session area that wraps it; the plugin SHALL NOT pass a Session identity as an occurrence prop.
+
+The host window SHALL compose the complete native surface: the Session header — title ancestry, View tabs and their More menu, header actions, header utilities, and the right-bar corner — and the conversation body — the active View, transcript, composer, and Session statistics, including the composer statistics footer. The drawer SHALL NOT mount, register, or fabricate any header component, header input, View roster, or pin state. Contributions registered by the host and its plugins SHALL render through the window without per-occurrence registration. The drawer MAY render its own agent-preset card picker outside the window, as defined by Agent-preset cards start task conversations.
+
+View facts SHALL remain per-Session and shared with the main panel: the View roster, unpinned View choices, the active View, and the composer draft SHALL NOT be duplicated by the drawer occurrence. The body SHALL use the View selected for that Session; the plugin SHALL NOT force a View or a conversation phase. An embedded occurrence SHALL omit the leading global-navigation seat and the application window-drag marker, and SHALL NOT inherit the main conversation column's frame clearance.
+
+The drawer SHALL keep the conversation-surface gates around the occurrence: it SHALL track the displayed conversation for read state, SHALL refuse to mount a second live composer for a Session that already has one, and SHALL report an open failure with the close action available. A header contribution that fails SHALL be reported and contained by the host's slot composition; the drawer SHALL NOT substitute a plugin-owned header or fallback row.
+
+The window SHALL follow the active task conversation tab, including switching between root conversations, and SHALL NOT appear in the Info, Git, or Notes sections.
+
+#### Scenario: Show the native window for the active conversation
+
+- **WHEN** the user opens the Conversations section for a task conversation
+- **THEN** the drawer renders the host's native conversation window
+- **AND** the window shows the Session title and ancestry, View tabs and their More menu, header actions, header utilities, and the right-bar corner
+- **AND** the window shows the transcript, composer, and Session statistics footer
+
+#### Scenario: Bind the Session from the retained area
+
+- **WHEN** the drawer renders the window occurrence for a retained root conversation
+- **THEN** the occurrence renders that Session's window without receiving a Session identity in its props
+
+#### Scenario: Render the host header extension points
+
+- **WHEN** a host plugin has registered an entry in a header action, utility, View More, or corner extension point
+- **THEN** that entry renders in the drawer's window through the host composition
+- **AND** the plugin registers no second copy of that entry for the drawer
+
+#### Scenario: Share Views with the main panel
+
+- **WHEN** the user selects a View tab in the drawer's window and the main panel shows the same Session
+- **THEN** the main panel shows that View selected as well
+- **AND** the drawer mounts no second View roster or stored selection
+
+#### Scenario: Keep the selected View
+
+- **WHEN** the user opens a task conversation whose Session has a selected View other than Chat
+- **THEN** the drawer renders that View
+- **AND** the plugin does not force the Chat View
+
+#### Scenario: Contain a failing header contribution
+
+- **WHEN** a host header contribution throws while the drawer's window renders
+- **THEN** the host composition reports the failure and retires that contribution
+- **AND** the rest of the window keeps rendering
+- **AND** the drawer does not replace the header with a plugin-owned fallback
+
+#### Scenario: Keep task sections free of the window
+
+- **WHEN** the user opens the Info, Git, or Notes section
+- **THEN** the conversation window is not shown
+
+### Requirement: Host compatibility for the conversation window
+
+The client SHALL render the public `conversation.window` occurrence when the running host declares it. When the Factory is not declared, the drawer SHALL present an explicit notice that the DSH version must be updated and SHALL NOT render a blank conversation area, a manually assembled header, or a plugin-owned replica of the window. The plugin SHALL remain installable on the pinned host generation and SHALL NOT require a DSH patch. The manifest pin to the release that declares the Factory is a release-time follow-up; the pinned SDK compiles the window call through a local type bridge only.
+
+#### Scenario: Render on a supported host
+
+- **WHEN** the plugin runs on a DSH host that declares `conversation.window`
+- **THEN** the drawer renders the host window without a DSH patch
+
+#### Scenario: Report an unsupported host
+
+- **WHEN** the running DSH host does not declare `conversation.window`
+- **THEN** the drawer presents an explicit notice that the DSH version must be updated
+- **AND** it does not present an empty conversation area as if the conversation were unavailable
+
+#### Scenario: Do not resurrect the manual header
+
+- **WHEN** the Factory is unavailable
+- **THEN** the drawer does not fall back to a hand-assembled native header or a plugin-owned header replica
+
+### Requirement: Close the active conversation from its tab
+
+The Conversations section SHALL present the close action for the active task conversation inside that conversation's tab, to the right of its title. The action SHALL be a control separate from the tab's selection target and SHALL NOT change the selected conversation when activated. It SHALL close the active root conversation and SHALL be disabled while a conversation command is pending. Its accessible name SHALL identify the conversation being closed.
+
+The action SHALL remain reachable while the native conversation body is loading or has failed to open, so that the tab can still be closed. Closing SHALL only hide the conversation from the open-tab strip; it SHALL NOT archive the native session, delete its history, or change the task's session identifiers.
+
+#### Scenario: Close the active conversation
+
+- **WHEN** the user activates the close action in the active conversation's tab
+- **THEN** that conversation moves to the closed state
+- **AND** its native session and history remain
+- **AND** the drawer selects the next open conversation or presents the all-closed empty state
+
+#### Scenario: Keep the selection unchanged
+
+- **WHEN** the user activates the close action inside the active tab
+- **THEN** the close action does not first select a different conversation
+- **AND** the tab's own selection target remains separate from the close control
+
+#### Scenario: Show the close action only on the active tab
+
+- **WHEN** the task has several open conversation tabs
+- **THEN** only the active conversation's tab presents the close action
+
+#### Scenario: Keep the close action available when the native body fails
+
+- **WHEN** the active conversation's native body is loading or fails to open
+- **THEN** the close action remains available in the conversation tab
+- **AND** activating it closes the conversation rather than trapping the user in the failed view
+
+#### Scenario: Disable the close action while a command is pending
+
+- **WHEN** a conversation close, reopen, or create command is pending
+- **THEN** the close action is disabled
+- **AND** it becomes available again when the command settles
+
+### Requirement: Agent-preset cards start task conversations
+
+In the Conversations section, when the task has no open conversation, or when the user requests a new conversation with the plus action, the drawer SHALL present the host's native agent-preset roster as selectable cards in the conversation area. The cards SHALL replace the standalone start-conversation button. Activating a card SHALL create a native conversation for the task, select that preset on the created session through the host's native preset selection, and open that conversation.
+
+The roster SHALL use the host's native preset list and selection behavior, excluding presets the native picker would hide: broken presets, and coding-tools-gated presets while developer tools are disabled. The plugin SHALL NOT store a task-level default mode or own a preset.
+
+When the preset selection fails after the conversation was created, the conversation SHALL remain open with the host default, the drawer SHALL report the failure in the conversation area, and the card choice SHALL remain available to retry the selection on that same conversation. A failed roster load SHALL be reported with a retry action. Canceling the plus action's choice SHALL create no conversation; selecting another conversation tab SHALL discard the choice. The drawer SHALL NOT depend on the host's own blank-conversation preset seat or read-only mode label, which remain host-owned and may be absent outside the main panel.
+
+#### Scenario: Show the preset cards for a task without conversations
+
+- **WHEN** the user opens the Conversations section for a task with no open conversation
+- **THEN** the drawer shows the host's agent-preset roster as selectable cards in the conversation area
+- **AND** it does not show a standalone start-conversation button
+
+#### Scenario: Start a conversation from a card
+
+- **WHEN** the user activates a preset card for a task with no open conversation
+- **THEN** a native conversation is created for the task
+- **AND** the chosen preset is selected on that conversation through the host's preset selection
+- **AND** the drawer opens that conversation's window
+
+#### Scenario: Open the preset choice from the plus action
+
+- **WHEN** the task already has an open conversation and the user activates the plus action
+- **THEN** the drawer presents the preset cards in the conversation area
+- **AND** activating a card creates another native conversation with that preset and opens it
+
+#### Scenario: Keep the conversation after a preset selection failure
+
+- **WHEN** the preset selection fails after the conversation was created from a card
+- **THEN** the conversation remains open with the host default preset
+- **AND** the drawer reports the failure in the conversation area
+- **AND** the card choice remains available to retry the selection on that same conversation
+
+#### Scenario: Cancel the plus action's choice
+
+- **WHEN** the user cancels the preset choice opened from the plus action
+- **THEN** no conversation is created
+- **AND** the previously active conversation remains displayed
+
+#### Scenario: Report a roster failure with retry
+
+- **WHEN** the host's agent-preset roster cannot be loaded
+- **THEN** the drawer reports the failure in the conversation area
+- **AND** it offers a retry action
+
+#### Scenario: Do not persist a task default
+
+- **WHEN** the user starts conversations with different card choices
+- **THEN** each conversation uses the preset selected for it
+- **AND** the plugin has not written a task-level mode field
+
+### Requirement: Task conversation lineage and ownership
+
+The plugin SHALL treat a task's native conversation lineage as its retained top-level conversation sessions plus their direct and nested native subagent descendants whose session header records `origin: subagent`. A top-level conversation session SHALL include a conversation created for the task and a fork the task adopted. It SHALL use this lineage for ownership decisions, including shared-worktree protection and owned worktree-workspace cleanup. It SHALL NOT add subagent descendants to the task's conversation tabs, retained session IDs, or closed-conversation list, and SHALL NOT attempt to move or archive them through generic session operations.
+
+Archiving a parent conversation SHALL gate its descendant sessions according to native DSH behavior. A fork the plugin has not adopted — including a fork of a subagent descendant and a fork of a session that no task retains — SHALL NOT be treated as owned by this lineage.
+
+#### Scenario: A subagent descendant is not a conversation tab
+
+- **WHEN** a task conversation has a native subagent child
+- **THEN** the task drawer still shows only the task's retained top-level conversation tabs
+- **AND** the child is not persisted as a task session ID or closed-conversation entry
+
+#### Scenario: A direct or nested subagent descendant is owned
+
+- **WHEN** a task conversation spawns a subagent child, and that child spawns another subagent child
+- **THEN** both descendants belong to the task's conversation lineage for ownership decisions
+
+#### Scenario: An adopted fork is a top-level task conversation
+
+- **WHEN** the plugin has adopted a fork of a task conversation
+- **THEN** the fork is one of the task's retained top-level conversation sessions
+- **AND** it is owned for lineage, task deletion, and shared-worktree protection
+
+#### Scenario: A fork remains foreign
+
+- **WHEN** a fork was created from a subagent descendant or from a session that no task retains
+- **THEN** the plugin does not treat the fork as an owned descendant or conversation
+
+#### Scenario: Archiving a parent gates its descendants
+
+- **WHEN** task deletion archives a top-level task conversation that has subagent descendants
+- **THEN** the plugin does not archive or move those descendants individually
+- **AND** native archived-parent behavior gates their execution until the native lifecycle changes
+
+### Requirement: Warm task conversation surfaces within the open drawer
+
+While a task drawer remains mounted, a conversation tab that has been opened SHALL remain retained when the user switches conversation tabs or moves between the Conversations, Info, Git, and Notes sections. Returning to a visited conversation within that drawer SHALL present the same native Session and its already-open history without re-opening the Session or downloading its history again. Warm retention SHALL start lazily at each conversation's first visit; a tab that was never opened SHALL NOT open its Session in the background. Closing the task drawer or closing the conversation tab SHALL release that retained conversation. Warm retention SHALL NOT acknowledge a settled turn for a conversation whose content is not visible.
+
+#### Scenario: Return to a visited conversation tab
+
+- **WHEN** the user switches from one task conversation tab to another and then back to the first
+- **THEN** the first tab presents the same native Session and its prior messages
+- **AND** its history is not opened again before the transcript is presented
+
+#### Scenario: Return from another drawer section
+
+- **WHEN** the user opens a task conversation, moves to Info, Git, or Notes, and returns to Conversations
+- **THEN** the previously active conversation is presented with its prior messages
+- **AND** its history is not opened again before the transcript is presented
+
+#### Scenario: Warm lazily on first visit
+
+- **WHEN** a task has several open conversation tabs and the user has visited only one of them
+- **THEN** only the visited conversation is retained while the drawer remains mounted
+- **AND** an unvisited tab opens its Session when the user selects it
+
+#### Scenario: Release on drawer close
+
+- **WHEN** the user closes the task drawer and later reopens the task
+- **THEN** the task still provides its existing conversation sessions and histories
+- **AND** the conversations are acquired again for the reopened drawer
+
+#### Scenario: Release on tab close
+
+- **WHEN** the user closes a visited conversation tab and later reopens it from the closed-conversation list
+- **THEN** the reopened conversation keeps the same native Session identity and history
+- **AND** its content is acquired again when it becomes active
+
+#### Scenario: Keep an unread turn while warm but not visible
+
+- **WHEN** a retained conversation is not visible because another drawer section is open and its turn settles
+- **THEN** the conversation's unread or failure indicator remains
+- **AND** the hidden content does not acknowledge the settled turn

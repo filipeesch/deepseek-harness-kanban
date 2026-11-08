@@ -10,7 +10,6 @@ function mount(overrides: Partial<ConversationActions> = {}) {
   const close = vi.fn();
   const value: ConversationActions = {
     activeSessionId: 's1',
-    canClose: true,
     pending: false,
     close,
     label: id => id === 's1' ? 'Planner' : id,
@@ -35,11 +34,8 @@ describe('ConversationCloseAction', () => {
     expect(close).not.toHaveBeenCalled();
   });
 
-  it('renders nothing without an active root or during a subagent peek', () => {
-    mount({ activeSessionId: null, canClose: false });
-    expect(screen.queryByRole('button', { name: /^Close / })).toBeNull();
-    cleanup();
-    mount({ canClose: false });
+  it('renders nothing without an active root conversation', () => {
+    mount({ activeSessionId: null });
     expect(screen.queryByRole('button', { name: /^Close / })).toBeNull();
   });
 });

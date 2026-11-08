@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client';
 import { RetainedConversation, type ConversationSurfaceOwner, type ConversationSurfaceServices } from '../../src/client/conversation-surface.js';
-import { ConversationActionsProvider, type ConversationActions } from '../../src/client/conversation-actions.js';
 import { ConversationLeaseRegistry, type ConversationLeaseSessions } from '../../src/client/conversation-leases.js';
 import { ConversationLeasesProvider } from '../../src/client/conversation-lease-context.js';
 
@@ -33,23 +32,20 @@ function sessions(retain: (target: unknown) => SessionReference, catalog: string
         projectionsBySession: {},
       }),
     },
-    subagentAddress: () => undefined,
   } as unknown as ConversationLeaseSessions;
 }
 
 function mount(port: ConversationLeaseSessions) {
-  const close = vi.fn();
-  const actions: ConversationActions = { activeSessionId: 's1', canClose: true, pending: false, close, label: () => 'Planner' };
   const services: ConversationSurfaceServices = { claimComposer: () => () => {} };
   const owner: ConversationSurfaceOwner = {
     SessionProvider: ({ session, children }) => <div data-testid="provider" data-session={session.sessionId}>{children}</div>,
     renderSlot: key => <div data-testid={'slot-' + key} />,
   };
   const registry = new ConversationLeaseRegistry({ sessions: port, lifetime: new AbortController().signal });
-  render(<ConversationActionsProvider value={actions}><ConversationLeasesProvider registry={registry}>
+  render(<ConversationLeasesProvider registry={registry}>
     <RetainedConversation id="s1" owner={owner} services={services} />
-  </ConversationLeasesProvider></ConversationActionsProvider>);
-  return { close, registry };
+  </ConversationLeasesProvider>);
+  return { registry };
 }
 
 describe('retained native conversation surface', () => {
@@ -60,11 +56,10 @@ describe('retained native conversation surface', () => {
     registry.dispose();
   });
 
-  it('keeps the close action in the acquisition failure surface', async () => {
-    const { close } = mount(sessions(() => { throw new Error('native unavailable'); }));
+  it('reports an acquisition failure and offers retry', async () => {
+    mount(sessions(() => { throw new Error('native unavailable'); }));
     expect(await screen.findByText(/native unavailable/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Close Planner' }));
-    expect(close).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: 'Retry conversation' })).toBeTruthy();
   });
 
   it('retries a failed acquisition', async () => {

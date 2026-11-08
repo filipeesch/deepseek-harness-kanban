@@ -125,7 +125,7 @@ it('prepares the worktree and the first conversation before the first execution'
   await baseDialog.getByRole('button', { name: 'Continue in base project' }).click();
   await finishPreparation();
   await expect.poll(() => page.locator('.kb-agent-tabs .kb-tab').count(), { timeout: 30_000 }).toBe(1);
-  const baseTranscript = page.locator('.kb-native-conversation');
+  const baseTranscript = page.locator('.kb-conversation-window');
   if (await baseTranscript.count() > 0) expect(await baseTranscript.first().textContent()).not.toContain(INSTRUCTION);
   await cancelCountdown();
   await visible(page.getByRole('button', { name: 'Run Plan instruction' }));
@@ -145,6 +145,6 @@ it('prepares the worktree and the first conversation before the first execution'
   await expect.poll(async () => { try { return (await stat(join(basePath, 'prepared-worktree'))).isDirectory(); } catch { return false; } }, { timeout: 30_000 }).toBe(true);
   const worktrees = await exec('git', ['worktree', 'list', '--porcelain'], { cwd: repository });
   expect(worktrees.stdout).toContain('branch refs/heads/prepared-worktree');
-  const worktreeTranscript = page.locator('.kb-native-conversation');
+  const worktreeTranscript = page.locator('.kb-conversation-window');
   if (await worktreeTranscript.count() > 0) expect(await worktreeTranscript.first().textContent()).not.toContain(INSTRUCTION);
 });

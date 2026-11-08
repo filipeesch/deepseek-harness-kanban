@@ -5,12 +5,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { BoardView, columnLayout } from '../../src/client/board.js';
-import { ConversationCloseAction } from '../../src/client/conversation-actions.js';
 import type { KanbanSnapshot, ClientApi, Command } from '../../src/shared/types.js';
 import { styles } from '../../src/client/styles.js';
 import { deferred, fakeApi, fixture, restrictedFixture } from './helpers.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
+import { PresetProvider } from './agent-preset-fixture.js';
 
 
 vi.mock('../../src/client/code-editor.js', async () => {
@@ -23,8 +23,8 @@ vi.mock('../../src/client/code-editor.js', async () => {
 
 afterEach(cleanup);
 function mount(data = fixture()) {
-  const mock = fakeApi(data); const renderer = vi.fn((id: string) => <div data-testid={'native-' + id}>Native session {id}<ConversationCloseAction /></div>);
-  const view = render(<BoardView api={mock.api} renderConversation={renderer} />);
+  const mock = fakeApi(data); const renderer = vi.fn((id: string) => <div data-testid={'native-' + id}>Native session {id}</div>);
+  const view = render(<PresetProvider><BoardView api={mock.api} renderConversation={renderer} /></PresetProvider>);
   return { ...mock, renderer, ...view, user: userEvent.setup() };
 }
 async function loaded() { await screen.findByRole('button', { name: 'Open task Alpha task' }); }
@@ -56,11 +56,9 @@ describe('auto-mode hold from task attention', () => {
 });
 
 describe('board header layout', () => {
-  it('defines the fallback native-action row and the native header wrapper', () => {
-    expect(styles).toContain('.dsh-kanban .kb-conversation-status{');
-    expect(styles).toContain('container-type:inline-size');
-    expect(styles).toContain('.dsh-kanban .kb-conversation-status:empty{display:none}');
-    expect(styles).toContain('.dsh-kanban .kb-native-session-header{');
+  it('defines the conversation window host', () => {
+    expect(styles).toContain('.dsh-kanban .kb-conversation-window{');
+    expect(styles).toContain('.dsh-kanban .kb-conversation-window>[data-kanban-conversation-window]{');
   });
 
   it('reserves the host frame leading clearance for the collapsed sidebar', () => {
@@ -137,14 +135,14 @@ describe('scoped Kanban page', () => {
     await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'Gated task');
     await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Project' }), 'p2');
     await user.click(within(dialog).getByRole('button', { name: 'Create task' }));
-    const start = await screen.findByRole('button', { name: 'Start conversation' });
-    expect((start as HTMLButtonElement).disabled).toBe(true);
+    const card = await screen.findByRole('button', { name: /Standard/ });
+    expect((card as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: 'New conversation' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByRole('button', { name: 'Continue in base project' })).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Continue in base project' }));
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Start conversation' }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect((screen.getByRole('button', { name: /Standard/ }) as HTMLButtonElement).disabled).toBe(false));
     expect((screen.getByRole('button', { name: 'New conversation' }) as HTMLButtonElement).disabled).toBe(false);
-    await user.click(screen.getByRole('button', { name: 'Start conversation' }));
+    await user.click(screen.getByRole('button', { name: /Standard/ }));
     await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'conversation.create' })));
   });
 
@@ -152,14 +150,14 @@ describe('scoped Kanban page', () => {
     const data = fixture(); data.state.tasks[0]!.sessionIds = []; delete data.state.projects[0]!.gitRootPath;
     const { user } = mount(data); await openAlpha(user);
     expect(screen.queryByRole('note', { name: 'Worktree not created' })).toBeNull();
-    expect((screen.getByRole('button', { name: 'Start conversation' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((await screen.findByRole('button', { name: /Standard/ }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('starts a zero-conversation task with a ready worktree', async () => {
     const data = fixture(); const task = data.state.tasks[0]!; task.sessionIds = []; task.worktree = { path: '/trees/alpha', branch: 'alpha', owned: true, status: 'ready' }; task.effectiveCwd = '/trees/alpha';
     const { user } = mount(data); await openAlpha(user);
     expect(screen.queryByRole('note', { name: 'Worktree not created' })).toBeNull();
-    expect((screen.getByRole('button', { name: 'Start conversation' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((await screen.findByRole('button', { name: /Standard/ }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('withholds the start for a zero-conversation preparing worktree and points to Git', async () => {
@@ -167,19 +165,19 @@ describe('scoped Kanban page', () => {
     const { user } = mount(data); await openAlpha(user);
     expect(screen.queryByRole('note', { name: 'Worktree not created' })).toBeNull();
     expect(screen.getByText('Resolve the worktree setup in Git before starting.')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Start conversation' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((await screen.findByRole('button', { name: /Standard/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('withholds the start when the task project is unavailable', async () => {
     const data = fixture(); data.state.tasks[0]!.sessionIds = []; data.state.tasks[0]!.projectId = 'missing-project';
     const { user } = mount(data); await openAlpha(user);
     expect(screen.getByText('Refresh the board: the task project is unavailable.')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Start conversation' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((await screen.findByRole('button', { name: /Standard/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('keeps an existing conversation ungated and allows another tab', async () => {
     const { user } = mount(); await openAlpha(user);
-    expect(screen.queryByRole('button', { name: 'Start conversation' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Standard/ })).toBeNull();
     expect((screen.getByRole('button', { name: 'New conversation' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -215,11 +213,11 @@ describe('scoped Kanban page', () => {
   it('uses distinct injected native sessions, plus, close and reopen without history deletion', async () => {
     const { user, renderer, command } = mount(); await openAlpha(user);
     expect(screen.getByTestId('native-s1')).toBeTruthy(); await user.click(screen.getByRole('tab', { name: 'Agent 2' })); expect(screen.getByTestId('native-s2')).toBeTruthy(); expect(screen.queryByTestId('native-s1')).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'New conversation' })); await screen.findByTestId('native-s3');
+    await user.click(screen.getByRole('button', { name: 'New conversation' })); await user.click(await screen.findByRole('button', { name: /Standard/ })); await screen.findByTestId('native-s3');
     await user.click(screen.getByRole('button', { name: 'Close Agent 3' })); expect(screen.queryByTestId('native-s3')).toBeNull();
     await user.click(screen.getByRole('button', { name: '1 closed conversation' })); await user.click(screen.getByRole('button', { name: 'Reopen Agent 3' })); await screen.findByTestId('native-s3');
     await waitFor(() => expect(screen.getByRole('tab', { name: 'Agent 3' })).toBe(document.activeElement));
-    expect(command).toHaveBeenCalledWith({ type: 'conversation.create', taskId: 't1' }); expect(command).toHaveBeenCalledWith({ type: 'conversation.close', taskId: 't1', sessionId: 's3' }); expect(command).toHaveBeenCalledWith({ type: 'conversation.reopen', taskId: 't1', sessionId: 's3' }); expect(renderer).toHaveBeenCalledWith('s2', undefined);
+    expect(command).toHaveBeenCalledWith({ type: 'conversation.create', taskId: 't1' }); expect(command).toHaveBeenCalledWith({ type: 'conversation.close', taskId: 't1', sessionId: 's3' }); expect(command).toHaveBeenCalledWith({ type: 'conversation.reopen', taskId: 't1', sessionId: 's3' }); expect(renderer).toHaveBeenCalledWith('s2');
   });
 
   it('dismisses the closed-conversation popover without closing the drawer', async () => {

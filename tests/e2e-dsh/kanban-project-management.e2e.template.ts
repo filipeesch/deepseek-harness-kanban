@@ -6,6 +6,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { chromium } from 'playwright';
 import { expect, it, onTestFinished } from 'vitest';
+import './kanban-e2e-setup.ts';
 import { launchWebScaffold } from './scaffold.ts';
 import { newEnglishPage } from './support.ts';
 

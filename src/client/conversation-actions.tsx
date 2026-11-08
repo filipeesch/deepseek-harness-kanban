@@ -4,7 +4,6 @@ import { CloseIcon } from './icons.js';
 /** The active root conversation owned by the drawer's Conversations section. */
 export interface ConversationActions {
   activeSessionId: string | null;
-  canClose: boolean;
   pending: boolean;
   close(): void;
   label(sessionId: string): string;
@@ -12,7 +11,6 @@ export interface ConversationActions {
 
 const noActions: ConversationActions = {
   activeSessionId: null,
-  canClose: false,
   pending: false,
   close: () => {},
   label: () => '',
@@ -29,14 +27,14 @@ export function useConversationActions(): ConversationActions {
 }
 
 /**
- * The drawer's close action consumes the active conversation through context:
- * the native session-header slot never receives drawer callbacks as props.
- * It renders nothing outside the drawer or when a subagent peek owns the view.
+ * The drawer's close action consumes the active conversation through context
+ * and renders inside that conversation's tab. It renders nothing when no
+ * active conversation exists.
  */
 export function ConversationCloseAction() {
   const actions = useConversationActions();
   const sessionId = actions.activeSessionId;
-  if (!actions.canClose || sessionId === null) return null;
+  if (sessionId === null) return null;
   const label = 'Close ' + actions.label(sessionId);
   return <button type="button" className="kb-button kb-icon-button kb-session-close" aria-label={label} title={label} disabled={actions.pending} onClick={() => actions.close()}>
     <CloseIcon size={14} />

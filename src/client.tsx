@@ -18,16 +18,14 @@ import { allTasks } from './client/hub-view.js';
 import { AutoRunController } from './client/auto-run.js';
 import { QuestionForm } from './questions/QuestionForm.js';
 import { selectActiveRound } from './questions/submission.js';
-import { NativeSessionHeader } from './client/native-session-header.js';
-import { ConversationCloseAction } from './client/conversation-actions.js';
-import { EmbeddedConversationBody, RetainedConversation, type ConversationSurfaceOwner, type ConversationSurfaceServices } from './client/conversation-surface.js';
+import { RetainedConversation, TaskConversationWindow, type ConversationSurfaceOwner, type ConversationSurfaceServices } from './client/conversation-surface.js';
+import { AgentPresetProvider } from './client/agent-preset-context.js';
+import { createAgentPresetPortSource } from './client/agent-preset-port.js';
 import type { ConversationLeaseEnvironment } from './client/conversation-leases.js';
 import type { SessionTitles } from './client/conversation-label.js';
-import type { NativeLocaleSource, NativeSlotSource, NativeSnapshotSource } from './client/native-slot-host.js';
-import { createModePortSource } from './client/mode-port.js';
+import type { NativeLocaleSource, NativeSlotSource } from './client/native-slot-host.js';
 import type { PreparationSeat } from './client/execution-preparation/model-seat.js';
 import { TASK_CONTEXT_NODE_KIND, TaskContextNodeView, taskContextDefinition } from './client/task-context-node.js';
-import { useConversationNavigation, isOwnedSubagent, type ConversationLineagePort, type DrawerSubagentAddress } from './client/conversation-navigation.js';
 import type { ClientApi } from './shared/types.js';
 
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
@@ -36,33 +34,23 @@ declare module '@deepseek-ai/dsh-api-session-controller/client' {
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
     'kanban.conversation': { kind: 'single'; scope: 'session' };
-    'kanban.session.header': { kind: 'single'; scope: 'session' };
   }
 }
 type ClientContext = Omit<Context, 'sessions'> & { sessions: ISessions };
-type MainProps = PropsRuntime<'main'> & PropsRenderSlots<'kanban.conversation' | 'kanban.session.header'>;
-type EmbeddedProps = PropsRuntime<'kanban.conversation'> & PropsRenderFactories;
-type SessionHeaderProps = PropsRuntime<'kanban.session.header'> & PropsRenderFactories;
+type MainProps = PropsRuntime<'main'> & PropsRenderSlots<'kanban.conversation'>;
+type ConversationSeatProps = PropsRuntime<'kanban.conversation'> & PropsRenderFactories;
 export const name = 'kanban-client';
 // Service keys, not package names. Mount our own namespace before any access to remote.kanban.
-export const inject = ['remote', 'slots', 'sessions', 'uiSession', 'conversation', 'layout', 'locale', 'uiConversation'];
+export const inject = ['remote', 'slots', 'sessions', 'uiSession', 'locale', 'uiConversation'];
 const clientCss = '.kanban-native-state{padding:16px;color:inherit}.kanban-feed-error{padding:8px 16px;color:var(--dsw-alias-state-error-primary,crimson);border-bottom:1px solid var(--dsw-alias-border-l2)}';
 
 
 /** Sources are optional: a test context may expose no workspace service at all. */
-function directoryPickerSources(ctx: Context): { desktop?: () => Promise<string | null>; host?: () => Promise<string | null> } {
-  const desktop = (globalThis as { __DSH_DIRECTORY_PICKER__?: { pick?: () => Promise<string | null> } }).__DSH_DIRECTORY_PICKER__;
-  let workspace: { pickDirectory?: () => Promise<string | null> } | undefined;
-  try { workspace = (ctx as { get?: (key: string) => unknown }).get?.('uiWorkspace') as typeof workspace; } catch { workspace = undefined; }
-  return {
-    ...(desktop?.pick === undefined ? {} : { desktop: () => desktop.pick!() }),
-    ...(workspace?.pickDirectory === undefined ? {} : { host: () => workspace!.pickDirectory!() }),
-  };
-}
+type DeveloperToolsSource = { getSnapshot(): unknown; subscribe(listener: () => void): () => void };
 
-function developerToolsSource(ctx: Context): NativeSnapshotSource | undefined {
+function developerToolsSource(ctx: Context): DeveloperToolsSource | undefined {
   try {
-    const forms = ctx.get('configForms') as { developerTools?: { enabled?: NativeSnapshotSource } } | undefined;
+    const forms = ctx.get('configForms') as { developerTools?: { enabled?: DeveloperToolsSource } } | undefined;
     return forms?.developerTools?.enabled;
   } catch { return undefined; }
 }
@@ -79,13 +67,14 @@ function agentPresetsNamespace(ctx: Context): unknown {
   try { return (ctx as unknown as { remote?: { agentPresets?: unknown } }).remote?.agentPresets; } catch { return undefined; }
 }
 
-function sessionRows(sessions: ISessions): Parameters<typeof isOwnedSubagent>[0] {
-  const list = sessions.list?.getSnapshot();
-  const byId = Object.fromEntries(Object.entries(list?.byId ?? {}).map(([id, row]) => [id, row === undefined ? undefined : {
-    ...(row.origin === 'subagent' ? { origin: 'subagent' as const } : {}),
-    ...(row.parentId === undefined ? {} : { parentId: String(row.parentId) }),
-  }]));
-  return { byId };
+function directoryPickerSources(ctx: Context): { desktop?: () => Promise<string | null>; host?: () => Promise<string | null> } {
+  const desktop = (globalThis as { __DSH_DIRECTORY_PICKER__?: { pick?: () => Promise<string | null> } }).__DSH_DIRECTORY_PICKER__;
+  let workspace: { pickDirectory?: () => Promise<string | null> } | undefined;
+  try { workspace = (ctx as { get?: (key: string) => unknown }).get?.('uiWorkspace') as typeof workspace; } catch { workspace = undefined; }
+  return {
+    ...(desktop?.pick === undefined ? {} : { desktop: () => desktop.pick!() }),
+    ...(workspace?.pickDirectory === undefined ? {} : { host: () => workspace!.pickDirectory!() }),
+  };
 }
 
 /** Real client plugin: no replacement server, global Session selection, or native acknowledgement writes. */
@@ -112,29 +101,18 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   // The command port belongs to this client generation, not to a mounted board.
   const autoRun = new AutoRunController({ run: command => bridge.api.command(command) });
   const scopedSessions = ctx.sessions;
-  const modePortSource = createModePortSource(agentPresetsNamespace(ctx), { developerTools: () => developerToolsEnabled(ctx) });
-  let modeInjection: ReturnType<Context['inject']> | undefined;
+  const presetSource = createAgentPresetPortSource(agentPresetsNamespace(ctx), { developerTools: () => developerToolsEnabled(ctx) });
+  let presetInjection: ReturnType<Context['inject']> | undefined;
   try {
-    modeInjection = ctx.inject(['remote.agentPresets'], scoped => {
+    presetInjection = ctx.inject(['remote.agentPresets'], scoped => {
       let namespace: unknown;
       try { namespace = scoped.get('remote.agentPresets'); } catch { namespace = undefined; }
       if (namespace === undefined) namespace = (scoped as unknown as { remote?: { agentPresets?: unknown } }).remote?.agentPresets;
-      modePortSource.set(namespace);
-      return () => modePortSource.set(undefined);
+      presetSource.set(namespace);
+      return () => presetSource.set(undefined);
     });
-  } catch { modeInjection = undefined; }
-  if (modeInjection !== undefined) void Promise.resolve(modeInjection).catch(() => undefined);
-  const lineage: ConversationLineagePort = {
-    subagentAddress: sessionId => {
-      const address = scopedSessions.subagentAddress(sessionId as SessionId);
-      return address === undefined ? undefined : {
-        parentSessionId: String(address.parentSessionId),
-        childSessionId: String(address.childSessionId),
-        mode: address.mode,
-      };
-    },
-    isOwnedDescendant: (roots, sessionId) => isOwnedSubagent(sessionRows(scopedSessions), roots, sessionId),
-  };
+  } catch { presetInjection = undefined; }
+  if (presetInjection !== undefined) void Promise.resolve(presetInjection).catch(() => undefined);
   const picker = createDirectoryPicker(directoryPickerSources(ctx));
   const emptySessionState = { ids: [], byId: {}, phase: 'ready' as const, projectionsBySession: {} };
   const emptySessionList = { subscribe: () => () => {}, getSnapshot: () => emptySessionState };
@@ -145,28 +123,12 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     return <div className="kanban-feed-error" role="alert">Kanban updates are unavailable: {status.error.message} <button type="button" onClick={() => bridge.retry()}>Retry updates</button></div>;
   }
   const viewSession = (sessionId: string) => bridge.viewSession(sessionId);
-  function EmbeddedBody(props: EmbeddedProps) {
-    return <EmbeddedConversationBody
+  function ConversationWindowSeat(props: ConversationSeatProps) {
+    return <TaskConversationWindow
       sessionId={props.sessionId}
       useSession={props.useSession as never}
-      renderFactorySlot={props.renderFactorySlot as never}
+      renderFactorySlot={props.renderFactorySlot}
       viewSession={viewSession}
-    />;
-  }
-  function SessionHeader(props: SessionHeaderProps) {
-    const navigation = useConversationNavigation();
-    const modePort = useSyncExternalStore(modePortSource.subscribe, modePortSource.getSnapshot, modePortSource.getSnapshot);
-    const developerTools = developerToolsSource(ctx);
-    const renderFactorySlot = (props as unknown as PropsRenderFactories).renderFactorySlot;
-    return <NativeSessionHeader
-      slots={ctx.slots as unknown as NativeSlotSource}
-      locale={ctx.locale as unknown as NativeLocaleSource}
-      standard={props as unknown as Record<string, unknown>}
-      navigation={navigation}
-      modePort={modePort}
-      trailing={<ConversationCloseAction />}
-      {...(developerTools === undefined ? {} : { developerTools })}
-      {...(renderFactorySlot === undefined ? {} : { renderFactorySlot })}
     />;
   }
   function TaskContextChatNode(props: ChatNodeViewProps<'kanban-task-context'>) {
@@ -205,10 +167,9 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
         if (!result.ok) throw new Error(result.error.message);
       },
     }), [sessionList, scopedSessions]);
-    const renderConversation = useCallback((id: string, target?: DrawerSubagentAddress) => <RetainedConversation
-      key={target?.childSessionId ?? id}
+    const renderConversation = useCallback((id: string) => <RetainedConversation
+      key={id}
       id={id}
-      {...(target === undefined ? {} : { target })}
       owner={surfaceOwner}
       services={surfaceServices}
     />, [surfaceOwner, surfaceServices]);
@@ -218,7 +179,6 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       sessionTitles={sessionTitles}
       picker={picker}
       autoRun={props.autoRun}
-      lineage={lineage}
       nativeSeat={nativeSeat}
       conversationLeases={leaseEnvironment}
       renderConversation={renderConversation}
@@ -227,7 +187,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   function Main(props: MainProps) {
     const active = props.usePanelInfo(value => value.activePanelId === 'kanban');
     if (!active) return null; // A hidden cached page must not leave another copy of a composer mounted.
-    return <><style>{clientCss}</style><FeedStatus /><BoardPage {...props} api={bridge.api} autoRun={autoRun} /></>;
+    return <AgentPresetProvider source={presetSource} translate={ctx.locale.bind('settings.agentPreset')}><style>{clientCss}</style><FeedStatus /><BoardPage {...props} api={bridge.api} autoRun={autoRun} /></AgentPresetProvider>;
   }
   function Dock(props: PropsRuntime<'conversation.input.dock'>) {
     const view = useSyncExternalStore(bridge.questionsView.subscribe, bridge.questionsView.getSnapshot, bridge.questionsView.getSnapshot);
@@ -260,9 +220,8 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   function BoardIcon() { return <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor"><rect x="2" y="3" width="16" height="14" rx="2" /><path d="M7 3v14M13 3v14M4 7h1M9 7h2M15 7h1M4 10h1M9 10h2" /></svg>; }
 
   const offTaskContext = ctx.uiConversation.events.register(taskContextDefinition);
-  ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'kanban', children: { 'kanban.conversation': { kind: 'single', scope: 'session' }, 'kanban.session.header': { kind: 'single', scope: 'session' } } }, Main));
-  ctx.slots.inject('kanban.conversation', () => ctx.slots.register({ name: 'kanban.conversation' }, EmbeddedBody));
-  ctx.slots.inject('kanban.session.header', () => ctx.slots.register({ name: 'kanban.session.header' }, SessionHeader));
+  ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'kanban', children: { 'kanban.conversation': { kind: 'single', scope: 'session' } } }, Main));
+  ctx.slots.inject('kanban.conversation', () => ctx.slots.register({ name: 'kanban.conversation' }, ConversationWindowSeat));
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: TASK_CONTEXT_NODE_KIND, locale: 'chat', inject: () => ({}) }, TaskContextChatNode));
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: 'kanban', order: 80, label: 'Kanban' }, BoardIcon));
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'kanban-decision-questions', order: 20 }, Dock));
@@ -273,7 +232,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   return async () => {
     lifetime.abort(); autoRun.dispose(); unsubscribeAutoRun();
     offTaskContext();
-    try { await modeInjection?.dispose(); } catch { /* the optional namespace fiber is best effort */ }
+    try { await presetInjection?.dispose(); } catch { /* the optional namespace fiber is best effort */ }
     await bridge.dispose();
   };
 }
