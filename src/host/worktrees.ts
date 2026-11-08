@@ -16,6 +16,8 @@ export interface WorktreeStore {
   locate(taskId: string): { hubId: string; hub: HubState; task: Task; project: Project };
   transactTask<T>(taskId: string, change: (draft: HubState) => T): Promise<T>;
   allTasks(): Task[];
+  /** Whether any task holds a context operation; the resume path avoids cloning Hubs when it is false. */
+  hasOperations?(): boolean;
 }
 export interface WorktreeCoordinatorOptions { signal?: AbortSignal; id?: () => string; now?: () => string; onTaskDeleted?: (task: Task, project: Project) => Promise<void>; sharing?: WorktreeSharingGuard }
 type CreateAttempt = NonNullable<ContextOperation['createAttempt']>;
@@ -268,6 +270,9 @@ export class WorktreeCoordinator {
   /** Called at startup and by the parent's native activity events, never by a timer. */
   resumePending(): Promise<void> {
     if (this.disposed || this.signal.aborted) return Promise.resolve();
+    // The activity timer calls this on every attention edge; without an operation
+    // there is nothing to resume and materializing every task would clone each Hub.
+    if (this.store.hasOperations?.() === false) return Promise.resolve();
     if (this.resumed) { this.resumeAgain = true; return this.resumed; }
     this.resumed = (async () => {
       do {

@@ -657,3 +657,48 @@ describe('auto mode on the board', () => {
     expect(mock.command).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'task.autoMode' }));
   });
 });
+
+describe('responsive board opening', () => {
+  it('paints from the snapshot the feed already holds without waiting for a host read', async () => {
+    const data = fixture();
+    const pending = new Promise<KanbanSnapshot>(() => {});
+    const api: ClientApi = {
+      snapshot: vi.fn(() => pending),
+      command: vi.fn(async () => data),
+      sharing: vi.fn(async () => data),
+      localDrive: vi.fn(async (request: { action: string; path?: string }) => request.action === 'roots' ? { action: 'roots' as const, discovery: { state: 'empty' as const, locations: [] } } : { action: 'list' as const, page: { rootId: '/drive', path: '/drive', parent: null, entries: [], hasDocument: false, truncated: false, shown: 0 } }),
+      branches: vi.fn(async () => []),
+      worktreeDefault: vi.fn(async () => ({ branchName: 'task', path: '' })),
+      detectProject: vi.fn(async (pathValue: string) => ({ kind: 'folder' as const, projectPath: pathValue })),
+      subscribe: vi.fn(listener => { listener(data); return () => {}; }),
+    };
+    render(<BoardView api={api} renderConversation={() => null} />);
+    expect(await screen.findByRole('button', { name: 'Open task Alpha task' })).toBeTruthy();
+    expect(api.snapshot).toHaveBeenCalled();
+  });
+
+  it('fills an opened conversation tab indicator from a later publication without a reload', async () => {
+    const data = fixture();
+    data.attention.t1 = { running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
+    data.conversationAttention = {};
+    const mock = mount(data);
+    const user = userEvent.setup();
+    await openAlpha(user);
+    expect(screen.queryByRole('tab', { name: /Unread messages/ })).toBeNull();
+    const next = mock.get();
+    next.sequence += 1;
+    next.stateRevision += 1;
+    next.conversationAttention = { ...next.conversationAttention, s2: { running: false, background: [], unread: true, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK } };
+    act(() => { mock.publish(next); });
+    const tab = await screen.findByRole('tab', { name: /Unread messages/ });
+    expect(tab.getAttribute('title')).toBe('s2');
+  });
+
+  it('asks the host to resolve the opened drawer task first', async () => {
+    const mock = mount();
+    const user = userEvent.setup();
+    await loaded();
+    await user.click(screen.getByRole('button', { name: 'Open task Alpha task' }));
+    await waitFor(() => expect(mock.api.snapshot).toHaveBeenCalledWith({ priorityTaskIds: ['t1'] }));
+  });
+});

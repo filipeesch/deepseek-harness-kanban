@@ -93,7 +93,7 @@ describe('Hub-scoped host commands', () => {
     const task = await taskWithConversation(f.app, { boardId: second.boardId, projectId: second.project.id, title: 'Running elsewhere', description: '' });
     f.sessions.busy.add(task.sessionIds[0]!);
     f.app.sessionActivity(task.sessionIds[0]!);
-    const snapshot = await f.app.snapshot();
+    const snapshot = await f.app.snapshot({refreshSessionIds:[task.sessionIds[0]!]});
     expect(snapshot.conversations[task.sessionIds[0]!]?.running).toBe(true);
   });
 

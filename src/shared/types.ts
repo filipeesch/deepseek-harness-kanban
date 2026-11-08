@@ -200,10 +200,25 @@ export type LocalDriveRequest = { action: 'roots'; refresh?: boolean } | { actio
 export type LocalDriveResult =
   | { action: 'roots'; discovery: DriveDiscoveryView }
   | { action: 'list'; page: DriveBrowseView };
-/** Host snapshot: durable state plus per-conversation attention facts and per-Hub publishing. */
-export interface HostSnapshot { commandReceipt?: CommandReceipt; state: KanbanState; conversations: Record<string, ConversationFacts>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; sequence: number }
-/** Client snapshot: host facts plus the client-owned attention projection. */
-export interface KanbanSnapshot extends Omit<HostSnapshot, 'conversations'> { attention: Record<string, Attention>; conversationAttention: Record<string, Attention>; clientEpoch?: number }
+/**
+ * Host snapshot: durable state plus per-conversation attention facts and per-Hub publishing.
+ * `state` is present on baselines and command responses and omitted from an update frame that
+ * did not change the state revision; the client merges it with the state it already holds.
+ */
+export interface HostSnapshot { commandReceipt?: CommandReceipt; state?: KanbanState; stateRevision: number; conversations: Record<string, ConversationFacts>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; sequence: number }
+/** A snapshot that carries the board state: every unary response, baseline, and command result. */
+export type FullHostSnapshot = HostSnapshot & { state: KanbanState };
+/** A request for one unary snapshot; every field is an optional hint, never a required read. */
+export interface SnapshotRequest {
+  /** Conversations that must be re-read before the response is built (a rising running status). */
+  refreshSessionIds?: string[];
+  /** Tasks whose conversations are resolved before historically idle ones (the open drawer). */
+  priorityTaskIds?: string[];
+  /** Re-read the authorization view instead of using its cached value. */
+  refreshAuth?: boolean;
+}
+/** Client snapshot: host facts plus the client-owned attention projection. State is always merged. */
+export interface KanbanSnapshot extends Omit<HostSnapshot, 'conversations' | 'state'> { state: KanbanState; attention: Record<string, Attention>; conversationAttention: Record<string, Attention>; clientEpoch?: number }
 export const EMPTY_ATTENTION: Attention = { running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
 export interface ProjectInput { id?: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string }
 export interface NewTask { projectId: string; title: string; description: string; boardId?: string }
@@ -239,7 +254,7 @@ export type Command =
   | { type: 'note.delete'; hubId?: string; taskId: string; noteId: string };
 export type Outcome<T> = { ok: true; value: T } | { ok: false; error: Problem };
 export interface ClientApi {
-  snapshot(): Promise<KanbanSnapshot>;
+  snapshot(request?: SnapshotRequest): Promise<KanbanSnapshot>;
   command(command: Command): Promise<KanbanSnapshot>;
   sharing(command: SharingCommand): Promise<KanbanSnapshot>;
   localDrive(request: LocalDriveRequest): Promise<LocalDriveResult>;

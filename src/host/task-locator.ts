@@ -1,5 +1,5 @@
 import type { HubState, Project, Task } from '../shared/types.js';
-import type { HubRepository, LocatedTask } from './hub-repository.js';
+import type { HubRepository, LocatedTask, TaskSummary } from './hub-repository.js';
 import type { WorktreeStore } from './worktrees.js';
 
 export interface LocatedProject { hubId: string; hub: HubState; project: Project }
@@ -12,6 +12,8 @@ export class TaskLocator {
   bySession(sessionId: string): LocatedTask | undefined { return this.hubs.findTaskBySession(sessionId); }
   hasSession(sessionId: string): boolean { return this.hubs.hasTaskSession(sessionId); }
   all(): LocatedTask[] { return this.hubs.allTasks(); }
+  /** Lightweight identity and conversation ids for the hot read paths. */
+  summaries(): readonly TaskSummary[] { return this.hubs.taskSummaries(); }
 
   project(projectId: string): LocatedProject | undefined {
     for (const hub of this.hubs.list()) {
@@ -37,4 +39,5 @@ export class RepositoryWorktreeStore implements WorktreeStore {
   }
 
   allTasks(): Task[] { return this.hubs.allTasks().map(located => located.task); }
+  hasOperations(): boolean { return this.hubs.taskSummaries().some(summary => summary.hasOperation); }
 }

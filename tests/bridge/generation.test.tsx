@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { RemoteStream, type RemoteStreamOptions } from '@deepseek-ai/dsh-api-gateway/client';
 import type { RemoteResult, RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol';
-import type { HostSnapshot, KanbanSnapshot, Outcome } from '../../src/shared/types.js';
+import type { FullHostSnapshot, HostSnapshot, KanbanSnapshot, Outcome } from '../../src/shared/types.js';
 import { ClientBridge, type BridgeRemote } from '../../src/client-bridge.js';
 import { BoardView } from '../../src/client/board.js';
 
@@ -23,9 +23,9 @@ class Feed implements RemoteStreamHandle<HostSnapshot, never>, AsyncIterator<Hos
   return(): Promise<IteratorResult<HostSnapshot>> { this.dispose(); return Promise.resolve({ done: true, value: undefined }); }
   [Symbol.asyncIterator](): AsyncIterator<HostSnapshot> { return this; }
 }
-function snapshot(sequence: number, title: string): HostSnapshot {
+function snapshot(sequence: number, title: string): FullHostSnapshot {
   const now = '2026-10-21T00:00:00Z';
-  return { sequence, conversations: {}, sharing: {}, state: { hubs: [{ id: 'hub', name: 'Hub', revision: 0, projects: [], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Workflow', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: now, updatedAt: now }], notes: [], tasks: [{ id: 'task', boardId: 'board', title, description: '', projectId: 'p', columnId: 'backlog', position: 0, sessionIds: [], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' }], createdAt: now, updatedAt: now }], settings: { revision: 0 } } };
+  return { sequence, stateRevision: sequence, conversations: {}, sharing: {}, state: { hubs: [{ id: 'hub', name: 'Hub', revision: 0, projects: [], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Workflow', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: now, updatedAt: now }], notes: [], tasks: [{ id: 'task', boardId: 'board', title, description: '', projectId: 'p', columnId: 'backlog', position: 0, sessionIds: [], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' }], createdAt: now, updatedAt: now }], settings: { revision: 0 } } };
 }
 const success = (value: HostSnapshot): RemoteResult<Outcome<HostSnapshot>> => ({ ok: true, value: { ok: true, value } });
 const bridges: ClientBridge[] = [];

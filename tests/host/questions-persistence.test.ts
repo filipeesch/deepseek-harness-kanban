@@ -216,12 +216,12 @@ describe('conversation question persistence', () => {
     app.observe(sessionId, call(1, 1, 'a'));
     app.observe(sessionId, result(2, 1, 'a'));
     app.observe(sessionId, end(3, 1));
-    expect((await app.snapshot()).conversations[sessionId]?.pending.kinds).toEqual(['decision-question', 'native-question']);
+    expect((await app.snapshot({refreshSessionIds:[sessionId]})).conversations[sessionId]?.pending.kinds).toEqual(['decision-question', 'native-question']);
     sessions.awaiting.delete(sessionId);
     app.observe(sessionId, { type: 'turn/start', seq: 100, data: { turn: 2 } });
     const round = (await app.rounds(sessionId))[0]!;
     await app.dismissQuestions(sessionId, round.id);
-    const attention = (await app.snapshot()).conversations[sessionId];
+    const attention = (await app.snapshot({refreshSessionIds:[sessionId]})).conversations[sessionId];
     expect(attention?.pending.kinds).toEqual([]);
     await app.close();
   });

@@ -7,7 +7,7 @@ import { RemoteStream, type RemoteStreamOptions } from '@deepseek-ai/dsh-api-gat
 import type { RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol';
 import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client';
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots';
-import type { HostSnapshot, QuestionFeedFrame, QuestionRound } from '../../src/shared/types.js';
+import type { FullHostSnapshot, HostSnapshot, QuestionFeedFrame, QuestionRound } from '../../src/shared/types.js';
 import { apply, inject } from '../../src/client.js';
 import { TYPERT_REMOTE } from '../../src/remote.js';
 const disposers: Array<() => Promise<void>> = [];
@@ -33,12 +33,12 @@ class QuestionFeed implements RemoteStreamHandle<QuestionFeedFrame, never>, Asyn
   return(): Promise<IteratorResult<QuestionFeedFrame>> { this.dispose(); return Promise.resolve({ done: true, value: undefined }); }
   [Symbol.asyncIterator](): AsyncIterator<QuestionFeedFrame> { return this; }
 }
-function snapshot(): HostSnapshot {
+function snapshot(): FullHostSnapshot {
   const now = '2026-10-21T00:00:00Z';
-  return { sequence: 1, conversations: {}, sharing: {}, state: { hubs: [{ id: 'hub', name: 'Hub', revision: 1, projects: [{ id: 'p', name: 'Project', projectPath: '/project', gitRootPath: '/project' }], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }, { id: 'review', name: 'Review', onEnterPrompt: 'Review **carefully**.' }], groups: [] }, createdAt: now, updatedAt: now }], tasks: [{ id: 'task', boardId: 'board', projectId: 'p', title: 'Native task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' }], notes: [], createdAt: now, updatedAt: now }], settings: { revision: 0 } } };
+  return { sequence: 1, stateRevision: 1, conversations: {}, sharing: {}, state: { hubs: [{ id: 'hub', name: 'Hub', revision: 1, projects: [{ id: 'p', name: 'Project', projectPath: '/project', gitRootPath: '/project' }], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }, { id: 'review', name: 'Review', onEnterPrompt: 'Review **carefully**.' }], groups: [] }, createdAt: now, updatedAt: now }], tasks: [{ id: 'task', boardId: 'board', projectId: 'p', title: 'Native task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: '', updatedAt: '' }], notes: [], createdAt: now, updatedAt: now }], settings: { revision: 0 } } };
 }
 /** A two-Hub snapshot with a second board in the first Hub, for navigation coverage. */
-function twoHubSnapshot(): HostSnapshot {
+function twoHubSnapshot(): FullHostSnapshot {
   const value = snapshot();
   const hubA = value.state.hubs[0]!;
   hubA.name = 'Hub A';
@@ -369,15 +369,15 @@ describe('public SDK plugin binding contracts', () => {
   });
   it('keeps an armed countdown running when the Kanban panel is hidden', async () => {
     const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;
-    const initial = (await f.remote.snapshot() as unknown as { value: { value: HostSnapshot } }).value.value;
+    const initial = (await f.remote.snapshot({}) as unknown as { value: { value: FullHostSnapshot } }).value.value;
     const moved = structuredClone(initial);
     const task = moved.state.hubs[0]!.tasks[0]!;
     task.columnId = 'review';
     task.instructionPending = { columnId: 'review', enteredAt: 42 };
-    moved.sequence += 1;
+    moved.sequence += 1; moved.stateRevision += 1;
     const cleared = structuredClone(moved);
     delete cleared.state.hubs[0]!.tasks[0]!.instructionPending;
-    cleared.sequence += 1;
+    cleared.sequence += 1; cleared.stateRevision += 1;
     f.remote.command.mockImplementation(async (request: { type: string }) => ({ ok: true, value: { ok: true, value: request.type === 'task.runInstruction' ? cleared : moved } }));
     const provider = ({ children }: { children: ReactNode }) => <div>{children}</div>;
     const active = (select: (value: { activePanelId: string | null }) => unknown) => select({ activePanelId: 'kanban' });
@@ -406,10 +406,10 @@ describe('public SDK plugin binding contracts', () => {
     const movedTask = moved.state.hubs[0]!.tasks[0]!;
     movedTask.columnId = 'review';
     movedTask.instructionPending = { columnId: 'review', enteredAt: 42 };
-    moved.sequence += 1;
+    moved.sequence += 1; moved.stateRevision += 1;
     const cleared = structuredClone(moved);
     delete cleared.state.hubs[0]!.tasks[0]!.instructionPending;
-    cleared.sequence += 1;
+    cleared.sequence += 1; cleared.stateRevision += 1;
     f.remote.snapshot.mockResolvedValue({ ok: true, value: { ok: true, value: initial } });
     f.remote.command.mockImplementation(async (request: { type: string }) => ({
       ok: true,

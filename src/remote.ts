@@ -3,7 +3,7 @@ import { createTypertContribution } from './sdk/typert.js';
 import type { RemoteResult, RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol';
 import type { TypertContribution } from '@deepseek-ai/dsh-typert-registry';
 import { KanbanStateSchema } from './domain/hub-schema.js';
-import type { Command, DriveBrowseView, DriveDiscoveryView, HostSnapshot, HubSharingView, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingAuthView, SharingCommand } from './shared/types.js';
+import type { Command, DriveBrowseView, DriveDiscoveryView, HostSnapshot, HubSharingView, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingAuthView, SharingCommand, SnapshotRequest } from './shared/types.js';
 import { SHARING_STORAGES } from './shared/types.js';
 export const PACKAGE_NAME = 'dsh-kanban';
 const id=z.string().min(1).max(200);
@@ -86,7 +86,8 @@ export const LocalDriveResultSchema:z.ZodType<LocalDriveResult>=z.discriminatedU
  z.object({action:z.literal('roots'),discovery:DriveDiscoveryViewSchema}).strict(),
  z.object({action:z.literal('list'),page:DriveBrowseViewSchema}).strict(),
 ]);
-export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note']),id}).strict().optional(),state:KanbanStateSchema,conversations:z.record(z.string(),ConversationFactsSchema),sharing:z.record(z.string(),HubSharingViewSchema),sharingAuth:SharingAuthViewSchema.optional(),sequence:z.number().int().nonnegative()}).strict();
+export const SnapshotRequestSchema:z.ZodType<SnapshotRequest>=z.object({refreshSessionIds:z.array(id).optional(),priorityTaskIds:z.array(id).optional(),refreshAuth:z.boolean().optional()}).strict();
+export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note']),id}).strict().optional(),state:KanbanStateSchema.optional(),stateRevision:z.number().int().nonnegative(),conversations:z.record(z.string(),ConversationFactsSchema),sharing:z.record(z.string(),HubSharingViewSchema),sharingAuth:SharingAuthViewSchema.optional(),sequence:z.number().int().nonnegative()}).strict();
 export const SharingCommandSchema:z.ZodType<SharingCommand>=z.discriminatedUnion('type',[
  z.object({type:z.literal('sharing.connect'),hubId:id,provider:sharingStorage.optional(),settings:z.record(z.string(),z.string()).optional(),repository:z.string().min(1).max(2048).optional(),intervalMinutes:z.number().int().min(0).max(1440).optional()}).strict(),
  z.object({type:z.literal('sharing.receive'),hubId:id}).strict(),
@@ -112,7 +113,7 @@ const codec=(name:string,create:()=>z.ZodType)=>({mode:'strict' as const,typeSym
 const parameter=(name:string,schema:z.ZodType,typeName:string)=>({name,source:'json' as const,codec:codec(typeName,()=>schema),strictCodec:codec(typeName,()=>schema)});
 const base={service:'kanbanController',invocation:{kind:'direct' as const}};
 const contribution=createTypertContribution({package:PACKAGE_NAME,methods:{
- 'kanban/snapshot':{...base,parameters:[],result:codec('SnapshotOutcome',()=>outcome(SnapshotSchema))},
+ 'kanban/snapshot':{...base,parameters:[parameter('request',SnapshotRequestSchema,'SnapshotRequest')],result:codec('SnapshotOutcome',()=>outcome(SnapshotSchema))},
  'kanban/command':{...base,parameters:[parameter('request',CommandSchema,'Command')],result:codec('CommandOutcome',()=>outcome(SnapshotSchema))},
  'kanban/sharing':{...base,parameters:[parameter('request',SharingCommandSchema,'SharingCommand')],result:codec('SharingOutcome',()=>outcome(SnapshotSchema))},
  'kanban/branches':{...base,parameters:[parameter('request',z.object({taskId:id}).strict(),'TaskLookup')],result:codec('BranchesOutcome',()=>outcome(z.array(z.string())))},
@@ -126,7 +127,7 @@ const contribution=createTypertContribution({package:PACKAGE_NAME,methods:{
 export const TYPERT_REMOTE=contribution.remote;
 export const TYPERT_HOST:TypertContribution=contribution.host;
 export interface KanbanRemote {
- snapshot():Promise<RemoteResult<Outcome<HostSnapshot>>>;
+ snapshot(request:SnapshotRequest):Promise<RemoteResult<Outcome<HostSnapshot>>>;
  command(request:Command):Promise<RemoteResult<Outcome<HostSnapshot>>>;
  sharing(request:SharingCommand):Promise<RemoteResult<Outcome<HostSnapshot>>>;
  branches(request:{taskId:string}):Promise<RemoteResult<Outcome<string[]>>>;

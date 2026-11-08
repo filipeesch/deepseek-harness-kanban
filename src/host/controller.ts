@@ -1,25 +1,37 @@
 import { Context } from '@deepseek-ai/cordis';
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
-import type { Command, HostSnapshot, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingCommand } from '../shared/types.js';
+import type { Command, FullHostSnapshot, HostSnapshot, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingCommand, SnapshotRequest } from '../shared/types.js';
 import { problem, KanbanError } from '../shared/errors.js';
 import type { KanbanApp } from './app.js';
 export class KanbanController extends TypertRemoteService {
  constructor(ctx:Context,private readonly app:KanbanApp){super(ctx,'kanbanController',{namespace:'kanban'});}
  private owner():void{if(this.ctx.invocation&&this.ctx.invocation.peer.principal.kind!=='owner')throw new KanbanError('FORBIDDEN','Kanban access requires the native host owner.');}
  private async attempt<T>(fn:()=>Promise<T>):Promise<Outcome<T>>{try{this.owner();return {ok:true,value:await fn()};}catch(error){return {ok:false,error:problem(error)};}}
- @Remote async snapshot():Promise<Outcome<HostSnapshot>>{return this.attempt(()=>this.app.snapshot(true));}
- @Remote async command(request:Command):Promise<Outcome<HostSnapshot>>{return this.attempt(()=>this.app.command(request));}
- @Remote async sharing(request:SharingCommand):Promise<Outcome<HostSnapshot>>{return this.attempt(()=>this.app.sharingCommand(request));}
+ @Remote async snapshot(request:SnapshotRequest={}):Promise<Outcome<FullHostSnapshot>>{return this.attempt(()=>this.app.snapshot(request));}
+ @Remote async command(request:Command):Promise<Outcome<FullHostSnapshot>>{return this.attempt(()=>this.app.command(request));}
+ @Remote async sharing(request:SharingCommand):Promise<Outcome<FullHostSnapshot>>{return this.attempt(()=>this.app.sharingCommand(request));}
  @Remote async branches(request:{taskId:string}):Promise<Outcome<string[]>>{return this.attempt(()=>this.app.branches(request.taskId));}
  @Remote async worktreeDefault(request:{taskId:string}):Promise<Outcome<{branchName:string;path:string}>>{return this.attempt(()=>this.app.worktreeDefault(request.taskId));}
  @Remote async detectProject(request:{path:string}):Promise<Outcome<ProjectLocation>>{return this.attempt(()=>this.app.detectProject(request.path));}
  @Remote async localDrive(request:LocalDriveRequest):Promise<Outcome<LocalDriveResult>>{return this.attempt(()=>this.app.localDrive(request));}
  @Remote async dismissQuestions(request:{sessionId:string;roundId:string}):Promise<Outcome<QuestionRound[]>>{return this.attempt(()=>this.app.dismissQuestions(request.sessionId,request.roundId));}
  @Remote({mode:'stream'}) async *follow(signal:AbortSignal):AsyncGenerator<HostSnapshot>{
-  this.owner();let dirty=true;let wake:(()=>void)|undefined;
+  this.owner();let dirty=true;let wake:(()=>void)|undefined;let lastRevision=-1;
   const changed=()=>{dirty=true;wake?.();};const off=this.app.subscribe(changed);
   signal.addEventListener('abort',changed,{once:true});
-  try{while(!signal.aborted){if(dirty){dirty=false;yield await this.app.snapshot();continue;}await new Promise<void>(resolve=>{wake=resolve;if(dirty||signal.aborted)resolve();});wake=undefined;}}
+  try{while(!signal.aborted){
+   if(dirty){
+    dirty=false;
+    const snapshot=await this.app.snapshot();
+    // A baseline always carries state; an update carries it only when the revision moved.
+    const includeState=lastRevision!==snapshot.stateRevision;
+    lastRevision=snapshot.stateRevision;
+    if(includeState)yield snapshot;
+    else{const {state:_state,...rest}=snapshot;yield rest;}
+    continue;
+   }
+   await new Promise<void>(resolve=>{wake=resolve;if(dirty||signal.aborted)resolve();});wake=undefined;
+  }}
   finally{off();signal.removeEventListener('abort',changed);wake?.();}
  }
  /**

@@ -122,29 +122,29 @@ describe('attention activity lifecycle', () => {
     const f = await runtime();
     const notify = vi.fn(); f.app.subscribe(notify);
     f.families.set(f.sessionId, [{ kind: 'turn' }]);
-    expect((await f.app.snapshot()).conversations[f.sessionId]?.running).toBe(true);
+    expect((await f.app.snapshot({refreshSessionIds:[f.sessionId]})).conversations[f.sessionId]?.running).toBe(true);
 
     f.emitSessionEvent({ type: 'turn/end', seq: 1, time: 1, data: { turn: 1, reason: { kind: 'completed' } } });
-    expect((await f.app.snapshot()).conversations[f.sessionId]?.running).toBe(true);
+    expect((await f.app.snapshot({refreshSessionIds:[f.sessionId]})).conversations[f.sessionId]?.running).toBe(true);
 
     notify.mockClear();
     f.families.set(f.sessionId, []);
     f.emitAgentStatus('idle');
     await vi.waitFor(() => expect(notify).toHaveBeenCalled());
-    expect((await f.app.snapshot()).conversations[f.sessionId]?.running).toBe(false);
+    expect((await f.app.snapshot({refreshSessionIds:[f.sessionId]})).conversations[f.sessionId]?.running).toBe(false);
   });
 
   it('exposes background families and clears them through the schedule edge', async () => {
     const f = await runtime();
     f.families.set(f.sessionId, [{ kind: 'job', items: [{ id: 'job-1', label: 'Run tests' }] }]);
-    expect((await f.app.snapshot()).conversations[f.sessionId]).toMatchObject({
+    expect((await f.app.snapshot({refreshSessionIds:[f.sessionId]})).conversations[f.sessionId]).toMatchObject({
       running: false,
       background: [{ kind: 'job', label: 'Run tests' }],
     });
 
     f.families.set(f.sessionId, []);
     f.root.emit('schedule/changed');
-    expect((await f.app.snapshot()).conversations[f.sessionId]?.background).toEqual([]);
+    expect((await f.app.snapshot({refreshSessionIds:[f.sessionId]})).conversations[f.sessionId]?.background).toEqual([]);
   });
 
   it('treats a subagent family as agent execution and clears it through the parent conversation edge', async () => {
@@ -152,29 +152,29 @@ describe('attention activity lifecycle', () => {
     const childId = SessionId('session-attention-child');
     f.sessions.set(childId, { id: childId, header: { parentSession: SessionId(f.sessionId) } } as never);
     f.families.set(f.sessionId, [{ kind: 'subagent', items: [{ id: childId, label: 'Research' }] }]);
-    expect((await f.app.snapshot()).conversations[f.sessionId]).toMatchObject({ running: true, background: [] });
+    expect((await f.app.snapshot({refreshSessionIds:[f.sessionId]})).conversations[f.sessionId]).toMatchObject({ running: true, background: [] });
     f.families.set(f.sessionId, []);
     f.root.emit('subagent/end', { id: childId } as never);
-    expect((await f.app.snapshot()).conversations[f.sessionId]?.running).toBe(false);
+    expect((await f.app.snapshot({refreshSessionIds:[f.sessionId]})).conversations[f.sessionId]?.running).toBe(false);
   });
 
   it('invalidates the parent when a subagent starts outside a turn', async () => {
     const f = await runtime();
     const childId = SessionId('session-attention-start');
     f.sessions.set(childId, { id: childId, header: { parentSession: SessionId(f.sessionId) } } as never);
-    expect((await f.app.snapshot()).conversations[f.sessionId]?.running).toBe(false);
+    expect((await f.app.snapshot({refreshSessionIds:[f.sessionId]})).conversations[f.sessionId]?.running).toBe(false);
     f.families.set(f.sessionId, [{ kind: 'subagent', items: [{ id: childId, label: 'Research' }] }]);
     f.root.emit('subagent/start', { id: childId } as never);
-    expect((await f.app.snapshot()).conversations[f.sessionId]).toMatchObject({ running: true, background: [] });
+    expect((await f.app.snapshot({refreshSessionIds:[f.sessionId]})).conversations[f.sessionId]).toMatchObject({ running: true, background: [] });
   });
 
   it('publishes one change and resumes once when a cached running read clears on the idle edge', async () => {
     const f = await runtime();
     const notify = vi.fn(); f.app.subscribe(notify);
     f.families.set(f.sessionId, [{ kind: 'turn' }]);
-    expect((await f.app.snapshot()).conversations[f.sessionId]?.running).toBe(true);
+    expect((await f.app.snapshot({refreshSessionIds:[f.sessionId]})).conversations[f.sessionId]?.running).toBe(true);
     f.emitSessionEvent({ type: 'turn/end', seq: 1, time: 1, data: { turn: 1, reason: { kind: 'completed' } } });
-    expect((await f.app.snapshot()).conversations[f.sessionId]?.running).toBe(true);
+    expect((await f.app.snapshot({refreshSessionIds:[f.sessionId]})).conversations[f.sessionId]?.running).toBe(true);
 
     const resume = vi.spyOn(f.app.worktrees, 'resumePending');
     notify.mockClear();
@@ -186,7 +186,7 @@ describe('attention activity lifecycle', () => {
     notify.mockClear();
     await new Promise(resolve => setTimeout(resolve, 60));
     expect(notify).not.toHaveBeenCalled();
-    expect((await f.app.snapshot()).conversations[f.sessionId]?.running).toBe(false);
+    expect((await f.app.snapshot({refreshSessionIds:[f.sessionId]})).conversations[f.sessionId]?.running).toBe(false);
   });
 
   it('resumes pending worktrees in the same coalesced tick as the invalidation', async () => {

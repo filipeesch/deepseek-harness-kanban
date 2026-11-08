@@ -13,7 +13,7 @@ import { transitionAccess } from '../domain/transitions.js';
 import { compareTaskOrder } from '../domain/task-order.js';
 import { placementIndex } from '../domain/placement.js';
 import { AutoRunController } from './auto-run.js';
-import { autoModeView } from './auto-mode.js';
+import { BoardCard } from './board-card.js';
 import { ACTIVE_HUB_KEY, allTasks, boardView, normalizeSnapshot, readBoardPreferences, readStorage, scopedCommand, writeBoardPreference, writeStorage } from './hub-view.js';
 import { projectScopeActivity, type ScopeActivity } from './scope-activity.js';
 import { HubNav } from './hub-nav.js';
@@ -29,7 +29,6 @@ import { useDestructiveOperations } from './destructive-operations.js';
 import { batchRejectionProblem, useBatchDeletion } from './useBatchDeletion.js';
 import { DestructiveOperationsNotice } from './destructive-notices.js';
 import { CheckSquareIcon, PlusIcon, SettingsIcon, TrashIcon } from './icons.js';
-import { TaskCard } from './task-card.js';
 import { useBoardMoves } from './board-moves.js';
 import { useExecutionPreparation } from './execution-preparation/use-execution-preparation.js';
 import type { PreparationSeat } from './execution-preparation/model-seat.js';
@@ -52,8 +51,7 @@ export interface BoardViewProps {
   nativeSeat?: PreparationSeat;
 }
 
-export function columnLayout(workflow: Workflow): Array<{ key: string; group?: ColumnGroup; columns: Column[] }> {
-  const result: Array<{ key: string; group?: ColumnGroup; columns: Column[] }> = []; const seen = new Set<string>();
+export function columnLayout(workflow: Workflow): Array<{ key: string; group?: ColumnGroup; columns: Column[] }> {  const result: Array<{ key: string; group?: ColumnGroup; columns: Column[] }> = []; const seen = new Set<string>();
   for (const column of workflow.columns) {
     if (seen.has(column.id)) continue;
     const group = workflow.groups.find(value => value.columnIds.includes(column.id));
@@ -64,11 +62,16 @@ export function columnLayout(workflow: Workflow): Array<{ key: string; group?: C
   return result;
 }
 
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 export function BoardView({ api, renderConversation, pageState, sessionTitles, conversationLeases, picker = null, autoRun: providedAutoRun, lineage, nativeSeat }: BoardViewProps) {
   const [localPageState] = useState(createBoardPageState); const preferences = pageState ?? localPageState;
   const [snapshot, setSnapshot] = useState<KanbanSnapshot | null>(null); const latest = useRef<KanbanSnapshot | null>(null); const live = useRef(false); const currentApi = useRef(api); currentApi.current = api;
   const [loadError, setLoadError] = useState<Problem | null>(null); const [loadAttempt, setLoadAttempt] = useState(0);
   const [search, setSearch] = usePageField(preferences, 'search'); const [projectFilter, setProjectFilter] = usePageField(preferences, 'projectFilter'); const [selectedId, setSelectedId] = usePageField(preferences, 'selectedTaskId');
+  const selectedIdRef = useRef(selectedId); selectedIdRef.current = selectedId;
   const [newTask, setNewTask] = useState(false); const [newHub, setNewHub] = useState(false); const [newBoard, setNewBoard] = useState(false); const [configuration, setConfiguration] = useState<string | null>(null);
   const [actionError, setActionError] = useState<Problem | null>(null);
   const [selectionMode, setSelectionMode] = useState(false); const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -86,8 +89,11 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   const accept = useCallback((next: KanbanSnapshot) => { if (!live.current) return; const currentEpoch = latest.current?.clientEpoch ?? 0; const nextEpoch = next.clientEpoch ?? 0; if (latest.current && (nextEpoch < currentEpoch || (nextEpoch === currentEpoch && next.sequence < latest.current.sequence))) return; const normalized = normalizeSnapshot(next); latest.current = normalized; setSnapshot(normalized); }, []);
   useEffect(() => {
     let active = true; live.current = true; latest.current = null; setSnapshot(null); setLoadError(null); let unsubscribe = () => {};
-    try { unsubscribe = api.subscribe(next => { if (active) accept(next); }); } catch (error) { setLoadError(asProblem(error)); }
-    void Promise.resolve().then(() => api.snapshot()).then(next => { if (active) accept(next); }, error => { if (active) setLoadError(asProblem(error)); });
+    let delivered = false;
+    try { unsubscribe = api.subscribe(next => { delivered = true; if (active) accept(next); }); } catch (error) { setLoadError(asProblem(error)); }
+    // The subscription replays the snapshot the client already holds, so the board paints
+    // immediately. This reconcile is a background safety net for a stopped live stream.
+    void Promise.resolve().then(() => api.snapshot()).then(next => { if (active) accept(next); }, error => { if (active && !delivered) setLoadError(asProblem(error)); });
     return () => { active = false; live.current = false; unsubscribe(); };
   }, [api, loadAttempt, accept]);
 
@@ -168,7 +174,6 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     restoreFocus.current = selectedId;
     clearCloseTimer(); setDrawerClosing(false); setDrawerEntering(false); setSelectedId(null);
   }
-  function prefersReducedMotion(): boolean { return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
   function requestCloseDrawer() {
     if (!selectedId || drawerClosing) return;
     if (prefersReducedMotion()) { finishClose(); return; }
@@ -176,11 +181,17 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     clearCloseTimer();
     closeTimer.current = setTimeout(finishClose, 180);
   }
-  function openTask(taskId: string) {
+  const openTask = useCallback((taskId: string) => {
     clearCloseTimer();
-    const entering = selectedId === null && !prefersReducedMotion();
+    const entering = selectedIdRef.current === null && !prefersReducedMotion();
     setDrawerClosing(false); setDrawerEntering(entering); setSelectedId(taskId);
-  }
+  }, [setDrawerClosing, setDrawerEntering, setSelectedId]);
+  // The open drawer's conversations are resolved before historical ones; the response is
+  // a hint-only snapshot, so opening a drawer never waits for conversation history.
+  useEffect(() => {
+    if (!selectedId) return;
+    void api.snapshot({ priorityTaskIds: [selectedId] }).catch(() => undefined);
+  }, [api, selectedId]);
   useEffect(() => () => clearCloseTimer(), []);
   useEffect(() => {
     if (selectedId !== null) { restoreFocus.current = null; return; }
@@ -220,20 +231,20 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     return next;
   }
 
-  function toggleSelect(taskId: string) { setSelectedIds(previous => { const next = new Set(previous); if (next.has(taskId)) next.delete(taskId); else next.add(taskId); return next; }); }
+  const toggleSelect = useCallback((taskId: string) => { setSelectedIds(previous => { const next = new Set(previous); if (next.has(taskId)) next.delete(taskId); else next.add(taskId); return next; }); }, []);
 
-  function toggleAutoMode(taskId: string, enabled: boolean): void {
+  const toggleAutoMode = useCallback((taskId: string, enabled: boolean): void => {
     if (autoModeInFlight.current.has(taskId)) return;
     autoModeInFlight.current.add(taskId);
     setAutoModePending(new Set(autoModeInFlight.current));
     setActionError(null);
-    void run({ type: 'task.autoMode', taskId, enabled })
+    void runRef.current({ type: 'task.autoMode', taskId, enabled })
       .catch(error => setActionError(asProblem(error)))
       .finally(() => {
         autoModeInFlight.current.delete(taskId);
         setAutoModePending(new Set(autoModeInFlight.current));
       });
-  }
+  }, []);
   function enterSelection() { setSelectionMode(true); setSelectedIds(new Set()); setBatchTasks([]); }
   function exitSelection() { setSelectionMode(false); setSelectedIds(new Set()); setBatchTasks([]); }
   function deleteSelected() {
@@ -249,7 +260,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   function renderCard(task: Task, column: Column, workflow: Workflow) {
     const attention = snapshot?.attention[task.id] ?? EMPTY_ATTENTION;
     const project = state?.projects.find(value => value.id === task.projectId)?.name ?? task.projectId;
-    return <TaskCard key={task.id} task={task} column={column} projectName={project} attention={attention} selectionMode={selectionMode} selected={selectedIds.has(task.id)} autoRun={autoRun} autoMode={autoModeView(task, workflow, attention.pending)} autoModePending={autoModePending.has(task.id)} onToggleAutoMode={toggleAutoMode} onOpen={openTask} onToggleSelect={toggleSelect} onBeginDrag={begin} shouldSuppressClick={shouldSuppressClick} onRun={moves.requestRun} />;
+    return <BoardCard key={task.id} task={task} column={column} projectName={project} attention={attention} workflow={workflow} selectionMode={selectionMode} selected={selectedIds.has(task.id)} autoRun={autoRun} autoModePending={autoModePending.has(task.id)} onToggleAutoMode={toggleAutoMode} onOpen={openTask} onToggleSelect={toggleSelect} onBeginDrag={begin} shouldSuppressClick={shouldSuppressClick} onRun={moves.requestRun} />;
   }
 
   function renderNewTaskButton(column: Column) { return <div className="kb-column-create"><button type="button" className="kb-button kb-primary" disabled={!state || state.projects.length === 0} onClick={() => setNewTask(true)} aria-label="New task"><PlusIcon size={14} /> New task</button></div>; }
