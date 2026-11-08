@@ -40,7 +40,7 @@ describe('Hub operations', () => {
     expect(hub.tasks[0]!.autoMode?.pause).toBeUndefined();
     operations.pauseAutoMode(hub, task.id, pause, deps, 'backlog');
     expect(hub.tasks[0]!.autoMode?.pause).toEqual(pause);
-    operations.placeTask(hub, task.id, 'done', null, 1);
+    operations.placeTask(hub, task.id, 'done', 'end', 1);
     expect(hub.tasks[0]!.autoMode?.pause).toBeUndefined();
     expect(hub.tasks[0]!.autoMode?.enabled).toBe(true);
   });
@@ -66,8 +66,29 @@ describe('Hub operations', () => {
     const hub = sampleHub(); const deps = operationDeps();
     operations.saveBoardWorkflow(hub, 'board', 'name: Flow\ninitial_column: backlog\ncolumns:\n  - id: backlog\n    label: Backlog\n  - id: done\n    label: Done\n', deps);
     const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Task', description: '' }, deps);
-    operations.placeTask(hub, task.id, 'done', null, Date.now());
+    operations.placeTask(hub, task.id, 'done', 'end', Date.now());
     expect(hub.tasks.find(value => value.id === task.id)).toMatchObject({ boardId: 'board', columnId: 'done' });
+  });
+
+  it('places a task at the requested position in its destination stage', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    operations.saveBoardWorkflow(hub, 'board', 'name: Flow\ninitial_column: backlog\ncolumns:\n  - id: backlog\n    label: Backlog\n  - id: done\n    label: Done\n', deps);
+    const first = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'First', description: '' }, deps);
+    const second = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Second', description: '' }, deps);
+    const third = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Third', description: '' }, deps);
+    const order = () => hub.tasks.filter(task => task.columnId === 'done').sort((left, right) => left.position - right.position).map(task => task.title);
+    operations.placeTask(hub, first.id, 'done', 'end', 1);
+    operations.placeTask(hub, second.id, 'done', 'end', 2);
+    operations.placeTask(hub, third.id, 'done', 'end', 3);
+    expect(order()).toEqual(['First', 'Second', 'Third']);
+    operations.placeTask(hub, third.id, 'done', 'start', 4);
+    expect(order()).toEqual(['Third', 'First', 'Second']);
+    operations.placeTask(hub, third.id, 'done', 'end', 5);
+    expect(order()).toEqual(['First', 'Second', 'Third']);
+    operations.placeTask(hub, third.id, 'done', { before: second.id }, 6);
+    expect(order()).toEqual(['First', 'Third', 'Second']);
+    operations.placeTask(hub, third.id, 'done', { before: 'missing-task' }, 7);
+    expect(order()).toEqual(['First', 'Second', 'Third']);
   });
 
   it('updates task text and notes only for tasks in the Hub', () => {

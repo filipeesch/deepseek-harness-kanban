@@ -88,7 +88,7 @@ export function useBoardMoves({ state, run, autoRun, selectionMode, prepare, onE
     },
   });
 
-  const moveTo = useCallback((task: Task, column: Column, beforeTaskId: string | null = null): Promise<boolean> => move(task, column, beforeTaskId), [move]);
+  const moveTo = useCallback((task: Task, column: Column, beforeTaskId?: string | null): Promise<boolean> => move(task, column, beforeTaskId), [move]);
 
   const requestRun = useCallback((input: AutoRunInput): void => {
     const current = stateRef.current;

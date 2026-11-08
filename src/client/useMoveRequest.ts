@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { transitionAccess } from '../domain/transitions.js';
+import { placementFromAnchor, type Placement } from '../domain/placement.js';
 import type { BoardState, Column, Command, KanbanSnapshot, Problem, Task } from '../shared/types.js';
 import { asProblem } from './ui.js';
 
-export interface OptimisticMove { taskId: string; columnId: string; beforeTaskId: string | null }
+export interface OptimisticMove { taskId: string; columnId: string; placement: Placement }
 
 export interface MoveConfirmation {
   taskId: string;
@@ -19,7 +20,8 @@ export interface MoveConfirmation {
 export interface MoveIntent {
   task: Task;
   column: Column;
-  beforeTaskId: string | null;
+  /** Absent means no position was requested; `null` is the end and an id is anchored. */
+  beforeTaskId?: string | null;
 }
 
 export interface MoveRequestOptions {
@@ -43,7 +45,7 @@ export interface MoveRequest {
 }
 
 interface PendingConfirmation extends MoveConfirmation {
-  beforeTaskId: string | null;
+  beforeTaskId: string | null | undefined;
   resolve: (moved: boolean) => void;
   settled: boolean;
 }
@@ -51,7 +53,7 @@ interface PendingConfirmation extends MoveConfirmation {
 const contextChanged = (message: string): Problem => ({ code: 'MOVE_CONTEXT_CHANGED', message });
 
 function anchorAvailable(request: PendingConfirmation, state: BoardState): boolean {
-  if (request.beforeTaskId === null) return true;
+  if (request.beforeTaskId === undefined || request.beforeTaskId === null) return true;
   const anchor = state.tasks.find(value => value.id === request.beforeTaskId);
   return Boolean(anchor && anchor.id !== request.taskId && anchor.columnId === request.toColumnId);
 }
@@ -102,12 +104,12 @@ export function useMoveRequest({ state, run, onImmediateError, onMoved, beforeAp
     setError(asProblem(problem)); setCanRetry(retry); setPending(false);
   }
 
-  const apply = useCallback(async (task: Task, column: Column, beforeTaskId: string | null, override: boolean): Promise<boolean> => {
-    setOptimistic({ taskId: task.id, columnId: column.id, beforeTaskId });
+  const apply = useCallback(async (task: Task, column: Column, beforeTaskId: string | null | undefined, override: boolean): Promise<boolean> => {
+    setOptimistic({ taskId: task.id, columnId: column.id, placement: placementFromAnchor(beforeTaskId) });
     try {
       const result = await runRef.current({
         type: 'task.move', taskId: task.id, columnId: column.id,
-        ...(beforeTaskId !== null ? { beforeTaskId } : {}),
+        ...(beforeTaskId !== undefined ? { beforeTaskId } : {}),
         ...(override ? { overrideTransition: true } : {}),
       });
       try { onMovedRef.current?.(result, task, column); } catch { /* arming is best effort after a committed move */ }
@@ -117,7 +119,7 @@ export function useMoveRequest({ state, run, onImmediateError, onMoved, beforeAp
     }
   }, []);
 
-  const move = useCallback(async (task: Task, column: Column, beforeTaskId: string | null = null): Promise<boolean> => {
+  const move = useCallback(async (task: Task, column: Column, beforeTaskId?: string | null): Promise<boolean> => {
     const currentState = stateRef.current;
     if (!currentState) { errorRef.current({ code: 'BOARD_NOT_READY', message: 'The board is still loading.' }); return false; }
     const currentTask = currentState.tasks.find(value => value.id === task.id);
