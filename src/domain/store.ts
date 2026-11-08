@@ -7,6 +7,7 @@ import { KanbanError, invariant } from '../shared/errors.js';
 import { BoardStateSchema, initialState } from './schema.js';
 import { parseWorkflow } from './workflow.js';
 import { entryInstruction, nextEnteredAt } from './stage-entry.js';
+import { compareTaskOrder } from './task-order.js';
 import { assertId, assertRevision, isAbsolutePath } from './validation.js';
 import { assertProjectConversion, buildProject } from './project-registration.js';
 import { applyNoteTags, validateNoteWrite, type NoteInput } from './note.js';
@@ -237,7 +238,7 @@ export class BoardStore {
       const peers = state.tasks.filter(task => task.columnId === state.workflow.initialColumnId);
       let position = peers.length ? peers.reduce((minimum, task) => Math.min(minimum, task.position), Infinity) - 1 : 0;
       if (!Number.isFinite(position) || peers.some(task => task.position === position)) {
-        peers.sort((left, right) => left.position - right.position).forEach((task, index) => { task.position = index; });
+        peers.sort(compareTaskOrder).forEach((task, index) => { task.position = index; });
         position = -1;
       }
       const timestamp = new Date().toISOString();

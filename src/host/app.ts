@@ -3,6 +3,7 @@ import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { canTransition, transitionAccess } from '../domain/transitions.js';
 import { nextEnteredAt } from '../domain/stage-entry.js';
+import { placementFromAnchor } from '../domain/placement.js';
 import { AUTO_ADVANCE_SETTLE_MS, AutoAdvanceCoordinator } from './auto-advance.js';
 import type { AutoAdvancePlan } from '../domain/auto-advance.js';
 import { admitAutoAdvance } from './auto-advance-admission.js';
@@ -451,7 +452,7 @@ export class KanbanApp {
   if(this.disposed)return;if(this.driving){this.driveAgain=true;return;}this.driving=true;
   try{do{this.driveAgain=false;for(const located of this.locator.all()){const task=located.task;const pending=task.pendingTransition;if(!pending||pending.status!=='waiting'||task.operation||(pending.worktreeRequest&&task.worktree?.status!=='ready'))continue;const store=this.hubs.hub(located.hubId);
    try{
-    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');operations.placeTask(d,t.id,pending.columnId,pending.beforeTaskId??null,nextEnteredAt());if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});
+    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');operations.placeTask(d,t.id,pending.columnId,placementFromAnchor(pending.beforeTaskId),nextEnteredAt());if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});
     if(pending.mode==='run'){
      invariant(pending.sessionId&&pending.text,'INVALID_TARGET','Confirmed execution is missing its target or instruction.');
      await admitStageInstruction(this.stageInstructionDeps(),{taskId:task.id,columnId:pending.columnId,instruction:pending.text,sessionId:pending.sessionId,requestId:pending.id});

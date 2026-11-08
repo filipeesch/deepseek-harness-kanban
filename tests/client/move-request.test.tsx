@@ -71,7 +71,7 @@ describe('useMoveRequest', () => {
     let moved = false;
     await act(async () => { moved = await result.current.move(state.tasks[0]!, column(state, 'intake'), null); });
     expect(moved).toBe(true);
-    expect(run).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'intake' });
+    expect(run).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'intake', beforeTaskId: null });
     expect(beforeApply).not.toHaveBeenCalled();
   });
 
@@ -301,7 +301,7 @@ describe('useMoveRequest', () => {
     run.mockImplementationOnce(async () => { await gate.promise; return fixture(); });
     let pending!: Promise<boolean>;
     act(() => { pending = result.current.move(state.tasks[0]!, column(state, 'doing')); });
-    expect(result.current.optimistic).toEqual({ taskId: 't1', columnId: 'doing', beforeTaskId: null });
+    expect(result.current.optimistic).toEqual({ taskId: 't1', columnId: 'doing', placement: 'start' });
     await act(async () => { gate.resolve(); await pending; });
     expect(result.current.optimistic).toBeNull();
     expect(onImmediateError).not.toHaveBeenCalled();

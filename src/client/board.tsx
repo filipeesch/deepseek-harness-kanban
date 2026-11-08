@@ -10,6 +10,8 @@ import type { SessionTitles } from './conversation-label.js';
 import type { ConversationLeaseEnvironment } from './conversation-leases.js';
 import type { ConversationLineagePort, DrawerSubagentAddress } from './conversation-navigation.js';
 import { transitionAccess } from '../domain/transitions.js';
+import { compareTaskOrder } from '../domain/task-order.js';
+import { placementIndex } from '../domain/placement.js';
 import { AutoRunController } from './auto-run.js';
 import { autoModeView } from './auto-mode.js';
 import { ACTIVE_HUB_KEY, allTasks, boardView, normalizeSnapshot, readBoardPreferences, readStorage, scopedCommand, writeBoardPreference, writeStorage } from './hub-view.js';
@@ -195,7 +197,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   }, [selectedId, drawerClosing]);
 
 
-  async function moveTo(task: Task, column: Column, beforeTaskId: string | null = null): Promise<boolean> {
+  async function moveTo(task: Task, column: Column, beforeTaskId?: string | null): Promise<boolean> {
     setActionError(null);
     return moves.moveTo(task, column, beforeTaskId);
   }
@@ -206,7 +208,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   }
 
   const selectedTasks = state?.tasks.filter(task => selectedIds.has(task.id)) ?? [];
-  const visible = state?.tasks.filter(task => (!projectFilter || task.projectId === projectFilter) && (task.title + ' ' + task.description).toLowerCase().includes(search.trim().toLowerCase())).sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt)) ?? [];
+  const visible = state?.tasks.filter(task => (!projectFilter || task.projectId === projectFilter) && (task.title + ' ' + task.description).toLowerCase().includes(search.trim().toLowerCase())).sort(compareTaskOrder) ?? [];
   function tasksForColumn(columnId: string): Task[] {
     const source = optimistic ? visible.filter(task => task.id !== optimistic.taskId) : visible;
     const base = source.filter(task => task.columnId === columnId);
@@ -214,8 +216,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     const moving = visible.find(task => task.id === optimistic.taskId);
     if (!moving) return base;
     const next = [...base];
-    const index = optimistic.beforeTaskId ? next.findIndex(task => task.id === optimistic.beforeTaskId) : -1;
-    next.splice(index >= 0 ? index : next.length, 0, moving);
+    next.splice(placementIndex(optimistic.placement, next), 0, moving);
     return next;
   }
 

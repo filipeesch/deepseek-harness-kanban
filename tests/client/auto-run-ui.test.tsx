@@ -241,7 +241,7 @@ describe('instructed move auto-run', () => {
     fireEvent.pointerUp(document, { clientX: 20, clientY: 20, pointerId: 1 });
     delete (document as unknown as { elementFromPoint?: unknown }).elementFromPoint;
     await settle();
-    expect(mock.command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'review' });
+    expect(mock.command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'review', beforeTaskId: null });
     const marker = mock.get().state.tasks[0]!.instructionPending!;
     expect(countdown()).not.toBeNull();
     await advance(5000);
