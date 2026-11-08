@@ -116,6 +116,6 @@ it('advances the card and dispatches the next instruction after a completed turn
   await contains(conversation.getByText(PLAN, { exact: false }), PLAN);
   await count(drawer.getByRole('tablist', { name: 'Agent conversations' }).getByRole('tab'), 1);
   await attribute(cardInReview.locator('.kb-auto-chip'), 'aria-pressed', 'true');
-  await attribute(drawer.locator('.kb-drawer-auto'), 'aria-pressed', 'true');
-  await contains(drawer.locator('.kb-drawer-automode'), 'Auto mode is on');
+  await attribute(drawer.locator('.kb-drawer-header .kb-auto-chip'), 'aria-pressed', 'true');
+  await attribute(drawer.locator('.kb-drawer-header .kb-auto-chip'), 'title', 'Auto mode is on: the next completed turn moves to Done.');
 });

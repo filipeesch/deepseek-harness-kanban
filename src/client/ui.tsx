@@ -98,4 +98,30 @@ export function Tabs({ label, values, selected, onSelect, id }: { label: string;
   }}>{value}</button>)}</div>;
 }
 
+export interface IconTabItem {
+  id: string;
+  /** The section name; also the default accessible name and tooltip. */
+  label: string;
+  icon: ReactNode;
+  /** Optional content beside the icon, such as an activity dot. */
+  badge?: ReactNode;
+  /** Overrides the accessible name when the item reports additional state. */
+  accessibleName?: string;
+  /** Overrides the tooltip; defaults to the label. */
+  tooltip?: string;
+}
+
+/** Icon-only tabs that keep the same roving tabindex and arrow-key behavior as `Tabs`. */
+export function IconTabs({ label, items, selected, onSelect, id }: { label: string; items: readonly IconTabItem[]; selected: string; onSelect: (value: string) => void; id: string }) {
+  return <div role="tablist" aria-label={label} className="kb-icon-tabs">{items.map((item, index) => <button type="button" className="kb-icon-tab" key={item.id} id={id + '-tab-' + item.id} role="tab" aria-selected={selected === item.id} aria-label={item.accessibleName ?? item.label} title={item.tooltip ?? item.label} tabIndex={selected === item.id ? 0 : -1} onClick={() => onSelect(item.id)} onKeyDown={event => {
+    let next = index;
+    if (event.key === 'ArrowRight') next = (index + 1) % items.length;
+    else if (event.key === 'ArrowLeft') next = (index + items.length - 1) % items.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = items.length - 1;
+    else return;
+    event.preventDefault(); const target = items[next]?.id; if (target) { onSelect(target); document.getElementById(id + '-tab-' + target)?.focus(); }
+  }}>{item.icon}{item.badge}</button>)}</div>;
+}
+
 export function submit(event: FormEvent) { event.preventDefault(); }

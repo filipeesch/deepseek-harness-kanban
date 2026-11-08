@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Workflow } from '../../src/shared/types.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
-import { canTransition, transitionAccess, transitionDestinations } from '../../src/domain/transitions.js';
+import { canTransition, nextStage, transitionAccess, transitionDestinations } from '../../src/domain/transitions.js';
 
 const workflow: Workflow = {
   name: 'Flow',
@@ -39,6 +39,20 @@ describe('transition access policy', () => {
       { column: workflow.columns[3], access: 'restricted' },
     ]);
     expect(transitionDestinations(workflow, 'backlog').map(entry => entry.column.id)).toEqual(['backlog', 'plan', 'done', 'archive']);
+  });
+
+  it('returns the following stage with its access, and undefined at the end or for an unknown source', () => {
+    expect(nextStage(workflow, 'backlog')).toEqual({ column: workflow.columns[1], access: 'allowed' });
+    expect(nextStage(workflow, 'plan')).toEqual({ column: workflow.columns[2], access: 'allowed' });
+    expect(nextStage(workflow, 'done')).toEqual({ column: workflow.columns[3], access: 'allowed' });
+    expect(nextStage(workflow, 'archive')).toBeUndefined();
+    expect(nextStage(workflow, 'missing')).toBeUndefined();
+  });
+
+  it('keeps a restricted next stage restricted', () => {
+    const restricted: Workflow = { ...workflow, columns: [...workflow.columns.slice(0, 2), { ...workflow.columns[2]!, allowedTransitions: undefined }] };
+    restricted.columns[0] = { ...restricted.columns[0]!, allowedTransitions: [] };
+    expect(nextStage(restricted, 'backlog')).toEqual({ column: restricted.columns[1], access: 'restricted' });
   });
 
   it('matches canTransition to the allowed classification for every pair', () => {

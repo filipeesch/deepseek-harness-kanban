@@ -8,14 +8,13 @@ import { GitPanel, PendingTransitionStatus } from './git.js';
 import { OperationStatus } from './operation-status.js';
 import { WorktreeNotice } from './worktree-notice.js';
 import { useWorktreeDraft } from './worktree-draft.js';
-import { Tabs, type RunCommand } from './ui.js';
-import { CloseIcon, TrashIcon } from './icons.js';
+import { type RunCommand } from './ui.js';
 import { createTaskPageState, usePageField, type DrawerSection, type TaskPageState } from './page-state.js';
-import { TaskActivity } from './activity.js';
-import { transitionDestinations } from '../domain/transitions.js';
+import { nextStage, transitionDestinations } from '../domain/transitions.js';
 import type { AutoRunController } from './auto-run.js';
 import { DrawerAutoRunNotice } from './auto-run-view.js';
-import { autoModeView, AutoModeNotice, DrawerAutoModeToggle } from './auto-mode.js';
+import { autoModeView } from './auto-mode.js';
+import { DrawerHeader } from './drawer-header.js';
 import { DrawerConversations } from './drawer-conversations.js';
 import type { SessionTitles } from './conversation-label.js';
 import { ConversationLeaseRegistry, type ConversationLeaseEnvironment } from './conversation-leases.js';
@@ -62,8 +61,10 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
   const autoMode = autoModeView(task, state.workflow, attention.pending);
   const gitBacked = project !== undefined && isGitProject(project);
   const worktreeDecisionRequired = requiresWorktreeDecision(task, project);
-  const sections = ['Conversations', 'Info', ...(gitBacked ? ['Git'] : []), 'Notes'];
+  const sections: DrawerSection[] = gitBacked ? ['Conversations', 'Info', 'Git', 'Notes'] : ['Conversations', 'Info', 'Notes'];
   const destinations = transitionDestinations(state.workflow, task.columnId);
+  const next = nextStage(state.workflow, task.columnId);
+  const projectName = project?.name ?? task.projectId;
   const worktreeDraft = useWorktreeDraft({ api, task, project, basePath: state.settings?.worktreeBasePath, enabled: gitBacked && !task.worktree && (section === 'Conversations' || section === 'Git') });
   useEffect(() => { if (!gitBacked && section === 'Git') setSection('Info'); }, [gitBacked, section, setSection]);
   useEffect(() => () => { leases?.dispose(); }, [leases]);
@@ -92,18 +93,17 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
 
   const body = <aside ref={aside} className="kb-drawer" aria-label="Task details" aria-labelledby={id + '-title'} style={{ width }} data-entering={entering ? 'true' : undefined} data-closing={closing ? 'true' : undefined}>
     <div className="kb-drawer-resize" role="separator" aria-orientation="vertical" aria-label="Resize task drawer" aria-valuenow={Math.round(width)} aria-valuemin={360} aria-valuemax={Math.round(Math.max(360, (typeof window === 'undefined' ? 1200 : window.innerWidth) * 0.9))} tabIndex={0} onPointerDown={startResize} onDoubleClick={() => persistWidth(clampWidth(DRAWER_DEFAULT_WIDTH))} onKeyDown={resizeKey} />
-    <header className="kb-drawer-header"><div><h2 id={id + '-title'}>{task.title}</h2><p className="kb-hint">{project?.name ?? task.projectId}</p><TaskActivity attention={attention} /></div><div className="kb-drawer-header-actions">
-      {onToggleAutoMode && <DrawerAutoModeToggle view={autoMode} pending={autoModePending} onToggle={enabled => onToggleAutoMode(task.id, enabled)} />}
-      <button type="button" className="kb-button kb-icon-button kb-danger" aria-label="Delete task" title="Delete task" disabled={blocked} onClick={() => onDanger(task, 'task.delete')}><TrashIcon size={16} /></button>
-      <button ref={close} type="button" className="kb-button kb-icon-button" aria-label="Close task details" title="Close task details" onClick={onClose}><CloseIcon size={16} /></button>
-    </div></header>
+    <DrawerHeader
+      title={{ id: id + '-title', title: task.title, projectName }}
+      sectionNav={{ id, sections, selected: section, onSelect: value => setSection(value), activity: attention }}
+      stage={{ id, destinations, currentColumnId: task.columnId, next, movingTo, blocked, onMove: column => { void moveTo(column); } }}
+      actions={{ ...(onToggleAutoMode ? { autoMode, onToggleAutoMode: (enabled: boolean) => onToggleAutoMode(task.id, enabled) } : {}), autoModePending, blocked, onDelete: () => onDanger(task, 'task.delete'), onClose, closeRef: close }}
+    />
     {(task.operation || task.pendingTransition) && <div className="kb-status-stack">
       <OperationStatus task={task} run={run} sessionTitles={sessionTitles} {...(onForce ? { onForce } : {})} />
       {task.pendingTransition && <PendingTransitionStatus task={task} run={run} columnName={state.workflow.columns.find(column => column.id === task.pendingTransition?.columnId)?.name ?? task.pendingTransition?.columnId ?? ''} />}
     </div>}
-    <div className="kb-drawer-toolbar"><Tabs label="Task sections" values={sections} selected={section} onSelect={value => setSection(value as DrawerSection)} id={id} /><label className="kb-stage-compact"><span className="kb-sr">Move task to</span><select className="kb-input kb-stage-select" aria-label="Move task to" aria-describedby={id + '-stage-hint'} value={movingTo ?? task.columnId} disabled={blocked || movingTo !== null} onChange={event => { const column = state.workflow.columns.find(value => value.id === event.target.value); if (column && column.id !== task.columnId) void moveTo(column); }}>{destinations.map(({ column, access }) => <option key={column.id} value={column.id} className={access === 'restricted' ? 'kb-stage-option-restricted' : undefined} aria-label={access === 'restricted' ? column.name + ', requires confirmation' : undefined}>{column.name}</option>)}</select></label><span className="kb-sr" id={id + '-stage-hint'}>Stages that this workflow does not permit require confirmation before moving.</span></div>
     {autoRun && <DrawerAutoRunNotice task={task} controller={autoRun} columns={state.workflow.columns} sessionTitles={sessionTitles} />}
-    {onToggleAutoMode && (!task.pendingTransition || task.pendingTransition.origin !== 'auto') && <AutoModeNotice view={autoMode} />}
     <section className={'kb-drawer-panel ' + (section === 'Conversations' ? 'kb-chat-panel' : '')} role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>
       {section === 'Conversations' && <>{!gitBacked && task.worktree && <p className="kb-hint" role="note" aria-label="Plain checkout">This checkout is no longer Git-managed. Git actions are unavailable and the directory is kept when the task is deleted.</p>}{gitBacked && !task.worktree && !task.worktreeDismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} />}<DrawerConversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} worktreeDecisionRequired={worktreeDecisionRequired} projectUnavailable={project === undefined} conversationAttention={conversationAttention} /></>}
       {section === 'Info' && <InfoPanel task={task} state={state} run={run} viewState={preferences} />}

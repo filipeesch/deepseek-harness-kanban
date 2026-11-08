@@ -15,6 +15,7 @@ interface Appearance {
   chip: string;
   chipContrast: number;
   drawerContrast: number;
+  dotContrast: number;
   pendingContrast: number;
   dangerContrast: number;
 }
@@ -75,7 +76,8 @@ function appearance(page: Page): Promise<Appearance> {
     const card = document.querySelector<HTMLElement>('.kb-card[data-working=true]');
     const chip = document.querySelector<HTMLElement>('.kb-background');
     const drawer = document.querySelector<HTMLElement>('.kb-drawer');
-    const drawerDetail = drawer?.querySelector<HTMLElement>('.kb-task-background') ?? null;
+    const drawerDetail = drawer?.querySelector<HTMLElement>('.kb-drawer-project') ?? null;
+    const dot = drawer?.querySelector<HTMLElement>('.kb-activity-dot') ?? null;
     const workingColor = working === null ? '' : getComputedStyle(working).color;
     const chipColor = chip === null ? '' : getComputedStyle(chip).color;
     const chipOpacity = chip === null ? 1 : Number(getComputedStyle(chip).opacity);
@@ -83,6 +85,7 @@ function appearance(page: Page): Promise<Appearance> {
     const drawerBackground = effectiveBackground(drawer?.querySelector('.kb-drawer-header') ?? drawer);
     const drawerColor = drawerDetail === null ? '' : getComputedStyle(drawerDetail).color;
     const drawerOpacity = drawerDetail === null ? 1 : Number(getComputedStyle(drawerDetail).opacity);
+    const dotColor = dot === null ? '' : getComputedStyle(dot).backgroundColor;
     return {
       theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light',
       token: probe('--dsw-alias-label-deep-diving'),
@@ -93,6 +96,7 @@ function appearance(page: Page): Promise<Appearance> {
       chip: chipColor,
       chipContrast: chipColor === '' ? 0 : contrast(composite(chipColor, background, chipOpacity), background),
       drawerContrast: drawerColor === '' ? 0 : contrast(composite(drawerColor, drawerBackground, drawerOpacity), drawerBackground),
+      dotContrast: dotColor === '' ? 0 : contrast(dotColor, drawerBackground),
       pendingContrast: statusContrast('.kb-card-status-line.is-pending'),
       dangerContrast: statusContrast('.kb-card-status-line.is-danger'),
     };
@@ -127,20 +131,22 @@ test('working indicator uses the host token and stays legible in both appearance
   await page.screenshot({ path: path.join(OUT, 'appearance-dark.png') });
 });
 
-test('drawer header and background detail keep the host appearance across sections', async ({ page }) => {
+test('drawer header and project chip keep the host appearance across sections', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'light' });
   await page.goto(HARNESS + '?scenario=appearance');
   await page.getByRole('button', { name: 'Open task Long column task 2', exact: true }).click();
   const drawer = page.locator('.kb-drawer');
-  await expect(drawer.locator('.kb-drawer-header .kb-working')).toBeVisible();
-  await expect(drawer.locator('.kb-drawer-header')).toContainText('Background: Wake later');
+  const conversations = drawer.getByRole('tab', { name: /^Conversations/ });
+  await expect(conversations.locator('.kb-activity-dot')).toBeVisible();
+  await expect(conversations).toHaveAttribute('aria-label', 'Conversations, Agent running. Background activity: Wake later');
+  await expect(drawer.locator('.kb-drawer-header .kb-working')).toHaveCount(0);
   await expect(drawer.getByRole('tab', { name: /Agent 1/ }).locator('.kb-attention-dots .kb-dot')).toHaveCount(0);
   const light = await appearance(page);
   expect(light.drawerContrast, 'the drawer detail is legible in light').toBeGreaterThanOrEqual(4.5);
+  expect(light.dotContrast, 'the activity dot is distinguishable in light').toBeGreaterThanOrEqual(3);
   await page.screenshot({ path: path.join(OUT, 'appearance-drawer-light.png') });
   await drawer.getByRole('tab', { name: 'Info' }).click();
-  await expect(drawer.locator('.kb-drawer-header .kb-working')).toBeVisible();
-  await expect(drawer.locator('.kb-drawer-header')).toContainText('Background: Wake later');
+  await expect(drawer.getByRole('tab', { name: /^Conversations/ }).locator('.kb-activity-dot')).toBeVisible();
 
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('');
@@ -148,6 +154,7 @@ test('drawer header and background detail keep the host appearance across sectio
   expect(dark.chip).not.toBe('');
   expect(dark.chipContrast, 'the background chip is legible').toBeGreaterThanOrEqual(4.5);
   expect(dark.drawerContrast, 'the drawer detail is legible in dark').toBeGreaterThanOrEqual(4.5);
+  expect(dark.dotContrast, 'the activity dot is distinguishable in dark').toBeGreaterThanOrEqual(3);
   await page.screenshot({ path: path.join(OUT, 'appearance-drawer-dark.png') });
   await expect(page.locator('[data-task-id="long-1"]')).toContainText('1 job');
 });

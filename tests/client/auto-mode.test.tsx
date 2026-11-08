@@ -2,7 +2,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { autoModeView, CardAutoModeControl, DrawerAutoModeToggle, AutoModeNotice } from '../../src/client/auto-mode.js';
+import { autoModeView, AutoModeControl } from '../../src/client/auto-mode.js';
 import { PendingTransitionStatus } from '../../src/client/git.js';
 import type { Column, Task, Workflow } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
@@ -33,7 +33,7 @@ describe('autoModeView', () => {
     expect(view.enabled).toBe(false);
     expect(view.toggleLabel).toBe('Turn on auto mode');
     expect(view.status).toBeUndefined();
-    expect(view.notice).toBeUndefined();
+    expect(view.stateLabel).toBeUndefined();
   });
 
   it('derives the armed state with the cascade destination', () => {
@@ -41,7 +41,8 @@ describe('autoModeView', () => {
     expect(view.state).toBe('armed');
     expect(view.destinationName).toBe('Review');
     expect(view.status).toBeUndefined();
-    expect(view.notice).toBe('Auto mode is on: the next completed turn moves to Review.');
+    expect(view.stateLabel).toBeUndefined();
+    expect(view.title).toBe('Auto mode is on: the next completed turn moves to Review.');
   });
 
   it('derives the instruction state for an unresolved current entry', () => {
@@ -54,7 +55,7 @@ describe('autoModeView', () => {
     const view = autoModeView(task({ autoMode: { enabled: true } }), workflow, pendingUserWork(['decision-question', 'queued-prompt'], 2));
     expect(view.state).toBe('held');
     expect(view.status).toBeUndefined();
-    expect(view.notice).toBeUndefined();
+    expect(view.stateLabel).toBeUndefined();
     expect(view.waitLabel).toBe('Auto mode is waiting for you: an unanswered question, 2 queued messages.');
     expect(view.title).toContain('The next completed turn advances once nothing of yours is pending.');
   });
@@ -76,7 +77,8 @@ describe('autoModeView', () => {
     const view = autoModeView(task({ columnId: 'done', autoMode: { enabled: true } }), workflow);
     expect(view.state).toBe('dead-end');
     expect(view.status).toEqual({ tone: 'pending', label: 'Auto mode: no next stage' });
-    expect(view.notice).toBe('Auto mode is on. No next stage is configured.');
+    expect(view.stateLabel).toBe('Auto mode: no next stage');
+    expect(view.title).toBe('Auto mode is on. No next stage is configured.');
   });
 
   it('derives an admitted automatic advance', () => {
@@ -131,7 +133,7 @@ describe('auto-mode controls', () => {
   it('renders the card chip as a pressed toggle without activating the card', () => {
     const onToggle = vi.fn();
     const view = autoModeView(task({ autoMode: { enabled: true } }), workflow);
-    render(<CardAutoModeControl view={view} onToggle={onToggle} />);
+    render(<AutoModeControl view={view} onToggle={onToggle} />);
     const chip = screen.getByRole('button', { name: 'Turn off auto mode' });
     expect(chip.getAttribute('aria-pressed')).toBe('true');
     expect(chip.getAttribute('data-auto-state')).toBe('armed');
@@ -140,58 +142,63 @@ describe('auto-mode controls', () => {
   });
 
   it('disables the card chip while the command is in flight', () => {
-    render(<CardAutoModeControl view={autoModeView(task(), workflow)} pending onToggle={() => {}} />);
+    render(<AutoModeControl view={autoModeView(task(), workflow)} pending onToggle={() => {}} />);
     expect((screen.getByRole('button', { name: 'Turn on auto mode' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('marks the advancing chip visually and keeps the armed chip distinct', () => {
     const advancing = task({ autoMode: { enabled: true }, pendingTransition: { id: 'p', fromColumnId: 'backlog', columnId: 'plan', mode: 'move', status: 'waiting', origin: 'auto' } });
-    const first = render(<CardAutoModeControl view={autoModeView(advancing, workflow)} onToggle={() => {}} />);
-    const chip = screen.getByRole('button', { name: 'Turn off auto mode' });
+    const first = render(<AutoModeControl variant="header" view={autoModeView(advancing, workflow)} onToggle={() => {}} />);
+    const chip = screen.getByRole('button', { name: 'Advancing to Plan… Turn off auto mode' });
     expect(chip.className).toContain('is-advancing');
     expect(chip.getAttribute('data-auto-state')).toBe('advancing');
     first.unmount();
 
-    render(<CardAutoModeControl view={autoModeView(task({ autoMode: { enabled: true } }), workflow)} onToggle={() => {}} />);
+    render(<AutoModeControl variant="header" view={autoModeView(task({ autoMode: { enabled: true } }), workflow)} onToggle={() => {}} />);
     expect(screen.getByRole('button', { name: 'Turn off auto mode' }).className).not.toContain('is-advancing');
   });
 
-  it('renders the drawer toggle with its state label', () => {
-    render(<DrawerAutoModeToggle view={autoModeView(task({ autoMode: { enabled: true } }), workflow)} onToggle={() => {}} />);
-    const toggle = screen.getByRole('button', { name: 'Auto mode: on' });
-    expect(toggle.textContent).toContain('Auto mode: on');
+  it('renders the header chip with the shared label and the larger variant class', () => {
+    render(<AutoModeControl variant="header" view={autoModeView(task({ autoMode: { enabled: true } }), workflow)} onToggle={() => {}} />);
+    const toggle = screen.getByRole('button', { name: 'Turn off auto mode' });
+    expect(toggle.textContent).toBe('Auto');
+    expect(toggle.className).toContain('kb-auto-chip-header');
     expect(toggle.getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('renders no drawer notice when auto mode is off', () => {
-    const { container } = render(<AutoModeNotice view={autoModeView(task(), workflow)} />);
-    expect(container.querySelector('.kb-drawer-automode')).toBeNull();
-  });
+  it('carries the pause reason and the advance failure in the header control name and tooltip', () => {
+    const paused = autoModeView(task({ autoMode: { enabled: true, pause: { reason: 'turn-error', at: now } } }), workflow);
+    const first = render(<AutoModeControl variant="header" view={paused} onToggle={() => {}} />);
+    const toggle = screen.getByRole('button', { name: 'Auto mode paused: the turn failed. Turn off auto mode' });
+    expect(toggle.getAttribute('title')).toBe('Auto mode paused: the turn failed');
+    first.unmount();
 
-  it('renders an alert notice for a failed automatic advance', () => {
-    const view = autoModeView(task({
+    const failed = autoModeView(task({
       autoMode: { enabled: true },
       pendingTransition: { id: 'p', fromColumnId: 'backlog', columnId: 'plan', mode: 'move', status: 'failed', origin: 'auto', error: { code: 'SEND_FAILED', message: 'The instruction could not be sent.' } },
     }), workflow);
-    render(<AutoModeNotice view={view} />);
-    expect(screen.getByRole('alert').textContent).toContain('Automatic advance failed');
+    render(<AutoModeControl variant="header" view={failed} onToggle={() => {}} />);
+    const failedToggle = screen.getByRole('button', { name: 'Automatic advance failed: The instruction could not be sent. Turn off auto mode' });
+    expect(failedToggle.getAttribute('data-auto-state')).toBe('failed');
+    expect(failedToggle.getAttribute('title')).toContain('Automatic advance failed');
   });
 
   it('presents the held state on the card chip and in its accessible name', () => {
     const view = autoModeView(task({ autoMode: { enabled: true } }), workflow, pendingUserWork(['native-question']));
-    render(<CardAutoModeControl view={view} onToggle={() => {}} />);
+    render(<AutoModeControl view={view} onToggle={() => {}} />);
     const chip = screen.getByRole('button', { name: 'Auto mode is waiting for you: an unanswered agent question. Turn off auto mode' });
     expect(chip.getAttribute('data-auto-state')).toBe('held');
     expect(chip.className).toContain('is-held');
     expect(chip.getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('mirrors the held state in the drawer control without adding a notice', () => {
+  it('mirrors the held state in the header control without adding a notice', () => {
     const view = autoModeView(task({ autoMode: { enabled: true } }), workflow, pendingUserWork(['queued-prompt'], 1));
-    render(<><DrawerAutoModeToggle view={view} onToggle={() => {}} /><AutoModeNotice view={view} /></>);
-    const toggle = screen.getByRole('button', { name: 'Auto mode is waiting for you: 1 queued message. Auto mode: on' });
+    render(<AutoModeControl variant="header" view={view} onToggle={() => {}} />);
+    const toggle = screen.getByRole('button', { name: 'Auto mode is waiting for you: 1 queued message. Turn off auto mode' });
     expect(toggle.getAttribute('data-auto-state')).toBe('held');
     expect(toggle.className).toContain('is-held');
+    expect(document.querySelector('.kb-drawer-automode')).toBeNull();
   });
 
   it('presents an automatic advance failure with only the automatic retry action', () => {

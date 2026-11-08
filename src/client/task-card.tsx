@@ -4,7 +4,7 @@ import { backgroundAccessibleName, backgroundDetails, backgroundIndicatorText, W
 import { AttentionDots } from './attention-dots.js';
 import { autoRunEntryForColumn, RUN_FAILURE_FALLBACK, type AutoRunController, type AutoRunInput } from './auto-run.js';
 import { CardInstructionAction, useAutoRunEntry } from './auto-run-view.js';
-import { CardAutoModeControl, type AutoModeStatus, type AutoModeView } from './auto-mode.js';
+import { AutoModeControl, type AutoModeStatus, type AutoModeView } from './auto-mode.js';
 import { AlertIcon, ClockIcon } from './icons.js';
 
 export interface TaskCardProps {
@@ -66,7 +66,7 @@ function CardContext({ taskId, title, projectName, attention, selectionMode, sel
   return <div className="kb-card-context" onClick={onActivate}>
     {selectionMode && <input type="checkbox" className="kb-card-select" aria-label={'Select ' + title} checked={selected} onClick={event => event.stopPropagation()} onChange={() => onToggleSelect(taskId)} />}
     <span className="kb-card-project" title={projectName}>{projectName}</span>
-    {!selectionMode && <CardAutoModeControl view={autoMode} pending={autoModePending === true} onToggle={enabled => onToggleAutoMode(taskId, enabled)} />}
+    {!selectionMode && <AutoModeControl view={autoMode} pending={autoModePending === true} onToggle={enabled => onToggleAutoMode(taskId, enabled)} />}
     <AttentionDots value={attention} label={'Attention for ' + title} />
   </div>;
 }
