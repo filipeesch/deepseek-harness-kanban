@@ -14,13 +14,13 @@ import type { GitProject } from '../shared/types.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 import { createNativeSessionFacts, inspectedOpenTurn, nativePending } from './native-facts.js';
 import type { ConversationFactsReader } from './conversation-facts.js';
+import { createSessionHistory, type SessionHistory, type SessionHistoryReader } from './session-history.js';
 import { createQueuedPromptReader, PluginPromptLedger } from './queued-prompts.js';
 import { executeCommand } from './host-command.js';
 import { createHostProjectProbe } from './project-probe.js';
 
 const EXECUTION_TIMEOUT_MS = 60_000;
 const READ_TIMEOUT_MS = 30_000;
-type Inspection = Awaited<ReturnType<Context['sessionController']['inspect']>>;
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -54,9 +54,9 @@ async function directoryPath(path: string): Promise<string> {
   invariant((await stat(result)).isDirectory(), 'INVALID_DIRECTORY', 'The selected path is not an existing directory.');
   return result;
 }
-function inspectedDirectory(inspection: Inspection): string | undefined {
-  let current = inspection.meta.cwd;
-  for (const event of inspection.events) {
+function inspectedDirectory(history: SessionHistory): string | undefined {
+  let current = history.header.cwd;
+  for (const event of history.events) {
     if (event.type === 'working-directory/change') current = event.data.cwd;
   }
   return current;
@@ -80,15 +80,15 @@ function commonPolicy(policies: SandboxExecutionPolicy[]): SandboxExecutionPolic
   return selected;
 }
 
-/** Optional Host integrations the native adapters read; absent keeps the inspect fallback. */
+/** Optional Host integrations the native adapters read; absent creates the public history reader. */
 export interface NativePortsOptions {
   conversationFacts?: ConversationFactsReader;
+  history?: SessionHistoryReader;
 }
 
 /** Native adapters own no session history, permission grants, or replacement runtime. */
 export function createNativePorts(ctx: Context, options: NativePortsOptions = {}): { sessions: SessionPort; executor: GitExecutor; workspaces: WorkspacePort; probe: ProjectProbe } {
-  const inspect = (id: string, signal = AbortSignal.timeout(READ_TIMEOUT_MS)) =>
-    ctx.sessionController.inspect(SessionId(id), signal);
+  const history = options.history ?? createSessionHistory(ctx);
   const projections = (id: string, signal = AbortSignal.timeout(READ_TIMEOUT_MS)) =>
     ctx.sessionController.projections({ sessionId: SessionId(id) }, signal);
   const activity = (id: string) => ctx.waterfall('workspace/session-activity',
@@ -118,8 +118,8 @@ export function createNativePorts(ctx: Context, options: NativePortsOptions = {}
       let session = ctx.sessions.get(SessionId(id));
       if (!session) {
         // A detached native Session is a policy snapshot only: never attached, resumed, or driven.
-        const snapshot = await inspect(id, signal);
-        session = Session.create(SessionId(id), snapshot.events, snapshot.meta, snapshot.inheritedEventCount);
+        const snapshot = await history.read(id, { signal });
+        session = Session.create(SessionId(id), snapshot.events, snapshot.header, snapshot.inheritedEventCount);
       }
       policies.push(validatePolicy(policyService.resolve({ session })));
     }
@@ -148,7 +148,7 @@ export function createNativePorts(ctx: Context, options: NativePortsOptions = {}
     const session = ctx.sessions.get(SessionId(id));
     return session === undefined ? undefined : options.conversationFacts!.read(session);
   };
-  const sessionFacts = createNativeSessionFacts({ activity, projections, inspect, queuedPrompts, ...(liveFacts === undefined ? {} : { liveFacts }) });
+  const sessionFacts = createNativeSessionFacts({ activity, projections, inspect: id => history.read(id), queuedPrompts, ...(liveFacts === undefined ? {} : { liveFacts }) });
   const sessions: SessionPort = {
     async create(projectPath, workspaceId) {
       const cwd = await directoryPath(projectPath);
@@ -171,7 +171,7 @@ export function createNativePorts(ctx: Context, options: NativePortsOptions = {}
         return projection.values.workingDirectory;
       }
       // Header-only list cwd and migration cache hints may be stale. Read the exact native observation.
-      const cwd = inspectedDirectory(await inspect(id, signal));
+      const cwd = inspectedDirectory(await history.read(id, { signal }));
       invariant(cwd, 'SESSION_CONTEXT_UNAVAILABLE', 'This conversation has no recorded effective project directory.');
       absolute(cwd);
       return cwd;
@@ -215,7 +215,7 @@ export function createNativePorts(ctx: Context, options: NativePortsOptions = {}
       if (record(boundary) && boundary.openTurnStartSeq != null) return false;
       const inbox: unknown = projection.values.inbox;
       if (record(inbox) && Array.isArray(inbox['next-turn']) && inbox['next-turn'].length > 0) return false;
-      const snapshot = await inspect(id);
+      const snapshot = await history.read(id);
       return !inspectedOpenTurn(snapshot) && !nativePending(projection, snapshot);
     },
     async send(id, text, requestId = randomUUID()) {

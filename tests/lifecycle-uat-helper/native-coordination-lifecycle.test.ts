@@ -45,7 +45,8 @@ function fixture(){
   const outside={gate,assertRetained:vi.fn(async()=>{}),settleOwnedWhileOff:vi.fn(async(permit:{jobIds:string[];ownerIds:string[]})=>{expect(enabled).toBe(false);expect(permit.jobIds).toEqual([spec.id]);expect(permit.ownerIds).toEqual([owner]);expect(gate.status().admissionsPaused).toBe(true);calls.push('work-enter');signals.workEntered.resolve();await hooks.workDelay;if(hooks.workReject)throw new Error(secret);if(!hooks.workLies)finish(hooks.terminal??'completed');return{status:'completed',rawError:secret};})};
   const fs={resolve:vi.fn(async(value:string)=>value),processPath:vi.fn((value:string)=>value),contains:vi.fn((parent:string,child:string)=>child.startsWith(parent+'/')),stat:vi.fn(async()=>({type:'directory'}))};
   const sessions={inspect:vi.fn(async(id:string)=>({meta:{cwd:base},events:[{type:'job/registered',data:{jobId:spec.id,owner:id,kind:spec.kind,label:spec.label,toolCall:{callId:spec.rootCallId,rootCallId:spec.rootCallId}}}]}))};
-  Object.assign(services,{pluginManager:manager,jobs,fs,sessionController:sessions});
+  const sessionQuery={observeSession:vi.fn(async(id:string)=>{const value=await sessions.inspect(id);return{header:value.meta,events:value.events,inheritedEventCount:0,source:'live',cursor:0,retain(){return this;},[Symbol.dispose](){}};})};
+  Object.assign(services,{pluginManager:manager,jobs,fs,sessionController:sessions,sessionQuery});
   const make=()=>installNativeLifecycleTransaction.call(ctx,config,outside);
   return{config,make,ctx,services,manager,jobs,records,finish,signals,hooks,calls,board,invokers,gate,outside,fs,sessions,get enabled(){return enabled;},set enabled(value:boolean){enabled=value;}};
 }

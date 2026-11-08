@@ -152,10 +152,10 @@ async function prepareFixture(options, workspace, nonce, io = { mkdir, lstat, re
   return paths;
 }
 const nativeAction = async function(payload) {
-  const ctx=this.root??this,action=payload.action,controller=ctx.get('sessionController');
+  const ctx=this.root??this,action=payload.action,controller=ctx.get('sessionController'),query=ctx.get('sessionQuery');
   if(action.kind==='preflight') {
     const presets=ctx.get('permissionPresets'),working=ctx.get('workingDirectory'),workspace=ctx.get('workspaceRegistry');
-    if(!presets||!controller||typeof controller.inspect!=='function'||typeof controller.projections!=='function'||typeof controller.resolveAgent!=='function'||!working||typeof working.get!=='function'||typeof working.set!=='function'||!workspace||typeof workspace.archiveSession!=='function'||typeof workspace.unarchiveSession!=='function'||!ctx.get('sandboxPolicy')||typeof ctx.waterfall!=='function')throw new Error();
+    if(!presets||!controller||!query||typeof query.observeSession!=='function'||typeof controller.projections!=='function'||typeof controller.resolveAgent!=='function'||!working||typeof working.get!=='function'||typeof working.set!=='function'||!workspace||typeof workspace.archiveSession!=='function'||typeof workspace.unarchiveSession!=='function'||!ctx.get('sandboxPolicy')||typeof ctx.waterfall!=='function')throw new Error();
     for(const mode of ['read-only','workspace-write','danger-full-access'])if(!presets.names.includes(mode)||presets.resolve(mode).sandbox!==mode)throw new Error();
     return {defaultPreset:presets.catalog().defaultPreset,policyModes:['read-only','workspace-write','danger-full-access'],nativeConfinementAdvertised:typeof ctx.get('sandbox')?.confine==='function',exactProjections:true};
   }
@@ -168,9 +168,12 @@ const nativeAction = async function(payload) {
   const allowedOrigins=new Set(payload.allowedOrigins),allowedCwds=new Set(payload.allowedCwds),fullOrigins=new Set(payload.allowedFullOrigins??[]);
   const inspect=async id=>{
     if(!/^session-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id)||!origins.has(id)||!allowedOrigins.has(origins.get(id)))throw new Error();
-    const value=await controller.inspect(id,AbortSignal.timeout(10000));
-    if(value.meta.cwd!==origins.get(id)||!Array.isArray(value.events))throw new Error();
-    return value;
+    const observation=await query.observeSession(id,{signal:AbortSignal.timeout(10000)});
+    try{
+      const value={header:observation.header,events:observation.events,inheritedEventCount:observation.inheritedEventCount};
+      if(value.header.cwd!==origins.get(id)||!Array.isArray(value.events))throw new Error();
+      return value;
+    }finally{observation[Symbol.dispose]();}
   };
   // Exact committed observations must never activate an Agent or let ensure() repair a bad cwd.
   const projection=async id=>{
@@ -208,7 +211,7 @@ const nativeAction = async function(payload) {
     for(const id of action.ids){
       const value=await inspect(id),events=value.events,expected=payload.prefixes?.[id],ends=events.filter(e=>e.type==='turn/end'),kind=ends.at(-1)?.data.reason.kind;
       if(expected&&(!Number.isSafeInteger(expected.count)||expected.count<0||!/^[0-9a-f]{16}$/.test(expected.fingerprint)))throw new Error();
-      result[id]={origin:value.meta.cwd,cwd:await observed(id),eventCount:events.length,prefixCount:expected?.count??events.length,prefixFingerprint:expected?.fingerprint??fingerprint(events),prefixMatches:!expected||events.length>=expected.count&&fingerprint(events.slice(0,expected.count))===expected.fingerprint,users:events.filter(e=>e.type==='user/message'&&e.data.source?.kind==='user').length,assistants:events.filter(e=>e.type==='assistant/message').length,turnStarts:events.filter(e=>e.type==='turn/start').length,turnEnds:ends.length,tools:events.filter(e=>['tool/call','tool/result','tool/ptc-dispatch-start','tool/ptc-dispatch'].includes(e.type)).length,lastReason:['completed','blocked','error','aborted','max-iterations'].includes(kind)?kind:null,archived:ctx.get('workspaceRegistry').archivedSessionIds.includes(id),mode:null,idle:await idle(id,value)};
+      result[id]={origin:value.header.cwd,cwd:await observed(id),eventCount:events.length,prefixCount:expected?.count??events.length,prefixFingerprint:expected?.fingerprint??fingerprint(events),prefixMatches:!expected||events.length>=expected.count&&fingerprint(events.slice(0,expected.count))===expected.fingerprint,users:events.filter(e=>e.type==='user/message'&&e.data.source?.kind==='user').length,assistants:events.filter(e=>e.type==='assistant/message').length,turnStarts:events.filter(e=>e.type==='turn/start').length,turnEnds:ends.length,tools:events.filter(e=>['tool/call','tool/result','tool/ptc-dispatch-start','tool/ptc-dispatch'].includes(e.type)).length,lastReason:['completed','blocked','error','aborted','max-iterations'].includes(kind)?kind:null,archived:ctx.get('workspaceRegistry').archivedSessionIds.includes(id),mode:null,idle:await idle(id,value)};
       const live=ctx.get('sessions')?.get(id);if(live)result[id].mode=ctx.get('sandboxPolicy').resolve({session:live}).mode;
     }
     return result;

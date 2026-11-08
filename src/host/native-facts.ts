@@ -7,16 +7,15 @@ export interface ActivityEntry {
   readonly kind: string;
   readonly items?: ReadonlyArray<{ readonly id?: string; readonly label?: string }>;
 }
-/** The native inspection facts this module depends on, kept structural for direct tests. */
-export interface InspectionLike {
-  readonly meta: { readonly cwd?: string };
+/** The event-log facts these folds depend on. */
+export interface SessionEventsLike {
   readonly events: ReadonlyArray<{ readonly type: string; readonly seq: number; readonly data: unknown }>;
 }
 export interface ProjectionLike { readonly values?: unknown }
 export interface NativeFactsDeps {
   activity(sessionId: string): Promise<readonly ActivityEntry[]>;
   projections(sessionId: string): Promise<ProjectionLike | null | undefined>;
-  inspect(sessionId: string): Promise<InspectionLike>;
+  inspect(sessionId: string): Promise<SessionEventsLike>;
   /** Incremental facts for a live Session; absent for a not-live Session. */
   liveFacts?(sessionId: string): ConversationFactsFold | undefined;
   /** User messages queued for a later turn, read from the same projection hydration; absent keeps the read to the other facts. */
@@ -69,7 +68,7 @@ function pendingUserQuestion(projection: ProjectionLike | null | undefined): boo
 
 /** A conversation awaits a reply while a native question or approval is still open. */
 /** A pending native approval remains open until its decision or the turn boundary that clears it. */
-export function inspectedApprovals(inspection: InspectionLike): boolean {
+export function inspectedApprovals(inspection: SessionEventsLike): boolean {
   const approvals = new Set<string>();
   for (const event of inspection.events) {
     if (event.type === 'turn/end') approvals.clear();
@@ -80,12 +79,12 @@ export function inspectedApprovals(inspection: InspectionLike): boolean {
   return approvals.size > 0;
 }
 
-export function nativePending(projection: ProjectionLike | null | undefined, inspection: InspectionLike): boolean {
+export function nativePending(projection: ProjectionLike | null | undefined, inspection: SessionEventsLike): boolean {
   return pendingUserQuestion(projection) || inspectedApprovals(inspection);
 }
 
 /** A turn boundary is open until its matching `turn/end` is recorded. */
-export function inspectedOpenTurn(inspection: InspectionLike): boolean {
+export function inspectedOpenTurn(inspection: SessionEventsLike): boolean {
   let open = false;
   for (const event of inspection.events) {
     if (event.type === 'turn/start') open = true;
@@ -95,7 +94,7 @@ export function inspectedOpenTurn(inspection: InspectionLike): boolean {
 }
 
 /** The last settled turn, identified by its durable event sequence so a read state can target it. */
-export function lastSettledTurn(inspection: InspectionLike): SettledTurn | null {
+export function lastSettledTurn(inspection: SessionEventsLike): SettledTurn | null {
   let settled: SettledTurn | null = null;
   for (const event of inspection.events) {
     if (event.type !== 'turn/end') continue;

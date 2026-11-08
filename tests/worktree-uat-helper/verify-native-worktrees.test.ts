@@ -18,10 +18,11 @@ function nativeFixture(){
   const paths=fixturePaths('/workspace',nonce),session={id},live={id,status:'idle',session,inbox:{nextTurn:[]}};
   const modes=new Map([[id,'workspace-write']]);const dirs=new Map([[id,paths.root]]);const events:Array<{type:string;data:unknown}>=[];
   const controller={inspect:vi.fn(async(_id:string)=>({meta:{cwd:paths.root},events})),projections:vi.fn(async()=>({kind:'sequenced',values:{workingDirectory:dirs.get(id),turnBoundary:{openTurnStartSeq:null},inbox:{'next-turn':[]},userQuestions:{active:[]}}})),resolveAgent:vi.fn(async()=>({agent:live})),cancel:vi.fn(async()=>{}),prompt:vi.fn(async()=>{})};
+  const sessionQuery={observeSession:vi.fn(async(sessionId:string)=>{const value=await controller.inspect(sessionId);return{header:value.meta,events:value.events,inheritedEventCount:0,source:'live',cursor:0,retain(){return this;},[Symbol.dispose](){}};})};
   const presets={names:['read-only','workspace-write','danger-full-access'],catalog:()=>({defaultPreset:'workspace-write'}),resolve:(name:string)=>({sandbox:name}),current:()=>modes.get(id),set:vi.fn((value:{id:string},mode:string)=>modes.set(value.id,mode))};
   const working={get:()=>dirs.get(id),set:vi.fn(async(_agent:unknown,cwd:string)=>{dirs.set(id,cwd);})};
   const workspace={archivedSessionIds:[] as string[],archiveSession:vi.fn(async(sid:string)=>{workspace.archivedSessionIds.push(sid);}),unarchiveSession:vi.fn(async(sid:string)=>{workspace.archivedSessionIds=workspace.archivedSessionIds.filter(item=>item!==sid);})};
-  const services:Record<string,unknown>={sessionController:controller,permissionPresets:presets,workingDirectory:working,workspaceRegistry:workspace,sandboxPolicy:{resolve:()=>({mode:modes.get(id)})},agents:{get:()=>live},sessions:{get:()=>session},sandbox:{confine:()=>{}}};
+  const services:Record<string,unknown>={sessionController:controller,sessionQuery,permissionPresets:presets,workingDirectory:working,workspaceRegistry:workspace,sandboxPolicy:{resolve:()=>({mode:modes.get(id)})},agents:{get:()=>live},sessions:{get:()=>session},sandbox:{confine:()=>{}}};
   const ctx={get:(key:string)=>services[key],waterfall:vi.fn(async()=>[])};
   const payload=(action:Record<string,unknown>)=>({...authorized(),action,origins:[{id,origin:paths.root}],allowedOrigins:[paths.root,paths.monoProject],allowedCwds:[paths.root,paths.rootNew,paths.monoProject],allowedFullOrigins:[paths.monoProject],modelRequests:0,prefixes:{}});
   return{paths,ctx,payload,controller,presets,working,workspace,events,modes,dirs,live};

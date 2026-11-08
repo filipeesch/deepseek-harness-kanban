@@ -9,12 +9,13 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { spawn } from 'node:child_process';
 import { createNativePorts } from '../../src/host/native.js';
+import type { SessionHistory } from '../../src/host/session-history.js';
 import type { GitProject, Project, BoardState } from '../../src/shared/types.js';
 import { registerTaskExecutionGuards } from '../../src/index.js';
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
 vi.mock('node:child_process', () => ({ spawn: spawnMock }));
-type Inspection = Awaited<ReturnType<Context['sessionController']['inspect']>>;
+type Inspection = SessionHistory;
 type Projection = Awaited<ReturnType<Context['sessionController']['projections']>>;
 const fixturesRoot = resolve('tests/native');
 let root: string;
@@ -42,19 +43,21 @@ function envelope(type: string, data: unknown, seq = 0): SessionEvent {
 }
 function fixture() {
   const id = SessionId('a');
-  const meta: Inspection['meta'] = { id, version: SESSION_FORMAT_VERSION, createdAt: 1, isSeeded: false, cwd: root };
+  const meta: Inspection['header'] = { id, version: SESSION_FORMAT_VERSION, createdAt: 1, isSeeded: false, cwd: root };
   const session = Session.create(id, [], meta);
   let cwd = root;
   const agent = { id, session, status: 'idle', inbox: { nextTurn: [], nextStep: [] } } as unknown as Agent;
   const live = new Map([[id as string, session]]);
-  const inspections = new Map<string, Inspection>([['a', { meta, events: [], inheritedEventCount: SessionLogOffset(0) }]]);
+  const inspections = new Map<string, Inspection>([['a', { header: meta, events: [], inheritedEventCount: SessionLogOffset(0) }]]);
   const projection = vi.fn<Context['sessionController']['projections']>().mockResolvedValue({ kind: 'sequenced', asOfSeq: -1, values: {} });
   const create = vi.fn<Context['sessionController']['create']>().mockResolvedValue({ sessionId: SessionId('new') });
-  const inspect = vi.fn<Context['sessionController']['inspect']>().mockImplementation(async (key) => {
-    const value = inspections.get(key);
-    if (!value) throw new Error('session missing');
-    return value;
-  });
+  const history = {
+    read: vi.fn(async (key: string) => {
+      const value = inspections.get(key);
+      if (!value) throw new Error('session missing');
+      return value;
+    }),
+  };
   const resolveAgent = vi.fn<Context['sessionController']['resolveAgent']>().mockResolvedValue({ agent });
   const prompt = vi.fn<Context['sessionController']['prompt']>().mockResolvedValue({ accepted: true });
   const list = vi.fn<Context['sessionController']['list']>().mockResolvedValue({ items: [] });
@@ -100,13 +103,13 @@ function fixture() {
   const confine = vi.fn<Context['sandbox']['confine']>().mockResolvedValue(wrapped);
   const services: Record<string, unknown> = { sandboxPolicy: { resolve: resolvePolicy }, sandbox: { confine } };
   const ctx = {
-    sessionController: { create, inspect, projections: projection, resolveAgent, prompt, list },
+    sessionController: { create, projections: projection, resolveAgent, prompt, list },
     sessions: { get: (key: string) => live.get(key), list: () => [...live.values()] },
     agents: { get: (key: string) => key === 'a' ? agent : undefined },
     workingDirectory: { get: getDirectory, set, ensure }, workspaceRegistry,
     waterfall, get: (key: string) => services[key],
   } as unknown as Context;
-  return { ...createNativePorts(ctx), ctx, agent, session, live, inspections, projection, create, inspect,
+  return { ...createNativePorts(ctx, { history }), ctx, agent, session, live, inspections, projection, create, history,
     resolveAgent, prompt, list, waterfall, set, getDirectory, ensure, archiveSession, workspaceByPath, makeWorkspace, createWorkspace, getWorkspace, listWorkspaces, resolveWorkspace, workspaceRegistry, resolvePolicy, policies, fallback, wrapped, confine, services };
 }
 
@@ -206,10 +209,14 @@ describe('native conversations', () => {
     const f = fixture(); const expected = join(root, 'ready-tree', 'api'); await mkdir(expected, { recursive: true }); await f.sessions.setDirectory('a', expected);
     const events = new Context(); const model = vi.fn();
     const dispose = registerTaskExecutionGuards(events, { bySession: (id: string) => id === 'a' ? { task: { sessionIds: ['a'] } } : undefined } as never, { assertExecutionContext: id => f.sessions.validateDirectory(id, expected) });
-    events.on('agent/request', async (_payload, next) => { const config = await next(); await f.ctx.workingDirectory.set(f.agent, root); return config; });
-    const config = { provider: 'test', model: 'test' } as Parameters<Context['llm']['prepareCall']>[0];
+    // Simulate a request-configuration middleware committing directory drift before the model stream.
+    await f.ctx.workingDirectory.set(f.agent, root);
+    const signal = new AbortController().signal;
+    const stream = await events.waterfall('llm/stream', { provider: 'test', model: 'test', messages: [], sessionId: SessionId('a'), signal }, async function* () {
+      model(); yield { type: 'text', text: 'ok' } as never;
+    });
     try {
-      await expect(events.waterfall('agent/request', { agent: f.agent, turn: 1, step: 1, signal: new AbortController().signal }, async () => config).then(value => model(value))).rejects.toMatchObject({ code: 'CONTEXT_MISMATCH' });
+      await expect((async () => { for await (const _chunk of stream) { /* consume */ } })()).rejects.toMatchObject({ code: 'CONTEXT_MISMATCH' });
       expect(model).not.toHaveBeenCalled(); expect(f.prompt).not.toHaveBeenCalled(); expect(f.ensure).not.toHaveBeenCalled();
     } finally { dispose(); }
   });
@@ -243,6 +250,7 @@ describe('native conversations', () => {
     expect(await f.sessions.isIdle('a')).toBe(false);
     f.inspections.set('a', { ...previous, events: [envelope('approval/asked', { id: 'approval' }), envelope('approval/decided', { id: 'approval' }, 1)] });
     expect(await f.sessions.isIdle('a')).toBe(true);
+    expect(f.history.read).toHaveBeenCalled();
   });
   it('does not mistake a non-waking cwd notice for activity, but blocks queued turns', async () => {
     const f = fixture();
@@ -321,7 +329,7 @@ describe('native conversations', () => {
       ? { kind: 'sequenced', asOfSeq: 0, values: { workingDirectory: changed } }
       : { kind: 'sequenced', asOfSeq: 0, values: {} });
     expect((await f.sessions.topology(root)).related).toEqual([{ sessionId: coldId, directory: changed }, { sessionId: 'a', directory: root }]);
-    expect(f.resolveAgent).not.toHaveBeenCalled(); expect(f.inspect).not.toHaveBeenCalled();
+    expect(f.resolveAgent).not.toHaveBeenCalled(); expect(f.history.read).not.toHaveBeenCalled();
   });
   it('narrows a shared-tree scan to the target path without reading unrelated cold sessions', async () => {
     const f = fixture(); const within = join(root, 'tree'); await mkdir(within); await mkdir(join(root, 'other'));
@@ -334,12 +342,12 @@ describe('native conversations', () => {
       ? { kind: 'sequenced', asOfSeq: 1, values: { workingDirectory: join(within, 'api') } }
       : { kind: 'sequenced', asOfSeq: 1, values: { workingDirectory: join(root, 'other') } });
     expect((await f.sessions.topology(within)).related).toEqual([{ sessionId: cold, directory: join(within, 'api') }]);
-    expect(f.inspect).not.toHaveBeenCalled();
+    expect(f.history.read).not.toHaveBeenCalled();
   });
   it('returns global lineage even when related directories are filtered', async () => {
     const f = fixture(); const child = SessionId('cold-child');
     f.list.mockResolvedValue({ items: [{ sessionId: child, agentAvailable: false, running: false, updatedAt: 1, blank: false, cwd: root, parentSessionId: SessionId('a'), origin: 'subagent' }] } as never);
-    f.inspections.set(String(child), { meta: { ...f.inspections.get('a')!.meta, id: child, cwd: root }, events: [], inheritedEventCount: SessionLogOffset(0) });
+    f.inspections.set(String(child), { header: { ...f.inspections.get('a')!.header, id: child, cwd: root }, events: [], inheritedEventCount: SessionLogOffset(0) });
     const scoped = await f.sessions.topology(root);
     expect(scoped.related.map(item => item.sessionId).sort()).toEqual(['a', String(child)].sort());
     expect(scoped.lineage).toEqual(expect.arrayContaining([
@@ -355,7 +363,7 @@ describe('native conversations', () => {
     const f = fixture(); const child = SessionId('live-child');
     const meta = { ...f.session.header, id: child, parentSession: SessionId('a'), origin: 'subagent' as const, delegationDepth: 1 };
     f.live.set(String(child), Session.create(child, [], meta));
-    f.inspections.set(String(child), { meta, events: [], inheritedEventCount: SessionLogOffset(0) });
+    f.inspections.set(String(child), { header: meta, events: [], inheritedEventCount: SessionLogOffset(0) });
     f.list.mockResolvedValue({ items: [{ sessionId: child, agentAvailable: true, running: false, updatedAt: 1, blank: false, cwd: root }] } as never);
     const topology = await f.sessions.topology(root);
     expect(topology.lineage).toContainEqual({ sessionId: String(child), parentSessionId: 'a', origin: 'subagent' });
@@ -365,25 +373,25 @@ describe('native conversations', () => {
     const f = fixture(); f.live.clear(); const expected = join(root, 'actual-tree', 'api');
     const snapshot = f.inspections.get('a')!; f.inspections.set('a', { ...snapshot, events: [envelope('working-directory/change', { cwd: expected })] });
     f.projection.mockRejectedValue(Object.assign(new Error('Session projection read failed'), { code: 'gateway/internal' }));
-    expect(await f.sessions.directory('a')).toBe(expected); expect(f.inspect).toHaveBeenCalled();
+    expect(await f.sessions.directory('a')).toBe(expected); expect(f.history.read).toHaveBeenCalled();
     expect(f.resolveAgent).not.toHaveBeenCalled(); expect(f.ensure).not.toHaveBeenCalled(); expect(f.prompt).not.toHaveBeenCalled();
   });
   it('keeps a cold shared peer in the protection catalog when only aggregate projections fail', async () => {
     const f = fixture(); const id = SessionId('cold'); const expected = join(root, 'shared-tree');
     f.list.mockResolvedValue({ items: [{ sessionId: id, agentAvailable: false, running: false, updatedAt: 1, blank: false, cwd: root }] });
-    f.inspections.set(id, { ...f.inspections.get('a')!, meta: { ...f.inspections.get('a')!.meta, id }, events: [envelope('working-directory/change', { cwd: expected })] });
+    f.inspections.set(id, { ...f.inspections.get('a')!, header: { ...f.inspections.get('a')!.header, id }, events: [envelope('working-directory/change', { cwd: expected })] });
     f.projection.mockRejectedValue(new Error('Session projections are unavailable'));
     expect((await f.sessions.topology(root)).related).toEqual([{ sessionId: id, directory: expected }, { sessionId: 'a', directory: root }]);
     expect(f.resolveAgent).not.toHaveBeenCalled(); expect(f.ensure).not.toHaveBeenCalled();
   });
   it('still fails closed if canonical peer history is unreadable after a projection error', async () => {
     const f = fixture(); f.live.clear(); f.list.mockResolvedValue({ items: [{ sessionId: SessionId('a'), agentAvailable: false, running: false, updatedAt: 1, blank: false, cwd: root }] });
-    f.projection.mockRejectedValue(new Error('Session projection read failed')); f.inspect.mockRejectedValue(new Error('Canonical observation unavailable'));
+    f.projection.mockRejectedValue(new Error('Session projection read failed')); f.history.read.mockRejectedValue(new Error('Canonical observation unavailable'));
     await expect(f.sessions.topology(root)).rejects.toThrow('Canonical observation unavailable'); expect(f.resolveAgent).not.toHaveBeenCalled();
   });
   it('propagates projection cancellation rather than starting another native read', async () => {
     const f = fixture(); f.live.clear(); const cancelled = Object.assign(new Error('Session projection read was cancelled'), { code: 'gateway/cancelled' });
-    f.projection.mockRejectedValue(cancelled); await expect(f.sessions.directory('a')).rejects.toBe(cancelled); expect(f.inspect).not.toHaveBeenCalled();
+    f.projection.mockRejectedValue(cancelled); await expect(f.sessions.directory('a')).rejects.toBe(cancelled); expect(f.history.read).not.toHaveBeenCalled();
   });
   it('ignores stale migration hints and reads the exact canonical inspection, propagating unreadable peers', async () => {
     const f = fixture(); f.live.clear();
@@ -435,6 +443,7 @@ describe('all-session policy preflight', () => {
     const cold = f.resolvePolicy.mock.calls[0]?.[0]?.session;
     expect(cold).toBeInstanceOf(Session); expect(cold?.header.cwd).toBe(root); expect(cold).not.toBe(f.session);
     expect(f.resolveAgent).not.toHaveBeenCalled(); expect(f.create).not.toHaveBeenCalled();
+    expect(f.history.read).toHaveBeenCalledWith('a', { signal: undefined });
   });
   it('uses the project root for agentless reads and full access for agentless worktree writes', async () => {
     const f = fixture();

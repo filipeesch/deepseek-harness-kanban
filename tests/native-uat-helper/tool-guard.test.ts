@@ -14,10 +14,11 @@ function fixture(realTools?:ToolRuntime){
     if(realTools)return realTools;
     return{guard:vi.fn((callback:ToolGuard)=>{callbacks.set(id,callback);const dispose=vi.fn(()=>{callbacks.delete(id);});removers.set(id,dispose);return dispose;})};
   })}}]));
-  const inspect=vi.fn(async(id:string)=>({meta:{id,cwd}}));
+  const inspect=vi.fn(async(id:string)=>({meta:{id,cwd},events:[]}));
+  const sessionQuery={observeSession:vi.fn(async(sessionId:string)=>{const value=await inspect(sessionId);return{header:value.meta,events:value.events,inheritedEventCount:0,source:'live',cursor:0,retain(){return this;},[Symbol.dispose](){}};})};
   const agents={get:(id:string)=>members.get(id)};
   const waterfall=vi.fn(async()=>[] as unknown[]);
-  const host={get:vi.fn((name:string)=>name==='agents'?agents:name==='sessionController'?{inspect}:undefined),waterfall};
+  const host={get:vi.fn((name:string)=>name==='agents'?agents:name==='sessionQuery'?sessionQuery:undefined),waterfall};
   return{host,members,callbacks,removers,inspect,waterfall};
 }
 function execution(id?:string){return{agent:id?{id}:undefined} as unknown as Parameters<ToolGuard>[0];}
@@ -36,7 +37,7 @@ describe('authorized fixture-only public tool execution guard',()=>{
     await guard.dispose();for(const release of f.removers.values())expect(release).toHaveBeenCalledOnce();
   });
   it('fails the public scope/ownership precondition instead of installing a broad fallback',async()=>{
-    const f=fixture();f.inspect.mockImplementation(async id=>({meta:{id,cwd:id===ids[1]?'/other-user-project':cwd}}));
+    const f=fixture();f.inspect.mockImplementation(async id=>({meta:{id,cwd:id===ids[1]?'/other-user-project':cwd},events:[]}));
     await expect(installFixtureToolGuard.call(f.host,authorization,ids,cwd)).rejects.toThrow('scope');expect(f.callbacks.size).toBe(0);
     const missing=fixture();missing.members.get(ids[1]!)!.ctx.get.mockReturnValue(undefined);
     await expect(installFixtureToolGuard.call(missing.host,authorization,ids,cwd)).rejects.toThrow('guard');expect(missing.callbacks.size).toBe(0);

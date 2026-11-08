@@ -106,19 +106,22 @@ it('deletes a task whose own deterministic subagent child uses the worktree', as
   await projectDialog.getByRole('textbox', { name: 'Project name' }).fill('Harness');
   await projectDialog.getByRole('textbox', { name: 'Project path' }).fill(repository);
   await projectDialog.getByRole('textbox', { name: 'Project path' }).press('Tab');
-  await expect(projectDialog.getByText('Git repository')).toBeVisible();
+  await projectDialog.getByText('Git repository').waitFor({ state: 'visible' });
   await projectDialog.getByRole('button', { name: 'Save project' }).click();
-  await expect(page.getByText('Project saved.')).toBeVisible();
+  await page.getByText('Project saved.').waitFor({ state: 'visible' });
   await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
   await page.getByRole('button', { name: 'New task' }).first().click();
   await page.getByRole('textbox', { name: 'Title' }).fill(TASK_TITLE);
+  await page.getByRole('dialog', { name: 'New task' }).getByRole('combobox', { name: 'Project' }).selectOption({ label: 'Harness' });
   await page.getByRole('button', { name: 'Create task' }).click();
   await page.getByRole('button', { name: 'Open task ' + TASK_TITLE }).click();
   const notice = page.getByRole('note', { name: 'Worktree not created' });
-  await expect(notice).toBeVisible();
+  await notice.waitFor({ state: 'visible' });
   await notice.getByRole('button', { name: 'Create worktree' }).click();
-  await expect(notice).toBeHidden({ timeout: 20_000 });
-  await expect(page.getByRole('tab', { name: 'Conversations' })).toHaveAttribute('aria-selected', 'true');
+  await notice.waitFor({ state: 'hidden', timeout: 20_000 });
+  expect(await page.getByRole('tab', { name: 'Conversations' }).getAttribute('aria-selected')).toBe('true');
+  await page.getByRole('button', { name: 'Start conversation' }).click();
+  await page.locator('.kb-agent-tabs [role="tab"]').first().waitFor({ state: 'visible' });
 
   const worktreePath = join(basePath, BRANCH);
   await expect.poll(async () => existsSync(worktreePath), { timeout: 20_000 }).toBe(true);
@@ -134,25 +137,33 @@ it('deletes a task whose own deterministic subagent child uses the worktree', as
     delivery: 'parent',
     provider: 'spawn',
     label: 'Kanban deletion child',
+    cwd: canonicalWorktree,
     signal: new AbortController().signal,
-    request: { prompt: [{ type: 'text', text: 'Reply with one sentence about the checkout.' }], parent },
+    prompt: [{ type: 'text', text: 'Reply with one sentence about the checkout.' }],
+    parent,
   });
   const childId = started.childId;
   await waitForAgentToSettle(scaffold, childId);
-  const childInspection = await scaffold.ctx.sessionController.inspect(childId, new AbortController().signal);
-  expect(String(childInspection.meta.parentSession)).toBe(String(parentId));
-  expect(childInspection.meta.origin).toBe('subagent');
+  const childObservation = await scaffold.ctx.sessionQuery.observeSession(childId, { signal: new AbortController().signal });
+  let childHeader;
+  try {
+    childHeader = childObservation.header;
+  } finally {
+    childObservation[Symbol.dispose]();
+  }
+  expect(String(childHeader.parentSession)).toBe(String(parentId));
+  expect(childHeader.origin).toBe('subagent');
   const childProjection = await scaffold.ctx.sessionController.projections({ sessionId: childId }, new AbortController().signal);
   const childDirectory = childProjection?.kind === 'sequenced' && typeof childProjection.values.workingDirectory === 'string' ? childProjection.values.workingDirectory : undefined;
   if (childDirectory === undefined) throw new Error('child working directory projection is unavailable');
   expect(await realpath(childDirectory)).toBe(canonicalWorktree);
-  await expect(page.locator('.kb-agent-tabs [role="tab"]')).toHaveCount(1);
+  await expect.poll(() => page.locator('.kb-agent-tabs [role="tab"]').count()).toBe(1);
 
   await page.getByRole('button', { name: 'Delete task', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Delete task' });
-  await expect(dialog).toBeVisible();
+  await dialog.waitFor({ state: 'visible' });
   await dialog.getByRole('button', { name: 'Delete task', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Open task ' + TASK_TITLE })).toHaveCount(0, { timeout: 30_000 });
+  await expect.poll(() => page.getByRole('button', { name: 'Open task ' + TASK_TITLE }).count(), { timeout: 30_000 }).toBe(0);
   await expect.poll(async () => existsSync(worktreePath), { timeout: 20_000 }).toBe(false);
   expect((await exec('git', ['show-ref', '--verify', 'refs/heads/' + BRANCH], { cwd: repository })).stdout).toContain('refs/heads/' + BRANCH);
   expect(scaffold.ctx.workspaceRegistry.archivedSessionIds).toContain(parentId);

@@ -65,6 +65,11 @@ interface LooseProjectionRegistry {
   stateOf(session: Session, key: string): unknown;
 }
 
+interface ProjectionHandleLike {
+  stateOf(session: Session): unknown;
+  dispose(): Promise<void> | void;
+}
+
 /** Release the pinned registration handle (a disposer) or the newer awaited handle. */
 function disposeRegistration(registration: unknown): void {
   try {
@@ -75,7 +80,7 @@ function disposeRegistration(registration: unknown): void {
       }
       return;
     }
-    const handle = registration as { dispose?: () => unknown } | undefined;
+    const handle = registration as ProjectionHandleLike | undefined;
     const pending = handle?.dispose?.();
     if (pending !== null && pending !== undefined && typeof (pending as Promise<void>).then === 'function') {
       void (pending as Promise<void>).catch(() => undefined);
@@ -97,9 +102,11 @@ function projectionRegistry(ctx: Context): LooseProjectionRegistry | undefined {
 /**
  * Register the host-only conversation-facts fold. The unit declares no wire
  * view, so its state never enters client payloads.
+ * Registrations are awaited so the new handle API is used on newer hosts and
+ * the legacy disposer plus registry read is used on older hosts.
  * @returns the reader used by the native facts port; reads are `undefined` when the registry is absent.
  */
-export function registerConversationFacts(ctx: Context): ConversationFactsReader {
+export async function registerConversationFacts(ctx: Context): Promise<ConversationFactsReader> {
   const registry = projectionRegistry(ctx);
   if (registry === undefined) return { read: () => undefined, dispose: () => {} };
   const registration = registry.register({
@@ -109,16 +116,20 @@ export function registerConversationFacts(ctx: Context): ConversationFactsReader
     apply: applyConversationFacts,
     stateVersion: 1,
   });
+  const resolved = await registration;
+  const legacy = typeof resolved === 'function';
   let disposed = false;
   return {
     dispose(): void {
       if (disposed) return;
       disposed = true;
-      disposeRegistration(registration);
+      disposeRegistration(resolved);
     },
     read(session: Session): ConversationFactsFold | undefined {
       try {
-        const value = registry.stateOf(session, CONVERSATION_FACTS_KEY);
+        const value = legacy
+          ? registry.stateOf(session, CONVERSATION_FACTS_KEY)
+          : (resolved as ProjectionHandleLike).stateOf(session);
         const parsed = conversationFactsSchema.safeParse(value);
         return parsed.success ? parsed.data : undefined;
       } catch {

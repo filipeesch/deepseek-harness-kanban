@@ -19,15 +19,15 @@ const locator = { bySession: (id: string) => id === 'session-1' ? { hubId: 'hub'
 const userMessage = (text: string) => createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } });
 const enter = (messages: ReturnType<typeof userMessage>[]) => async () => ({ kind: 'enter' as const, messages });
 
-function setup(options: { events?: readonly unknown[]; inspect?: (id: string) => Promise<{ events: readonly unknown[] }> } = {}) {
+function setup(options: { events?: readonly unknown[]; read?: (id: string) => Promise<{ events: readonly unknown[] }> } = {}) {
   const ctx = new Context();
   let events = options.events ?? [];
-  const inspect = vi.fn(options.inspect ?? (async () => ({ events })));
+  const read = vi.fn(options.read ?? (async () => ({ events })));
   const report = vi.fn();
-  const dispose = registerTaskContextInjection(ctx, locator, { inspect, report });
+  const dispose = registerTaskContextInjection(ctx, locator, { history: { read }, report });
   const signal = new AbortController().signal;
   const step = (agent: Agent, messages: ReturnType<typeof userMessage>[]) => ctx.waterfall('agent/pre-step', { agent, turn: 1, step: 1, signal, messages }, enter(messages));
-  return { ctx, inspect, report, dispose, step, setEvents: (next: readonly unknown[]) => { events = next; }, agent: { id: SessionId('session-1') } as Agent };
+  return { ctx, read, report, dispose, step, setEvents: (next: readonly unknown[]) => { events = next; }, agent: { id: SessionId('session-1') } as Agent };
 }
 
 describe('task context injection', () => {
@@ -58,7 +58,7 @@ describe('task context injection', () => {
     const third = await f.step(f.agent, [userMessage('Again')]);
     if (third.kind !== 'enter') throw new Error('expected enter');
     expect(third.messages).toHaveLength(1);
-    expect(f.inspect).toHaveBeenCalledTimes(2);
+    expect(f.read).toHaveBeenCalledTimes(2);
     f.dispose();
   });
 
@@ -68,7 +68,7 @@ describe('task context injection', () => {
     const result = await f.ctx.waterfall('agent/pre-step', { agent: f.agent, turn: 1, step: 1, signal: controller.signal, messages: [userMessage('Hello')] }, enter([userMessage('Hello')]));
     if (result.kind !== 'enter') throw new Error('expected enter');
     expect(result.messages).toHaveLength(1);
-    expect(f.inspect).not.toHaveBeenCalled();
+    expect(f.read).not.toHaveBeenCalled();
     f.dispose();
   });
 
@@ -77,12 +77,12 @@ describe('task context injection', () => {
     const empty = await f.step(f.agent, []);
     if (empty.kind !== 'enter') throw new Error('expected enter');
     expect(empty.messages).toHaveLength(0);
-    expect(f.inspect).not.toHaveBeenCalled();
+    expect(f.read).not.toHaveBeenCalled();
 
     const next = await f.step(f.agent, [userMessage('Hello')]);
     if (next.kind !== 'enter') throw new Error('expected enter');
     expect(next.messages).toHaveLength(2);
-    expect(f.inspect).toHaveBeenCalledTimes(1);
+    expect(f.read).toHaveBeenCalledTimes(1);
     f.dispose();
   });
 
@@ -91,7 +91,7 @@ describe('task context injection', () => {
     const result = await f.step(f.agent, [userMessage('Hello')]);
     if (result.kind !== 'enter') throw new Error('expected enter');
     expect(result.messages).toHaveLength(1);
-    expect(f.inspect).toHaveBeenCalledTimes(1);
+    expect(f.read).toHaveBeenCalledTimes(1);
     f.dispose();
   });
 
@@ -101,24 +101,24 @@ describe('task context injection', () => {
     const result = await f.step(other, [userMessage('Hello')]);
     if (result.kind !== 'enter') throw new Error('expected enter');
     expect(result.messages).toHaveLength(1);
-    expect(f.inspect).not.toHaveBeenCalled();
+    expect(f.read).not.toHaveBeenCalled();
     f.dispose();
   });
 
   it('returns a rejected decision unchanged without inspecting history', async () => {
     const ctx = new Context();
-    const inspect = vi.fn(async () => ({ events: [] }));
-    const dispose = registerTaskContextInjection(ctx, locator, { inspect });
+    const read = vi.fn(async () => ({ events: [] }));
+    const dispose = registerTaskContextInjection(ctx, locator, { history: { read } });
     const agent = { id: SessionId('session-1') } as Agent;
     const decision = await ctx.waterfall('agent/pre-step', { agent, turn: 1, step: 1, signal: new AbortController().signal, messages: [userMessage('Hello')] }, async () => ({ kind: 'reject' as const }));
     expect(decision).toEqual({ kind: 'reject' });
-    expect(inspect).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
     dispose();
   });
 
   it('retries after an inspection failure and injects on the next step', async () => {
     let fail = true;
-    const f = setup({ inspect: async () => { if (fail) throw new Error('history unavailable'); return { events: [] }; } });
+    const f = setup({ read: async () => { if (fail) throw new Error('history unavailable'); return { events: [] }; } });
     const first = await f.step(f.agent, [userMessage('Hello')]);
     if (first.kind !== 'enter') throw new Error('expected enter');
     expect(first.messages).toHaveLength(1);
@@ -146,7 +146,7 @@ describe('task context injection', () => {
     const result = await f.step(resumed, [userMessage('Hello')]);
     if (result.kind !== 'enter') throw new Error('expected enter');
     expect(result.messages).toHaveLength(2);
-    expect(f.inspect).toHaveBeenCalledTimes(2);
+    expect(f.read).toHaveBeenCalledTimes(2);
     f.dispose();
   });
 
@@ -157,7 +157,7 @@ describe('task context injection', () => {
     const result = await f.step(f.agent, [userMessage('Hello')]);
     if (result.kind !== 'enter') throw new Error('expected enter');
     expect(result.messages).toHaveLength(2);
-    expect(f.inspect).toHaveBeenCalledTimes(2);
+    expect(f.read).toHaveBeenCalledTimes(2);
     f.dispose();
   });
 });
