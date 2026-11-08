@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useState } from 'react';
-import type { Board, BoardState, ClientApi, HubSharingView, HubState, KanbanSettings, Project, SharingAuthView, Task } from '../../shared/types.js';
+import type { Attention, Board, BoardState, ClientApi, HubSharingView, HubState, KanbanSettings, Project, SharingAuthView, Task } from '../../shared/types.js';
 import { hubProjectView } from '../hub-view.js';
 import { ProjectEditorDialog } from '../projects/project-editor-dialog.js';
 import { ProjectList } from '../projects/project-list.js';
@@ -11,9 +11,9 @@ import { TeamSettings } from './team-settings/team-settings.js';
 
 interface Section { id: string; render: () => React.ReactNode }
 
-export function Configuration({ state, hub, board, hubCount, settings, settingsRevision, run, api, sharing, sharingAuth, onClose, initial = 'General', onHubDeleted, onBoardDeleted, onBoardCreated }: {
+export function Configuration({ state, hub, board, hubCount, settings, settingsRevision, run, api, sharing, sharingAuth, conversationAttention, onClose, initial = 'General', onHubDeleted, onBoardDeleted, onBoardCreated }: {
   state: BoardState | null; hub: HubState | null; board: Board | null; hubCount: number;
-  settings?: KanbanSettings; settingsRevision: number; run: RunCommand; api?: ClientApi; sharing?: HubSharingView; sharingAuth?: SharingAuthView;
+  settings?: KanbanSettings; settingsRevision: number; run: RunCommand; api?: ClientApi; sharing?: HubSharingView; sharingAuth?: SharingAuthView; conversationAttention?: Record<string, Attention>;
   onClose: () => void; initial?: string; onHubDeleted?: () => void; onBoardDeleted?: () => void; onBoardCreated?: (id: string) => void;
 }) {
   const id = useId();
@@ -26,7 +26,7 @@ export function Configuration({ state, hub, board, hubCount, settings, settingsR
   const sections: Section[] = [
     { id: 'General', render: () => <GeneralSettings settings={settings} settingsRevision={settingsRevision} run={run} /> },
     { id: 'Hub', render: () => hub ? <HubSettings hub={hub} hubCount={hubCount} run={run} sharing={sharing} onDeleted={onHubDeleted} onBoardCreated={onBoardCreated} /> : <p className="kb-hint">No Hub is selected.</p> },
-    { id: 'Projects', render: () => projectView ? <ProjectsSection projects={projectView.projects} tasks={hub?.tasks ?? projectView.tasks} revision={projectView.revision} run={run} api={api} hubId={hub?.id} /> : <p className="kb-hint">No Hub is selected.</p> },
+    { id: 'Projects', render: () => projectView ? <ProjectsSection projects={projectView.projects} tasks={hub?.tasks ?? projectView.tasks} revision={projectView.revision} run={run} api={api} hubId={hub?.id} conversationAttention={conversationAttention} /> : <p className="kb-hint">No Hub is selected.</p> },
     ...(state && board ? [{ id: 'Board', render: () => <BoardSettings state={state} hub={hub} board={board} run={run} api={api} sharing={sharing} onDeleted={onBoardDeleted} workflowDraft={workflowDraft} setWorkflowDraft={setWorkflowDraft} /> }] : []),
     { id: 'Team Settings', render: () => hub ? <TeamSettings key={hub.id} hub={hub} sharing={sharing} auth={sharingAuth} api={api} /> : <p className="kb-hint">No Hub is selected.</p> },
   ];
@@ -49,20 +49,23 @@ export function Configuration({ state, hub, board, hubCount, settings, settingsR
   </Modal>;
 }
 
-function ProjectsSection({ projects, tasks, revision, run, api, hubId }: { projects: Project[]; tasks: Task[]; revision: number; run: RunCommand; api?: ClientApi; hubId?: string }) {
+function ProjectsSection({ projects, tasks, revision, run, api, hubId, conversationAttention }: { projects: Project[]; tasks: Task[]; revision: number; run: RunCommand; api?: ClientApi; hubId?: string; conversationAttention?: Record<string, Attention> }) {
   const [editing, setEditing] = useState<{ project?: Project } | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState<'saved' | 'relocated' | null>(null);
   return <div className="kb-form">
-    <ProjectList projects={projects} tasks={tasks} revision={revision} run={run} onAdd={() => { setEditing({}); setSaved(false); }} onEdit={project => { setEditing({ project }); setSaved(false); }} />
-    {saved && <p role="status">Project saved.</p>}
+    <ProjectList projects={projects} tasks={tasks} revision={revision} run={run} onAdd={() => { setEditing({}); setSaved(null); }} onEdit={project => { setEditing({ project }); setSaved(null); }} />
+    {saved === 'saved' && <p role="status">Project saved.</p>}
+    {saved === 'relocated' && <p role="status">Relocation accepted. Its progress is shown in the project row.</p>}
     {editing && <ProjectEditorDialog
       {...(api === undefined ? {} : { api })}
       {...(hubId === undefined ? {} : { hubId })}
       expectedRevision={revision}
       {...(editing.project === undefined ? {} : { project: editing.project })}
+      tasks={tasks}
+      isConversationActive={sessionId => { const attention = conversationAttention?.[sessionId]; return attention !== undefined && (attention.running || attention.background.length > 0); }}
       run={run}
       onClose={() => setEditing(null)}
-      onSaved={() => { setEditing(null); setSaved(true); }}
+      onSaved={(_id, outcome) => { setEditing(null); setSaved(outcome === 'save' ? 'saved' : 'relocated'); }}
     />}
   </div>;
 }

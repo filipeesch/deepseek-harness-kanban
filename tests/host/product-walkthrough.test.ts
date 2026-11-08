@@ -269,7 +269,7 @@ describe('bounded integrated product walkthrough', () => {
     expect(f.executor.calls).toEqual([]); // Project metadata registration does not invent a Git participant or execute Git.
     const beforeInvalid = f.app.store.snapshot();
     await expect(f.app.command({ type: 'project.save', project: { id: 'escape', name: 'Escaping project', projectPath: f.root, gitRootPath: f.project.gitRootPath } })).rejects.toMatchObject({ code: 'INVALID_PROJECT_PATH' });
-    await expect(f.app.command({ type: 'project.save', project: { id: 'missing', name: 'Missing project', projectPath: path.join(f.root, 'missing'), gitRootPath: f.project.gitRootPath } })).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(f.app.command({ type: 'project.save', project: { id: 'missing', name: 'Missing project', projectPath: path.join(f.root, 'missing'), gitRootPath: f.project.gitRootPath } })).rejects.toMatchObject({ code: 'PATH_UNAVAILABLE' });
     expect(f.app.store.snapshot()).toEqual(beforeInvalid);
     const a = await f.task(); const note = await addSharedNote(f, a);
     const b = await taskWithConversation(f.app, { projectId: 'root-project', title: 'Independent other task', description: 'Different shared-note collection' });

@@ -164,3 +164,30 @@ describe('absent worktree removal', () => {
     expect(listed).toContain(other);
   });
 });
+
+describe('GitAdapter worktree repair', () => {
+  it('repairs an existing checkout under the common directory write policy', async () => {
+    const f = await fixture(); const executor = new LocalExecutor(); const adapter = new GitAdapter(executor);
+    await adapter.create(f.project, { mode: 'new', path: f.tree, branchName: 'repair' }, ['a']);
+    executor.calls.length = 0; executor.policies.length = 0;
+    await adapter.repair(f.project, [f.tree, path.join(f.root, 'missing-checkout')], ['a']);
+    expect(executor.calls.at(-1)).toEqual(['-C', f.project.gitRootPath, 'worktree', 'repair', f.tree]);
+    expect(executor.policies.some(call => call.write && call.paths.includes(f.tree) && call.paths.includes(path.join(f.project.gitRootPath, '.git')))).toBe(true);
+    expect(executor.writes.at(-1)).toBe(true);
+  });
+
+  it('skips an absent checkout without invoking Git', async () => {
+    const f = await fixture(); const executor = new LocalExecutor(); const adapter = new GitAdapter(executor);
+    await expect(adapter.repair(f.project, [path.join(f.root, 'missing-checkout')], [])).resolves.toBeUndefined();
+    expect(executor.calls.some(args => args.includes('repair'))).toBe(false);
+  });
+
+  it('surfaces a policy denial before any repair write', async () => {
+    const f = await fixture(); const executor = new LocalExecutor(); const adapter = new GitAdapter(executor);
+    await adapter.create(f.project, { mode: 'new', path: f.tree, branchName: 'denied-repair' }, []);
+    executor.calls.length = 0;
+    executor.deny = (_paths, write) => write;
+    await expect(adapter.repair(f.project, [f.tree], [])).rejects.toMatchObject({ code: 'FS_SANDBOX_DENIED' });
+    expect(executor.calls.some(args => args.includes('repair'))).toBe(false);
+  });
+});

@@ -26,6 +26,7 @@ function gitTrap(): { port: GitPort; calls: string[] } {
     async inspect(): Promise<GitTree> { return order('inspect'); },
     async create(): Promise<GitTree> { return order('create'); },
     async remove(): Promise<void> { return order('remove'); },
+    async repair(): Promise<void> { return order('repair'); },
     async assertPolicy(): Promise<void> { return order('assertPolicy'); },
     async projectDirectory(): Promise<string> { return order('projectDirectory'); },
   };

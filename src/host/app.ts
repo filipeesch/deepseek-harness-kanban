@@ -9,11 +9,14 @@ import type { AutoAdvancePlan } from '../domain/auto-advance.js';
 import { admitAutoAdvance } from './auto-advance-admission.js';
 import { readPendingUserWork, withQuestionPending } from './pending-source.js';
 import type { ConversationFactsSource } from './native-facts.js';
-import type { AutoModePauseReason, BoardSettings, Command, ConversationFacts, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, SharingCommand, SnapshotRequest } from '../shared/types.js';
+import type { AutoModePauseReason, BoardSettings, Command, ConversationFacts, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, RetainedCheckout, SharingCommand, SnapshotRequest, Task } from '../shared/types.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionStore } from './question-storage.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
 import { WorktreeCoordinator } from './worktrees.js';
+import { OperationQueue } from './operation-queue.js';
+import { ProjectRelocationCoordinator } from './project-relocation.js';
+import { RepositoryProjectRelocationStore } from './project-relocation-store.js';
 import { bindingMatches } from './destructive-admission.js';
 import { AttentionCoordinator, type AttentionTask } from './attention.js';
 import { SnapshotAssembler } from './snapshot-assembler.js';
@@ -37,6 +40,7 @@ import type { SharingPollScheduler } from './sharing/scheduler.js';
 import type { GoogleDriveLocalDiscovery } from './sharing/google-drive-local/discovery.js';
 import { isAuthorizationCommand, type GoogleDriveAuthCoordinator } from './sharing/auth-coordinator.js';
 import { WorkspaceCoordinator } from './workspace-coordinator.js';
+import { resolveCanonicalPath } from './path-resolution.js';
 
 async function pathExists(value:string):Promise<boolean>{try{await lstat(value);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}}
 function isEvent(value:unknown):value is {type:string;seq:number;data:unknown}{return Boolean(value&&typeof value==='object'&&'type'in value&&typeof value.type==='string'&&'seq'in value&&typeof value.seq==='number'&&Number.isSafeInteger(value.seq)&&'data'in value);}
@@ -52,6 +56,8 @@ export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unk
 export class KanbanApp {
  readonly questions=new QuestionIndex();
  readonly worktrees:WorktreeCoordinator;
+ readonly relocations:ProjectRelocationCoordinator;
+ private readonly operationQueue=new OperationQueue();
  readonly locator:TaskLocator;
  private readonly listeners=new Set<()=>void>();
  private readonly prepared=new Map<string,Promise<void>>();
@@ -64,6 +70,8 @@ export class KanbanApp {
  private readonly disposers:Array<()=>void>=[];
  private sequence=0; private disposed=false; private driving=false; private driveAgain=false; private drivePromise:Promise<void>|undefined; private commandTail:Promise<void>=Promise.resolve();
  private readonly saveTimers=new Map<string,ReturnType<typeof setTimeout>>();
+ /** Transient, in-memory retention notices; the checkout itself lives on disk. */
+ private readonly retainedCheckouts:RetainedCheckout[]=[];
  private readonly autoAdvance:AutoAdvanceCoordinator;
  /** The one conversation-fact read every host consumer shares; the question projection is folded in here. */
  private readonly factsSource:ConversationFactsSource;
@@ -79,8 +87,9 @@ export class KanbanApp {
    },
    ...(options.report?{report:options.report}:{}),
   });
-  this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,onTaskDeleted:async task=>{try{await this.workspaceCoordinator?.cleanup(task as HubTask);}catch(error){this.options.report?.(error);}}});
-  this.pendingWork=new PendingWorkRunner({resumeWorktrees:async()=>{await this.worktrees.resumePending();},dispatchPending:async()=>{await this.dispatchPending();},report:error=>this.options.report?.(error)});
+  this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,queue:this.operationQueue,onTaskDeleted:async task=>{try{await this.workspaceCoordinator?.cleanup(task as HubTask);}catch(error){this.options.report?.(error);}},onCheckoutRetained:(task,project,retainedPath)=>this.retainCheckout(task,project,retainedPath)});
+  this.relocations=new ProjectRelocationCoordinator(new RepositoryProjectRelocationStore(hubs),sessions,git,{queue:this.operationQueue,signal:options.signal,...(this.workspaceCoordinator?{workspaces:{bind:async(hubId,project)=>{await this.workspaceCoordinator!.rebindProject(hubId,project);}}}:{}),...(options.report?{report:options.report}:{})});
+  this.pendingWork=new PendingWorkRunner({resumeWorktrees:async()=>{await this.worktrees.resumePending();},resumeRelocations:async()=>{await this.relocations.resumePending();},dispatchPending:async()=>{await this.dispatchPending();},report:error=>this.options.report?.(error)});
   this.attention=new AttentionCoordinator({source:this.factsSource,tasks:()=>this.attentionTasks(),runPendingWork:async()=>{await this.pendingWork.run();},onChange:()=>this.attentionChanged(),onFacts:()=>this.markChanged(),report:error=>this.options.report?.(error)});
   this.autoAdvance=new AutoAdvanceCoordinator({
    locateBySession:sessionId=>{const located=this.locator.bySession(sessionId);return located?{task:located.task,board:located.board}:undefined;},
@@ -115,6 +124,17 @@ export class KanbanApp {
   this.markChanged();
  }
  private markChanged():void{if(this.disposed)return;this.sequence++;this.publisher.request();}
+ /** Record a transient retention notice once, after the deletion that retained the checkout completed. */
+ private retainCheckout(task:Task,project:Project,retainedPath:string):void{
+  if(this.disposed)return;
+  if(this.retainedCheckouts.some(value=>value.path===retainedPath))return;
+  this.retainedCheckouts.push({path:retainedPath,projectId:project.id,taskTitle:task.title});
+  if(this.retainedCheckouts.length>20){
+   const dropped=this.retainedCheckouts.shift();
+   if(dropped)this.options.report?.(new KanbanError('RETAINED_CHECKOUT_DROPPED','The retained-checkout notice limit dropped an older path.',{path:dropped.path}));
+  }
+  this.markChanged();
+ }
  private attentionChanged():void{if(this.disposed)return;this.sequence++;this.publisher.request();this.publisher.flush();}
  subscribe(listener:()=>void):()=>void{this.listeners.add(listener);return()=>this.listeners.delete(listener);}
  private attentionTasks():AttentionTask[]{
@@ -130,6 +150,7 @@ export class KanbanApp {
   for(const summary of summaries)for(const sessionId of summary.sessionIds)this.restoreQuestionProjection(sessionId);
   for(const summary of summaries){if(summary.hasPendingTransition)await this.repairInterruptedTransition(summary);}
   await this.worktrees.resumePending();
+  await this.relocations.resumePending();
   await this.dispatchPending();
   this.scheduleStartupReconciliation(summaries);
  }
@@ -260,7 +281,7 @@ export class KanbanApp {
   else if(request.refreshSessionIds!==undefined&&request.refreshSessionIds.length>0){sequence=++this.sequence;conversations=await this.attention.refresh(request.refreshSessionIds,tasks);}
   else{sequence=this.sequence;conversations=this.attention.present(tasks);}
   const parts=await this.assembler.assemble(conversations,{refreshAuth:request.refreshAuth===true,allowAuthRefresh:mode==='full'});
-  return {...parts,sequence};
+  return {...parts,sequence,...(this.retainedCheckouts.length===0?{}:{retainedCheckouts:[...this.retainedCheckouts]})};
  }
  /** Publish a new snapshot after publishing or authorization state changed outside a board command. */
  sharingChanged():void{this.assembler.invalidateAuth();this.assembler.invalidateSharing();this.markChanged();}
@@ -305,6 +326,7 @@ export class KanbanApp {
  }
  async assertExecutionContext(sessionId:string):Promise<void>{
   const located=this.locator.bySession(sessionId);if(!located)return;const task=located.task;const project=located.project;
+  this.assertProjectRelocation(project,'running this task');
   if(!isGitProject(project)){
    // Without a Git root the recorded directory cannot be re-derived; it must still be the project path or its retained checkout.
    const expected=task.effectiveCwd;
@@ -332,12 +354,14 @@ export class KanbanApp {
   return this.hubs.saveSettings({worktreeBasePath:resolved},expectedRevision);
  }
  private async project(input:ProjectInput):Promise<ProjectInput>{
-  const projectPath=await realpath(input.projectPath);
-  invariant((await stat(projectPath)).isDirectory(),'INVALID_PROJECT_PATH','The project path must be an existing directory.');
   invariant(input.gitRootPath===undefined||typeof input.gitRootPath==='string','INVALID_INPUT','Git root must be text.');
+  // One canonical resolution validates shape, existence, and alias resolution; the probe
+  // decides the Git association instead of repeating the path checks.
+  const projectPath=await resolveCanonicalPath(input.projectPath);
+  invariant((await stat(projectPath)).isDirectory(),'INVALID_PROJECT_PATH','The project path must be an existing directory.');
   const requestedGitRoot=typeof input.gitRootPath==='string'&&input.gitRootPath.trim()?input.gitRootPath.trim():undefined;
   if(requestedGitRoot===undefined){const {gitRootPath:_gitRootPath,...rest}=input;return {...rest,projectPath};}
-  const gitRootPath=await realpath(requestedGitRoot);
+  const gitRootPath=await resolveCanonicalPath(requestedGitRoot);
   invariant((await stat(gitRootPath)).isDirectory(),'INVALID_PROJECT_PATH','The Git root must be an existing directory.');
   const relative=path.relative(gitRootPath,projectPath);
   invariant(relative===''||(!relative.startsWith('..'+path.sep)&&relative!=='..'&&!path.isAbsolute(relative)),'INVALID_PROJECT_PATH','Project path must be inside its configured Git root.');
@@ -349,10 +373,13 @@ export class KanbanApp {
   return {...input,projectPath,gitRootPath};
  }
  private assertContext(taskId:string):void{const task=this.locatedTask(taskId).task;invariant(!task.operation,'CONTEXT_OPERATION_PENDING','Resolve the task context operation before admitting another conversation or execution.');}
+ /** A recorded project relocation owns every directory-changing action in its project. */
+ private assertProjectRelocation(project:Project,action:string):void{invariant(!project.operation,'PROJECT_RELOCATING','Resolve the project relocation before '+action+'.');}
  private serial<T>(run:()=>Promise<T>):Promise<T>{const result=this.commandTail.then(run);this.commandTail=result.then(()=>undefined,()=>undefined);return result;}
  createConversation(taskId:string):Promise<string>{return this.serial(()=>this.createConversationNow(taskId));}
  private async createConversationNow(taskId:string,options:{allowUndecided?:boolean}={}):Promise<string>{
   this.assertContext(taskId);const located=this.locatedTask(taskId);const store=this.hubs.hub(located.hubId);const before=located.task;const project=located.project;
+  this.assertProjectRelocation(project,'creating a conversation');
   invariant(!(options.allowUndecided===true&&before.sessionIds.length===0&&unresolvedWorktreeBinding(before,project)),'WORKTREE_BINDING_UNRESOLVED','Resolve the worktree binding in the Git section before starting the first conversation.');
   invariant(options.allowUndecided===true||!requiresWorktreeDecision(before,project),'WORKTREE_DECISION_REQUIRED','Choose whether to create a worktree or continue in the base project before starting the first conversation.');
   const workspaceId=await this.workspaceCoordinator?.ensureTaskWorkspace(located.hubId,before,project);const id=await this.sessions.create(project.projectPath,workspaceId);
@@ -402,8 +429,18 @@ export class KanbanApp {
     break;
    }
    case 'board.workflow.save':await this.hubStore(command.hubId).saveBoardWorkflow(command.boardId,command.yaml,command.expectedRevision);this.noteSharingChange(command.hubId);break;
-   case 'project.save':{const store=this.hubStore(command.hubId);const value=await store.saveProject(await this.project(command.project),command.expectedRevision);commandReceipt={kind:'project',id:value.id};break;}
-   case 'project.delete':{const store=this.hubStore(command.hubId);invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the project registration.');await store.deleteProject(command.projectId,command.expectedRevision);break;}
+   case 'project.save':{const store=this.hubStore(command.hubId);const state=this.hubs.requireHub(store.hubId);const existing=command.project.id===undefined?undefined:state.projects.find(project=>project.id===command.project.id);invariant(!existing?.operation,'PROJECT_BUSY','Resolve the recorded project relocation before saving the project.');const value=await store.saveProject(await this.project(command.project),command.expectedRevision);commandReceipt={kind:'project',id:value.id};break;}
+   case 'project.relocate':{
+    invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm the project relocation and its migration impact.');
+    const store=this.hubStore(command.hubId);
+    const found=this.hubs.findProject(command.project.id);invariant(found,'PROJECT_NOT_FOUND','Project does not exist.');invariant(found.hubId===store.hubId,'PROJECT_NOT_FOUND','Project does not exist in the selected Hub.');
+    await this.relocations.request({...await this.project(command.project),id:command.project.id},command.expectedRevision);
+    commandReceipt={kind:'project',id:command.project.id};
+    break;
+   }
+   case 'project.relocationRetry':{const store=this.hubStore(command.hubId);const project=store.requireProject(command.projectId);invariant(project.id===command.projectId,'PROJECT_NOT_FOUND','Project does not exist in the selected Hub.');await this.relocations.retry(command.projectId);break;}
+   case 'project.relocationCancel':{const store=this.hubStore(command.hubId);store.requireProject(command.projectId);await this.relocations.cancel(command.projectId);break;}
+   case 'project.delete':{const store=this.hubStore(command.hubId);invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the project registration.');const project=store.requireProject(command.projectId);invariant(!project.operation,'PROJECT_BUSY','Resolve the project relocation before deleting the project.');await store.deleteProject(command.projectId,command.expectedRevision);break;}
    case 'workflow.save':await this.hubStore(command.hubId).setWorkflow(command.yaml,command.expectedRevision);this.noteSharingChange(command.hubId);break;
    case 'settings.save':await this.settings(command.settings,command.expectedRevision);break;
    case 'task.create':{const value=await this.createTaskNow(command);commandReceipt={kind:'task',id:value.id};break;}
@@ -414,14 +451,14 @@ export class KanbanApp {
    case 'note.save':{const value=await this.saveNoteNow(command);commandReceipt={kind:'note',id:value.id};break;}
    case 'note.delete':{const value=await this.deleteNoteNow(command);commandReceipt={kind:'note',id:value.id};break;}
    case 'task.delete':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm task data/worktree removal and native conversation archiving.');this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'delete');await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'delete',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true});break;
-   case 'worktree.create':this.assertContext(command.taskId);invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'create',mode:command.mode,path:command.path,branchName:command.branchName,sourceBranch:command.sourceBranch});break;
-   case 'worktree.attach':this.assertContext(command.taskId);invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'attach',path:command.path});break;
+   case 'worktree.create':this.assertContext(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'create',mode:command.mode,path:command.path,branchName:command.branchName,sourceBranch:command.sourceBranch});break;
+   case 'worktree.attach':this.assertContext(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'attach',path:command.path});break;
    case 'worktree.dismiss':{this.assertContext(command.taskId);const located=this.locatedTask(command.taskId);invariant(isGitProject(located.project),'PROJECT_NOT_GIT','Worktree choices require a Git-backed project.');invariant(!located.task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');invariant(!located.task.worktree,'WORKTREE_EXISTS','The task already has a worktree.');if(located.task.worktreeDismissed!==true)await this.hubs.hub(located.hubId).dismissWorktree(command.taskId);break;}
-   case 'worktree.remove':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm removal of the worktree while preserving the task and branch.');this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'remove');await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'remove',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true});break;
+   case 'worktree.remove':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm removal of the worktree while preserving the task and branch.');this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'remove');await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'remove',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true});break;
    case 'operation.retry':{
-    const located=this.locatedTask(command.taskId);const store=this.hubs.hub(located.hubId);const task=located.task;if(task.operation){await this.worktrees.retry(command.taskId,{background:true});const current=store.snapshot().tasks.find(t=>t.id===command.taskId);if(current&&!current.operation&&current.pendingTransition?.worktreeRequest&&current.pendingTransition.status==='failed')await store.transact(d=>{const p=d.tasks.find(t=>t.id===command.taskId)!.pendingTransition!;p.status='waiting';delete p.error;});}else if(task.pendingTransition){await store.transact(d=>{const t=d.tasks.find(t=>t.id===command.taskId)!;if(t.pendingTransition){t.pendingTransition.status='waiting';delete t.pendingTransition.error;}});}await this.dispatchPending();break;
+    const located=this.locatedTask(command.taskId);const store=this.hubs.hub(located.hubId);const task=located.task;this.assertProjectRelocation(located.project,'retrying a context operation');if(task.operation){await this.worktrees.retry(command.taskId,{background:true});const current=store.snapshot().tasks.find(t=>t.id===command.taskId);if(current&&!current.operation&&current.pendingTransition?.worktreeRequest&&current.pendingTransition.status==='failed')await store.transact(d=>{const p=d.tasks.find(t=>t.id===command.taskId)!.pendingTransition!;p.status='waiting';delete p.error;});}else if(task.pendingTransition){await store.transact(d=>{const t=d.tasks.find(t=>t.id===command.taskId)!;if(t.pendingTransition){t.pendingTransition.status='waiting';delete t.pendingTransition.error;}});}await this.dispatchPending();break;
    }
-   case 'operation.return':await this.clearPending(command.taskId);await this.worktrees.returnToBase(command.taskId);break;
+   case 'operation.return':this.assertProjectRelocation(this.locatedTask(command.taskId).project,'returning to the base project');await this.clearPending(command.taskId);await this.worktrees.returnToBase(command.taskId);break;
    case 'operation.dismiss':await this.dismissFailedAdvance(command.taskId);break;
    case 'task.move':await this.move(command);break;
    case 'task.autoMode':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).setAutoMode(command.taskId,command.enabled);if(!command.enabled)this.autoAdvance.forget(command.taskId);break;}
@@ -465,6 +502,7 @@ export class KanbanApp {
  }
  private async runInstruction(command:Extract<Command,{type:'task.runInstruction'}>):Promise<void>{
   this.assertContext(command.taskId);
+  this.assertProjectRelocation(this.locatedTask(command.taskId).project,'running a stage instruction');
   const pending=this.locatedTask(command.taskId).task.pendingTransition;
   invariant(!pending||(pending.origin==='auto'&&pending.status==='failed'),'TASK_BUSY','Resolve the confirmed transition first.');
   await admitStageInstruction(this.stageInstructionDeps(),{
@@ -524,5 +562,5 @@ export class KanbanApp {
   // Let the background reconciliation finish (or abort) before flushing question
   // persistence, so no replay can schedule a write after the final flush.
   this.startup.dispose();await this.startup.whenSettled();
-  await this.flushQuestions();this.publisher.flush();this.disposed=true;this.publisher.dispose();this.attention.dispose();this.autoAdvance.dispose();for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.worktrees.settle();}
+  await this.flushQuestions();this.publisher.flush();this.disposed=true;this.publisher.dispose();this.attention.dispose();this.autoAdvance.dispose();for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();this.relocations.dispose();this.operationQueue.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.relocations.settle();}
 }

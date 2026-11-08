@@ -29,6 +29,24 @@ describe('persisted board schema', () => {
     expect(parsed.success && parsed.data.tasks[0]!.pendingTransition?.origin).toBe('auto');
   });
 
+  it('accepts an optional project relocation journal and rejects an unknown phase', () => {
+    const state = populatedState();
+    state.projects[0]!.operation = {
+      id: 'relocation',
+      request: {
+        from: { projectPath: '/repos/platform/services/api', gitRootPath: '/repos/platform' },
+        to: { name: 'API', projectPath: '/moved/services/api', gitRootPath: '/moved' },
+      },
+      phase: 'waiting',
+      migratedSessionIds: ['session-1'],
+      started: true,
+      createdAt: '2026-10-21T10:00:00.000Z',
+    };
+    expect(BoardStateSchema.safeParse(state).success).toBe(true);
+    state.projects[0]!.operation!.phase = 'unknown' as never;
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+
   it('rejects missing required fields and unknown top-level data instead of silently dropping it', () => {
     const state = initialState() as unknown as Record<string, unknown>;
     delete state.schemaVersion;

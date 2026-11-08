@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { saveProject } from '../../src/domain/hub-operations.js';
+import { buildProject } from '../../src/domain/project-registration.js';
 import type { HubState, HubTask } from '../../src/shared/types.js';
 import { operationDeps, sampleHub } from './hub-helpers.js';
 
@@ -58,6 +59,22 @@ describe('project registration conversions', () => {
   it('still rejects a different Git root while tasks reference the project', () => {
     const hub = sampleHub(); hub.tasks = [task()];
     expect(failure(() => saveProject(hub, { id: 'project', name: 'Project', projectPath: '/repo/app', gitRootPath: '/other' }, operationDeps()))).toBe('PROJECT_IN_USE');
+  });
+
+  it('preserves a recorded relocation when rebuilding the project', () => {
+    const operation = {
+      id: 'relocation',
+      request: {
+        from: { projectPath: '/repo/app', gitRootPath: '/repo' },
+        to: { name: 'Project', projectPath: '/moved/app', gitRootPath: '/moved' },
+      },
+      phase: 'waiting' as const,
+      migratedSessionIds: [],
+      started: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    const project = buildProject('project', { id: 'project', name: 'Project', projectPath: '/repo/app', gitRootPath: '/repo' }, { id: 'project', name: 'Project', projectPath: '/repo/app', gitRootPath: '/repo', operation });
+    expect(project.operation).toEqual(operation);
   });
 
   it('never stores a default branch without a Git root', () => {

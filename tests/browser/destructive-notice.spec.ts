@@ -54,3 +54,14 @@ for (const scheme of ['light', 'dark'] as const) {
     await page.screenshot({ path: `.verification/destructive-force-${scheme}.png`, fullPage: false });
   });
 }
+
+test('reports a checkout retained because its Git context could not be resolved', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=retained');
+  const notice = page.getByRole('region', { name: 'Destructive operations' });
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText('/worktrees/gone');
+  await expect(notice).toContainText('was not removed because its project path or Git root could not be resolved');
+  await notice.screenshot({ path: '.verification/destructive-notice-retained-unverifiable.png' });
+  await notice.getByRole('button', { name: 'Dismiss' }).click();
+  await expect(notice).not.toContainText('/worktrees/gone');
+});

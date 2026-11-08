@@ -1,6 +1,22 @@
 export const DATA_VERSION = 2 as const;
 export interface Problem { code: string; message: string; details?: Record<string, unknown> }
-export interface Project { id: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string; workspaceId?: string; workspaceOwned?: boolean }
+/** One project location as it is recorded before, and applied as, a relocation target. */
+export interface ProjectLocationPaths { projectPath: string; gitRootPath?: string; defaultBranch?: string }
+/** Observable step of a recorded project relocation. */
+export type ProjectRelocationPhase = 'queued' | 'preflight' | 'waiting' | 'migrating' | 'worktrees' | 'sessions' | 'workspace' | 'failed';
+/** The durable relocation journal stored on the project it repairs. */
+export interface ProjectRelocation {
+  id: string;
+  request: { from: ProjectLocationPaths; to: ProjectLocationPaths & { name: string } };
+  phase: ProjectRelocationPhase;
+  error?: Problem;
+  /** Conversations whose directory change was already committed. */
+  migratedSessionIds: string[];
+  /** Set once a durable project or task change was applied; cancellation is no longer offered. */
+  started: boolean;
+  createdAt: string;
+}
+export interface Project { id: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string; workspaceId?: string; workspaceOwned?: boolean; /** Absent means no relocation is recorded. */ operation?: ProjectRelocation }
 /** A project whose Git root is known; required by every Git and worktree operation. */
 export type GitProject = Project & { gitRootPath: string };
 /** Non-persistent result of inspecting a folder for project registration. */
@@ -22,6 +38,8 @@ export interface ContextOperation {
   id: string; request: OperationRequest;
   phase: 'queued' | 'waiting' | 'preflight' | 'git' | 'switching' | 'removing' | 'archiving' | 'failed';
   targetPath?: string; targetDirectory?: string;
+  /** A checkout retained because a deletion could not resolve its project context. */
+  retainedCheckoutPath?: string;
   previousDirectories: Record<string, string>; switchedSessionIds: string[];
   archivedSessionIds: string[]; gitCompleted: boolean; error?: Problem; createdAt: string;
   createAttempt?: { operationId: string; path: string; gitRootPath: string; branchName: string; mode: 'new' | 'existing'; absentBefore: true };
@@ -200,12 +218,14 @@ export type LocalDriveRequest = { action: 'roots'; refresh?: boolean } | { actio
 export type LocalDriveResult =
   | { action: 'roots'; discovery: DriveDiscoveryView }
   | { action: 'list'; page: DriveBrowseView };
+/** A checkout left on disk because a deletion could not resolve its Git context. */
+export interface RetainedCheckout { path: string; projectId: string; taskTitle: string }
 /**
  * Host snapshot: durable state plus per-conversation attention facts and per-Hub publishing.
  * `state` is present on baselines and command responses and omitted from an update frame that
  * did not change the state revision; the client merges it with the state it already holds.
  */
-export interface HostSnapshot { commandReceipt?: CommandReceipt; state?: KanbanState; stateRevision: number; conversations: Record<string, ConversationFacts>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; sequence: number }
+export interface HostSnapshot { commandReceipt?: CommandReceipt; state?: KanbanState; stateRevision: number; conversations: Record<string, ConversationFacts>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; /** Transient, in-memory retained checkouts; omitted when empty. */ retainedCheckouts?: RetainedCheckout[]; sequence: number }
 /** A snapshot that carries the board state: every unary response, baseline, and command result. */
 export type FullHostSnapshot = HostSnapshot & { state: KanbanState };
 /** A request for one unary snapshot; every field is an optional hint, never a required read. */
@@ -231,6 +251,9 @@ export type Command =
   | { type: 'board.delete'; hubId: string; boardId: string; confirmed: boolean; expectedRevision?: number; sharing?: 'local' | 'team' }
   | { type: 'board.workflow.save'; hubId: string; boardId: string; yaml: string; expectedRevision?: number }
   | { type: 'project.save'; hubId?: string; project: ProjectInput; expectedRevision?: number }
+  | { type: 'project.relocate'; hubId?: string; project: ProjectInput & { id: string }; confirmed: boolean; expectedRevision?: number }
+  | { type: 'project.relocationRetry'; hubId?: string; projectId: string }
+  | { type: 'project.relocationCancel'; hubId?: string; projectId: string }
   | { type: 'project.delete'; hubId?: string; projectId: string; confirmed: boolean; expectedRevision?: number }
   /** @deprecated Saves the first board's workflow; the UI uses board.workflow.save. Kept for single-board callers. */
   | { type: 'workflow.save'; hubId?: string; yaml: string; expectedRevision?: number }

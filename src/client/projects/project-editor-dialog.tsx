@@ -1,22 +1,25 @@
 import React from 'react';
-import type { ClientApi, Project, ProjectLocation } from '../../shared/types.js';
+import type { ClientApi, Project, ProjectLocation, Task } from '../../shared/types.js';
 import { ErrorNotice, Modal, type RunCommand } from '../ui.js';
 import { canSaveProject, type ProjectDraft } from './project-draft.js';
 import { useProjectEditor } from './use-project-editor.js';
 
 /** Focused create/edit surface; the registry list never embeds a form. */
-export function ProjectEditorDialog({ api, hubId, expectedRevision, project, run, onClose, onSaved }: {
+export function ProjectEditorDialog({ api, hubId, expectedRevision, project, tasks, isConversationActive, run, onClose, onSaved }: {
   api?: ClientApi;
   hubId?: string;
   expectedRevision?: number;
   project?: Project;
+  tasks?: readonly Task[];
+  isConversationActive?: (sessionId: string) => boolean;
   run: RunCommand;
   onClose: () => void;
-  onSaved: (id: string) => void;
+  onSaved: (id: string, outcome: 'save' | 'relocate') => void;
 }) {
-  const editor = useProjectEditor({ api, hubId, expectedRevision, project, run, onClose, onSaved });
+  const editor = useProjectEditor({ api, hubId, expectedRevision, project, tasks, isConversationActive, run, onClose, onSaved });
   const { draft, detection } = editor;
   const title = project === undefined ? 'New project' : 'Edit project';
+  if (editor.relocation !== null) return <RelocationConfirmDialog editor={editor} project={project!} />;
   return <Modal title={title} onClose={editor.cancel} busy={editor.pending}>
     <form className="kb-form" aria-label={title} aria-busy={editor.pending} onSubmit={event => { event.preventDefault(); void editor.save(); }}>
       <label className="kb-field">Project name<input className="kb-input" required aria-label="Project name" disabled={editor.pending} value={draft.name} onChange={event => editor.change('name', event.target.value)} /></label>
@@ -37,6 +40,36 @@ export function ProjectEditorDialog({ api, hubId, expectedRevision, project, run
         <button className="kb-button kb-primary" disabled={editor.pending || editor.blocked || !canSaveProject(draft)}>{editor.pending ? 'Saving…' : 'Save project'}</button>
       </div>
     </form>
+  </Modal>;
+}
+
+/** The path-change confirmation for a project that still has tasks. */
+function RelocationConfirmDialog({ editor, project }: { editor: ReturnType<typeof useProjectEditor>; project: Project }) {
+  const impact = editor.relocation!;
+  const pathChanged = project.projectPath !== impact.input.projectPath;
+  const currentRoot = project.gitRootPath ?? '';
+  const nextRoot = impact.input.gitRootPath ?? '';
+  return <Modal title="Relocate project?" onClose={editor.cancelRelocation} busy={editor.pending} initialFocus="cancel">
+    <div className="kb-form">
+      <p>The project location changes, so its tasks and conversations move with it.</p>
+      <div className="kb-destructive-identity">
+        <code>{pathChanged ? project.projectPath : currentRoot || project.projectPath}</code>
+        <span className="kb-hint">becomes</span>
+        <code>{pathChanged ? impact.input.projectPath : nextRoot || impact.input.projectPath}</code>
+      </div>
+      {pathChanged && currentRoot !== nextRoot && <p className="kb-hint">Git root: <code>{currentRoot || 'none'}</code> becomes <code>{nextRoot || 'none'}</code></p>}
+      <ul className="kb-batch-list">
+        <li>{impact.tasks === 1 ? 'The task keeps its stage and work.' : impact.tasks + ' tasks keep their stage and work.'}</li>
+        <li>{impact.conversations === 1 ? 'One conversation moves to the new directory.' : impact.conversations + ' conversations move to the new directory.'}</li>
+        {impact.worktrees > 0 && <li>{impact.worktrees === 1 ? 'One worktree binding is revalidated; anything unverifiable records an error.' : impact.worktrees + ' worktree bindings are revalidated; anything unverifiable records an error.'}</li>}
+      </ul>
+      {impact.activeConversations > 0 && <p className="kb-hint" role="status">{impact.activeConversations === 1 ? 'One conversation is active' : impact.activeConversations + ' conversations are active'}, so the relocation waits for them to finish. Cancel is available until migration starts.</p>}
+      <ErrorNotice problem={editor.error} />
+      <div className="kb-actions">
+        <button type="button" className="kb-button" data-kb-initial-focus disabled={editor.pending} onClick={editor.cancelRelocation}>Back to editor</button>
+        <button type="button" className="kb-button kb-primary" disabled={editor.pending} onClick={() => void editor.confirmRelocation()}>{editor.pending ? 'Relocating…' : 'Relocate project'}</button>
+      </div>
+    </div>
   </Modal>;
 }
 

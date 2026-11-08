@@ -32,6 +32,7 @@ export const operation = z.strictObject({
   id, request: operationRequest,
   phase: z.enum(['queued', 'waiting', 'preflight', 'git', 'switching', 'removing', 'archiving', 'failed']),
   targetPath: absolutePath.optional(), targetDirectory: absolutePath.optional(),
+  retainedCheckoutPath: absolutePath.optional(),
   previousDirectories: z.record(id, absolutePath), switchedSessionIds: z.array(id), archivedSessionIds: z.array(id),
   createAttempt: z.strictObject({ operationId: id, path: absolutePath, gitRootPath: absolutePath, branchName: nonempty, mode: z.enum(['new', 'existing']), absentBefore: z.literal(true) }).optional(),
   gitCompleted: z.boolean(), error: problem.optional(), createdAt: timestamp,
@@ -57,8 +58,25 @@ export const workflow = z.strictObject({
 export const note = z.strictObject({
   id, taskId: id, content: nonempty, createdAt: timestamp, updatedAt: timestamp, tags: z.array(nonempty).optional(),
 });
+const relocationLocationShape = { projectPath: absolutePath, gitRootPath: absolutePath.optional(), defaultBranch: nonempty.optional() };
+const relocationFrom = z.strictObject(relocationLocationShape).superRefine((value, context) => {
+  if (value.defaultBranch !== undefined && value.gitRootPath === undefined) context.addIssue({ code: 'custom', path: ['defaultBranch'], message: 'A default branch requires a Git root.' });
+});
+const relocationTo = z.strictObject({ name: nonempty, ...relocationLocationShape }).superRefine((value, context) => {
+  if (value.defaultBranch !== undefined && value.gitRootPath === undefined) context.addIssue({ code: 'custom', path: ['defaultBranch'], message: 'A default branch requires a Git root.' });
+});
+/** The durable project relocation journal; absent on a project with no recorded relocation. */
+export const projectRelocation = z.strictObject({
+  id,
+  request: z.strictObject({ from: relocationFrom, to: relocationTo }),
+  phase: z.enum(['queued', 'preflight', 'waiting', 'migrating', 'worktrees', 'sessions', 'workspace', 'failed']),
+  error: problem.optional(),
+  migratedSessionIds: z.array(id),
+  started: z.boolean(),
+  createdAt: timestamp,
+});
 export const project = z.strictObject({
-  id, name: nonempty, projectPath: absolutePath, gitRootPath: absolutePath.optional(), defaultBranch: nonempty.optional(), workspaceId: id.optional(), workspaceOwned: z.boolean().optional(),
+  id, name: nonempty, projectPath: absolutePath, gitRootPath: absolutePath.optional(), defaultBranch: nonempty.optional(), workspaceId: id.optional(), workspaceOwned: z.boolean().optional(), operation: projectRelocation.optional(),
 }).superRefine((value, context) => {
   if (value.defaultBranch !== undefined && value.gitRootPath === undefined) context.addIssue({ code: 'custom', path: ['defaultBranch'], message: 'A default branch requires a Git root.' });
 });

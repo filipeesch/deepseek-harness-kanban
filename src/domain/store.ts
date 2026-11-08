@@ -9,7 +9,7 @@ import { parseWorkflow } from './workflow.js';
 import { entryInstruction, nextEnteredAt } from './stage-entry.js';
 import { compareTaskOrder } from './task-order.js';
 import { assertId, assertRevision, isAbsolutePath } from './validation.js';
-import { assertProjectConversion, buildProject } from './project-registration.js';
+import { assertProjectSave, buildProject } from './project-registration.js';
 import { applyNoteTags, validateNoteWrite, type NoteInput } from './note.js';
 
 export type { NoteInput } from './note.js';
@@ -175,7 +175,7 @@ export class BoardStore {
     return this.transact(state => {
       const projectId = value.id ?? nextId(state.projects);
       const current = state.projects.find(project => project.id === projectId);
-      assertProjectConversion(state, projectId, value);
+      assertProjectSave(state, projectId, value);
       const project = buildProject(projectId, value, current);
       if (current) state.projects[state.projects.indexOf(current)] = project;
       else state.projects.push(project);
@@ -202,6 +202,7 @@ export class BoardStore {
     assertId(projectId, 'Project ID');
     return this.transact(state => {
       const project = this.requireProject(projectId, state);
+      invariant(!project.operation, 'PROJECT_BUSY', 'Resolve the project relocation before deleting the project.');
       invariant(!state.tasks.some(task => task.projectId === projectId), 'PROJECT_IN_USE', 'Move or delete the tasks in this project before deleting the project.');
       state.projects.splice(state.projects.indexOf(project), 1);
       return project;

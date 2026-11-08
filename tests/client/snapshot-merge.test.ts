@@ -33,6 +33,14 @@ describe('snapshot frame merge', () => {
     expect(merged.state).toBe(nextState);
   });
 
+  it('carries the transient retained-checkout projection through a merge', () => {
+    const retained = [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo' }];
+    const first = mergeSnapshotFrame(undefined, frame({ retainedCheckouts: retained }), false);
+    expect(first.retainedCheckouts).toEqual(retained);
+    const merged = mergeSnapshotFrame(first, frame({ sequence: 2, retainedCheckouts: retained }), false);
+    expect(merged.retainedCheckouts).toEqual(retained);
+  });
+
   it('always accepts the state on a baseline', () => {
     const first = mergeSnapshotFrame(undefined, frame(), false);
     const restarted: KanbanState = { ...state, settings: { revision: 0 } };

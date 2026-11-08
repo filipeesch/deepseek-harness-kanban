@@ -1,5 +1,6 @@
+import path from 'node:path';
 import { invariant } from '../shared/errors.js';
-import type { Project, ProjectInput } from '../shared/types.js';
+import type { Project, ProjectInput, ProjectLocationPaths } from '../shared/types.js';
 
 /** The task facts that make a Git-association change unsafe while work is in flight. */
 export interface ProjectRegistrationTask {
@@ -13,6 +14,20 @@ export interface ProjectRegistrationState {
   tasks: ProjectRegistrationTask[];
 }
 
+/** One task's directory facts the relocation plan reads. */
+export interface RelocationTask {
+  id: string;
+  effectiveCwd: string;
+  worktree: { path: string } | null;
+}
+
+export interface ProjectRelocationPlan {
+  /** Tasks that move from the previous base project path to the new one. */
+  tasks: Array<{ taskId: string; from: string; to: string }>;
+  /** Tasks whose checkout is kept and whose equivalent project subdirectory is recomputed. */
+  worktrees: Array<{ taskId: string; worktreePath: string; target: string }>;
+}
+
 /** A blank Git root means the project is a folder project, never an empty path. */
 export function projectGitRoot(input: ProjectInput): string | undefined {
   if (input.gitRootPath === undefined) return undefined;
@@ -21,26 +36,68 @@ export function projectGitRoot(input: ProjectInput): string | undefined {
   return value.length > 0 ? value : undefined;
 }
 
+function busyTasks(state: ProjectRegistrationState, projectId: string): ProjectRegistrationTask[] {
+  return state.tasks.filter(task => task.projectId === projectId);
+}
+
 /**
- * Registration may add or remove a project's Git association without changing its
- * project path. A path change or a different Git root still requires the project to
- * have no tasks, and a kind change waits for in-flight worktree work.
+ * Adding or removing a project's Git association is a registration change: it
+ * waits for in-flight worktree work but does not depend on the project path.
  */
-export function assertProjectConversion(state: ProjectRegistrationState, projectId: string, input: ProjectInput): void {
+export function assertProjectAssociationChange(state: ProjectRegistrationState, projectId: string, input: ProjectInput): void {
+  const current = state.projects.find(project => project.id === projectId);
+  if (!current) return;
+  const nextGitRoot = projectGitRoot(input);
+  const kindChanged = (current.gitRootPath === undefined) !== (nextGitRoot === undefined);
+  if (!kindChanged) return;
+  const busy = busyTasks(state, projectId).some(task => (task.operation !== undefined && task.operation !== null) || task.pendingTransition?.worktreeRequest !== undefined);
+  invariant(!busy, 'PROJECT_BUSY', 'Wait for worktree work in this project to finish before changing its Git association.');
+}
+
+/**
+ * A registration save never moves a project location: a changed project path or
+ * Git root with tasks is a relocation, and a project without tasks may be saved
+ * in place.
+ */
+export function assertProjectLocationUnchanged(state: ProjectRegistrationState, projectId: string, input: ProjectInput): void {
   const current = state.projects.find(project => project.id === projectId);
   if (!current) return;
   const nextGitRoot = projectGitRoot(input);
   const pathChanged = current.projectPath !== input.projectPath;
   const rootChanged = current.gitRootPath !== undefined && nextGitRoot !== undefined && current.gitRootPath !== nextGitRoot;
-  const kindChanged = (current.gitRootPath === undefined) !== (nextGitRoot === undefined);
-  const tasks = state.tasks.filter(task => task.projectId === projectId);
-  if (pathChanged || rootChanged) {
-    invariant(tasks.length === 0, 'PROJECT_IN_USE', 'Project paths cannot change while tasks reference the project.');
+  if (!pathChanged && !rootChanged) return;
+  invariant(busyTasks(state, projectId).length === 0, 'PROJECT_IN_USE', 'Changing a project location with tasks requires a project relocation.');
+}
+
+/** The full registration save policy: no location move, no association change while busy, no pending relocation. */
+export function assertProjectSave(state: ProjectRegistrationState, projectId: string, input: ProjectInput): void {
+  const current = state.projects.find(project => project.id === projectId);
+  if (!current) return;
+  invariant(!current.operation, 'PROJECT_BUSY', 'Resolve the recorded project relocation before saving the project.');
+  assertProjectLocationUnchanged(state, projectId, input);
+  assertProjectAssociationChange(state, projectId, input);
+}
+
+/**
+ * The pure relocation plan. It never resolves a directory or inspects Git: it maps
+ * the recorded previous location and the confirmed target to the directories each
+ * task should use, and leaves every other task untouched.
+ */
+export function planProjectRelocation(from: ProjectLocationPaths, to: ProjectLocationPaths, tasks: RelocationTask[]): ProjectRelocationPlan {
+  const plan: ProjectRelocationPlan = { tasks: [], worktrees: [] };
+  for (const task of tasks) {
+    if (task.worktree) {
+      // A folder project keeps a retained plain checkout as-is: there is no Git
+      // root to derive an equivalent subdirectory from, and the binding stays valid.
+      if (to.gitRootPath === undefined) continue;
+      const relative = path.relative(to.gitRootPath, to.projectPath);
+      plan.worktrees.push({ taskId: task.id, worktreePath: task.worktree.path, target: relative === '' ? task.worktree.path : path.join(task.worktree.path, relative) });
+      continue;
+    }
+    if (task.effectiveCwd !== from.projectPath) continue;
+    plan.tasks.push({ taskId: task.id, from: task.effectiveCwd, to: to.projectPath });
   }
-  if (kindChanged) {
-    const busy = tasks.some(task => (task.operation !== undefined && task.operation !== null) || task.pendingTransition?.worktreeRequest !== undefined);
-    invariant(!busy, 'PROJECT_BUSY', 'Wait for worktree work in this project to finish before changing its Git association.');
-  }
+  return plan;
 }
 
 /** Build the stored project, discarding a default branch that has no Git root to belong to. */
@@ -51,6 +108,7 @@ export function buildProject(projectId: string, input: ProjectInput, current?: P
     ...(gitRootPath === undefined ? {} : { gitRootPath }),
     ...(current?.workspaceId ? { workspaceId: current.workspaceId } : {}),
     ...(current?.workspaceOwned !== undefined ? { workspaceOwned: current.workspaceOwned } : {}),
+    ...(current?.operation ? { operation: current.operation } : {}),
   };
   if (gitRootPath !== undefined && input.defaultBranch !== undefined) {
     invariant(typeof input.defaultBranch === 'string', 'INVALID_INPUT', 'Default branch must be text.');

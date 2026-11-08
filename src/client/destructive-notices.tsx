@@ -17,15 +17,18 @@ function stateLabel(task: Task): string {
   return 'Removing worktree…';
 }
 
+/** One checkout left on disk after a deletion; the reason drives the wording. */
+export interface RetainedCheckoutNotice { path: string; reason: 'plain' | 'unavailable' }
+
 /**
  * One board-level strip for destructive operations: queued/running work,
- * failures with their recovery actions, and retained plain checkouts. Per-task
+ * failures with their recovery actions, and retained checkouts. Per-task
  * detail stays in the card and the drawer.
  */
 export function DestructiveOperationsNotice({ tasks, retained, onDismissRetained, onOpen, onRetry, onForce, onReturn }: {
   tasks: readonly Task[];
-  retained: string | null;
-  onDismissRetained: () => void;
+  retained: readonly RetainedCheckoutNotice[];
+  onDismissRetained: (path: string) => void;
   onOpen: (taskId: string) => void;
   onRetry: (taskId: string) => void;
   onForce: (taskId: string) => void;
@@ -34,7 +37,7 @@ export function DestructiveOperationsNotice({ tasks, retained, onDismissRetained
   const entries = tasks.filter(task => destructiveOperation(task) !== null);
   const active = entries.filter(task => task.operation!.phase !== 'failed');
   const failed = entries.filter(task => task.operation!.phase === 'failed');
-  if (active.length === 0 && failed.length === 0 && retained === null) return null;
+  if (active.length === 0 && failed.length === 0 && retained.length === 0) return null;
   return <section className="kb-destructive-notice" aria-label="Destructive operations" role="region">
     {active.length > 0 && <div className="kb-destructive-row">
       <strong>{active.length === 1 ? '1 destructive operation' : active.length + ' destructive operations'}</strong>
@@ -49,9 +52,11 @@ export function DestructiveOperationsNotice({ tasks, retained, onDismissRetained
         <button type="button" className="kb-button" onClick={() => onOpen(task.id)}>Open task</button>
       </div>;
     })}
-    {retained !== null && <div className="kb-destructive-row">
-      <p className="kb-hint">Task deleted. The checkout at <code>{retained}</code> was left on disk.</p>
-      <button type="button" className="kb-button" onClick={onDismissRetained}>Dismiss</button>
-    </div>}
+    {retained.map(entry => <div className="kb-destructive-row" key={entry.path}>
+      <p className="kb-hint">{entry.reason === 'unavailable'
+        ? <>Task deleted. The checkout at <code>{entry.path}</code> was not removed because its project path or Git root could not be resolved, so it was left on disk.</>
+        : <>Task deleted. The checkout at <code>{entry.path}</code> was left on disk.</>}</p>
+      <button type="button" className="kb-button" onClick={() => onDismissRetained(entry.path)}>Dismiss</button>
+    </div>)}
   </section>;
 }

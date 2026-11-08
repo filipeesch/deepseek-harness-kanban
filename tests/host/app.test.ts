@@ -1,7 +1,7 @@
 import { describe,it,expect,afterEach,vi } from 'vitest';
 import path from 'node:path';
 import { mkdir, rm } from 'node:fs/promises';
-import { CommandSchema } from '../../src/remote.js';
+import { CommandSchema, SnapshotSchema } from '../../src/remote.js';
 import { fixture, taskWithConversation } from './helpers.js';
 import { KanbanApp } from '../../src/host/app.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
@@ -191,6 +191,18 @@ describe('host command orchestration',()=>{
   expect(CommandSchema.parse(remove)).toEqual(remove);
   expect(()=>CommandSchema.parse({type:'note.delete',taskId:'task-1'})).toThrow();
   expect(()=>CommandSchema.parse({...save,extra:true})).toThrow();
+ });
+ it('accepts the project relocation wire commands and the retained-checkout projection',()=>{
+  const relocate={type:'project.relocate' as const,project:{id:'project-1',name:'Web',projectPath:'/moved',gitRootPath:'/moved'},confirmed:true};
+  expect(CommandSchema.parse(relocate)).toEqual(relocate);
+  expect(()=>CommandSchema.parse({...relocate,project:{...relocate.project,id:undefined}})).toThrow();
+  expect(()=>CommandSchema.parse({...relocate,confirmed:undefined})).toThrow();
+  const retry={type:'project.relocationRetry' as const,projectId:'project-1'};
+  expect(CommandSchema.parse(retry)).toEqual(retry);
+  const cancel={type:'project.relocationCancel' as const,projectId:'project-1'};
+  expect(CommandSchema.parse(cancel)).toEqual(cancel);
+  const snapshot=SnapshotSchema.parse({stateRevision:1,conversations:{},sharing:{},retainedCheckouts:[{path:'/trees/x',projectId:'project-1',taskTitle:'Task'}],sequence:1});
+  expect(snapshot.retainedCheckouts).toHaveLength(1);
  });
  it('accepts the new move and run wire commands and rejects legacy fields',()=>{
   const move={type:'task.move' as const,taskId:'task-1',columnId:'plan'};

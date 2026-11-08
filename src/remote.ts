@@ -9,6 +9,7 @@ export const PACKAGE_NAME = 'dsh-kanban';
 const id=z.string().min(1).max(200);
 const revision=z.number().int().nonnegative().optional();
 const project=z.object({id:id.optional(),name:z.string().min(1),projectPath:z.string().min(1),gitRootPath:z.string().optional(),defaultBranch:z.string().optional()}).strict();
+const relocationProject=project.extend({id});
 const hubId=id.optional();
 const boardId=id.optional();
 const projectLocation=z.discriminatedUnion('kind',[z.object({kind:z.literal('git'),projectPath:z.string(),gitRootPath:z.string(),defaultBranch:z.string().optional()}).strict(),z.object({kind:z.literal('folder'),projectPath:z.string()}).strict()]);
@@ -24,6 +25,9 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('board.delete'),hubId:id,boardId:id,confirmed:z.boolean(),expectedRevision:revision,sharing:z.enum(['local','team']).optional()}).strict(),
  z.object({type:z.literal('board.workflow.save'),hubId:id,boardId:id,yaml:z.string(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('project.save'),hubId,project,expectedRevision:revision}).strict(),
+ z.object({type:z.literal('project.relocate'),hubId,project:relocationProject,confirmed:z.boolean(),expectedRevision:revision}).strict(),
+ z.object({type:z.literal('project.relocationRetry'),hubId,projectId:id}).strict(),
+ z.object({type:z.literal('project.relocationCancel'),hubId,projectId:id}).strict(),
  z.object({type:z.literal('project.delete'),hubId,projectId:id,confirmed:z.boolean(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('workflow.save'),hubId,yaml:z.string(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('settings.save'),settings:boardSettings,expectedRevision:revision}).strict(),
@@ -87,7 +91,7 @@ export const LocalDriveResultSchema:z.ZodType<LocalDriveResult>=z.discriminatedU
  z.object({action:z.literal('list'),page:DriveBrowseViewSchema}).strict(),
 ]);
 export const SnapshotRequestSchema:z.ZodType<SnapshotRequest>=z.object({refreshSessionIds:z.array(id).optional(),priorityTaskIds:z.array(id).optional(),refreshAuth:z.boolean().optional()}).strict();
-export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note']),id}).strict().optional(),state:KanbanStateSchema.optional(),stateRevision:z.number().int().nonnegative(),conversations:z.record(z.string(),ConversationFactsSchema),sharing:z.record(z.string(),HubSharingViewSchema),sharingAuth:SharingAuthViewSchema.optional(),sequence:z.number().int().nonnegative()}).strict();
+export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note']),id}).strict().optional(),state:KanbanStateSchema.optional(),stateRevision:z.number().int().nonnegative(),conversations:z.record(z.string(),ConversationFactsSchema),sharing:z.record(z.string(),HubSharingViewSchema),sharingAuth:SharingAuthViewSchema.optional(),retainedCheckouts:z.array(z.object({path:z.string(),projectId:id,taskTitle:z.string()}).strict()).optional(),sequence:z.number().int().nonnegative()}).strict();
 export const SharingCommandSchema:z.ZodType<SharingCommand>=z.discriminatedUnion('type',[
  z.object({type:z.literal('sharing.connect'),hubId:id,provider:sharingStorage.optional(),settings:z.record(z.string(),z.string()).optional(),repository:z.string().min(1).max(2048).optional(),intervalMinutes:z.number().int().min(0).max(1440).optional()}).strict(),
  z.object({type:z.literal('sharing.receive'),hubId:id}).strict(),

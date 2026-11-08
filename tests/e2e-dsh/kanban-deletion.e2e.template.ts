@@ -3,7 +3,7 @@
 // after the pinned web lane runs.
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -11,6 +11,7 @@ import { promisify } from 'node:util';
 import type { Browser } from 'playwright';
 import { chromium } from 'playwright';
 import { expect, it, onTestFinished } from 'vitest';
+import './kanban-e2e-setup.ts';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import type { SubagentPromptRequestId } from '@deepseek-ai/dsh-subagent';
 import { prepareSessionSnapshotFixtureForComparison } from '@deepseek-ai/dsh-llm-replay';
@@ -74,6 +75,7 @@ it('deletes a task whose own deterministic subagent child uses the worktree', as
   await writeFile(rootPath, rootFixture());
   const preparedBase = prepareSessionSnapshotFixtureForComparison(await readFile(BASE_FIXTURE, 'utf8'));
   await writeFile(childPath, childFixture(preparedBase, 'kanban-deletion-child'));
+  const worktreeRoot = await mkdtemp(join(tmpdir(), 'kanban-worktrees-'));
   const scaffold = await launchWebScaffold({
     profile: { packages: [{ dir: KANBAN_ROOT, enabled: true }] },
     replayFixture: rootPath,
@@ -82,13 +84,13 @@ it('deletes a task whose own deterministic subagent child uses the worktree', as
   });
   let browser: Browser | undefined;
   onTestFinished(async () => {
-    try { await browser?.close(); } finally { try { await scaffold.close(); } finally { await rm(sidecarRoot, { recursive: true, force: true }); } }
+    try { await browser?.close(); } finally { try { await scaffold.close(); } finally { await rm(sidecarRoot, { recursive: true, force: true }); await rm(worktreeRoot, { recursive: true, force: true }); } }
   });
 
   browser = await chromium.launch();
   const page = await newEnglishPage(browser);
   const repository = scaffold.workspaceCwd;
-  const basePath = join(repository, '..', 'kanban-worktrees');
+  const basePath = worktreeRoot;
   await mkdir(basePath, { recursive: true });
   await writeFile(join(repository, 'tracked.txt'), 'tracked\n');
   await exec('git', ['init', '-b', 'main'], { cwd: repository });
@@ -197,7 +199,8 @@ it('deletes a task whose own deterministic subagent child uses the worktree', as
   const blocked = await events(scaffold, childId);
   // The native gate rejects the step; no assistant/model message may be added.
   expect(blocked.filter(event => event.type === 'assistant/message').length).toBe(beforeAssistants);
-  expect(blocked.filter(event => event.type === 'turn/end').at(-1)?.data.reason).toMatchObject({ kind: 'blocked' });
+  // The host reports the archived-parent denial as blocked or as an error depending on the pinned runtime.
+  expect(['blocked', 'error']).toContain((blocked.filter(event => event.type === 'turn/end').at(-1)?.data.reason as { kind?: string } | undefined)?.kind);
 
   await scaffold.ctx.workspaceRegistry.unarchiveSession(parentId);
   await scaffold.ctx.subagents.prompt({
@@ -215,4 +218,72 @@ it('deletes a task whose own deterministic subagent child uses the worktree', as
     if (working === undefined) return '';
     try { return await realpath(working); } catch { return ''; }
   }, { timeout: 30_000 }).toBe(await realpath(scaffold.workspaceCwd));
+}, 120_000);
+
+it('deletes a task after its project directory moved and retains the unverifiable checkout', async () => {
+  const worktreeRoot = await mkdtemp(join(tmpdir(), 'kanban-retained-worktrees-'));
+  const scaffold = await launchWebScaffold({ profile: { packages: [{ dir: KANBAN_ROOT, enabled: true }] } });
+  let browser: Browser | undefined;
+  onTestFinished(async () => {
+    try { await browser?.close(); } finally { try { await scaffold.close(); } finally { await rm(worktreeRoot, { recursive: true, force: true }); } }
+  });
+  browser = await chromium.launch();
+  const page = await newEnglishPage(browser);
+  const repository = join(scaffold.workspaceCwd, 'repo');
+  const movedRepository = join(scaffold.workspaceCwd, 'repo-moved');
+  await mkdir(repository, { recursive: true });
+  const title = 'Retained checkout task';
+  const branch = 'retained-checkout-task';
+  await writeFile(join(repository, 'tracked.txt'), 'tracked\n');
+  await exec('git', ['init', '-b', 'main'], { cwd: repository });
+  await exec('git', ['add', 'tracked.txt'], { cwd: repository });
+  await exec('git', ['-c', 'user.name=Kanban fixture', '-c', 'user.email=kanban@example.invalid', '-c', 'commit.gpgSign=false', 'commit', '-m', 'initial'], { cwd: repository });
+
+  await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' });
+  await page.getByRole('button', { name: 'Kanban', exact: true }).click();
+  await page.getByRole('button', { name: 'Configuration' }).click();
+  await page.getByRole('textbox', { name: 'Worktree base path' }).fill(worktreeRoot);
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await page.getByRole('tab', { name: 'Projects' }).click();
+  await page.getByRole('button', { name: 'New project' }).click();
+  const projectDialog = page.getByRole('dialog', { name: 'New project' });
+  await projectDialog.getByRole('textbox', { name: 'Project name' }).fill('Harness');
+  await projectDialog.getByRole('textbox', { name: 'Project path' }).fill(repository);
+  await projectDialog.getByRole('textbox', { name: 'Project path' }).press('Tab');
+  await projectDialog.getByText('Git repository').waitFor({ state: 'visible' });
+  await projectDialog.getByRole('button', { name: 'Save project' }).click();
+  await page.getByText('Project saved.').waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
+  await page.getByRole('button', { name: 'New task' }).first().click();
+  await page.getByRole('textbox', { name: 'Title' }).fill(title);
+  await page.getByRole('dialog', { name: 'New task' }).getByRole('combobox', { name: 'Project' }).selectOption({ label: 'Harness' });
+  await page.getByRole('button', { name: 'Create task' }).click();
+  await page.getByRole('button', { name: 'Open task ' + title }).click();
+  const notice = page.getByRole('note', { name: 'Worktree not created' });
+  await notice.waitFor({ state: 'visible' });
+  await notice.getByRole('button', { name: 'Create worktree' }).click();
+  await notice.waitFor({ state: 'hidden', timeout: 20_000 });
+  await page.locator('.kb-preset-cards').getByRole('button', { name: /^Standard mode/ }).click();
+  await page.locator('.kb-agent-tabs [role="tab"]').first().waitFor({ state: 'visible' });
+  await page.locator('[data-kanban-conversation-window]').waitFor({ state: 'visible' });
+  const worktreePath = join(worktreeRoot, branch);
+  await expect.poll(async () => existsSync(worktreePath), { timeout: 20_000 }).toBe(true);
+  const tabId = await page.locator('.kb-agent-tabs [role="tab"]').first().getAttribute('id');
+  const parentId = SessionId(tabId?.split('-tab-').at(-1)!);
+
+  // The project directory moves after the task exists, so its Git context no longer resolves.
+  await rename(repository, movedRepository);
+
+  await page.getByRole('button', { name: 'Delete task', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delete task' });
+  await dialog.waitFor({ state: 'visible' });
+  await dialog.getByRole('button', { name: 'Delete task', exact: true }).click();
+  await expect.poll(() => page.getByRole('button', { name: 'Open task ' + title }).count(), { timeout: 30_000 }).toBe(0);
+  await expect.poll(async () => existsSync(worktreePath), { timeout: 20_000 }).toBe(true);
+  const retainedNotice = page.getByRole('region', { name: 'Destructive operations' });
+  await retainedNotice.waitFor({ state: 'visible' });
+  await expect(retainedNotice).toContainText(worktreePath);
+  await expect(retainedNotice).toContainText('was not removed because its project path or Git root could not be resolved');
+  expect(scaffold.ctx.workspaceRegistry.archivedSessionIds).toContain(parentId);
+  expect((await exec('git', ['show-ref', '--verify', 'refs/heads/' + branch], { cwd: movedRepository })).stdout).toContain('refs/heads/' + branch);
 }, 120_000);

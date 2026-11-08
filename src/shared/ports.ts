@@ -52,6 +52,8 @@ export interface GitPort {
   inspect(project: GitProject, path: string, sessionIds: string[]): Promise<GitTree>;
   create(project: GitProject, request: CreateWorktree, sessionIds: string[], signal?: AbortSignal): Promise<GitTree>;
   remove(project: GitProject, path: string, discardChanges: boolean, sessionIds: string[], signal?: AbortSignal): Promise<void>;
+  /** Best-effort repair of moved linked worktrees; returns after the repository admin files were repaired. */
+  repair(project: GitProject, worktreePaths: string[], sessionIds: string[], signal?: AbortSignal): Promise<void>;
   assertPolicy(project: GitProject, paths: string[], sessionIds: string[], write: boolean): Promise<void>;
   projectDirectory(project: GitProject, worktreeRoot?: string): Promise<string>;
 }

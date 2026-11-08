@@ -19,7 +19,7 @@ export interface WorktreeStore {
   /** Whether any task holds a context operation; the resume path avoids cloning Hubs when it is false. */
   hasOperations?(): boolean;
 }
-export interface WorktreeCoordinatorOptions { signal?: AbortSignal; id?: () => string; now?: () => string; onTaskDeleted?: (task: Task, project: Project) => Promise<void>; sharing?: WorktreeSharingGuard }
+export interface WorktreeCoordinatorOptions { signal?: AbortSignal; id?: () => string; now?: () => string; onTaskDeleted?: (task: Task, project: Project) => Promise<void>; onCheckoutRetained?: (task: Task, project: Project, path: string) => void; sharing?: WorktreeSharingGuard; /** Shared with project relocation so both serialize on one per-repository lane. */ queue?: OperationQueue }
 type CreateAttempt = NonNullable<ContextOperation['createAttempt']>;
 
 function requireProject(state: HubState, id: string): Project {
@@ -53,7 +53,8 @@ export class WorktreeCoordinator {
   private readonly journal: OperationJournal;
   private readonly admission: DestructiveAdmission;
   private readonly destructive: DestructiveExecution;
-  private readonly queue = new OperationQueue();
+  private readonly queue: OperationQueue;
+  private readonly ownsQueue: boolean;
   private readonly tails = new Map<string, Promise<void>>();
   private resumed: Promise<void> | undefined;
   private resumeAgain = false;
@@ -61,13 +62,15 @@ export class WorktreeCoordinator {
 
   constructor(private readonly store: WorktreeStore, private readonly sessions: SessionPort, private readonly git: GitPort, options: WorktreeCoordinatorOptions = {}) {
     this.signal = options.signal ? AbortSignal.any([this.controller.signal, options.signal]) : this.controller.signal;
+    this.queue = options.queue ?? new OperationQueue();
+    this.ownsQueue = options.queue === undefined;
     this.id = options.id ?? randomUUID;
     this.now = options.now ?? (() => new Date().toISOString());
     this.onTaskDeleted = options.onTaskDeleted;
     this.sharing = options.sharing ?? new WorktreeSharingGuard(store, sessions);
     this.journal = new OperationJournal(store, this.now);
     this.admission = new DestructiveAdmission({ locate: taskId => this.read(taskId) }, this.journal);
-    this.destructive = new DestructiveExecution(store, sessions, git, this.destructiveHost(), this.journal, { now: this.now, sharing: this.sharing, ...(options.onTaskDeleted ? { onTaskDeleted: options.onTaskDeleted } : {}) });
+    this.destructive = new DestructiveExecution(store, sessions, git, this.destructiveHost(), this.journal, { now: this.now, sharing: this.sharing, ...(options.onTaskDeleted ? { onTaskDeleted: options.onTaskDeleted } : {}), ...(options.onCheckoutRetained ? { onCheckoutRetained: options.onCheckoutRetained } : {}) });
   }
 
   private destructiveHost(): DestructiveOperationHost {
@@ -81,7 +84,7 @@ export class WorktreeCoordinator {
     };
   }
 
-  dispose(): void { this.disposed = true; this.queue.dispose(); this.controller.abort(); }
+  dispose(): void { this.disposed = true; if (this.ownsQueue) this.queue.dispose(); this.controller.abort(); }
 
   async settle(): Promise<void> {
     for (;;) {
@@ -223,8 +226,8 @@ export class WorktreeCoordinator {
     throw new KanbanError('OPERATION_TARGET_CHANGED', 'The recorded deletion target no longer matches this confirmation; resolve the existing operation before confirming the new binding.', { recordedTargetPath: recorded, confirmedTargetPath: request.expectedWorktreePath });
   }
 
-  private enqueue(lane: string, taskId: string, operationId: string): void {
-    this.queue.enqueue({ lane, taskId, operationId, run: () => this.serial(taskId, async () => { await this.drive(taskId); }).then(() => {}) });
+  private enqueue(lane: string, ownerId: string, operationId: string): void {
+    this.queue.enqueue({ lane, ownerId, operationId, run: () => this.serial(ownerId, async () => { await this.drive(ownerId); }).then(() => {}) });
   }
 
   async returnToBase(taskId: string): Promise<HubState> {
