@@ -296,6 +296,18 @@ describe('workflow confirmation', () => {
     expect(screen.queryByText('Worktree is optional')).toBeNull();
   });
 
+  it('previews an unanchored drawer change at the top of the destination', async () => {
+    const mock = mount(); const gate = deferred<KanbanSnapshot>();
+    const original = mock.api.command;
+    mock.api.command = vi.fn(async (input: Command) => input.type === 'task.move' ? gate.promise : original(input));
+    await openAlpha(mock.user);
+    await mock.user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'doing');
+    await waitFor(() => expect(mock.api.command).toHaveBeenCalledWith(expect.objectContaining({ type: 'task.move', taskId: 't1', columnId: 'doing' })));
+    const doing = document.querySelector('[data-column-id="doing"]')!;
+    expect([...doing.querySelectorAll('[data-task-id]')].map(card => card.getAttribute('data-task-id'))).toEqual(['t1', 't2']);
+    await act(async () => { gate.resolve(mock.get()); });
+  });
+
   it('moves immediately to an instructed stage without opening a dialog', async () => {
     const { user, command } = mount(); await openAlpha(user);
     await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
