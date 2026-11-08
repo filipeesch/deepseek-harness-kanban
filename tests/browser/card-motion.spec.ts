@@ -2,14 +2,16 @@ import { expect, test, type Page } from '@playwright/test';
 
 const HARNESS = new URL('./.tmp/index.html', import.meta.url).href;
 
+interface HarnessColumn { id: string; name: string }
 interface HarnessTask { id: string; columnId: string; position: number; title: string; [key: string]: unknown }
-interface HarnessState { hubs: Array<{ tasks: HarnessTask[] }> }
+interface HarnessState { hubs: Array<{ tasks: HarnessTask[]; boards: Array<{ workflow: { columns: HarnessColumn[] } }> }> }
 type HarnessWindow = { __harness: { mutate(change: (state: unknown) => void): void; commands(): Array<{ type: string }> } };
 
 type HarnessMutation =
   | { kind: 'remove-task'; taskId: string }
   | { kind: 'empty-column'; columnId: string }
   | { kind: 'move-task'; taskId: string; columnId: string }
+  | { kind: 'widen-workflow' }
   | { kind: 'add-task' };
 
 /** Applies a host-driven board change, the way a team update or an automatic advance arrives. */
@@ -21,6 +23,9 @@ async function mutate(page: Page, change: HarnessMutation): Promise<void> {
       const hub = state.hubs[0]!;
       if (input.kind === 'remove-task') hub.tasks = hub.tasks.filter(task => task.id !== input.taskId);
       if (input.kind === 'empty-column') hub.tasks = hub.tasks.filter(task => task.columnId !== input.columnId);
+      if (input.kind === 'widen-workflow') {
+        for (const id of ['c1', 'c2', 'c3', 'c4', 'c5', 'c6']) hub.boards[0]!.workflow.columns.push({ id, name: id.toUpperCase() });
+      }
       if (input.kind === 'move-task') {
         const task = hub.tasks.find(value => value.id === input.taskId);
         if (task !== undefined) { task.columnId = input.columnId; task.position = 95; }
@@ -33,15 +38,12 @@ async function mutate(page: Page, change: HarnessMutation): Promise<void> {
   }, change);
 }
 
-/** A pointer press inside the grid arms the frame, as any user interaction does. */
-async function armBoard(page: Page): Promise<void> {
-  const header = page.locator('.kb-column-header h2').first();
-  const box = (await header.boundingBox())!;
-  await page.mouse.click(box.x + 4, box.y + 4);
+function runningAnimations(page: Page): Promise<number> {
+  return page.evaluate(() => Array.from(document.querySelectorAll('.kb-card[data-task-id]')).filter(card => card.getAnimations().length > 0).length);
 }
 
-function runningAnimations(page: Page): Promise<number> {
-  return page.evaluate(() => Array.from(document.querySelectorAll('.kb-card')).filter(card => card.getAnimations().length > 0).length);
+function flatTaskIds(page: Page): Promise<Array<string | null>> {
+  return page.evaluate(() => Array.from(document.querySelectorAll('.kb-card[data-task-id]')).map(card => card.getAttribute('data-task-id')));
 }
 
 async function dragCard(page: Page, title: string, destinationName: string): Promise<void> {
@@ -59,11 +61,16 @@ test('a drop glides the card and the cards that make room for it', async ({ page
   await page.setViewportSize({ width: 1280, height: 2200 });
   await page.goto(HARNESS + '?scenario=board');
   await page.waitForSelector('.kb-column');
+  const frame = await page.evaluate(() => {
+    const header = document.querySelector<HTMLElement>('.kb-header')!.getBoundingClientRect();
+    const columns = document.querySelector<HTMLElement>('.kb-columns')!.getBoundingClientRect();
+    return { headerHeight: header.height, columnsTop: columns.top };
+  });
   await dragCard(page, 'Long column task 0', 'Apply column');
   await page.waitForFunction(() => Array.from(document.querySelectorAll('.kb-card')).some(card => card.getAnimations().length > 0));
   const motion = await page.evaluate(() => {
     const moved = document.querySelector<HTMLElement>('[data-task-id="long-0"]');
-    const animated = Array.from(document.querySelectorAll<HTMLElement>('.kb-card')).filter(card => card.getAnimations().length > 0).length;
+    const animated = Array.from(document.querySelectorAll<HTMLElement>('.kb-card[data-task-id]')).filter(card => card.getAnimations().length > 0).length;
     return {
       animated,
       gliding: moved?.classList.contains('kb-card-gliding') ?? false,
@@ -76,14 +83,23 @@ test('a drop glides the card and the cards that make room for it', async ({ page
   const interactive = await page.evaluate(() => {
     const card = document.querySelector<HTMLElement>('[data-task-id="long-0"]')!;
     const open = card.querySelector<HTMLButtonElement>('.kb-card-open')!;
-    return { pointerEvents: getComputedStyle(card).pointerEvents, disabled: open.disabled, focusable: open.tabIndex >= 0 };
+    open.focus();
+    return { pointerEvents: getComputedStyle(card).pointerEvents, disabled: open.disabled, focusable: open.tabIndex >= 0, focused: document.activeElement === open };
   });
   expect(interactive.pointerEvents).not.toBe('none');
   expect(interactive.disabled).toBe(false);
   expect(interactive.focusable).toBe(true);
+  expect(interactive.focused).toBe(true);
   await expect(page.getByRole('region', { name: 'Apply column' }).getByRole('button', { name: 'Open task Long column task 0', exact: true })).toBeVisible();
   await expect(page.locator('.kb-card.kb-card-gliding')).toHaveCount(0, { timeout: 2000 });
   expect(await runningAnimations(page)).toBe(0);
+  const after = await page.evaluate(() => {
+    const header = document.querySelector<HTMLElement>('.kb-header')!.getBoundingClientRect();
+    const columns = document.querySelector<HTMLElement>('.kb-columns')!.getBoundingClientRect();
+    return { headerHeight: header.height, columnsTop: columns.top };
+  });
+  expect(after.headerHeight).toBe(frame.headerHeight);
+  expect(after.columnsTop).toBe(frame.columnsTop);
   const moves = await page.evaluate(() => (window as unknown as HarnessWindow).__harness.commands().filter(command => command.type === 'task.move'));
   expect(moves).toHaveLength(1);
   await page.getByRole('button', { name: 'Open task Long column task 0', exact: true }).click();
@@ -120,11 +136,26 @@ test('a drawer stage change glides the card on the board', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Close task details' })).toBeVisible();
 });
 
+test("a drawer change on a column's last card still glides", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 2200 });
+  await page.goto(HARNESS + '?scenario=board');
+  await page.waitForSelector('.kb-column');
+  const before = await flatTaskIds(page);
+  await page.getByRole('button', { name: 'Open task Delete target', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Move task to' }).selectOption('apply');
+  await page.waitForFunction(() => {
+    const card = document.querySelector<HTMLElement>('[data-task-id="delete-target"]');
+    return card !== null && card.getAnimations().length > 0;
+  });
+  const after = await flatTaskIds(page);
+  expect(after).toEqual(before);
+  await expect(page.getByRole('region', { name: 'Apply column' }).getByRole('button', { name: 'Open task Delete target', exact: true })).toBeVisible();
+});
+
 test('a host-driven move glides the card and sends no command', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 2200 });
   await page.goto(HARNESS + '?scenario=board');
   await page.waitForSelector('.kb-column');
-  await armBoard(page);
   await mutate(page, { kind: 'move-task', taskId: 'long-1', columnId: 'apply' });
   await page.waitForFunction(() => {
     const card = document.querySelector<HTMLElement>('[data-task-id="long-1"]');
@@ -139,7 +170,6 @@ test('a leaving card fades as an inert copy in the hidden overlay without extend
   await page.setViewportSize({ width: 1280, height: 2200 });
   await page.goto(HARNESS + '?scenario=board');
   await page.waitForSelector('.kb-column');
-  await armBoard(page);
   const before = await page.evaluate(() => ({
     width: document.querySelector<HTMLElement>('.kb-columns')!.scrollWidth,
     height: document.querySelector<HTMLElement>('.kb-page-body')!.scrollHeight,
@@ -168,11 +198,42 @@ test('a leaving card fades as an inert copy in the hidden overlay without extend
   await expect(page.locator('[data-task-id="other"]')).toHaveCount(0);
 });
 
+test('an exit copy stays visible after horizontal scrolling', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 1600 });
+  await page.goto(HARNESS + '?scenario=board');
+  await page.waitForSelector('.kb-column');
+  await mutate(page, { kind: 'widen-workflow' });
+  await mutate(page, { kind: 'move-task', taskId: 'other', columnId: 'c6' });
+  await page.waitForFunction(() => document.querySelector<HTMLElement>('[data-task-id="other"]')?.closest('[data-column-id="c6"]') !== null);
+  await expect(page.locator('.kb-card-gliding')).toHaveCount(0, { timeout: 2000 });
+  const scrolled = await page.evaluate(() => {
+    const list = document.querySelector<HTMLElement>('.kb-columns')!;
+    list.scrollLeft = list.scrollWidth;
+    return { scrollLeft: list.scrollLeft, scrollWidth: list.scrollWidth, clientWidth: list.clientWidth };
+  });
+  expect(scrolled.scrollLeft).toBeGreaterThan(0);
+  await mutate(page, { kind: 'remove-task', taskId: 'other' });
+  await page.waitForFunction(() => document.querySelectorAll('.kb-motion-overlay > *').length === 1);
+  const copy = await page.evaluate(() => {
+    const list = document.querySelector<HTMLElement>('.kb-columns')!;
+    const element = document.querySelector<HTMLElement>('.kb-motion-overlay')!.firstElementChild as HTMLElement;
+    const listRect = list.getBoundingClientRect();
+    const copyRect = element.getBoundingClientRect();
+    return {
+      width: copyRect.width,
+      inside: copyRect.left >= listRect.left - 1 && copyRect.right <= listRect.right + 1,
+      scrollWidth: list.scrollWidth,
+    };
+  });
+  expect(copy.width).toBeGreaterThan(0);
+  expect(copy.inside).toBe(true);
+  expect(copy.scrollWidth).toBe(scrolled.scrollWidth);
+});
+
 test('an appearing card fades in', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 2200 });
   await page.goto(HARNESS + '?scenario=board');
   await page.waitForSelector('.kb-column');
-  await armBoard(page);
   await mutate(page, { kind: 'add-task' });
   await page.waitForFunction(() => {
     const card = document.querySelector<HTMLElement>('[data-task-id="synced"]');
@@ -197,7 +258,6 @@ test('replacing the presented view settles immediately', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 2200 });
   await page.goto(HARNESS + '?scenario=board');
   await page.waitForSelector('.kb-column');
-  await armBoard(page);
   const search = page.getByRole('searchbox', { name: 'Search tasks' });
   await search.fill('Short task');
   await page.waitForFunction(() => document.querySelectorAll('.kb-card').length === 1);
@@ -207,13 +267,35 @@ test('replacing the presented view settles immediately', async ({ page }) => {
   await page.waitForFunction(() => document.querySelectorAll('.kb-card').length > 10);
   expect(await runningAnimations(page)).toBe(0);
   expect(await page.locator('.kb-motion-overlay > *').count()).toBe(0);
+  const projectFilter = page.getByRole('combobox', { name: 'Project filter' });
+  await projectFilter.selectOption('p2');
+  await page.waitForFunction(() => document.querySelectorAll('.kb-card').length === 1);
+  expect(await runningAnimations(page)).toBe(0);
+  expect(await page.locator('.kb-motion-overlay > *').count()).toBe(0);
+  await projectFilter.selectOption('');
+  await page.waitForFunction(() => document.querySelectorAll('.kb-card').length > 10);
+  expect(await runningAnimations(page)).toBe(0);
+  expect(await page.locator('.kb-motion-overlay > *').count()).toBe(0);
+});
+
+test('switching Hub settles immediately', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 2200 });
+  await page.goto(HARNESS + '?scenario=hubs');
+  await page.waitForSelector('.kb-card');
+  await page.getByRole('tab', { name: 'Second Hub' }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.kb-card').length === 0);
+  expect(await runningAnimations(page)).toBe(0);
+  expect(await page.locator('.kb-motion-overlay > *').count()).toBe(0);
+  await page.getByRole('tab', { name: 'Harness Hub' }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.kb-card').length > 0);
+  expect(await runningAnimations(page)).toBe(0);
+  expect(await page.locator('.kb-motion-overlay > *').count()).toBe(0);
 });
 
 test('the empty-column note waits for the card exit and then fades in', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 2200 });
   await page.goto(HARNESS + '?scenario=board');
   await page.waitForSelector('.kb-column');
-  await armBoard(page);
   await mutate(page, { kind: 'empty-column', columnId: 'propose' });
   const note = page.locator('[data-column-id="propose"] .kb-empty-column');
   await expect(note).toHaveCount(1);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Workflow } from '../../src/shared/types.js';
-import { cardRowKeys, columnLayout, planColumns } from '../../src/client/board-columns.js';
+import { cardLayoutKeys, columnLayout, planColumns } from '../../src/client/board-columns.js';
 import { task } from './helpers.js';
 
 const workflow: Workflow = {
@@ -15,7 +15,10 @@ const tasks = [
   task('t4', 'Fourth', 'p', 'done'),
 ];
 
-function keys(plan: ReturnType<typeof planColumns>): string[] { return cardRowKeys(plan); }
+function keys(plan: ReturnType<typeof planColumns>): string[] { return cardLayoutKeys(plan); }
+function taskIds(plan: ReturnType<typeof planColumns>): string[] {
+  return cardLayoutKeys(plan).map(key => key.slice(key.indexOf('\u0000') + 1));
+}
 
 describe('column layout', () => {
   it('keeps a group together and does not render a claimed column twice', () => {
@@ -32,40 +35,54 @@ describe('column layout', () => {
 });
 
 describe('column planning', () => {
+  it('prefixes every card with the column that renders it', () => {
+    expect(keys(planColumns(workflow, tasks, null))).toEqual(['todo\u0000t1', 'todo\u0000t2', 'doing\u0000t3', 'done\u0000t4']);
+  });
+
   it('places every task in its stage in the order the caller supplied', () => {
-    expect(keys(planColumns(workflow, tasks, null))).toEqual(['t1', 't2', 't3', 't4']);
+    expect(taskIds(planColumns(workflow, tasks, null))).toEqual(['t1', 't2', 't3', 't4']);
   });
 
   it('renders only the tasks the caller kept', () => {
-    expect(keys(planColumns(workflow, [tasks[1]!, tasks[3]!], null))).toEqual(['t2', 't4']);
+    expect(taskIds(planColumns(workflow, [tasks[1]!, tasks[3]!], null))).toEqual(['t2', 't4']);
   });
 
   it('inserts an optimistic move at the top of its destination', () => {
     const plan = planColumns(workflow, tasks, { taskId: 't4', columnId: 'todo', placement: 'start' });
-    expect(keys(plan)).toEqual(['t4', 't1', 't2', 't3']);
+    expect(taskIds(plan)).toEqual(['t4', 't1', 't2', 't3']);
   });
 
   it('inserts an optimistic move after the last card', () => {
     const plan = planColumns(workflow, tasks, { taskId: 't4', columnId: 'doing', placement: 'end' });
-    expect(keys(plan)).toEqual(['t1', 't2', 't3', 't4']);
+    expect(taskIds(plan)).toEqual(['t1', 't2', 't3', 't4']);
   });
 
   it('inserts an optimistic move before its anchor', () => {
     const plan = planColumns(workflow, tasks, { taskId: 't4', columnId: 'todo', placement: { before: 't2' } });
-    expect(keys(plan)).toEqual(['t1', 't4', 't2', 't3']);
+    expect(taskIds(plan)).toEqual(['t1', 't4', 't2', 't3']);
   });
 
   it('falls back to the end when the optimistic anchor is gone', () => {
     const plan = planColumns(workflow, tasks, { taskId: 't1', columnId: 'doing', placement: { before: 'missing' } });
-    expect(keys(plan)).toEqual(['t2', 't3', 't1', 't4']);
+    expect(taskIds(plan)).toEqual(['t2', 't3', 't1', 't4']);
   });
 
   it('ignores an optimistic move for a task the caller did not render', () => {
-    expect(keys(planColumns(workflow, tasks, { taskId: 'gone', columnId: 'todo', placement: 'start' }))).toEqual(['t1', 't2', 't3', 't4']);
+    expect(taskIds(planColumns(workflow, tasks, { taskId: 'gone', columnId: 'todo', placement: 'start' }))).toEqual(['t1', 't2', 't3', 't4']);
   });
 
   it('keeps an empty destination column rendered without tasks', () => {
     const plan = planColumns(workflow, [tasks[0]!], null);
     expect(plan.flatMap(slot => slot.columns.flatMap(column => [column.column.id, column.tasks.length]))).toEqual(['todo', 1, 'doing', 0, 'done', 0]);
+  });
+
+  it('changes the layout key when a card changes stage even if the flat task order is identical', () => {
+    const before = keys(planColumns(workflow, tasks, null));
+    // t2 is the last card of "todo"; moving it to the top of "doing" keeps the
+    // flat order t1,t2,t3 while changing which column renders t2.
+    const after = keys(planColumns(workflow, tasks.map(value => value.id === 't2' ? { ...value, columnId: 'doing' } : value), { taskId: 't2', columnId: 'doing', placement: 'start' }));
+    expect(before.map(key => key.slice(key.indexOf('\u0000') + 1))).toEqual(after.map(key => key.slice(key.indexOf('\u0000') + 1)));
+    expect(before).not.toEqual(after);
+    expect(after[1]).toBe('doing\u0000t2');
   });
 });

@@ -5,16 +5,20 @@ import { exitCopyRect, intersectsViewport, planCardMotion, sameRowKeys, type Car
 import { prefersReducedMotion } from './preference.js';
 
 export interface CardMotionFrameProps {
-  /** The rendered card ids in DOM order; a difference is what starts motion. */
-  rowKeys: readonly string[];
+  /**
+   * The rendered cards in DOM order, each prefixed by its column. The prefix is
+   * what makes a stage change visible even when the flat task order is identical.
+   */
+  layoutKeys: readonly string[];
   /** Changes when the presented view is replaced, so a replacement settles immediately. */
   resetKey: string;
-  /** Whether a board state is being rendered; a board that is not ready settles. */
-  ready: boolean;
   className: string;
   label?: string;
   children: ReactNode;
-  /** Isolated harnesses may replace the animator, configuration, and preference reading. */
+  /**
+   * Isolated harnesses may replace these; they are read once when the frame
+   * mounts, which is enough because every production caller uses the defaults.
+   */
   animator?: CardMotionAnimator;
   config?: CardMotionConfig;
   reducedMotion?: () => boolean;
@@ -48,6 +52,18 @@ function visibleViewport(list: HTMLElement): CardRect {
   return { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
 }
 
+/**
+ * Covers the visible scrollport in the scroller's content coordinates. The
+ * overlay is clipped to its own box, so without this a horizontally scrolled
+ * board would clip the exit fades of cards near the end of the content.
+ */
+function positionOverlay(list: HTMLElement, overlay: HTMLElement): void {
+  overlay.style.left = list.scrollLeft + 'px';
+  overlay.style.top = list.scrollTop + 'px';
+  overlay.style.width = list.clientWidth + 'px';
+  overlay.style.height = list.clientHeight + 'px';
+}
+
 function readRows(list: HTMLElement): RowGeometry {
   const elements = new Map<string, HTMLElement>();
   const rects = new Map<string, CardRect>();
@@ -69,11 +85,10 @@ function readRows(list: HTMLElement): RowGeometry {
  * React commits, not observers, drive it: the pre-mutation geometry is read in
  * `getSnapshotBeforeUpdate`, so a card that changes columns is animated from
  * where it was, and every other card that changed position glides to its new
- * one. Rows that only changed size, a replaced view, an oversized batch, and the
- * reduced-motion preference all settle immediately.
+ * one. Rows that only changed size, a replaced view, an oversized membership
+ * change, and the reduced-motion preference all settle immediately.
  */
 export class CardMotionFrame extends Component<CardMotionFrameProps> {
-  private armed = false;
   private readonly list = createRef<HTMLDivElement>();
   private readonly overlay = createRef<HTMLDivElement>();
   private readonly animator: CardMotionAnimator;
@@ -88,14 +103,30 @@ export class CardMotionFrame extends Component<CardMotionFrameProps> {
   }
 
   override getSnapshotBeforeUpdate(previous: CardMotionFrameProps): FrameSnapshot | null {
-    if (!this.shouldAnimate(previous)) return null;
-    const list = this.list.current;
-    if (list === null) return null;
-    const rows = readRows(list);
-    return rows.snapshot.keys.length === 0 ? null : { rows };
+    try {
+      if (!this.shouldAnimate(previous)) return null;
+      const list = this.list.current;
+      return list === null ? null : { rows: readRows(list) };
+    } catch {
+      this.animator.cancelAll();
+      return null;
+    }
   }
 
   override componentDidUpdate(previous: CardMotionFrameProps, _state: unknown, snapshot: FrameSnapshot | null): void {
+    try {
+      this.reconcile(previous, snapshot);
+    } catch {
+      // A motion failure may never take the board down with it.
+      this.animator.cancelAll();
+    }
+  }
+
+  override componentWillUnmount(): void {
+    this.animator.cancelAll();
+  }
+
+  private reconcile(previous: CardMotionFrameProps, snapshot: FrameSnapshot | null): void {
     const list = this.list.current;
     const overlay = this.overlay.current;
     if (list === null || overlay === null) { this.animator.cancelAll(); return; }
@@ -103,18 +134,18 @@ export class CardMotionFrame extends Component<CardMotionFrameProps> {
       if (this.settlesOnCommit(previous)) this.animator.cancelAll();
       return;
     }
-    // Cancel first: a running glide holds a transform that would otherwise be
-    // measured as the card's layout position.
+    // Cancel before reading the target layout: a running glide holds a transform
+    // that would otherwise be measured as the card's resting position.
     this.animator.cancelMovements();
     const current = readRows(list);
     const viewport = visibleViewport(list);
     const visible = viewport.width === 0 || viewport.height === 0
-      ? () => true
+      ? () => false
       : (rect: CardRect) => intersectsViewport(rect, viewport);
     const plan = planCardMotion(snapshot.rows.snapshot, current.snapshot, visible);
-    // Only cards entering or leaving the board count toward the cap; cards that stay
-    // and shift to make room are the movement this pipeline exists for, and a normal
-    // move in a long stage can shift more than the cap allows.
+    // Only cards entering or leaving the board count toward the cap; cards that
+    // stay and shift to make room are the movement this pipeline exists for, and
+    // a normal move in a long stage can shift more than the cap allows.
     const membership = plan.entered.length + plan.exited.length;
     const changes = plan.movements.length + membership;
     if (changes === 0 || membership > this.config.batchLimit) { this.animator.cancelAll(); return; }
@@ -126,6 +157,8 @@ export class CardMotionFrame extends Component<CardMotionFrameProps> {
       const element = current.elements.get(key);
       if (element !== undefined) this.animator.fadeIn(element);
     }
+    if (plan.exited.length === 0) return;
+    positionOverlay(list, overlay);
     const origin = overlay.getBoundingClientRect();
     for (const key of plan.exited) {
       const row = snapshot.rows.elements.get(key);
@@ -135,32 +168,22 @@ export class CardMotionFrame extends Component<CardMotionFrameProps> {
     }
   }
 
-  override componentWillUnmount(): void {
-    this.animator.cancelAll();
-  }
-
   private shouldAnimate(previous: CardMotionFrameProps): boolean {
-    return this.armed
-      && this.animator.enabled
-      && previous.ready && this.props.ready
+    return this.animator.enabled
       && previous.resetKey === this.props.resetKey
       && !this.reducedMotion()
-      && !sameRowKeys(previous.rowKeys, this.props.rowKeys);
+      && !sameRowKeys(previous.layoutKeys, this.props.layoutKeys);
   }
 
   private settlesOnCommit(previous: CardMotionFrameProps): boolean {
     return !this.animator.enabled
-      || !this.props.ready
       || previous.resetKey !== this.props.resetKey
       || this.reducedMotion();
   }
 
-  private readonly arm = (): void => { this.armed = true; };
-
   override render(): ReactNode {
     return (
-      <div ref={this.list} className={this.props.className} aria-label={this.props.label}
-        onPointerDownCapture={this.arm} onKeyDownCapture={this.arm}>
+      <div ref={this.list} className={this.props.className} aria-label={this.props.label}>
         {this.props.children}
         <div ref={this.overlay} className="kb-motion-overlay" aria-hidden="true" />
       </div>

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { cleanup, render } from '@testing-library/react';
 import { CardMotionFrame, type CardMotionFrameProps } from '../../src/client/card-motion/frame.js';
 import type { CardMotionAnimator } from '../../src/client/card-motion/animator.js';
 
@@ -41,13 +41,16 @@ beforeEach(() => {
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-interface GridOptions { resetKey?: string; ready?: boolean; reducedMotion?: () => boolean }
+interface GridOptions { resetKey?: string; reducedMotion?: () => boolean }
 
-function grid(keys: readonly string[], animator: CardMotionAnimator, options: GridOptions = {}): React.ReactElement<CardMotionFrameProps> {
+type Entry = readonly [column: string, taskId: string];
+
+function grid(entries: readonly Entry[], animator: CardMotionAnimator, options: GridOptions = {}): React.ReactElement<CardMotionFrameProps> {
   return <CardMotionFrame
-    className="grid" label="Cards" rowKeys={keys} resetKey={options.resetKey ?? 'view'} ready={options.ready ?? true}
-    animator={animator} {...(options.reducedMotion === undefined ? {} : { reducedMotion: options.reducedMotion })}
-  >{keys.map(key => <article key={key} data-task-id={key}>{key}</article>)}</CardMotionFrame>;
+    className="grid" label="Cards" layoutKeys={entries.map(([column, id]) => column + '\u0000' + id)}
+    resetKey={options.resetKey ?? 'view'} animator={animator}
+    {...(options.reducedMotion === undefined ? {} : { reducedMotion: options.reducedMotion })}
+  >{entries.map(([, id]) => <article key={id} data-task-id={id}>{id}</article>)}</CardMotionFrame>;
 }
 
 function cards(container: HTMLElement): Map<string, HTMLElement> {
@@ -56,122 +59,136 @@ function cards(container: HTMLElement): Map<string, HTMLElement> {
   return found;
 }
 
-function arm(container: HTMLElement): void { fireEvent.pointerDown(container.querySelector('.grid')!); }
-
 describe('card motion frame', () => {
   it('glides every card whose order changed and settles a same-key commit', () => {
     const animator = fakeAnimator();
-    const view = render(grid(['a', 'b'], animator));
+    const view = render(grid([['c', 'a'], ['c', 'b']], animator));
     const elements = cards(view.container);
-    arm(view.container);
     queues.set(elements.get('a')!, [domRect(0, 0), domRect(0, 60)]);
     queues.set(elements.get('b')!, [domRect(0, 60), domRect(0, 0)]);
-    view.rerender(grid(['b', 'a'], animator));
+    view.rerender(grid([['c', 'b'], ['c', 'a']], animator));
     expect(animator.glide).toHaveBeenCalledTimes(2);
     expect(animator.glide).toHaveBeenCalledWith(elements.get('a'), { key: 'a', dx: 0, dy: -60 });
     expect(animator.glide).toHaveBeenCalledWith(elements.get('b'), { key: 'b', dx: 0, dy: 60 });
     animator.glide.mockClear();
-    view.rerender(grid(['b', 'a'], animator, { resetKey: 'view' }));
+    view.rerender(grid([['c', 'b'], ['c', 'a']], animator));
     expect(animator.glide).not.toHaveBeenCalled();
+  });
+
+  it('glides a card whose stage changed even when the flat task order stayed identical', () => {
+    const animator = fakeAnimator();
+    const view = render(grid([['left', 'a'], ['right', 'b']], animator));
+    const elements = cards(view.container);
+    queues.set(elements.get('a')!, [domRect(0, 0), domRect(240, 0)]);
+    queues.set(elements.get('b')!, [domRect(240, 0), domRect(240, 0)]);
+    view.rerender(grid([['right', 'a'], ['right', 'b']], animator));
+    expect(animator.glide).toHaveBeenCalledTimes(1);
+    expect(animator.glide).toHaveBeenCalledWith(elements.get('a'), { key: 'a', dx: -240, dy: 0 });
   });
 
   it('cancels a running glide before starting the next one', () => {
     const animator = fakeAnimator();
-    const view = render(grid(['a', 'b'], animator));
+    const view = render(grid([['c', 'a'], ['c', 'b']], animator));
     const elements = cards(view.container);
-    arm(view.container);
     queues.set(elements.get('a')!, [domRect(0, 0), domRect(0, 60)]);
     queues.set(elements.get('b')!, [domRect(0, 60), domRect(0, 0)]);
-    view.rerender(grid(['b', 'a'], animator));
+    view.rerender(grid([['c', 'b'], ['c', 'a']], animator));
     expect(animator.cancelMovements).toHaveBeenCalled();
     expect(animator.cancelMovements.mock.invocationCallOrder[0]).toBeLessThan(animator.glide.mock.invocationCallOrder[0]!);
   });
 
-  it('stays still until the first local pointer or keyboard input', () => {
-    const animator = fakeAnimator();
-    const view = render(grid(['a', 'b'], animator));
-    const elements = cards(view.container);
-    queues.set(elements.get('a')!, [domRect(0, 0), domRect(0, 60)]);
-    queues.set(elements.get('b')!, [domRect(0, 60), domRect(0, 0)]);
-    view.rerender(grid(['b', 'a'], animator));
-    expect(animator.glide).not.toHaveBeenCalled();
-  });
-
   it('settles a commit that only changed a card size', () => {
     const animator = fakeAnimator();
-    const view = render(grid(['a', 'b'], animator));
+    const view = render(grid([['c', 'a'], ['c', 'b']], animator));
     const elements = cards(view.container);
-    arm(view.container);
     queues.set(elements.get('b')!, [domRect(0, 120)]);
-    view.rerender(grid(['a', 'b'], animator, { resetKey: 'view' }));
+    view.rerender(grid([['c', 'a'], ['c', 'b']], animator));
     expect(animator.glide).not.toHaveBeenCalled();
   });
 
-  it('settles a replaced view and a board that is not ready', () => {
+  it('settles a replaced view', () => {
     const animator = fakeAnimator();
-    const view = render(grid(['a', 'b'], animator));
+    const view = render(grid([['c', 'a'], ['c', 'b']], animator));
     const elements = cards(view.container);
-    arm(view.container);
     queues.set(elements.get('a')!, [domRect(0, 0), domRect(0, 60)]);
     queues.set(elements.get('b')!, [domRect(0, 60), domRect(0, 0)]);
-    view.rerender(grid(['b', 'a'], animator, { resetKey: 'other-board' }));
+    view.rerender(grid([['c', 'b'], ['c', 'a']], animator, { resetKey: 'other-board' }));
     expect(animator.glide).not.toHaveBeenCalled();
     expect(animator.cancelAll).toHaveBeenCalled();
-    view.rerender(grid(['a', 'b'], animator, { resetKey: 'other-board', ready: false }));
-    expect(animator.glide).not.toHaveBeenCalled();
   });
 
-  it('honors the reduced-motion preference', () => {
+  it('honors reduced motion for movement, entries, and exits', () => {
     const animator = fakeAnimator();
-    const view = render(grid(['a', 'b'], animator, { reducedMotion: () => true }));
+    const reducedMotion = (): boolean => true;
+    const view = render(grid([['c', 'a'], ['c', 'b']], animator, { reducedMotion }));
     const elements = cards(view.container);
-    arm(view.container);
     queues.set(elements.get('a')!, [domRect(0, 0), domRect(0, 60)]);
-    queues.set(elements.get('b')!, [domRect(0, 60), domRect(0, 0)]);
-    view.rerender(grid(['b', 'a'], animator, { reducedMotion: () => true }));
+    queues.set(elements.get('b')!, [domRect(0, 60)]);
+    view.rerender(grid([['c', 'b'], ['c', 'c']], animator, { reducedMotion }));
     expect(animator.glide).not.toHaveBeenCalled();
+    expect(animator.fadeIn).not.toHaveBeenCalled();
+    expect(animator.fadeOut).not.toHaveBeenCalled();
+    expect(animator.cancelAll).toHaveBeenCalled();
   });
 
-  it('settles a batch of entries above the cap', () => {
+  it('animates exactly eight entries', () => {
     const animator = fakeAnimator();
-    const view = render(grid(['a'], animator));
-    arm(view.container);
-    const added = Array.from({ length: 9 }, (_, index) => 'n' + index);
-    view.rerender(grid(['a', ...added], animator));
+    const view = render(grid([['c', 'a']], animator));
+    view.rerender(grid([['c', 'a'], ...Array.from({ length: 8 }, (_, index) => ['c', 'e' + index] as Entry)], animator));
+    expect(animator.fadeIn).toHaveBeenCalledTimes(8);
+  });
+
+  it('settles nine entries', () => {
+    const animator = fakeAnimator();
+    const view = render(grid([['c', 'a']], animator));
+    view.rerender(grid([['c', 'a'], ...Array.from({ length: 9 }, (_, index) => ['c', 'e' + index] as Entry)], animator));
     expect(animator.fadeIn).not.toHaveBeenCalled();
+    expect(animator.cancelAll).toHaveBeenCalled();
+  });
+
+  it('settles a batch of exits above the cap', () => {
+    const animator = fakeAnimator();
+    const keys = Array.from({ length: 9 }, (_, index) => ['c', 'x' + index] as Entry);
+    const view = render(grid(keys, animator));
+    view.rerender(grid([], animator));
+    expect(animator.fadeOut).not.toHaveBeenCalled();
     expect(animator.cancelAll).toHaveBeenCalled();
   });
 
   it('glides a long reorder because cards that stay do not count toward the cap', () => {
     const animator = fakeAnimator();
-    const keys = Array.from({ length: 10 }, (_, index) => 'k' + index);
+    const keys = Array.from({ length: 10 }, (_, index) => ['c', 'k' + index] as Entry);
     const view = render(grid(keys, animator));
     const elements = cards(view.container);
-    arm(view.container);
-    keys.forEach((key, index) => {
-      queues.set(elements.get(key)!, [domRect(0, index * 50), domRect(0, (keys.length - 1 - index) * 50)]);
-    });
+    for (const [index, key] of ['k0', 'k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'k7', 'k8', 'k9'].entries()) {
+      queues.set(elements.get(key)!, [domRect(0, index * 50), domRect(0, (9 - index) * 50)]);
+    }
     view.rerender(grid([...keys].reverse(), animator));
     expect(animator.glide).toHaveBeenCalledTimes(10);
   });
 
-  it('fades an entering card', () => {
+  it('fades the first card of an empty board', () => {
     const animator = fakeAnimator();
-    const view = render(grid(['a'], animator));
-    arm(view.container);
-    view.rerender(grid(['a', 'b'], animator));
-    const entered = cards(view.container).get('b');
+    const view = render(grid([], animator));
+    view.rerender(grid([['c', 'a']], animator));
     expect(animator.fadeIn).toHaveBeenCalledTimes(1);
-    expect(animator.fadeIn).toHaveBeenCalledWith(entered);
+  });
+
+  it('skips cards outside the visible board', () => {
+    const animator = fakeAnimator();
+    const view = render(grid([['left', 'a']], animator));
+    const elements = cards(view.container);
+    queues.set(elements.get('a')!, [domRect(0, -400), domRect(0, -350)]);
+    view.rerender(grid([['right', 'a']], animator));
+    expect(animator.glide).not.toHaveBeenCalled();
   });
 
   it('fades a leaving card as an inert, identity-free copy in the hidden overlay', () => {
     const animator = fakeAnimator();
-    const view = render(grid(['a', 'b'], animator));
+    const view = render(grid([['c', 'a'], ['c', 'b']], animator));
     const leaving = cards(view.container).get('b')!;
-    arm(view.container);
     queues.set(leaving, [domRect(0, 60)]);
-    view.rerender(grid(['a'], animator));
+    view.rerender(grid([['c', 'a']], animator));
     expect(animator.fadeOut).toHaveBeenCalledTimes(1);
     const [copy, overlay] = animator.fadeOut.mock.calls[0] as [HTMLElement, HTMLElement];
     expect(copy.hasAttribute('data-task-id')).toBe(false);
@@ -184,11 +201,22 @@ describe('card motion frame', () => {
     expect(view.container.querySelectorAll('[data-task-id]')).toHaveLength(1);
   });
 
-  it('keeps the overlay empty and hidden in the rendered grid', () => {
+  it('settles and clears motion when the frame unmounts', () => {
     const animator = fakeAnimator();
-    const view = render(grid(['a'], animator));
-    const overlay = view.container.querySelector('.kb-motion-overlay');
-    expect(overlay?.getAttribute('aria-hidden')).toBe('true');
-    expect(overlay?.childElementCount).toBe(0);
+    const view = render(grid([['c', 'a'], ['c', 'b']], animator));
+    const elements = cards(view.container);
+    queues.set(elements.get('a')!, [domRect(0, 0), domRect(0, 60)]);
+    queues.set(elements.get('b')!, [domRect(0, 60), domRect(0, 0)]);
+    view.rerender(grid([['c', 'b'], ['c', 'a']], animator));
+    view.unmount();
+    expect(animator.cancelAll).toHaveBeenCalled();
+  });
+
+  it('does nothing on a host without animations', () => {
+    const animator = fakeAnimator(false);
+    const view = render(grid([['c', 'a'], ['c', 'b']], animator));
+    view.rerender(grid([['c', 'b'], ['c', 'a']], animator));
+    expect(animator.glide).not.toHaveBeenCalled();
+    expect(animator.cancelAll).toHaveBeenCalled();
   });
 });

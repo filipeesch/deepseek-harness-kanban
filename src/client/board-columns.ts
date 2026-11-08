@@ -48,9 +48,16 @@ export function planColumns(workflow: Workflow, tasks: readonly Task[], move: Pl
   return columnLayout(workflow).map(slot => ({ ...slot, columns: slot.columns.map(column => ({ column, tasks: byColumn.get(column.id) ?? [] })) }));
 }
 
-/** The rendered card ids in DOM order, which is the order the motion frame compares. */
-export function cardRowKeys(plan: readonly PlannedSlot[]): string[] {
+/**
+ * The rendered cards in DOM order, each prefixed by its column. The column
+ * prefix is what makes a stage change visible to the motion frame even when the
+ * flat sequence of task ids would be identical (for example, moving a column's
+ * last card to the top of the next column).
+ */
+export const CARD_LAYOUT_SEPARATOR = '\u0000';
+
+export function cardLayoutKeys(plan: readonly PlannedSlot[]): string[] {
   const keys: string[] = [];
-  for (const slot of plan) for (const planned of slot.columns) for (const task of planned.tasks) keys.push(task.id);
+  for (const slot of plan) for (const planned of slot.columns) for (const task of planned.tasks) keys.push(planned.column.id + CARD_LAYOUT_SEPARATOR + task.id);
   return keys;
 }

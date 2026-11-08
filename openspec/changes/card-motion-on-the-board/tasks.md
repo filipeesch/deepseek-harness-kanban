@@ -2,7 +2,7 @@
 
 ## 1. One source of truth for the rendered order
 
-- [x] 1.1 Add `src/client/board-columns.ts` with a pure `planColumns(workflow, tasks, optimistic)` and `cardRowKeys(plan)`, moving today's grouping and `tasksForColumn` placement logic out of `board.tsx`; verify with `tests/client/board-columns.test.ts` covering grouped workflows, search and project filtering, and optimistic placement before a card, after the last card, and at the top
+- [x] 1.1 Add `src/client/board-columns.ts` with a pure `planColumns(workflow, tasks, optimistic)` and `cardLayoutKeys(plan)`, which prefixes each rendered card with its column, moving today's grouping and `tasksForColumn` placement logic out of `board.tsx`; verify with `tests/client/board-columns.test.ts` covering grouped workflows, search and project filtering, optimistic placement before a card, after the last card, and at the top, and a stage change whose flat task order is identical
 - [x] 1.2 Switch `board.tsx` to render from the plan and pass the flattened ids onward, deleting the local `tasksForColumn`; verify `pnpm vitest run tests/client/board.test.tsx tests/client/move-request.test.tsx` passes and the rendered per-column order is unchanged
 
 ## 2. Pure motion planning
@@ -18,13 +18,13 @@
 
 ## 4. The motion frame
 
-- [x] 4.1 Add `src/client/card-motion/frame.tsx` as the board-scoped class frame: read geometry in `getSnapshotBeforeUpdate`, decide in `componentDidUpdate`, arm on the first local pointer or keyboard input, render the wrapper and an `aria-hidden` overlay, and clear animations and exit copies on unmount; verify with a jsdom render that a keyed reorder calls the animator once per moved card and a same-key re-render calls no animation
-- [x] 4.2 Implement the gates in the frame: `ready`, `resetKey`, the eight-card batch cap, size-only commits, `prefers-reduced-motion`, and cards outside the viewport all settle and cancel; verify each gate has a jsdom test with stubbed geometry and a fake animator
+- [x] 4.1 Add `src/client/card-motion/frame.tsx` as the board-scoped class frame: read geometry in `getSnapshotBeforeUpdate`, decide in `componentDidUpdate` from the column-aware layout keys, render the wrapper and an `aria-hidden` overlay, and clear animations and exit copies on unmount; verify with a jsdom render that a keyed reorder calls the animator once per moved card, a same-key re-render calls no animation, and a stage change with an identical flat task order still animates
+- [x] 4.2 Implement the gates in the frame: `resetKey`, the eight-card membership cap (entries and exits only), size-only commits, `prefers-reduced-motion`, a zero-size board, and cards outside the viewport all settle and cancel, and both lifecycle methods catch their own failures; verify each gate has a jsdom test with stubbed geometry and a fake animator
 - [x] 4.3 Make exit copies inert and identity-free — strip `data-task-id`, set `inert`, place them at overlay-relative coordinates, and remove them on finish — verify `tests/client/card-motion-frame.test.tsx` shows no `[data-task-id]` copy remains, the overlay is `aria-hidden`, and the copy cannot be focused
 
 ## 5. Board wiring
 
-- [x] 5.1 Wrap the workflow grid in `board.tsx` with the frame, passing the plan's `rowKeys`, `resetKey` (Hub, board, search, project filter), and `ready`; verify `tests/client/board.test.tsx` still passes and a new assertion finds the frame wrapper and the hidden overlay around the columns
+- [x] 5.1 Wrap the workflow grid in `board.tsx` with the frame, passing the plan's `layoutKeys` and `resetKey` (Hub, board, search, project filter); verify `tests/client/board.test.tsx` still passes and a new assertion finds the frame wrapper and the hidden overlay around the columns
 - [x] 5.2 Add the motion styles — `.kb-columns{position:relative}`, the clipped `pointer-events:none` overlay, and the temporary stacking index used while a card glides; verify `tests/client/styles.test.ts` covers the overlay, the positioned grid, and a reduced-motion block that disables the motion
 
 ## 6. Selected cleanups
@@ -34,7 +34,7 @@
 
 ## 7. Browser and system verification
 
-- [x] 7.1 Add `tests/browser/card-motion.spec.ts` covering a real drag between stages (the card and its neighbors report active animations, and a mid-flight transform is not zero), an appearing card, an exit copy that disappears, reduced motion with no animations, a board switch that settles, and unchanged `scrollWidth`/`scrollHeight` across an exit copy; verify `pnpm test:browser` passes
+- [x] 7.1 Add `tests/browser/card-motion.spec.ts` covering a real drag between stages (the card and its neighbors report active animations, a mid-flight transform is not zero, focus stays available, and the board frame keeps its position), a same-stage reorder, the drawer stage control including a column's last card, a host-driven move with no command, an appearing card, an exit copy that disappears and stays visible after horizontal scrolling without growing the scroll area, reduced motion, search and project-filter replacement, and a Hub switch; verify `pnpm test:browser` passes
 - [x] 7.2 Confirm every scenario in the `kanban-board` delta maps to a fast or browser test, adding coverage for any scenario left without one; verify the mapping is listed in the change summary and `pnpm vitest run` plus `pnpm test:browser` pass
 - [x] 7.3 Run the full gates `pnpm typecheck`, `pnpm test`, `pnpm build`, and `pnpm check` and resolve every failure without weakening the motion gates
 
