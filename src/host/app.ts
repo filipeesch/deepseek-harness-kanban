@@ -18,6 +18,7 @@ import { OperationQueue } from './operation-queue.js';
 import { ProjectRelocationCoordinator } from './project-relocation.js';
 import { RepositoryProjectRelocationStore } from './project-relocation-store.js';
 import { bindingMatches } from './destructive-admission.js';
+import { replaceableByDeletion } from '../shared/context-operation.js';
 import { AttentionCoordinator, type AttentionTask } from './attention.js';
 import { SnapshotAssembler } from './snapshot-assembler.js';
 import { PendingTransitionIndex } from './pending-transition-index.js';
@@ -474,7 +475,14 @@ export class KanbanApp {
  private assertDestructiveTarget(taskId:string,expected:string|null,kind:'delete'|'remove'):void{
   const task=this.locatedTask(taskId).task;
   invariant(bindingMatches(task,expected),'WORKTREE_CHANGED','The worktree changed since this confirmation was displayed.');
-  invariant(!task.operation||(task.operation.phase==='failed'&&task.operation.request.kind===kind),'CONTEXT_OPERATION_PENDING','Resolve the existing context operation before replacing its intent.');
+  const operation=task.operation;
+  if(!operation)return;
+  const sameFailed=operation.phase==='failed'&&operation.request.kind===kind;
+  // An explicit deletion may discard a failed operation that left no unclaimed create
+  // attempt and did not start archiving; the deletion owns the checkout binding and
+  // retains anything it cannot verify.
+  const replaceable=kind==='delete'&&replaceableByDeletion(operation);
+  invariant(sameFailed||replaceable,'CONTEXT_OPERATION_PENDING','Resolve the existing context operation before replacing its intent.');
  }
  private async clearPending(taskId:string):Promise<void>{const located=this.locatedTask(taskId);const task=located.task;invariant(task.pendingTransition?.status!=='sending','EXECUTION_ADMISSION_PENDING','Wait until native prompt admission completes.');if(task.pendingTransition)await this.hubs.hub(located.hubId).transact(d=>{delete d.tasks.find(t=>t.id===taskId)!.pendingTransition;});}
  private stageInstructionDeps():StageInstructionDeps{
