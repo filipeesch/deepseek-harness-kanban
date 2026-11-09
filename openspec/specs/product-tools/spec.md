@@ -10,12 +10,12 @@ Reference note: Railyin's [card tool definitions](<https://github.com/filipeesch
 
 ### Requirement: Restricted board tool surface
 
-The plugin SHALL expose tools for discovering Hubs, boards, and projects; reading board and task information; creating tasks; editing task titles and descriptions; creating, listing, and tag-aware updating of shared task notes; reading the transitions available from a task's current stage and recording the transition that task will follow next through `list_allowed_transitions` and `set_next_transition`; and administering the boards of a Hub through `create_board`, `update_board`, `edit_board_yaml`, and `delete_board`, together with an extended `get_board_summary`. Its product tool surface SHALL NOT include moving tasks, deleting tasks, deleting notes, sending messages to other cards, Hub creation, rename, or deletion, decision-ledger tools, or a plugin-owned TODO checklist. Recording a transition SHALL NOT be treated as moving a task.
+The plugin SHALL expose tools for discovering Hubs, boards, and projects; reading board and task information; creating tasks; editing task titles and descriptions; creating, listing, and tag-aware updating of shared task notes; reading the transitions available from a task's current stage and recording the transition that task will follow next through `list_allowed_transitions` and `set_next_transition`; and administering the boards of a Hub through `create_board`, `update_board`, `edit_board_yaml`, and `delete_board`, together with an extended `get_board_summary`; and searching, reading, creating, editing, and deleting the Hub's team files through `search_team_files`, `read_team_file`, `create_team_file`, `edit_team_file`, and `delete_team_file`. Its product tool surface SHALL NOT include moving tasks, deleting tasks, deleting notes, sending messages to other cards, Hub creation, rename, or deletion, decision-ledger tools, or a plugin-owned TODO checklist. Recording a transition SHALL NOT be treated as moving a task.
 
 #### Scenario: Discover available product operations
 
 - **WHEN** an agent receives the plugin's board and note tools
-- **THEN** Hub, board, and project discovery, board and task reading, task creation, task text editing, shared note creation, listing, and tag-aware updating, transition discovery and recording, board creation, board rename, board workflow reading and writing, and empty-board deletion are available operations
+- **THEN** Hub, board, and project discovery, board and task reading, task creation, task text editing, shared note creation, listing, and tag-aware updating, transition discovery and recording, board creation, board rename, board workflow reading and writing, empty-board deletion, and team file search, reading, creation, editing, and deletion are available operations
 - **AND** board movement, task deletion, note deletion, inter-card messaging, Hub administration, decision-ledger operations, and a plugin-owned TODO checklist are not exposed as part of that tool surface
 
 #### Scenario: Inspect the board administration tool names
@@ -29,6 +29,12 @@ The plugin SHALL expose tools for discovering Hubs, boards, and projects; readin
 - **WHEN** an agent records the transition a task will follow next
 - **THEN** the task remains in its current stage and position
 - **AND** the recorded transition only decides the destination of a later advance
+
+#### Scenario: Expose team file operations
+
+- **WHEN** an agent receives the plugin's product tools for a Hub bound to a storage that supports team files
+- **THEN** searching, reading, creating, editing, and deleting the Hub's team files are available operations
+- **AND** moving a team file to another path, restoring a deleted team file, and browsing the storage outside the team files directory are not exposed
 
 ### Requirement: Note tools support tags
 The plugin's note tools SHALL operate on the same shared task note collection as the Notes section and SHALL support tags with the same normalization rules. `create_note` and `update_note` SHALL accept an optional tag collection, and every returned note SHALL include its tags. `list_notes` SHALL accept an optional tag collection and SHALL return the notes that have any of those tags, comparing both stored and requested values after normalization. An empty tag collection SHALL apply no filter. `update_note` SHALL allow changing only tags, changing only content, or changing both, and SHALL require at least one of content or an explicit tag collection. An omitted tag collection SHALL preserve existing tags, and an explicitly empty collection SHALL clear them. The note tool surface SHALL NOT add a tool that deletes a note.
@@ -79,7 +85,7 @@ The plugin's note tools SHALL operate on the same shared task note collection as
 
 ### Requirement: Explicit user intent without a second product confirmation
 
-Creating, editing, or deleting a task, or creating, renaming, editing, or deleting a board through a product tool SHALL require an explicit user request for that change. The plugin SHALL NOT add another product-specific approval dialog for a write that the user explicitly requested. This requirement SHALL NOT bypass native DSH permission behavior.
+Creating, editing, or deleting a task, creating, renaming, editing, or deleting a board, or creating, editing, or deleting a Hub's team file through a product tool SHALL require an explicit user request for that change. The plugin SHALL NOT add another product-specific approval dialog for a write that the user explicitly requested. This requirement SHALL NOT bypass native DSH permission behavior.
 
 #### Scenario: Create a task at the user's request
 
@@ -105,6 +111,16 @@ Creating, editing, or deleting a task, or creating, renaming, editing, or deleti
 
 - **WHEN** an agent has no explicit user request to create, edit, or delete a board task or a board
 - **THEN** the plugin's board tools do not authorize that change merely to track the agent's own work
+
+#### Scenario: Edit a team file at the user's request
+
+- **WHEN** the user explicitly asks an agent to change a document in the Hub's team files and the agent invokes the corresponding team file tool
+- **THEN** the requested change can be applied without an additional product-specific confirmation dialog
+
+#### Scenario: Do not use team files for unsolicited agent bookkeeping
+
+- **WHEN** an agent has no explicit user request to create, edit, or delete a team file
+- **THEN** the plugin's team file tools do not authorize that change merely to record the agent's own progress
 
 ### Requirement: Tool writes follow the same task behavior as the board
 Task creation through tools SHALL use the target board's configured initial workflow stage and SHALL require a project owned by that board's Hub. Task creation SHALL accept an auto-mode option and SHALL persist the selected value. When that initial stage has an entry instruction, creation SHALL prepare the task's first execution immediately — the default worktree for a Git-backed project, the first conversation, and the dispatch of the stage instruction — without the cancelable countdown, because the agent surface has no cancelable window. The tool result SHALL report the start outcome, and a failed preparation or dispatch SHALL leave the task in its initial stage with the unresolved entry. When the initial stage has no entry instruction, creation SHALL NOT start an agent. Tool editing SHALL allow title and description changes at any stage, including for tasks with worktrees, without automatically messaging task conversations. Tool changes SHALL affect the same task data shown in the active board UI.
@@ -143,7 +159,7 @@ Task creation through tools SHALL use the target board's configured initial work
 
 ### Requirement: Availability outside task-bound chats
 
-Board and task read tools SHALL be available in task conversations and ordinary DSH chats. Creating or editing a task SHALL NOT require the calling chat to be associated with a task card. Board administration writes SHALL be available only in an ordinary DSH chat that is not owned by a task; a session owned by a task, including a subagent descendant of a task conversation, SHALL be rejected without changing board state. Board-scoped tools SHALL require an explicitly discovered board identifier in an ordinary DSH chat and SHALL resolve it from the task in a task conversation.
+Board and task read tools SHALL be available in task conversations and ordinary DSH chats. Creating or editing a task SHALL NOT require the calling chat to be associated with a task card. Board administration writes SHALL be available only in an ordinary DSH chat that is not owned by a task; a session owned by a task, including a subagent descendant of a task conversation, SHALL be rejected without changing board state. Board-scoped tools SHALL require an explicitly discovered board identifier in an ordinary DSH chat and SHALL resolve it from the task in a task conversation. Team file tools SHALL be available in task conversations and ordinary DSH chats alike, SHALL resolve the Hub from the task in a task conversation, and SHALL NOT require a board identifier or a task identifier.
 
 #### Scenario: Use board tools from an ordinary DSH chat
 
@@ -168,6 +184,12 @@ Board and task read tools SHALL be available in task conversations and ordinary 
 - **WHEN** an agent calls `list_hubs`
 - **THEN** the tool returns the Hubs available to the installation
 - **AND** it does not require a board or a native workspace
+
+#### Scenario: Use team file tools from either conversation kind
+
+- **WHEN** a user asks an agent to read or change a Hub's team file from a task conversation or from an ordinary DSH chat
+- **THEN** the tool resolves the Hub for that conversation and reports the storage's team file support
+- **AND** no board identifier or task identifier is required
 
 ### Requirement: Preserve host-native tools
 Excluding Railyin board mutations, decision-ledger tools, and a plugin-owned TODO checklist SHALL apply to this plugin's product scope only. The plugin SHALL NOT remove or disable native DSH tools merely because an equivalent Railyin capability is out of scope.

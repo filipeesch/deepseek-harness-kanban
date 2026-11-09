@@ -147,7 +147,7 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
   function localDriveSharing(pathValue: string, status: 'preview' | 'published'): HubSharingView {
     const folder = pathValue.slice(pathValue.lastIndexOf('/') + 1);
     return {
-      status, provider: 'google-drive-local', providerLabel: 'Google Drive Local', address: 'member@example.test / ' + folder,
+      status, provider: 'google-drive-local', providerLabel: 'Google Drive Local', supportsFiles: true, address: 'member@example.test / ' + folder,
       syncMode: 'continuous', intervalMinutes: 1, lastSyncedAt: '2026-10-21T00:05:00Z',
       drafts: 0, pending: 0, updates: 0, conflicts: 0, orderChanged: false, syncing: false,
       boards: [{ boardId: 'board', key: 'harness-board', name: 'Harness board', state: 'in-sync', bound: true, pending: false }],

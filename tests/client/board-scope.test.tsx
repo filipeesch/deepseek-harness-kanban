@@ -149,7 +149,7 @@ describe('published project adoption', () => {
 
 describe('outdated team configuration', () => {
   const sharing: HubSharingView = {
-    status: 'unavailable', provider: 'git', providerLabel: 'Git', address: 'team/repo', repository: 'team/repo',
+    status: 'unavailable', provider: 'git', providerLabel: 'Git', supportsFiles: true, address: 'team/repo', repository: 'team/repo',
     syncMode: 'explicit', intervalMinutes: 0, drafts: 0, pending: 0, updates: 0, conflicts: 0, orderChanged: false,
     syncing: false, boards: [], incoming: [], removed: [], blockers: [], removing: [],
     error: { code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED', message: 'The team configuration was written by a newer plugin version. Update the plugin to read or publish it.' },
@@ -170,5 +170,29 @@ describe('outdated team configuration', () => {
     render(<HubPublishingBadge view={sharing} />);
     const badge = screen.getByRole('img', { name: 'Team updates unavailable' });
     expect(badge.getAttribute('title')).toContain('newer plugin version');
+  });
+});
+
+describe('team files in Team Settings', () => {
+  const view: HubSharingView = {
+    status: 'published', provider: 'git', providerLabel: 'Git', supportsFiles: true, address: 'team/repo', repository: 'team/repo',
+    syncMode: 'explicit', intervalMinutes: 5, drafts: 0, pending: 0, updates: 0, conflicts: 0, orderChanged: false,
+    syncing: false, boards: [], incoming: [], removed: [], blockers: [], removing: [],
+  };
+
+  it('names the team files directory for a storage that serves it', () => {
+    render(<TeamSettings hub={fixture().state.hubs[0]!} sharing={view} />);
+    expect(screen.getByText(/documents the agent tools/)).toBeTruthy();
+    expect(screen.getAllByText(/team-files\//).length).toBeGreaterThan(0);
+  });
+
+  it('states the storage that cannot serve team files', () => {
+    render(<TeamSettings hub={fixture().state.hubs[0]!} sharing={{ ...view, provider: 'google-drive', providerLabel: 'Google Drive', supportsFiles: false }} />);
+    expect(screen.getByText(/Team files are unavailable with Google Drive/)).toBeTruthy();
+  });
+
+  it('says nothing about team files while the Hub has no storage', () => {
+    render(<TeamSettings hub={fixture().state.hubs[0]!} sharing={undefined} />);
+    expect(screen.queryByText(/Team files/)).toBeNull();
   });
 });

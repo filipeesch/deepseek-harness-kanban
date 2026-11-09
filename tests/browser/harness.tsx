@@ -32,7 +32,7 @@ const harness = createHarnessApi({ ...(scenario === 'schedules' ? { schedules: s
 
 function harnessSharing(kind: string): HubSharingView {
   const view: HubSharingView = {
-    status: 'published', provider: 'git', providerLabel: 'Git repository', repository: 'https://example.test/team.git', address: 'https://example.test/team.git', syncMode: 'explicit', intervalMinutes: 5, lastCheckedAt: '2026-10-21T00:05:00Z',
+    status: 'published', provider: 'git', providerLabel: 'Git repository', supportsFiles: true, repository: 'https://example.test/team.git', address: 'https://example.test/team.git', syncMode: 'explicit', intervalMinutes: 5, lastCheckedAt: '2026-10-21T00:05:00Z',
     drafts: 0, pending: 0, updates: 0, conflicts: 0, orderChanged: false, syncing: false,
     boards: [{ boardId: 'board', key: 'harness-board', name: 'Harness board', state: 'in-sync', bound: true, pending: false }],
     incoming: [], removed: [], blockers: [], removing: [],
@@ -55,7 +55,7 @@ function harnessSharing(kind: string): HubSharingView {
     return local;
   }
   if (kind.startsWith('drive')) {
-    const drive = { ...view, provider: 'google-drive' as const, providerLabel: 'Google Drive', address: 'Team drive / Hub', syncMode: 'continuous' as const, authorization: 'connected' as const, pending: 0, lastSyncedAt: '2026-10-21T00:05:00Z' };
+    const drive = { ...view, provider: 'google-drive' as const, providerLabel: 'Google Drive', supportsFiles: false, address: 'Team drive / Hub', syncMode: 'continuous' as const, authorization: 'connected' as const, pending: 0, lastSyncedAt: '2026-10-21T00:05:00Z' };
     if (kind === 'drive-preview') return { ...drive, status: 'preview', updates: 1, drafts: 1, boards: [{ ...drive.boards[0]!, state: 'updates-available', pending: true, detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }], preview: { publishedBoards: 2, localBoards: 1 } };
     if (kind === 'drive-review') return { ...drive, status: 'needs-review', conflicts: 1, boards: [{ ...drive.boards[0]!, state: 'needs-review', detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }] };
     return drive;

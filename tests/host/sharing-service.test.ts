@@ -55,7 +55,7 @@ class FakeFactory implements SharedConfigStoreFactory {
   readonly stores = new Map<string, FakeStore>();
   constructor(private readonly seed?: SharedHubDocument) {}
   create(hubId: string): SharedConfigStore { return this.storeFor(hubId); }
-  describe(binding: { settings: Record<string, string> }) { return { id: 'git' as const, label: 'Git repository', address: binding.settings.repository ?? '', syncMode: 'explicit' as const, defaultIntervalMinutes: 5, requiresAuthorization: false }; }
+  describe(binding: { settings: Record<string, string> }) { return { id: 'git' as const, label: 'Git repository', address: binding.settings.repository ?? '', syncMode: 'explicit' as const, defaultIntervalMinutes: 5, requiresAuthorization: false, supportsFiles: false }; }
   async prepare(_hubId: string, binding: SharingBinding) { return binding; }
   normalize(_provider: string, settings: Record<string, string>) { return settings; }
   defaultInterval() { return 5; }

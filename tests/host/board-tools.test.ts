@@ -29,7 +29,7 @@ class FakeSharing {
 
 function sharingView(overrides: Partial<HubSharingView> = {}): HubSharingView {
   return {
-    status: 'published', provider: 'git', providerLabel: 'Git', address: 'team/repo', syncMode: 'explicit', intervalMinutes: 5,
+    status: 'published', provider: 'git', providerLabel: 'Git', supportsFiles: true, address: 'team/repo', syncMode: 'explicit', intervalMinutes: 5,
     drafts: 0, pending: 0, updates: 0, conflicts: 0, orderChanged: false, syncing: false,
     boards: [], incoming: [], removed: [], blockers: [], removing: [], ...overrides,
   };

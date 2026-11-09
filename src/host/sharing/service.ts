@@ -12,6 +12,7 @@ import { isAuthorizationCommand, type SharingAuthorizationPort } from './auth-co
 import type { BindingCandidate, ProviderState, SharingBinding, SharingProviderId, SharingProviderResolver } from './provider.js';
 import type { SharedConfigStore, SharedDocumentSnapshot } from './store.js';
 import type { HubSharingRecord, HubSharingStore } from './state.js';
+import type { TeamFileStore, TeamFileStoreResolution } from './team-file-store.js';
 import { buildSharingView, publishedDocument, sharingComparison } from './view.js';
 
 export const DEFAULT_SHARING_INTERVAL_MINUTES = 5;
@@ -72,7 +73,8 @@ function stored(document: SharedHubDocument): { token: string; document: SharedH
 export class HubSharingService {
   private readonly tails = new Map<string, Promise<unknown>>();
   private readonly inflight = new Set<string>();
-  private readonly active = new AsyncLocalStorage<true>();
+  /** The Hub whose publishing lane the current async context already holds. */
+  private readonly active = new AsyncLocalStorage<string>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly lanes = new Map<string, number>();
   private connectTail: Promise<unknown> = Promise.resolve();
@@ -500,6 +502,49 @@ export class HubSharingService {
     return this.options.providers.create(hubId, binding, state);
   }
 
+  /**
+   * The team file surface of a bound Hub. An unbound Hub and a storage that
+   * cannot serve files are refused with distinct typed errors, and every
+   * mutation runs inside the Hub's publishing lane, so a file write and a
+   * document publish never hold the same clone at once.
+   */
+  fileStoreFor(hubId: string): TeamFileStoreResolution {
+    const record = this.options.store.load(hubId);
+    invariant(record, 'TEAM_FILES_UNAVAILABLE', 'This Hub is not connected to a team storage. Connect one in Team Settings to use team files.');
+    const described = this.options.providers.describe(record.binding);
+    const store = this.options.providers.createFileStore?.(hubId, record.binding, record.providerState);
+    if (store === undefined) {
+      throw new KanbanError('TEAM_FILES_UNSUPPORTED', 'Team files are unavailable with ' + described.label + '. Team files need a Git repository, a local folder, or a Google Drive Local folder.', { provider: record.binding.provider });
+    }
+    return { store: this.lockedFileStore(hubId, store), provider: described.id, label: described.label, address: described.address };
+  }
+
+  /**
+   * Run one operation inside the Hub's publishing lane, FIFO with its document
+   * work. Re-entrant for the same Hub, so a caller can hold the lane for a whole
+   * read-modify-write while the store it uses takes the same lane again.
+   */
+  exclusive<T>(hubId: string, operation: () => Promise<T>): Promise<T> {
+    if (this.disposed) throw new KanbanError('PLUGIN_DISPOSED', 'The Kanban plugin is shutting down.');
+    if (this.active.getStore() === hubId) return operation();
+    return this.run(hubId, operation);
+  }
+
+  /** Reads stay outside the lane; mutations queue behind whatever already holds the binding. */
+  private lockedFileStore(hubId: string, store: TeamFileStore): TeamFileStore {
+    const locked: TeamFileStore = {
+      ensure: () => store.ensure(),
+      list: () => store.list(),
+      read: (relative, options) => store.read(relative, options),
+      create: (relative, content) => this.exclusive(hubId, () => store.create(relative, content)),
+      write: (relative, content, options) => this.exclusive(hubId, () => store.write(relative, content, options)),
+      move: (from, to, options) => this.exclusive(hubId, () => store.move(from, to, options)),
+    };
+    const head = store.head;
+    if (head !== undefined) locked.head = () => head.call(store);
+    return locked;
+  }
+
   private requireRecord(hubId: string): HubSharingRecord {
     const record = this.options.store.load(hubId);
     invariant(record, 'SHARING_NOT_PUBLISHED', 'This Hub is not connected to a team storage.');
@@ -652,13 +697,16 @@ export class HubSharingService {
 
   private run<T>(hubId: string, operation: () => Promise<T>): Promise<T> {
     if (this.disposed) throw new KanbanError('PLUGIN_DISPOSED', 'The Kanban plugin is shutting down.');
-    if (this.active.getStore()) throw new KanbanError('SHARING_REENTRANT', 'A publishing operation cannot start inside another publishing operation.');
+    // A nested publishing operation stays refused. The public `exclusive` seam is
+    // the only way to reuse the lane, because a nested `run` would queue behind
+    // the operation that is waiting for it.
+    if (this.active.getStore() !== undefined) throw new KanbanError('SHARING_REENTRANT', 'A publishing operation cannot start inside another publishing operation.');
     const active = (this.lanes.get(hubId) ?? 0) + 1;
     this.lanes.set(hubId, active);
     this.inflight.add(hubId);
     if (active === 1) this.options.notify?.();
     const prior = this.tails.get(hubId) ?? Promise.resolve();
-    const execution = prior.then(() => this.active.run(true, operation));
+    const execution = prior.then(() => this.active.run(hubId, operation));
     this.tails.set(hubId, execution.then(() => undefined, () => undefined));
     return execution.finally(() => {
       const remaining = (this.lanes.get(hubId) ?? 1) - 1;

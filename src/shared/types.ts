@@ -189,6 +189,10 @@ export type SharingHubStatus = 'not-published' | 'preview' | 'published' | 'upda
 /** Every team storage the product supports. This tuple is the single declared source of truth. */
 export const SHARING_STORAGES = ['git', 'google-drive', 'google-drive-local', 'local-folder'] as const;
 export type SharingStorage = (typeof SHARING_STORAGES)[number];
+/** The one directory the plugin owns beside the document in a bound team storage location. */
+export const TEAM_FILES_DIRECTORY = 'team-files';
+/** Deleted team files move here; no tool can list, read, create, edit, or delete inside it. */
+export const TEAM_FILES_TRASH_DIRECTORY = '.trash';
 export type SharingSyncMode = 'explicit' | 'continuous';
 export type SharingAuthStatus = 'not-connected' | 'authorizing' | 'connected' | 'error' | 'reconnect-required';
 export interface SharingAuthView {
@@ -216,6 +220,8 @@ export interface HubSharingView {
   status: SharingHubStatus;
   provider: SharingStorage;
   providerLabel: string;
+  /** Whether this storage serves the Hub's team files, derived from its descriptor. */
+  supportsFiles: boolean;
   address: string;
   /** Kept for Git callers; equal to the repository address. */
   repository?: string;

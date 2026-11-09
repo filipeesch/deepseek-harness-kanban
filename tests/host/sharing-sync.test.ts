@@ -53,7 +53,7 @@ const driveDescriptor = createGoogleDriveProviderDescriptor({ auth: { accessToke
 
 const resolver = (store: FakeStore): SharingProviderResolver => ({
   create: () => store,
-  describe: (binding: SharingBinding): ProviderDescription => ({ id: binding.provider, label: binding.provider === 'git' ? 'Git repository' : 'Google Drive', address: binding.provider === 'git' ? 'repo' : 'drive/folder', syncMode: binding.provider === 'google-drive' ? 'continuous' : 'explicit', defaultIntervalMinutes: binding.provider === 'google-drive' ? 1 : 5, requiresAuthorization: binding.provider === 'google-drive' }),
+  describe: (binding: SharingBinding): ProviderDescription => ({ id: binding.provider, label: binding.provider === 'git' ? 'Git repository' : 'Google Drive', address: binding.provider === 'git' ? 'repo' : 'drive/folder', syncMode: binding.provider === 'google-drive' ? 'continuous' : 'explicit', defaultIntervalMinutes: binding.provider === 'google-drive' ? 1 : 5, requiresAuthorization: binding.provider === 'google-drive', supportsFiles: false }),
   prepare: async (hubId, binding, existing) => {
     const prepare = driveDescriptor.prepareBinding;
     if (binding.provider !== 'google-drive' || prepare === undefined) return binding;

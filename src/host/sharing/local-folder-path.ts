@@ -2,6 +2,7 @@ import { access, constants, mkdir, realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { KanbanError } from '../../shared/errors.js';
+import { folderIdentity } from '../paths.js';
 
 /** The home-relative directory that holds the suggested per-Hub team folders. */
 export const SUGGESTED_FOLDER_ROOT = '.dsh-kanban';
@@ -40,40 +41,9 @@ export function abbreviateHome(value: string, home: string): string {
   return value.startsWith(prefix) ? '~' + path.sep + value.slice(prefix.length) : value;
 }
 
-/**
- * Directory identity used to detect that two bindings address one folder.
- * A case-insensitive filesystem resolves two spellings to one directory.
- */
-export function folderIdentity(resolved: string, platform: NodeJS.Platform = process.platform): string {
-  const trimmed = resolved.length > 1 && resolved.endsWith(path.sep) ? resolved.slice(0, -1) : resolved;
-  return platform === 'darwin' || platform === 'win32' ? trimmed.toLocaleLowerCase() : trimmed;
-}
-
-/**
- * Whether one resolved path is the root itself or lies inside it, using the
- * same identity rule as a binding comparison. Both inputs are expected to be
- * resolved already; lexical `..` escapes are collapsed by `path.resolve`.
- */
-export function isWithinPath(root: string, candidate: string, platform: NodeJS.Platform = process.platform): boolean {
-  const normalize = (value: string): string => {
-    const unified = value.replace(/\\/g, '/');
-    const absolute = unified.startsWith('/');
-    const parts: string[] = [];
-    for (const part of unified.split('/')) {
-      if (part === '' || part === '.') continue;
-      if (part === '..') { parts.pop(); continue; }
-      parts.push(part);
-    }
-    const normalized = (absolute ? '/' : '') + parts.join('/');
-    return platform === 'darwin' || platform === 'win32' ? normalized.toLocaleLowerCase() : normalized;
-  };
-  const base = normalize(root);
-  const value = normalize(candidate);
-  // Both spellings are compared after collapsing separators and dot segments,
-  // so a Windows-style path can be reasoned about on any host.
-  if (base === '/') return value.startsWith('/');
-  return value === base || value.startsWith(base + '/');
-}
+// Path identity and containment live in the shared host module so a bound
+// folder and a team files directory cannot disagree about one directory.
+export { folderIdentity, isWithinPath } from '../paths.js';
 
 export interface InspectedFolder {
   /** The canonical path with symbolic links resolved. */

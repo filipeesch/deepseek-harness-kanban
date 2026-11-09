@@ -9,6 +9,7 @@ import { noteTools } from './notes.js';
 import { boardTools } from './boards.js';
 import { questionTools } from './questions.js';
 import { transitionTools } from './transitions.js';
+import { teamFileTools } from './team-files.js';
 
 export function productToolDefinitions(app:KanbanApp,boards:BoardAdministration=app.boards):ToolDefinition[]{
  return [
@@ -17,6 +18,7 @@ export function productToolDefinitions(app:KanbanApp,boards:BoardAdministration=
   ...noteTools(app),
   ...boardTools(app,boards),
   ...transitionTools(app),
+  ...teamFileTools(app),
   ...questionTools(),
  ];
 }
