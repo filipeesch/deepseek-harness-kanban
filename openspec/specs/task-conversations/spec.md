@@ -276,13 +276,19 @@ The task drawer SHALL be resizable within defined minimum and maximum bounds and
 
 ### Requirement: Nested native conversation tabs
 
-A task SHALL begin with no native DSH conversation in its Conversations section. The section SHALL provide an explicit start action, presented as the agent-preset cards, that creates the first distinct native DSH conversation as a tab within the same task, and a plus action that opens the same preset choice to create another distinct native DSH conversation. The first conversation SHALL be created only by that explicit choice, by the execution preparation that precedes a task's first execution, or by a stage instruction that needs a conversation and finds none open, including a stage instruction dispatched from a card, a confirmed transition, or an automatic advance. When the execution preparation creates the first conversation, it SHALL do so after the worktree choice is resolved and before the move or run action is applied. For a Git-backed task without a worktree, the explicit start action SHALL remain unavailable until the worktree choice is resolved as defined by `worktree-management`. The first conversation SHALL use the task's current effective directory at creation time. A conversation created from a card SHALL receive the card's preset; conversations created by the execution preparation or a stage instruction use the host default.
+A task SHALL begin with no native DSH conversation in its Conversations section. The section SHALL provide an explicit start action, presented as the agent-preset cards, that creates the first distinct native DSH conversation as a tab within the same task, and a plus action that opens the same preset choice to create another distinct native DSH conversation. The first conversation SHALL be created only by that explicit choice, by the execution preparation that precedes a task's first execution, including the automatic first-execution preparation on task creation, or by a stage instruction that needs a conversation and finds none open, including a stage instruction dispatched from a card, a confirmed transition, or an automatic advance. When an execution preparation creates the first conversation, it SHALL do so after the worktree is ready and before the move or run action is applied, and the conversation SHALL use that directory. For a Git-backed task without a worktree, the explicit start action SHALL remain unavailable until the worktree choice is resolved as defined by `worktree-management`. The first conversation SHALL use the task's current effective directory at creation time. A conversation created from a card SHALL receive the card's preset; conversations created by the execution preparation, including the automatic creation preparation, or a stage instruction use the host default.
 
 #### Scenario: Open a newly created task
 
-- **WHEN** a user opens a newly created task's Conversations section
+- **WHEN** a user opens a newly created task's Conversations section and its creation did not start the first execution
 - **THEN** no native conversation tab exists
 - **AND** the agent-preset cards and the plus action are available, subject to the worktree choice
+
+#### Scenario: Open a created task that started
+
+- **WHEN** a user opens a newly created task whose creation started the first execution
+- **THEN** the first native DSH conversation created by the preparation is present as a tab
+- **AND** it uses the task's effective directory resolved by the preparation
 
 #### Scenario: Start the first conversation
 
@@ -303,6 +309,13 @@ A task SHALL begin with no native DSH conversation in its Conversations section.
 - **THEN** the first native DSH conversation is created after the worktree choice is resolved
 - **AND** it is created before the move or run action is applied
 - **AND** it uses the task's current effective directory
+
+#### Scenario: Prepare the first conversation on task creation
+
+- **WHEN** the automatic first execution on task creation prepares a task with no conversation
+- **THEN** the first native DSH conversation is created after the default worktree is ready
+- **AND** it uses the worktree directory, or the project directory for a folder project
+- **AND** no preset is selected and no model selector is presented
 
 #### Scenario: A stage instruction creates the first conversation
 
@@ -326,10 +339,9 @@ A task SHALL begin with no native DSH conversation in its Conversations section.
 
 - **WHEN** the task has a ready worktree, an attached worktree, or a recorded base-project choice
 - **THEN** the card start creates the first conversation at the task's current effective directory
-
 ### Requirement: Model selection for the first conversation
 
-When the execution preparation defined by Execution preparation before a task's first execution in `kanban-board` creates a task's first conversation and DSH's native model selector is available, the preparation SHALL present that native model selector for the created conversation before the first execution is admitted. The selector SHALL show the deployment default selection while the conversation has no recorded selection, and presenting it SHALL NOT submit a selection. When the user chooses a different model or reasoning effort, the selection SHALL apply to that conversation and SHALL follow DSH's native behavior for the deployment default. When DSH's native model selector is not available, the preparation SHALL omit the model step and the conversation SHALL use the deployment default. The selection SHALL NOT be persisted on the task, SHALL NOT be presented for later conversations, and SHALL NOT be presented when the task already has a conversation.
+When the execution preparation defined by Execution preparation before a task's first execution in `kanban-board` creates a task's first conversation and DSH's native model selector is available, the preparation SHALL present that native model selector for the created conversation before the first execution is admitted. The selector SHALL show the deployment default selection while the conversation has no recorded selection, and presenting it SHALL NOT submit a selection. When the user chooses a different model or reasoning effort, the selection SHALL apply to that conversation and SHALL follow DSH's native behavior for the deployment default. When DSH's native model selector is not available, the preparation SHALL omit the model step and the conversation SHALL use the deployment default. The automatic first-execution preparation on task creation SHALL NOT present the native model selector and SHALL NOT submit a selection; its first conversation SHALL use the deployment default. The selection SHALL NOT be persisted on the task, SHALL NOT be presented for later conversations, and SHALL NOT be presented when the task already has a conversation.
 
 #### Scenario: Show the default without submitting
 
@@ -351,6 +363,13 @@ When the execution preparation defined by Execution preparation before a task's 
 - **AND** the first conversation uses the deployment default
 - **AND** the rest of the preparation and the execution proceed
 
+#### Scenario: No model step for the creation preparation
+
+- **WHEN** the automatic first execution on task creation creates the first conversation
+- **THEN** the native model selector is not presented
+- **AND** no model selection is submitted
+- **AND** the conversation uses the deployment default
+
 #### Scenario: Model step without a worktree question
 
 - **WHEN** the task already has a ready worktree, is a folder project, or has a recorded base-project choice, and the task has no conversation
@@ -362,7 +381,6 @@ When the execution preparation defined by Execution preparation before a task's 
 - **WHEN** a task already has a conversation
 - **THEN** no preparation and no model step is presented
 - **AND** later conversations are not changed
-
 ### Requirement: Continuous sessions retain separate histories
 Each conversation tab SHALL represent a continuous native DSH session with its own retained identity and history. Switching between task conversation tabs or reopening the task drawer SHALL return to those existing sessions instead of replacing them with newly created sessions. Within a mounted task drawer, returning to a conversation that was already visited SHALL reuse its already-open native Session without opening it or downloading its history again.
 

@@ -101,19 +101,43 @@ Each board SHALL support its own workflow configuration in YAML, including the i
 - **THEN** the same requests are permitted and the same requests require confirmation
 
 ### Requirement: Top-level task creation
-The active board SHALL provide one New task action at the top of its workflow's configured initial column. It SHALL collect a title, description, and project from the active Hub's project registry. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. Saving a new task SHALL place it in the active board's configured initial stage without creating a native DSH conversation and without initiating an agent execution. The board header SHALL NOT provide a separate New task action.
+The active board SHALL provide one New task action at the top of its workflow's configured initial column. It SHALL collect a title, description, and project from the active Hub's project registry, an Auto mode option that is off by default, and, only when the initial stage has an entry instruction, a Start execution now option that is on by default. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. Saving a new task SHALL place it in the active board's configured initial stage and SHALL record the selected auto-mode value. When the initial stage has an entry instruction and the Start execution now option remains enabled, saving SHALL start the automatic first execution defined by Automatic first execution on task creation. Otherwise, saving SHALL NOT create a native DSH conversation, a workspace, or an agent execution. The board header SHALL NOT provide a separate New task action.
 
 #### Scenario: Open task creation from the board
 - **WHEN** the user selects the New task action at the top of the active board's configured initial column
-- **THEN** the creation experience provides title, description, and project inputs without asking the user to choose a stage
+- **THEN** the creation experience provides title, description, project, and Auto mode inputs without asking the user to choose a stage
+- **AND** it presents Start execution now only when the initial stage has an entry instruction
 - **AND** the project input is unselected
 - **AND** the project list contains only projects owned by the active Hub
 
 #### Scenario: Create into a customized initial stage
-- **WHEN** the user saves a new task and the active board's workflow has a configured initial stage
-- **THEN** the task is created in that stage with the supplied title, description, and project
+- **WHEN** the user saves a new task, the active board's workflow has a configured initial stage, and the start option does not apply or is disabled
+- **THEN** the task is created in that stage with the supplied title, description, project, and auto-mode value
 - **AND** the task belongs to the active board
 - **AND** no native DSH conversation or workspace is created
+- **AND** task creation does not initiate an agent execution
+
+#### Scenario: Create a task with auto mode
+- **WHEN** the user enables Auto mode in the New task dialog and saves
+- **THEN** the task is persisted with auto mode enabled
+- **AND** its stage and position are unchanged
+- **AND** no agent execution starts unless Start execution now also applies
+
+#### Scenario: Create and start the first execution
+- **WHEN** the user saves a new task in an initial stage with an entry instruction and keeps Start execution now enabled
+- **THEN** the task is created in that stage
+- **AND** the automatic first execution defined by Automatic first execution on task creation prepares the task and arms the countdown
+- **AND** the card presents the task in that stage
+
+#### Scenario: Capture a task without starting
+- **WHEN** the initial stage has an entry instruction and the user disables Start execution now
+- **THEN** no native DSH conversation, workspace, worktree, or agent execution is created
+- **AND** the selected auto-mode value is persisted
+- **AND** the card exposes the run action for the unresolved entry
+
+#### Scenario: No start option without an entry instruction
+- **WHEN** the active board's initial stage has no entry instruction
+- **THEN** the dialog does not present Start execution now
 - **AND** task creation does not initiate an agent execution
 
 #### Scenario: Require an explicit project choice
@@ -127,9 +151,61 @@ The active board SHALL provide one New task action at the top of its workflow's 
 - **AND** no New task action is available
 
 #### Scenario: Start the first conversation after creation
-- **WHEN** the user opens a newly created task's Conversations section
+- **WHEN** the user opens a newly created task's Conversations section and its creation did not start the first execution
 - **THEN** the task has no native conversation
 - **AND** the section presents the explicit start state defined by `task-conversations`
+
+### Requirement: Automatic first execution on task creation
+The system SHALL prepare a task's first execution immediately after its creation when the active board's initial stage has an entry instruction and the creation kept the Start execution now option enabled. The preparation SHALL be a host admission that does not depend on the creating board remaining mounted, SHALL present no dialog, SHALL NOT ask the worktree choice, and SHALL NOT present the native model selector. For a Git-backed project, the preparation SHALL create the task's default worktree using its title-derived defaults and SHALL wait until that worktree is ready. For a folder project, the task SHALL use its project directory. The preparation SHALL then create the task's first conversation and SHALL arm the five-second countdown defined by Timed stage instruction after a move for the created entry; expiry SHALL send the stage instruction through the same admission as a user run action. While the preparation runs, the card and the drawer SHALL present a preparing state, and the card's run action SHALL NOT be available. Canceling the countdown SHALL keep the created worktree and conversation, SHALL leave the unresolved entry, and SHALL expose the card's run action. A failed preparation or send SHALL keep the card and the unresolved entry, SHALL report the failure on the card and in the drawer, SHALL expose the run action, and SHALL NOT retry automatically. The preparation and the countdown SHALL NOT be persisted: a reload or plugin restart before the send SHALL send nothing and SHALL leave the entry unresolved. The agent tool surface SHALL prepare and dispatch the first execution in the same call as defined by the product-tools specification.
+
+#### Scenario: Prepare and arm after creation
+- **WHEN** a task is created in an instructed initial stage with Start execution now enabled and the task has no conversation
+- **THEN** the preparation creates the default worktree for a Git-backed project or uses the project directory for a folder project
+- **AND** the first conversation is created after the worktree is ready
+- **AND** the five-second countdown is armed for the created entry
+- **AND** no preparation dialog and no native model selector are presented
+
+#### Scenario: Use the repository-sibling worktree default
+- **WHEN** no worktree base path is configured and the created task's project is Git-backed
+- **THEN** the preparation creates the worktree at the repository-sibling default defined by `worktree-management`
+- **AND** the first conversation uses that worktree directory
+
+#### Scenario: Present the preparing state
+- **WHEN** the automatic first-execution preparation is running for a created task
+- **THEN** the card and the drawer present a preparing state
+- **AND** the card's run action is unavailable
+- **AND** no instruction is sent before the countdown is armed
+
+#### Scenario: Cancel the countdown
+- **WHEN** the user cancels the countdown armed after the creation preparation
+- **THEN** no instruction is sent
+- **AND** the created worktree and conversation remain
+- **AND** the entry remains unresolved and the card exposes the run action
+
+#### Scenario: Failed preparation keeps the card
+- **WHEN** the worktree or the first conversation cannot be prepared during creation
+- **THEN** the card and the unresolved entry remain in the initial stage
+- **AND** the failure is reported on the card and in the drawer
+- **AND** the card exposes the run action
+- **AND** no automatic retry occurs
+
+#### Scenario: Failed timed send keeps the card
+- **WHEN** the timed send after the creation preparation fails
+- **THEN** the card and the unresolved entry remain in the initial stage
+- **AND** the failure is reported on the card and in the drawer
+- **AND** the card exposes the run action
+- **AND** no automatic retry occurs
+
+#### Scenario: Reload before the send
+- **WHEN** the board reloads or the plugin restarts during the preparation or the countdown
+- **THEN** no instruction is sent automatically
+- **AND** the entry remains unresolved
+- **AND** the card exposes the run action after reload
+
+#### Scenario: Do not prepare without the start option
+- **WHEN** a task is created in an instructed initial stage with Start execution now disabled
+- **THEN** no worktree, first conversation, preparation, or countdown is created
+- **AND** the card exposes the run action for the unresolved entry
 
 ### Requirement: Edit task text at any stage
 The user SHALL be able to edit a task's title and description in any workflow stage, including after a worktree has been created. Saving those edits SHALL NOT automatically send a message to any task conversation or initiate an agent execution.
@@ -492,7 +568,7 @@ The card's activity region SHALL keep its content on one line. It SHALL present 
 - **AND** it is presented in the same control style and height as the auto-mode control
 
 ### Requirement: Task card status strip
-The board SHALL present a card's unresolved context operation, confirmed transition, and automatic-advance state in one status region below the activity region. Each status SHALL carry a tone that distinguishes a failure from a pending state and SHALL present a short label that names the state. A destructive operation's label SHALL use task-deletion or worktree-removal language and SHALL distinguish checking, queued, in progress, and failed states rather than exposing a raw phase token. A status SHALL remain visible while its operation or transition is unresolved. The automatic-advance status SHALL name the destination stage while an advance is admitted, name a failure when an admitted advance failed, and name the pause reason when auto mode is paused. The status region SHALL NOT report the held state defined by Auto mode on a task card, which the auto-mode control presents instead. A run-action admission failure SHALL be reported in the same status region. When a card has more than one such fact, the status region SHALL present them together without replacing one with another.
+The board SHALL present a card's unresolved context operation, confirmed transition, and automatic-advance state in one status region below the activity region. Each status SHALL carry a tone that distinguishes a failure from a pending state and SHALL present a short label that names the state. A destructive operation's label SHALL use task-deletion or worktree-removal language and SHALL distinguish checking, queued, in progress, and failed states rather than exposing a raw phase token. A status SHALL remain visible while its operation or transition is unresolved. The automatic-advance status SHALL name the destination stage while an advance is admitted, name a failure when an admitted advance failed, and name the pause reason when auto mode is paused. The status region SHALL NOT report the held state defined by Auto mode on a task card, which the auto-mode control presents instead. A run-action admission failure SHALL be reported in the same status region. A failure of the automatic first-execution preparation on task creation SHALL be reported in the same status region. When a card has more than one such fact, the status region SHALL present them together without replacing one with another.
 
 #### Scenario: Report a failed operation
 - **WHEN** a card's task has a context operation in a failed phase
@@ -546,11 +622,15 @@ The board SHALL present a card's unresolved context operation, confirmed transit
 - **THEN** the status region reports the failure
 - **AND** the run action remains available for the same entry
 
+#### Scenario: Report a creation preparation failure
+- **WHEN** the automatic first-execution preparation for a newly created task fails
+- **THEN** the status region reports the failure
+- **AND** the card exposes the run action for the unresolved entry
+
 #### Scenario: Clear a resolved status
 - **WHEN** the operation, confirmed transition, or automatic-advance state resolves
 - **THEN** the corresponding status is no longer presented in the status region
 - **AND** reading a conversation does not clear an automatic-advance pause by itself
-
 ### Requirement: Host-themed board controls
 The board SHALL follow the host application's light and dark appearance for its primary actions, focus indicators, and selection accents. Enabled primary actions SHALL use host theme colors for their fill, foreground, and hover state in both appearances. Primary-action text SHALL maintain at least 4.5:1 contrast against its fill at rest and on hover. The board SHALL NOT use the browser's selection highlight color as a product fill or accent.
 
@@ -574,7 +654,7 @@ The board SHALL follow the host application's light and dark appearance for its 
 - **THEN** primary-action fills and board accents do not use the browser selection highlight color or its matching foreground color
 
 ### Requirement: General board configuration with worktree base path
-The Kanban configuration experience SHALL include a General section that is presented first and opened by default. The General section SHALL provide an optional worktree base path used as the parent directory for future task worktree destinations across all Hubs and boards. A non-empty worktree base path SHALL be an absolute path; saving SHALL require it to resolve to an existing directory and SHALL retain that canonical directory. Saving an empty worktree base path SHALL remove the configured value. Changing or clearing the worktree base path SHALL NOT move, remove, or rename any existing worktree or branch.
+The Kanban configuration experience SHALL include a General section that is presented first and opened by default. The General section SHALL provide an optional worktree base path used as the parent directory for future task worktree destinations across all Hubs and boards. A non-empty worktree base path SHALL be an absolute path; saving SHALL require it to resolve to an existing directory and SHALL retain that canonical directory. Saving an empty worktree base path SHALL remove the configured value. When no worktree base path is configured, future worktree destinations for Git-backed tasks SHALL be derived beside the project's Git repository as defined by `worktree-management`. Changing or clearing the worktree base path SHALL NOT move, remove, or rename any existing worktree or branch.
 
 #### Scenario: Save a worktree base path
 - **WHEN** the user saves an existing absolute directory as the worktree base path
@@ -588,12 +668,16 @@ The Kanban configuration experience SHALL include a General section that is pres
 #### Scenario: Clear the worktree base path
 - **WHEN** the user saves the General section with an empty worktree base path
 - **THEN** the installation has no configured worktree base path
-- **AND** task worktree destinations are not derived from a configured base path
+- **AND** future worktree destinations for Git-backed tasks derive beside the project's Git repository
+- **AND** every existing worktree, branch, and recorded destination remains unchanged
+
+#### Scenario: Derive beside the repository without a base path
+- **WHEN** no worktree base path is configured and a Git-backed task needs a worktree destination
+- **THEN** the destination is derived beside the project's Git repository as defined by `worktree-management`
 
 #### Scenario: Existing worktrees survive a base path change
 - **WHEN** the user changes or clears the worktree base path while tasks have existing worktrees
 - **THEN** every existing worktree, branch, and recorded destination remains unchanged
-
 ### Requirement: Run a stage instruction from a card
 
 When a task's current stage has an entry instruction, its card SHALL expose a run action only while the current entry into that stage is unresolved. The entry SHALL be unresolved when a persisted entry marker exists for the current stage and no successful user prompt has been sent in any open conversation of the task since that entry. The marker SHALL be created on every move into an instructed stage, including a task created directly in an instructed initial stage. A same-stage reorder SHALL NOT reset the marker; leaving and re-entering the stage SHALL create a new marker. A successful user prompt in any open conversation SHALL clear the marker. An admission failure SHALL NOT clear it. A task already in an instructed stage without a marker SHALL NOT show the action until its next entry. While the timed instruction for the entry is counting down or being sent, the card SHALL expose the countdown control defined by the Timed stage instruction after a move requirement instead of the run action; canceling that countdown or a failed timed send SHALL expose the run action for the same unresolved entry. When visible, the action SHALL send the stage's entry instruction to the task's first open conversation in conversation order, followed by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies. When the task has no conversation, activating the action SHALL first present the execution preparation defined by Execution preparation before a task's first execution; when no conversation is open after the preparation, the action SHALL create a new conversation and use that conversation as the target. The action SHALL carry the entry identity it was displayed for — the entry's stage and entry timestamp — and the host SHALL reject a request for an entry that has been resolved or replaced. The action SHALL NOT move the task or change its position, SHALL NOT offer a conversation picker, and SHALL NOT be available in selection mode. It SHALL be unavailable while the task has an unresolved context operation or confirmed transition. The submitted message SHALL contain the stage instruction and, when it applies, the transition briefing; the conversation's first-turn task context supplies the task context. Admission failures SHALL be reported without changing the stage or position and without creating another conversation beyond the resolved target.
@@ -1042,8 +1126,7 @@ When a user requests a transition that the active board's workflow does not perm
 - **AND** it does not offer a retry that cannot succeed
 
 ### Requirement: Timed stage instruction after a move
-
-When a permitted move changes a task's stage to a stage with an entry instruction, the system SHALL arm one five-second countdown for that entry. The countdown SHALL be armed for board drops and drawer stage changes. It SHALL NOT be armed for a same-stage reorder, for a task created directly in an instructed initial stage, or for a move into a stage without an entry instruction. When the task has no conversation, the countdown SHALL be armed only after the execution preparation defined by Execution preparation before a task's first execution completes, and the conversation that preparation created SHALL be the target. The target SHALL be the task's first open conversation in conversation order; when no conversation is open, the system SHALL create a new conversation and use it. When the five seconds elapse without cancellation, the system SHALL send that stage's entry instruction to the target, followed by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies. Cancel SHALL stop only the automatic send: the task's stage, position, and unresolved entry SHALL remain, and the card's run action SHALL be available. A new instructed entry for the task SHALL replace the pending countdown for the previous entry. The countdown SHALL be canceled without sending when a successful user prompt resolves the entry, when the task is deleted, or when the entry marker is removed for any other reason. The card SHALL present the countdown as a control that cancels when activated. The drawer for the task SHALL present a matching countdown notice above its section panel with the same cancel action. Both notices SHALL identify the stage whose instruction will run. A countdown SHALL continue when its card is not rendered, when the Kanban panel is not visible, or when the user switches to another board or Hub. The automatic send SHALL NOT depend on the board that armed it being mounted or visible. Unsent composer text or attachments in the target conversation SHALL NOT prevent the send and SHALL remain unchanged. The countdown SHALL NOT be persisted: a reload or plugin restart SHALL send nothing and SHALL leave the entry unresolved with its run action available. A failed timed send SHALL stop the countdown, report the failure on the card and in the drawer notice, restore the run action for the unresolved entry, and SHALL NOT retry automatically. When admission reports that the entry was already resolved, the countdown SHALL end without reporting a failure. The delay SHALL be fixed at five seconds and SHALL NOT be configurable.
+When a permitted move changes a task's stage to a stage with an entry instruction, or a task created directly in an instructed initial stage completes the automatic first-execution preparation defined by Automatic first execution on task creation, the system SHALL arm one five-second countdown for that entry. The countdown SHALL be armed for board drops, drawer stage changes, and the automatic creation preparation. It SHALL NOT be armed for a same-stage reorder, for a creation whose Start execution now option is disabled, or for a move into a stage without an entry instruction. When the task has no conversation, the countdown SHALL be armed only after the first-execution preparation (the interactive preparation defined by Execution preparation before a task's first execution or the automatic creation preparation) completes, and the conversation that preparation created SHALL be the target. The target SHALL be the task's first open conversation in conversation order; when no conversation is open, the system SHALL create a new conversation and use it. When the five seconds elapse without cancellation, the system SHALL send only that stage's entry instruction to the target, followed by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies. Cancel SHALL stop only the automatic send: the task's stage, position, and unresolved entry SHALL remain, and the card's run action SHALL be available. A new instructed entry for the task SHALL replace the pending countdown for the previous entry. The countdown SHALL be canceled without sending when a successful user prompt resolves the entry, when the task is deleted, or when the entry marker is removed for any other reason. The card SHALL present the countdown as a control that cancels when activated. The drawer for the task SHALL present a matching countdown notice above its section panel with the same cancel action. Both notices SHALL identify the stage whose instruction will run. A countdown SHALL continue when its card is not rendered, when the Kanban panel is not visible, or when the user switches to another board or Hub. The automatic send SHALL NOT depend on the board that armed it being mounted or visible. Unsent composer text or attachments in the target conversation SHALL NOT prevent the send and SHALL remain unchanged. The countdown SHALL NOT be persisted: a reload or plugin restart SHALL send nothing and SHALL leave the entry unresolved with its run action available. A failed timed send SHALL stop the countdown, report the failure on the card and in the drawer notice, restore the run action for the unresolved entry, and SHALL NOT retry automatically. When admission reports that the entry was already resolved, the countdown SHALL end without reporting a failure. The delay SHALL be fixed at five seconds and SHALL NOT be configurable.
 
 #### Scenario: Arm on a board drop
 - **WHEN** the user drops a card on a permitted stage with an entry instruction
@@ -1060,9 +1143,20 @@ When a permitted move changes a task's stage to a stage with an entry instructio
 - **THEN** the countdown for that entry is armed only after the preparation
 - **AND** the target is the conversation created by the preparation
 
+#### Scenario: Arm after the creation preparation
+- **WHEN** a task is created directly in an instructed initial stage with Start execution now enabled and the automatic first-execution preparation completes
+- **THEN** the countdown for the created entry is armed
+- **AND** the target is the conversation the preparation created
+- **AND** no instruction is sent while the countdown is active
+
+#### Scenario: No countdown for task creation
+- **WHEN** a task is created directly in an instructed initial stage with Start execution now disabled
+- **THEN** no countdown is armed
+- **AND** the card exposes the run action for the new entry
+
 #### Scenario: Send only the instruction on expiry
 - **WHEN** the five-second countdown ends without cancellation
-- **THEN** the stage's entry instruction is sent to the task's first open conversation, followed by the transition briefing when the stage configures two or more targets
+- **THEN** only the stage's entry instruction is sent to the task's first open conversation, followed by the transition briefing when the stage configures two or more targets
 - **AND** the unresolved entry is resolved
 - **AND** no conversation picker or confirmation is presented
 
@@ -1074,7 +1168,7 @@ When a permitted move changes a task's stage to a stage with an entry instructio
 #### Scenario: Create a conversation when none is open
 - **WHEN** the countdown ends and every task conversation is closed
 - **THEN** a new conversation is created and becomes the target
-- **AND** the stage's entry instruction is sent to that new conversation
+- **AND** only the stage's entry instruction is sent to that new conversation
 - **AND** the task's stage and position are unchanged
 
 #### Scenario: Cancel from the card
@@ -1104,11 +1198,6 @@ When a permitted move changes a task's stage to a stage with an entry instructio
 - **THEN** no new countdown is armed
 - **AND** an active countdown for the current entry keeps running
 
-#### Scenario: No countdown for task creation
-- **WHEN** a task is created directly in an instructed initial stage
-- **THEN** no countdown is armed
-- **AND** the card exposes the run action for the new entry
-
 #### Scenario: Continue when the card is not visible
 - **WHEN** the card is hidden by search, a project filter, selection mode, or another panel before the countdown ends
 - **THEN** the countdown keeps running
@@ -1122,7 +1211,7 @@ When a permitted move changes a task's stage to a stage with an entry instructio
 
 #### Scenario: Send while the Kanban panel is hidden
 - **WHEN** the countdown ends while the Kanban panel is not visible and its board is not mounted
-- **THEN** the stage's entry instruction is sent to the resolved target
+- **THEN** only the stage's entry instruction is sent to the resolved target
 - **AND** the unresolved entry is resolved without requiring the board to be reopened
 
 #### Scenario: Unsent draft does not block the send
@@ -1154,7 +1243,6 @@ When a permitted move changes a task's stage to a stage with an entry instructio
 - **THEN** no instruction is sent automatically
 - **AND** the entry remains unresolved
 - **AND** the card exposes the run action after reload
-
 ### Requirement: Stable board frame during commands
 The active board SHALL keep its frame stable while a command is in flight. Command progress SHALL NOT insert, remove, or resize any element between the board header and the task columns, and the board SHALL NOT present a global saving indicator, either visually or through a live region. A task move or same-stage reorder SHALL be reflected in its destination position immediately, and that immediate placement SHALL be the board-level feedback for the move. Progress that a specific action needs SHALL be reported inside the surface that started it, and a command failure SHALL remain a board-level notice.
 
@@ -1251,15 +1339,21 @@ Pending user work SHALL be derived from the conversations' durable state and SHA
 
 ### Requirement: Auto mode on a task card
 
-A task SHALL have an optional auto-mode setting that is disabled unless the user enables it, is persisted with the task, and is independent of its stage, position, and conversations. The card SHALL present the setting as an always-visible toggle that also indicates its state, SHALL expose its pressed state and purpose to assistive technology, and SHALL NOT open the task drawer or begin a drag when activated. The control SHALL NOT be presented in selection mode.
+A task SHALL have an optional auto-mode setting that is disabled unless the user enables it, including while creating the task, is persisted with the task, and is independent of its stage, position, and conversations. The card SHALL present the setting as an always-visible toggle that also indicates its state, SHALL expose its pressed state and purpose to assistive technology, and SHALL NOT open the task drawer or begin a drag when activated. The control SHALL NOT be presented in selection mode.
 
-Enabling auto mode SHALL arm the task and SHALL NOT move it, change its position, or send an instruction; the next completed turn remains the only trigger. Disabling it SHALL stop future automatic advances and SHALL NOT retract an advance that is already admitted. A user movement of the task SHALL preserve the setting. The indicator SHALL distinguish disabled, armed, advancing, held, and paused. A paused state SHALL be explained in the status region defined by Task card status strip. A held state SHALL be presented by the control itself, including its accessible name, and SHALL NOT add a status-region entry, because it is derived from pending user work rather than a recorded cause. Held SHALL mean the task has pending user work as defined by Pending user work, and the state SHALL clear when that work is consumed, SHALL NOT be persisted, and SHALL NOT require a user action. The control SHALL name the stage the next completed turn reaches: the recorded transition's stage while that transition resolves, otherwise the default destination. A recorded transition that no longer resolves SHALL be presented as a pause with the `transition-stale` reason, and reading a conversation SHALL NOT change the setting or clear that pause.
+Enabling auto mode SHALL arm the task and SHALL NOT move it, change its position, or send an instruction; the next completed turn remains the only trigger. Enabling it while creating a task SHALL persist the setting and SHALL NOT by itself start the first execution; the Start execution now option and Automatic first execution on task creation govern that execution. Disabling it SHALL stop future automatic advances and SHALL NOT retract an advance that is already admitted. A user movement of the task SHALL preserve the setting. The indicator SHALL distinguish disabled, armed, advancing, held, and paused. A paused state SHALL be explained in the status region defined by Task card status strip. A held state SHALL be presented by the control itself, including its accessible name, and SHALL NOT add a status-region entry, because it is derived from pending user work rather than a recorded cause. Held SHALL mean the task has pending user work as defined by Pending user work, and the state SHALL clear when that work is consumed, SHALL NOT be persisted, and SHALL NOT require a user action. The control SHALL name the stage the next completed turn reaches: the recorded transition's stage while that transition resolves, otherwise the default destination. A recorded transition that no longer resolves SHALL be presented as a pause with the `transition-stale` reason, and reading a conversation SHALL NOT change the setting or clear that pause.
 
 #### Scenario: Auto mode is disabled by default
 
-- **WHEN** a task is created
+- **WHEN** a task is created without enabling Auto mode
 - **THEN** its auto mode is disabled
 - **AND** the card presents the auto-mode control in its disabled state
+
+#### Scenario: Enable auto mode while creating
+- **WHEN** the user enables Auto mode in the New task dialog and saves
+- **THEN** the task is persisted with auto mode enabled
+- **AND** its stage and position are unchanged
+- **AND** no instruction is sent and no agent execution starts unless Start execution now also applies
 
 #### Scenario: Enable auto mode
 
@@ -1313,7 +1407,6 @@ Enabling auto mode SHALL arm the task and SHALL NOT move it, change its position
 - **WHEN** an armed task has a recorded transition that no longer resolves
 - **THEN** the control presents a pause whose label states that the recorded transition is no longer valid
 - **AND** the task's stage and position are unchanged
-
 ### Requirement: Automatic advance after a completed turn
 When a conversation of a task with auto mode enabled ends a turn whose reason is `completed`, and no open conversation of the task is running a turn, and the task has no pending user work as defined by Pending user work, the host SHALL admit exactly one automatic advance. The host SHALL perform the advance without requiring the board to be mounted, without a confirmation, without a conversation picker, and without arming the timed stage instruction. An admitted advance SHALL be durable: reloading the board SHALL NOT cancel it, and a host restart SHALL dispatch it when it had not been dispatched.
 

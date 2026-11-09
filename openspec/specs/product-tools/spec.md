@@ -77,7 +77,6 @@ The plugin's note tools SHALL operate on the same shared task note collection as
 - **WHEN** an agent reads a note with tags
 - **THEN** the returned note includes the tag collection
 
-
 ### Requirement: Explicit user intent without a second product confirmation
 
 Creating, editing, or deleting a task, or creating, renaming, editing, or deleting a board through a product tool SHALL require an explicit user request for that change. The plugin SHALL NOT add another product-specific approval dialog for a write that the user explicitly requested. This requirement SHALL NOT bypass native DSH permission behavior.
@@ -107,15 +106,30 @@ Creating, editing, or deleting a task, or creating, renaming, editing, or deleti
 - **WHEN** an agent has no explicit user request to create, edit, or delete a board task or a board
 - **THEN** the plugin's board tools do not authorize that change merely to track the agent's own work
 
-
 ### Requirement: Tool writes follow the same task behavior as the board
-Task creation through tools SHALL use the target board's configured initial workflow stage without starting an agent, and SHALL require a project owned by that board's Hub. Tool editing SHALL allow title and description changes at any stage, including for tasks with worktrees, without automatically messaging task conversations. Tool changes SHALL affect the same task data shown in the active board UI.
+Task creation through tools SHALL use the target board's configured initial workflow stage and SHALL require a project owned by that board's Hub. Task creation SHALL accept an auto-mode option and SHALL persist the selected value. When that initial stage has an entry instruction, creation SHALL prepare the task's first execution immediately — the default worktree for a Git-backed project, the first conversation, and the dispatch of the stage instruction — without the cancelable countdown, because the agent surface has no cancelable window. The tool result SHALL report the start outcome, and a failed preparation or dispatch SHALL leave the task in its initial stage with the unresolved entry. When the initial stage has no entry instruction, creation SHALL NOT start an agent. Tool editing SHALL allow title and description changes at any stage, including for tasks with worktrees, without automatically messaging task conversations. Tool changes SHALL affect the same task data shown in the active board UI.
+
+#### Scenario: Create in an instructed initial stage
+- **WHEN** an authorized board tool creates a task on a board whose initial stage has an entry instruction
+- **THEN** the task appears in that stage with the requested project and task text
+- **AND** the first execution is prepared and the stage instruction is dispatched in the same call
+- **AND** the tool result reports the start outcome
 
 #### Scenario: Create without triggering task execution
-- **WHEN** an authorized board tool creates a task on a board
-- **THEN** the task appears in that board's configured initial stage with the requested project and task text
-- **AND** the project belongs to the board's Hub
-- **AND** creation does not initiate an agent execution for that task
+- **WHEN** an authorized board tool creates a task on a board whose initial stage has no entry instruction
+- **THEN** the task appears in that stage with the requested project and task text
+- **AND** creation does not initiate an agent execution
+
+#### Scenario: Create with auto mode
+- **WHEN** an authorized board tool creates a task with auto mode enabled
+- **THEN** the task is persisted with auto mode enabled
+- **AND** the start rule applies independently of the auto-mode value
+
+#### Scenario: Report a failed start
+- **WHEN** the first-execution preparation or the stage-instruction dispatch fails during tool creation
+- **THEN** the task remains in its initial stage with the unresolved entry
+- **AND** the tool result reports the failure
+- **AND** no automatic retry occurs
 
 #### Scenario: Reject a project from another Hub
 - **WHEN** a board tool receives a project identifier that is not owned by the board's Hub
@@ -126,8 +140,6 @@ Task creation through tools SHALL use the target board's configured initial work
 - **WHEN** an authorized board tool edits the title or description of a task outside Backlog that has a worktree
 - **THEN** the updated text is reflected in that task's board data
 - **AND** the edit does not automatically send a message to its conversations or initiate an execution
-
-
 ### Requirement: Availability outside task-bound chats
 
 Board and task read tools SHALL be available in task conversations and ordinary DSH chats. Creating or editing a task SHALL NOT require the calling chat to be associated with a task card. Board administration writes SHALL be available only in an ordinary DSH chat that is not owned by a task; a session owned by a task, including a subagent descendant of a task conversation, SHALL be rejected without changing board state. Board-scoped tools SHALL require an explicitly discovered board identifier in an ordinary DSH chat and SHALL resolve it from the task in a task conversation.
@@ -156,14 +168,12 @@ Board and task read tools SHALL be available in task conversations and ordinary 
 - **THEN** the tool returns the Hubs available to the installation
 - **AND** it does not require a board or a native workspace
 
-
 ### Requirement: Preserve host-native tools
 Excluding Railyin board mutations, decision-ledger tools, and a plugin-owned TODO checklist SHALL apply to this plugin's product scope only. The plugin SHALL NOT remove or disable native DSH tools merely because an equivalent Railyin capability is out of scope.
 
 #### Scenario: Native tooling remains available
 - **WHEN** the plugin is enabled in a DSH conversation that already has native tools
 - **THEN** those host-native tools remain governed by DSH rather than being removed by the plugin's exclusions
-
 
 ### Requirement: Board-anchored discovery and scope
 The plugin SHALL expose `list_hubs` so an agent can discover Hubs, and `list_boards` so an agent can discover the boards of a Hub. Board-scoped tools SHALL accept a board identifier and SHALL resolve the board's Hub and project registry from it. The plugin SHALL provide `list_projects`, `get_board_summary`, `list_cards`, and `create_card` with the board identifier as their scope. `get_card`, `edit_card`, and the note tools SHALL accept a task identifier and resolve the owning board and Hub. A task conversation SHALL allow the board identifier to be omitted for board-scoped tools and SHALL resolve it from the task. An ordinary DSH chat SHALL require an explicitly discovered board identifier.
@@ -195,7 +205,6 @@ The plugin SHALL expose `list_hubs` so an agent can discover Hubs, and `list_boa
 - **WHEN** a board or card tool returns a board or task
 - **THEN** the result includes the board identifier and the Hub identifier needed for a subsequent scoped call
 
-
 ### Requirement: Board workflow read payload
 
 The plugin SHALL expose `get_board_summary` with an optional `include_workflow` flag. When the flag is true, the result SHALL include the exact stored workflow YAML, the parsed workflow's initial stage, its columns with their entry prompts and allowed transitions, its groups, the Hub revision, and the board's publishing state. When the flag is false or omitted, the result SHALL retain the board summary with the board name, Hub, workflow columns, task counts, and the Hub revision.
@@ -218,7 +227,6 @@ The plugin SHALL expose `get_board_summary` with an optional `include_workflow` 
 - **WHEN** an agent calls `get_board_summary` with a board identifier that does not exist
 - **THEN** the tool reports that the board does not exist
 - **AND** it returns no board data
-
 
 ### Requirement: Whole-document board workflow replacement
 
@@ -251,7 +259,6 @@ The plugin SHALL expose `get_board_summary` with an optional `include_workflow` 
 - **WHEN** an agent replaces a workflow and an existing task of that board is in a stage the new workflow no longer defines
 - **THEN** the tool reports the orphaned stages
 - **AND** the board's stored workflow is unchanged
-
 
 ### Requirement: Partial board workflow edits
 
@@ -293,7 +300,6 @@ The plugin SHALL expose `get_board_summary` with an optional `include_workflow` 
 - **THEN** every comment and every untouched line remain exactly as authored
 - **AND** only the replaced span differs
 
-
 ### Requirement: Board creation and rename
 
 `create_board` SHALL require a nonempty name and SHALL initialize the board with the default workflow unless a workflow is supplied. A board name SHALL be unique within its Hub after trimming and case-insensitive comparison. `update_board` SHALL rename a board without changing its tasks, workflow, conversations, or worktrees. Creating or renaming a board SHALL NOT create a native conversation or start an agent execution.
@@ -316,7 +322,6 @@ The plugin SHALL expose `get_board_summary` with an optional `include_workflow` 
 - **THEN** the board's name changes
 - **AND** its tasks, workflow, conversations, and worktrees are unchanged
 - **AND** no native conversation is created and no agent execution starts
-
 
 ### Requirement: Board deletion
 
@@ -356,7 +361,6 @@ The plugin SHALL expose `get_board_summary` with an optional `include_workflow` 
 - **WHEN** an agent deletes the only board of a Hub that has no tasks
 - **THEN** the Hub remains with no boards
 
-
 ### Requirement: Board write concurrency
 
 `update_board`, `edit_board_yaml`, and `delete_board` SHALL accept an optional Hub revision. When the supplied revision no longer matches the current Hub revision, the tool SHALL reject the request without changing the board. When the revision is omitted, the tool SHALL apply the change to the current stored state. The board workflow read payload SHALL include the current Hub revision.
@@ -376,7 +380,6 @@ The plugin SHALL expose `get_board_summary` with an optional `include_workflow` 
 
 - **WHEN** an agent omits the Hub revision
 - **THEN** the requested board change is applied to the current stored board
-
 
 ### Requirement: Board administration publishing
 
