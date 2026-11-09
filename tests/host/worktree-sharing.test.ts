@@ -20,7 +20,7 @@ function task(overrides: Partial<Task> = {}): Task {
 function state(tasks: Task[], root: string): BoardState {
   return {
     schemaVersion: 2, revision: 1, workflowYaml: '', workflow: { name: 'C', initialColumnId: 'c', columns: [{ id: 'c', name: 'C' }], groups: [] },
-    projects: [{ id: 'p', name: 'P', projectPath: root, gitRootPath: root }], tasks, notes: [],
+    projects: [{ id: 'p', projectKey: 'p', name: 'P', projectPath: root, gitRootPath: root }], tasks, notes: [],
   };
 }
 

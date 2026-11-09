@@ -1,12 +1,15 @@
 import { KanbanError, invariant } from '../shared/errors.js';
 import type { AutoModePause, Board, BoardSettings, HubState, HubTask, Note, Project, ProjectInput, Workflow } from '../shared/types.js';
 import { assertId, isAbsolutePath } from './validation.js';
+import { isPublishedProject, requireProjectPath } from '../shared/project.js';
 import { createBoard } from './hub-schema.js';
 import { parseWorkflow } from './workflow.js';
 import { applyWorkflowEdits, type WorkflowTextEdit } from './workflow-edit.js';
 import { entryInstruction, nextEnteredAt } from './stage-entry.js';
 import { transitionTargets } from './transitions.js';
 import { assertProjectSave, buildProject } from './project-registration.js';
+import { assertKnownProjectKeys, assertProjectCreatable, boardsAllowingKey, normalizeProjectKeys } from './board-project-scope.js';
+import { requireProjectKey } from './project-key.js';
 import { applyNoteTags, validateNoteWrite, type NoteInput } from './note.js';
 import { placementIndex, type Placement } from './placement.js';
 import { compareTaskOrder } from './task-order.js';
@@ -130,7 +133,16 @@ export function saveProject(hub: HubState, input: ProjectInput, deps: OperationD
   const projectId = value.id ?? nextId(hub.projects, deps.id);
   const current = hub.projects.find(project => project.id === projectId);
   assertProjectSave(hub, projectId, value);
-  const project = buildProject(projectId, value, current);
+  const takenKeys = hub.projects.filter(project => project.id !== projectId).map(project => project.projectKey);
+  const project = buildProject(projectId, value, current, takenKeys);
+  // A key edit is a local reference migration: every board scope of the Hub follows it
+  // in the same write, so no board is left naming a key that no project owns.
+  if (current !== undefined && current.projectKey !== project.projectKey) {
+    for (const board of boardsAllowingKey(hub.boards, current.projectKey)) {
+      board.allowedProjectKeys = normalizeProjectKeys((board.allowedProjectKeys ?? []).map(key => key === current.projectKey ? project.projectKey : key));
+      board.updatedAt = timestamp(deps);
+    }
+  }
   if (current) hub.projects[hub.projects.indexOf(current)] = project;
   else hub.projects.push(project);
   hub.updatedAt = timestamp(deps);
@@ -141,14 +153,36 @@ export function deleteProject(hub: HubState, projectId: string, deps: OperationD
   const project = requireProject(hub, projectId);
   invariant(!project.operation, 'PROJECT_BUSY', 'Resolve the project relocation before deleting the project.');
   invariant(!hub.tasks.some(task => task.projectId === projectId), 'PROJECT_IN_USE', 'Delete the tasks in this project before deleting the project.');
+  // A deleted project cannot stay in a board's scope: the key leaves every board that
+  // names it, which may leave a restricted board with fewer keys or with none at all.
+  for (const board of boardsAllowingKey(hub.boards, project.projectKey)) {
+    board.allowedProjectKeys = normalizeProjectKeys((board.allowedProjectKeys ?? []).filter(key => key !== project.projectKey));
+    board.updatedAt = timestamp(deps);
+  }
   hub.projects.splice(hub.projects.indexOf(project), 1);
   hub.updatedAt = timestamp(deps);
   return project;
 }
 
+/** Set or clear one board's project scope; an absent list allows every project of the Hub. */
+export function setBoardProjectScope(hub: HubState, boardId: string, projectKeys: readonly string[] | undefined, deps: OperationDeps): Board {
+  const board = requireBoard(hub, boardId);
+  if (projectKeys === undefined) {
+    delete board.allowedProjectKeys;
+  } else {
+    const keys = normalizeProjectKeys(projectKeys.map(requireProjectKey));
+    assertKnownProjectKeys(keys, hub.projects);
+    board.allowedProjectKeys = keys;
+  }
+  board.updatedAt = timestamp(deps);
+  hub.updatedAt = timestamp(deps);
+  return board;
+}
+
 export function setProjectWorkspace(hub: HubState, projectId: string, workspaceId: string, owned: boolean, deps: OperationDeps): Project {
   assertId(workspaceId, 'Workspace ID');
   const project = requireProject(hub, projectId);
+  invariant(!isPublishedProject(project), 'PROJECT_NOT_ADOPTED', 'Adopt the published project before binding a native workspace to it.');
   project.workspaceId = workspaceId;
   project.workspaceOwned = owned;
   hub.updatedAt = timestamp(deps);
@@ -176,6 +210,7 @@ export function createTask(hub: HubState, input: { boardId: string; projectId: s
   invariant(value.autoMode === undefined || typeof value.autoMode === 'boolean', 'INVALID_INPUT', 'Task auto mode must be a boolean.');
   const board = requireBoard(hub, value.boardId);
   const project = requireProject(hub, value.projectId);
+  assertProjectCreatable(board, project);
   const peers = hub.tasks.filter(task => task.boardId === board.id && task.columnId === board.workflow.initialColumnId);
   let position = peers.length ? peers.reduce((minimum, task) => Math.min(minimum, task.position), Infinity) - 1 : 0;
   if (!Number.isFinite(position) || peers.some(task => task.position === position)) {
@@ -186,7 +221,7 @@ export function createTask(hub: HubState, input: { boardId: string; projectId: s
   const initialColumn = board.workflow.columns.find(column => column.id === board.workflow.initialColumnId);
   const task: HubTask = {
     id: nextId(hub.tasks, deps.id), boardId: board.id, projectId: project.id, title: value.title.trim(), description: value.description,
-    columnId: board.workflow.initialColumnId, position, sessionIds: [], closedSessionIds: [], effectiveCwd: project.projectPath,
+    columnId: board.workflow.initialColumnId, position, sessionIds: [], closedSessionIds: [], effectiveCwd: requireProjectPath(project),
     worktree: null, operation: null,
     ...(value.autoMode === true ? { autoMode: { enabled: true as const } } : {}),
     ...(entryInstruction(initialColumn) !== undefined ? { instructionPending: { columnId: initialColumn!.id, enteredAt: nextEnteredAt(Date.parse(at)) } } : {}),

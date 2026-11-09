@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
-import { isGitProject } from '../shared/project.js';
+import { isGitProject, requireRegisteredProject } from '../shared/project.js';
 import type { GitPort, SessionPort } from '../shared/ports.js';
 import type { ContextOperation, Project, ProjectInput, ProjectLocationPaths, ProjectRelocation, ProjectRelocationPhase, Task } from '../shared/types.js';
 import { planProjectRelocation } from '../domain/project-registration.js';
@@ -30,10 +30,11 @@ type WorktreeUpdate = { branch: string; target: string } | { error: ReturnType<t
 const CANCELLABLE: ReadonlySet<ProjectRelocationPhase> = new Set(['queued', 'preflight', 'waiting']);
 
 function fromProject(project: Project): ProjectLocationPaths {
+  const registered = requireRegisteredProject(project);
   return {
-    projectPath: project.projectPath,
-    ...(project.gitRootPath === undefined ? {} : { gitRootPath: project.gitRootPath }),
-    ...(project.defaultBranch === undefined ? {} : { defaultBranch: project.defaultBranch }),
+    projectPath: registered.projectPath,
+    ...(registered.gitRootPath === undefined ? {} : { gitRootPath: registered.gitRootPath }),
+    ...(registered.defaultBranch === undefined ? {} : { defaultBranch: registered.defaultBranch }),
   };
 }
 

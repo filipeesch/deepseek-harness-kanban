@@ -133,7 +133,7 @@ describe('project editor lifetime during save', () => {
     await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Updated Web');
     await user.click(screen.getByRole('button', { name: 'Save project' }));
     await waitFor(() => expect(mock.command).toHaveBeenLastCalledWith(expect.objectContaining({
-      type: 'project.save', project: { id: 'p2', name: 'Updated Web', projectPath: '/web', gitRootPath: '/web', defaultBranch: 'main' },
+      type: 'project.save', project: { id: 'p2', name: 'Updated Web', projectKey: 'p2', projectPath: '/web', gitRootPath: '/web', defaultBranch: 'main' },
     })));
   });
 });

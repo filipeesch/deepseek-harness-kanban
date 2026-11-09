@@ -21,7 +21,7 @@ async function openProjects() {
 describe('project registry list', () => {
   it('lists Git-backed and folder projects with their indication', async () => {
     const data = fixture();
-    data.state.projects.push({ id: 'p3', name: 'Notes', projectPath: '/plain/notes' });
+    data.state.projects.push({ id: 'p3', projectKey: 'p3', name: 'Notes', projectPath: '/plain/notes' });
     const mock = fakeApi(data); const user = userEvent.setup();
     render(<BoardView api={mock.api} renderConversation={() => null} />);
     await screen.findByRole('button', { name: 'Open task Alpha task' });

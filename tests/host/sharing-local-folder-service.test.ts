@@ -16,7 +16,7 @@ const flow = (label: string): string => ['name: Flow', 'initial_column: backlog'
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 
-const teamDocument = (label: string): SharedHubDocument => ({ version: 1, boards: [{ key: 'kanban', name: 'Kanban', workflow: flow(label) }] });
+const teamDocument = (label: string): SharedHubDocument => ({ version: 2, boards: [{ key: 'kanban', name: 'Kanban', workflow: flow(label) }] });
 
 function memorySharingStore(): HubSharingStore {
   const records = new Map<string, HubSharingRecord>();

@@ -15,7 +15,7 @@ function flow(label = 'Backlog'): string {
   return ['name: Flow', 'initial_column: backlog', 'columns:', '  - id: backlog', '    label: ' + label, ''].join('\n');
 }
 function documentOf(name: string, workflow: string): SharedHubDocument {
-  return { version: 1, boards: [{ key: 'kanban', name, workflow }] };
+  return { version: 2, boards: [{ key: 'kanban', name, workflow }] };
 }
 
 class FakeStore implements SharedConfigStore {

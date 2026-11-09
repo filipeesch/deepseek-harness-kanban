@@ -14,7 +14,7 @@ function folderFixture() {
   const web = hub.projects.find(project => project.id === 'p2')!;
   delete web.gitRootPath;
   delete web.defaultBranch;
-  hub.projects.push({ id: 'p3', name: 'Notes', projectPath: '/plain/notes' });
+  hub.projects.push({ id: 'p3', projectKey: 'p3', name: 'Notes', projectPath: '/plain/notes' });
   hub.tasks.push({ ...task('t3', 'Gamma task', 'p3', 'intake'), effectiveCwd: '/plain/notes', worktree: null });
   return data;
 }

@@ -9,7 +9,7 @@ import { task } from './helpers.js';
 
 afterEach(cleanup);
 
-const project = { id: 'p1', name: 'API', projectPath: '/repo/apps/api', gitRootPath: '/repo' };
+const project = { id: 'p1', name: 'API', projectKey: 'p1', projectPath: '/repo/apps/api', gitRootPath: '/repo' };
 const base = task('t1', 'Alpha task', 'p1', 'intake');
 const withWorktree = {
   ...base,

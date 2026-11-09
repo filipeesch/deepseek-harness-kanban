@@ -28,7 +28,7 @@ const LOCAL = flow([['backlog', 'Backlog', [40, 0]], ['plan', 'Plan', [200, 0]],
 const TEAM = flow([['backlog', 'Backlog', [0, 0]], ['plan', 'Plan', [260, 0]], ['done', 'Done']]);
 
 function documentOf(workflow: string): SharedHubDocument {
-  return { version: 1, boards: [{ key: 'kanban', name: 'Kanban', workflow }] };
+  return { version: 2, boards: [{ key: 'kanban', name: 'Kanban', workflow }] };
 }
 
 class FakeStore implements SharedConfigStore {

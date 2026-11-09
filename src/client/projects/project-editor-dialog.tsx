@@ -18,11 +18,15 @@ export function ProjectEditorDialog({ api, hubId, expectedRevision, project, tas
 }) {
   const editor = useProjectEditor({ api, hubId, expectedRevision, project, tasks, isConversationActive, run, onClose, onSaved });
   const { draft, detection } = editor;
-  const title = project === undefined ? 'New project' : 'Edit project';
+  const adopting = project?.origin === 'published';
+  const title = project === undefined ? 'New project' : adopting ? 'Adopt published project' : 'Edit project';
   if (editor.relocation !== null) return <RelocationConfirmDialog editor={editor} project={project!} />;
   return <Modal title={title} onClose={editor.cancel} busy={editor.pending}>
     <form className="kb-form" aria-label={title} aria-busy={editor.pending} onSubmit={event => { event.preventDefault(); void editor.save(); }}>
       <label className="kb-field">Project name<input className="kb-input" required aria-label="Project name" disabled={editor.pending} value={draft.name} onChange={event => editor.change('name', event.target.value)} /></label>
+      <label className="kb-field">Project key<input className="kb-input" aria-label="Project key" disabled={editor.pending} value={draft.projectKey} onChange={event => editor.change('projectKey', event.target.value)} /></label>
+      <p className="kb-hint">The key identifies this project across the Hub's boards and in the published configuration. Leave it empty to derive it from the name; changing it updates every board that allows this project.</p>
+      {adopting && <p className="kb-hint" role="status">This project came from a published board and has no directory yet. Choose its project path to adopt it; it keeps its key.</p>}
       <label className="kb-field">Project path
         <div className="kb-input-row">
           <input className="kb-input" required aria-label="Project path" disabled={editor.pending} value={draft.projectPath} onChange={event => editor.change('projectPath', event.target.value)} onBlur={() => editor.blurPath()} />

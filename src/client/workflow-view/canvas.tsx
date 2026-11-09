@@ -13,7 +13,7 @@ import { CardEnvironmentContext, type CardEnvironment } from './card-environment
 import type { GestureHandle, PointerEventsPort } from './gestures/stage-drag.js';
 import { noSnap, segmentOffset, type SnapPolicy } from './gestures/grid-snap.js';
 import { beginConnectionDrag, type KeyboardEventsPort } from './gestures/connection-drag.js';
-import { FLOW_ZOOM, nextZoom, zoomAroundPoint } from './gestures/viewport-policy.js';
+import { FLOW_ZOOM, clampZoom, nextZoom, zoomAroundPoint, type Viewport } from './gestures/viewport-policy.js';
 import { authoredOffsetAt, connectionLayoutOf, connectionRouteFor, edgeModel, withOffset, type ConnectionLayoutOverride, type LiveConnectionDescriptor, type LiveStageRect } from './edge-model.js';
 import { nearestAnchor } from './routing/ports.js';
 import type { DiagramPoint, DiagramRect } from './routing/orthogonal.js';
@@ -46,13 +46,25 @@ export interface ConnectionEdit {
 /** What the control stack can ask of the diagram surface. */
 export interface CanvasViewportActions { zoomIn(): void; zoomOut(): void; fit(): void }
 
+/**
+ * Where the surface places the diagram once it is ready: either the position the
+ * board stored, or the whole diagram. The parent owns the intent and the token.
+ */
+export type CanvasViewRequest =
+  | { readonly kind: 'restore'; readonly viewport: Viewport }
+  | { readonly kind: 'fit' };
+
 export interface WorkflowCanvasProps {
   readonly stages: readonly CanvasStage[];
   readonly connections: readonly CanvasConnection[];
   /** False until every stage has been measured, so the first paint never jumps. */
   readonly ready: boolean;
-  /** Increment to frame the whole diagram. */
-  readonly fitRequest: number;
+  /** How the surface places the diagram; see CanvasViewRequest. */
+  readonly viewRequest: CanvasViewRequest;
+  /** Changes when a new request must be applied, even when it repeats the same intent. */
+  readonly viewToken: number;
+  /** The position the diagram settled on; the parent stores it for the active board. */
+  readonly onViewportChange?: (viewport: Viewport) => void;
   /** The layout lock; a locked diagram never starts a stage move, a resize, or an arrow adjustment. */
   readonly locked: boolean;
   /** The lattice every layout gesture settles on. */
@@ -149,10 +161,15 @@ function CanvasInner(props: WorkflowCanvasProps) {
   }, []);
 
   useEffect(() => {
-    if (!props.ready) return;
+    if (!props.ready) return undefined;
+    if (props.viewRequest.kind === 'restore') {
+      const { x, y, zoom } = props.viewRequest.viewport;
+      void instance.setViewport({ x, y, zoom: clampZoom(zoom) }, { duration: 0 });
+      return undefined;
+    }
     const frame = requestAnimationFrame(() => { void instance.fitView({ padding: 0.2, duration: 0 }); });
     return () => cancelAnimationFrame(frame);
-  }, [props.ready, props.fitRequest, instance]);
+  }, [props.ready, props.viewToken, instance]);
 
   const liveStages = useMemo<LiveStageRect[]>(() => nodes.map(node => ({
     id: node.id,
@@ -407,6 +424,7 @@ function CanvasInner(props: WorkflowCanvasProps) {
               maxZoom={FLOW_ZOOM.max}
               fitView={false}
               defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+              onMoveEnd={(_event, next) => props.onViewportChange?.({ x: next.x, y: next.y, zoom: next.zoom })}
             >
               {props.controls !== undefined && <Panel position="bottom-left">{props.controls(viewport)}</Panel>}
               <DiagramMinimap />

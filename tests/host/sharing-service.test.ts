@@ -18,7 +18,7 @@ function flow(columns: string[] = DEFAULT_COLUMNS, initial = columns[0]!): strin
   return ['name: Flow', 'initial_column: ' + initial, 'columns:', ...columns.flatMap(column => ['  - id: ' + column, '    label: ' + column]), ''].join('\n');
 }
 function documentOf(name = 'Kanban', workflow = DEFAULT_WORKFLOW_YAML, key = 'kanban'): SharedHubDocument {
-  return { version: 1, boards: [{ key, name, workflow }] };
+  return { version: 2, boards: [{ key, name, workflow }] };
 }
 function ids(): () => string { let value = 0; return () => 'generated-' + (++value); }
 
@@ -157,7 +157,7 @@ describe('Hub publishing service', () => {
     await connect(context);
     await context.hubs.hub(context.hubId).saveBoardWorkflow(context.boardId, flow(['backlog', 'plan']));
     const remote = context.factory.storeFor(context.hubId);
-    remote.publish({ version: 1, boards: [
+    remote.publish({ version: 2, boards: [
       { key: 'kanban', name: 'Kanban', workflow: DEFAULT_WORKFLOW_YAML },
       { key: 'extra', name: 'Extra', workflow: flow(['backlog', 'done']) },
     ] });
@@ -243,10 +243,15 @@ describe('Hub publishing service', () => {
     const context = await fixture();
     await connect(context);
     await context.hubs.hub(context.hubId).saveBoardWorkflow(context.boardId, flow(['backlog', 'plan']));
-    context.factory.storeFor(context.hubId).publish(documentOf('Kanban', flow(['backlog', 'done'])));
+    context.factory.storeFor(context.hubId).publish({ version: 2, boards: [{ key: 'kanban', name: 'Kanban', workflow: flow(['backlog', 'done']), projectKeys: ['project'] }] });
     await context.service.check(context.hubId);
+    // The review explains both scopes, not only both workflows.
+    expect(context.service.view(context.hubId)!.boards[0]!.detail).toMatchObject({ teamProjectKeys: ['project'] });
+    expect(context.service.view(context.hubId)!.boards[0]!.detail?.localProjectKeys).toBeUndefined();
     await context.service.resolve(context.hubId, context.boardId, 'team');
     expect(context.hubs.requireHub(context.hubId).boards[0]!.workflowYaml).toBe(flow(['backlog', 'done']));
+    // The team version is the workflow and its project scope together.
+    expect(context.hubs.requireHub(context.hubId).boards[0]!.allowedProjectKeys).toEqual(['project']);
     expect(context.service.view(context.hubId)!.conflicts).toBe(0);
 
     const second = await fixture();
@@ -290,7 +295,7 @@ describe('Hub publishing service', () => {
     await connect(context);
     const hub = context.hubs.requireHub(context.hubId);
     const [first, second] = hub.boards;
-    context.factory.storeFor(context.hubId).publish({ version: 1, boards: [
+    context.factory.storeFor(context.hubId).publish({ version: 2, boards: [
       { key: 'extra', name: 'Extra', workflow: second!.workflowYaml },
       { key: 'kanban', name: 'Kanban', workflow: first!.workflowYaml },
     ] });
@@ -306,7 +311,7 @@ describe('Hub publishing service', () => {
     const context = await fixture();
     await context.hubs.hub(context.hubId).addBoard('Extra');
     await connect(context);
-    context.factory.storeFor(context.hubId).publish({ version: 1, boards: [{ key: 'kanban', name: 'Kanban', workflow: DEFAULT_WORKFLOW_YAML }] });
+    context.factory.storeFor(context.hubId).publish({ version: 2, boards: [{ key: 'kanban', name: 'Kanban', workflow: DEFAULT_WORKFLOW_YAML }] });
     await context.service.check(context.hubId);
     const pending = context.service.view(context.hubId)!;
     expect(pending.updates).toBe(1);
@@ -322,7 +327,7 @@ describe('Hub publishing service', () => {
     // An orphan can be deleted when it holds only unpublished changes and no tasks.
     await context.hubs.hub(context.hubId).saveBoardWorkflow(context.boardId, flow(['backlog', 'done']));
     const remote = context.factory.storeFor(context.hubId);
-    remote.publish({ version: 1, boards: [] });
+    remote.publish({ version: 2, boards: [] });
     await context.service.check(context.hubId);
     await context.service.getUpdates(context.hubId);
     expect(context.service.view(context.hubId)!.boards[0]).toMatchObject({ state: 'orphan' });
@@ -344,11 +349,15 @@ describe('Hub publishing service', () => {
     await context.service.removeBoard(context.hubId, context.boardId, 'local', 'Kanban');
     const removedView = context.service.view(context.hubId)!;
     expect(removedView.removed).toEqual([{ boardId: context.boardId, key: 'kanban', name: 'Kanban' }]);
+    // The team board also carries a project scope, which the restore has to apply.
+    context.factory.storeFor(context.hubId).publish({ version: 2, boards: [{ key: 'kanban', name: 'Kanban', workflow: DEFAULT_WORKFLOW_YAML, projectKeys: ['project'] }] });
     await context.service.check(context.hubId);
     await context.service.getUpdates(context.hubId);
     expect(context.hubs.requireHub(context.hubId).boards).toHaveLength(0);
     await context.service.restore(context.hubId, context.boardId);
-    expect(context.hubs.requireHub(context.hubId).boards).toHaveLength(1);
+    const restored = context.hubs.requireHub(context.hubId).boards[0]!;
+    expect(restored.allowedProjectKeys).toEqual(['project']);
+    expect(context.hubs.requireHub(context.hubId).projects.some(project => project.projectKey === 'project')).toBe(true);
     expect(context.service.view(context.hubId)!.removed).toHaveLength(0);
   });
 
@@ -369,7 +378,7 @@ describe('Hub publishing service', () => {
     await context.hubs.hub(context.hubId).saveProject({ name: 'P', projectPath: '/repo' });
     const project = context.hubs.requireHub(context.hubId).projects[0]!;
     await context.hubs.hub(context.hubId).createTask({ projectId: project.id, title: 'Task', description: '', boardId: context.boardId });
-    context.factory.storeFor(context.hubId).publish({ version: 1, boards: [] });
+    context.factory.storeFor(context.hubId).publish({ version: 2, boards: [] });
     await context.service.check(context.hubId);
     expect(context.service.view(context.hubId)).toMatchObject({ updates: 1 });
     expect(context.service.view(context.hubId)!.boards[0]).toMatchObject({ state: 'orphan', pending: true });
@@ -391,7 +400,7 @@ describe('Hub publishing service', () => {
     const project = context.hubs.requireHub(context.hubId).projects[0]!;
     await context.hubs.hub(context.hubId).createTask({ projectId: project.id, title: 'Task', description: '', boardId: context.boardId });
     const remote = context.factory.storeFor(context.hubId);
-    remote.publish({ version: 1, boards: [] });
+    remote.publish({ version: 2, boards: [] });
     await context.service.check(context.hubId);
     await context.service.getUpdates(context.hubId);
     expect(context.service.view(context.hubId)!.boards[0]).toMatchObject({ state: 'orphan' });
@@ -410,7 +419,7 @@ describe('Hub publishing service', () => {
     const project = context.hubs.requireHub(context.hubId).projects[0]!;
     await context.hubs.hub(context.hubId).createTask({ projectId: project.id, title: 'Task', description: '', boardId: context.boardId });
     const remote = context.factory.storeFor(context.hubId);
-    remote.publish({ version: 1, boards: [] });
+    remote.publish({ version: 2, boards: [] });
     await context.service.check(context.hubId);
     await context.service.getUpdates(context.hubId);
     expect(context.service.view(context.hubId)!.boards[0]).toMatchObject({ state: 'orphan' });

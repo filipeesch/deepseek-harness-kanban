@@ -3,9 +3,35 @@ import type { HubState } from '../../shared/types.js';
 import { createBoard } from '../hub-schema.js';
 import { normalizeBoardName } from './identity.js';
 import { parseWorkflow } from '../workflow.js';
+import { canonicalProjectKeys } from '../project-key.js';
 import type { SharingPlan } from './plan.js';
 
 export interface ApplySharingDeps { id: () => string; now: () => string }
+
+/** An absent key list allows every project; a present list, including an empty one, restricts. */
+function applyScope(board: { allowedProjectKeys?: string[] }, projectKeys: readonly string[] | undefined): void {
+  if (projectKeys === undefined) delete board.allowedProjectKeys;
+  else board.allowedProjectKeys = canonicalProjectKeys(projectKeys);
+}
+
+function allocateProjectId(draft: HubState, deps: ApplySharingDeps): string {
+  const taken = new Set(draft.projects.map(project => project.id));
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const candidate = deps.id();
+    if (!taken.has(candidate)) return candidate;
+  }
+  throw new KanbanError('ID_COLLISION', 'Could not allocate a unique project identifier.');
+}
+
+/** Hold a published key locally as a placeholder until someone adopts it with a directory. */
+function ensureProjectKeys(draft: HubState, keys: readonly string[], deps: ApplySharingDeps): void {
+  const known = new Set(draft.projects.map(project => project.projectKey));
+  for (const key of keys) {
+    if (known.has(key)) continue;
+    draft.projects.push({ id: allocateProjectId(draft, deps), name: key, projectKey: key, origin: 'published' });
+    known.add(key);
+  }
+}
 export interface ApplySharingResult { created: Array<{ boardId: string; key: string }> }
 
 /**
@@ -52,11 +78,16 @@ export function applySharingPlan(draft: HubState, plan: SharingPlan, deps: Apply
     invariant(!draft.tasks.some(task => task.boardId === boardId), 'SHARING_REMOVE_IN_USE', 'A board with tasks cannot be removed by a team update.');
   }
 
+  // Every key the team names must exist locally before a board can record it: an
+  // unknown key becomes a placeholder that cannot create tasks until it is adopted.
+  ensureProjectKeys(draft, parsed.flatMap(item => item.entry.projectKeys ?? []), deps);
+
   const at = deps.now();
   const created: Array<{ boardId: string; key: string }> = [];
   for (const item of parsed) {
     if (item.board === undefined) {
       const board = createBoard(deps.id(), item.entry.name, at, item.entry.workflow);
+      applyScope(board, item.entry.projectKeys);
       draft.boards.push(board);
       created.push({ boardId: board.id, key: item.entry.key });
       continue;
@@ -64,6 +95,7 @@ export function applySharingPlan(draft: HubState, plan: SharingPlan, deps: Apply
     item.board.name = item.entry.name;
     item.board.workflowYaml = item.entry.workflow;
     item.board.workflow = item.workflow;
+    applyScope(item.board, item.entry.projectKeys);
     item.board.updatedAt = at;
   }
   if (plan.removals.length > 0) draft.boards = draft.boards.filter(board => !removals.has(board.id));

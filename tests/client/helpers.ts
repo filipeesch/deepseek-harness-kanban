@@ -18,7 +18,7 @@ export function task(id: string, title: string, projectId: string, columnId: str
 function rawFixture(): KanbanSnapshot {
   const hub: HubState = {
     id: 'hub-1', name: 'My Hub', revision: 1,
-    projects: [{ id: 'p1', name: 'API', projectPath: '/repo/apps/api', gitRootPath: '/repo', defaultBranch: 'main' }, { id: 'p2', name: 'Web', projectPath: '/web', gitRootPath: '/web', defaultBranch: 'main' }],
+    projects: [{ id: 'p1', projectKey: 'p1', name: 'API', projectPath: '/repo/apps/api', gitRootPath: '/repo', defaultBranch: 'main' }, { id: 'p2', projectKey: 'p2', name: 'Web', projectPath: '/web', gitRootPath: '/web', defaultBranch: 'main' }],
     boards: [{ id: 'board-1', name: 'Delivery', workflowYaml: FIXTURE_WORKFLOW_YAML, workflow: structuredClone(workflow), createdAt: now, updatedAt: now }],
     tasks: [task('t1', 'Alpha task', 'p1', 'intake'), { ...task('t2', 'Beta task', 'p2', 'doing'), description: 'Searchable documentation', worktree: { path: '/trees/beta', branch: 'beta', owned: true, status: 'ready' }, effectiveCwd: '/trees/beta' }],
     notes: [], createdAt: now, updatedAt: now,
@@ -115,7 +115,7 @@ export function fakeApi(initial: TestSnapshot = fixture()) {
       case 'operation.retry': case 'operation.return': if (current) current.operation = null; break;
       case 'note.save': { const note = value.state.notes.find(item => item.id === input.noteId); if (note) { if (input.content !== undefined) note.content = input.content; if (input.tags !== undefined) { if (input.tags.length === 0) delete note.tags; else note.tags = [...input.tags]; } } else { const id = 'n' + next++; value.state.notes.push({ id, taskId: input.taskId, content: input.content ?? '', ...(input.tags !== undefined && input.tags.length > 0 ? { tags: [...input.tags] } : {}), createdAt: 'now', updatedAt: 'now' }); receipt = { kind: 'note', id }; } break; }
       case 'note.delete': value.state.notes = value.state.notes.filter(item => !(item.id === input.noteId && item.taskId === input.taskId)); receipt = { kind: 'note', id: input.noteId }; break;
-      case 'project.save': { const hub = value.state.hubs.find(item => item.id === input.hubId) ?? value.state.hubs[0]!; const project = hub.projects.find(item => item.id === input.project.id); if (project) Object.assign(project, input.project); else { const id = 'p' + next++; hub.projects.push({ ...input.project, id }); receipt = { kind: 'project', id }; } break; }
+      case 'project.save': { const hub = value.state.hubs.find(item => item.id === input.hubId) ?? value.state.hubs[0]!; const project = hub.projects.find(item => item.id === input.project.id); if (project) Object.assign(project, input.project); else { const id = 'p' + next++; hub.projects.push({ ...input.project, id, projectKey: input.project.projectKey ?? id }); receipt = { kind: 'project', id }; } break; }
       case 'project.delete': { const hub = value.state.hubs.find(item => item.id === input.hubId) ?? value.state.hubs[0]!; hub.projects = hub.projects.filter(project => project.id !== input.projectId); receipt = { kind: 'project', id: input.projectId }; break; }
       case 'settings.save': value.state.settings = { revision: value.state.settings.revision + 1, ...(input.settings.worktreeBasePath ? { worktreeBasePath: input.settings.worktreeBasePath } : {}) }; break;
     }

@@ -1,18 +1,44 @@
-import React, { useState } from 'react';
-import type { Board, BoardState, ClientApi, HubSharingView, HubState, Problem } from '../../shared/types.js';
-import { ErrorNotice, type RunCommand } from '../ui.js';
+import React from 'react';
+import type { Board, BoardState, ClientApi, HubSharingView, HubState } from '../../shared/types.js';
 import { canShareFromEditor } from '../sharing/status.js';
+import type { RunCommand } from '../ui.js';
 import { WorkflowEditor } from '../workflow-editor.js';
+import { BoardDeletionControl } from './board/board-deletion-control.js';
+import { BoardIdentityForm } from './board/board-identity-form.js';
+import { BoardProjectScopeForm } from './board/board-project-scope-form.js';
 
-export function BoardSettings({ state, hub, board, run, api, sharing, onDeleted, workflowDraft, setWorkflowDraft }: { state: BoardState; hub: HubState | null; board: Board; run: RunCommand; api?: ClientApi; sharing?: HubSharingView; onDeleted?: () => void; workflowDraft: { yaml: string; revision: number } | null; setWorkflowDraft: React.Dispatch<React.SetStateAction<{ yaml: string; revision: number } | null>> }) {
-  const [name, setName] = useState(board.name); const [pending, setPending] = useState(false); const [error, setError] = useState<Problem | null>(null); const [confirmDelete, setConfirmDelete] = useState(false);
+/**
+ * The board section of Configuration: identity, project scope, deletion, and the
+ * workflow editor. Each concern owns its own form and its own command.
+ */
+export function BoardSettings({ state, hub, board, run, api, sharing, onDeleted, workflowDraft, setWorkflowDraft }: {
+  state: BoardState;
+  hub: HubState | null;
+  board: Board;
+  run: RunCommand;
+  api?: ClientApi;
+  sharing?: HubSharingView;
+  onDeleted?: () => void;
+  workflowDraft: { yaml: string; revision: number } | null;
+  setWorkflowDraft: React.Dispatch<React.SetStateAction<{ yaml: string; revision: number } | null>>;
+}) {
   if (!hub) return null;
-  const hubId = hub.id; const hubRevision = hub.revision;
-  const bound = sharing?.boards.find(value => value.boardId === board.id)?.bound === true;
-  const onShare = api !== undefined && canShareFromEditor(sharing, board.id) ? async () => { await api.sharing({ type: 'sharing.publish', hubId }); } : undefined;
-  async function saveName(event: React.FormEvent) { event.preventDefault(); if (!name.trim()) return; setPending(true); setError(null); try { await run({ type: 'board.rename', hubId, boardId: board.id, name: name.trim(), expectedRevision: hubRevision }); } catch (failure) { setError(failure as Problem); } finally { setPending(false); } }
-  async function deleteBoard(scope?: 'local' | 'team') { setPending(true); setError(null); try { await run({ type: 'board.delete', hubId, boardId: board.id, confirmed: true, expectedRevision: hubRevision, ...(scope === undefined ? {} : { sharing: scope }) }); onDeleted?.(); } catch (failure) { setError(failure as Problem); } finally { setPending(false); } }
-  return <div className="kb-form"><form className="kb-form" onSubmit={saveName}><h3>Board</h3><label className="kb-field">Board name<input className="kb-input" value={name} disabled={pending} onChange={event => setName(event.target.value)} /></label><div className="kb-actions"><button className="kb-button kb-primary" disabled={pending || !name.trim()}>{pending ? 'Saving…' : 'Save board name'}</button><button type="button" className="kb-button kb-danger" disabled={pending || state.tasks.length > 0} title={state.tasks.length > 0 ? 'Delete every task before deleting the board.' : 'Delete this board'} onClick={() => { if (!bound && confirmDelete) { void deleteBoard(); return; } setConfirmDelete(true); }}>{!bound && confirmDelete ? 'Confirm delete board' : 'Delete board'}</button>{confirmDelete && (bound
-    ? <><button type="button" className="kb-button" disabled={pending} onClick={() => void deleteBoard('local')}>Remove only here</button><button type="button" className="kb-button kb-danger" disabled={pending} onClick={() => void deleteBoard('team')}>Remove for the team</button><button type="button" className="kb-button" onClick={() => setConfirmDelete(false)}>Cancel</button></>
-    : <button type="button" className="kb-button" onClick={() => setConfirmDelete(false)}>Cancel</button>)}</div>{bound && confirmDelete && <p className="kb-hint">Remove only here keeps the team board published. Remove for the team sends the removal with the next {sharing?.syncMode === 'continuous' ? 'synchronization' : 'publish'}.</p>}</form><ErrorNotice problem={error} /><WorkflowEditor state={state} run={run} hubId={hubId} boardId={board.id} yaml={workflowDraft?.yaml ?? state.workflowYaml} baseRevision={workflowDraft?.revision ?? state.revision} onYamlChange={yaml => setWorkflowDraft(current => current ? { ...current, yaml } : { yaml, revision: state.revision })} onSaved={() => setWorkflowDraft(null)} onReload={() => setWorkflowDraft(null)} {...(onShare === undefined ? {} : { onShare })} /></div>;
+  const onShare = api !== undefined && canShareFromEditor(sharing, board.id) ? async () => { await api.sharing({ type: 'sharing.publish', hubId: hub.id }); } : undefined;
+  return <div className="kb-form">
+    <BoardIdentityForm hub={hub} board={board} run={run} />
+    <BoardProjectScopeForm state={state} hub={hub} board={board} run={run} />
+    <BoardDeletionControl state={state} hub={hub} board={board} sharing={sharing} run={run} onDeleted={onDeleted} />
+    <WorkflowEditor
+      state={state}
+      run={run}
+      hubId={hub.id}
+      boardId={board.id}
+      yaml={workflowDraft?.yaml ?? state.workflowYaml}
+      baseRevision={workflowDraft?.revision ?? state.revision}
+      onYamlChange={yaml => setWorkflowDraft(current => current ? { ...current, yaml } : { yaml, revision: state.revision })}
+      onSaved={() => setWorkflowDraft(null)}
+      onReload={() => setWorkflowDraft(null)}
+      {...(onShare === undefined ? {} : { onShare })}
+    />
+  </div>;
 }

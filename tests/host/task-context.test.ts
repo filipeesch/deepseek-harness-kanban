@@ -13,7 +13,7 @@ const task: HubTask = {
 };
 const workflow = { name: 'Delivery', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }, { id: 'plan', name: 'Plan' }], groups: [] };
 const board: Board = { id: 'board', name: 'Delivery board', workflowYaml: '', workflow, createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z' };
-const project = { id: 'project', name: 'Project', projectPath: '/repo', gitRootPath: '/repo' };
+const project = { id: 'project', name: 'Project', projectKey: 'project', projectPath: '/repo', gitRootPath: '/repo' };
 const hub: HubState = { id: 'hub', name: 'Product Hub', revision: 1, projects: [project], boards: [board], tasks: [task], notes: [], createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z' };
 const locator = { bySession: (id: string) => id === 'session-1' ? { hubId: 'hub', hub, board, project, task } : undefined };
 const userMessage = (text: string) => createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } });

@@ -7,7 +7,7 @@ const now = '2026-11-08T00:00:00Z';
 function state(mutate?: (hub: HubState) => void): KanbanState {
   const hub: HubState = {
     id: 'hub', name: 'Hub', revision: 1,
-    projects: [{ id: 'p', name: 'Project', projectPath: '/project', gitRootPath: '/project' }],
+    projects: [{ id: 'p', projectKey: 'p', name: 'Project', projectPath: '/project', gitRootPath: '/project' }],
     boards: [{ id: 'b', name: 'Board', workflowYaml: 'name: Flow', workflow: { name: 'Flow', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: now, updatedAt: now }],
     tasks: [
       { id: 't1', boardId: 'b', projectId: 'p', title: 'One', description: '', columnId: 'backlog', position: 0, sessionIds: [], closedSessionIds: [], effectiveCwd: '/project', worktree: null, operation: null, createdAt: now, updatedAt: now },

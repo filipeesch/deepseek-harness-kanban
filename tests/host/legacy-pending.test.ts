@@ -97,7 +97,7 @@ describe('legacy pending transitions', () => {
     const workflowYaml = ['name: Flow', 'initial_column: a', 'columns:', '  - id: a', '    label: A', '  - id: b', '    label: B', '    on_enter_prompt: Run.', ''].join('\n');
     const state = {
       schemaVersion: 2 as const, revision: 1, workflowYaml, workflow: { name: 'Flow', initialColumnId: 'a', columns: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B', onEnterPrompt: 'Run.' }], groups: [] },
-      projects: [{ id: 'p', name: 'P', projectPath: '/p', gitRootPath: '/p' }], notes: [],
+      projects: [{ id: 'p', name: 'P', projectKey: 'p', projectPath: '/p', gitRootPath: '/p' }], notes: [],
       tasks: [{ id: 't', projectId: 'p', title: 'T', description: '', columnId: 'b', position: 0, sessionIds: ['s'], closedSessionIds: [], effectiveCwd: '/p', worktree: null, operation: null, instructionPending: { columnId: 'b', enteredAt: 1 }, pendingTransition: { id: 'legacy', fromColumnId: 'a', columnId: 'b', mode: 'run' as const, sessionId: 's', text: 'Frozen.', worktreeRequest: { mode: 'new' as const, path: '/t', branchName: 'task/t', sourceBranch: 'main' }, status: 'failed' as const }, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }],
     };
     expect(BoardStateSchema.safeParse(state).success).toBe(true);

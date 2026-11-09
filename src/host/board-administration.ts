@@ -52,6 +52,8 @@ export interface BoardAdministrationOptions {
 export interface CreateBoardInput { hubId?: string; name: string; workflowYaml?: string }
 export interface UpdateBoardInput { hubId?: string; boardId: string; name?: string; workflowYaml?: string; expectedRevision?: number }
 export interface SaveBoardWorkflowInput { hubId?: string; boardId: string; yaml: string; expectedRevision?: number }
+/** An absent `projectKeys` allows every project of the Hub; an empty list closes the board. */
+export interface SaveBoardProjectScopeInput { hubId?: string; boardId: string; projectKeys?: string[]; expectedRevision?: number }
 export interface EditBoardWorkflowInput { hubId?: string; boardId: string; edits: readonly WorkflowTextEdit[]; expectedRevision?: number }
 export interface RemoveBoardInput { hubId?: string; boardId: string; confirmed: boolean; sharing?: 'local' | 'team'; expectedRevision?: number }
 
@@ -140,6 +142,16 @@ export class BoardAdministration {
       const located = this.locate(input.boardId, input.hubId);
       await this.options.hubs.hub(located.hubId).saveBoardWorkflow(input.boardId, input.yaml, input.expectedRevision);
       const board = this.requireBoard(located.hubId, input.boardId);
+      this.noteLocalChange(located.hubId);
+      return this.result(located.hubId, board, await this.publishOutcome(located.hubId, board.id, policy));
+    });
+  }
+
+  /** Replace one board's project scope through the same write path and publishing policy. */
+  async saveProjectScope(input: SaveBoardProjectScopeInput, policy: BoardPublishingPolicy = 'never'): Promise<BoardWriteResult> {
+    return this.enqueue(async () => {
+      const located = this.locate(input.boardId, input.hubId);
+      const board = await this.options.hubs.hub(located.hubId).setBoardProjectScope(input.boardId, input.projectKeys, input.expectedRevision);
       this.noteLocalChange(located.hubId);
       return this.result(located.hubId, board, await this.publishOutcome(located.hubId, board.id, policy));
     });

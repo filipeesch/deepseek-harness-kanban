@@ -10,9 +10,19 @@ function task(overrides: Partial<Task> = {}): Task {
   };
 }
 
-const project: Project = { id: 'project', name: 'Web', projectPath: '/repo/app', gitRootPath: '/repo' };
+const project: Project = { id: 'project', projectKey: 'project', name: 'Web', projectPath: '/repo/app', gitRootPath: '/repo' };
 const other = { ...project, id: 'other', name: 'Other', projectPath: '/repo/other' };
 const moved = { name: 'Web', projectPath: '/moved/app', gitRootPath: '/moved' };
+
+describe('relocation cannot carry a key edit', () => {
+  it('blocks a path change combined with a key change', () => {
+    const project = { id: 'p', name: 'P', projectKey: 'before', projectPath: '/repo/app' } as const;
+    const tasks = [{ projectId: 'p' } as never];
+    expect(relocationBlockedReason(project, { id: 'p', name: 'P', projectPath: '/repo/moved', projectKey: 'after' }, tasks)).toMatch(/key/);
+    expect(relocationBlockedReason(project, { id: 'p', name: 'P', projectPath: '/repo/moved' }, tasks)).toBeNull();
+    expect(relocationBlockedReason(project, { id: 'p', name: 'P', projectPath: '/repo/moved', projectKey: 'before' }, tasks)).toBeNull();
+  });
+});
 
 describe('project relocation impact', () => {
   it('keeps a task-free project on the save path even when the hub has other tasks', () => {

@@ -11,7 +11,7 @@ import type { CardEnvironment } from './card-environment.js';
 import type { RunCommand } from '../ui.js';
 import type { CardDragState } from '../useCardDrag.js';
 import type { OptimisticMove } from '../useMoveRequest.js';
-import { WorkflowCanvas, type CanvasConnection, type CanvasStage, type ConnectionEdit, type WorkflowCanvasComponent } from './canvas.js';
+import { WorkflowCanvas, type CanvasConnection, type CanvasStage, type CanvasViewRequest, type ConnectionEdit, type WorkflowCanvasComponent } from './canvas.js';
 import { connectionKey } from '../../domain/connection-anchor.js';
 import { readConnections, type ConnectionLayouts } from '../../domain/workflow-connections.js';
 import { mergeConnectionOverrides, useConnectionOverrides } from './use/use-connection-overrides.js';
@@ -29,6 +29,7 @@ import { usePlacementHistory } from './use/use-placement-history.js';
 import { usePlacementOverrides } from './use/use-placement-overrides.js';
 import { usePlacementSaver } from './use/use-placement-saver.js';
 import { useTravel } from './use/use-travel.js';
+import { readWorkflowViewport, writeWorkflowViewport } from '../workflow-preference.js';
 
 export { PLACEMENT_SAVE_DELAY_MS } from './use/use-placement-saver.js';
 
@@ -112,7 +113,14 @@ export function WorkflowView(props: WorkflowViewProps) {
   const measurements = useStageMeasurements(props.state.workflow.columns);
   const measurementRef = measurements.measuredRef;
 
-  const [fitRequest, setFitRequest] = useState(0);
+  const [overrides, setOverrides] = useState<Record<string, StagePosition>>({});
+  const overridesRef = useRef(overrides); overridesRef.current = overrides;
+  const [sizeOverrides, setSizeOverrides] = useState<Record<string, StageSize>>({});
+  const [viewRequest, setViewRequest] = useState<CanvasViewRequest>(() => {
+    const stored = readWorkflowViewport(props.boardId);
+    return stored === null ? { kind: 'fit' } : { kind: 'restore', viewport: stored };
+  });
+  const [viewToken, setViewToken] = useState(0);
   const [layoutVersion, setLayoutVersion] = useState(0);
   const frozen = useRef<FrozenAutoLayout | null>(null);
 
@@ -161,10 +169,30 @@ export function WorkflowView(props: WorkflowViewProps) {
     if (!first) measurements.hide();
   }, [workflowKey, measurements.hide]);
 
+  // The first reveal of a board shows the position that board stored. Every later
+  // reveal follows a structural workflow change, which must frame the whole diagram
+  // because a stage may have been added or removed.
+  const firstReveal = useRef(true);
   useEffect(() => {
     if (!measurements.revealed) return;
-    setFitRequest(value => value + 1);
+    if (firstReveal.current) { firstReveal.current = false; return; }
+    setViewRequest({ kind: 'fit' });
+    setViewToken(value => value + 1);
   }, [measurements.revealed]);
+
+  // Opening another board restores that board's own position instead of fitting it.
+  const shownBoard = useRef(props.boardId);
+  useEffect(() => {
+    if (shownBoard.current === props.boardId) return;
+    shownBoard.current = props.boardId;
+    firstReveal.current = true;
+    const stored = readWorkflowViewport(props.boardId);
+    setViewRequest(stored === null ? { kind: 'fit' } : { kind: 'restore', viewport: stored });
+    setViewToken(value => value + 1);
+  }, [props.boardId]);
+
+  const requestFit = useCallback(() => { setViewRequest({ kind: 'fit' }); setViewToken(value => value + 1); }, []);
+  const storeViewport = useCallback((viewport: { x: number; y: number; zoom: number }) => { writeWorkflowViewport(props.boardId, viewport); }, [props.boardId]);
 
   const autoLayout = useMemo(() => {
     const compute = () => computeAutoLayout(props.state.workflow, measurements.measured);
@@ -292,8 +320,8 @@ export function WorkflowView(props: WorkflowViewProps) {
     setLayoutVersion(value => value + 1);
     history.push({ before, after: next, beforeSizes: sizes, afterSizes: sizes, beforeLayout, afterLayout: next });
     reposition(next, { clearOverrides: true, immediate: true });
-    setFitRequest(value => value + 1);
-  }, [history, lock.locked, measurementRef, reposition, saver, visualPositions]);
+    requestFit();
+  }, [history, lock.locked, measurementRef, reposition, requestFit, saver, visualPositions]);
 
   const undo = useCallback(() => {
     if (lock.locked) return;
@@ -390,7 +418,9 @@ export function WorkflowView(props: WorkflowViewProps) {
       stages={stages}
       connections={connections}
       ready={measurements.revealed}
-      fitRequest={fitRequest}
+      viewRequest={viewRequest}
+      viewToken={viewToken}
+      onViewportChange={storeViewport}
       locked={lock.locked}
       snap={grid.snap}
       callbacks={{ onMeasure: measurements.onMeasure }}

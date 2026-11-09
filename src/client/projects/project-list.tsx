@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { Project, Task } from '../../shared/types.js';
-import { isGitProject } from '../../shared/project.js';
+import { isGitProject, isPublishedProject } from '../../shared/project.js';
 import { useAction, type RunCommand } from '../ui.js';
 
 function relocationLabel(project: Project): string | null {
@@ -51,8 +51,8 @@ export function ProjectList({ projects, tasks, revision, run, onAdd, onEdit }: {
       const used = tasks.some(task => task.projectId === project.id);
       const gitBacked = isGitProject(project);
       return <li key={project.id}>
-        <strong>{project.name}</strong><span className="kb-hint">{project.projectPath}</span>
-        <span className={'kb-badge ' + (gitBacked ? 'kb-badge-git' : 'kb-badge-folder')}>{gitBacked ? 'Git' : 'Folder'}</span>
+        <strong>{project.name}</strong><span className="kb-hint">{project.projectPath ?? 'No directory yet; edit to adopt this published project.'}</span>
+        <span className={'kb-badge ' + (gitBacked ? 'kb-badge-git' : 'kb-badge-folder')}>{isPublishedProject(project) ? 'Awaiting adoption' : gitBacked ? 'Git' : 'Folder'}</span>
         {project.operation && <span className="kb-hint" role={project.operation.phase === 'failed' ? 'alert' : 'status'}>{relocationLabel(project)}</span>}
         {project.operation?.phase === 'failed' && <button className="kb-button" type="button" aria-label={'Retry relocation of ' + project.name} disabled={action.pending} onClick={() => void retryRelocation(project)}>Retry relocation</button>}
         {canCancelRelocation(project) && <button className="kb-button" type="button" aria-label={'Cancel relocation of ' + project.name} disabled={action.pending} onClick={() => void cancelRelocation(project)}>Cancel relocation</button>}

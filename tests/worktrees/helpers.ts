@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { GitExecutor, CommandResult, SessionPort } from '../../src/shared/ports.js';
-import type { ConversationFacts, GitProject, HubState, Project } from '../../src/shared/types.js';
+import type { ConversationFacts, GitProject, HubState, RegisteredProject } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { KanbanError } from '../../src/shared/errors.js';
 
@@ -30,7 +30,7 @@ export async function fixture(): Promise<{ root: string; project: GitProject; tr
   await gitOk(repo, ['config', 'commit.gpgsign', 'false']);
   await gitOk(repo, ['add', '.']);
   await gitOk(repo, ['commit', '-m', 'Initial fixture']);
-  return { root, project: { id: 'project', name: 'API', gitRootPath: repo, projectPath, defaultBranch: 'main' }, tree: path.join(root, 'trees', 'feature') };
+  return { root, project: { id: 'project', projectKey: 'project', name: 'API', gitRootPath: repo, projectPath, defaultBranch: 'main' }, tree: path.join(root, 'trees', 'feature') };
 }
 export async function cleanup(): Promise<void> {
   const temporaryRoot = await realpath(tmpdir());
@@ -79,7 +79,7 @@ export class MemoryStore {
   }
   allTasks() { return this.snapshot().tasks; }
 }
-export function board(project: Project): HubState {
+export function board(project: RegisteredProject): HubState {
   const now = new Date().toISOString();
   return { id: 'hub', name: 'Test Hub', revision: 0, projects: [project], boards: [{ id: 'board', name: 'Board', workflowYaml: '', workflow: { name: 'Default', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: now, updatedAt: now }], notes: [{ id: 'note', taskId: 'task', content: 'Retained note', createdAt: '', updatedAt: '' }], tasks: [{ id: 'task', boardId: 'board', projectId: project.id, title: 'Task', description: '', columnId: 'backlog', position: 0, sessionIds: ['a', 'b'], closedSessionIds: [], effectiveCwd: project.projectPath, worktree: null, operation: null, createdAt: '', updatedAt: '' }], createdAt: now, updatedAt: now };
 }

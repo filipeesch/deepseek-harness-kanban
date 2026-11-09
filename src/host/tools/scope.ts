@@ -30,7 +30,15 @@ export function resolveBoard(app:KanbanApp,args:ToolArgs,exec:ToolRunContext):{h
  return found;
 }
 
-export function boardSummary(board:Board,hub:HubState){return {id:board.id,hubId:hub.id,name:board.name,columns:board.workflow.columns.map(column=>({id:column.id,name:column.name,count:hub.tasks.filter(task=>task.boardId===board.id&&task.columnId===column.id).length}))};}
+export function boardSummary(board:Board,hub:HubState){
+ const keys=board.allowedProjectKeys;
+ return {
+  id:board.id,hubId:hub.id,name:board.name,
+  acceptsNewTasks:keys===undefined||keys.length>0,
+  projectScope:keys===undefined?{mode:'all' as const}:{mode:'restricted' as const,projectKeys:[...keys]},
+  columns:board.workflow.columns.map(column=>({id:column.id,name:column.name,count:hub.tasks.filter(task=>task.boardId===board.id&&task.columnId===column.id).length})),
+ };
+}
 
 /**
  * Board administration writes are an ordinary-chat capability. A session owned by
