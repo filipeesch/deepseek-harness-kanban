@@ -2,12 +2,15 @@
 import React, { useEffect } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { userEvent } from '@testing-library/user-event';
 import type { BoardState, KanbanSnapshot, Command } from '../../src/shared/types.js';
 import type { RunCommand } from '../../src/client/ui.js';
 import { AutoRunController } from '../../src/client/auto-run.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import { WorkflowView, type WorkflowCardPort, type WorkflowViewProps } from '../../src/client/workflow-view/workflow-view.js';
 import type { WorkflowCanvasProps } from '../../src/client/workflow-view/canvas.js';
+import { StageHeader } from '../../src/client/workflow-view/stage-node.js';
+import { EMPTY_STAGE_COPY } from '../../src/client/stage-empty.js';
 import { noSnap } from '../../src/client/workflow-view/gestures/grid-snap.js';
 import { deferred, fixture } from './helpers.js';
 
@@ -49,6 +52,13 @@ function cardPort(overrides: Partial<WorkflowCardPort> = {}): WorkflowCardPort {
   };
 }
 
+/**
+ * Stages whose header pointer reached the drag gesture. The stub wires the header the
+ * way the canvas does, so a test can tell a press that picked the stage up from one
+ * that only opened the board's New task dialog.
+ */
+const headerDrags: string[] = [];
+
 /** Draws the stages, the board cards, the controls, and the gesture buttons the tests drive. */
 function StubCanvas(props: WorkflowCanvasProps) {
   useEffect(() => {
@@ -56,7 +66,22 @@ function StubCanvas(props: WorkflowCanvasProps) {
   }, [props.stages]);
   return <div data-testid="canvas" data-ready={String(props.ready)} data-fit={props.fitRequest} data-snap={props.snap === noSnap ? 'off' : 'on'} data-connections={JSON.stringify(props.connections.map(connection => [connection.id, connection.source ?? null, connection.target ?? null, connection.segments ?? null]))}>
     {props.stages.map(stage => <section key={stage.id} aria-label={stage.label} data-testid={'stage-' + stage.id} data-x={stage.x} data-y={stage.y} data-w={stage.width} data-h={stage.height}>
+      {/* The real header, so the creation action under test is the one the canvas paints. */}
+      <StageHeader
+        id={stage.id}
+        label={stage.label}
+        cardCount={stage.cardIds.length}
+        locked={props.locked}
+        creatable={stage.creatable}
+        onCreateTask={props.callbacks.onCreateTask}
+        onPointerDown={(_event, stageId) => {
+          if (props.locked) return;
+          headerDrags.push(stageId);
+          props.onStageMove(stageId, { x: 42, y: 84 });
+        }}
+      />
       {stage.cardIds.map(cardId => <React.Fragment key={cardId}>{props.cardEnvironment.renderCard(cardId)}</React.Fragment>)}
+      {stage.cardIds.length === 0 && <p className="kb-empty-column">{EMPTY_STAGE_COPY}</p>}
       <button type="button" aria-label={'drop-' + stage.id} onClick={() => { if (!props.locked) props.onStageMove(stage.id, { x: 42, y: 84 }); }}>drop</button>
       <button type="button" aria-label={'resize-' + stage.id} onClick={() => {
         if (props.locked) return;
@@ -81,6 +106,7 @@ function StubCanvas(props: WorkflowCanvasProps) {
 function setup(overrides: Partial<WorkflowViewProps> = {}) {
   const run = vi.fn(async (_command: Command) => fixture() as KanbanSnapshot);
   const state = boardState();
+  headerDrags.length = 0;
   let props: WorkflowViewProps = {
     hubId: 'hub-1', boardId: 'board-1', state, tasks: state.tasks, optimistic: null, drag: null,
     beginDrag: vi.fn(), shouldSuppressClick: () => false, run: run as unknown as RunCommand,
@@ -525,5 +551,105 @@ describe('workflow view', () => {
     await act(async () => {});
     expect(onError).toHaveBeenCalled();
     expect(screen.getByTestId('canvas').dataset['connections']).not.toContain('bottom');
+  });
+});
+
+describe('workflow diagram task creation', () => {
+  const actionIn = (stageId: string) => within(screen.getByTestId('stage-' + stageId)).queryByRole('button', { name: 'New task' });
+
+  it('presents the creation action on the initial stage alone', () => {
+    setup({ onCreateTask: vi.fn() });
+    expect(actionIn('one')).toBeTruthy();
+    expect(actionIn('two')).toBeNull();
+    expect(actionIn('three')).toBeNull();
+    // The same name the column board's action carries, so neither presentation
+    // invents its own wording for creating a task.
+    expect(actionIn('one')!.getAttribute('title')).toBe('New task');
+  });
+
+  it('keeps the action on the initial stage alone while cards are being selected', () => {
+    setup({ onCreateTask: vi.fn(), card: cardPort({ selectionMode: true, selectedIds: new Set(['a']) }) });
+    expect(actionIn('one')).toBeTruthy();
+    expect(actionIn('two')).toBeNull();
+  });
+
+  it('moves the action to the stage the workflow names as initial', () => {
+    const { applyCommand, run } = setup({ onCreateTask: vi.fn() });
+    const edited = yaml.replace('name: Delivery', 'name: Delivery\ninitial_column: two');
+    applyCommand({ type: 'board.workflow.save', yaml: edited } as unknown as Command);
+    expect(actionIn('two')).toBeTruthy();
+    expect(actionIn('one')).toBeNull();
+    // Presenting an edited workflow is not a layout edit: nothing is stored.
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('opens creation from the header without picking the stage up', async () => {
+    vi.useFakeTimers();
+    const onCreateTask = vi.fn();
+    const { run } = setup({ onCreateTask });
+    unlock();
+    const width = screen.getByTestId('stage-one').dataset['w'];
+    const action = actionIn('one')!;
+    fireEvent.pointerDown(action, { button: 0 });
+    fireEvent.click(action);
+    expect(onCreateTask).toHaveBeenCalledTimes(1);
+    // No gesture of any kind followed the press: the stage was not picked up, resized,
+    // or rewired, nothing was stored, and no layout history entry was made.
+    expect(headerDrags).toEqual([]);
+    expect(screen.getByTestId('stage-one').dataset['w']).toBe(width);
+    expect((screen.getByRole('button', { name: 'Undo layout change' }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { vi.advanceTimersByTime(400); });
+    expect(run).not.toHaveBeenCalled();
+    // The very same press on the header body does drag the stage, so the guard above
+    // is the button's own and not a harness that never drags anything.
+    fireEvent.pointerDown(screen.getByRole('heading', { name: 'One' }), { button: 0 });
+    expect(headerDrags).toEqual(['one']);
+    await act(async () => { vi.advanceTimersByTime(400); });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates from the keyboard', async () => {
+    const onCreateTask = vi.fn();
+    const onOpenTask = vi.fn();
+    const user = userEvent.setup();
+    setup({ onCreateTask, onOpenTask });
+    const action = actionIn('one')!;
+    action.focus();
+    await user.keyboard('{Enter}');
+    expect(onCreateTask).toHaveBeenCalledTimes(1);
+    // The keyboard reaches the same creation path, without dragging the stage or
+    // opening the drawer, which is what a focused element inside a node could do.
+    expect(headerDrags).toEqual([]);
+    expect(onOpenTask).not.toHaveBeenCalled();
+    await user.click(action);
+    expect(onCreateTask).toHaveBeenCalledTimes(2);
+  });
+
+  it('creates while the layout is locked and while cards are being selected', () => {
+    const onCreateTask = vi.fn();
+    setup({ onCreateTask, card: cardPort({ selectionMode: true }) });
+    const action = actionIn('one')! as HTMLButtonElement;
+    expect(action.disabled).toBe(false);
+    fireEvent.click(action);
+    expect(onCreateTask).toHaveBeenCalledTimes(1);
+    // Locking the layout still refuses the layout gesture, only never the action.
+    fireEvent.pointerDown(screen.getByRole('heading', { name: 'One' }), { button: 0 });
+    expect(headerDrags).toEqual([]);
+  });
+
+  it('presents the action but leaves it unavailable when nothing can own a task', () => {
+    setup();
+    const action = actionIn('one')! as HTMLButtonElement;
+    expect(action.disabled).toBe(true);
+    fireEvent.click(action);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('presents the action on a stage a filter has emptied', () => {
+    const onCreateTask = vi.fn();
+    setup({ tasks: [], onCreateTask });
+    const stage = screen.getByTestId('stage-one');
+    expect(within(stage).getByText(EMPTY_STAGE_COPY)).toBeTruthy();
+    expect((within(stage).getByRole('button', { name: 'New task' }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

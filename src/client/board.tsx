@@ -7,13 +7,14 @@ import type { DirectoryPickerPort } from './directory-picker.js';
 import { TaskDrawer } from './drawer.js';
 import type { SessionTitles } from './conversation-label.js';
 import type { ConversationLeaseEnvironment } from './conversation-leases.js';
-import { entryInstruction } from '../domain/stage-entry.js';
 import { AutoRunController } from './auto-run.js';
 import { BoardCard } from './board-card.js';
 import { BoardHeader } from './board/board-header.js';
 import { BoardBody, BoardEmptyStates, BoardProblemNotices, ProjectsEmptyState, ShareBanner } from './board/board-notices.js';
 import { BoardColumnsView } from './board/board-columns-view.js';
 import { BoardCreationDialogs } from './board/board-dialogs.js';
+import { useCreationDialogs } from './use-creation-dialogs.js';
+import { useTaskCreation } from './use-task-creation.js';
 import { WorkflowView as WorkflowDiagram } from './workflow-view/workflow-view.js';
 import { WorkflowViewControl } from './workflow-view/view-control.js';
 import { readBoardView, writeBoardView } from './view-preference.js';
@@ -35,7 +36,6 @@ import { BulkDeleteDialog } from './bulk-delete-dialogs.js';
 import { ForceRemovalDialog } from './force-removal-dialog.js';
 import { useDestructiveOperations } from './destructive-operations.js';
 import { batchRejectionProblem, useBatchDeletion } from './useBatchDeletion.js';
-import { PlusIcon } from './icons.js';
 import { useBoardMoves } from './board-moves.js';
 import { useExecutionPreparation } from './execution-preparation/use-execution-preparation.js';
 import type { PreparationSeat } from './execution-preparation/model-seat.js';
@@ -63,7 +63,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   const [loadError, setLoadError] = useState<Problem | null>(null); const [loadAttempt, setLoadAttempt] = useState(0);
   const [search, setSearch] = usePageField(preferences, 'search'); const [projectFilter, setProjectFilter] = usePageField(preferences, 'projectFilter'); const [selectedId, setSelectedId] = usePageField(preferences, 'selectedTaskId');
   const selectedIdRef = useRef(selectedId); selectedIdRef.current = selectedId;
-  const [newTask, setNewTask] = useState(false); const [newHub, setNewHub] = useState(false); const [newBoard, setNewBoard] = useState(false); const [configuration, setConfiguration] = useState<string | null>(null);
+  const [configuration, setConfiguration] = useState<string | null>(null);
   const [actionError, setActionError] = useState<Problem | null>(null);
   const [selectionMode, setSelectionMode] = useState(false); const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [autoModePending, setAutoModePending] = useState<ReadonlySet<string>>(() => new Set());
@@ -189,23 +189,20 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     const entering = selectedIdRef.current === null && !prefersReducedMotion();
     setDrawerClosing(false); setDrawerEntering(entering); setSelectedId(taskId);
   }, [setDrawerClosing, setDrawerEntering, setSelectedId]);
-  // Creation opens the drawer immediately; an instructed initial stage then prepares
-  // the first execution and arms the countdown through the existing controller.
-  const startCreatedTask = useCallback((taskId: string, options: { start: boolean }) => {
-    openTask(taskId);
-    if (!options.start) return;
-    const current = latest.current;
-    if (!current) return;
-    const task = current.state.hubs.flatMap(hub => hub.tasks).find(value => value.id === taskId);
-    if (!task) return;
-    const board = current.state.hubs.flatMap(hub => hub.boards).find(value => value.id === task.boardId);
-    const instruction = entryInstruction(board?.workflow.columns.find(value => value.id === task.columnId));
-    const marker = task.instructionPending;
-    if (instruction === undefined || marker?.columnId !== task.columnId) return;
-    void autoRun.prepare({ taskId, columnId: task.columnId, enteredAt: marker.enteredAt, instruction }, async () => {
-      await runRef.current({ type: 'task.prepareFirstExecution', taskId, columnId: task.columnId, expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
-    });
-  }, [openTask, autoRun]);
+  // One creation instance serves both presentations: the column board renders the
+  // button it returns and the diagram opens the same dialog through its port, so the
+  // two New task actions cannot drift in label, enablement, or start handoff.
+  const creation = useTaskCreation({
+    state,
+    run,
+    autoRun,
+    onOpenTask: openTask,
+    latest: () => latest.current,
+  });
+  const containers = useCreationDialogs({
+    activateHub: hubId => { setActiveHubIdState(hubId); writeStorage(ACTIVE_HUB_KEY, hubId); },
+    selectCreatedBoard: boardId => { if (activeHub !== undefined) selectBoard(activeHub.id, boardId); },
+  });
   // The open drawer's conversations are resolved before historical ones; the response is
   // a hint-only snapshot, so opening a drawer never waits for conversation history.
   useEffect(() => {
@@ -303,8 +300,6 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     return <BoardCard key={task.id} task={task} column={column} projectName={project} attention={attention} workflow={workflow} selectionMode={selectionMode} selected={selectedIds.has(task.id)} autoRun={autoRun} autoModePending={autoModePending.has(task.id)} onToggleAutoMode={toggleAutoMode} onOpen={openTask} onToggleSelect={toggleSelect} onBeginDrag={begin} shouldSuppressClick={shouldSuppressClick} onMoveTask={advanceTask} advancePending={advancePending.has(task.id)} onRun={moves.requestRun} />;
   }
 
-  function renderNewTaskButton(column: Column) { return <div className="kb-column-create"><button type="button" className="kb-button kb-primary" disabled={!state || state.projects.length === 0} onClick={() => setNewTask(true)} aria-label="New task"><PlusIcon size={14} /> New task</button></div>; }
-
   function onBoardPointerDown(event: React.PointerEvent<HTMLDivElement>) {
     if (!selectedId) return;
     const target = event.target as Element;
@@ -319,7 +314,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
         {...(activeHub ? { activeHubId: activeHub.id } : {})}
         hubActivity={hubActivity}
         onSelectHub={selectHub}
-        onCreateHub={() => setNewHub(true)}
+        onCreateHub={containers.openHub}
         sharing={snapshot?.sharing ?? {}}
       />}
       boardTabs={<BoardTabRow
@@ -328,7 +323,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
         {...(activeBoard ? { activeBoardId: activeBoard.id } : {})}
         boardActivity={boardActivity}
         onSelectBoard={selectBoard}
-        onCreateBoard={() => setNewBoard(true)}
+        onCreateBoard={containers.openBoard}
         sharing={snapshot?.sharing ?? {}}
       />}
       filterScope={(activeHub?.id ?? '') + ':' + (activeBoard?.id ?? '')}
@@ -363,7 +358,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       onReturn={taskId => { void run({ type: 'operation.return', taskId }).catch(error => setActionError(asProblem(error))); }}
       onRelocationRetry={projectId => { void run({ type: 'project.relocationRetry', projectId }).catch(error => setActionError(asProblem(error))); }}
     />
-    <BoardEmptyStates snapshot={snapshot} loadError={loadError} hub={activeHub} board={activeBoard} onCreateHub={() => setNewHub(true)} onCreateBoard={() => setNewBoard(true)} />
+    <BoardEmptyStates snapshot={snapshot} loadError={loadError} hub={activeHub} board={activeBoard} onCreateHub={containers.openHub} onCreateBoard={containers.openBoard} />
     {state && <>
       <BoardBody bodyRef={boardBody} onPointerDown={onBoardPointerDown} flow={view === 'workflow'} empty={state.projects.length === 0 && view !== 'workflow' ? <ProjectsEmptyState onConfigureProjects={() => setConfiguration('Projects')} /> : null}>
         {view === 'workflow'
@@ -381,6 +376,9 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
               revision={state.revision}
               onOpenTask={openTask}
               onError={error => setActionError(asProblem(error))}
+              // Withheld, not hidden, when nothing can own a task: the same enablement
+              // the column board's action carries, decided in one place.
+              onCreateTask={creation.canCreate ? creation.openDialog : undefined}
               card={{
                 attention: snapshot?.attention ?? {},
                 projectNames: new Map((state.projects).map(project => [project.id, project.name])),
@@ -395,7 +393,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
                 onRun: moves.requestRun,
               }}
             />
-          : <BoardColumnsView plan={columnPlan} layoutKeys={layoutKeys} resetKey={motionResetKey} workflow={state.workflow} drag={drag} renderCard={renderCard} renderNewTaskButton={renderNewTaskButton} />}
+          : <BoardColumnsView plan={columnPlan} layoutKeys={layoutKeys} resetKey={motionResetKey} workflow={state.workflow} drag={drag} renderCard={renderCard} renderNewTaskButton={creation.renderButton} />}
       </BoardBody>
       {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} conversationAttention={snapshot?.conversationAttention} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} onForce={destructive.openForce} onToggleAutoMode={toggleAutoMode} autoModePending={autoModePending.has(selected.id)} sessionTitles={sessionTitles} {...(conversationLeases === undefined ? {} : { conversationLeases })} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} />}
       {destructive.state.view && (() => {
@@ -413,7 +411,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       })()}
       {batchConfirm && <BulkDeleteDialog tasks={batchTasks} attention={snapshot?.attention ?? {}} onCancel={() => setBatchConfirm(false)} onConfirm={deleteSelected} />}
     </>}
-    <BoardCreationDialogs boardState={state} hub={activeHub} board={activeBoard} run={run} newTask={newTask} newHub={newHub} newBoard={newBoard} onCloseNewTask={() => setNewTask(false)} onCloseNewHub={() => setNewHub(false)} onCloseNewBoard={() => setNewBoard(false)} onTaskCreated={startCreatedTask} onHubCreated={id => { setActiveHubIdState(id); writeStorage(ACTIVE_HUB_KEY, id); setNewHub(false); }} onBoardCreated={id => { if (activeHub) selectBoard(activeHub.id, id); setNewBoard(false); }} />
+    <BoardCreationDialogs hub={activeHub} run={run} task={creation} containers={containers} />
     {moves.overrideDialog && <div hidden={preparation.dialog !== null}>{moves.overrideDialog}</div>}
     {preparation.dialog}
   </section></DirectoryPickerProvider>;

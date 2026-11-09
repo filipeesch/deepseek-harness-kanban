@@ -1,18 +1,21 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { userEvent } from '@testing-library/user-event';
 import { BoardView } from '../../src/client/board.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import { fakeApi, fixture, openFilterPopoverByClick, type TestSnapshot } from './helpers.js';
 
 vi.mock('../../src/client/workflow-view/canvas.js', async () => {
   const React = await import('react');
+  // The real header, so the creation action a test drives is the one the canvas paints.
+  const { StageHeader } = await import('../../src/client/workflow-view/stage-node.js');
   type StubProps = {
-    stages: Array<{ id: string; label: string; width: number; height: number; cardIds: string[] }>;
+    stages: Array<{ id: string; label: string; width: number; height: number; cardIds: string[]; creatable: boolean }>;
     locked: boolean;
     ready: boolean;
-    callbacks: { onMeasure: (id: string, size: { width: number; height: number }) => void };
+    callbacks: { onMeasure: (id: string, size: { width: number; height: number }) => void; onCreateTask?: () => void };
     cardEnvironment: { renderCard: (taskId: string) => React.ReactNode };
     controls?: (viewport: { zoomIn: () => void; zoomOut: () => void; fit: () => void }) => React.ReactNode;
     onStageMove: (id: string, position: { x: number; y: number }) => void;
@@ -21,8 +24,15 @@ vi.mock('../../src/client/workflow-view/canvas.js', async () => {
     WorkflowCanvas: (props: StubProps) => {
       React.useEffect(() => { for (const stage of props.stages) props.callbacks.onMeasure(stage.id, { width: 200, height: 100 }); }, []);
       return React.createElement('div', { 'data-testid': 'flow-canvas' },
-        props.stages.map(stage => React.createElement('div', { key: stage.id },
-          stage.label,
+        props.stages.map(stage => React.createElement('div', { key: stage.id, 'data-testid': 'flow-stage-' + stage.id },
+          React.createElement(StageHeader, {
+            id: stage.id,
+            label: stage.label,
+            cardCount: stage.cardIds.length,
+            locked: props.locked,
+            creatable: stage.creatable,
+            onCreateTask: props.callbacks.onCreateTask,
+          }),
           stage.cardIds.map(cardId => React.createElement(React.Fragment, { key: cardId }, props.cardEnvironment.renderCard(cardId))),
           React.createElement('button', { key: 'move', type: 'button', 'aria-label': 'move ' + stage.label, onClick: () => { if (!props.locked) props.onStageMove(stage.id, { x: 5, y: 6 }); } }, 'move'),
         )),
@@ -152,5 +162,40 @@ describe('board presentation selection', () => {
     expect(await screen.findByRole('region', { name: 'Workflow diagram' })).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: /^Delivery/ }));
     expect(await screen.findByRole('region', { name: 'Intake column' })).toBeTruthy();
+  });
+});
+
+describe('creating a task from the workflow diagram', () => {
+  it('offers the creation action on the initial stage alone', async () => {
+    mount(withDefault(fixture()));
+    await screen.findByTestId('flow-canvas');
+    expect(within(screen.getByTestId('flow-stage-intake')).getByRole('button', { name: 'New task' })).toBeTruthy();
+    expect(within(screen.getByTestId('flow-stage-doing')).queryByRole('button', { name: 'New task' })).toBeNull();
+    expect(within(screen.getByTestId('flow-stage-review')).queryByRole('button', { name: 'New task' })).toBeNull();
+  });
+
+  it('opens the board dialog the column board action opens, and creates there', async () => {
+    const user = userEvent.setup();
+    const { command } = mount(withDefault(fixture()));
+    await screen.findByTestId('flow-canvas');
+    await user.click(screen.getByRole('button', { name: 'New task' }));
+    const dialog = await screen.findByRole('dialog', { name: 'New task' });
+    await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'From the diagram');
+    await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Project' }), 'p1');
+    await user.click(within(dialog).getByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.create', projectId: 'p1', title: 'From the diagram', description: '' }));
+    // The created task belongs to the board, not to the presentation that asked for it.
+    expect(await screen.findByRole('button', { name: 'Open task From the diagram' })).toBeTruthy();
+  });
+
+  it('leaves the action unavailable when no project can own a task', async () => {
+    const data = withDefault(fixture());
+    data.state.projects = [];
+    mount(data);
+    await screen.findByTestId('flow-canvas');
+    const action = screen.getByRole('button', { name: 'New task' }) as HTMLButtonElement;
+    expect(action.disabled).toBe(true);
+    fireEvent.click(action);
+    expect(screen.queryByRole('dialog', { name: 'New task' })).toBeNull();
   });
 });

@@ -1,14 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow, ReactFlowProvider, Panel, ViewportPortal, applyNodeChanges,
-  useReactFlow, type Edge, type EdgeTypes, type Node, type NodeChange, type NodeTypes,
+  useReactFlow, type Edge, type EdgeTypes, type NodeChange, type NodeTypes,
 } from '@xyflow/react';
 import flowStyles from '@xyflow/react/dist/style.css';
 import type { ConnectionAnchor, ConnectionSegmentOffset } from '../../shared/types.js';
 import { sameAnchor, sameConnectionLayout } from '../../domain/connection-anchor.js';
 import { ConnectionEdgeView } from './connection-edge.js';
 import { DiagramMinimap } from './controls/minimap.js';
-import { StageCallbacksContext, StageDragContext, StageNodeView, type StageCallbacks, type StageNodeModel } from './stage-node.js';
+import { StageCallbacksContext, StageDragContext, StageNodeView, type StageCallbacks } from './stage-node.js';
 import { CardEnvironmentContext, type CardEnvironment } from './card-environment.js';
 import type { GestureHandle, PointerEventsPort } from './gestures/stage-drag.js';
 import { noSnap, segmentOffset, type SnapPolicy } from './gestures/grid-snap.js';
@@ -19,18 +19,11 @@ import { nearestAnchor } from './routing/ports.js';
 import type { DiagramPoint, DiagramRect } from './routing/orthogonal.js';
 import { ConnectionHandlersContext, stepAnchor, type ConnectionEnd, type ConnectionHandlers } from './connection-interaction.js';
 import { useStageDrag } from './use/use-stage-drag.js';
+import { stageSignature, toNode, type CanvasStage, type StageFlowNode } from './canvas-stage.js';
 
-export interface CanvasStage {
-  readonly id: string;
-  readonly label: string;
-  readonly x: number;
-  readonly y: number;
-  /** The minimum width the stage renders at. */
-  readonly width: number;
-  /** The minimum height the stage renders at. */
-  readonly height: number;
-  readonly cardIds: readonly string[];
-}
+// The stage model and its projection to nodes are pure, so they live apart from the
+// React Flow surface and can be tested without one.
+export type { CanvasStage } from './canvas-stage.js';
 
 /** One connection as the diagram draws it, with the authored layout already merged in. */
 export type CanvasConnection = LiveConnectionDescriptor;
@@ -75,31 +68,15 @@ export interface WorkflowCanvasProps {
 
 export type WorkflowCanvasComponent = React.ComponentType<WorkflowCanvasProps>;
 
-type StageFlowNode = Node<StageNodeModel, 'stage'>;
-
 const nodeTypes = { stage: StageNodeView } as unknown as NodeTypes;
 const edgeTypes = { connection: ConnectionEdgeView } as unknown as EdgeTypes;
 
 /** The connection layout a gesture previews before it is committed. */
 type ConnectionPreview = ConnectionLayoutOverride;
 
-function toNode(stage: CanvasStage, locked: boolean, measured?: StageFlowNode['measured']): StageFlowNode {
-  return {
-    id: stage.id,
-    type: 'stage',
-    position: { x: stage.x, y: stage.y },
-    data: { id: stage.id, label: stage.label, cardIds: stage.cardIds, width: stage.width, height: stage.height, locked },
-    style: { width: stage.width, minHeight: stage.height },
-    draggable: false,
-    selectable: false,
-    ...(measured === undefined ? {} : { measured }),
-  };
-}
-
 function rectOf(stage: LiveStageRect): DiagramRect {
   return { x: stage.x, y: stage.y, width: stage.width, height: stage.height };
 }
-
 function previewPatch(values: Record<string, ConnectionPreview>, connectionId: string, end: ConnectionEnd, anchor: ConnectionAnchor): Record<string, ConnectionPreview> {
   const current = values[connectionId] ?? {};
   return { ...values, [connectionId]: end === 'source' ? { ...current, source: anchor } : { ...current, target: anchor } };
@@ -115,10 +92,7 @@ function CanvasInner(props: WorkflowCanvasProps) {
   const previewRef = useRef(preview);
   previewRef.current = preview;
 
-  const signature = useMemo(() => JSON.stringify(props.stages.map(stage => [
-    stage.id, stage.x, stage.y, stage.width, stage.height, stage.label, props.locked,
-    stage.cardIds,
-  ])), [props.stages, props.locked]);
+  const signature = useMemo(() => stageSignature(props.stages, props.locked), [props.stages, props.locked]);
 
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;

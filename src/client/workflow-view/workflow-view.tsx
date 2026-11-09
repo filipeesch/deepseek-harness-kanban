@@ -68,6 +68,13 @@ export interface WorkflowViewProps {
   onError: (error: unknown) => void;
   /** Everything the board's card needs; the diagram only renders it. */
   card: WorkflowCardPort;
+  /**
+   * Opens the board's New task experience for the configured initial stage, taken
+   * from the board's single creation instance. Absent when no registered project
+   * can own a task, which leaves the action presented but unavailable. The diagram
+   * never owns creation state, the dialog, or the first-execution handoff.
+   */
+  onCreateTask?: () => void;
   /** Isolated harnesses substitute the canvas; production uses React Flow. */
   canvas?: WorkflowCanvasComponent;
 }
@@ -340,9 +347,13 @@ export function WorkflowView(props: WorkflowViewProps) {
   });
 
   const stageSizeOf = useCallback((stageId: string): StageSize => effectiveStageSize(placement.sizes[stageId] ?? storedSizes[stageId]), [placement.sizes, storedSizes]);
+  // The board creates in one stage: the workflow's configured initial stage. The
+  // diagram presents the action there and nowhere else, and never lets the stage the
+  // user is looking at decide where a task lands.
+  const initialColumnId = props.state.workflow.initialColumnId;
   const stages: CanvasStage[] = scene.nodes.map(node => {
     const size = stageSizeOf(node.id);
-    return { id: node.id, label: node.name, x: node.position.x, y: node.position.y, width: size.width, height: size.height, cardIds: node.tasks.map(task => task.id) };
+    return { id: node.id, label: node.name, x: node.position.x, y: node.position.y, width: size.width, height: size.height, cardIds: node.tasks.map(task => task.id), creatable: node.id === initialColumnId };
   });
   const connections: CanvasConnection[] = scene.edges.map(edge => {
     const layout = presentedConnections[connectionKey(edge.from, edge.to)];
@@ -393,7 +404,14 @@ export function WorkflowView(props: WorkflowViewProps) {
       fitRequest={fitRequest}
       locked={lock.locked}
       snap={grid.snap}
-      callbacks={{ onMeasure: measurements.onMeasure }}
+      callbacks={{
+        onMeasure: measurements.onMeasure,
+        // Passed straight through: the diagram never decides where a task is created
+        // and holds no creation state of its own. Absent when no registered project
+        // can own a task, which leaves the action presented but unavailable; creating
+        // is not a layout edit, so the lock never gates it.
+        ...(props.onCreateTask === undefined ? {} : { onCreateTask: props.onCreateTask }),
+      }}
       cardEnvironment={cardEnvironment}
       dropStageId={props.drag?.overColumnId ?? null}
       dropIndicatorY={props.drag?.overColumnId === undefined ? null : props.drag.indicatorY}
