@@ -76,6 +76,26 @@ it('edits a grouped workflow, grows columns, and animates the drawer', async () 
   await expect(page.getByRole('region', { name: 'Explore stage' })).toBeVisible();
   await expect(page.locator('.kb-flow-edge')).toHaveCount(2);
   await expect(page.getByRole('button', { name: 'Organize' })).toBeVisible();
+  // Creating from the diagram is the board's one creation action, offered by the
+  // initial stage alone.
+  const diagram = page.getByRole('region', { name: 'Workflow diagram' });
+  await expect(diagram.locator('.kb-flow-stage-create')).toHaveCount(1);
+  await expect(diagram.locator('.kb-flow-stage[data-column-id="explore"] .kb-flow-stage-create')).toBeVisible();
+  await expect(diagram.locator('.kb-flow-stage[data-column-id="propose"] .kb-flow-stage-create')).toHaveCount(0);
+  await page.locator('.kb-flow-stage-create').click();
+  const diagramDialog = page.getByRole('dialog', { name: 'New task' });
+  await expect(diagramDialog).toBeVisible();
+  await diagramDialog.getByRole('textbox', { name: 'Title' }).fill('Diagram task');
+  await diagramDialog.getByRole('combobox', { name: 'Project' }).selectOption({ label: 'Harness' });
+  await diagramDialog.getByRole('button', { name: 'Create task' }).click();
+  await expect(page.getByRole('button', { name: 'Open task Diagram task' })).toBeVisible();
+  await page.getByRole('button', { name: 'Close task details' }).click();
+  // Wait for the close to finish, so the drawer opened later is a fresh entry.
+  await expect(page.locator('.kb-drawer')).toBeHidden({ timeout: 2_000 });
+  // Creating is not a layout edit: the diagram is untouched and holds no history entry.
+  await expect(diagram).toBeVisible();
+  await expect(page.locator('.kb-flow-edge')).toHaveCount(2);
+  await expect(page.getByRole('button', { name: 'Undo layout change' })).toBeDisabled();
   await page.getByRole('button', { name: 'Board', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Explore column' })).toBeVisible();
 
