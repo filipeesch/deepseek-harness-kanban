@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { Workflow } from '../../src/shared/types.js';
 import { computeAutoLayout, freezeAutoLayout, graphKey, mergePlacements, samePlacements } from '../../src/client/workflow-view/placement.js';
+import { transitions } from '../support/transition-rules.js';
 
 const workflow: Workflow = {
   name: 'Flow',
   initialColumnId: 'one',
-  columns: [{ id: 'one', name: 'One', allowedTransitions: ['two'] }, { id: 'two', name: 'Two' }],
+  columns: [{ id: 'one', name: 'One', allowedTransitions: transitions('two') }, { id: 'two', name: 'Two' }],
   groups: [],
 };
 

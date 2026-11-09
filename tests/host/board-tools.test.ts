@@ -93,7 +93,7 @@ describe('board workflow reads', () => {
     const created = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Grouped', workflow_yaml: GROUPED_FLOW });
     const value = await run(f, 'get_board_summary', { board_id: created.id, include_workflow: true });
     expect(value.groups).toEqual([{ id: 'flow', name: 'Flow', columnIds: ['todo', 'done'] }]);
-    expect(value.workflow.columns[0]).toMatchObject({ id: 'todo', onEnterPrompt: 'Do it.', allowedTransitions: ['done'] });
+    expect(value.workflow.columns[0]).toMatchObject({ id: 'todo', onEnterPrompt: 'Do it.', allowedTransitions: [{ to: 'done' }] });
   });
 
   it('reports the board publishing state when the board is bound', async () => {
@@ -254,7 +254,7 @@ describe('partial workflow edit tools', () => {
         { old: '    label: Planning\n', new: '    label: Planning\n    allowed_transitions: [backlog]\n' },
       ],
     });
-    expect(value.workflow.columns[1].allowedTransitions).toEqual(['backlog']);
+    expect(value.workflow.columns[1].allowedTransitions).toEqual([{ to: 'backlog' }]);
   });
 
   it('rejects a missing match without changing the board', async () => {

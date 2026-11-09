@@ -10,7 +10,8 @@ import { WorktreeNotice } from './worktree-notice.js';
 import { useWorktreeDraft } from './worktree-draft.js';
 import { type RunCommand } from './ui.js';
 import { createTaskPageState, usePageField, type DrawerSection, type TaskPageState } from './page-state.js';
-import { nextStage, transitionDestinations } from '../domain/transitions.js';
+import { transitionAccess, transitionDestinations } from '../domain/transitions.js';
+import { resolveNextStageRoute } from '../domain/transition-route.js';
 import type { AutoRunController } from './auto-run.js';
 import { DrawerAutoRunNotice } from './auto-run-view.js';
 import { autoModeView } from './auto-mode.js';
@@ -49,6 +50,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
   const [leases] = useState<ConversationLeaseRegistry | null>(() => conversationLeases === undefined ? null : new ConversationLeaseRegistry(conversationLeases));
   const openKey = JSON.stringify(openSessionIds(task));
   const [movingTo, setMovingTo] = useState<string | null>(null); const alive = useRef(true);
+  const [stageNotice, setStageNotice] = useState<string | null>(null);
   useEffect(() => {
     close.current?.focus();
     alive.current = true;
@@ -63,10 +65,18 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
   const worktreeDecisionRequired = requiresWorktreeDecision(task, project);
   const sections: DrawerSection[] = gitBacked ? ['Conversations', 'Info', 'Git', 'Notes'] : ['Conversations', 'Info', 'Notes'];
   const destinations = transitionDestinations(state.workflow, task.columnId);
-  const next = nextStage(state.workflow, task.columnId);
+  // The next-stage action follows a recorded transition; without one it still
+  // steps to the adjacent stage, so the manual action keeps its meaning.
+  const stageRoute = resolveNextStageRoute(state.workflow, task);
+  const next = stageRoute.kind === 'advance'
+    ? { column: stageRoute.column, access: transitionAccess(state.workflow, task.columnId, stageRoute.column.id) }
+    : undefined;
+  const staleNext = stageRoute.kind === 'stale' ? stageRoute.message : undefined;
   const projectName = project?.name ?? task.projectId;
   const worktreeDraft = useWorktreeDraft({ api, task, project, basePath: state.settings?.worktreeBasePath, enabled: gitBacked && !task.worktree && (section === 'Conversations' || section === 'Git') });
   useEffect(() => { if (!gitBacked && section === 'Git') setSection('Info'); }, [gitBacked, section, setSection]);
+  // A refusal explains the current routing state, so it clears when the task moves.
+  useEffect(() => { setStageNotice(null); }, [task.id, task.columnId]);
   useEffect(() => () => { leases?.dispose(); }, [leases]);
   useEffect(() => { if (leases !== null) leases.retainOnly(openSessionIds(task)); }, [leases, openKey]);
 
@@ -96,13 +106,14 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
     <DrawerHeader
       title={{ id: id + '-title', title: task.title, projectName }}
       sectionNav={{ id, sections, selected: section, onSelect: value => setSection(value), activity: attention }}
-      stage={{ id, destinations, currentColumnId: task.columnId, next, movingTo, blocked, onMove: column => { void moveTo(column); } }}
+      stage={{ id, destinations, currentColumnId: task.columnId, next, ...(staleNext === undefined ? {} : { staleNext, onRefuse: () => setStageNotice(staleNext) }), movingTo, blocked, onMove: column => { void moveTo(column); } }}
       actions={{ ...(onToggleAutoMode ? { autoMode, onToggleAutoMode: (enabled: boolean) => onToggleAutoMode(task.id, enabled) } : {}), autoModePending, blocked, onDelete: () => onDanger(task, 'task.delete'), onClose, closeRef: close }}
     />
     {(task.operation || task.pendingTransition) && <div className="kb-status-stack">
       <OperationStatus task={task} run={run} sessionTitles={sessionTitles} {...(onForce ? { onForce } : {})} />
       {task.pendingTransition && <PendingTransitionStatus task={task} run={run} columnName={state.workflow.columns.find(column => column.id === task.pendingTransition?.columnId)?.name ?? task.pendingTransition?.columnId ?? ''} />}
     </div>}
+    {stageNotice !== null && <div className="kb-status-stack"><div className="kb-error" role="alert"><strong>The recorded transition is no longer valid</strong><span>{stageNotice}</span></div></div>}
     {autoRun && <DrawerAutoRunNotice task={task} controller={autoRun} columns={state.workflow.columns} sessionTitles={sessionTitles} />}
     <section className={'kb-drawer-panel ' + (section === 'Conversations' ? 'kb-chat-panel' : '')} role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>
       {section === 'Conversations' && <>{!gitBacked && task.worktree && <p className="kb-hint" role="note" aria-label="Plain checkout">This checkout is no longer Git-managed. Git actions are unavailable and the directory is kept when the task is deleted.</p>}{gitBacked && !task.worktree && !task.worktreeDismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} />}<DrawerConversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} worktreeDecisionRequired={worktreeDecisionRequired} projectUnavailable={project === undefined} conversationAttention={conversationAttention} /></>}

@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import type { Task, Workflow } from '../shared/types.js';
+import type { Task, TransitionRule, Workflow } from '../shared/types.js';
+import { transitionRule as normalizeTransitionRule } from './transition-rule.js';
 import { isAbsolutePath, isDomainId } from './validation.js';
 
 /**
@@ -43,15 +44,22 @@ export const pendingTransition = z.strictObject({
   origin: z.literal('auto').optional(),
 });
 export const autoModePause = z.strictObject({
-  reason: z.enum(['turn-error', 'turn-blocked', 'turn-aborted', 'turn-max-tokens', 'advance-failed']),
+  reason: z.enum(['turn-error', 'turn-blocked', 'turn-aborted', 'turn-max-tokens', 'advance-failed', 'transition-stale']),
   at: timestamp,
   message: z.string().optional(),
 });
 export const autoMode = z.strictObject({ enabled: z.boolean(), pause: autoModePause.optional() });
 /** An authored stage position; the workflow parser owns the accepted range. */
 export const stagePosition = z.strictObject({ x: z.number().finite(), y: z.number().finite() });
+/** One authored transition entry; the bare identifier form is normalized on read. */
+export const transitionRule = z.union([
+  id,
+  z.strictObject({ to: id, when: nonempty.optional() }),
+]).transform((value): TransitionRule => typeof value === 'string'
+  ? normalizeTransitionRule(value)
+  : normalizeTransitionRule(value.to, value.when));
 export const column = z.strictObject({
-  id, name: nonempty, onEnterPrompt: z.string().optional(), allowedTransitions: z.array(id).optional(), position: stagePosition.optional(),
+  id, name: nonempty, onEnterPrompt: z.string().optional(), allowedTransitions: z.array(transitionRule).optional(), position: stagePosition.optional(),
 });
 export const group = z.strictObject({ id, name: nonempty, columnIds: z.array(id).min(1) });
 export const workflow = z.strictObject({
@@ -91,11 +99,12 @@ export const baseTask = z.strictObject({
   worktreeDismissed: z.boolean().optional(),
   unclaimedWorktrees: z.array(z.strictObject({ path: absolutePath, branch: nonempty, error: problem })).optional(),
   worktreeWorkspaceId: id.optional(), worktreeWorkspaceOwned: z.boolean().optional(),
-  operation: operation.nullable(), pendingTransition: pendingTransition.optional(), instructionPending: z.strictObject({ columnId: id, enteredAt: z.number().finite() }).optional(), autoMode: autoMode.optional(), createdAt: timestamp, updatedAt: timestamp,
+  operation: operation.nullable(), pendingTransition: pendingTransition.optional(), instructionPending: z.strictObject({ columnId: id, enteredAt: z.number().finite() }).optional(), autoMode: autoMode.optional(),
+  recordedTransition: z.strictObject({ fromColumnId: id, columnId: id, at: timestamp }).optional(), createdAt: timestamp, updatedAt: timestamp,
 });
 
 /** The task fields the shared invariant check reads. */
-export type TaskCheckValue = Pick<Task, 'projectId' | 'columnId' | 'sessionIds' | 'closedSessionIds' | 'operation' | 'pendingTransition' | 'instructionPending'>;
+export type TaskCheckValue = Pick<Task, 'projectId' | 'columnId' | 'sessionIds' | 'closedSessionIds' | 'operation' | 'pendingTransition' | 'instructionPending' | 'recordedTransition'>;
 
 function workflowShape(value: Workflow, includePosition: boolean): string {
   return JSON.stringify({
@@ -103,7 +112,8 @@ function workflowShape(value: Workflow, includePosition: boolean): string {
     defaultView: value.defaultView,
     initialColumnId: value.initialColumnId,
     columns: value.columns.map(item => ({
-      id: item.id, name: item.name, onEnterPrompt: item.onEnterPrompt, allowedTransitions: item.allowedTransitions,
+      id: item.id, name: item.name, onEnterPrompt: item.onEnterPrompt,
+      allowedTransitions: item.allowedTransitions?.map(rule => normalizeTransitionRule(rule.to, rule.when)),
       ...(includePosition ? { position: item.position } : {}),
     })),
     groups: value.groups.map(item => ({ id: item.id, name: item.name, columnIds: item.columnIds })),
@@ -149,6 +159,12 @@ export function createTaskInvariantChecker(projectIds: ReadonlySet<string>, issu
         if (!sessions.has(sessionId)) issue(['tasks', index, 'closedSessionIds'], 'Closed sessions must belong to the task.');
       }
       if (value.instructionPending && !columnIds.has(value.instructionPending.columnId)) issue(['tasks', index, 'instructionPending', 'columnId'], 'Instruction entry column does not exist.');
+      // A recorded transition is routing intent, not a reference the workflow must
+      // still satisfy: a workflow edit may remove its target, and that is exactly
+      // the stale recording the advance must report instead of refusing the edit.
+      if (value.recordedTransition && !columnIds.has(value.recordedTransition.fromColumnId)) {
+        issue(['tasks', index, 'recordedTransition', 'fromColumnId'], 'Recorded transition source column does not exist.');
+      }
       if (value.pendingTransition) {
         const pending = value.pendingTransition;
         if (transitionIds.has(pending.id)) issue(['tasks', index, 'pendingTransition', 'id'], 'Pending transition IDs must be unique.');

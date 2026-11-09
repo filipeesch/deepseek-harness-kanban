@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { KanbanSnapshot, BoardState, Command } from '../../src/shared/types.js';
 import { useMoveRequest } from '../../src/client/useMoveRequest.js';
 import { fixture } from './helpers.js';
+import { transitions } from '../support/transition-rules.js';
 
 afterEach(cleanup);
 
@@ -192,7 +193,7 @@ describe('useMoveRequest', () => {
     act(() => { pending = result.current.move(state.tasks[0]!, column(state, 'blocked')); });
     await waitFor(() => expect(result.current.confirmation).not.toBeNull());
     const allowed = restrictedState();
-    allowed.workflow.columns[0]!.allowedTransitions = ['doing', 'review', 'blocked'];
+    allowed.workflow.columns[0]!.allowedTransitions = transitions('doing', 'review', 'blocked');
     rerender({ state: allowed });
     await act(async () => { await result.current.confirm(); });
     await expect(pending).resolves.toBe(true);

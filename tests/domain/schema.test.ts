@@ -30,6 +30,50 @@ describe('persisted board schema', () => {
     expect(parsed.success && parsed.data.tasks[0]!.pendingTransition?.origin).toBe('auto');
   });
 
+  it('normalizes a stored workflow written with bare transition identifiers', () => {
+    const yaml = 'name: Flow\ncolumns:\n  - id: backlog\n    label: Backlog\n    allowed_transitions: [done]\n  - id: done\n    label: Done\n';
+    const state = populatedState();
+    state.workflowYaml = yaml;
+    state.workflow = parseWorkflow(yaml);
+    // The shape a previous version persisted: bare identifiers, not entries.
+    state.workflow.columns[0]!.allowedTransitions = ['done'] as never;
+    const parsed = BoardStateSchema.safeParse(state);
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.workflow.columns[0]!.allowedTransitions).toEqual([{ to: 'done' }]);
+  });
+
+  it('accepts a recorded transition and the transition-stale pause reason', () => {
+    const state = populatedState();
+    state.tasks[0]!.recordedTransition = { fromColumnId: 'backlog', columnId: 'done', at: '2026-10-21T10:00:00.000Z' };
+    state.tasks[0]!.autoMode = { enabled: true, pause: { reason: 'transition-stale', at: '2026-10-21T10:00:00.000Z' } };
+    const parsed = BoardStateSchema.safeParse(state);
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.tasks[0]!.recordedTransition?.columnId).toBe('done');
+    expect(parsed.success && parsed.data.tasks[0]!.autoMode?.pause?.reason).toBe('transition-stale');
+  });
+
+  it('accepts a recording whose target stage was removed from the workflow', () => {
+    const state = populatedState();
+    state.tasks[0]!.recordedTransition = { fromColumnId: 'backlog', columnId: 'missing', at: '2026-10-21T10:00:00.000Z' };
+    // This is the state a workflow edit produces, and the advance reports it as a
+    // stale recording instead of the save being refused.
+    const parsed = BoardStateSchema.safeParse(state);
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.tasks[0]!.recordedTransition?.columnId).toBe('missing');
+  });
+
+  it('rejects a recording whose source stage is outside the workflow', () => {
+    const state = populatedState();
+    state.tasks[0]!.recordedTransition = { fromColumnId: 'missing', columnId: 'done', at: '2026-10-21T10:00:00.000Z' };
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+
+  it('rejects an unknown pause reason', () => {
+    const state = populatedState();
+    state.tasks[0]!.autoMode = { enabled: true, pause: { reason: 'unknown' as never, at: '2026-10-21T10:00:00.000Z' } };
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+
   it('accepts an optional project relocation journal and rejects an unknown phase', () => {
     const state = populatedState();
     state.projects[0]!.operation = {

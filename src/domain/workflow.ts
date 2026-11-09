@@ -23,7 +23,7 @@ export const DEFAULT_WORKFLOW_YAML = [
 /** The largest accepted absolute coordinate of an authored stage position. */
 export const STAGE_POSITION_LIMIT = 1_000_000;
 
-const { record, keys, text, id, ids } = createYamlFields(invalidWorkflow);
+const { record, keys, text, id, ids, rules } = createYamlFields(invalidWorkflow);
 
 const COLUMN_NOTE = 'WIP and agent-engine settings are not supported.';
 const POSITION_NOTE = 'Only x and y are supported.';
@@ -77,7 +77,7 @@ export function parseWorkflow(yaml: string): Workflow {
     keys(value, ['id', 'label', 'name', 'description', 'allowed_transitions', 'on_enter_prompt', 'position'], 'column', COLUMN_NOTE);
     if (value.description !== undefined && typeof value.description !== 'string') invalidWorkflow('Column description must be text.');
     const column: Column = { id: id(value.id, 'Column ID'), name: label(value, 'Column') };
-    if (value.allowed_transitions !== undefined) column.allowedTransitions = ids(value.allowed_transitions, 'allowed_transitions');
+    if (value.allowed_transitions !== undefined) column.allowedTransitions = rules(value.allowed_transitions, 'allowed_transitions');
     if (value.on_enter_prompt !== undefined && value.on_enter_prompt !== null) {
       if (typeof value.on_enter_prompt !== 'string') invalidWorkflow('on_enter_prompt must be text or null.');
       if (value.on_enter_prompt.trim()) column.onEnterPrompt = value.on_enter_prompt;
@@ -88,8 +88,8 @@ export function parseWorkflow(yaml: string): Workflow {
   const columnIds = new Set(columns.map(column => column.id));
   if (columnIds.size !== columns.length) invalidWorkflow('Column IDs must be unique.');
   for (const column of columns) {
-    for (const target of column.allowedTransitions ?? []) {
-      if (!columnIds.has(target)) invalidWorkflow('Column ' + column.id + ' references unknown transition target ' + target + '.');
+    for (const entry of column.allowedTransitions ?? []) {
+      if (!columnIds.has(entry.to)) invalidWorkflow('Column ' + column.id + ' references unknown transition target ' + entry.to + '.');
     }
   }
   const initialColumnId = input.initial_column === undefined ? columns[0]!.id : id(input.initial_column, 'Initial column');

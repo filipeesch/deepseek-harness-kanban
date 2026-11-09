@@ -3,7 +3,7 @@ import type { AutoModePauseReason, PendingUserWork, PendingUserWorkKind, Task, W
 import { NO_PENDING_USER_WORK } from '../shared/types.js';
 import { hasUnresolvedEntry } from '../domain/stage-entry.js';
 import { hasPendingUserWork } from '../domain/pending-user-work.js';
-import { resolveAutoAdvance } from '../domain/auto-advance.js';
+import { resolveAdvanceRoute } from '../domain/transition-route.js';
 import { AutoModeIcon } from './icons.js';
 
 /** The card and drawer state derived from the task's persisted auto mode, transition, and pending user work. */
@@ -54,6 +54,7 @@ export function pauseLabel(reason: AutoModePauseReason, message?: string): strin
     case 'turn-aborted': return 'Auto mode paused: the turn was stopped';
     case 'turn-max-tokens': return 'Auto mode paused: the turn reached its token limit';
     case 'advance-failed': return 'Auto mode could not advance' + detail;
+    case 'transition-stale': return 'Auto mode paused: the recorded transition is no longer valid' + detail;
   }
 }
 
@@ -81,7 +82,7 @@ export function autoModeView(task: Task, workflow: Workflow, pendingWork: Pendin
   const pause = task.autoMode?.pause;
   if (pause !== undefined) {
     const label = pauseLabel(pause.reason, pause.message);
-    const tone: AutoModeStatus['tone'] = pause.reason === 'turn-error' || pause.reason === 'advance-failed' ? 'danger' : 'pending';
+    const tone: AutoModeStatus['tone'] = pause.reason === 'turn-error' || pause.reason === 'advance-failed' || pause.reason === 'transition-stale' ? 'danger' : 'pending';
     return { ...base, state: 'paused', reason: pause.reason, status: { tone, label, ...(pause.reason === 'advance-failed' ? { alert: true } : {}) }, stateLabel: label, title: label };
   }
   // The held state is derived from pending user work, so it is presented by the control
@@ -94,12 +95,19 @@ export function autoModeView(task: Task, workflow: Workflow, pendingWork: Pendin
     const label = 'Auto mode is waiting for the ' + stageName(workflow, task.columnId) + ' instruction';
     return { ...base, state: 'instruction', status: { tone: 'pending', label }, stateLabel: label, title: label };
   }
-  const destination = resolveAutoAdvance(workflow, task.columnId).destination;
-  if (destination === undefined) {
+  const route = resolveAdvanceRoute(workflow, task);
+  // A recording that stopped resolving is a pause even before a turn ends, so the
+  // control explains it instead of naming a destination that cannot be reached.
+  if (route.kind === 'stale') {
+    const label = pauseLabel('transition-stale', route.message);
+    return { ...base, state: 'paused', reason: 'transition-stale', status: { tone: 'danger', label }, stateLabel: label, title: label };
+  }
+  if (route.kind !== 'advance' || route.plan.destination === undefined) {
     const label = 'Auto mode: no next stage';
     return { ...base, state: 'dead-end', status: { tone: 'pending', label }, stateLabel: label, title: 'Auto mode is on. No next stage is configured.' };
   }
-  return { ...base, state: 'armed', destinationName: destination.name, title: 'Auto mode is on: the next completed turn moves to ' + destination.name + '.' };
+  const destination = route.plan.destination;
+  return { ...base, state: 'armed', destinationName: destination.name, title: 'Auto mode is on: the next completed turn moves to ' + destination.name + (route.source === 'recorded' ? ', the transition this task recorded.' : '.') };
 }
 
 const STATEFUL_LABEL: ReadonlySet<AutoModeState> = new Set(['advancing', 'failed', 'paused', 'instruction', 'dead-end']);

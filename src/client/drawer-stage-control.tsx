@@ -8,17 +8,24 @@ export interface DrawerStageControlProps {
   destinations: readonly TransitionDestination[];
   currentColumnId: string;
   next?: TransitionDestination;
+  /** Why a recorded transition no longer resolves; present instead of `next`. */
+  staleNext?: string;
   movingTo: string | null;
   blocked: boolean;
   onMove: (column: Column) => void;
+  onRefuse?: () => void;
 }
 
 function advanceLabel(next: TransitionDestination): string {
   return 'Move to ' + next.column.name + (next.access === 'restricted' ? ', requires confirmation' : '');
 }
 
+function refuseLabel(message: string): string {
+  return 'Recorded transition unavailable: ' + message;
+}
+
 /** The workflow stage select and the one-click next-stage action. */
-export function DrawerStageControl({ id, destinations, currentColumnId, next, movingTo, blocked, onMove }: DrawerStageControlProps) {
+export function DrawerStageControl({ id, destinations, currentColumnId, next, staleNext, movingTo, blocked, onMove, onRefuse }: DrawerStageControlProps) {
   const disabled = blocked || movingTo !== null;
   const hintId = id + '-stage-hint';
   return <div className="kb-drawer-stage">
@@ -33,6 +40,7 @@ export function DrawerStageControl({ id, destinations, currentColumnId, next, mo
       </select>
     </label>
     {next !== undefined && <button type="button" className="kb-button kb-icon-button kb-stage-advance" aria-label={advanceLabel(next)} title={advanceLabel(next)} disabled={disabled} onClick={() => onMove(next.column)}><AdvanceStageIcon size={15} /></button>}
+    {staleNext !== undefined && <button type="button" className="kb-button kb-icon-button kb-stage-advance" aria-label={refuseLabel(staleNext)} title={refuseLabel(staleNext)} disabled={disabled} onClick={() => onRefuse?.()}><AdvanceStageIcon size={15} /></button>}
     <span className="kb-sr" id={hintId}>Stages that this workflow does not permit require confirmation before moving.</span>
   </div>;
 }

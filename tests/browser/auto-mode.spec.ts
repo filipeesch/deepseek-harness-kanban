@@ -96,6 +96,48 @@ test('presents the armed, paused, and advancing states on cards', async ({ page 
   await expect(page.locator('[data-task-id="long-2"] .kb-auto-chip')).toHaveAttribute('data-auto-state', 'failed');
 });
 
+test('follows the recorded transition on the card and the drawer action', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=routed');
+  await page.waitForSelector('.kb-column');
+  const chip = page.locator('[data-task-id="long-0"] .kb-auto-chip');
+  await expect(chip).toHaveAttribute('title', 'Auto mode is on: the next completed turn moves to Apply, the transition this task recorded.');
+  await page.getByRole('button', { name: 'Open task Long column task 0', exact: true }).click();
+  const drawer = page.locator('.kb-drawer');
+  await expect(drawer.locator('.kb-drawer-header .kb-auto-chip')).toHaveAttribute('title', /moves to Apply/);
+  await expect(drawer.getByRole('button', { name: 'Move to Apply' })).toBeVisible();
+  await expect(drawer.getByRole('button', { name: 'Move to Propose' })).toHaveCount(0);
+});
+
+test('updates the recorded destination without a reload', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=routed');
+  await page.waitForSelector('.kb-column');
+  const chip = page.locator('[data-task-id="long-0"] .kb-auto-chip');
+  await expect(chip).toHaveAttribute('title', 'Auto mode is on: the next completed turn moves to Apply, the transition this task recorded.');
+  await page.evaluate(() => {
+    const harness = (window as unknown as { __harness: { mutate(change: (state: { tasks: Array<{ id: string; recordedTransition?: { fromColumnId: string; columnId: string; at: string } }> }) => void): void } }).__harness;
+    harness.mutate(state => {
+      const task = state.tasks.find(value => value.id === 'long-0');
+      if (task) task.recordedTransition = { fromColumnId: 'explore', columnId: 'propose', at: '2026-10-21T00:00:00Z' };
+    });
+  });
+  await expect(chip).toHaveAttribute('title', 'Auto mode is on: the next completed turn moves to Propose, the transition this task recorded.');
+});
+
+test('refuses a stale recorded transition in the drawer', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=stale-route');
+  await page.waitForSelector('.kb-column');
+  await expect(page.locator('[data-task-id="long-0"] .kb-auto-chip')).toHaveAttribute('data-auto-state', 'paused');
+  await page.getByRole('button', { name: 'Open task Long column task 0', exact: true }).click();
+  const drawer = page.locator('.kb-drawer');
+  const refuse = drawer.getByRole('button', { name: /Recorded transition unavailable/ });
+  await expect(refuse).toBeVisible();
+  await refuse.click();
+  // The recorded target no longer exists in the workflow, which is the removed-stage
+  // case a workflow edit produces.
+  await expect(drawer.getByRole('alert')).toContainText('The recorded transition points to a stage that no longer exists.');
+  await expect(page.locator('[data-task-id="long-0"]')).toBeVisible();
+});
+
 test('presents the held state on the chip and in the drawer without a status entry', async ({ page }) => {
   await openBoard(page);
   const chip = page.locator('[data-task-id="other"] .kb-auto-chip');

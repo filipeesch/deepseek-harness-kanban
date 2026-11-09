@@ -5,6 +5,7 @@ import { createBoard } from './hub-schema.js';
 import { parseWorkflow } from './workflow.js';
 import { applyWorkflowEdits, type WorkflowTextEdit } from './workflow-edit.js';
 import { entryInstruction, nextEnteredAt } from './stage-entry.js';
+import { transitionTargets } from './transitions.js';
 import { assertProjectSave, buildProject } from './project-registration.js';
 import { applyNoteTags, validateNoteWrite, type NoteInput } from './note.js';
 import { placementIndex, type Placement } from './placement.js';
@@ -228,6 +229,32 @@ export function pauseAutoMode(hub: HubState, taskId: string, pause: AutoModePaus
   return task;
 }
 
+/**
+ * Record, replace, or clear the transition the task follows on its next advance.
+ * The current stage must configure transitions and the target must be one of
+ * them. A recording never moves the task, sends a message, or changes auto mode.
+ */
+export function recordTransition(hub: HubState, taskId: string, columnId: string | undefined, deps: OperationDeps): HubTask {
+  const task = requireTask(hub, taskId);
+  const board = boardForTask(hub, task);
+  const source = board.workflow.columns.find(column => column.id === task.columnId);
+  invariant(source, 'INVALID_TARGET', 'The task stage does not exist.');
+  invariant(source.allowedTransitions !== undefined, 'TRANSITIONS_NOT_CONFIGURED', 'The current stage does not configure transitions.');
+  if (columnId === undefined) {
+    if (task.recordedTransition === undefined) return task;
+    delete task.recordedTransition;
+  } else {
+    assertId(columnId, 'Column ID');
+    invariant(columnId !== task.columnId, 'INVALID_TARGET', 'A recorded transition must target another stage.');
+    invariant(transitionTargets(board.workflow, task.columnId).some(target => target.column.id === columnId),
+      'TRANSITION_NOT_ALLOWED', 'The destination stage is not a configured transition of the current stage.');
+    task.recordedTransition = { fromColumnId: task.columnId, columnId, at: timestamp(deps) };
+  }
+  task.updatedAt = timestamp(deps);
+  hub.updatedAt = task.updatedAt;
+  return task;
+}
+
 export function editTask(hub: HubState, taskId: string, patch: TaskTextPatch, deps: OperationDeps): HubTask {
   const value = clone(patch);
   invariant(value && typeof value === 'object' && !Array.isArray(value), 'INVALID_INPUT', 'Task edits must be a mapping.');
@@ -321,6 +348,9 @@ export function placeTask(hub: HubState, taskId: string, columnId: string, place
   const index = placementIndex(placement, destination);
   task.columnId = columnId;
   if (task.autoMode?.pause !== undefined) delete task.autoMode.pause;
+  // A recorded transition is an edge of one stage, so it stops applying the
+  // moment the task leaves that stage. A same-stage reorder keeps it.
+  if (sourceColumnId !== columnId && task.recordedTransition !== undefined) delete task.recordedTransition;
   if (sourceColumnId !== columnId) {
     const destinationColumn = board.workflow.columns.find(value => value.id === columnId);
     if (entryInstruction(destinationColumn) !== undefined) task.instructionPending = { columnId, enteredAt };

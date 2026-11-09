@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest';
 import type { Workflow } from '../../src/shared/types.js';
 import { workflowGraph } from '../../src/domain/workflow-graph.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
+import { transitions } from '../support/transition-rules.js';
 
 const flow: Workflow = {
   name: 'Flow',
   initialColumnId: 'backlog',
   columns: [
-    { id: 'backlog', name: 'Backlog', allowedTransitions: ['plan', 'done'] },
+    { id: 'backlog', name: 'Backlog', allowedTransitions: transitions('plan', 'done') },
     { id: 'plan', name: 'Plan' },
-    { id: 'review', name: 'In Review', allowedTransitions: ['done', 'backlog', 'review'] },
+    { id: 'review', name: 'In Review', allowedTransitions: transitions('done', 'backlog', 'review') },
     { id: 'done', name: 'Done', allowedTransitions: [] },
   ],
   groups: [{ id: 'planning', name: 'Planning', columnIds: ['plan', 'backlog'] }],
@@ -52,7 +53,7 @@ describe('workflow graph', () => {
   });
 
   it('skips a target the workflow does not define', () => {
-    const hand: Workflow = { name: 'Hand', initialColumnId: 'one', columns: [{ id: 'one', name: 'One', allowedTransitions: ['missing', 'two'] }, { id: 'two', name: 'Two' }], groups: [] };
+    const hand: Workflow = { name: 'Hand', initialColumnId: 'one', columns: [{ id: 'one', name: 'One', allowedTransitions: transitions('missing', 'two') }, { id: 'two', name: 'Two' }], groups: [] };
     expect(workflowGraph(hand).connections).toEqual([{ from: 'one', to: 'two', kind: 'explicit', returning: false, fanOut: 0, fanOutCount: 1 }]);
   });
 

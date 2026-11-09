@@ -1,0 +1,96 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools';
+import { productToolDefinitions } from '../../src/host/tools.js';
+import { fixture, taskWithConversation } from './helpers.js';
+
+const BRANCHED_WORKFLOW = [
+  'name: Branch',
+  'initial_column: backlog',
+  'columns:',
+  '  - id: backlog',
+  '    label: Backlog',
+  '    allowed_transitions:',
+  '      - to: done',
+  '        when: The task needs no further work.',
+  '      - to: plan',
+  '        when: The task needs a plan.',
+  '  - id: plan',
+  '    label: Plan',
+  '    on_enter_prompt: Plan it.',
+  '  - id: done',
+  '    label: Done',
+  '',
+].join(String.fromCharCode(10));
+
+const active: Array<Awaited<ReturnType<typeof fixture>>> = [];
+afterEach(async () => { for (const value of active.splice(0)) await value.close(); });
+
+async function setup() {
+  const f = await fixture();
+  active.push(f);
+  await f.store.saveBoardWorkflow(f.board.id, BRANCHED_WORKFLOW);
+  const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Route', description: '' });
+  const tools = productToolDefinitions(f.app);
+  const exec = () => ({ signal: new AbortController().signal, agent: { id: task.sessionIds[0]! }, deferContext: vi.fn(), concludeTurn: vi.fn() } as unknown as ToolRunContext);
+  const named = (name: string): ToolDefinition => {
+    const definition = tools.find(value => value.name === name);
+    if (!definition) throw new Error('Missing test tool ' + name);
+    return definition;
+  };
+  return { ...f, task, tools, exec, named };
+}
+
+describe('transition tools', () => {
+  it('lists the configured transitions and the default destination', async () => {
+    const f = await setup();
+    const value = await f.named('list_allowed_transitions').execute({}, f.exec()) as Record<string, unknown>;
+    expect(value).toMatchObject({ taskId: f.task.id, stage: { columnId: 'backlog' }, configured: true, defaultColumnId: 'done', recorded: null });
+    expect(value.targets).toEqual([
+      { columnId: 'done', name: 'Done', when: 'The task needs no further work.' },
+      { columnId: 'plan', name: 'Plan', when: 'The task needs a plan.' },
+    ]);
+  });
+
+  it('records, replaces, and clears the transition without moving the task', async () => {
+    const f = await setup();
+    const set = f.named('set_next_transition');
+    const recorded = await set.execute({ column_id: 'plan' }, f.exec()) as Record<string, unknown>;
+    expect(recorded.recorded).toMatchObject({ columnId: 'plan', fromColumnId: 'backlog' });
+    expect(f.app.hubs.requireTask(f.task.id).task.columnId).toBe('backlog');
+    const replaced = await set.execute({ column_id: 'done' }, f.exec()) as Record<string, unknown>;
+    expect(replaced.recorded).toMatchObject({ columnId: 'done' });
+    const cleared = await set.execute({}, f.exec()) as Record<string, unknown>;
+    expect(cleared.recorded).toBeNull();
+    expect(f.app.hubs.requireTask(f.task.id).task.recordedTransition).toBeUndefined();
+    expect(f.sessions.sent).toEqual([]);
+  });
+
+  it('rejects a target the stage does not configure and keeps the recording', async () => {
+    const f = await setup();
+    const set = f.named('set_next_transition');
+    await set.execute({ column_id: 'plan' }, f.exec());
+    await expect(set.execute({ column_id: 'backlog' }, f.exec())).rejects.toMatchObject({ code: 'INVALID_TARGET' });
+    expect(f.app.hubs.requireTask(f.task.id).task.recordedTransition).toMatchObject({ columnId: 'plan' });
+  });
+
+  it('reports a stage that configures no transitions', async () => {
+    const f = await setup();
+    const listed = await f.named('list_allowed_transitions').execute({ task_id: f.task.id }, f.exec()) as Record<string, unknown>;
+    expect(listed.configured).toBe(true);
+    await f.app.command({ type: 'task.recordTransition', taskId: f.task.id, columnId: 'plan' });
+    await f.app.command({ type: 'task.move', taskId: f.task.id, columnId: 'plan' });
+    const afterMove = await f.named('list_allowed_transitions').execute({ task_id: f.task.id }, f.exec()) as Record<string, unknown>;
+    expect(afterMove).toMatchObject({ stage: { columnId: 'plan' }, configured: false, recorded: null });
+    expect(afterMove.targets).toEqual([]);
+    await expect(f.named('set_next_transition').execute({ task_id: f.task.id, column_id: 'done' }, f.exec()))
+      .rejects.toMatchObject({ code: 'TRANSITIONS_NOT_CONFIGURED' });
+  });
+
+  it('requires a task scope outside a task conversation', async () => {
+    const f = await setup();
+    const ordinary = () => ({ ...f.exec(), agent: { id: 'ordinary-session' } } as unknown as ToolRunContext);
+    await expect(f.named('list_allowed_transitions').execute({}, ordinary())).rejects.toMatchObject({ code: 'MISSING_TASK_CONTEXT' });
+    const explicit = await f.named('list_allowed_transitions').execute({ task_id: f.task.id }, ordinary()) as Record<string, unknown>;
+    expect(explicit.taskId).toBe(f.task.id);
+  });
+});

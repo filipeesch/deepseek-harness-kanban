@@ -494,6 +494,10 @@ export class HubStore {
   async pauseAutoMode(taskId: string, pause: AutoModePause, expectedColumnId?: string): Promise<HubTask> {
     return this.transact(draft => operations.pauseAutoMode(draft, taskId, pause, this.deps(), expectedColumnId));
   }
+  /** Record or clear the transition the task follows on its next advance. */
+  async recordTransition(taskId: string, columnId: string | undefined): Promise<HubTask> {
+    return this.transact(draft => operations.recordTransition(draft, taskId, columnId, this.deps()));
+  }
   async addSession(taskId: string, sessionId: string, expectedEffectiveCwd?: string): Promise<HubTask> {
     return this.transact(draft => operations.addSession(draft, taskId, sessionId, this.deps(), expectedEffectiveCwd));
   }
