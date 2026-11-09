@@ -2,7 +2,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
-import { backgroundAccessibleName, backgroundDetails, backgroundIndicatorText, backgroundSummary } from '../../src/client/activity.js';
+import { backgroundDetails } from '../../src/client/activity.js';
 import { ActivityDot, activityFacts, sectionTabName } from '../../src/client/activity-dot.js';
 import type { Attention } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
@@ -15,22 +15,10 @@ const job = { kind: 'job' as const, label: 'Run tests' };
 const schedule = { kind: 'schedule' as const, label: 'Wake later' };
 
 describe('background activity copy', () => {
-  it('counts the job and schedule families in a stable order and names the labels', () => {
-    expect(backgroundSummary([])).toBe('');
-    expect(backgroundSummary([job])).toBe('1 job');
-    expect(backgroundSummary([job, job, schedule])).toBe('2 jobs · 1 schedule');
-    expect(backgroundSummary([schedule, job])).toBe('1 job · 1 schedule');
+  it('names the labels in activity order', () => {
+    expect(backgroundDetails([])).toBe('');
     expect(backgroundDetails([job, schedule])).toBe('Run tests · Wake later');
-    expect(backgroundSummary([job, schedule])).not.toContain('subagent');
-  });
-
-  it('keeps one family label and aggregates once families mix', () => {
-    expect(backgroundIndicatorText([])).toBe('');
-    expect(backgroundIndicatorText([job])).toBe('1 job');
-    expect(backgroundIndicatorText([job, job])).toBe('2 jobs');
-    expect(backgroundIndicatorText([job, schedule])).toBe('2 activities');
-    expect(backgroundIndicatorText([job, job, schedule])).toBe('3 activities');
-    expect(backgroundAccessibleName([job, schedule])).toBe('Background activity: 2 activities. Run tests · Wake later');
+    expect(backgroundDetails([job, schedule])).not.toContain('subagent');
   });
 });
 

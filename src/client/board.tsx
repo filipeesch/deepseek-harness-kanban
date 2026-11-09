@@ -15,6 +15,7 @@ import { BoardColumnsView } from './board/board-columns-view.js';
 import { BoardCreationDialogs } from './board/board-dialogs.js';
 import { WorkflowView as WorkflowDiagram } from './workflow-view/workflow-view.js';
 import { WorkflowViewControl } from './workflow-view/view-control.js';
+import { readBoardView, writeBoardView } from './view-preference.js';
 import { cardLayoutKeys, planColumns } from './board-columns.js';
 import { filterTasks } from './task-filter.js';
 import { cardFocusTarget } from './card-focus.js';
@@ -92,8 +93,16 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   const activeHub = snapshot?.state.hubs.find(hub => hub.id === activeHubId) ?? snapshot?.state.hubs[0];
   const activeBoard = activeHub ? activeHub.boards.find(board => board.id === activeBoardByHub[activeHub.id]) ?? activeHub.boards[0] : undefined;
   const [view, setView] = usePageField(preferences, 'view');
-  // The presentation is session state; every board opens with its configured default.
-  useEffect(() => { setView(activeBoard?.workflow.defaultView ?? 'board'); }, [activeBoard?.id]);
+  // A board opens with the presentation the user last chose for it in this
+  // browser, and falls back to the board's configured default.
+  useEffect(() => {
+    if (activeBoard === undefined) return;
+    setView(readBoardView(activeBoard.id) ?? activeBoard.workflow.defaultView ?? 'board');
+  }, [activeBoard?.id, setView]);
+  const chooseView = useCallback((next: WorkflowPresentation): void => {
+    setView(next);
+    if (activeBoard !== undefined) writeBoardView(activeBoard.id, next);
+  }, [activeBoard?.id, setView]);
   const state = useMemo(() => snapshot && activeHub && activeBoard ? boardView(activeHub, activeBoard, snapshot.state.settings ?? { revision: 0 }) : undefined, [snapshot, activeHub, activeBoard]);
   const hubActivity = useMemo(() => {
     const values = new Map<string, ScopeActivity>();
@@ -205,6 +214,25 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     setActionError(null);
     return moves.moveTo(task, column, beforeTaskId);
   }
+  // A stable card callback keeps a memoized card from re-rendering when an
+  // unrelated snapshot publishes.
+  const movesRef = useRef(moves); movesRef.current = moves;
+  const [advancePending, setAdvancePending] = useState<ReadonlySet<string>>(() => new Set());
+  const advanceInFlight = useRef(new Set<string>());
+  /** The card's next-stage action; the pending flag is keyed by task so a card
+   *  reparented by its optimistic move keeps the action disabled. */
+  const advanceTask = useCallback(async (task: Task, column: Column): Promise<boolean> => {
+    if (advanceInFlight.current.has(task.id)) return false;
+    advanceInFlight.current.add(task.id);
+    setAdvancePending(new Set(advanceInFlight.current));
+    setActionError(null);
+    try {
+      return await movesRef.current.moveTo(task, column);
+    } finally {
+      advanceInFlight.current.delete(task.id);
+      setAdvancePending(new Set(advanceInFlight.current));
+    }
+  }, []);
 
   function requestDanger(task: Task, type: 'task.delete' | 'worktree.remove') {
     setActionError(null);
@@ -254,7 +282,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   function renderCard(task: Task, column: Column, workflow: Workflow) {
     const attention = snapshot?.attention[task.id] ?? EMPTY_ATTENTION;
     const project = state?.projects.find(value => value.id === task.projectId)?.name ?? task.projectId;
-    return <BoardCard key={task.id} task={task} column={column} projectName={project} attention={attention} workflow={workflow} selectionMode={selectionMode} selected={selectedIds.has(task.id)} autoRun={autoRun} autoModePending={autoModePending.has(task.id)} onToggleAutoMode={toggleAutoMode} onOpen={openTask} onToggleSelect={toggleSelect} onBeginDrag={begin} shouldSuppressClick={shouldSuppressClick} onRun={moves.requestRun} />;
+    return <BoardCard key={task.id} task={task} column={column} projectName={project} attention={attention} workflow={workflow} selectionMode={selectionMode} selected={selectedIds.has(task.id)} autoRun={autoRun} autoModePending={autoModePending.has(task.id)} onToggleAutoMode={toggleAutoMode} onOpen={openTask} onToggleSelect={toggleSelect} onBeginDrag={begin} shouldSuppressClick={shouldSuppressClick} onMoveTask={advanceTask} advancePending={advancePending.has(task.id)} onRun={moves.requestRun} />;
   }
 
   function renderNewTaskButton(column: Column) { return <div className="kb-column-create"><button type="button" className="kb-button kb-primary" disabled={!state || state.projects.length === 0} onClick={() => setNewTask(true)} aria-label="New task"><PlusIcon size={14} /> New task</button></div>; }
@@ -294,7 +322,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       onOpenConfiguration={() => setConfiguration('General')}
       onRequestDelete={() => { setBatchTasks(selectedTasks); setBatchConfirm(true); }}
       onExitSelection={exitSelection}
-      {...(state === undefined ? {} : { viewControl: <WorkflowViewControl view={view} onChange={setView} /> })}
+      {...(state === undefined ? {} : { viewControl: <WorkflowViewControl view={view} onChange={chooseView} /> })}
     />
     <ShareBanner view={activeHub ? snapshot?.sharing?.[activeHub.id] : undefined} onReview={() => setConfiguration('Team Settings')} />
     {configuration && <Configuration key={configuration} state={state ?? null} hub={activeHub ?? null} board={activeBoard ?? null} hubCount={snapshot?.state.hubs.length ?? 1} settings={snapshot?.state.settings} settingsRevision={snapshot?.state.settings?.revision ?? 0} run={run} api={api} sharing={activeHub ? snapshot?.sharing?.[activeHub.id] : undefined} sharingAuth={snapshot?.sharingAuth} conversationAttention={snapshot?.conversationAttention} initial={configuration} onClose={() => setConfiguration(null)} onHubDeleted={() => { setConfiguration(null); setActiveHubIdState(null); writeStorage(ACTIVE_HUB_KEY, null); }} onBoardDeleted={() => { setConfiguration(null); }} onBoardCreated={id => { selectBoard(activeHub!.id, id); setConfiguration(null); }} />}
@@ -316,7 +344,34 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     {state && <>
       <BoardBody bodyRef={boardBody} onPointerDown={onBoardPointerDown} flow={view === 'workflow'} empty={state.projects.length === 0 && view !== 'workflow' ? <ProjectsEmptyState onConfigureProjects={() => setConfiguration('Projects')} /> : null}>
         {view === 'workflow'
-          ? <WorkflowDiagram key={activeBoard!.id} hubId={activeHub!.id} boardId={activeBoard!.id} state={state} tasks={visible} attention={snapshot?.attention ?? {}} optimistic={optimistic} drag={drag} beginDrag={begin} shouldSuppressClick={shouldSuppressClick} run={run} revision={state.revision} onOpenTask={openTask} onError={error => setActionError(asProblem(error))} />
+          ? <WorkflowDiagram
+              key={activeBoard!.id}
+              hubId={activeHub!.id}
+              boardId={activeBoard!.id}
+              state={state}
+              tasks={visible}
+              optimistic={optimistic}
+              drag={drag}
+              beginDrag={begin}
+              shouldSuppressClick={shouldSuppressClick}
+              run={run}
+              revision={state.revision}
+              onOpenTask={openTask}
+              onError={error => setActionError(asProblem(error))}
+              card={{
+                attention: snapshot?.attention ?? {},
+                projectNames: new Map((state.projects).map(project => [project.id, project.name])),
+                autoRun,
+                autoModePending,
+                selectionMode,
+                selectedIds,
+                onToggleAutoMode: toggleAutoMode,
+                onToggleSelect: toggleSelect,
+                advancePending,
+                onAdvance: advanceTask,
+                onRun: moves.requestRun,
+              }}
+            />
           : <BoardColumnsView plan={columnPlan} layoutKeys={layoutKeys} resetKey={motionResetKey} workflow={state.workflow} drag={drag} renderCard={renderCard} renderNewTaskButton={renderNewTaskButton} />}
       </BoardBody>
       {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} conversationAttention={snapshot?.conversationAttention} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} onForce={destructive.openForce} onToggleAutoMode={toggleAutoMode} autoModePending={autoModePending.has(selected.id)} sessionTitles={sessionTitles} {...(conversationLeases === undefined ? {} : { conversationLeases })} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} />}

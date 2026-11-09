@@ -1,53 +1,63 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator } from '@playwright/test';
 
 const HARNESS = new URL('./.tmp/index.html', import.meta.url).href;
 
-test('cards show working and background activity with a real pulse', async ({ page }) => {
+/** The trailing execution accent's animated pseudo-element. */
+function accent(locator: Locator, property: string): Promise<string> {
+  return locator.evaluate((element: HTMLElement, name: string) => getComputedStyle(element, '::after').getPropertyValue(name), property);
+}
+
+test('cards show the execution accent with a real pulse', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=activity');
   await page.waitForSelector('.kb-card');
 
   const working = page.locator('[data-task-id="long-0"]');
   await expect(working).toHaveAttribute('data-working', 'true');
   await expect(working.locator('.kb-card-open')).not.toHaveAttribute('data-working');
-  await expect(working.locator('.kb-working')).toHaveText(/Working/);
-  await expect.poll(() => working.locator('.kb-working-dot').evaluate(element => element.getAnimations().length)).toBeGreaterThan(0);
-  expect(await page.locator('.kb-card[data-working=true]').first().evaluate(element => getComputedStyle(element).boxShadow)).toContain('inset');
-  await expect(working.locator('.kb-card-activity .kb-working')).toBeVisible();
+  expect(await accent(working, 'animation-name')).toBe('kb-working-bar');
+  expect(await accent(working, 'width')).toBe('3px');
+  // The working label is gone; the activity announcement is the only text.
+  await expect(working.locator('.kb-working')).toHaveCount(0);
+  await expect(working.getByRole('status')).toHaveText(/Working/);
 
   const background = page.locator('[data-task-id="long-1"]');
   await expect(background).not.toHaveAttribute('data-working', 'true');
-  await expect(background.locator('.kb-card-activity').getByText('1 job')).toBeVisible();
+  expect(await accent(background, 'animation-name')).toBe('none');
+  await expect(background.locator('.kb-background')).toHaveCount(0);
+  await expect(background.getByText('1 job')).toHaveCount(0);
 
   // The activity region is reserved, so idle, working, and background cards share one height.
   const heights = await page.locator('.kb-card').evaluateAll(cards => cards.slice(0, 6).map(card => Math.round(card.getBoundingClientRect().height)));
   expect(new Set(heights).size, JSON.stringify(heights)).toBe(1);
-  const note = background.getByRole('note');
-  await expect(note).toHaveAttribute('title', 'Run tests');
-  await note.focus();
-  await expect(note).toBeFocused();
-  await expect(note).toHaveAttribute('aria-label', 'Background activity: 1 job. Run tests');
 
   const both = page.locator('[data-task-id="long-2"]');
-  await expect(both.locator('.kb-working')).toBeVisible();
-  await expect(both.getByText('1 schedule')).toBeVisible();
+  expect(await accent(both, 'animation-name')).toBe('kb-working-bar');
+  await expect(both.getByText('1 schedule')).toHaveCount(0);
 });
 
-test('mixed background kinds aggregate into one activity line beside the identity row', async ({ page }) => {
+test('mixed attention states coexist with the accent and no background chip', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=activity');
   await page.waitForSelector('.kb-card');
   const card = page.locator('[data-task-id="long-3"]');
-  const chip = card.locator('.kb-card-activity .kb-background');
-  await expect(chip).toHaveText('2 activities');
-  await expect(chip).toHaveAttribute('aria-label', 'Background activity: 2 activities. Run tests · Wake later');
-  await expect(chip).toHaveAttribute('title', 'Run tests · Wake later');
-  await expect(chip).not.toContainText('job');
-  await expect(chip).not.toContainText('subagent');
-
   const dots = card.locator('.kb-card-context .kb-attention-dots .kb-dot');
   await expect(dots).toHaveCount(3);
-  await expect(card.locator('.kb-card-context').getByText('2 activities')).toHaveCount(0);
+  await expect(card.locator('.kb-background')).toHaveCount(0);
+  expect(await accent(card, 'animation-name')).toBe('none');
   const activity = await card.locator('.kb-card-activity').evaluate(element => Math.round(element.getBoundingClientRect().height));
   expect(activity, 'the activity region stays on one reserved line').toBe(26);
+});
+
+test('keeps the controls of the activity row at one height', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=activity');
+  await page.waitForSelector('.kb-card');
+  const card = page.locator('[data-task-id="long-0"]');
+  await expect(card.locator('.kb-auto-chip')).toBeVisible();
+  const heights = await card.evaluate(element => {
+    const values = [...element.querySelectorAll('.kb-card-actions > *')].map(child => Math.round(child.getBoundingClientRect().height));
+    return values.length === 0 ? [0] : values;
+  });
+  expect(new Set(heights).size, JSON.stringify(heights)).toBe(1);
+  expect(heights[0]).toBe(26);
 });
 
 test('drawer activity dot stays on the Conversations tab across sections', async ({ page }) => {
@@ -66,28 +76,16 @@ test('drawer activity dot stays on the Conversations tab across sections', async
   }
 });
 
-test('reduced motion keeps the indicator visible without animation', async ({ page }) => {
+test('reduced motion keeps the accent visible without animation', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto(HARNESS + '?scenario=activity');
-  await page.waitForSelector('.kb-working-dot');
-  expect(await page.locator('.kb-working-dot').first().evaluate(element => element.getAnimations().length)).toBe(0);
-  await expect(page.locator('.kb-working').first()).toBeVisible();
-  await expect(page.locator('.kb-card[data-working=true]').first()).toBeVisible();
-  await page.getByRole('button', { name: 'Open task Long column task 0', exact: true }).click();
+  await page.waitForSelector('.kb-card');
+  const working = page.locator('[data-task-id="long-0"]');
+  await expect(working).toHaveAttribute('data-working', 'true');
+  expect(await accent(working, 'animation-name')).toBe('none');
+  expect(await accent(working, 'opacity')).toBe('1');
   const dot = page.locator('.kb-drawer .kb-activity-dot');
+  await page.getByRole('button', { name: 'Open task Long column task 0', exact: true }).click();
   await expect(dot).toBeVisible();
   expect(await dot.evaluate(element => element.getAnimations().length)).toBe(0);
-});
-
-test('working label matches the background chip typography', async ({ page }) => {
-  await page.goto(HARNESS + '?scenario=activity');
-  await page.waitForSelector('.kb-card');
-  const working = page.locator('[data-task-id="long-0"] .kb-working');
-  const chip = page.locator('[data-task-id="long-1"] .kb-background');
-  const reading = (locator: typeof working) => locator.evaluate(element => ({ size: getComputedStyle(element).fontSize, spacing: getComputedStyle(element).letterSpacing }));
-  const cardWorking = await reading(working);
-  const cardChip = await reading(chip);
-  expect(cardWorking.size).toBe(cardChip.size);
-  expect(cardWorking.size).toBe('10.5px');
-  expect(cardWorking.spacing).toBe('normal');
 });

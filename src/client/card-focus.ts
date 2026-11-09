@@ -1,7 +1,6 @@
 /**
- * The activatable control of a rendered task card, for either presentation:
- * the board card is a container with a `.kb-card-open` child, while the diagram
- * card is itself a button.
+ * The activatable control of a rendered task card. Both presentations render the
+ * same card: a container with a `.kb-card-open` control inside.
  */
 export function cardFocusTarget(taskId: string, root: ParentNode = document): HTMLElement | null {
   const card = Array.from(root.querySelectorAll<HTMLElement>('[data-task-id]')).find(element => element.dataset['taskId'] === taskId) ?? null;

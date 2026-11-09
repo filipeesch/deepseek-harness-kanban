@@ -27,12 +27,16 @@ test('keeps the project label and attention dots hoverable while the card still 
   await expect(page.locator('.kb-drawer')).toHaveCount(0);
 });
 
-test('opens the task from the background indicator', async ({ page }) => {
+test('does not present a background indicator on the card', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=activity');
   await page.waitForSelector('.kb-card');
-  await page.locator('[data-task-id="long-1"] .kb-background').click();
-  await expect(page.locator('.kb-drawer')).toBeVisible();
-  await expect(page.locator('.kb-drawer')).toContainText('Long column task 1');
+  await expect(page.locator('[data-task-id="long-1"] .kb-background')).toHaveCount(0);
+  await expect(page.locator('[data-task-id="long-1"] .kb-card-activity')).not.toContainText('1 job');
+  // The task still opens from its title and exposes the background in the drawer.
+  await page.getByRole('button', { name: 'Open task Long column task 1', exact: true }).click();
+  const drawer = page.locator('.kb-drawer');
+  await expect(drawer).toContainText('Long column task 1');
+  await expect(drawer.getByRole('tab', { name: /Background activity: Run tests/ })).toBeVisible();
 });
 
 test('places the selection control inline in the context row', async ({ page }) => {
