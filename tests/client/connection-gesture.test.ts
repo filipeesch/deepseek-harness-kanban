@@ -51,6 +51,17 @@ describe('connection drag gesture', () => {
     expect(fake.pointerListeners()).toBe(0);
   });
 
+  it('observes a move below the threshold without previewing it', () => {
+    const fake = ports();
+    const onSample = vi.fn();
+    const onMove = vi.fn();
+    beginConnectionDrag({ start, events: fake.events, keys: fake.keyEvents, onSample, onMove, onCommit: vi.fn(), onCancel: vi.fn() });
+    fake.move(101, 100);
+    expect(onSample).toHaveBeenCalledTimes(1);
+    expect(onMove).not.toHaveBeenCalled();
+    fake.up();
+  });
+
   it('treats a press without movement as no change and stores nothing', () => {
     const fake = ports();
     const onCommit = vi.fn();

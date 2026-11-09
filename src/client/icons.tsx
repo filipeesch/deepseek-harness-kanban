@@ -15,6 +15,7 @@ import {
   LayoutGrid as LayoutGridGlyph,
   Lock as LockGlyph,
   LockOpen as LockOpenGlyph,
+  Magnet as MagnetGlyph,
   MessagesSquare as MessagesSquareGlyph,
   NotebookPen as NotebookPenGlyph,
   Pencil as PencilGlyph,
@@ -90,3 +91,4 @@ export const RedoIcon = icon(Redo2Glyph);
 export const OrganizeIcon = icon(LayoutGridGlyph);
 export const LockIcon = icon(LockGlyph);
 export const UnlockIcon = icon(LockOpenGlyph);
+export const MagnetIcon = icon(MagnetGlyph);

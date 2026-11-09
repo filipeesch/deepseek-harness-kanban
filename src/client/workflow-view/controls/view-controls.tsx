@@ -1,5 +1,5 @@
 import React from 'react';
-import { FitViewIcon, LockIcon, OrganizeIcon, RedoIcon, UndoIcon, UnlockIcon, ZoomInIcon, ZoomOutIcon } from '../../icons.js';
+import { FitViewIcon, LockIcon, MagnetIcon, OrganizeIcon, RedoIcon, UndoIcon, UnlockIcon, ZoomInIcon, ZoomOutIcon } from '../../icons.js';
 import { TooltipButton } from './tooltip.js';
 
 export interface ViewControlsProps {
@@ -12,14 +12,17 @@ export interface ViewControlsProps {
   readonly onUndo: () => void;
   readonly onRedo: () => void;
   readonly onOrganize: () => void;
+  readonly snapping: boolean;
+  readonly onToggleSnap: () => void;
   readonly onToggleLock: () => void;
 }
 
 /**
- * The diagram's one control stack: navigation, layout history, and the layout
- * lock, in that order. Presentational only; the view owns every callback.
+ * The diagram's one control stack: navigation, layout history, then the two
+ * preference toggles, grid snapping and the layout lock. Presentational only; the
+ * view owns every callback.
  */
-export function ViewControls({ locked, canUndo, canRedo, onZoomIn, onZoomOut, onFit, onUndo, onRedo, onOrganize, onToggleLock }: ViewControlsProps) {
+export function ViewControls({ locked, canUndo, canRedo, onZoomIn, onZoomOut, onFit, onUndo, onRedo, onOrganize, snapping, onToggleSnap, onToggleLock }: ViewControlsProps) {
   return <div className="kb-flow-controls" role="group" aria-label="Diagram controls">
     <TooltipButton label="Zoom in" onClick={onZoomIn}><ZoomInIcon size={16} /></TooltipButton>
     <TooltipButton label="Zoom out" onClick={onZoomOut}><ZoomOutIcon size={16} /></TooltipButton>
@@ -29,6 +32,7 @@ export function ViewControls({ locked, canUndo, canRedo, onZoomIn, onZoomOut, on
     <TooltipButton label="Redo layout change" disabled={!canRedo || locked} onClick={onRedo}><RedoIcon size={16} /></TooltipButton>
     <TooltipButton label="Organize stages" disabled={locked} onClick={onOrganize}><OrganizeIcon size={16} /></TooltipButton>
     <span className="kb-flow-control-divider" aria-hidden="true" />
+    <TooltipButton label={snapping ? 'Turn off grid snapping' : 'Turn on grid snapping'} pressed={snapping} onClick={onToggleSnap}><MagnetIcon size={16} /></TooltipButton>
     <TooltipButton label={locked ? 'Unlock layout editing' : 'Lock layout editing'} pressed={locked} onClick={onToggleLock}>{locked ? <LockIcon size={16} /> : <UnlockIcon size={16} />}</TooltipButton>
   </div>;
 }
