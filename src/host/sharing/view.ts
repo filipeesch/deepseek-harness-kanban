@@ -82,6 +82,7 @@ export function buildSharingView(record: HubSharingRecord, hub: HubState, contex
     status,
     provider: record.binding.provider,
     providerLabel: context.provider.label,
+    supportsFiles: context.provider.supportsFiles,
     address: context.provider.address,
     ...(record.binding.provider === 'git' ? { repository: context.provider.address } : {}),
     syncMode: context.provider.syncMode,

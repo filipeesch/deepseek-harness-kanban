@@ -1,42 +1,28 @@
-import { realpath, stat } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import type { DriveDiscoveryView, DriveLocationView } from '../../../shared/types.js';
+import { TEAM_FILES_DIRECTORY } from '../../../shared/types.js';
 import { KanbanError, invariant } from '../../../shared/errors.js';
 import { DirectorySharedConfigStore, normalizeDirectoryState, type DirectoryStoreOptions } from '../directory-store.js';
+import { GuardedTeamFileStore } from '../guarded-team-file-store.js';
+import { DirectoryTeamFileStore, TeamFileDirectory } from '../team-file-directory.js';
 import {
   absoluteFolderPath,
   assertOutsideManagedRoot,
   folderIdentity,
   inspectFolder,
-  isWithinPath,
   resolveManagedRoot,
   type FolderPathOptions,
 } from '../local-folder-path.js';
 import type { BindingCandidate, ProviderState, SharingProviderDescriptor } from '../provider.js';
 import type { LocatedDriveFolder } from './discovery.js';
+import { createDriveMountGuard, drivePermissionDenied, type DriveMountGuardOptions } from './mount-guard.js';
 
 /** The discovery surface the descriptor and its store depend on. */
 export interface DriveLocationResolver {
   locate(value: string): Promise<LocatedDriveFolder | undefined>;
   roots(): Promise<DriveDiscoveryView>;
   refresh(): Promise<DriveDiscoveryView>;
-}
-
-interface PathState { canonical?: string; isDirectory?: boolean; code?: string }
-
-async function inspectCanonical(value: string): Promise<PathState> {
-  try {
-    const canonical = await realpath(value);
-    const info = await stat(canonical);
-    return { canonical, isDirectory: info.isDirectory() };
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    return { ...(code === undefined ? {} : { code }) };
-  }
-}
-
-function permissionDenied(value: string, cause?: string): KanbanError {
-  return new KanbanError('SHARING_DRIVE_PERMISSION_DENIED', 'The operating system denied access to the selected Google Drive folder.', { path: value, ...(cause === undefined ? {} : { cause }) });
 }
 
 export interface GoogleDriveLocalStoreOptions extends DirectoryStoreOptions {
@@ -53,7 +39,12 @@ export interface GoogleDriveLocalStoreOptions extends DirectoryStoreOptions {
  * refuses a location that discovery no longer reports.
  */
 export class GoogleDriveLocalSharedConfigStore extends DirectorySharedConfigStore {
-  constructor(private readonly driveOptions: GoogleDriveLocalStoreOptions) { super(driveOptions); }
+  private readonly assertMount: () => Promise<void>;
+
+  constructor(driveOptions: GoogleDriveLocalStoreOptions) {
+    super(driveOptions);
+    this.assertMount = createDriveMountGuard(guardOptions(driveOptions));
+  }
 
   override async ensure(): Promise<void> {
     await this.assertMount();
@@ -69,39 +60,11 @@ export class GoogleDriveLocalSharedConfigStore extends DirectorySharedConfigStor
     await this.assertMount();
     return super.write(document, options, signal);
   }
+}
 
-  private async assertMount(): Promise<void> {
-    const mount = this.driveOptions.mountRoot;
-    const root = await inspectCanonical(mount);
-    if (root.canonical === undefined || root.isDirectory !== true) {
-      if (root.code === 'EACCES' || root.code === 'EPERM') throw permissionDenied(mount, root.code);
-      await this.driveOptions.discovery.refresh().catch(() => undefined);
-      throw new KanbanError('SHARING_DRIVE_MOUNT_UNAVAILABLE', 'The Google Drive location is no longer mounted on this machine.', { path: this.driveOptions.directory, mount });
-    }
-    const directory = this.driveOptions.directory;
-    const folder = await inspectCanonical(directory);
-    if (folder.canonical === undefined || folder.isDirectory !== true) {
-      if (folder.code === 'EACCES' || folder.code === 'EPERM') throw permissionDenied(directory, folder.code);
-      throw new KanbanError('SHARING_FOLDER_MISSING', 'The selected Google Drive folder is not accessible.', { path: directory });
-    }
-    if (!isWithinPath(root.canonical, folder.canonical, this.driveOptions.platform)) {
-      throw new KanbanError('SHARING_DRIVE_NOT_IN_MOUNT', 'The selected folder no longer resolves inside its Google Drive location.', { path: directory, mount });
-    }
-    if (await this.isDiscovered(root.canonical)) return;
-    const refreshed = await this.driveOptions.discovery.refresh().catch(() => undefined);
-    if (refreshed !== undefined && this.containsRoot(refreshed, root.canonical)) return;
-    throw new KanbanError('SHARING_DRIVE_MOUNT_UNAVAILABLE', 'The Google Drive location is no longer discovered on this machine.', { path: directory, mount });
-  }
-
-  private async isDiscovered(canonicalRoot: string): Promise<boolean> {
-    const view = await this.driveOptions.discovery.roots().catch(() => undefined);
-    return view !== undefined && this.containsRoot(view, canonicalRoot);
-  }
-
-  private containsRoot(view: DriveDiscoveryView, canonicalRoot: string): boolean {
-    const identity = folderIdentity(canonicalRoot, this.driveOptions.platform);
-    return view.locations.some(location => folderIdentity(location.rootPath, this.driveOptions.platform) === identity);
-  }
+/** The guard options for one bound folder, shared by the document and file stores. */
+function guardOptions(options: { directory: string; mountRoot: string; discovery: DriveLocationResolver; platform: NodeJS.Platform }): DriveMountGuardOptions {
+  return { directory: options.directory, mountRoot: options.mountRoot, discovery: options.discovery, platform: options.platform };
 }
 
 export interface GoogleDriveLocalProviderOptions extends FolderPathOptions {
@@ -116,7 +79,7 @@ function drivePermissionFromInspection(error: unknown): KanbanError | undefined 
   if (!(error instanceof KanbanError) || error.code !== 'SHARING_FOLDER_MISSING') return undefined;
   const detail = error.details ?? {};
   const cause = typeof detail.code === 'string' ? detail.code : typeof detail.cause === 'string' ? detail.cause : undefined;
-  if (cause === 'EACCES' || cause === 'EPERM') return permissionDenied(typeof detail.path === 'string' ? detail.path : '', cause);
+  if (cause === 'EACCES' || cause === 'EPERM') return drivePermissionDenied(typeof detail.path === 'string' ? detail.path : '', cause);
   return undefined;
 }
 
@@ -188,6 +151,17 @@ export function createGoogleDriveLocalProviderDescriptor(options: GoogleDriveLoc
       if (directory === undefined) throw new KanbanError('INVALID_INPUT', 'A Google Drive folder is required.');
       if (mountRoot === undefined) throw new KanbanError('INVALID_INPUT', 'The Google Drive location for this folder is missing.');
       return new GoogleDriveLocalSharedConfigStore({ directory, mountRoot, discovery: options.discovery, state, platform });
+    },
+    createFileStore(_hubId, binding) {
+      if (binding.provider !== 'google-drive-local') throw new KanbanError('SHARING_UNSUPPORTED_STORAGE', 'The configured team storage is not Google Drive Local.', { provider: binding.provider });
+      const directory = text(binding.settings.path);
+      const mountRoot = text(binding.settings.mountId);
+      if (directory === undefined) throw new KanbanError('INVALID_INPUT', 'A Google Drive folder is required.');
+      if (mountRoot === undefined) throw new KanbanError('INVALID_INPUT', 'The Google Drive location for this folder is missing.');
+      // The file store re-proves the mount before every operation, exactly like
+      // the document store, so a redirected folder is never served as current.
+      const guard = createDriveMountGuard(guardOptions({ directory, mountRoot, discovery: options.discovery, platform }));
+      return new GuardedTeamFileStore(guard, new DirectoryTeamFileStore(new TeamFileDirectory(path.join(directory, TEAM_FILES_DIRECTORY))));
     },
     normalizeState(state: ProviderState): ProviderState { return normalizeDirectoryState(state); },
   };

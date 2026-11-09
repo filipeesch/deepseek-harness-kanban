@@ -1,7 +1,9 @@
 import os from 'node:os';
 import path from 'node:path';
 import { KanbanError, invariant } from '../../shared/errors.js';
+import { TEAM_FILES_DIRECTORY } from '../../shared/types.js';
 import { DirectorySharedConfigStore, normalizeDirectoryState } from './directory-store.js';
+import { DirectoryTeamFileStore, TeamFileDirectory } from './team-file-directory.js';
 import {
   abbreviateHome,
   absoluteFolderPath,
@@ -70,9 +72,11 @@ export function createLocalFolderProviderDescriptor(options: LocalFolderProvider
     },
     createStore(hubId, binding, state) {
       if (binding.provider !== 'local-folder') throw new KanbanError('SHARING_UNSUPPORTED_STORAGE', 'The configured team storage is not a local folder.', { provider: binding.provider });
-      const directory = text(binding.settings.path);
-      if (directory === undefined) throw new KanbanError('INVALID_INPUT', 'A folder path is required.');
-      return new DirectorySharedConfigStore({ directory, state });
+      return new DirectorySharedConfigStore({ directory: requireDirectory(binding), state });
+    },
+    createFileStore(_hubId, binding) {
+      if (binding.provider !== 'local-folder') throw new KanbanError('SHARING_UNSUPPORTED_STORAGE', 'The configured team storage is not a local folder.', { provider: binding.provider });
+      return new DirectoryTeamFileStore(new TeamFileDirectory(path.join(requireDirectory(binding), TEAM_FILES_DIRECTORY)));
     },
     normalizeState,
   };
@@ -80,4 +84,11 @@ export function createLocalFolderProviderDescriptor(options: LocalFolderProvider
 
 function normalizeState(state: ProviderState): ProviderState {
   return normalizeDirectoryState(state);
+}
+
+/** The bound folder, or a refusal naming the missing setting. */
+function requireDirectory(binding: { settings: Record<string, string> }): string {
+  const directory = text(binding.settings.path);
+  if (directory === undefined) throw new KanbanError('INVALID_INPUT', 'A folder path is required.');
+  return directory;
 }

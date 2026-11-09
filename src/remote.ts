@@ -85,7 +85,7 @@ export const SharingAuthViewSchema:z.ZodType<SharingAuthView>=z.object({
  folders:z.array(z.object({id:id,name:z.string().min(1)}).strict()).optional(),
 }).strict();
 export const HubSharingViewSchema:z.ZodType<HubSharingView>=z.object({
- status:sharingHubStatus,provider:sharingStorage,providerLabel:z.string().min(1),address:z.string(),repository:z.string().optional(),syncMode:sharingSyncMode,
+ status:sharingHubStatus,provider:sharingStorage,providerLabel:z.string().min(1),supportsFiles:z.boolean(),address:z.string(),repository:z.string().optional(),syncMode:sharingSyncMode,
  authorization:sharingAuthStatus.optional(),
  intervalMinutes:z.number().int().nonnegative(),lastCheckedAt:z.string().optional(),lastSyncedAt:z.string().optional(),error:ProblemSchema.optional(),
  drafts:z.number().int().nonnegative(),pending:z.number().int().nonnegative(),updates:z.number().int().nonnegative(),conflicts:z.number().int().nonnegative(),orderChanged:z.boolean(),syncing:z.boolean(),

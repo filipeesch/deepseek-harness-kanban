@@ -1,6 +1,7 @@
 import { KanbanError } from '../../shared/errors.js';
 import { SHARING_STORAGES, type SharingStorage } from '../../shared/types.js';
 import type { SharedConfigStore } from './store.js';
+import type { TeamFileStore } from './team-file-store.js';
 
 /** Storage identifiers supported by the sharing boundary, derived from the shared list. */
 export type SharingProviderId = SharingStorage;
@@ -29,6 +30,8 @@ export interface ProviderDescription {
   defaultIntervalMinutes: number;
   /** The storage needs an external authorization before a binding is accepted. */
   requiresAuthorization: boolean;
+  /** Whether this storage can serve team files, derived from its descriptor. */
+  supportsFiles: boolean;
 }
 
 /**
@@ -46,6 +49,8 @@ export interface SharingProviderDescriptor {
   normalizeSettings(settings: Record<string, string>): Record<string, string>;
   describe(binding: SharingBinding): string;
   createStore(hubId: string, binding: SharingBinding, state: ProviderState): SharedConfigStore;
+  /** Absent when the storage cannot serve the team files directory. */
+  createFileStore?(hubId: string, binding: SharingBinding, state: ProviderState): TeamFileStore;
   /** Validate the persisted provider state; an unusable state falls back to empty. */
   normalizeState(state: ProviderState): ProviderState;
   /**
@@ -59,6 +64,8 @@ export interface SharingProviderDescriptor {
 /** The service-facing resolver; tests can provide a small fake implementation. */
 export interface SharingProviderResolver {
   create(hubId: string, binding: SharingBinding, state: ProviderState): SharedConfigStore;
+  /** Absent in narrow test resolvers; a service then reports the storage as unsupported. */
+  createFileStore?(hubId: string, binding: SharingBinding, state: ProviderState): TeamFileStore | undefined;
   describe(binding: SharingBinding): ProviderDescription;
   normalize(provider: SharingProviderId, settings: Record<string, string>): Record<string, string>;
   defaultInterval(provider: SharingProviderId): number;
@@ -89,6 +96,16 @@ export class SharingProviderRegistry implements SharingProviderResolver {
     return descriptor.createStore(hubId, binding, descriptor.normalizeState(state));
   }
 
+  createFileStore(hubId: string, binding: SharingBinding, state: ProviderState): TeamFileStore | undefined {
+    const descriptor = this.get(binding.provider);
+    if (!descriptor.createFileStore) return undefined;
+    return descriptor.createFileStore(hubId, binding, descriptor.normalizeState(state));
+  }
+
+  supportsFiles(id: SharingProviderId): boolean {
+    return this.get(id).createFileStore !== undefined;
+  }
+
   describe(binding: SharingBinding): ProviderDescription {
     const descriptor = this.get(binding.provider);
     return {
@@ -98,6 +115,7 @@ export class SharingProviderRegistry implements SharingProviderResolver {
       syncMode: descriptor.syncMode,
       defaultIntervalMinutes: descriptor.defaultIntervalMinutes,
       requiresAuthorization: descriptor.requiresAuthorization,
+      supportsFiles: descriptor.createFileStore !== undefined,
     };
   }
 

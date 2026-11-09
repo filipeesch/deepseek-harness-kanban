@@ -57,6 +57,7 @@ async function fixture(seed: Record<string, SharedHubDocument> = {}) {
       syncMode: binding.provider === 'google-drive-local' ? 'continuous' : 'explicit',
       defaultIntervalMinutes: binding.provider === 'google-drive-local' ? 1 : 5,
       requiresAuthorization: false,
+      supportsFiles: false,
     }),
     normalize: (_provider, settings) => settings,
     defaultInterval: provider => provider === 'google-drive-local' ? 1 : 5,

@@ -12,6 +12,7 @@ import { openSharingStorage } from './host/sharing/state.js';
 import { HubSharingService } from './host/sharing/service.js';
 import { SharingPollScheduler } from './host/sharing/scheduler.js';
 import { createGitProviderDescriptor } from './host/sharing/git-store.js';
+import { TeamFiles } from './host/team-files/service.js';
 import { sharingRoot } from './host/sharing/root.js';
 import type { SharingCommandRunner } from './host/sharing/command-runner.js';
 import { GoogleDriveAuthService } from './host/sharing/google-drive-auth.js';
@@ -189,7 +190,8 @@ export async function apply(ctx:Context):Promise<void>{
  try{schedules=await openScheduleRunStorage(ctx);}catch(error){await hubs.close();await questions.close();await storage.close();throw error;}
  let sharing:HubSharingRuntime;
  try{sharing=await openHubSharing(ctx,hubs,{report});}catch(error){await schedules.close();await hubs.close();await questions.close();await storage.close();throw error;}
- const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler},native.workspaces);
+ const teamFiles=new TeamFiles({store:hubId=>sharing.service.fileStoreFor(hubId),exclusive:(hubId,operation)=>sharing.service.exclusive(hubId,operation)});
+ const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
  sharing.setNotify(()=>app.sharingChanged());
  const scheduleModels=createScheduleModelPort(ctx);
  const scheduleRuns=new ScheduleRunRegistry({storage:schedules.storage,now:()=>new Date().toISOString(),onChange:()=>app.activityChanged(),report});

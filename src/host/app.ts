@@ -39,6 +39,7 @@ import { RepositoryWorktreeStore, TaskLocator } from './task-locator.js';
 import { QuestionIndex } from '../questions/indexer.js';
 import * as operations from '../domain/hub-operations.js';
 import type { HubSharingService } from './sharing/service.js';
+import type { TeamFiles } from './team-files/service.js';
 import type { SharingPollScheduler } from './sharing/scheduler.js';
 import type { GoogleDriveLocalDiscovery } from './sharing/google-drive-local/discovery.js';
 import { isAuthorizationCommand, type GoogleDriveAuthCoordinator } from './sharing/auth-coordinator.js';
@@ -65,7 +66,7 @@ function boardSharingPort(sharing:HubSharingService):BoardSharingPort{
   publish:hubId=>sharing.publish(hubId),
  };
 }
-export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore; probe?:ProjectProbe; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler }
+export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore; probe?:ProjectProbe; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles }
 /** Coordinates Hub-scoped commands while the host continues to own sessions and execution. */
 export class KanbanApp {
  readonly questions=new QuestionIndex();
@@ -74,6 +75,8 @@ export class KanbanApp {
  private readonly operationQueue=new OperationQueue();
  readonly locator:TaskLocator;
  readonly boards:BoardAdministration;
+ /** The team file surface, present only when the host wires a sharing service. */
+ readonly teamFiles?:TeamFiles;
  private readonly listeners=new Set<()=>void>();
  private readonly prepared=new Map<string,Promise<void>>();
  private readonly attention:AttentionCoordinator;
@@ -94,6 +97,7 @@ export class KanbanApp {
  private scheduleRuntime:ScheduleRuntimePort|undefined;
  constructor(readonly hubs:HubRepository,readonly sessions:SessionPort,readonly git:GitPort,private readonly options:AppOptions={},private readonly workspaces?:WorkspacePort){
   this.locator=new TaskLocator(hubs);
+  if(options.teamFiles)this.teamFiles=options.teamFiles;
   this.boards=new BoardAdministration({hubs,...(options.sharing?{sharing:boardSharingPort(options.sharing)}:{}),...(options.report?{report:options.report}:{})});
   this.factsSource=withQuestionPending({read:id=>this.sessions.facts(id)},this.questions);
   if(workspaces)this.workspaceCoordinator=new WorkspaceCoordinator({

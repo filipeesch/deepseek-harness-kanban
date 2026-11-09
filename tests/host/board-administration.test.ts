@@ -41,6 +41,7 @@ function sharingView(overrides: Partial<HubSharingView> = {}): HubSharingView {
     status: 'published',
     provider: 'git',
     providerLabel: 'Git',
+    supportsFiles: true,
     address: 'team/repo',
     syncMode: 'explicit',
     intervalMinutes: 5,
