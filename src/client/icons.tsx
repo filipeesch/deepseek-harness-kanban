@@ -5,6 +5,8 @@ import {
   ChevronsRight as ChevronsRightGlyph,
   Clock as ClockGlyph,
   Cloud as CloudGlyph,
+  Filter as FilterGlyph,
+  FilterX as FilterClearGlyph,
   Folder as FolderGlyph,
   Frame as FrameGlyph,
   GitBranch as GitBranchGlyph,
@@ -56,6 +58,8 @@ export const PencilIcon = icon(PencilGlyph);
 export const CloseIcon = icon(XGlyph);
 export const PlusIcon = icon(PlusGlyph);
 export const CheckSquareIcon = icon(SquareCheckGlyph);
+export const FilterIcon = icon(FilterGlyph);
+export const FilterClearIcon = icon(FilterClearGlyph);
 export const InfoIcon = icon(InfoGlyph);
 export const PlayIcon = icon(PlayGlyph, 'currentColor');
 export const AlertIcon = icon(TriangleExclamationPointGlyph);

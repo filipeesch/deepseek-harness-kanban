@@ -2,6 +2,11 @@ import { expect, test, type Page } from '@playwright/test';
 
 const HARNESS = new URL('./.tmp/index.html', import.meta.url).href;
 
+/** Both filter inputs live inside the popover, so a test opens it before using them. */
+async function openFilterPopover(page: Page): Promise<void> {
+  await page.getByRole('button', { name: /^Filter tasks/ }).click();
+}
+
 interface HarnessColumn { id: string; name: string }
 interface HarnessTask { id: string; columnId: string; position: number; title: string; [key: string]: unknown }
 interface HarnessState { hubs: Array<{ tasks: HarnessTask[]; boards: Array<{ workflow: { columns: HarnessColumn[] } }> }> }
@@ -263,6 +268,7 @@ test('replacing the presented view settles immediately', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 2200 });
   await page.goto(HARNESS + '?scenario=board');
   await page.waitForSelector('.kb-column');
+  await openFilterPopover(page);
   const search = page.getByRole('searchbox', { name: 'Search tasks' });
   await search.fill('Short task');
   await page.waitForFunction(() => document.querySelectorAll('.kb-card').length === 1);
