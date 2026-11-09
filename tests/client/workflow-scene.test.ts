@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Task, Workflow } from '../../src/shared/types.js';
 import { buildWorkflowScene } from '../../src/client/workflow-view/scene.js';
 import { filterTasks } from '../../src/client/task-filter.js';
+import { transitions } from '../support/transition-rules.js';
 
 function task(id: string, columnId: string, position: number): Task {
   return {
@@ -15,7 +16,7 @@ const workflow: Workflow = {
   name: 'Flow',
   initialColumnId: 'one',
   columns: [
-    { id: 'one', name: 'One', allowedTransitions: ['two'] },
+    { id: 'one', name: 'One', allowedTransitions: transitions('two') },
     { id: 'two', name: 'Two' },
     { id: 'three', name: 'Three', allowedTransitions: [] },
   ],

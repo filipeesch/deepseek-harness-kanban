@@ -53,7 +53,7 @@ export function workflowGraph(workflow: Workflow): WorkflowGraph {
     if (authored === null) continue;
     const candidates = authored.targets === null
       ? (authored.next === undefined ? [] : [authored.next.id])
-      : authored.targets;
+      : authored.targets.map(rule => rule.to);
     const targets = candidates.filter(target => target !== column.id && indexOf.has(target));
     const kind: WorkflowConnectionKind = authored.targets === null ? 'implicit' : 'explicit';
     targets.forEach((target, fanOut) => {

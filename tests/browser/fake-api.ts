@@ -3,6 +3,7 @@ import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import { taskTitleSlug, worktreePathForBranch } from '../../src/shared/worktree-name.js';
 import { applyMove, applyRunInstruction, createEnteredAtSource } from '../support/in-memory-board.js';
+import { transitions } from '../support/transition-rules.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 
 export interface HarnessApi {
@@ -15,7 +16,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { attention?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error' }
+export interface HarnessOptions { recorded?: boolean; staleRoute?: boolean; attention?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error' }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -74,12 +75,28 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
       { id: 'p', name: 'Project', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' },
       { id: 'p2', name: 'A very long project name that must truncate inside the card', projectPath: '/repo/long', gitRootPath: '/repo', defaultBranch: 'main' },
     ],
-    boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(options.restricted, options.prepare !== undefined, options.restrictedNext), workflow: { name: 'Harness flow', initialColumnId: 'explore', columns: [{ id: 'explore', name: 'Explore', ...(options.restrictedNext ? { allowedTransitions: ['apply'] } : options.restricted ? { allowedTransitions: ['propose'] } : {}) }, { id: 'propose', name: 'Propose', ...(options.restricted ? {} : { onEnterPrompt: 'Plan this task.' }) }, { id: 'apply', name: 'Apply', ...(options.prepare === undefined ? {} : { onEnterPrompt: 'Apply the plan.' }) }], groups: [{ id: 'planning', name: 'Planning', columnIds: ['explore', 'propose'] }] }, createdAt: now, updatedAt: now }],
+    boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(options.restricted, options.prepare !== undefined, options.restrictedNext), workflow: { name: 'Harness flow', initialColumnId: 'explore', columns: [{ id: 'explore', name: 'Explore', ...(options.restrictedNext ? { allowedTransitions: transitions('apply') } : options.restricted ? { allowedTransitions: transitions('propose') } : {}) }, { id: 'propose', name: 'Propose', ...(options.restricted ? {} : { onEnterPrompt: 'Plan this task.' }) }, { id: 'apply', name: 'Apply', ...(options.prepare === undefined ? {} : { onEnterPrompt: 'Apply the plan.' }) }], groups: [{ id: 'planning', name: 'Planning', columnIds: ['explore', 'propose'] }] }, createdAt: now, updatedAt: now }],
     tasks, notes: options.notes ? [
       { id: 'n1', taskId: 'short', content: 'Design note with **bold** text', tags: ['design'], createdAt: now, updatedAt: now },
       { id: 'n2', taskId: 'short', content: 'Todo note', tags: ['todo'], createdAt: now, updatedAt: now },
     ] satisfies Note[] : [], createdAt: now, updatedAt: now,
   };
+  if (options.recorded) {
+    // A branch the model routed explicitly: Explore configures two targets and the
+    // task records the second, so both the automatic and manual paths follow it.
+    hub.boards[0]!.workflow.columns.find(column => column.id === 'explore')!.allowedTransitions = transitions('propose', 'apply');
+    const routed = hub.tasks.find(task => task.id === 'long-0')!;
+    routed.autoMode = { enabled: true };
+    routed.recordedTransition = { fromColumnId: 'explore', columnId: 'apply', at: now };
+  }
+  if (options.staleRoute) {
+    // A recording whose target the workflow no longer configures: the automatic
+    // advance pauses and the drawer's next-stage action refuses.
+    hub.boards[0]!.workflow.columns.find(column => column.id === 'explore')!.allowedTransitions = transitions('propose', 'apply');
+    const routed = hub.tasks.find(task => task.id === 'long-0')!;
+    routed.autoMode = { enabled: true };
+    routed.recordedTransition = { fromColumnId: 'explore', columnId: 'done', at: now };
+  }
   if (options.extraProject) hub.projects.push({ id: 'p3', name: 'Relocation-only project', projectPath: '/repo/free', gitRootPath: '/repo', defaultBranch: 'main' });
   options.relocation?.forEach((state, index) => {
     const project = hub.projects[index];

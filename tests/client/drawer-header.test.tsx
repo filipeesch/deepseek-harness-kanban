@@ -10,6 +10,7 @@ import { DrawerActions } from '../../src/client/drawer-actions.js';
 import { DrawerSectionNav } from '../../src/client/drawer-section-nav.js';
 import { autoModeView } from '../../src/client/auto-mode.js';
 import { nextStage, transitionDestinations } from '../../src/domain/transitions.js';
+import { transitions } from '../support/transition-rules.js';
 import type { Column, Task, Workflow } from '../../src/shared/types.js';
 
 afterEach(cleanup);
@@ -20,7 +21,7 @@ const workflow: Workflow = {
   name: 'Flow',
   initialColumnId: 'backlog',
   columns: [
-    column('backlog', 'Backlog', { allowedTransitions: ['plan'] }),
+    column('backlog', 'Backlog', { allowedTransitions: transitions('plan') }),
     column('plan', 'Plan'),
     column('done', 'Done'),
   ],
@@ -110,6 +111,16 @@ describe('DrawerStageControl', () => {
     first.unmount();
     render(<DrawerStageControl id="stage" destinations={destinations} currentColumnId="done" next={nextStage(workflow, 'done')} movingTo={null} blocked={false} onMove={() => {}} />);
     expect(screen.queryByRole('button', { name: /Move to/ })).toBeNull();
+  });
+
+  it('refuses a stale recorded transition instead of moving', () => {
+    const onMove = vi.fn();
+    const onRefuse = vi.fn();
+    const message = 'The recorded transition is no longer a configured transition of the Backlog stage.';
+    render(<DrawerStageControl id="stage" destinations={destinations} currentColumnId="backlog" staleNext={message} movingTo={null} blocked={false} onMove={onMove} onRefuse={onRefuse} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Recorded transition unavailable: ' + message }));
+    expect(onRefuse).toHaveBeenCalledTimes(1);
+    expect(onMove).not.toHaveBeenCalled();
   });
 
   it('disables both controls while the task is blocked and reflects the moving stage', () => {

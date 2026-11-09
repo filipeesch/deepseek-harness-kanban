@@ -8,6 +8,7 @@ import type { Column, Task, Workflow } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import { fixture } from './helpers.js';
+import { transitions } from '../support/transition-rules.js';
 
 afterEach(cleanup);
 
@@ -15,7 +16,7 @@ const now = '2026-01-01T00:00:00Z';
 const column = (id: string, extra: Partial<Column> = {}): Column => ({ id, name: id.charAt(0).toUpperCase() + id.slice(1), ...extra });
 const flow = (...columns: Column[]): Workflow => ({ name: 'Flow', initialColumnId: columns[0]!.id, columns, groups: [] });
 const workflow = flow(
-  column('backlog', { allowedTransitions: ['plan'] }),
+  column('backlog', { allowedTransitions: transitions('plan') }),
   column('plan'),
   column('review', { onEnterPrompt: 'Review it.' }),
   column('done'),
@@ -43,6 +44,28 @@ describe('autoModeView', () => {
     expect(view.status).toBeUndefined();
     expect(view.stateLabel).toBeUndefined();
     expect(view.title).toBe('Auto mode is on: the next completed turn moves to Review.');
+  });
+
+  it('names the recorded transition as the destination', () => {
+    const routed = flow(
+      column('backlog', { allowedTransitions: transitions('plan', 'done') }),
+      column('plan'),
+      column('review', { onEnterPrompt: 'Review it.' }),
+      column('done'),
+    );
+    const view = autoModeView(task({ autoMode: { enabled: true }, recordedTransition: { fromColumnId: 'backlog', columnId: 'done', at: now } }), routed);
+    expect(view.state).toBe('armed');
+    expect(view.destinationName).toBe('Done');
+    expect(view.title).toContain('the transition this task recorded');
+  });
+
+  it('presents a recorded transition that no longer resolves as the stale pause', () => {
+    const routed = flow(column('backlog', { allowedTransitions: transitions('done') }), column('plan'), column('done'));
+    const view = autoModeView(task({ autoMode: { enabled: true }, recordedTransition: { fromColumnId: 'backlog', columnId: 'plan', at: now } }), routed);
+    expect(view.state).toBe('paused');
+    expect(view.reason).toBe('transition-stale');
+    expect(view.status?.tone).toBe('danger');
+    expect(view.status?.label).toContain('the recorded transition is no longer valid');
   });
 
   it('derives the instruction state for an unresolved current entry', () => {

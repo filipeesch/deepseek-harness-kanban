@@ -2,30 +2,32 @@ import { describe, expect, it } from 'vitest';
 import type { Column, ConversationFacts, Task, Workflow } from '../../src/shared/types.js';
 import { EMPTY_CONVERSATION_FACTS } from '../../src/shared/types.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
-import { nextConfiguredColumn, resolveAdvanceDecision, resolveAutoAdvance } from '../../src/domain/auto-advance.js';
+import { resolveAdvanceDecision, resolveAutoAdvance } from '../../src/domain/auto-advance.js';
+import { defaultDestination } from '../../src/domain/transitions.js';
+import { transitions } from '../support/transition-rules.js';
 
 const column = (id: string, extra: Partial<Column> = {}): Column => ({ id, name: id.toUpperCase(), ...extra });
 const flow = (...columns: Column[]): Workflow => ({ name: 'Flow', initialColumnId: columns[0]!.id, columns, groups: [] });
 
-describe('nextConfiguredColumn', () => {
+describe('defaultDestination', () => {
   it('prefers the first configured transition over workflow order', () => {
-    const workflow = flow(column('backlog', { allowedTransitions: ['done', 'plan'] }), column('plan'), column('done'));
-    expect(nextConfiguredColumn(workflow, 'backlog')?.id).toBe('done');
+    const workflow = flow(column('backlog', { allowedTransitions: transitions('done', 'plan') }), column('plan'), column('done'));
+    expect(defaultDestination(workflow, 'backlog')?.id).toBe('done');
   });
 
   it('uses the next stage in workflow order when transitions are not configured', () => {
     const workflow = flow(column('backlog'), column('plan'), column('done'));
-    expect(nextConfiguredColumn(workflow, 'backlog')?.id).toBe('plan');
+    expect(defaultDestination(workflow, 'backlog')?.id).toBe('plan');
   });
 
   it('has no destination for an empty transition list, a self transition, or an unknown stage', () => {
-    expect(nextConfiguredColumn(flow(column('backlog', { allowedTransitions: [] }), column('plan')), 'backlog')).toBeUndefined();
-    expect(nextConfiguredColumn(flow(column('backlog', { allowedTransitions: ['backlog'] }), column('plan')), 'backlog')).toBeUndefined();
-    expect(nextConfiguredColumn(flow(column('backlog'), column('plan')), 'missing')).toBeUndefined();
+    expect(defaultDestination(flow(column('backlog', { allowedTransitions: [] }), column('plan')), 'backlog')).toBeUndefined();
+    expect(defaultDestination(flow(column('backlog', { allowedTransitions: transitions('backlog') }), column('plan')), 'backlog')).toBeUndefined();
+    expect(defaultDestination(flow(column('backlog'), column('plan')), 'missing')).toBeUndefined();
   });
 
   it('has no destination after the last stage', () => {
-    expect(nextConfiguredColumn(flow(column('backlog'), column('done')), 'done')).toBeUndefined();
+    expect(defaultDestination(flow(column('backlog'), column('done')), 'done')).toBeUndefined();
   });
 });
 
@@ -57,9 +59,9 @@ describe('resolveAutoAdvance', () => {
 
   it('follows the first configured transition for each crossed stage', () => {
     const workflow = flow(
-      column('backlog', { allowedTransitions: ['review', 'plan'] }),
+      column('backlog', { allowedTransitions: transitions('review', 'plan') }),
       column('plan'),
-      column('review', { allowedTransitions: ['done'], onEnterPrompt: 'Review it.' }),
+      column('review', { allowedTransitions: transitions('done'), onEnterPrompt: 'Review it.' }),
       column('done'),
     );
     const plan = resolveAutoAdvance(workflow, 'backlog');
@@ -69,8 +71,8 @@ describe('resolveAutoAdvance', () => {
 
   it('never revisits a stage in a configured cycle', () => {
     const workflow = flow(
-      column('backlog', { allowedTransitions: ['plan'] }),
-      column('plan', { allowedTransitions: ['backlog'] }),
+      column('backlog', { allowedTransitions: transitions('plan') }),
+      column('plan', { allowedTransitions: transitions('backlog') }),
     );
     const plan = resolveAutoAdvance(workflow, 'backlog');
     expect(plan.path.map(value => value.id)).toEqual(['plan']);
@@ -79,8 +81,8 @@ describe('resolveAutoAdvance', () => {
 
   it('stops before repeating a stage even when an instruction is later in the cycle', () => {
     const workflow = flow(
-      column('backlog', { allowedTransitions: ['plan'] }),
-      column('plan', { allowedTransitions: ['backlog'] }),
+      column('backlog', { allowedTransitions: transitions('plan') }),
+      column('plan', { allowedTransitions: transitions('backlog') }),
       column('done', { onEnterPrompt: 'Finish it.' }),
     );
     const plan = resolveAutoAdvance(workflow, 'backlog');
@@ -99,6 +101,32 @@ describe('resolveAutoAdvance', () => {
     expect(resolveAutoAdvance(flow(column('backlog'), column('done')), 'missing')).toEqual({ fromColumnId: 'missing', path: [] });
     expect(resolveAutoAdvance(flow(column('backlog')), 'backlog')).toEqual({ fromColumnId: 'backlog', path: [] });
     expect(resolveAutoAdvance(flow(column('backlog', { allowedTransitions: [] }), column('done')), 'backlog')).toEqual({ fromColumnId: 'backlog', path: [] });
+  });
+
+  it('stops exactly at a recorded destination instead of crossing it', () => {
+    const workflow = flow(
+      column('backlog', { allowedTransitions: transitions('review', 'plan') }),
+      column('plan', { onEnterPrompt: 'Plan it.' }),
+      column('review'),
+      column('done', { onEnterPrompt: 'Done.' }),
+    );
+    const plan = resolveAutoAdvance(workflow, 'backlog', { exact: workflow.columns[2]! });
+    expect(plan.path.map(value => value.id)).toEqual(['review']);
+    expect(plan.destination?.id).toBe('review');
+    expect(plan.instruction).toBeUndefined();
+  });
+
+  it('captures the instruction of a recorded destination', () => {
+    const workflow = flow(column('backlog', { allowedTransitions: transitions('plan', 'done') }), column('plan', { onEnterPrompt: 'Plan it.' }), column('done'));
+    const plan = resolveAutoAdvance(workflow, 'backlog', { exact: workflow.columns[1]! });
+    expect(plan.path.map(value => value.id)).toEqual(['plan']);
+    expect(plan.destination?.id).toBe('plan');
+    expect(plan.instruction).toBe('Plan it.');
+  });
+
+  it('has no plan when the recorded destination is the current stage', () => {
+    const workflow = flow(column('backlog', { allowedTransitions: transitions('plan') }), column('plan'));
+    expect(resolveAutoAdvance(workflow, 'backlog', { exact: workflow.columns[0]! })).toEqual({ fromColumnId: 'backlog', path: [] });
   });
 });
 

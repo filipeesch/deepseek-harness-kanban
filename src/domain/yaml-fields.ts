@@ -1,4 +1,6 @@
 import { KanbanError } from '../shared/errors.js';
+import type { TransitionRule } from '../shared/types.js';
+import { transitionRule } from './transition-rule.js';
 import { isDomainId } from './validation.js';
 
 /** Throws the code the authored workflow parsers report for an invalid document. */
@@ -43,5 +45,25 @@ export function createYamlFields(invalid: InvalidField) {
     return result;
   }
 
-  return { record, keys, text, id, ids };
+  /**
+   * One transition entry: a bare target identifier, or a mapping with the target
+   * and an optional condition. Both forms normalize to the same value.
+   */
+  function rule(value: unknown, context: string): TransitionRule {
+    if (typeof value === 'string') return transitionRule(id(value, context));
+    const map = record(value, context);
+    keys(map, ['to', 'when'], context + ' transition');
+    const to = id(map.to, context + ' target');
+    if (map.when !== undefined && map.when !== null && typeof map.when !== 'string') invalid(context + ' condition must be text.');
+    return transitionRule(to, typeof map.when === 'string' ? map.when : undefined);
+  }
+
+  function rules(value: unknown, context: string): TransitionRule[] {
+    if (!Array.isArray(value)) invalid(context + ' must be an array of column IDs or transition mappings.');
+    const result = value.map((item, index) => rule(item, context + '[' + index + ']'));
+    if (new Set(result.map(entry => entry.to)).size !== result.length) invalid(context + ' contains duplicate IDs.');
+    return result;
+  }
+
+  return { record, keys, text, id, ids, rules };
 }

@@ -32,6 +32,42 @@ const SILENT_FLOW = [
   '    label: Done',
   '',
 ].join('\n');
+const BRANCHED_FLOW = [
+  'name: Branched flow',
+  'initial_column: backlog',
+  'columns:',
+  '  - id: backlog',
+  '    label: Backlog',
+  '    allowed_transitions: [plan, done]',
+  '  - id: plan',
+  '    label: Plan',
+  '    on_enter_prompt: Plan it.',
+  '    allowed_transitions:',
+  '      - to: done',
+  '        when: The plan approved the task without further work.',
+  '      - to: review',
+  '        when: The plan needs a review before implementation.',
+  '  - id: review',
+  '    label: Review',
+  '  - id: done',
+  '    label: Done',
+  '',
+].join('\n');
+const REMOVED_DESTINATION_FLOW = [
+  'name: Removed destination',
+  'initial_column: backlog',
+  'columns:',
+  '  - id: backlog',
+  '    label: Backlog',
+  '    allowed_transitions: [plan]',
+  '  - id: plan',
+  '    label: Plan',
+  '    on_enter_prompt: Plan it.',
+  '    allowed_transitions: [review]',
+  '  - id: review',
+  '    label: Review',
+  '',
+].join('\n');
 const CASCADE_FLOW = [
   'name: Cascade flow',
   'initial_column: backlog',
@@ -86,6 +122,60 @@ describe('automatic advance', () => {
     expect(f.sessions.sent).toHaveLength(1);
     expect(f.sessions.sent[0]).toMatchObject({ id: sessionId, text: 'Plan it.' });
     expect(f.sessions.dirs.size).toBe(1);
+  });
+
+  it('sends the transition briefing with the destination instruction', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(BRANCHED_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Briefed', description: '' });
+    await arm(f.app, task.id);
+    await endTurn(f.app, task.sessionIds[0]!, 1);
+    await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('plan');
+    await expect.poll(() => f.sessions.sent.length).toBe(1);
+    const text = f.sessions.sent[0]!.text;
+    expect(text.startsWith('Plan it.\n\nWorkflow transitions from Plan:')).toBe(true);
+    expect(text).toContain('- Done — The plan approved the task without further work.');
+    expect(text).toContain('- Review — The plan needs a review before implementation.');
+    expect(text).toContain('set_next_transition');
+  });
+
+  it('advances to the recorded destination instead of the first configured target', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(BRANCHED_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Routed', description: '' });
+    await arm(f.app, task.id);
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'done' });
+    await endTurn(f.app, task.sessionIds[0]!, 1);
+    await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('done');
+    expect(f.store.requireTask(task.id).recordedTransition).toBeUndefined();
+    expect(f.sessions.sent).toEqual([]);
+  });
+
+  it('pauses with transition-stale when the recorded transition stops resolving', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(BRANCHED_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Stale', description: '' });
+    await arm(f.app, task.id);
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'done' });
+    await f.store.setWorkflow('name: Narrowed\ninitial_column: backlog\ncolumns:\n  - id: backlog\n    label: Backlog\n    allowed_transitions: [plan]\n  - id: plan\n    label: Plan\n  - id: done\n    label: Done\n');
+    await endTurn(f.app, task.sessionIds[0]!, 1);
+    await expect.poll(() => f.store.requireTask(task.id).autoMode?.pause?.reason).toBe('transition-stale');
+    expect(f.store.requireTask(task.id).columnId).toBe('backlog');
+    expect(f.sessions.sent).toEqual([]);
+  });
+
+  it('pauses with transition-stale when the workflow removes the recorded destination stage', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(BRANCHED_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Removed destination', description: '' });
+    await arm(f.app, task.id);
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'done' });
+    // The save itself must succeed; the dangling recording is the stale state.
+    await f.store.setWorkflow(REMOVED_DESTINATION_FLOW);
+    await endTurn(f.app, task.sessionIds[0]!, 1);
+    await expect.poll(() => f.store.requireTask(task.id).autoMode?.pause?.reason).toBe('transition-stale');
+    expect(f.store.requireTask(task.id).columnId).toBe('backlog');
+    expect(f.sessions.sent).toEqual([]);
   });
 
   it('cascades over an uninstructed stage to the next instructed stage', async () => {

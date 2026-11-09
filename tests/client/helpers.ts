@@ -3,11 +3,12 @@ import { fireEvent, screen } from '@testing-library/react';
 import type { BoardState, ClientApi, Command, HubState, HubTask, KanbanSnapshot, KanbanState } from '../../src/shared/types.js';
 import { taskTitleSlug, worktreePathForBranch } from '../../src/shared/worktree-name.js';
 import { applyInitialEntry, applyMove, applyRunInstruction, createEnteredAtSource } from '../support/in-memory-board.js';
+import { transitions } from '../support/transition-rules.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 
 const FIXTURE_WORKFLOW_YAML = ['name: Delivery', 'initial_column: intake', 'columns:', '  - id: intake', '    label: Intake', '    allowed_transitions: [doing, review]', '  - id: doing', '    label: Doing', '  - id: review', '    label: Review', '    on_enter_prompt: |', '      Review **carefully**.', 'groups:', '  - id: plan', '    label: Planning', '    columns: [intake, review]', ''].join(String.fromCharCode(10));
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
-const workflow = { name: 'Delivery', initialColumnId: 'intake', columns: [{ id: 'intake', name: 'Intake', allowedTransitions: ['doing', 'review'] }, { id: 'doing', name: 'Doing' }, { id: 'review', name: 'Review', onEnterPrompt: 'Review **carefully**.' }], groups: [{ id: 'plan', name: 'Planning', columnIds: ['intake', 'review'] }] };
+const workflow = { name: 'Delivery', initialColumnId: 'intake', columns: [{ id: 'intake', name: 'Intake', allowedTransitions: transitions('doing', 'review') }, { id: 'doing', name: 'Doing' }, { id: 'review', name: 'Review', onEnterPrompt: 'Review **carefully**.' }], groups: [{ id: 'plan', name: 'Planning', columnIds: ['intake', 'review'] }] };
 const now = '2026-10-21T12:00:00Z';
 
 export function task(id: string, title: string, projectId: string, columnId: string): HubTask {

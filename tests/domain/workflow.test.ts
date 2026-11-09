@@ -22,6 +22,34 @@ describe('workflow configuration', () => {
     expect(canTransition(result, 'doing', 'todo')).toBe(false);
   });
 
+  it('accepts bare, conditioned, and mixed transition entries with one meaning', () => {
+    const result = parseWorkflow([
+      'columns:',
+      '  - id: review',
+      '    label: Review',
+      '    allowed_transitions:',
+      '      - done',
+      '      - to: rework',
+      '        when: The review requested changes.',
+      '      - to: blocked',
+      '        when: "   "',
+      '  - id: done',
+      '    label: Done',
+      '  - id: rework',
+      '    label: Rework',
+      '  - id: blocked',
+      '    label: Blocked',
+      '',
+    ].join(String.fromCharCode(10)));
+    expect(result.columns[0]?.allowedTransitions).toEqual([
+      { to: 'done' },
+      { to: 'rework', when: 'The review requested changes.' },
+      { to: 'blocked' },
+    ]);
+    expect(canTransition(result, 'review', 'done')).toBe(true);
+    expect(canTransition(result, 'review', 'rework')).toBe(true);
+  });
+
   it('accepts the default presentation and authored stage positions', () => {
     const result = parseWorkflow('default_view: workflow\ncolumns:\n  - id: todo\n    label: To do\n    position: {x: 40, y: 120}\n  - id: done\n    label: Done\n');
     expect(result.defaultView).toBe('workflow');
@@ -73,6 +101,11 @@ describe('workflow configuration', () => {
     'columns: [{id: one, label: One, allowed_transitions: [missing]}]',
     'columns: [{id: one, label: One, allowed_transitions: [one, one]}]',
     'columns: [{id: one, label: One, allowed_transitions: null}]',
+    'columns: [{id: one, label: One, allowed_transitions: [{when: Only a condition}]}]',
+    'columns: [{id: one, label: One, allowed_transitions: [{to: missing}]}]',
+    'columns: [{id: one, label: One, allowed_transitions: [{to: one, when: 3}]}]',
+    'columns: [{id: one, label: One, allowed_transitions: [{to: one, extra: text}]}]',
+    'columns: [{id: one, label: One, allowed_transitions: [one, {to: one}]}]',
     'columns: [{id: one, label: One, on_enter_prompt: 3}]',
     'default_view: maybe\n' + minimal,
     'columns: [{id: one, label: One, position: 3}]',
