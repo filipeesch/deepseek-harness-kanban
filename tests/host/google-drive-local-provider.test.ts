@@ -17,7 +17,7 @@ async function tempRoot(): Promise<string> {
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 
 const flow = (name: string): string => ['name: Flow', 'initial_column: backlog', 'columns:', '  - id: backlog', '    label: ' + name, ''].join('\n');
-const documentOf = (name: string): SharedHubDocument => ({ version: 1, boards: [{ key: 'flow', name, workflow: flow(name) }] });
+const documentOf = (name: string): SharedHubDocument => ({ version: 2, boards: [{ key: 'flow', name, workflow: flow(name) }] });
 
 function resolver(rootPath: string, status: DriveLocationView['status'] = 'available') {
   const refreshes: number[] = [];

@@ -1,6 +1,7 @@
 import { formatOccurrence } from '../domain/cron.js';
 import { requireProject, requireSchedule } from '../domain/hub-operations.js';
 import { invariant } from '../shared/errors.js';
+import { requireProjectPath } from '../shared/project.js';
 import type { HubSchedule, HubState, Project, ScheduleRunView } from '../shared/types.js';
 import type { ScheduleArchiveWatcher } from './schedule-archive.js';
 import type { ScheduleModelPort } from './schedule-model.js';
@@ -23,7 +24,7 @@ export interface ScheduleRunnerPorts {
   requireHub(hubId: string): HubState;
   /** The project's visible native workspace, provisioned by the workspace coordinator. */
   ensureProjectWorkspace(hubId: string, project: Project): Promise<string | undefined>;
-  createSession(project: Project, workspaceId: string | undefined): Promise<string>;
+  createSession(projectPath: string, workspaceId: string | undefined): Promise<string>;
   /** Fail closed unless the conversation is canonically in the expected directory. */
   validateDirectory(sessionId: string, expected: string): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
@@ -57,20 +58,21 @@ export class ScheduleRunner {
       const hub = this.ports.requireHub(hubId);
       const schedule = requireSchedule(hub, scheduleId);
       const project = requireProject(hub, schedule.projectId);
+      const projectPath = requireProjectPath(project);
       invariant(!project.operation, 'PROJECT_RELOCATING', 'Resolve the project relocation before running this schedule.');
       perRun = schedule.newConversation;
       archiveWhenIdle = perRun && schedule.archiveWhenIdle;
       this.checkLifetime();
       const workspaceId = await this.ports.ensureProjectWorkspace(hubId, project);
       const binding = schedule.newConversation ? undefined : this.ports.runs.continuousSession(scheduleId);
-      if (binding !== undefined && await this.continuousUsable(binding, schedule, project)) {
+      if (binding !== undefined && await this.continuousUsable(binding, schedule, projectPath)) {
         sessionId = binding.sessionId;
       } else {
         this.checkLifetime();
-        sessionId = await this.ports.createSession(project, workspaceId);
+        sessionId = await this.ports.createSession(projectPath, workspaceId);
         created = true;
         await this.ports.runs.markSession(scheduleId, sessionId);
-        if (!schedule.newConversation) await this.ports.runs.bindContinuousSession(hubId, scheduleId, { sessionId, projectId: schedule.projectId, projectPath: project.projectPath });
+        if (!schedule.newConversation) await this.ports.runs.bindContinuousSession(hubId, scheduleId, { sessionId, projectId: schedule.projectId, projectPath });
         // Register before the prompt can start a turn, so a fast turn still gets archived.
         else if (archiveWhenIdle) this.ports.watcher.register(sessionId, scheduleId);
       }
@@ -82,7 +84,7 @@ export class ScheduleRunner {
         this.ports.report?.(error);
       }
       // Re-read the project and admit the exact directory immediately before the prompt.
-      await this.assertDispatchable(hubId, scheduleId, project, sessionId);
+      await this.assertDispatchable(hubId, scheduleId, project.id, projectPath, sessionId);
       await this.ports.send(sessionId, schedule.prompt, 'schedule:' + scheduleId + ':' + occurrence.occurrenceAt);
       sent = true;
       await this.finish(occurrence, { status: 'sent', at: this.ports.now(), manual, sessionId });
@@ -107,21 +109,21 @@ export class ScheduleRunner {
   }
 
   /** A continuous conversation is reused only while it still belongs to this project and directory. */
-  private async continuousUsable(binding: { sessionId: string; projectId: string; projectPath: string }, schedule: HubSchedule, project: Project): Promise<boolean> {
-    if (binding.projectId !== schedule.projectId || binding.projectPath !== project.projectPath) return false;
-    try { await this.ports.validateDirectory(binding.sessionId, project.projectPath); return true; }
+  private async continuousUsable(binding: { sessionId: string; projectId: string; projectPath: string }, schedule: HubSchedule, projectPath: string): Promise<boolean> {
+    if (binding.projectId !== schedule.projectId || binding.projectPath !== projectPath) return false;
+    try { await this.ports.validateDirectory(binding.sessionId, projectPath); return true; }
     catch { return false; }
   }
 
   /** Reject a moved or relocating project and a directory that is no longer admissible. */
-  private async assertDispatchable(hubId: string, scheduleId: string, expected: Project, sessionId: string): Promise<void> {
+  private async assertDispatchable(hubId: string, scheduleId: string, expectedProjectId: string, expectedPath: string, sessionId: string): Promise<void> {
     this.checkLifetime();
     const hub = this.ports.requireHub(hubId);
     const schedule = requireSchedule(hub, scheduleId);
     const project = requireProject(hub, schedule.projectId);
     invariant(!project.operation, 'PROJECT_RELOCATING', 'The schedule project started relocating before this occurrence was sent.');
-    invariant(project.id === expected.id && project.projectPath === expected.projectPath, 'CONTEXT_CHANGED', 'The schedule project changed before this occurrence was sent.');
-    await this.ports.validateDirectory(sessionId, project.projectPath);
+    invariant(project.id === expectedProjectId && requireProjectPath(project) === expectedPath, 'CONTEXT_CHANGED', 'The schedule project changed before this occurrence was sent.');
+    await this.ports.validateDirectory(sessionId, expectedPath);
     this.checkLifetime();
   }
 

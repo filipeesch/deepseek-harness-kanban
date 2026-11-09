@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { edgeModel, type LiveConnectionDescriptor, type LiveStageRect } from '../../src/client/workflow-view/edge-model.js';
+import { authoredOffsetAt, edgeModel, withOffset, type LiveConnectionDescriptor, type LiveStageRect } from '../../src/client/workflow-view/edge-model.js';
 import { buildWorkflowScene } from '../../src/client/workflow-view/scene.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import type { ConnectionLayout } from '../../src/shared/types.js';
@@ -75,5 +75,22 @@ describe('committed and live geometry', () => {
       [{ id: 'one->two:0', from: 'one', to: 'two', kind: 'explicit', returning: false, fanOut: 0, fanOutCount: 1, source: { side: 'bottom', at: 4 }, segments: [{ axis: 'x', offset: 40 }] }],
     );
     expect(scene.edges[0]!.shape.points).toEqual(live[0]!.points);
+  });
+});
+
+describe('connection layout editing', () => {
+  it('reads the displacement an authored layout already applies', () => {
+    expect(authoredOffsetAt([], 'x', 0)).toBe(0);
+    expect(authoredOffsetAt([{ axis: 'y', offset: 4 }], 'x', 0)).toBe(0);
+    expect(authoredOffsetAt([{ axis: 'x', offset: 8 }, { axis: 'x', offset: 16 }], 'x', 1)).toBe(16);
+    expect(authoredOffsetAt([{ axis: 'x', offset: 8 }], 'x', 3)).toBe(0);
+  });
+
+  it('replaces one displacement and pads the earlier positions of that axis', () => {
+    expect(withOffset([], 'x', 0, 12)).toEqual([{ axis: 'x', offset: 12 }]);
+    // A second x line needs the first one kept unshifted, so the array carries it.
+    expect(withOffset([], 'x', 1, 20)).toEqual([{ axis: 'x', offset: 0 }, { axis: 'x', offset: 20 }]);
+    expect(withOffset([{ axis: 'x', offset: 8 }, { axis: 'y', offset: 2 }], 'x', 0, -8)).toEqual([{ axis: 'x', offset: -8 }, { axis: 'y', offset: 2 }]);
+    expect(withOffset([{ axis: 'x', offset: 8 }], 'x', 0, 0)).toEqual([{ axis: 'x', offset: 0 }]);
   });
 });

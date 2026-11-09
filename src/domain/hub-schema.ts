@@ -1,13 +1,16 @@
 import { z } from 'zod';
 import type { Board, HubSchedule, HubState, HubTask, KanbanMeta, KanbanSettings } from '../shared/types.js';
 import { DEFAULT_WORKFLOW_YAML, parseWorkflow } from './workflow.js';
-import { absolutePath, baseTask, canonicalWorkflow, createTaskInvariantChecker, id, nonempty, note, project, revision, timestamp, workflow } from './schema-parts.js';
+import { absolutePath, baseTask, canonicalWorkflow, createTaskInvariantChecker, id, nonempty, note, project, projectKey, revision, storedProject, timestamp, workflow } from './schema-parts.js';
 import { isTimeZone, parseCron } from './cron.js';
 
 export { canonicalWorkflow } from './schema-parts.js';
 
 const board = z.strictObject({
-  id, name: nonempty, workflowYaml: nonempty, workflow, createdAt: timestamp, updatedAt: timestamp,
+  id, name: nonempty, workflowYaml: nonempty, workflow,
+  /** Absent means every project of the Hub; an empty list closes the board to creation. */
+  allowedProjectKeys: z.array(projectKey).optional(),
+  createdAt: timestamp, updatedAt: timestamp,
 });
 const task = baseTask.extend({ boardId: id });
 const scheduleModel = z.strictObject({ provider: nonempty, model: nonempty, reasoningEffort: nonempty.optional() });
@@ -31,9 +34,19 @@ export const KanbanSettingsSchema: z.ZodType<KanbanSettings> = z.strictObject({
   worktreeBasePath: absolutePath.optional(),
 });
 
-/** Validates one Hub aggregate. Cross-Hub ownership is enforced by the repository. */
-export const HubStateSchema: z.ZodType<HubState> = z.strictObject({
-  id, name: nonempty, revision, projects: z.array(project), boards: z.array(board), tasks: z.array(task), notes: z.array(note), schedules: z.array(scheduleSchema).optional(), createdAt: timestamp, updatedAt: timestamp,
+/** The fields a stored Hub record and an opened Hub aggregate share. */
+const hubFields = { id, name: nonempty, revision, boards: z.array(board), tasks: z.array(task), notes: z.array(note), schedules: z.array(scheduleSchema).optional(), createdAt: timestamp, updatedAt: timestamp };
+/**
+ * The shape the storage domain reads and writes. It deliberately tolerates a project
+ * that predates project keys: the storage facility validates every record before the
+ * repository can open it, so the keyless shape has to be readable for the open
+ * backfill to assign a key and persist the record once.
+ */
+export const StoredHubStateSchema = z.strictObject({ ...hubFields, projects: z.array(storedProject) });
+
+/** Validates one Hub aggregate after the key backfill. Cross-Hub ownership is enforced by the repository. */
+export const HubStateSchema = z.strictObject({
+  ...hubFields, projects: z.array(project),
 }).superRefine((state, context) => {
   const issue = (path: (string | number)[], message: string): void => { context.addIssue({ code: 'custom', path, message }); };
   const unique = (values: string[], path: (string | number)[]): void => {
@@ -45,12 +58,19 @@ export const HubStateSchema: z.ZodType<HubState> = z.strictObject({
   unique(state.notes.map(value => value.id), ['notes']);
   const boardNames = state.boards.map(value => value.name.trim().toLocaleLowerCase());
   if (new Set(boardNames).size !== boardNames.length) issue(['boards'], 'Board names must be unique within a Hub.');
-  const projectIds = new Set(state.projects.map(value => value.id));
+  // A published placeholder cannot own a task: only an adopted project is a task's project.
+  const projectIds = new Set(state.projects.filter(value => value.origin !== 'published').map(value => value.id));
   const taskIds = new Set(state.tasks.map(value => value.id));
+  const projectKeys = new Set(state.projects.map(value => value.projectKey));
+  if (projectKeys.size !== state.projects.length) issue(['projects'], 'Project keys must be unique within a Hub.');
   const boardById = new Map(state.boards.map(value => [value.id, value]));
   for (const [index, value] of state.boards.entries()) {
     unique(value.workflow.columns.map(item => item.id), ['boards', index, 'workflow', 'columns']);
     unique(value.workflow.groups.map(item => item.id), ['boards', index, 'workflow', 'groups']);
+    if (value.allowedProjectKeys !== undefined) {
+      unique(value.allowedProjectKeys, ['boards', index, 'allowedProjectKeys']);
+      for (const key of value.allowedProjectKeys) if (!projectKeys.has(key)) issue(['boards', index, 'allowedProjectKeys'], 'A board project scope must name a project of the Hub.');
+    }
     if (!value.workflow.columns.some(item => item.id === value.workflow.initialColumnId)) issue(['boards', index, 'workflow', 'initialColumnId'], 'Initial column must exist.');
     try {
       const parsed = parseWorkflow(value.workflowYaml);
@@ -77,7 +97,7 @@ export const HubStateSchema: z.ZodType<HubState> = z.strictObject({
     try { parseCron(value.cron); }
     catch (error) { issue(['schedules', index, 'cron'], error instanceof Error ? error.message : 'Invalid cron expression.'); }
   }
-});
+}) as unknown as z.ZodType<HubState>;
 
 /** The client-facing aggregate of all Hubs plus global settings. */
 export const KanbanStateSchema = z.strictObject({

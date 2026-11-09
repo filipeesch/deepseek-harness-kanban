@@ -5,19 +5,20 @@ import {
 } from '@xyflow/react';
 import flowStyles from '@xyflow/react/dist/style.css';
 import type { ConnectionAnchor, ConnectionSegmentOffset } from '../../shared/types.js';
-import { sameAnchor } from '../../domain/connection-anchor.js';
+import { sameAnchor, sameConnectionLayout } from '../../domain/connection-anchor.js';
 import { ConnectionEdgeView } from './connection-edge.js';
 import { DiagramMinimap } from './controls/minimap.js';
 import { StageCallbacksContext, StageDragContext, StageNodeView, type StageCallbacks, type StageNodeModel } from './stage-node.js';
 import { CardEnvironmentContext, type CardEnvironment } from './card-environment.js';
-import { beginStageDrag, type GestureHandle, type PointerEventsPort } from './gestures/stage-drag.js';
+import type { GestureHandle, PointerEventsPort } from './gestures/stage-drag.js';
+import { noSnap, segmentOffset, type SnapPolicy } from './gestures/grid-snap.js';
 import { beginConnectionDrag, type KeyboardEventsPort } from './gestures/connection-drag.js';
-import { FLOW_ZOOM, nextZoom, zoomAroundPoint } from './gestures/viewport-policy.js';
-import { connectionRouteFor, edgeModel, type LiveConnectionDescriptor, type LiveStageRect } from './edge-model.js';
-import { connectionRoute } from './routing/route.js';
+import { FLOW_ZOOM, clampZoom, nextZoom, zoomAroundPoint, type Viewport } from './gestures/viewport-policy.js';
+import { authoredOffsetAt, connectionLayoutOf, connectionRouteFor, edgeModel, withOffset, type ConnectionLayoutOverride, type LiveConnectionDescriptor, type LiveStageRect } from './edge-model.js';
 import { nearestAnchor } from './routing/ports.js';
 import type { DiagramPoint, DiagramRect } from './routing/orthogonal.js';
 import { ConnectionHandlersContext, stepAnchor, type ConnectionEnd, type ConnectionHandlers } from './connection-interaction.js';
+import { useStageDrag } from './use/use-stage-drag.js';
 
 export interface CanvasStage {
   readonly id: string;
@@ -45,15 +46,29 @@ export interface ConnectionEdit {
 /** What the control stack can ask of the diagram surface. */
 export interface CanvasViewportActions { zoomIn(): void; zoomOut(): void; fit(): void }
 
+/**
+ * Where the surface places the diagram once it is ready: either the position the
+ * board stored, or the whole diagram. The parent owns the intent and the token.
+ */
+export type CanvasViewRequest =
+  | { readonly kind: 'restore'; readonly viewport: Viewport }
+  | { readonly kind: 'fit' };
+
 export interface WorkflowCanvasProps {
   readonly stages: readonly CanvasStage[];
   readonly connections: readonly CanvasConnection[];
   /** False until every stage has been measured, so the first paint never jumps. */
   readonly ready: boolean;
-  /** Increment to frame the whole diagram. */
-  readonly fitRequest: number;
+  /** How the surface places the diagram; see CanvasViewRequest. */
+  readonly viewRequest: CanvasViewRequest;
+  /** Changes when a new request must be applied, even when it repeats the same intent. */
+  readonly viewToken: number;
+  /** The position the diagram settled on; the parent stores it for the active board. */
+  readonly onViewportChange?: (viewport: Viewport) => void;
   /** The layout lock; a locked diagram never starts a stage move, a resize, or an arrow adjustment. */
   readonly locked: boolean;
+  /** The lattice every layout gesture settles on. */
+  readonly snap: SnapPolicy;
   readonly callbacks: StageCallbacks;
   readonly cardEnvironment: CardEnvironment;
   /** The stage and insertion line under an active card drag. */
@@ -78,11 +93,7 @@ const nodeTypes = { stage: StageNodeView } as unknown as NodeTypes;
 const edgeTypes = { connection: ConnectionEdgeView } as unknown as EdgeTypes;
 
 /** The connection layout a gesture previews before it is committed. */
-interface ConnectionPreview {
-  readonly source?: ConnectionAnchor;
-  readonly target?: ConnectionAnchor;
-  readonly segments?: readonly ConnectionSegmentOffset[];
-}
+type ConnectionPreview = ConnectionLayoutOverride;
 
 function toNode(stage: CanvasStage, locked: boolean, measured?: StageFlowNode['measured']): StageFlowNode {
   return {
@@ -101,19 +112,6 @@ function rectOf(stage: LiveStageRect): DiagramRect {
   return { x: stage.x, y: stage.y, width: stage.width, height: stage.height };
 }
 
-/** Replace the displacement of one axis at one position, keeping the others in order. */
-function withOffset(segments: readonly ConnectionSegmentOffset[], axis: 'x' | 'y', order: number, offset: number): ConnectionSegmentOffset[] {
-  const result = segments.map(segment => ({ axis: segment.axis, offset: segment.offset }));
-  const positions: number[] = [];
-  result.forEach((segment, index) => { if (segment.axis === axis) positions.push(index); });
-  while (positions.length <= order) {
-    result.push({ axis, offset: 0 });
-    positions.push(result.length - 1);
-  }
-  result[positions[order]!] = { axis, offset };
-  return result;
-}
-
 function previewPatch(values: Record<string, ConnectionPreview>, connectionId: string, end: ConnectionEnd, anchor: ConnectionAnchor): Record<string, ConnectionPreview> {
   const current = values[connectionId] ?? {};
   return { ...values, [connectionId]: end === 'source' ? { ...current, source: anchor } : { ...current, target: anchor } };
@@ -122,7 +120,6 @@ function previewPatch(values: Record<string, ConnectionPreview>, connectionId: s
 function CanvasInner(props: WorkflowCanvasProps) {
   const instance = useReactFlow();
   const wrapper = useRef<HTMLDivElement>(null);
-  const drag = useRef<GestureHandle | null>(null);
   const connectionDrag = useRef<GestureHandle | null>(null);
   const keyboardSession = useRef<{ connectionId: string; end: ConnectionEnd } | null>(null);
   const [nodes, setNodes] = useState<StageFlowNode[]>(() => props.stages.map(stage => toNode(stage, props.locked)));
@@ -137,53 +134,42 @@ function CanvasInner(props: WorkflowCanvasProps) {
 
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
+  const stageDrag = useStageDrag({
+    locked: props.locked,
+    zoom: () => instance.getZoom(),
+    events: document as unknown as PointerEventsPort,
+    snap: props.snap,
+    positionOf: stageId => nodesRef.current.find(node => node.id === stageId)?.position,
+    preview: (stageId, position) => setNodes(current => current.map(node => node.id === stageId ? { ...node, position } : node)),
+    commit: (stageId, position) => props.onStageMove(stageId, position),
+  });
 
   useEffect(() => {
     // A running gesture owns the node positions; the committed stages replace
     // them only once it has finished.
-    if (drag.current !== null) return;
+    if (stageDrag.isDragging()) return;
     setNodes(current => {
       const measured = new Map(current.map(node => [node.id, node.measured]));
       return props.stages.map(stage => toNode(stage, props.locked, measured.get(stage.id)));
     });
   }, [signature]);
 
-  useEffect(() => () => { drag.current?.dispose(); drag.current = null; connectionDrag.current?.dispose(); connectionDrag.current = null; }, []);
+  useEffect(() => () => { connectionDrag.current?.dispose(); connectionDrag.current = null; }, []);
 
   const onNodesChange = useCallback((changes: NodeChange<StageFlowNode>[]) => {
     setNodes(current => applyNodeChanges(changes, current));
   }, []);
 
-  const startStageDrag = useCallback((event: React.PointerEvent<HTMLElement>, stageId: string) => {
-    if (props.locked || event.button !== 0 || drag.current !== null) return;
-    const stage = nodesRef.current.find(node => node.id === stageId);
-    if (stage === undefined) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const origin = { x: stage.position.x, y: stage.position.y };
-    drag.current = beginStageDrag({
-      stageId,
-      start: { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY },
-      origin,
-      zoom: () => instance.getZoom(),
-      events: document as unknown as PointerEventsPort,
-      onMove: (id, position) => setNodes(current => current.map(candidate => candidate.id === id ? { ...candidate, position } : candidate)),
-      onCommit: (id, position) => {
-        drag.current = null;
-        props.onStageMove(id, position);
-      },
-      onCancel: () => {
-        drag.current = null;
-        setNodes(current => current.map(candidate => candidate.id === stageId ? { ...candidate, position: origin } : candidate));
-      },
-    });
-  }, [instance, props.locked, props.onStageMove]);
-
   useEffect(() => {
-    if (!props.ready) return;
+    if (!props.ready) return undefined;
+    if (props.viewRequest.kind === 'restore') {
+      const { x, y, zoom } = props.viewRequest.viewport;
+      void instance.setViewport({ x, y, zoom: clampZoom(zoom) }, { duration: 0 });
+      return undefined;
+    }
     const frame = requestAnimationFrame(() => { void instance.fitView({ padding: 0.2, duration: 0 }); });
     return () => cancelAnimationFrame(frame);
-  }, [props.ready, props.fitRequest, instance]);
+  }, [props.ready, props.viewToken, instance]);
 
   const liveStages = useMemo<LiveStageRect[]>(() => nodes.map(node => ({
     id: node.id,
@@ -234,13 +220,18 @@ function CanvasInner(props: WorkflowCanvasProps) {
       delete next[connectionId];
       return next;
     });
+    // The baseline is the presented connection without this gesture's preview, so
+    // an adjustment that settles on the layout it already has is not a layout
+    // edit: it must not reach the history or the coalesced save.
+    const baseline = props.connections.find(value => value.id === connectionId);
+    if (baseline === undefined || sameConnectionLayout(connectionLayoutOf(baseline, override), connectionLayoutOf(baseline, {}))) return;
     props.onConnectionEdit({
       connectionId,
       ...(override.source === undefined ? {} : { source: override.source }),
       ...(override.target === undefined ? {} : { target: override.target }),
       ...(override.segments === undefined ? {} : { segments: override.segments }),
     });
-  }, [props.onConnectionEdit]);
+  }, [props.connections, props.onConnectionEdit]);
 
   // The same route the diagram draws, including the clearance every connection
   // shares, so a dragged segment starts from exactly the line it shows.
@@ -257,7 +248,7 @@ function CanvasInner(props: WorkflowCanvasProps) {
     const rect = rectOf(stage);
     let current = end === 'source' ? connection.source : connection.target;
     connectionDrag.current = beginConnectionDrag({
-      start: { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY },
+      start: { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, altKey: event.altKey },
       events: document as unknown as PointerEventsPort,
       keys: document as unknown as KeyboardEventsPort,
       onMove: pointer => {
@@ -281,25 +272,38 @@ function CanvasInner(props: WorkflowCanvasProps) {
     if (route === null || line === undefined) return;
     const order = route.lines.filter(value => value.axis === line.axis).findIndex(value => value.index === line.index);
     const base = connection.segments ?? [];
+    // The bypass is engaged when the press carries the modifier and stays engaged
+    // for the rest of the gesture.
+    let free = event.altKey === true;
+    // The displacement the authored layout already applies to this line: a gesture
+    // that returns the segment to it changes nothing, and the zero offsets a
+    // preview pads earlier positions with must never be stored as an edit.
+    const authoredOffset = authoredOffsetAt(base, line.axis, order);
+    let changed = false;
     event.preventDefault();
     event.stopPropagation();
     connectionDrag.current = beginConnectionDrag({
       start: { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY },
       events: document as unknown as PointerEventsPort,
       keys: document as unknown as KeyboardEventsPort,
+      onSample: pointer => { if (pointer.altKey === true) free = true; },
       onMove: pointer => {
         const flow = instance.screenToFlowPosition({ x: pointer.clientX, y: pointer.clientY });
         const coordinate = line.axis === 'x' ? flow.x : flow.y;
-        const offset = Math.round(coordinate - line.coordinate);
+        const offset = segmentOffset(free ? noSnap : props.snap, coordinate, line.coordinate);
+        changed = offset !== authoredOffset;
         setPreview(values => {
           const current = values[connectionId] ?? {};
           return { ...values, [connectionId]: { ...current, segments: withOffset(base, line.axis, order, offset) } };
         });
       },
-      onCommit: () => { connectionDrag.current = null; commitPreview(connectionId); },
+      onCommit: () => {
+        connectionDrag.current = null;
+        if (changed) commitPreview(connectionId); else clearPreview(connectionId);
+      },
       onCancel: () => { connectionDrag.current = null; clearPreview(connectionId); },
     });
-  }, [clearPreview, commitPreview, connectionOf, instance, props.locked, routeOf]);
+  }, [clearPreview, commitPreview, connectionOf, instance, props.locked, props.snap, routeOf]);
 
   const currentAnchor = useCallback((connectionId: string, end: ConnectionEnd): ConnectionAnchor | undefined => {
     const override = previewRef.current[connectionId];
@@ -385,11 +389,12 @@ function CanvasInner(props: WorkflowCanvasProps) {
 
   const callbacks = useMemo<StageCallbacks>(() => ({
     ...props.callbacks,
-    onStagePointerDown: startStageDrag,
+    snap: props.snap,
+    onStagePointerDown: stageDrag.start,
     onStageResize: props.onStageResize,
     onStageResizeEnd: props.onStageResizeEnd,
     onStageResizeCancel: props.onStageResizeCancel,
-  }), [props.callbacks, startStageDrag, props.onStageResize, props.onStageResizeEnd, props.onStageResizeCancel]);
+  }), [props.callbacks, stageDrag.start, props.snap, props.onStageResize, props.onStageResizeEnd, props.onStageResizeCancel]);
 
   return <div ref={wrapper} className="kb-flow-canvas" data-ready={props.ready ? 'true' : 'false'} data-locked={props.locked ? 'true' : 'false'}>
     <style>{flowStyles}</style>
@@ -419,6 +424,7 @@ function CanvasInner(props: WorkflowCanvasProps) {
               maxZoom={FLOW_ZOOM.max}
               fitView={false}
               defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+              onMoveEnd={(_event, next) => props.onViewportChange?.({ x: next.x, y: next.y, zoom: next.zoom })}
             >
               {props.controls !== undefined && <Panel position="bottom-left">{props.controls(viewport)}</Panel>}
               <DiagramMinimap />

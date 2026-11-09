@@ -25,7 +25,7 @@ import { PendingTransitionIndex } from './pending-transition-index.js';
 import { StartupReconciler } from './startup-reconciler.js';
 import { PendingWorkRunner } from './pending-work.js';
 import { PublishScheduler } from './publish-scheduler.js';
-import { isGitProject, requireGitProject } from '../shared/project.js';
+import { isGitProject, requireGitProject, requireProjectPath } from '../shared/project.js';
 import { containsPath } from './git.js';
 import { defaultWorktreeDestination, taskTitleSlug } from '../shared/worktree-name.js';
 import { prepareFirstExecution } from './first-execution.js';
@@ -419,8 +419,8 @@ export class KanbanApp {
   this.assertProjectRelocation(project,'creating a conversation');
   invariant(!(options.allowUndecided===true&&before.sessionIds.length===0&&unresolvedWorktreeBinding(before,project)),'WORKTREE_BINDING_UNRESOLVED','Resolve the worktree binding in the Git section before starting the first conversation.');
   invariant(options.allowUndecided===true||!requiresWorktreeDecision(before,project),'WORKTREE_DECISION_REQUIRED','Choose whether to create a worktree or continue in the base project before starting the first conversation.');
-  const workspaceId=await this.workspaceCoordinator?.ensureTaskWorkspace(located.hubId,before,project);const id=await this.sessions.create(project.projectPath,workspaceId);
-  try{if(before.effectiveCwd!==project.projectPath)await this.sessions.setDirectory(id,before.effectiveCwd);this.assertContext(taskId);const current=store.requireTask(taskId);invariant(current.effectiveCwd===before.effectiveCwd,'CONTEXT_CHANGED','Task directory changed while the conversation was being created.');await store.addSession(taskId,id);return id;}
+  const projectDirectory=requireProjectPath(project);const workspaceId=await this.workspaceCoordinator?.ensureTaskWorkspace(located.hubId,before,project);const id=await this.sessions.create(projectDirectory,workspaceId);
+  try{if(before.effectiveCwd!==projectDirectory)await this.sessions.setDirectory(id,before.effectiveCwd);this.assertContext(taskId);const current=store.requireTask(taskId);invariant(current.effectiveCwd===before.effectiveCwd,'CONTEXT_CHANGED','Task directory changed while the conversation was being created.');await store.addSession(taskId,id);return id;}
   catch(error){try{await this.sessions.archive(id);}catch(archiveError){this.options.report?.(archiveError);}throw error;}
  }
  createTask(input:NewTask){return this.serial(()=>this.createTaskNow(input));}
@@ -502,6 +502,7 @@ export class KanbanApp {
    case 'board.rename':{await this.boards.update({hubId:command.hubId,boardId:command.boardId,name:command.name,expectedRevision:command.expectedRevision},'never');break;}
    case 'board.delete':{await this.boards.remove({hubId:command.hubId,boardId:command.boardId,confirmed:command.confirmed,expectedRevision:command.expectedRevision,sharing:command.sharing},'never');break;}
    case 'board.workflow.save':await this.boards.saveWorkflow({hubId:command.hubId,boardId:command.boardId,yaml:command.yaml,expectedRevision:command.expectedRevision},'never');break;
+   case 'board.projects.save':await this.boards.saveProjectScope({hubId:command.hubId,boardId:command.boardId,...(command.projectKeys===undefined?{}:{projectKeys:command.projectKeys}),...(command.expectedRevision===undefined?{}:{expectedRevision:command.expectedRevision})},'never');break;
    case 'project.save':{const store=this.hubStore(command.hubId);const state=this.hubs.requireHub(store.hubId);const existing=command.project.id===undefined?undefined:state.projects.find(project=>project.id===command.project.id);invariant(!existing?.operation,'PROJECT_BUSY','Resolve the recorded project relocation before saving the project.');const value=await store.saveProject(await this.project(command.project),command.expectedRevision);commandReceipt={kind:'project',id:value.id};break;}
    case 'project.relocate':{
     invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm the project relocation and its migration impact.');

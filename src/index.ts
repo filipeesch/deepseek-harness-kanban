@@ -206,7 +206,7 @@ export async function apply(ctx:Context):Promise<void>{
   requireHub:id=>hubs.requireHub(id),
   ensureProjectWorkspace:(hubId,project)=>app.ensureProjectWorkspace(hubId,project.id),
   signal:lifetime.signal,
-  createSession:(project,workspaceId)=>native.sessions.create(project.projectPath,workspaceId),
+  createSession:(projectPath,workspaceId)=>native.sessions.create(projectPath,workspaceId),
   validateDirectory:(id,expected)=>native.sessions.validateDirectory(id,expected),
   renameSession:async(id,title)=>{await ctx.sessionController.rename({sessionId:SessionId(id),title});},
   send:(id,text,requestId)=>native.sessions.send(id,text,requestId),

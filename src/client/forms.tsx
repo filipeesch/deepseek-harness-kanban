@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { BoardState, Problem, Task } from '../shared/types.js';
+import type { BoardState, Problem, Project, Task } from '../shared/types.js';
 import { entryInstruction } from '../domain/stage-entry.js';
 import { creationReceiptId, ErrorNotice, Markdown, Modal, useAction, type RunCommand } from './ui.js';
 import { createTaskPageState, usePageField, type TaskPageState } from './page-state.js';
@@ -7,24 +7,40 @@ import { createTaskPageState, usePageField, type TaskPageState } from './page-st
 /** The creation choices the board needs after the receipt: whether to start the first execution. */
 export interface CreatedTaskOptions { start: boolean }
 
-export function NewTaskDialog({ state, run, onClose, onCreated }: { state: BoardState; run: RunCommand; onClose: () => void; onCreated: (id: string, options: CreatedTaskOptions) => void }) {
+export function NewTaskDialog({ state, projects, closedForCreation, run, onClose, onCreated }: {
+  state: BoardState;
+  /** The projects the active board allows; a placeholder is never offered. */
+  projects: readonly Project[];
+  /** A board whose scope records no project accepts no new task. */
+  closedForCreation: boolean;
+  run: RunCommand;
+  onClose: () => void;
+  onCreated: (id: string, options: CreatedTaskOptions) => void;
+}) {
   const [title, setTitle] = useState(''); const [description, setDescription] = useState('');
   const [projectId, setProjectId] = useState(''); const [autoMode, setAutoMode] = useState(false); const [start, setStart] = useState(true);
   const action = useAction(run); const [creationError, setCreationError] = useState<Problem | null>(null);
+  // The board may change while this dialog is open: a project that is no longer allowed,
+  // or a board that is now closed, must stop the save instead of failing on the host.
+  const selectable = projects.some(project => project.id === projectId);
+  const cannotSave = closedForCreation || !selectable;
+  useEffect(() => { if (projectId !== '' && !selectable) setProjectId(''); }, [projectId, selectable]);
   const initialColumn = state.workflow.columns.find(column => column.id === state.workflow.initialColumnId);
   const hasInstruction = entryInstruction(initialColumn) !== undefined;
   const startApplies = hasInstruction && start;
   const columnName = initialColumn?.name ?? state.workflow.initialColumnId;
-  return <Modal title="New task" onClose={onClose} busy={action.pending}><form className="kb-form" onSubmit={async event => { event.preventDefault(); if (!title.trim() || !projectId || creationError) return; const result = await action.execute({ type: 'task.create', title: title.trim(), description, projectId, ...(autoMode ? { autoMode: true } : {}) }); if (result) { const id = creationReceiptId(result, 'task'); if (!id) { setCreationError({ code: 'CREATION_RECEIPT_REQUIRED', message: 'The host saved the task but did not return its exact task creation receipt. Close this dialog and inspect or refresh the board before creating another task.' }); return; } if (!result.state.hubs.some(hub => hub.tasks.some(task => task.id === id))) { setCreationError({ code: 'CREATED_TASK_UNAVAILABLE', message: 'The created task is not available in the current board snapshot. Close this dialog and refresh the board before continuing.' }); return; } onCreated(id, { start: startApplies }); onClose(); } }}>
+  return <Modal title="New task" onClose={onClose} busy={action.pending}><form className="kb-form" onSubmit={async event => { event.preventDefault(); if (!title.trim() || !projectId || cannotSave || creationError) return; const result = await action.execute({ type: 'task.create', title: title.trim(), description, projectId, ...(autoMode ? { autoMode: true } : {}) }); if (result) { const id = creationReceiptId(result, 'task'); if (!id) { setCreationError({ code: 'CREATION_RECEIPT_REQUIRED', message: 'The host saved the task but did not return its exact task creation receipt. Close this dialog and inspect or refresh the board before creating another task.' }); return; } if (!result.state.hubs.some(hub => hub.tasks.some(task => task.id === id))) { setCreationError({ code: 'CREATED_TASK_UNAVAILABLE', message: 'The created task is not available in the current board snapshot. Close this dialog and refresh the board before continuing.' }); return; } onCreated(id, { start: startApplies }); onClose(); } }}>
     <label className="kb-field">Title<input className="kb-input" required value={title} onChange={event => setTitle(event.target.value)} /></label>
     <label className="kb-field">Description<textarea className="kb-input" rows={7} value={description} onChange={event => setDescription(event.target.value)} /></label>
-    <label className="kb-field">Project<select className="kb-input" required value={projectId} onChange={event => setProjectId(event.target.value)}><option value="" disabled>Select a project</option>{state.projects.map(project => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label>
+    <label className="kb-field">Project<select className="kb-input" required disabled={closedForCreation} value={projectId} onChange={event => setProjectId(event.target.value)}><option value="" disabled>Select a project</option>{projects.map(project => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label>
+    {closedForCreation && <p className="kb-hint" role="status">This board allows no project, so it accepts no new task. Change its project scope in Configuration → Board to allow one.</p>}
+    {!closedForCreation && projects.length === 0 && <p className="kb-hint" role="status">No project of this Hub can create a task here yet. Register or adopt a project in Configuration → Projects, or widen this board's project scope.</p>}
     <label className="kb-choice"><input type="checkbox" checked={autoMode} onChange={event => setAutoMode(event.target.checked)} /> Auto mode</label>
     <p className="kb-hint">Advance this task to its next configured stage after each completed turn.</p>
     {hasInstruction && <><label className="kb-choice"><input type="checkbox" checked={start} onChange={event => setStart(event.target.checked)} /> Start execution now</label>
       <p className="kb-hint">Runs the {columnName} instruction after a five-second countdown once the worktree and the first conversation are ready.</p></>}
     <p className="kb-hint">Creates in {columnName}.{startApplies ? '' : ' No agent starts automatically.'}</p>
-    <ErrorNotice problem={action.error} /><ErrorNotice problem={creationError} /><div className="kb-actions"><button className="kb-button" type="button" disabled={action.pending} onClick={onClose}>{creationError ? 'Close and inspect board' : 'Cancel'}</button><button className="kb-button kb-primary" disabled={action.pending || Boolean(creationError) || !title.trim() || !projectId}>{action.pending ? 'Creating…' : 'Create task'}</button></div>
+    <ErrorNotice problem={action.error} /><ErrorNotice problem={creationError} /><div className="kb-actions"><button className="kb-button" type="button" disabled={action.pending} onClick={onClose}>{creationError ? 'Close and inspect board' : 'Cancel'}</button><button className="kb-button kb-primary" disabled={action.pending || Boolean(creationError) || !title.trim() || cannotSave}>{action.pending ? 'Creating…' : 'Create task'}</button></div>
   </form></Modal>;
 }
 

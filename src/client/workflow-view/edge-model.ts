@@ -1,4 +1,4 @@
-import type { ConnectionAnchor, ConnectionSegmentOffset } from '../../shared/types.js';
+import type { ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset } from '../../shared/types.js';
 import { connectionRoute, type ConnectionRoute, type RouteLine } from './routing/route.js';
 import type { ConnectionShape, DiagramRect } from './routing/orthogonal.js';
 
@@ -40,6 +40,41 @@ export interface LiveEdge extends ConnectionShape {
 
 function rectOf(stage: LiveStageRect): DiagramRect {
   return { x: stage.x, y: stage.y, width: stage.width, height: stage.height };
+}
+
+/** The displacement the authored layout already applies to one axis at one position. */
+export function authoredOffsetAt(segments: readonly ConnectionSegmentOffset[], axis: 'x' | 'y', order: number): number {
+  return segments.filter(segment => segment.axis === axis)[order]?.offset ?? 0;
+}
+
+/** Replace the displacement of one axis at one position, keeping the others in order. */
+export function withOffset(segments: readonly ConnectionSegmentOffset[], axis: 'x' | 'y', order: number, offset: number): ConnectionSegmentOffset[] {
+  const result = segments.map(segment => ({ axis: segment.axis, offset: segment.offset }));
+  const positions: number[] = [];
+  result.forEach((segment, index) => { if (segment.axis === axis) positions.push(index); });
+  while (positions.length <= order) {
+    result.push({ axis, offset: 0 });
+    positions.push(result.length - 1);
+  }
+  result[positions[order]!] = { axis, offset };
+  return result;
+}
+
+/** What an adjustment may author on one connection: its ends and its segments. */
+export type ConnectionLayoutOverride = Pick<ConnectionLayout, 'source' | 'target' | 'segments'>;
+
+/** The layout a connection describes once a gesture's override is applied. */
+export function connectionLayoutOf(connection: LiveConnectionDescriptor, override: ConnectionLayoutOverride): ConnectionLayout {
+  const source = override.source ?? connection.source;
+  const target = override.target ?? connection.target;
+  const segments = override.segments ?? connection.segments;
+  return {
+    from: connection.from,
+    to: connection.to,
+    ...(source === undefined ? {} : { source }),
+    ...(target === undefined ? {} : { target }),
+    ...(segments === undefined ? {} : { segments: [...segments] }),
+  };
 }
 
 /** The lowest stage bottom the diagram currently shows; a returning route clears it. */

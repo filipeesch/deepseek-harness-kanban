@@ -8,7 +8,7 @@ import { ScheduleEditorDialog } from '../../src/client/settings/schedules/schedu
 
 afterEach(cleanup);
 
-const projects = [{ id: 'p1', name: 'Web', projectPath: '/web' }];
+const projects = [{ id: 'p1', projectKey: 'web', name: 'Web', projectPath: '/web' }];
 const catalog: ScheduleModelCatalog = { default: { provider: 'deepseek', model: 'chat' }, providers: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'chat', name: 'Chat' }, { id: 'reason', name: 'Reason', reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'low' } }] }], failures: [] };
 
 function harness(options: { catalogFailure?: boolean; schedule?: Parameters<typeof ScheduleEditorDialog>[0]['schedule'] } = {}) {

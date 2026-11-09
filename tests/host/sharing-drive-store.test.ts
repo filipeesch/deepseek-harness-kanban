@@ -5,7 +5,7 @@ import { GoogleDriveSharedConfigStore, createGoogleDriveProviderDescriptor, norm
 import type { GoogleDriveClient, GoogleDriveFile } from '../../src/host/sharing/google-drive-client.js';
 
 function documentOf(name: string): SharedHubDocument {
-  return { version: 1, boards: [{ key: 'kanban', name, workflow: 'name: Flow\ninitial_column: backlog\ncolumns:\n  - id: backlog\n    label: Backlog\n' }] };
+  return { version: 2, boards: [{ key: 'kanban', name, workflow: 'name: Flow\ninitial_column: backlog\ncolumns:\n  - id: backlog\n    label: Backlog\n' }] };
 }
 
 class FakeDrive {

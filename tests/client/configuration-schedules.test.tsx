@@ -14,7 +14,7 @@ const schedule: HubSchedule = {
   newConversation: true, archiveWhenIdle: true, enabled: true, createdAt: now, updatedAt: now,
 };
 const hub: HubState = {
-  id: 'hub', name: 'My Hub', revision: 2, projects: [{ id: 'p1', name: 'Web', projectPath: '/web' }],
+  id: 'hub', name: 'My Hub', revision: 2, projects: [{ id: 'p1', projectKey: 'web', name: 'Web', projectPath: '/web' }],
   boards: [], tasks: [], notes: [], schedules: [schedule], createdAt: now, updatedAt: now,
 };
 

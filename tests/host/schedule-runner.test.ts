@@ -38,9 +38,9 @@ async function harness(options: HarnessOptions = {}) {
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     requireHub: hubId => value.hubs.requireHub(hubId),
     ensureProjectWorkspace: (hubId, project) => value.app.ensureProjectWorkspace(hubId, project.id),
-    createSession: async (project, workspaceId) => {
-      if (!(await stat(project.projectPath)).isDirectory()) throw new KanbanError('INVALID_DIRECTORY', 'The project directory is unavailable.');
-      return value.sessions.create(project.projectPath, workspaceId);
+    createSession: async (projectPath, workspaceId) => {
+      if (!(await stat(projectPath)).isDirectory()) throw new KanbanError('INVALID_DIRECTORY', 'The project directory is unavailable.');
+      return value.sessions.create(projectPath, workspaceId);
     },
     validateDirectory: (sessionId, expected) => value.sessions.validateDirectory(sessionId, expected),
     renameSession: async (sessionId, title) => { titles.push({ sessionId, title }); },
@@ -111,7 +111,7 @@ describe('ScheduleRunner', () => {
       now: () => now,
       requireHub: hubId => harnessed.hubs.requireHub(hubId),
       ensureProjectWorkspace: async () => { throw new KanbanError('INVALID_DIRECTORY', 'The project directory is unavailable.'); },
-      createSession: (project, workspaceId) => harnessed.sessions.create(project.projectPath, workspaceId),
+      createSession: (projectPath, workspaceId) => harnessed.sessions.create(projectPath, workspaceId),
       validateDirectory: (sessionId, expected) => harnessed.sessions.validateDirectory(sessionId, expected),
       renameSession: async () => {},
       send: (sessionId, prompt, requestId) => harnessed.sessions.send(sessionId, prompt, requestId),

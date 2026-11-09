@@ -18,7 +18,7 @@ function schedule(overrides: Partial<HubSchedule> = {}): HubSchedule {
 function hubState(schedules: HubSchedule[] = [schedule()]): HubState {
   return {
     id: 'hub', name: 'My Hub', revision: 4,
-    projects: [{ id: 'p1', name: 'Web', projectPath: '/web' }],
+    projects: [{ id: 'p1', projectKey: 'web', name: 'Web', projectPath: '/web' }],
     boards: [], tasks: [], notes: [], schedules, createdAt: now, updatedAt: now,
   };
 }

@@ -38,7 +38,7 @@ describe('Hub storage migration wiring', () => {
     legacy.revision = 3;
     const legacyYaml = 'name: Legacy Flow\ninitial_column: backlog\ncolumns:\n  - id: backlog\n    label: Backlog\n';
     legacy.workflowYaml = legacyYaml; legacy.workflow = parseWorkflow(legacyYaml);
-    legacy.projects = [{ id: 'project', name: 'Project', projectPath: '/repo/app', gitRootPath: '/repo' }];
+    legacy.projects = [{ id: 'project', projectKey: 'project', name: 'Project', projectPath: '/repo/app', gitRootPath: '/repo' }];
     legacy.tasks = [{ id: 'task', projectId: 'project', title: 'Legacy task', description: '', columnId: 'backlog', position: 0, sessionIds: ['session'], closedSessionIds: [], effectiveCwd: '/repo/app', worktree: null, operation: null, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }];
     legacy.settings = { worktreeBasePath: '/trees' };
     f.setLegacy(legacy);

@@ -6,17 +6,13 @@ import { readStagePositions, setStagePositions, type StagePositions } from '../w
 import { readStageSizes, setStageSizes, type StageSizes } from '../workflow-sizes.js';
 import { readConnections, setConnections, type ConnectionLayouts } from '../workflow-connections.js';
 import { sameConnectionLayout } from '../connection-anchor.js';
+import { samePosition } from '../stage-position.js';
 
 /** One board version as publishing sees it: its name and its authored workflow text. */
 export interface WorkflowVersion { readonly name: string; readonly workflow: string }
 
 /** The workflow text and board name a placement merge resolves to. */
 export interface WorkflowMergeResult { readonly name: string; readonly workflow: string }
-
-function samePosition(left: StagePosition | undefined, right: StagePosition | undefined): boolean {
-  if (left === undefined || right === undefined) return left === right;
-  return left.x === right.x && left.y === right.y;
-}
 
 /**
  * Merge one layout field across the three versions. The winner's values are the

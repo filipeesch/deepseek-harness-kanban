@@ -13,7 +13,7 @@ import { themeFixture } from './theme-fixture.js';
 
 const scenario = new URLSearchParams(window.location.search).get('scenario') ?? 'board';
 const sharingCase = new URLSearchParams(window.location.search).get('sharing');
-const flowScenario = scenario === 'flow' || scenario === 'flow-anchored' || scenario === 'flow-orphan' || scenario === 'flow-restricted' || scenario === 'flow-restricted-next';
+const flowScenario = scenario === 'flow' || scenario === 'flow-anchored' || scenario === 'flow-orphan' || scenario === 'flow-offgrid' || scenario === 'flow-restricted' || scenario === 'flow-restricted-next';
 const query = new URLSearchParams(window.location.search);
 const themed = query.get('theme') === 'host';
 const refuse = query.get('refuse');
@@ -85,7 +85,11 @@ if (flowScenario) {
       : scenario === 'flow-orphan'
         ? 'connections:' + String.fromCharCode(10) + '  - from: explore' + String.fromCharCode(10) + '    to: apply' + String.fromCharCode(10) + '    source: {side: top, at: 0}' + String.fromCharCode(10)
         : '';
-    board.workflowYaml = 'default_view: workflow' + String.fromCharCode(10) + board.workflowYaml + anchored;
+    // The off-grid scenario stores a placement that is not on the snapping lattice.
+    const positioned = scenario === 'flow-offgrid'
+      ? board.workflowYaml.replace('  - id: explore', '  - id: explore' + String.fromCharCode(10) + '    position: {x: 13, y: 7}')
+      : board.workflowYaml;
+    board.workflowYaml = 'default_view: workflow' + String.fromCharCode(10) + positioned + anchored;
     board.workflow = parseWorkflow(board.workflowYaml);
   });
 }

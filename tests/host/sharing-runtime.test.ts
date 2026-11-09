@@ -64,7 +64,7 @@ describe('publishing runtime wiring', () => {
     await runtime.service.connect({ type: 'sharing.connect', hubId, provider: 'local-folder', settings: { path: suggested }, intervalMinutes: 1 });
 
     expect(runtime.service.view(hubId)).toMatchObject({ provider: 'local-folder', syncMode: 'continuous', status: 'published' });
-    expect(await readFile(path.join(suggested, SHARED_DOCUMENT_FILE), 'utf8')).toContain('version: 1');
+    expect(await readFile(path.join(suggested, SHARED_DOCUMENT_FILE), 'utf8')).toContain('version: 2');
     await runtime.close();
     await hubs.close();
   });

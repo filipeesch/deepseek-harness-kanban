@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { Board, ClientApi, Column, Command, KanbanSnapshot, Problem, Task, Workflow, WorkflowView as WorkflowPresentation } from '../shared/types.js';
+import type { Board, ClientApi, Column, Command, KanbanSnapshot, Problem, Project, Task, Workflow, WorkflowView as WorkflowPresentation } from '../shared/types.js';
 import { EMPTY_ATTENTION } from '../shared/types.js';
 import { Configuration } from './settings/configuration.js';
 import { DirectoryPickerProvider } from './services.js';
@@ -261,6 +261,13 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
 
   const selectedTasks = state?.tasks.filter(task => selectedIds.has(task.id)) ?? [];
   const visible = state === undefined ? [] : filterTasks(state.tasks, { search, projectFilter });
+  // The filter narrows the cards of the board, so it offers the projects those cards
+  // already belong to; the board's project scope governs creation instead.
+  const filterProjects = useMemo(() => {
+    if (state === undefined) return [] as Project[];
+    const used = new Set(state.tasks.map(task => task.projectId));
+    return state.projects.filter(project => used.has(project.id));
+  }, [state]);
   // Local plain-checkout reports combine with the host's transient retention
   // notices; dismissal is per path and lasts for this board session.
   const retainedNotices = [
@@ -339,7 +346,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       batchPending={batch.pending}
       search={search}
       projectFilter={projectFilter}
-      projects={state?.projects ?? []}
+      projects={filterProjects}
       canSelectCards={state !== undefined && state.tasks.length > 0}
       onSearch={setSearch}
       onProjectFilter={setProjectFilter}

@@ -33,7 +33,7 @@ function fixture(){
     setBundleEnabled:vi.fn(async(name:string,on:boolean)=>{expect(name).toBe('dsh-kanban');if(!on){calls.push('off-enter');signals.offEntered.resolve();await hooks.offDelay;enabled=hooks.offObserved===false;calls.push('off-commit');signals.offCommitted.resolve();hooks.afterOff?.();if(hooks.offReject)throw new Error(secret);}else{calls.push('on-enter');signals.onEntered.resolve();await hooks.onDelay;enabled=hooks.onObserved!==false;calls.push('on-commit');if(hooks.onReject)throw new Error(secret);}return{stage:'enable',target:name,enabled:on,changed:true,application:(on?hooks.onApplication:hooks.offApplication)??'applied'};})
   };
   const timestamp='2026-10-22T00:00:00.000Z',state=initialState();
-  const project:Project={id:'owned-project',name:'Owned lifecycle fixture',projectPath:base,gitRootPath:run+'/monorepo',defaultBranch:'main'};
+  const project:Project={id:'owned-project', projectKey: 'owned-project',name:'Owned lifecycle fixture',projectPath:base,gitRootPath:run+'/monorepo',defaultBranch:'main'};
   const operation:ContextOperation={id:'owned-waiting-operation',request:{kind:'create',mode:'new',path:run+'/journal-tree',branchName:'lifecycle-'+nonce,sourceBranch:'main'},phase:'waiting',targetPath:run+'/journal-tree',previousDirectories:{},switchedSessionIds:[],archivedSessionIds:[],gitCompleted:false,createdAt:timestamp};
   const task:Task={id:'owned-task',projectId:project.id,title:'Owned lifecycle fixture',description:'In-memory protocol fixture only.',columnId:state.workflow.initialColumnId,position:0,sessionIds:[owner],closedSessionIds:[],effectiveCwd:base,worktree:null,operation,createdAt:timestamp,updatedAt:timestamp};
   state.projects=[project];state.tasks=[task];
@@ -130,7 +130,7 @@ describe('one-server-function lifecycle preparation (in-memory only)',()=>{
     const f=fixture();const foreign:Task=structuredClone(f.board.value.state.tasks[0]!);foreign.id='foreign-task';foreign.projectId='foreign-project';foreign.sessionIds=['foreign-session'];foreign.effectiveCwd='/foreign/project';foreign.operation=null;
     if(field==='operation')foreign.operation={...f.board.value.state.tasks[0]!.operation!,id:'foreign-operation',phase:'failed'};
     else foreign.pendingTransition={id:'foreign-transition',fromColumnId:foreign.columnId,columnId:foreign.columnId,mode:'move',status:'failed'};
-    f.board.value.state.projects.push({id:'foreign-project',name:'Foreign fixture',projectPath:'/foreign/project',gitRootPath:'/foreign'});f.board.value.state.tasks.push(foreign);expect(()=>BoardStateSchema.parse(f.board.value.state)).not.toThrow();
+    f.board.value.state.projects.push({id:'foreign-project', projectKey: 'foreign-project',name:'Foreign fixture',projectPath:'/foreign/project',gitRootPath:'/foreign'});f.board.value.state.tasks.push(foreign);expect(()=>BoardStateSchema.parse(f.board.value.state)).not.toThrow();
     const controller=f.make();controller.start();const result=await controller.result();expect(result.errors).toContain('FOREIGN_PENDING_WORK');expect(f.manager.setBundleEnabled).not.toHaveBeenCalled();expect(f.jobs.wait).not.toHaveBeenCalled();expect(JSON.stringify(result)).not.toContain('foreign-task');
   });
   it('blocks lifecycle on unacknowledged real runner outcomes, not a client boolean',async()=>{

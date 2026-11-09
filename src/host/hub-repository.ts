@@ -8,6 +8,7 @@ import type { NoteInput, OperationDeps, TaskTextPatch } from '../domain/hub-oper
 import * as operations from '../domain/hub-operations.js';
 import type { WorkflowTextEdit } from '../domain/workflow-edit.js';
 import { assertRevision, isDomainId } from '../domain/validation.js';
+import { withProjectKeys } from '../domain/project-key.js';
 
 export interface HubRepositoryOptions { id?: () => string; now?: () => string }
 export interface LocatedTask { hubId: string; hub: HubState; board: Board; project: Project; task: HubTask }
@@ -41,6 +42,18 @@ function storageFailure(operation: 'load' | 'save' | 'delete', error: unknown): 
 }
 
 function nameKey(value: string): string { return value.trim().toLocaleLowerCase(); }
+/**
+ * Fill in the key a stored project record predates, before the Hub schema reads it.
+ * The backfill is deterministic and runs once: a record whose projects already carry
+ * keys is returned untouched, so the second open writes nothing.
+ */
+function withHubProjectKeys(raw: unknown): unknown {
+  if (raw === null || typeof raw !== 'object' || !('projects' in raw)) return raw;
+  const projects = (raw as { projects?: unknown }).projects;
+  if (!Array.isArray(projects)) return raw;
+  const keyed = withProjectKeys(projects as Array<{ name: string; projectKey?: string }>);
+  return keyed.every((project, index) => project === projects[index]) ? raw : { ...raw, projects: keyed };
+}
 function parseHub(value: unknown, message: string): HubState {
   try { return HubStateSchema.parse(value); }
   catch (error) { throw new KanbanError('INVALID_STATE', message, { cause: error instanceof Error ? error.message : String(error) }); }
@@ -77,7 +90,16 @@ export class HubRepository {
     catch (error) { throw storageFailure('load', error); }
     const hubIds = new Set<string>();
     for (const hub of loaded.hubs) { invariant(!hubIds.has(hub.id), 'INVALID_STATE', 'A Hub identifier is duplicated in storage.'); hubIds.add(hub.id); }
-    const hubs = loaded.hubs.map(hub => parseHub(hub, 'Stored Hub data is invalid.'));
+    const hubs: HubState[] = [];
+    for (const raw of loaded.hubs) {
+      const keyed = withHubProjectKeys(raw);
+      const hub = parseHub(keyed, 'Stored Hub data is invalid.');
+      if (keyed !== raw) {
+        try { await storage.saveHub(structuredClone(hub)); }
+        catch (error) { throw storageFailure('save', error); }
+      }
+      hubs.push(hub);
+    }
     const repository = new HubRepository(storage, hubs, loaded.meta, options);
     if (repository.hubs.size === 0) {
       const at = repository.now();
@@ -544,6 +566,10 @@ export class HubStore {
   }
   async saveBoardWorkflow(boardId: string, yaml: string, expectedRevision?: number): Promise<Workflow> {
     return this.transact(draft => operations.saveBoardWorkflow(draft, boardId, yaml, this.deps()), expectedRevision);
+  }
+  /** Replace one board's project scope; an absent list allows every project of the Hub. */
+  async setBoardProjectScope(boardId: string, projectKeys: readonly string[] | undefined, expectedRevision?: number): Promise<Board> {
+    return this.transact(draft => operations.setBoardProjectScope(draft, boardId, projectKeys, this.deps()), expectedRevision);
   }
   async editBoardWorkflow(boardId: string, edits: readonly WorkflowTextEdit[], expectedRevision?: number): Promise<Board> {
     return this.transact(draft => {

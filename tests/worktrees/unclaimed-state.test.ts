@@ -3,7 +3,7 @@ import {BoardStateSchema,initialState} from '../../src/domain/schema.js';
 
 function state(){
   const value=initialState(); const time='2026-10-21T00:00:00.000Z';
-  value.projects=[{id:'project',name:'Fixture',gitRootPath:'/fixture/repo',projectPath:'/fixture/repo/apps/api'}];
+  value.projects=[{id:'project', projectKey: 'project',name:'Fixture',gitRootPath:'/fixture/repo',projectPath:'/fixture/repo/apps/api'}];
   value.tasks=[{id:'task',projectId:'project',title:'Fixture',description:'',columnId:value.workflow.initialColumnId,position:0,sessionIds:['session'],closedSessionIds:[],effectiveCwd:'/fixture/repo/apps/api',worktree:null,operation:null,createdAt:time,updatedAt:time}];
   return value;
 }

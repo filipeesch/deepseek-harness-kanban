@@ -1,5 +1,6 @@
 import type { BoardState, ClientApi, Command, DriveBrowseView, DriveDiscoveryView, HubSchedule, HubScheduleRuntime, HubSharingView, HubState, HubTask, KanbanSnapshot, KanbanState, LocalDriveRequest, LocalDriveResult, Note, SharingCommand } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
+import { requireProjectPath } from '../../src/shared/project.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import { defaultWorktreeDestination, taskTitleSlug } from '../../src/shared/worktree-name.js';
 import { applyInitialEntry, applyMove, applyRunInstruction, createEnteredAtSource } from '../support/in-memory-board.js';
@@ -72,8 +73,8 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
   const hub: HubState = {
     id: 'hub', name: 'Harness Hub', revision: 1,
     projects: [
-      { id: 'p', name: 'Project', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' },
-      { id: 'p2', name: 'A very long project name that must truncate inside the card', projectPath: '/repo/long', gitRootPath: '/repo', defaultBranch: 'main' },
+      { id: 'p', projectKey: 'p', name: 'Project', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' },
+      { id: 'p2', projectKey: 'p2', name: 'A very long project name that must truncate inside the card', projectPath: '/repo/long', gitRootPath: '/repo', defaultBranch: 'main' },
     ],
 boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(options.restricted, options.prepare !== undefined, options.restrictedNext), workflow: { name: 'Harness flow', initialColumnId: 'explore', columns: [{ id: 'explore', name: 'Explore', ...(options.initialInstruction ? { onEnterPrompt: 'Start the task.' } : {}), ...(options.restrictedNext ? { allowedTransitions: transitions('apply') } : options.restricted ? { allowedTransitions: transitions('propose') } : {}) }, { id: 'propose', name: 'Propose', ...(options.restricted ? {} : { onEnterPrompt: 'Plan this task.' }) }, { id: 'apply', name: 'Apply', ...(options.prepare === undefined ? {} : { onEnterPrompt: 'Apply the plan.' }) }], groups: [{ id: 'planning', name: 'Planning', columnIds: ['explore', 'propose'] }] }, createdAt: now, updatedAt: now }],
     tasks, notes: options.notes ? [
@@ -98,13 +99,13 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
     routed.recordedTransition = { fromColumnId: 'explore', columnId: 'done', at: now };
   }
   if (options.schedules !== undefined) hub.schedules = structuredClone(options.schedules);
-  if (options.extraProject) hub.projects.push({ id: 'p3', name: 'Relocation-only project', projectPath: '/repo/free', gitRootPath: '/repo', defaultBranch: 'main' });
+  if (options.extraProject) hub.projects.push({ id: 'p3', projectKey: 'p3', name: 'Relocation-only project', projectPath: '/repo/free', gitRootPath: '/repo', defaultBranch: 'main' });
   options.relocation?.forEach((state, index) => {
     const project = hub.projects[index];
     if (!project || state === null || state === undefined) return;
     project.operation = {
       id: 'relocation-' + project.id,
-      request: { from: { projectPath: project.projectPath, gitRootPath: project.gitRootPath }, to: { name: project.name, projectPath: '/moved/' + project.id, gitRootPath: '/moved' } },
+      request: { from: { projectPath: requireProjectPath(project), gitRootPath: project.gitRootPath }, to: { name: project.name, projectPath: '/moved/' + project.id, gitRootPath: '/moved' } },
       phase: state,
       migratedSessionIds: [],
       started: state !== 'waiting',

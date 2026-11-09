@@ -18,7 +18,7 @@ function flow(name: string, stages: readonly Stage[]): string {
 }
 
 function documentOf(workflow: string, name = 'Delivery'): SharedHubDocument {
-  return { version: 1, boards: [{ key: 'key-1', name, workflow }] };
+  return { version: 2, boards: [{ key: 'key-1', name, workflow }] };
 }
 
 function localBoard(workflow: string, options: { name?: string; taskColumns?: Array<{ columnId: string; tasks: number }> } = {}): LocalSharedBoard {
@@ -104,8 +104,8 @@ describe('sharing plan with stage placement', () => {
     const local = flow('Original', [['todo', 'To do', [40, 0]], ['doing', 'Doing', [200, 0]], ['done', 'Done']]);
     const published = flow('Original', [['todo', 'To do', [0, 0]], ['doing', 'Doing', [260, 0]], ['done', 'Done']]);
     const input: SharingInput = {
-      base: { version: 1, boards: [{ key: 'key-1', name: 'Original', workflow: base }] },
-      published: { version: 1, boards: [{ key: 'key-1', name: 'Original', workflow: published }] },
+      base: { version: 2, boards: [{ key: 'key-1', name: 'Original', workflow: base }] },
+      published: { version: 2, boards: [{ key: 'key-1', name: 'Original', workflow: published }] },
       local: [
         localBoard(local, { name: 'Renamed' }),
         { boardId: 'board-2', name: 'Original', workflow: base, tasks: 0, taskColumns: [] },

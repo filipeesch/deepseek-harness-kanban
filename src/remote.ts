@@ -10,7 +10,7 @@ import { SHARING_STORAGES } from './shared/types.js';
 export const PACKAGE_NAME = 'dsh-kanban';
 const id=z.string().min(1).max(200);
 const revision=z.number().int().nonnegative().optional();
-const project=z.object({id:id.optional(),name:z.string().min(1),projectPath:z.string().min(1),gitRootPath:z.string().optional(),defaultBranch:z.string().optional()}).strict();
+const project=z.object({id:id.optional(),name:z.string().min(1),projectPath:z.string().min(1),gitRootPath:z.string().optional(),defaultBranch:z.string().optional(),projectKey:z.string().min(1).optional()}).strict();
 const relocationProject=project.extend({id});
 const hubId=id.optional();
 const boardId=id.optional();
@@ -35,6 +35,7 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('board.rename'),hubId:id,boardId:id,name:z.string().min(1),expectedRevision:revision}).strict(),
  z.object({type:z.literal('board.delete'),hubId:id,boardId:id,confirmed:z.boolean(),expectedRevision:revision,sharing:z.enum(['local','team']).optional()}).strict(),
  z.object({type:z.literal('board.workflow.save'),hubId:id,boardId:id,yaml:z.string(),expectedRevision:revision}).strict(),
+ z.object({type:z.literal('board.projects.save'),hubId:id,boardId:id,projectKeys:z.array(z.string().min(1)).refine(keys=>new Set(keys).size===keys.length,'Project keys must be unique.').optional(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('project.save'),hubId,project,expectedRevision:revision}).strict(),
  z.object({type:z.literal('project.relocate'),hubId,project:relocationProject,confirmed:z.boolean(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('project.relocationRetry'),hubId,projectId:id}).strict(),

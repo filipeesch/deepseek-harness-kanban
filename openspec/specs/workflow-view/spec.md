@@ -159,12 +159,12 @@ A stage without a stored placement SHALL be placed automatically. Each stage SHA
 
 ### Requirement: Persisted stage placement
 
-Dragging a stage region SHALL place that stage at the dropped position and SHALL store the placement in the board's workflow configuration as that stage's position. Only the dragged stage's position SHALL change. A stored position SHALL survive a reload, a switch of presentation, and another installation that receives the board through team sharing. Saves produced by dragging SHALL be coalesced so that one completed drag produces one stored workflow change. A position that is not a finite number or that lies outside the accepted coordinate range SHALL be rejected as an invalid workflow, and the last valid workflow SHALL be retained.
+Dragging a stage region SHALL place that stage at the position the drag settles on and SHALL store the placement in the board's workflow configuration as that stage's position. A settled position SHALL be the dropped position rounded to whole diagram units while snapping is off, and the nearest lattice point while snapping is on. Only the dragged stage's position SHALL change. A stored position SHALL survive a reload, a switch of presentation, and another installation that receives the board through team sharing. Saves produced by dragging SHALL be coalesced so that one completed drag produces one stored workflow change. A position that is not a finite number or that lies outside the accepted coordinate range SHALL be rejected as an invalid workflow, and the last valid workflow SHALL be retained.
 
 #### Scenario: Persist a dragged stage
 
 - **WHEN** the user drags a stage region and releases it
-- **THEN** the stage stays at the dropped position
+- **THEN** the stage stays at the settled position
 - **AND** the board's workflow configuration stores that stage's new position
 
 #### Scenario: Restore a stored placement
@@ -406,56 +406,70 @@ The diagram SHALL expose each stage region as a labelled region and each card as
 - **AND** the diagram's card tab order is unchanged
 
 ### Requirement: Diagram zoom and pan
-
-The diagram SHALL support panning and zooming within its own surface. Scrolling the wheel SHALL zoom the diagram at the pointer position without requiring a modifier key. Dragging the empty background SHALL pan the diagram, and a pinch gesture SHALL zoom at the gesture position. Zoom in, zoom out, and fit-to-view SHALL be available through the diagram's control stack, and the zoom level SHALL be bounded so the diagram remains usable at both limits. Navigation SHALL NOT change board data, SHALL NOT be part of the layout history, and SHALL NOT persist across a reload.
+The diagram SHALL support panning and zooming within its own surface. Scrolling the wheel SHALL zoom the diagram at the pointer position without requiring a modifier key. Dragging the empty background SHALL pan the diagram, and a pinch gesture SHALL zoom at the gesture position. Zoom in, zoom out, and fit-to-view SHALL be available through the diagram's control stack, and the zoom level SHALL be bounded so the diagram remains usable at both limits. Navigation SHALL NOT change board data and SHALL NOT be part of the layout history. The diagram's pan position and zoom SHALL be stored per board in the browser and SHALL survive a reload. Opening a board SHALL restore the position last stored for that board, and switching from one board to another SHALL restore each board's own stored position. A change to that board's workflow that adds or removes a stage SHALL re-frame the whole diagram, and that framing SHALL become the stored position, because a stage may otherwise be left off screen. A change limited to authored stage positions or sizes SHALL keep the stored position: the user is looking at the layout they just authored, and re-framing it mid-edit would move the diagram away from them. Fit-to-view and organizing the stages SHALL re-frame the diagram, and that framing SHALL become the stored position. The stored position SHALL be local to the browser, SHALL NOT be sent to the host, SHALL NOT change the board's workflow, and SHALL NOT be published to the team.
 
 #### Scenario: Zoom with the wheel
-
 - **WHEN** the user scrolls the wheel over the diagram without holding any modifier key
 - **THEN** the diagram zooms around the pointer position
 - **AND** the gesture does not pan the diagram
 
 #### Scenario: Zoom with a modifier key
-
 - **WHEN** the user holds ctrl or cmd and scrolls over the diagram
 - **THEN** the diagram zooms around the pointer position
 
 #### Scenario: Zoom at the pointer
-
 - **WHEN** the user zooms with the wheel away from the diagram's center
 - **THEN** the point under the pointer stays under the pointer
 
 #### Scenario: Zoom with a pinch gesture
-
 - **WHEN** the user performs a pinch gesture over the diagram
 - **THEN** the diagram zooms around the gesture position
 
 #### Scenario: Pan by dragging the background
-
 - **WHEN** the user drags the empty background of the diagram
 - **THEN** the diagram pans
 
 #### Scenario: Fit the diagram
-
 - **WHEN** the user activates fit-to-view
 - **THEN** every stage region is visible inside the diagram surface
+- **AND** that framing is stored for the active board
 
 #### Scenario: Respect the zoom limits
-
 - **WHEN** the user zooms beyond the accepted bounds
 - **THEN** the zoom level stops at the bound
 - **AND** the diagram remains usable
 
 #### Scenario: Navigation changes no board data
-
 - **WHEN** the user pans or zooms the diagram
-- **THEN** no command is sent and no board data changes
+- **THEN** no command is sent to the host and no board data changes
+
+#### Scenario: Restore the position of a board
+- **WHEN** the user pans and zooms a board, reloads, and opens the same board
+- **THEN** the diagram presents the pan position and zoom last stored for that board
+
+#### Scenario: Keep a separate position per board
+- **WHEN** the user pans and zooms one board, switches to another board, pans and zooms there, and returns to the first
+- **THEN** each board presents its own stored pan position and zoom
+
+#### Scenario: Re-frame after a stage is added or removed
+- **WHEN** the board's workflow changes so that a stage is added or removed
+- **THEN** the diagram re-frames every stage
+- **AND** that framing becomes the stored position for that board
+
+#### Scenario: Keep the stored position after moving a stage
+- **WHEN** the board's workflow changes only the authored position or size of a stage
+- **THEN** the diagram keeps the stored position for that board
+- **AND** the moved stage is presented where it was authored
+
+#### Scenario: Keep the stored position out of shared data
+- **WHEN** the user navigates the diagram of a published board
+- **THEN** the pan position and zoom are not included in the board's workflow, the published document, or any team update
 
 ### Requirement: Stage minimum size
 
 Each stage SHALL have a size that bounds its rendered width and height in the diagram. A stage SHALL NOT render narrower or shorter than its minimum size, and the size the diagram uses today SHALL remain the accepted minimum. A stage SHALL grow beyond its stored size when its cards require more room and SHALL NOT shrink below its minimum size when they require less. A stage size SHALL be stored per stage in the board's workflow configuration as that stage's size, SHALL survive a reload, a switch of presentation, and another installation that receives the board through team sharing, and SHALL be merged by the same sharing path that merges placements.
 
-The user SHALL be able to resize a stage by dragging a resize handle on the stage region while the layout is unlocked. A resize SHALL change only the resized stage's size and SHALL NOT change any stage's placement. A size that is not a finite number, is smaller than the minimum, or lies outside the accepted coordinate range SHALL be rejected as an invalid workflow, and the last valid workflow SHALL be retained.
+The user SHALL be able to resize a stage by dragging a resize handle on the stage region while the layout is unlocked. A resize SHALL change only the resized stage's size and SHALL NOT change any stage's placement. A settled size SHALL be the pointer size rounded to whole diagram units while snapping is off, and the nearest lattice point while snapping is on, and SHALL never be below the accepted minimum size. A size that is not a finite number, is smaller than the minimum, or lies outside the accepted coordinate range SHALL be rejected as an invalid workflow, and the last valid workflow SHALL be retained.
 
 #### Scenario: Enforce the minimum size
 
@@ -471,7 +485,7 @@ The user SHALL be able to resize a stage by dragging a resize handle on the stag
 #### Scenario: Resize a stage
 
 - **WHEN** the user drags a stage's resize handle while the layout is unlocked
-- **THEN** that stage's width and height follow the pointer
+- **THEN** that stage's width and height follow the pointer, settling on the lattice while snapping is on
 - **AND** no other stage changes size or position
 
 #### Scenario: Persist a resized stage
@@ -640,7 +654,7 @@ Each connection's layout SHALL be stored in the board's workflow configuration a
 
 ### Requirement: Connection re-anchoring and route adjustment
 
-While the layout lock is off, the diagram SHALL let the user move either end of a drawn connection, including the dashed connection derived from a stage without configured transitions. Pointing at a connection SHALL reveal a handle at each end and a handle on each adjustable segment; while the layout lock is on, pointing at a connection SHALL reveal the same marks without making them operable. Dragging an end handle SHALL move that end to the anchor point nearest the pointer, and releasing SHALL store the layout. Moving the pointer SHALL NOT store the workflow. A press that never moves SHALL change nothing and SHALL store nothing. Dragging a segment handle SHALL move that segment perpendicular to itself and SHALL store the layout on release. A cancelled gesture SHALL leave the connection as it was. An adjustment SHALL change no stage, no transition, no card, and no other connection.
+While the layout lock is off, the diagram SHALL let the user move either end of a drawn connection, including the dashed connection derived from a stage without configured transitions. Pointing at a connection SHALL reveal a handle at each end and a handle on each adjustable segment; while the layout lock is on, pointing at a connection SHALL reveal the same marks without making them operable. Dragging an end handle SHALL move that end to the anchor point nearest the pointer, and releasing SHALL store the layout. Moving the pointer SHALL NOT store the workflow. A press that never moves SHALL change nothing and SHALL store nothing. Dragging a segment handle SHALL move that segment perpendicular to itself, SHALL settle the segment's line on the nearest lattice point while snapping is on, and SHALL store the layout on release. A cancelled gesture SHALL leave the connection as it was. An adjustment SHALL change no stage, no transition, no card, and no other connection.
 
 #### Scenario: Reveal the handles on hover
 
@@ -663,7 +677,7 @@ While the layout lock is off, the diagram SHALL let the user move either end of 
 #### Scenario: Adjust a route segment
 
 - **WHEN** the user drags a segment handle perpendicular to that segment
-- **THEN** the segment follows the pointer at right angles to its own direction
+- **THEN** the segment follows the pointer at right angles to its own direction, settling on the nearest lattice point while snapping is on
 - **AND** the rest of the path reconnects orthogonally
 - **AND** the change is stored on release
 
@@ -718,3 +732,93 @@ Each end of each drawn connection SHALL be reachable by keyboard. While a connec
 - **WHEN** a focused connection end receives an arrow key while the layout is locked
 - **THEN** the anchor does not move
 - **AND** nothing is stored
+
+### Requirement: Grid snapping of layout edits
+
+The diagram SHALL provide a grid-snapping preference for layout editing. While snapping is on, a completed stage move, a completed stage resize, and a completed route-segment adjustment SHALL settle on a lattice before any layout is stored. The lattice SHALL use a fixed step of 8 diagram units and SHALL be absolute: a settled value SHALL be the lattice point nearest the pointer, not the value the gesture started from plus a whole number of steps. The lattice SHALL be expressed in diagram coordinates, so panning and zooming SHALL NOT change a settled value.
+
+A settled stage size SHALL NOT be smaller than the accepted minimum size. When the nearest lattice point lies below the minimum, the settled size SHALL be the smallest lattice point at or above the minimum. A settled placement or size SHALL remain inside the accepted coordinate ranges of the workflow.
+
+Snapping SHALL apply only to an edit the user performs. Automatic placement, Organize, and the positions, sizes, and connection layouts already stored for a stage SHALL keep their current geometry; a stored position that is not a lattice point SHALL be presented as stored and SHALL settle on the lattice only when the user edits that stage. Connection ends SHALL keep resolving to their anchor points rather than to the lattice.
+
+Holding the bypass modifier, Alt, during a layout gesture SHALL ignore the lattice for the rest of that gesture without changing the preference. A gesture that settles on the value it started from SHALL store no workflow change and SHALL add no placement-history entry.
+
+The preference SHALL start on, SHALL be changeable from the diagram's control stack, and SHALL be remembered for the browser without being stored in the board's workflow or shared with the team. The control SHALL expose an accessible name, a tooltip, and its on or off state, and SHALL remain available while the layout is locked. The diagram SHALL NOT draw the lattice.
+
+#### Scenario: Snap a dragged stage
+
+- **WHEN** the user drags a stage while snapping is on
+- **THEN** the stage settles on the lattice point nearest the drop position
+- **AND** the stored position is that lattice point
+
+#### Scenario: Use an absolute lattice
+
+- **WHEN** the user drags a stage whose stored position is not a lattice point while snapping is on
+- **THEN** the settled position is the lattice point nearest the drop position
+- **AND** it is not the stored position plus a whole number of steps
+
+#### Scenario: Snap a resized stage
+
+- **WHEN** the user resizes a stage while snapping is on
+- **THEN** the settled width and height are the lattice points nearest the pointer
+- **AND** the stored size is that settled size
+
+#### Scenario: Keep the minimum size when snapping a resize
+
+- **WHEN** the lattice point nearest a resized dimension lies below the accepted minimum size
+- **THEN** the settled size uses the smallest lattice point at or above the minimum
+
+#### Scenario: Snap an adjusted route segment
+
+- **WHEN** the user drags a route segment while snapping is on
+- **THEN** the segment settles with its line on the lattice point nearest the pointer
+- **AND** the stored offset describes that line
+
+#### Scenario: Ignore the lattice while the bypass modifier is held
+
+- **WHEN** the user holds Alt during a layout gesture
+- **THEN** that gesture settles at the pointer position without using the lattice
+- **AND** the snapping preference is unchanged
+
+#### Scenario: Record nothing for an edit that settles in place
+
+- **WHEN** a stage move, a stage resize, or a route-segment adjustment settles on the value it started from
+- **THEN** no workflow change is stored
+- **AND** no placement-history entry is added
+
+#### Scenario: Turn snapping off
+
+- **WHEN** the user turns snapping off from the control stack
+- **THEN** a stage move or resize settles at the pointer position rounded to whole diagram units
+- **AND** an adjusted route segment settles at the pointer position rounded to whole diagram units
+- **AND** the toggle itself stores no workflow change
+
+#### Scenario: Remember the preference
+
+- **WHEN** the user changes the snapping preference and reloads the board
+- **THEN** snapping is presented in the chosen state
+- **AND** the board's workflow configuration contains no record of the preference
+
+#### Scenario: Keep automatic placement off the lattice
+
+- **WHEN** the user activates Organize while snapping is on
+- **THEN** every stage is placed exactly as the automatic layout places it with snapping off
+- **AND** the computed positions are stored as they are
+
+#### Scenario: Present a stored off-lattice placement
+
+- **WHEN** a stage's stored position is not a lattice point
+- **THEN** the stage is presented at that stored position
+- **AND** it settles on the lattice only after the user edits that stage
+
+#### Scenario: Change snapping while the layout is locked
+
+- **WHEN** the layout is locked and the user activates the snapping control
+- **THEN** the preference changes
+- **AND** no stage is moved or resized and no workflow change is stored
+
+#### Scenario: Name the snapping control
+
+- **WHEN** assistive technology reads the snapping control
+- **THEN** the control is announced with an accessible name and a tooltip
+- **AND** its on or off state is exposed

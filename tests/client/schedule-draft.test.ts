@@ -5,7 +5,7 @@ import {
   scheduleDraftError, scheduleDraftOccurrences, toScheduleCommand,
 } from '../../src/client/settings/schedules/schedule-draft.js';
 
-const projects: Project[] = [{ id: 'project', name: 'Web', projectPath: '/repo/web' }];
+const projects: Project[] = [{ id: 'project', projectKey: 'web', name: 'Web', projectPath: '/repo/web' }];
 const schedule: HubSchedule = {
   id: 'schedule', title: 'Morning', prompt: 'Summarize', cron: '0 9 * * *', timeZone: 'Europe/Lisbon', projectId: 'project',
   model: { provider: 'deepseek', model: 'reason', reasoningEffort: 'high' }, newConversation: true, archiveWhenIdle: true, enabled: true,

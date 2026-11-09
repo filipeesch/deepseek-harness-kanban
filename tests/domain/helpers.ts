@@ -1,5 +1,5 @@
 import type { StateStorage } from '../../src/shared/ports.js';
-import type { BoardState, Project, Task } from '../../src/shared/types.js';
+import type { BoardState, RegisteredProject, Task } from '../../src/shared/types.js';
 import { initialState } from '../../src/domain/schema.js';
 
 export function deferred<T = void>() {
@@ -34,8 +34,8 @@ export class MemoryStorage implements StateStorage {
   }
 }
 
-export const sampleProject = (id = 'project-1'): Project => ({
-  id, name: 'API', projectPath: '/repos/platform/services/api', gitRootPath: '/repos/platform',
+export const sampleProject = (id = 'project-1'): RegisteredProject => ({
+  id, name: 'API', projectKey: id, projectPath: '/repos/platform/services/api', gitRootPath: '/repos/platform',
 });
 
 export function sampleTask(id = 'task-1', sessionId = 'session-1'): Task {
