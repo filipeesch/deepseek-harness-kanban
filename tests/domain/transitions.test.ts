@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { Workflow } from '../../src/shared/types.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
-import { canTransition, nextStage, transitionAccess, transitionDestinations } from '../../src/domain/transitions.js';
+import { authoredTransitions, canTransition, defaultDestination, nextStage, transitionAccess, transitionDestinations, transitionTargets } from '../../src/domain/transitions.js';
+import { transitions } from '../support/transition-rules.js';
 
 const workflow: Workflow = {
   name: 'Flow',
   initialColumnId: 'backlog',
   columns: [
-    { id: 'backlog', name: 'Backlog', allowedTransitions: ['plan'] },
+    { id: 'backlog', name: 'Backlog', allowedTransitions: transitions('plan') },
     { id: 'plan', name: 'Plan' },
     { id: 'done', name: 'Done' },
     { id: 'archive', name: 'Archive', allowedTransitions: [] },
@@ -29,6 +30,13 @@ describe('transition access policy', () => {
     expect(transitionAccess(workflow, 'plan', 'archive')).toBe('allowed');
     expect(transitionAccess(workflow, 'archive', 'backlog')).toBe('restricted');
     expect(transitionAccess(workflow, 'archive', 'done')).toBe('restricted');
+  });
+
+  it('exposes the authored rule for one stage', () => {
+    expect(authoredTransitions(workflow, 'backlog')).toEqual({ targets: transitions('plan'), next: workflow.columns[1] });
+    expect(authoredTransitions(workflow, 'plan')).toEqual({ targets: null, next: workflow.columns[2] });
+    expect(authoredTransitions(workflow, 'archive')).toEqual({ targets: [], next: undefined });
+    expect(authoredTransitions(workflow, 'missing')).toBeNull();
   });
 
   it('returns every workflow stage in workflow order with its access', () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as operations from '../../src/domain/hub-operations.js';
 import { sampleHub, operationDeps } from './hub-helpers.js';
+import { transitions } from '../support/transition-rules.js';
 
 describe('Hub operations', () => {
   it('creates and renames boards with case-insensitive uniqueness', () => {
@@ -43,6 +44,43 @@ describe('Hub operations', () => {
     operations.placeTask(hub, task.id, 'done', 'end', 1);
     expect(hub.tasks[0]!.autoMode?.pause).toBeUndefined();
     expect(hub.tasks[0]!.autoMode?.enabled).toBe(true);
+  });
+
+  it('records, replaces, and clears the transition of the current stage without moving the task', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    hub.boards[0]!.workflow.columns.push({ id: 'review', name: 'Review' }, { id: 'done', name: 'Done' });
+    hub.boards[0]!.workflow.columns[0]!.allowedTransitions = transitions('review', 'done');
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Route', description: '' }, deps);
+    operations.recordTransition(hub, task.id, 'done', deps);
+    expect(task.recordedTransition).toMatchObject({ fromColumnId: 'backlog', columnId: 'done' });
+    expect(task.columnId).toBe('backlog');
+    operations.recordTransition(hub, task.id, 'review', deps);
+    expect(task.recordedTransition?.columnId).toBe('review');
+    operations.recordTransition(hub, task.id, undefined, deps);
+    expect(task.recordedTransition).toBeUndefined();
+  });
+
+  it('rejects a recording the current stage does not configure', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    hub.boards[0]!.workflow.columns.push({ id: 'done', name: 'Done' });
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Route', description: '' }, deps);
+    expect(() => operations.recordTransition(hub, task.id, 'done', deps)).toThrowError(/does not configure transitions/);
+    hub.boards[0]!.workflow.columns[0]!.allowedTransitions = transitions('done');
+    expect(() => operations.recordTransition(hub, task.id, 'backlog', deps)).toThrowError(/another stage/);
+    expect(() => operations.recordTransition(hub, task.id, 'missing', deps)).toThrowError(/configured transition/);
+    expect(task.recordedTransition).toBeUndefined();
+  });
+
+  it('discards the recording when the task leaves the stage and keeps it on a same-stage reorder', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    hub.boards[0]!.workflow.columns.push({ id: 'done', name: 'Done' });
+    hub.boards[0]!.workflow.columns[0]!.allowedTransitions = transitions('done');
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Route', description: '' }, deps);
+    operations.recordTransition(hub, task.id, 'done', deps);
+    operations.placeTask(hub, task.id, 'backlog', 'end', 1);
+    expect(task.recordedTransition).toMatchObject({ columnId: 'done' });
+    operations.placeTask(hub, task.id, 'done', 'end', 2);
+    expect(task.recordedTransition).toBeUndefined();
   });
 
   it('creates a task in the board initial stage and preserves per-board positions', () => {

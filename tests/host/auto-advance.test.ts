@@ -4,6 +4,8 @@ import type { AutoAdvancePlan } from '../../src/domain/auto-advance.js';
 import type { AutoModePauseReason, Board, Column, ConversationFacts, HubTask } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
+import { KanbanError } from '../../src/shared/errors.js';
+import { transitions } from '../support/transition-rules.js';
 
 const now = '2026-01-01T00:00:00.000Z';
 const idle: ConversationFacts = { running: false, background: [], pending: NO_PENDING_USER_WORK, settledTurn: null };
@@ -97,6 +99,50 @@ describe('auto-advance coordinator', () => {
     expect(f.admitted).toHaveLength(1);
     expect(f.admitted[0]!.plan.destination?.id).toBe('plan');
     expect(f.admitted[0]!.plan.instruction).toBe('Plan it.');
+  });
+
+  it('advances to the recorded destination instead of the first configured target', async () => {
+    const f = harness();
+    f.seed(
+      task({ recordedTransition: { fromColumnId: 'backlog', columnId: 'plan', at: now } }),
+      board(column('backlog', { allowedTransitions: transitions('done', 'plan') }), column('plan', { onEnterPrompt: 'Plan it.' }), column('done')),
+    );
+    f.coordinator.observe('s1', turnEnd(1));
+    await f.scheduler.flush();
+    expect(f.admitted).toHaveLength(1);
+    expect(f.admitted[0]!.plan.destination?.id).toBe('plan');
+    expect(f.admitted[0]!.plan.path.map(value => value.id)).toEqual(['plan']);
+  });
+
+  it('pauses with transition-stale when the recorded transition no longer resolves', async () => {
+    const f = harness();
+    f.seed(
+      task({ recordedTransition: { fromColumnId: 'backlog', columnId: 'plan', at: now } }),
+      board(column('backlog', { allowedTransitions: transitions('done') }), column('plan'), column('done')),
+    );
+    f.coordinator.observe('s1', turnEnd(1));
+    await f.scheduler.flush();
+    expect(f.admitted).toHaveLength(0);
+    expect(f.pauses).toHaveLength(1);
+    expect(f.pauses[0]).toMatchObject({ taskId: 'task', reason: 'transition-stale' });
+    expect(f.pauses[0]!.message).toContain('no longer a configured transition');
+  });
+
+  it('maps a stale admission failure to the same pause', async () => {
+    const f = harness({ admit: async () => { throw new KanbanError('TRANSITION_STALE', 'The recording stopped resolving.'); } });
+    f.seed(task(), board(column('backlog'), column('plan')));
+    f.coordinator.observe('s1', turnEnd(1));
+    await f.scheduler.flush();
+    expect(f.admitted).toHaveLength(0);
+    expect(f.pauses).toMatchObject([{ reason: 'transition-stale', message: 'The recording stopped resolving.' }]);
+  });
+
+  it('keeps advance-failed for any other admission failure', async () => {
+    const f = harness({ admit: async () => { throw new KanbanError('INVALID_TARGET', 'Changed.'); } });
+    f.seed(task(), board(column('backlog'), column('plan')));
+    f.coordinator.observe('s1', turnEnd(1));
+    await f.scheduler.flush();
+    expect(f.pauses).toMatchObject([{ reason: 'advance-failed' }]);
   });
 
   it('records a pause for every non-completed ending and never admits', async () => {

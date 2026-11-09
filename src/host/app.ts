@@ -517,6 +517,7 @@ export class KanbanApp {
    case 'operation.dismiss':await this.dismissFailedAdvance(command.taskId);break;
    case 'task.move':await this.move(command);break;
    case 'task.autoMode':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).setAutoMode(command.taskId,command.enabled);if(!command.enabled)this.autoAdvance.forget(command.taskId);break;}
+   case 'task.recordTransition':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).recordTransition(command.taskId,command.columnId);break;}
    case 'task.runInstruction':await this.runInstruction(command);break;
   }
   await this.dispatchPending();const snapshot=await this.snapshot({},'cache');return {...snapshot,...(commandReceipt?{commandReceipt}:{})};

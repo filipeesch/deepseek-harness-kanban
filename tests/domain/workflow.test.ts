@@ -22,6 +22,52 @@ describe('workflow configuration', () => {
     expect(canTransition(result, 'doing', 'todo')).toBe(false);
   });
 
+  it('accepts bare, conditioned, and mixed transition entries with one meaning', () => {
+    const result = parseWorkflow([
+      'columns:',
+      '  - id: review',
+      '    label: Review',
+      '    allowed_transitions:',
+      '      - done',
+      '      - to: rework',
+      '        when: The review requested changes.',
+      '      - to: blocked',
+      '        when: "   "',
+      '  - id: done',
+      '    label: Done',
+      '  - id: rework',
+      '    label: Rework',
+      '  - id: blocked',
+      '    label: Blocked',
+      '',
+    ].join(String.fromCharCode(10)));
+    expect(result.columns[0]?.allowedTransitions).toEqual([
+      { to: 'done' },
+      { to: 'rework', when: 'The review requested changes.' },
+      { to: 'blocked' },
+    ]);
+    expect(canTransition(result, 'review', 'done')).toBe(true);
+    expect(canTransition(result, 'review', 'rework')).toBe(true);
+  });
+
+  it('accepts the default presentation and authored stage positions', () => {
+    const result = parseWorkflow('default_view: workflow\ncolumns:\n  - id: todo\n    label: To do\n    position: {x: 40, y: 120}\n  - id: done\n    label: Done\n');
+    expect(result.defaultView).toBe('workflow');
+    expect(result.columns[0]?.position).toEqual({ x: 40, y: 120 });
+    expect(result.columns[1]?.position).toBeUndefined();
+  });
+
+  it('accepts authored stage sizes and leaves an absent one to the minimum', () => {
+    const result = parseWorkflow('columns:\n  - id: todo\n    label: To do\n    size: {width: 400, height: 300}\n  - id: done\n    label: Done\n');
+    expect(result.columns[0]?.size).toEqual({ width: 400, height: 300 });
+    expect(result.columns[1]?.size).toBeUndefined();
+  });
+
+  it('keeps an explicit board default and omits an absent one', () => {
+    expect(parseWorkflow('default_view: board\n' + minimal).defaultView).toBe('board');
+    expect(parseWorkflow(minimal).defaultView).toBeUndefined();
+  });
+
   it('defaults an omitted initial column to the first configured stage, not backlog', () => {
     expect(parseWorkflow(minimal).initialColumnId).toBe('todo');
   });
@@ -55,7 +101,26 @@ describe('workflow configuration', () => {
     'columns: [{id: one, label: One, allowed_transitions: [missing]}]',
     'columns: [{id: one, label: One, allowed_transitions: [one, one]}]',
     'columns: [{id: one, label: One, allowed_transitions: null}]',
+    'columns: [{id: one, label: One, allowed_transitions: [{when: Only a condition}]}]',
+    'columns: [{id: one, label: One, allowed_transitions: [{to: missing}]}]',
+    'columns: [{id: one, label: One, allowed_transitions: [{to: one, when: 3}]}]',
+    'columns: [{id: one, label: One, allowed_transitions: [{to: one, extra: text}]}]',
+    'columns: [{id: one, label: One, allowed_transitions: [one, {to: one}]}]',
     'columns: [{id: one, label: One, on_enter_prompt: 3}]',
+    'default_view: maybe\n' + minimal,
+    'columns: [{id: one, label: One, position: 3}]',
+    'columns: [{id: one, label: One, position: {x: 1}}]',
+    'columns: [{id: one, label: One, position: {x: \"1\", y: 2}}]',
+    'columns: [{id: one, label: One, position: {x: 1, y: 2, z: 3}}]',
+    'columns: [{id: one, label: One, position: {x: .inf, y: 2}}]',
+    'columns: [{id: one, label: One, size: 3}]',
+    'columns: [{id: one, label: One, size: {width: 264}}]',
+    'columns: [{id: one, label: One, size: {width: "264", height: 140}}]',
+    'columns: [{id: one, label: One, size: {width: 263, height: 140}}]',
+    'columns: [{id: one, label: One, size: {width: 264, height: 139}}]',
+    'columns: [{id: one, label: One, size: {width: 264, height: 140, depth: 1}}]',
+    'columns: [{id: one, label: One, size: {width: .inf, height: 140}}]',
+    'columns: [{id: one, label: One, size: {width: 10001, height: 140}}]',
     'columns: [{id: one, label: One, limit: 2}]',
     'columns: [{id: one, label: One, tools: [shell]}]',
     'columns: [{id: one, label: One, stage_instructions: Execute}]',

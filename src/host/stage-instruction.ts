@@ -1,6 +1,7 @@
 import type { Board, HubState, HubTask } from '../shared/types.js';
 import { invariant } from '../shared/errors.js';
 import { entryInstruction } from '../domain/stage-entry.js';
+import { buildTransitionBriefing } from './stage-briefing.js';
 
 /** The task scope an admission needs; the host resolves it from its task locator. */
 export interface StageInstructionTarget { hubId: string; task: HubTask; board: Board }
@@ -57,7 +58,13 @@ export async function admitStageInstruction(deps: StageInstructionDeps, request:
   }
   const sessionId = request.sessionId ?? await deps.resolveSession(task);
   await deps.assertExecutionContext(sessionId);
-  await deps.send(sessionId, instruction, request.requestId);
+  // Both awaits above can let the task, the workflow, or the recording change, so
+  // the send re-reads them. The message still belongs to the requested stage, and
+  // a task that left it must not receive that stage's instruction.
+  const live = deps.locate(request.taskId);
+  invariant(live.task.columnId === request.columnId, 'TASK_MOVED', 'The task moved to another stage before its instruction was sent.');
+  const briefing = buildTransitionBriefing(live.board.workflow, { columnId: request.columnId, recordedTransition: live.task.recordedTransition });
+  await deps.send(sessionId, briefing === undefined ? instruction : instruction + '\n\n' + briefing, request.requestId);
   await deps.transact(target.hubId, draft => {
     const current = draft.tasks.find(value => value.id === task.id);
     const marker = current?.instructionPending;

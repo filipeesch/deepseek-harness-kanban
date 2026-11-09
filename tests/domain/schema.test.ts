@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BoardStateSchema, initialState } from '../../src/domain/schema.js';
+import { parseWorkflow } from '../../src/domain/workflow.js';
 import { populatedState, sampleTask } from './helpers.js';
 
 describe('persisted board schema', () => {
@@ -29,6 +30,50 @@ describe('persisted board schema', () => {
     expect(parsed.success && parsed.data.tasks[0]!.pendingTransition?.origin).toBe('auto');
   });
 
+  it('normalizes a stored workflow written with bare transition identifiers', () => {
+    const yaml = 'name: Flow\ncolumns:\n  - id: backlog\n    label: Backlog\n    allowed_transitions: [done]\n  - id: done\n    label: Done\n';
+    const state = populatedState();
+    state.workflowYaml = yaml;
+    state.workflow = parseWorkflow(yaml);
+    // The shape a previous version persisted: bare identifiers, not entries.
+    state.workflow.columns[0]!.allowedTransitions = ['done'] as never;
+    const parsed = BoardStateSchema.safeParse(state);
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.workflow.columns[0]!.allowedTransitions).toEqual([{ to: 'done' }]);
+  });
+
+  it('accepts a recorded transition and the transition-stale pause reason', () => {
+    const state = populatedState();
+    state.tasks[0]!.recordedTransition = { fromColumnId: 'backlog', columnId: 'done', at: '2026-10-21T10:00:00.000Z' };
+    state.tasks[0]!.autoMode = { enabled: true, pause: { reason: 'transition-stale', at: '2026-10-21T10:00:00.000Z' } };
+    const parsed = BoardStateSchema.safeParse(state);
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.tasks[0]!.recordedTransition?.columnId).toBe('done');
+    expect(parsed.success && parsed.data.tasks[0]!.autoMode?.pause?.reason).toBe('transition-stale');
+  });
+
+  it('accepts a recording whose target stage was removed from the workflow', () => {
+    const state = populatedState();
+    state.tasks[0]!.recordedTransition = { fromColumnId: 'backlog', columnId: 'missing', at: '2026-10-21T10:00:00.000Z' };
+    // This is the state a workflow edit produces, and the advance reports it as a
+    // stale recording instead of the save being refused.
+    const parsed = BoardStateSchema.safeParse(state);
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.tasks[0]!.recordedTransition?.columnId).toBe('missing');
+  });
+
+  it('rejects a recording whose source stage is outside the workflow', () => {
+    const state = populatedState();
+    state.tasks[0]!.recordedTransition = { fromColumnId: 'missing', columnId: 'done', at: '2026-10-21T10:00:00.000Z' };
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+
+  it('rejects an unknown pause reason', () => {
+    const state = populatedState();
+    state.tasks[0]!.autoMode = { enabled: true, pause: { reason: 'unknown' as never, at: '2026-10-21T10:00:00.000Z' } };
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+
   it('accepts an optional project relocation journal and rejects an unknown phase', () => {
     const state = populatedState();
     state.projects[0]!.operation = {
@@ -52,6 +97,52 @@ describe('persisted board schema', () => {
     delete state.schemaVersion;
     expect(BoardStateSchema.safeParse(state).success).toBe(false);
     expect(BoardStateSchema.safeParse({ ...initialState(), engine: 'legacy' }).success).toBe(false);
+  });
+
+  it('persists the default presentation and authored stage positions', () => {
+    const yaml = 'name: Flow\ndefault_view: workflow\ncolumns:\n  - id: todo\n    label: To do\n    position: {x: 10, y: 20}\n  - id: done\n    label: Done\n';
+    const state = populatedState();
+    state.tasks[0]!.columnId = 'todo';
+    state.workflowYaml = yaml;
+    state.workflow = parseWorkflow(yaml);
+    expect(BoardStateSchema.safeParse(state).success).toBe(true);
+  });
+
+  it('persists authored stage sizes', () => {
+    const yaml = 'name: Flow\ncolumns:\n  - id: todo\n    label: To do\n    size: {width: 400, height: 300}\n  - id: done\n    label: Done\n';
+    const state = populatedState();
+    state.tasks[0]!.columnId = 'todo';
+    state.workflowYaml = yaml;
+    state.workflow = parseWorkflow(yaml);
+    expect(BoardStateSchema.safeParse(state).success).toBe(true);
+  });
+
+  it('rejects a stored stage size below the accepted minimum', () => {
+    const yaml = 'name: Flow\ncolumns:\n  - id: todo\n    label: To do\n  - id: done\n    label: Done\n';
+    const state = populatedState();
+    state.tasks[0]!.columnId = 'todo';
+    state.workflowYaml = yaml;
+    state.workflow = parseWorkflow(yaml);
+    (state.workflow.columns[0] as { size?: { width: number; height: number } }).size = { width: 10, height: 10 };
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+
+  it('rejects a stored stage size that the authored YAML does not carry', () => {
+    const state = initialState();
+    state.workflow.columns[0]!.size = { width: 400, height: 300 };
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+
+  it('rejects an unknown default presentation in the stored workflow', () => {
+    const state = initialState();
+    (state.workflow as { defaultView?: string }).defaultView = 'diagram';
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+
+  it('rejects a stored stage position that the authored YAML does not carry', () => {
+    const state = initialState();
+    state.workflow.columns[0]!.position = { x: 1, y: 2 };
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
   });
 
   it('accepts reordered object keys without confusing them with workflow changes', () => {

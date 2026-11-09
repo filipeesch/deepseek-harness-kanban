@@ -1,6 +1,8 @@
 import type { AutoModePauseReason, Board, ConversationFacts, HubTask } from '../shared/types.js';
+import { KanbanError } from '../shared/errors.js';
 import { openSessionIds } from '../shared/conversations.js';
-import { resolveAdvanceDecision, resolveAutoAdvance, type AutoAdvancePlan } from '../domain/auto-advance.js';
+import { resolveAdvanceDecision, type AutoAdvancePlan } from '../domain/auto-advance.js';
+import { resolveAdvanceRoute } from '../domain/transition-route.js';
 
 /** Delay before a completed turn is evaluated, so the native activity projection has settled. */
 export const AUTO_ADVANCE_SETTLE_MS = 250;
@@ -174,14 +176,22 @@ export class AutoAdvanceCoordinator {
 
   private async advance(task: HubTask, board: Board): Promise<void> {
     if (this.disposed) return;
-    const plan = resolveAutoAdvance(board.workflow, task.columnId);
-    if (!plan.destination) return;
+    const route = resolveAdvanceRoute(board.workflow, task);
+    if (route.kind === 'none') return;
+    // A recorded transition that no longer resolves is a workflow-edit condition,
+    // not an admission failure: it pauses with its own reason and never retries.
+    if (route.kind === 'stale') {
+      try { await this.ports.pause(task.id, 'transition-stale', route.message, task.columnId); }
+      catch (error) { this.ports.report(error); }
+      return;
+    }
     try {
-      await this.ports.admit(task.id, plan);
+      await this.ports.admit(task.id, route.plan);
     } catch (error) {
       this.ports.report(error);
       const message = error instanceof Error ? error.message : String(error);
-      try { await this.ports.pause(task.id, 'advance-failed', message, task.columnId); }
+      const reason: AutoModePauseReason = error instanceof KanbanError && error.code === 'TRANSITION_STALE' ? 'transition-stale' : 'advance-failed';
+      try { await this.ports.pause(task.id, reason, message, task.columnId); }
       catch (failure) { this.ports.report(failure); }
     }
   }

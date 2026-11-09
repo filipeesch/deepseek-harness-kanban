@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BoardView } from '../../src/client/board.js';
 import { AutoRunController } from '../../src/client/auto-run.js';
 import type { Command, KanbanSnapshot } from '../../src/shared/types.js';
-import { deferred, fakeApi, fixture, fixtureWithPlan } from './helpers.js';
+import { deferred, fakeApi, fixture, fixtureWithPlan, openFilterPopoverByClick } from './helpers.js';
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 beforeEach(() => {
@@ -99,6 +99,7 @@ describe('instructed move auto-run', () => {
 
   it('keeps running when the card is filtered out', async () => {
     const mock = await mount(); await openAlpha(); vi.useFakeTimers(); await moveTo('review');
+    await act(async () => { openFilterPopoverByClick(); });
     await act(async () => { fireEvent.change(screen.getByRole('searchbox', { name: 'Search tasks' }), { target: { value: 'no matching task' } }); }); await settle();
     expect(countdown()).toBeNull();
     await advance(5000);

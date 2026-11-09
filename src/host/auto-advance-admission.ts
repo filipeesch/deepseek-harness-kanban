@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { resolveAutoAdvance, type AutoAdvancePlan } from '../domain/auto-advance.js';
+import type { AutoAdvancePlan } from '../domain/auto-advance.js';
 import { hasPendingUserWork } from '../domain/pending-user-work.js';
 import { entryInstruction, hasUnresolvedEntry } from '../domain/stage-entry.js';
+import { resolveAdvanceRoute } from '../domain/transition-route.js';
 import { firstOpenSessionId } from '../shared/conversations.js';
-import { invariant } from '../shared/errors.js';
-import type { HubState, PendingTransition, PendingUserWork, Task } from '../shared/types.js';
+import { KanbanError, invariant } from '../shared/errors.js';
+import type { Column, HubState, PendingTransition, PendingUserWork, Task, Workflow } from '../shared/types.js';
 import type { LocatedTask } from './hub-repository.js';
 
 /** The task scope and the ports one automatic advance admission needs. */
@@ -24,11 +25,22 @@ function blocked(task: Task): boolean {
   return task.autoMode?.enabled !== true || task.operation !== null || task.pendingTransition !== undefined || hasUnresolvedEntry(task);
 }
 
-/** Re-resolution against the current workflow; a changed destination is a reviewable failure. */
+/**
+ * Re-resolution against the current workflow: the captured destination must
+ * still be the one the current recording resolves to. A recording that stopped
+ * resolving is a stale-transition failure of its own, so the coordinator can
+ * record the matching pause instead of a generic one.
+ */
+function requireRoute(destination: Column, workflow: Workflow, task: Task): void {
+  const route = resolveAdvanceRoute(workflow, task);
+  if (route.kind === 'stale') throw new KanbanError('TRANSITION_STALE', route.message);
+  invariant(route.kind === 'advance' && route.plan.destination?.id === destination.id,
+    'INVALID_TARGET', 'The automatic advance destination changed. Review the workflow before retrying.');
+}
+
 function requireSameDestination(located: LocatedTask, plan: AutoAdvancePlan): void {
   invariant(plan.destination !== undefined, 'INVALID_TARGET', 'The automatic advance has no destination.');
-  invariant(resolveAutoAdvance(located.board.workflow, plan.fromColumnId).destination?.id === plan.destination.id,
-    'INVALID_TARGET', 'The automatic advance destination changed. Review the workflow before retrying.');
+  requireRoute(plan.destination, located.board.workflow, located.task);
 }
 
 /**
@@ -44,14 +56,14 @@ function requireSameDestination(located: LocatedTask, plan: AutoAdvancePlan): vo
  */
 export async function admitAutoAdvance(deps: AutoAdvanceAdmissionDeps, taskId: string, plan: AutoAdvancePlan): Promise<void> {
   const located = deps.locate(taskId);
-  requireSameDestination(located, plan);
   if (blocked(located.task) || located.task.columnId !== plan.fromColumnId) return;
+  requireSameDestination(located, plan);
   const destination = plan.destination!;
   const instruction = entryInstruction(destination);
   const sessionId = instruction === undefined ? undefined : firstOpenSessionId(located.task) ?? await deps.resolveSession(located.task);
   const latest = deps.locate(taskId);
-  requireSameDestination(latest, plan);
   if (blocked(latest.task) || latest.task.columnId !== plan.fromColumnId) return;
+  requireSameDestination(latest, plan);
   // The settle evaluation and the durable decision are different observations:
   // a question, approval, or queued prompt admitted in between stops the advance.
   // An unreadable wait state is not idle either, and is a hold rather than a failure.
@@ -69,8 +81,8 @@ export async function admitAutoAdvance(deps: AutoAdvanceAdmissionDeps, taskId: s
     invariant(!value.operation && !value.pendingTransition, 'REVISION_CONFLICT', 'Task changed before the automatic advance could be admitted.');
     invariant(value.columnId === plan.fromColumnId, 'REVISION_CONFLICT', 'Task moved before the automatic advance could be admitted.');
     const board = draft.boards.find(candidate => candidate.id === value.boardId);
-    invariant(board !== undefined && resolveAutoAdvance(board.workflow, plan.fromColumnId).destination?.id === destination.id,
-      'INVALID_TARGET', 'The automatic advance destination changed.');
+    invariant(board !== undefined, 'INVALID_TARGET', 'The automatic advance destination changed.');
+    requireRoute(destination, board.workflow, value);
     value.pendingTransition = transition;
     if (value.autoMode.pause !== undefined) delete value.autoMode.pause;
   });

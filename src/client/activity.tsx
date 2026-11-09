@@ -1,41 +1,9 @@
 import React from 'react';
-import type { BackgroundActivity, BackgroundKind } from '../shared/types.js';
-
-const UNITS: Record<BackgroundKind, readonly [string, string]> = {
-  job: ['job', 'jobs'],
-  schedule: ['schedule', 'schedules'],
-};
-const KIND_ORDER: readonly BackgroundKind[] = ['job', 'schedule'];
-
-/** Count copy derived from the activity families, e.g. "1 job · 2 schedules". */
-export function backgroundSummary(items: readonly BackgroundActivity[]): string {
-  return KIND_ORDER.flatMap(kind => {
-    const count = items.filter(item => item.kind === kind).length;
-    if (count === 0) return [];
-    const [singular, plural] = UNITS[kind];
-    return [count + ' ' + (count === 1 ? singular : plural)];
-  }).join(' · ');
-}
+import type { BackgroundActivity } from '../shared/types.js';
 
 /** The labels of the unsettled activities, e.g. "Run tests · Research". */
 export function backgroundDetails(items: readonly BackgroundActivity[]): string {
   return items.map(item => item.label).join(' · ');
-}
-
-/** One background chip line: the family label alone, or the total once families mix. */
-export function backgroundIndicatorText(items: readonly BackgroundActivity[]): string {
-  if (new Set(items.map(item => item.kind)).size <= 1) return backgroundSummary(items);
-  return items.length + ' activities';
-}
-
-/** The count and the labels are both part of the indicator's accessible name. */
-export function backgroundAccessibleName(items: readonly BackgroundActivity[]): string {
-  const details = backgroundDetails(items);
-  return 'Background activity: ' + backgroundIndicatorText(items) + (details ? '. ' + details : '');
-}
-
-export function WorkingBadge({ decorative = false }: { decorative?: boolean }) {
-  return <span className="kb-working" aria-hidden={decorative ? true : undefined}><span className="kb-working-dot" aria-hidden="true" />Working</span>;
 }
 
 /** Persistent live region: mounted empty while idle, its text changes once when a turn starts. */

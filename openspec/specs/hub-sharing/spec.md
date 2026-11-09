@@ -49,7 +49,6 @@ Publishing SHALL be opt-in for each Hub and SHALL bind that Hub to exactly one s
 - **AND** every local board, workflow, task, note, project, conversation, and worktree remains
 - **AND** the team's shared document is unchanged
 
-
 ### Requirement: Published document content
 
 The published document SHALL contain a format version and one entry per board with a stable board key, the board name, the board order, and the board's workflow YAML exactly as authored. The document SHALL NOT contain projects, tasks, notes, conversations, worktrees, Hub names, worktree base paths, or any other local setting. A board key SHALL be assigned when the board is first published, SHALL remain stable across board renames, and SHALL be unique within the document.
@@ -75,7 +74,6 @@ The published document SHALL contain a format version and one entry per board wi
 
 - **WHEN** the user publishes a workflow containing comments and custom formatting
 - **THEN** the published workflow text matches the authored text without normalization
-
 
 ### Requirement: Drafts and explicit publishing
 
@@ -149,10 +147,9 @@ A board administration tool invoked at the user's explicit request SHALL publish
 - **AND** no publish is started for that removal
 - **AND** the team's document is unchanged
 
-
 ### Requirement: Team updates and three-way application
 
-Applying team changes SHALL compare the published document with the last received document and the local Hub. Applying SHALL apply boards that changed only in the published document, SHALL keep boards that changed only locally as drafts or pending changes, and SHALL require an explicit per-board choice for a board that changed on both sides. A storage that requires an explicit operation (Git) SHALL apply the comparison when the user gets team updates. A storage that supports continuous synchronization (Google Drive or a local folder) SHALL apply the comparison automatically when it has no conflict, blocker, or local pending change on a board that also changed remotely, and SHALL require review otherwise. Applying SHALL be all-or-nothing for the Hub: either every selected change is applied or none is. After a successful application the last received document SHALL record the applied content, keeping the previous content for any board that still needs a choice.
+Applying team changes SHALL compare the published document with the last received document and the local Hub. Applying SHALL apply boards that changed only in the published document, SHALL keep boards that changed only locally as drafts or pending changes, and SHALL require an explicit per-board choice for a board that changed on both sides. A difference limited to stage placement SHALL NOT count as a change that requires a choice: applying SHALL merge the placement of both sides per stage, SHALL apply the resulting workflow locally, and SHALL leave that board as a draft or pending change until it is published. When both sides changed the placement of the same stage, the local placement SHALL take precedence. The merged workflow text SHALL preserve the authored text of the side that changed the workflow's meaning, and the local text when neither side did. A storage that requires an explicit operation (Git) SHALL apply the comparison when the user gets team updates. A storage that supports continuous synchronization (Google Drive or a local folder) SHALL apply the comparison automatically when it has no conflict, blocker, or local pending change on a board that also changed remotely, and SHALL require review otherwise. Applying SHALL be all-or-nothing for the Hub: either every selected change is applied or none is. After a successful application the last received document SHALL record the applied content, keeping the previous content for any board that still needs a choice.
 
 #### Scenario: Apply a team-only change
 
@@ -173,7 +170,7 @@ Applying team changes SHALL compare the published document with the last receive
 
 #### Scenario: Both sides changed the same board
 
-- **WHEN** the team and the local installation changed the same board
+- **WHEN** the team and the local installation both changed a board's workflow in ways that are not limited to stage placement
 - **THEN** the review lists that board as needing a choice
 - **AND** no part of that board is applied before the choice
 
@@ -194,6 +191,30 @@ Applying team changes SHALL compare the published document with the last receive
 - **WHEN** applying an update set would be refused for any board
 - **THEN** no board, workflow, or board order changes locally
 
+#### Scenario: Apply a placement-only difference without a choice
+
+- **WHEN** the team and the local installation changed only the placement of stages on the same board
+- **THEN** applying merges the placements without listing that board as needing a choice
+- **AND** the board becomes a draft or pending change until it is published
+
+#### Scenario: Keep the local placement beside a team workflow change
+
+- **WHEN** the team changed a board's workflow meaning and the local installation only moved stages
+- **THEN** applying takes the team's workflow change
+- **AND** the locally moved stages keep their placement
+- **AND** the board is not listed as needing a choice
+
+#### Scenario: Keep the local placement for the same stage
+
+- **WHEN** the team and the local installation moved the same stage to different positions
+- **THEN** applying keeps the local position for that stage
+- **AND** every other stage takes the position of the side that moved it
+
+#### Scenario: Preserve the authored workflow text
+
+- **WHEN** applying merges an authored workflow with a placement-only difference
+- **THEN** the merged workflow keeps the comments and formatting of the side that changed the workflow's meaning
+- **AND** it keeps the local authored text when neither side changed the meaning
 
 ### Requirement: Refusal of destructive application
 
@@ -215,7 +236,6 @@ Get updates SHALL refuse the entire application and apply nothing when a workflo
 - **WHEN** a published board has the same name as a local board that has not been published
 - **THEN** no update is applied
 - **AND** the interface explains that the local board must be renamed or published first
-
 
 ### Requirement: Board removal and orphan handling
 
@@ -267,7 +287,6 @@ When the team removes a board, the plugin SHALL remove it locally only when the 
 - **WHEN** an orphan reconnects
 - **THEN** the local Hub has the same number of boards as before the reconnection
 
-
 ### Requirement: Locally removed boards
 
 When the user removes a published board only from this installation, the plugin SHALL record that board as locally removed, SHALL NOT apply that board from later team updates, and SHALL offer restoring it while the stored team document still contains it. A team-wide removal SHALL remove the board from the team document on the next synchronization: the next explicit publish for Git, or the next automatic synchronization for Google Drive. A team-wide removal SHALL NOT be recorded as locally removed.
@@ -293,7 +312,6 @@ When the user removes a published board only from this installation, the plugin 
 
 - **WHEN** the user removes a published board for the team on a Google Drive binding
 - **THEN** the board is absent from the team document after the next successful synchronization
-
 
 ### Requirement: Automatic checks and published status
 
@@ -364,7 +382,6 @@ The host SHALL check each published Hub automatically at its configured interval
 - **WHEN** the stored Google Drive Cloud change cursor is rejected
 - **THEN** the next check reads the document content in full
 - **AND** the new cursor is stored after a successful read
-
 
 ### Requirement: Team Settings interface
 
@@ -474,7 +491,6 @@ Configuration SHALL include a **Team Settings** section for the active Hub. That
 - **WHEN** Team Settings, the banner, or the indicators describe state and actions
 - **THEN** they use storage or synchronization vocabulary rather than commit, branch, remote, fetch, or push wording
 
-
 ### Requirement: First connection
 
 Connecting a storage that already contains a published document while the Hub has no received document SHALL present the differences and SHALL require choosing either to receive the published configuration or to publish the local one. Connecting a storage with no published document SHALL publish the local configuration without requiring that choice. A Git repository with no commits or no published document, a Google Drive folder with no `kanban-hub.yaml`, and a local folder with no `kanban-hub.yaml` SHALL all count as having no published document. A Google Drive document SHALL be adopted by its file ID when the selected folder already contains `kanban-hub.yaml`; a local folder document SHALL be adopted in place when the selected directory already contains it.
@@ -528,7 +544,6 @@ Connecting a storage that already contains a published document while the Hub ha
 - **THEN** the published document is replaced after explicit confirmation
 - **AND** the Hub becomes published
 
-
 ### Requirement: Storage-provider boundary
 
 Access to the shared document SHALL go through a storage-provider boundary that reads a whole document with a version token and writes a whole document while the expected token matches. A provider that supports an atomic conditional write (Git) SHALL refuse a stale write without modifying the document. A provider that does not support an atomic conditional write (Google Drive Cloud, Google Drive Local, and a local folder) SHALL compare the token before writing, verify the written content after writing, and report a concurrent change without claiming an atomic guarantee; the previous content SHALL remain recoverable from the storage's own history or conflict copies. The supported storages SHALL be Git, Google Drive Cloud, Google Drive Local, and a local folder; any other storage SHALL be rejected with an explicit error. The document format, the merge rules, and the interface states SHALL NOT depend on the storage. Provider-specific connection, location, and synchronization state SHALL be exposed through the storage's own surface, and provider-specific connection rules SHALL be applied through the storage descriptor rather than by branching on the storage inside the publishing service.
@@ -571,7 +586,6 @@ Access to the shared document SHALL go through a storage-provider boundary that 
 
 - **WHEN** a Hub is published with a different storage
 - **THEN** the document format, merge rules, board keys, and interface states remain the same
-
 
 ### Requirement: Google Drive connection
 
@@ -616,7 +630,6 @@ Google Drive SHALL be available as a team storage only after the user authorizes
 
 - **WHEN** the plugin reports status or a failure
 - **THEN** no access token, refresh token, or authorization code appears in the snapshot, logs, or the published document
-
 
 ### Requirement: Google Drive storage location
 
@@ -668,7 +681,6 @@ A Google Drive binding SHALL identify its location by the Drive, folder, and doc
 - **WHEN** the user selects a folder already bound to a different Hub
 - **THEN** the connection is refused with an explicit error
 - **AND** no document is created or modified
-
 
 ### Requirement: Google Drive local storage location
 
@@ -757,7 +769,6 @@ A Google Drive binding SHALL identify its location by the Drive, folder, and doc
 - **THEN** the Hub presents the review and applies and publishes nothing automatically
 - **AND** the plugin does not choose, rename, merge, or delete either version
 
-
 ### Requirement: Continuous synchronization
 
 For a storage that supports continuous synchronization (Google Drive Cloud, Google Drive Local, or a local folder), saving a board, a board name, a board order, or a workflow SHALL mark the Hub as pending and SHALL synchronize automatically after a short debounce without a Publish action. A synchronization SHALL apply team changes that only the team made in one Hub transaction. A board changed on both sides, a blocker, a concurrent write, or a storage-level review SHALL require explicit review and SHALL NOT be applied or published automatically. A local change SHALL NOT overwrite a team change that arrived since the last received document; the plugin SHALL keep the local change pending and require review. Offline or transient failures SHALL keep every local change pending and SHALL retry on later checks without losing edits; the interface SHALL show the pending state and the failure. Synchronization SHALL be serialized per Hub and SHALL survive a plugin restart; a pending change SHALL synchronize after the restart or after the connection returns. A Git binding SHALL keep explicit publishing and SHALL NOT synchronize automatically.
@@ -826,7 +837,6 @@ For a storage that supports continuous synchronization (Google Drive Cloud, Goog
 - **THEN** no board is applied automatically
 - **AND** the Hub presents the refusal for review
 
-
 ### Requirement: Concurrent writes on Google Drive
 
 A Google Drive write SHALL compare the document token read before the write, SHALL verify the written document after the write, and SHALL report a concurrent change when either check differs. A detected concurrent change SHALL keep the local changes pending and SHALL require review; it SHALL NOT be presented as a successful synchronization and SHALL NOT silently discard the local or the team version. The plugin SHALL NOT promise an atomic conditional write on Google Drive, and the previous document content SHALL remain recoverable from the Drive revision history.
@@ -848,7 +858,6 @@ A Google Drive write SHALL compare the document token read before the write, SHA
 - **WHEN** a concurrent write is reported
 - **THEN** the local version is retained
 - **AND** the previous document content remains available in the Drive revision history
-
 
 ### Requirement: Local folder storage location
 
@@ -927,7 +936,6 @@ A local folder binding SHALL identify the storage by an absolute directory path.
 - **THEN** the binding is removed and automatic checks stop
 - **AND** the folder, `kanban-hub.yaml`, and every other entry remain unchanged
 
-
 ### Requirement: Conflict copies in a local folder
 
 A local-folder check SHALL inspect the bound directory for entries whose name begins with the published document's base name and is not the published document itself, including the copies a synchronization client creates when two machines change the same document. When such an entry exists, the Hub SHALL present a review that names the entries found, SHALL NOT apply team updates automatically, SHALL NOT publish automatically, and SHALL NOT choose, rename, merge, or delete any of them. The review SHALL clear on the next successful check after those entries are no longer present. The plugin's own temporary files SHALL be excluded from that detection.
@@ -960,7 +968,6 @@ A local-folder check SHALL inspect the bound directory for entries whose name be
 
 - **WHEN** a check finds a temporary file written by the plugin itself
 - **THEN** it is not reported as a conflict copy
-
 
 ### Requirement: Concurrent writes on a local folder
 

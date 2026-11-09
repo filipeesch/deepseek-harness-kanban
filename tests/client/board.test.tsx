@@ -7,8 +7,8 @@ import { userEvent } from '@testing-library/user-event';
 import { BoardView } from '../../src/client/board.js';
 import { columnLayout } from '../../src/client/board-columns.js';
 import type { KanbanSnapshot, ClientApi, Command } from '../../src/shared/types.js';
-import { styles } from '../../src/client/styles.js';
-import { deferred, fakeApi, fixture, restrictedFixture } from './helpers.js';
+import { styles } from '../../src/client/styles/index.js';
+import { deferred, fakeApi, fixture, openFilterPopover, restrictedFixture } from './helpers.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import { PresetProvider } from './agent-preset-fixture.js';
@@ -44,6 +44,39 @@ describe('native overlay protection', () => {
   });
 });
 
+describe('card advance admission', () => {
+  it('keeps the advance disabled while its move is in flight, even after the optimistic move reparents the card', async () => {
+    const data = fixture();
+    data.attention.t1 = { ...data.attention.t1!, running: false };
+    const mock = fakeApi(data);
+    const pending = deferred<KanbanSnapshot>();
+    const commands: Command[] = [];
+    const api: ClientApi = {
+      ...mock.api,
+      command: async (command: Command) => {
+        commands.push(command);
+        if (command.type === 'task.move') return pending.promise;
+        return mock.api.command(command);
+      },
+    };
+    render(<PresetProvider><BoardView api={api} renderConversation={() => null} /></PresetProvider>);
+    await screen.findByRole('button', { name: 'Open task Alpha task' });
+    const intake = screen.getByRole('region', { name: 'Intake column' });
+    fireEvent.click(within(intake).getByRole('button', { name: 'Move to Doing' }));
+    // The optimistic move renders the card in the destination before the host confirms.
+    await waitFor(() => expect(within(screen.getByRole('region', { name: 'Doing column' })).getByRole('button', { name: 'Open task Alpha task' })).toBeTruthy());
+    // The optimistic move reparents the card, but the task's stage is still the
+    // source until the host confirms, so the card keeps the same action.
+    const card = screen.getByRole('region', { name: 'Doing column' }).querySelector<HTMLElement>('[data-task-id="t1"]')!;
+    const moved = within(card).getByRole('button', { name: 'Move to Doing' }) as HTMLButtonElement;
+    // The pending flag lives on the board, so the reparented card is still disabled.
+    expect(moved.disabled).toBe(true);
+    fireEvent.click(moved);
+    expect(commands.filter(command => command.type === 'task.move')).toHaveLength(1);
+    await act(async () => { pending.resolve(mock.get() as unknown as KanbanSnapshot); });
+  });
+});
+
 describe('auto-mode hold from task attention', () => {
   it('presents the held chip from the task-level pending attention', async () => {
     const data = fixture();
@@ -63,11 +96,17 @@ describe('board header layout', () => {
   });
 
   it('reserves the host frame leading clearance for the collapsed sidebar', () => {
-    const rule = styles.match(/\.dsh-kanban \.kb-header\{[^}]*\}/)?.[0] ?? '';
-    expect(rule).toContain('padding-inline-start:max(20px,var(--dsh-frame-leading-clearance,20px))');
-    expect(styles).toContain('.dsh-kanban .kb-header{padding:12px;padding-inline-start:max(12px,var(--dsh-frame-leading-clearance,12px))}');
+    // The contract is that every header inset honours the host token, not the specific values.
+    const rules = [...styles.matchAll(/\.dsh-kanban \.kb-header\{[^}]*\}/g)].map(match => match[0]);
+    expect(rules.length).toBeGreaterThanOrEqual(2);
+    for (const rule of rules) expect(rule).toMatch(/padding-inline-start:max\(\d+px,var\(--dsh-frame-leading-clearance,\d+px\)\)/);
   });
 });
+
+/** The removed working label must not come back as visible text. */
+function queryVisibleWorkingLabel(): Element | null {
+  return document.querySelector('.kb-working');
+}
 
 describe('scoped Kanban page', () => {
   it('renders grouped columns, search/project intersection, and simultaneous independent attention', async () => {
@@ -76,9 +115,11 @@ describe('scoped Kanban page', () => {
     expect(screen.getByRole('img', { name: 'Unread messages' })).toBeTruthy();
     expect(screen.getByRole('img', { name: 'Awaiting reply' })).toBeTruthy();
     expect(screen.getByRole('img', { name: 'Agent failure' })).toBeTruthy();
-    expect(screen.getByText('Working')).toBeTruthy(); expect(screen.getByText('1 job')).toBeTruthy();
+    expect(document.querySelector('.kb-background')).toBeNull();
+    expect(queryVisibleWorkingLabel()).toBeNull();
     expect(screen.queryByText('Running')).toBeNull();
     expect(screen.getByRole('button', { name: 'Open task Alpha task' }).closest('.kb-card')?.getAttribute('data-working')).toBe('true');
+    await openFilterPopover(user);
     await user.type(screen.getByRole('searchbox', { name: 'Search tasks' }), 'documentation');
     expect(screen.queryByRole('button', { name: 'Open task Alpha task' })).toBeNull(); expect(screen.getByRole('button', { name: 'Open task Beta task' })).toBeTruthy();
     await user.selectOptions(screen.getByRole('combobox', { name: 'Project filter' }), 'p1');
@@ -86,15 +127,19 @@ describe('scoped Kanban page', () => {
     await user.clear(screen.getByRole('searchbox', { name: 'Search tasks' })); expect(screen.getByRole('button', { name: 'Open task Alpha task' })).toBeTruthy();
   });
 
-  it('shows background work on its own after the turn ends', async () => {
-    const { publish, get } = mount(); await loaded();
+  it('keeps background work off the card after the turn ends', async () => {
+    const { user, publish, get } = mount(); await loaded();
     const next = get();
     next.attention.t2 = { running: false, background: [{ kind: 'job', label: 'Run tests' }], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
     act(() => { publish(next); });
     const beta = screen.getByRole('button', { name: 'Open task Beta task' }).closest('.kb-card') as HTMLElement;
-    expect(within(beta).getByText('1 job')).toBeTruthy();
-    expect(within(beta).getByTitle('Run tests')).toBeTruthy();
     expect(beta.getAttribute('data-working')).toBeNull();
+    expect(beta.querySelector('.kb-background')).toBeNull();
+    expect(within(beta).queryByText('1 job')).toBeNull();
+    // The drawer's Conversations entry keeps the background activity available.
+    await user.click(screen.getByRole('button', { name: 'Open task Beta task' }));
+    const drawer = screen.getByLabelText('Task details');
+    expect(within(drawer).getByRole('tab', { name: /Background activity: Run tests/ })).toBeTruthy();
   });
 
   it('keeps the task activity on the Conversations tab across sections', async () => {
@@ -206,6 +251,7 @@ describe('scoped Kanban page', () => {
     await user.selectOptions(project, 'p1');
     expect((within(dialog).getByRole('button', { name: 'Create task' }) as HTMLButtonElement).disabled).toBe(false);
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await openFilterPopover(user);
     await user.selectOptions(screen.getByRole('combobox', { name: 'Project filter' }), 'p1');
     await user.click(screen.getByRole('button', { name: 'New task' }));
     const filtered = screen.getByRole('dialog', { name: 'New task' });

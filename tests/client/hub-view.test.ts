@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { scopedCommand } from '../../src/client/hub-view.js';
+import { scopedCommand } from '../../src/client/command-scope.js';
 
 describe('Hub-aware command scoping', () => {
   it('scopes task creation with the Hub when multiple Hubs exist', () => {

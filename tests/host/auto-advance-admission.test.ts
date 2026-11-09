@@ -4,6 +4,7 @@ import type { LocatedTask } from '../../src/host/hub-repository.js';
 import { resolveAutoAdvance, type AutoAdvancePlan } from '../../src/domain/auto-advance.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import { NO_PENDING_USER_WORK, type Board, type HubState, type HubTask, type PendingUserWork, type Project } from '../../src/shared/types.js';
+import { transitions } from '../support/transition-rules.js';
 
 const now = '2026-01-01T00:00:00.000Z';
 
@@ -17,6 +18,12 @@ function board(): Board {
     },
   };
 }
+/** The same stages with an authored branch, so a recording can choose between them. */
+function routedBoard(): Board {
+  const value = board();
+  value.workflow.columns[0] = { ...value.workflow.columns[0]!, allowedTransitions: transitions('done', 'plan') };
+  return value;
+}
 const project: Project = { id: 'project', name: 'Project', projectPath: '/repo' };
 function task(overrides: Partial<HubTask> = {}): HubTask {
   return {
@@ -25,19 +32,24 @@ function task(overrides: Partial<HubTask> = {}): HubTask {
     autoMode: { enabled: true }, createdAt: now, updatedAt: now, ...overrides,
   };
 }
-function hub(value: HubTask): HubState {
-  return { id: 'hub', name: 'Hub', revision: 1, projects: [project], boards: [board()], tasks: [value], notes: [], createdAt: now, updatedAt: now };
+function hub(value: HubTask, target: Board = board()): HubState {
+  return { id: 'hub', name: 'Hub', revision: 1, projects: [project], boards: [target], tasks: [value], notes: [], createdAt: now, updatedAt: now };
 }
 const plan = (): AutoAdvancePlan => resolveAutoAdvance(board().workflow, 'backlog');
+const routedPlan = (columnId: string): AutoAdvancePlan => {
+  const target = routedBoard();
+  return resolveAutoAdvance(target.workflow, 'backlog', { exact: target.workflow.columns.find(column => column.id === columnId)! });
+};
 
-function fixture(overrides: Partial<AutoAdvanceAdmissionDeps> = {}) {
-  const state = { hub: hub(task()) };
+function fixture(overrides: Partial<AutoAdvanceAdmissionDeps> = {}, seed: { board?: Board; task?: HubTask } = {}) {
+  const target = seed.board ?? board();
+  const state = { hub: hub(seed.task ?? task(), target) };
   const pending: PendingUserWork[] = [NO_PENDING_USER_WORK];
   const created: string[] = [];
   const dispatched: number[] = [];
   const reported: unknown[] = [];
   const deps: AutoAdvanceAdmissionDeps = {
-    locate: (): LocatedTask => ({ hubId: 'hub', hub: state.hub, board: board(), project, task: state.hub.tasks[0]! }),
+    locate: (): LocatedTask => ({ hubId: 'hub', hub: state.hub, board: state.hub.boards[0]!, project, task: state.hub.tasks[0]! }),
     transact: async (_hubId, change) => { change(state.hub); },
     resolveSession: async () => { created.push('session-2'); return 'session-2'; },
     pending: async () => pending[pending.length - 1]!,
@@ -102,6 +114,40 @@ describe('automatic advance admission', () => {
     const f = fixture();
     f.state.hub.tasks[0] = task({ autoMode: undefined });
     await admitAutoAdvance(f.deps, 'task', plan());
+    expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
+  });
+
+  it('admits the recorded destination and stops there', async () => {
+    const f = fixture({}, {
+      board: routedBoard(),
+      task: task({ recordedTransition: { fromColumnId: 'backlog', columnId: 'plan', at: now } }),
+    });
+    await admitAutoAdvance(f.deps, 'task', routedPlan('plan'));
+    expect(f.state.hub.tasks[0]!.pendingTransition).toMatchObject({ fromColumnId: 'backlog', columnId: 'plan', mode: 'run', text: 'Plan it.' });
+    expect(f.state.hub.tasks[0]!.pendingTransition?.origin).toBe('auto');
+  });
+
+  it('rejects a recording that changed to another target before the decision', async () => {
+    const f = fixture({}, {
+      board: routedBoard(),
+      task: task({ recordedTransition: { fromColumnId: 'backlog', columnId: 'done', at: now } }),
+    });
+    await expect(admitAutoAdvance(f.deps, 'task', routedPlan('plan'))).rejects.toMatchObject({ code: 'INVALID_TARGET' });
+    expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
+  });
+
+  it('rejects a recording that was removed between the evaluation and the admission', async () => {
+    const f = fixture({}, { board: routedBoard(), task: task() });
+    await expect(admitAutoAdvance(f.deps, 'task', routedPlan('plan'))).rejects.toMatchObject({ code: 'INVALID_TARGET' });
+    expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
+  });
+
+  it('rejects a recording that stopped resolving with its own failure code', async () => {
+    const f = fixture({}, {
+      board: board(),
+      task: task({ recordedTransition: { fromColumnId: 'backlog', columnId: 'gone', at: now } }),
+    });
+    await expect(admitAutoAdvance(f.deps, 'task', plan())).rejects.toMatchObject({ code: 'TRANSITION_STALE' });
     expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
   });
 

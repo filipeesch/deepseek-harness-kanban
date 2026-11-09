@@ -14,7 +14,7 @@ import { TYPERT_REMOTE } from './remote.js';
 import { ClientBridge } from './client-bridge.js';
 import { createDirectoryPicker } from './client/directory-picker.js';
 import { BoardView, createBoardPageState, type BoardPageState } from './client/board.js';
-import { allTasks } from './client/hub-view.js';
+import { allTasks } from './client/snapshot-normalize.js';
 import { AutoRunController } from './client/auto-run.js';
 import { QuestionForm } from './questions/QuestionForm.js';
 import { selectActiveRound } from './questions/submission.js';

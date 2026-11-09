@@ -27,9 +27,17 @@ export type GitProject = Project & { gitRootPath: string };
 export type ProjectLocation =
   | { kind: 'git'; projectPath: string; gitRootPath: string; defaultBranch?: string }
   | { kind: 'folder'; projectPath: string };
-export interface Column { id: string; name: string; onEnterPrompt?: string; allowedTransitions?: string[] }
+/** How a board opens: the column board or the workflow diagram. */
+export type WorkflowView = 'board' | 'workflow'
+/** An authored diagram position for one stage, in diagram coordinates. */
+export interface StagePosition { x: number; y: number }
+/** One authored transition target and the condition under which it is followed. */
+export type TransitionRule = { to: string; when?: string }
+/** An authored minimum size for one stage, in diagram pixels. */
+export interface StageSize { width: number; height: number }
+export interface Column { id: string; name: string; onEnterPrompt?: string; allowedTransitions?: TransitionRule[]; /** Absent means the diagram places the stage automatically. */ position?: StagePosition; /** Absent means the stage renders at the accepted minimum size. */ size?: StageSize }
 export interface ColumnGroup { id: string; name: string; columnIds: string[] }
-export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[] }
+export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[]; /** Absent means the board opens the column board. */ defaultView?: WorkflowView }
 export interface Worktree { path: string; branch: string; owned: boolean; status: 'preparing' | 'ready' | 'error'; error?: Problem }
 export interface CreateWorktree { mode: 'new' | 'existing'; path: string; branchName: string; sourceBranch?: string }
 /**
@@ -59,10 +67,12 @@ export interface ContextOperation {
 }
 export interface PendingTransition { id: string; fromColumnId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; text?: string; /** Absent places the task at the start of the destination; `null` places it at the end; an id places it before that task. */ beforeTaskId?: string | null; worktreeRequest?: CreateWorktree; transitionOverride?: boolean; status: 'waiting' | 'sending' | 'failed'; error?: Problem; /** Absent means a user-confirmed transition; `auto` is a host automatic advance. */ origin?: 'auto' }
 /** Why auto mode is paused; only reasons that cannot be derived from the snapshot are recorded. */
-export type AutoModePauseReason = 'turn-error' | 'turn-blocked' | 'turn-aborted' | 'turn-max-tokens' | 'advance-failed';
+export type AutoModePauseReason = 'turn-error' | 'turn-blocked' | 'turn-aborted' | 'turn-max-tokens' | 'advance-failed' | 'transition-stale';
 export interface AutoModePause { reason: AutoModePauseReason; at: string; message?: string }
 /** Per-task auto mode: arms the host advance on the next completed turn. */
 export interface AutoModeState { enabled: boolean; pause?: AutoModePause }
+/** One transition recorded for a task's current stage, and the stage it was recorded for. */
+export interface RecordedTransition { fromColumnId: string; columnId: string; at: string }
 export interface Task {
   id: string; projectId: string; title: string; description: string; columnId: string; position: number;
   sessionIds: string[]; closedSessionIds: string[]; effectiveCwd: string;
@@ -73,6 +83,8 @@ export interface Task {
   instructionPending?: { columnId: string; enteredAt: number };
   /** Opt-in host automatic advance; absent means disabled. */
   autoMode?: AutoModeState;
+  /** The transition the model recorded for the current stage; discarded when the stage changes. */
+  recordedTransition?: RecordedTransition;
   /** Diagnostic-only checkouts left on disk; never an execution or cleanup target. */
   unclaimedWorktrees?: Array<{ path: string; branch: string; error: Problem }>;
   worktreeWorkspaceId?: string; worktreeWorkspaceOwned?: boolean;
@@ -273,6 +285,8 @@ export type Command =
   /** `beforeTaskId` absent places the task at the start of the destination; `null` places it at the end; an id places it before that task. */
   | { type: 'task.move'; hubId?: string; taskId: string; columnId: string; beforeTaskId?: string | null; overrideTransition?: boolean }
   | { type: 'task.autoMode'; hubId?: string; taskId: string; enabled: boolean }
+  /** An omitted `columnId` clears the recording. */
+  | { type: 'task.recordTransition'; hubId?: string; taskId: string; columnId?: string }
   | { type: 'task.runInstruction'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction: string }
   | { type: 'task.prepareFirstExecution'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction?: string }
   | { type: 'conversation.create'; hubId?: string; taskId: string }

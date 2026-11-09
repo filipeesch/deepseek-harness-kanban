@@ -11,5 +11,6 @@ await build({
   jsx: 'automatic',
   outfile: 'tests/browser/.tmp/harness.js',
   logLevel: 'info',
+  loader: { '.css': 'text' },
 });
 await writeFile('tests/browser/.tmp/index.html', '<!doctype html><html><head><meta charset="utf-8"><style>html,body,#root{margin:0;height:100%;min-height:800px}body{font:13px system-ui,sans-serif}</style></head><body><div id="root"></div><script src="./harness.js"></script></body></html>');

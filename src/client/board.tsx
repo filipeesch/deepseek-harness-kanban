@@ -1,37 +1,41 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { Board, ClientApi, Column, Command, KanbanSnapshot, Problem, Task, Workflow } from '../shared/types.js';
+import type { Board, ClientApi, Column, Command, KanbanSnapshot, Problem, Task, Workflow, WorkflowView as WorkflowPresentation } from '../shared/types.js';
 import { EMPTY_ATTENTION } from '../shared/types.js';
-import { NewTaskDialog } from './forms.js';
 import { Configuration } from './settings/configuration.js';
 import { DirectoryPickerProvider } from './services.js';
 import type { DirectoryPickerPort } from './directory-picker.js';
 import { TaskDrawer } from './drawer.js';
 import type { SessionTitles } from './conversation-label.js';
 import type { ConversationLeaseEnvironment } from './conversation-leases.js';
-import { transitionAccess } from '../domain/transitions.js';
 import { entryInstruction } from '../domain/stage-entry.js';
-import { compareTaskOrder } from '../domain/task-order.js';
 import { AutoRunController } from './auto-run.js';
 import { BoardCard } from './board-card.js';
+import { BoardHeader } from './board/board-header.js';
+import { BoardBody, BoardEmptyStates, BoardProblemNotices, ProjectsEmptyState, ShareBanner } from './board/board-notices.js';
+import { BoardColumnsView } from './board/board-columns-view.js';
+import { BoardCreationDialogs } from './board/board-dialogs.js';
+import { WorkflowView as WorkflowDiagram } from './workflow-view/workflow-view.js';
+import { WorkflowViewControl } from './workflow-view/view-control.js';
+import { readBoardView, writeBoardView } from './view-preference.js';
 import { cardLayoutKeys, planColumns } from './board-columns.js';
-import { CardMotionFrame } from './card-motion/frame.js';
+import { filterTasks } from './task-filter.js';
+import { cardFocusTarget } from './card-focus.js';
 import { prefersReducedMotion } from './card-motion/preference.js';
-import { ACTIVE_HUB_KEY, allTasks, boardView, normalizeSnapshot, readBoardPreferences, readStorage, scopedCommand, writeBoardPreference, writeStorage } from './hub-view.js';
+import { ACTIVE_HUB_KEY, readBoardPreferences, readStorage, writeBoardPreference, writeStorage } from './active-scope.js';
+import { allTasks, normalizeSnapshot } from './snapshot-normalize.js';
+import { scopedCommand } from './command-scope.js';
+import { boardView } from './board-projection.js';
 import { projectScopeActivity, type ScopeActivity } from './scope-activity.js';
-import { HubNav } from './hub-nav.js';
-import { CreateBoardDialog, CreateHubDialog } from './create-dialogs.js';
+import { BoardTabRow, HubTabRow } from './hub-nav.js';
 import { asProblem } from './ui.js';
 import { adviseCommandFailure } from './command-failure.js';
-import { BoardNotices } from './board-notices.js';
-import { styles } from './styles.js';
+import { styles } from './styles/index.js';
 import { DeleteTaskDialog, DiscardDialog, RemoveWorktreeDialog, type DestructiveRequest } from './destructive-dialogs.js';
 import { BulkDeleteDialog } from './bulk-delete-dialogs.js';
 import { ForceRemovalDialog } from './force-removal-dialog.js';
 import { useDestructiveOperations } from './destructive-operations.js';
 import { batchRejectionProblem, useBatchDeletion } from './useBatchDeletion.js';
-import { DestructiveOperationsNotice } from './destructive-notices.js';
-import { ProjectRelocationNotice } from './project-relocation-notice.js';
-import { CheckSquareIcon, PlusIcon, SettingsIcon, TrashIcon } from './icons.js';
+import { PlusIcon } from './icons.js';
 import { useBoardMoves } from './board-moves.js';
 import { useExecutionPreparation } from './execution-preparation/use-execution-preparation.js';
 import type { PreparationSeat } from './execution-preparation/model-seat.js';
@@ -89,6 +93,17 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   const [activeBoardByHub, setActiveBoardByHub] = useState<Record<string, string>>(readBoardPreferences);
   const activeHub = snapshot?.state.hubs.find(hub => hub.id === activeHubId) ?? snapshot?.state.hubs[0];
   const activeBoard = activeHub ? activeHub.boards.find(board => board.id === activeBoardByHub[activeHub.id]) ?? activeHub.boards[0] : undefined;
+  const [view, setView] = usePageField(preferences, 'view');
+  // A board opens with the presentation the user last chose for it in this
+  // browser, and falls back to the board's configured default.
+  useEffect(() => {
+    if (activeBoard === undefined) return;
+    setView(readBoardView(activeBoard.id) ?? activeBoard.workflow.defaultView ?? 'board');
+  }, [activeBoard?.id, setView]);
+  const chooseView = useCallback((next: WorkflowPresentation): void => {
+    setView(next);
+    if (activeBoard !== undefined) writeBoardView(activeBoard.id, next);
+  }, [activeBoard?.id, setView]);
   const state = useMemo(() => snapshot && activeHub && activeBoard ? boardView(activeHub, activeBoard, snapshot.state.settings ?? { revision: 0 }) : undefined, [snapshot, activeHub, activeBoard]);
   const hubActivity = useMemo(() => {
     const values = new Map<string, ScopeActivity>();
@@ -202,7 +217,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     if (selectedId !== null) { restoreFocus.current = null; return; }
     const closedTaskId = restoreFocus.current;
     restoreFocus.current = null;
-    if (closedTaskId) document.querySelector<HTMLElement>('[data-task-id="' + closedTaskId + '"] .kb-card-open')?.focus();
+    if (closedTaskId) cardFocusTarget(closedTaskId)?.focus();
   }, [selectedId]);
   useEffect(() => { if (state && selectedId && !state.tasks.some(task => task.id === selectedId)) { clearCloseTimer(); setDrawerClosing(false); setDrawerEntering(false); setSelectedId(null); } }, [state, selectedId]);
   useEffect(() => {
@@ -217,6 +232,25 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     setActionError(null);
     return moves.moveTo(task, column, beforeTaskId);
   }
+  // A stable card callback keeps a memoized card from re-rendering when an
+  // unrelated snapshot publishes.
+  const movesRef = useRef(moves); movesRef.current = moves;
+  const [advancePending, setAdvancePending] = useState<ReadonlySet<string>>(() => new Set());
+  const advanceInFlight = useRef(new Set<string>());
+  /** The card's next-stage action; the pending flag is keyed by task so a card
+   *  reparented by its optimistic move keeps the action disabled. */
+  const advanceTask = useCallback(async (task: Task, column: Column): Promise<boolean> => {
+    if (advanceInFlight.current.has(task.id)) return false;
+    advanceInFlight.current.add(task.id);
+    setAdvancePending(new Set(advanceInFlight.current));
+    setActionError(null);
+    try {
+      return await movesRef.current.moveTo(task, column);
+    } finally {
+      advanceInFlight.current.delete(task.id);
+      setAdvancePending(new Set(advanceInFlight.current));
+    }
+  }, []);
 
   function requestDanger(task: Task, type: 'task.delete' | 'worktree.remove') {
     setActionError(null);
@@ -224,7 +258,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   }
 
   const selectedTasks = state?.tasks.filter(task => selectedIds.has(task.id)) ?? [];
-  const visible = state?.tasks.filter(task => (!projectFilter || task.projectId === projectFilter) && (task.title + ' ' + task.description).toLowerCase().includes(search.trim().toLowerCase())).sort(compareTaskOrder) ?? [];
+  const visible = state === undefined ? [] : filterTasks(state.tasks, { search, projectFilter });
   // Local plain-checkout reports combine with the host's transient retention
   // notices; dismissal is per path and lasts for this board session.
   const retainedNotices = [
@@ -266,7 +300,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   function renderCard(task: Task, column: Column, workflow: Workflow) {
     const attention = snapshot?.attention[task.id] ?? EMPTY_ATTENTION;
     const project = state?.projects.find(value => value.id === task.projectId)?.name ?? task.projectId;
-    return <BoardCard key={task.id} task={task} column={column} projectName={project} attention={attention} workflow={workflow} selectionMode={selectionMode} selected={selectedIds.has(task.id)} autoRun={autoRun} autoModePending={autoModePending.has(task.id)} onToggleAutoMode={toggleAutoMode} onOpen={openTask} onToggleSelect={toggleSelect} onBeginDrag={begin} shouldSuppressClick={shouldSuppressClick} onRun={moves.requestRun} />;
+    return <BoardCard key={task.id} task={task} column={column} projectName={project} attention={attention} workflow={workflow} selectionMode={selectionMode} selected={selectedIds.has(task.id)} autoRun={autoRun} autoModePending={autoModePending.has(task.id)} onToggleAutoMode={toggleAutoMode} onOpen={openTask} onToggleSelect={toggleSelect} onBeginDrag={begin} shouldSuppressClick={shouldSuppressClick} onMoveTask={advanceTask} advancePending={advancePending.has(task.id)} onRun={moves.requestRun} />;
   }
 
   function renderNewTaskButton(column: Column) { return <div className="kb-column-create"><button type="button" className="kb-button kb-primary" disabled={!state || state.projects.length === 0} onClick={() => setNewTask(true)} aria-label="New task"><PlusIcon size={14} /> New task</button></div>; }
@@ -278,65 +312,108 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     requestCloseDrawer();
   }
 
-  return <DirectoryPickerProvider picker={picker}><section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style><header className="kb-header">
-    <div className="kb-heading"><div><h1>Kanban</h1><p className="kb-hint">Hubs, boards, and workflows</p></div><div className="kb-toolbar">
-    {!selectionMode ? <>
-      <label className="kb-field kb-search"><span className="kb-sr">Search tasks</span><input className="kb-input" type="search" aria-label="Search tasks" placeholder="Search title or description" value={search} onChange={event => setSearch(event.target.value)} /></label>
-      <label className="kb-field"><span className="kb-sr">Project filter</span><select className="kb-input" aria-label="Project filter" value={projectFilter} onChange={event => setProjectFilter(event.target.value)}><option value="">All projects</option>{state?.projects.map(project => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label>
-      <button type="button" className="kb-button kb-icon-button" disabled={!state || state.tasks.length === 0} aria-label="Select cards to delete" title="Select cards to delete" onClick={enterSelection}><CheckSquareIcon size={16} /></button>
-      <button type="button" className="kb-button kb-icon-button" disabled={!snapshot} aria-label="Configuration" title="Configuration" onClick={() => setConfiguration('General')}><SettingsIcon size={16} /></button>
-    </> : <>
-      <span className="kb-selection-count" role="status">{selectedIds.size} selected</span>
-      <button type="button" className="kb-button kb-danger" disabled={selectedIds.size === 0 || batch.pending} onClick={() => { setBatchTasks(selectedTasks); setBatchConfirm(true); }}><TrashIcon size={14} /> Delete {selectedIds.size || ''}</button>
-      <button type="button" className="kb-button" disabled={batch.pending} onClick={exitSelection}>Cancel</button>
-    </>}
-  </div></div>
-    <HubNav
-      hubs={snapshot?.state.hubs ?? []}
-      boards={activeHub?.boards}
-      {...(activeHub ? { activeHubId: activeHub.id } : {})}
-      {...(activeBoard ? { activeBoardId: activeBoard.id } : {})}
-      hubActivity={hubActivity}
-      boardActivity={boardActivity}
-      onSelectHub={selectHub}
-      onSelectBoard={selectBoard}
-      onCreateHub={() => setNewHub(true)}
-      onCreateBoard={() => setNewBoard(true)}
-      sharing={snapshot?.sharing ?? {}}
+  return <DirectoryPickerProvider picker={picker}><section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style>
+    <BoardHeader
+      hubTabs={<HubTabRow
+        hubs={snapshot?.state.hubs ?? []}
+        {...(activeHub ? { activeHubId: activeHub.id } : {})}
+        hubActivity={hubActivity}
+        onSelectHub={selectHub}
+        onCreateHub={() => setNewHub(true)}
+        sharing={snapshot?.sharing ?? {}}
+      />}
+      boardTabs={<BoardTabRow
+        boards={activeHub?.boards}
+        {...(activeHub ? { activeHubId: activeHub.id } : {})}
+        {...(activeBoard ? { activeBoardId: activeBoard.id } : {})}
+        boardActivity={boardActivity}
+        onSelectBoard={selectBoard}
+        onCreateBoard={() => setNewBoard(true)}
+        sharing={snapshot?.sharing ?? {}}
+      />}
+      filterScope={(activeHub?.id ?? '') + ':' + (activeBoard?.id ?? '')}
+      selectionMode={selectionMode}
+      selectedCount={selectedIds.size}
+      batchPending={batch.pending}
+      search={search}
+      projectFilter={projectFilter}
+      projects={state?.projects ?? []}
+      canSelectCards={state !== undefined && state.tasks.length > 0}
+      onSearch={setSearch}
+      onProjectFilter={setProjectFilter}
+      onEnterSelection={enterSelection}
+      onOpenConfiguration={() => setConfiguration('General')}
+      onRequestDelete={() => { setBatchTasks(selectedTasks); setBatchConfirm(true); }}
+      onExitSelection={exitSelection}
+      {...(state === undefined ? {} : { viewControl: <WorkflowViewControl view={view} onChange={chooseView} /> })}
     />
-  </header>
-    {(() => {
-      const view = activeHub ? snapshot?.sharing?.[activeHub.id] : undefined;
-      if (!view || view.status === 'preview' || view.status === 'not-published') return null;
-      if (view.updates === 0 && view.conflicts === 0 && view.blockers.length === 0) return null;
-      const message = view.conflicts > 0 ? 'Your team changed boards that also changed on this machine. Review the differences.' : view.updates > 0 ? 'Your team published changes to this Hub.' : view.blockers[0]?.message ?? 'Team changes cannot be applied until the blocking boards are resolved.';
-      return <div className="kb-share-banner" role="status"><p>{message}</p><div className="kb-actions"><button type="button" className="kb-button" onClick={() => setConfiguration('Team Settings')}>Review team changes</button></div></div>;
-    })()}
+    <ShareBanner view={activeHub ? snapshot?.sharing?.[activeHub.id] : undefined} onReview={() => setConfiguration('Team Settings')} />
     {configuration && <Configuration key={configuration} state={state ?? null} hub={activeHub ?? null} board={activeBoard ?? null} hubCount={snapshot?.state.hubs.length ?? 1} settings={snapshot?.state.settings} settingsRevision={snapshot?.state.settings?.revision ?? 0} run={run} api={api} sharing={activeHub ? snapshot?.sharing?.[activeHub.id] : undefined} sharingAuth={snapshot?.sharingAuth} conversationAttention={snapshot?.conversationAttention} initial={configuration} onClose={() => setConfiguration(null)} onHubDeleted={() => { setConfiguration(null); setActiveHubIdState(null); writeStorage(ACTIVE_HUB_KEY, null); }} onBoardDeleted={() => { setConfiguration(null); }} onBoardCreated={id => { selectBoard(activeHub!.id, id); setConfiguration(null); }} />}
-    <BoardNotices loadError={loadError} actionError={actionError} onRetryLoad={() => setLoadAttempt(value => value + 1)} />{state && <ProjectRelocationNotice projects={state.projects} onRetry={projectId => { void run({ type: 'project.relocationRetry', projectId }).catch(error => setActionError(asProblem(error))); }} />}{state && <DestructiveOperationsNotice tasks={state.tasks} retained={retainedNotices} onDismissRetained={path => { setDismissedRetained(previous => previous.includes(path) ? previous : [...previous, path]); setRetainedCheckout(current => current === path ? null : current); }} onOpen={openTask} onRetry={taskId => void destructive.retryTask(taskId)} onForce={destructive.openForce} onReturn={taskId => { void run({ type: 'operation.return', taskId }).catch(error => setActionError(asProblem(error))); }} />}{!snapshot && !loadError && <p className="kb-empty" role="status">Loading Kanban…</p>}{snapshot && !activeHub && <div className="kb-empty"><h2>No Hub available</h2><p>Create a Hub to continue.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewHub(true)}>Create Hub</button></div>}{snapshot && activeHub && !activeBoard && <div className="kb-empty"><h2>Create your first board</h2><p>Boards hold a workflow and their tasks inside this Hub.</p><button type="button" className="kb-button kb-primary" onClick={() => setNewBoard(true)}>Create board</button></div>}
-    {state && <><div className="kb-page-body" ref={boardBody} onPointerDown={onBoardPointerDown}>{state.projects.length === 0 && <div className="kb-empty"><h2>Add your first project</h2><p>Register a project folder, and its Git root when it is a repository, to create tasks.</p><button type="button" className="kb-button kb-primary" onClick={() => setConfiguration('Projects')}>Configure projects</button></div>}
-      <CardMotionFrame className="kb-columns" label="Workflow columns" layoutKeys={layoutKeys} resetKey={motionResetKey}>{columnPlan.map(slot => <section key={slot.key} className={'kb-column-slot ' + (slot.group ? 'kb-column-group' : '')} aria-label={slot.group?.name}>{slot.group && <h2 className="kb-group-heading">{slot.group.name}</h2>}{slot.columns.map(({ column, tasks }) => { const restricted = Boolean(drag && drag.overColumnId === column.id && transitionAccess(state.workflow, drag.sourceColumnId, column.id) === 'restricted');
-        return <section className={'kb-column' + (restricted ? ' kb-drop-restricted' : '')} key={column.id} aria-label={column.name + ' column'} data-column-id={column.id}><header className="kb-column-header"><h2>{column.name}</h2><span aria-label={tasks.length + ' tasks'}>{tasks.length}</span></header>{column.id === state.workflow.initialColumnId && renderNewTaskButton(column)}<div className="kb-card-list">{tasks.map(task => renderCard(task, column, state.workflow))}{drag?.overColumnId === column.id && <div className={'kb-drop-indicator' + (restricted ? ' kb-drop-indicator-restricted' : '')} style={{ top: drag.indicatorY }} aria-hidden="true" />}{tasks.length === 0 && <p className="kb-empty-column">No matching tasks</p>}</div></section>; })}</section>)}</CardMotionFrame></div>
+    <BoardProblemNotices
+      loadError={loadError}
+      actionError={actionError}
+      onRetryLoad={() => setLoadAttempt(value => value + 1)}
+      state={state}
+      tasks={state?.tasks ?? []}
+      retained={retainedNotices}
+      onDismissRetained={path => { setDismissedRetained(previous => previous.includes(path) ? previous : [...previous, path]); setRetainedCheckout(current => current === path ? null : current); }}
+      onOpenTask={openTask}
+      onRetryOperation={taskId => void destructive.retryTask(taskId)}
+      onForce={destructive.openForce}
+      onReturn={taskId => { void run({ type: 'operation.return', taskId }).catch(error => setActionError(asProblem(error))); }}
+      onRelocationRetry={projectId => { void run({ type: 'project.relocationRetry', projectId }).catch(error => setActionError(asProblem(error))); }}
+    />
+    <BoardEmptyStates snapshot={snapshot} loadError={loadError} hub={activeHub} board={activeBoard} onCreateHub={() => setNewHub(true)} onCreateBoard={() => setNewBoard(true)} />
+    {state && <>
+      <BoardBody bodyRef={boardBody} onPointerDown={onBoardPointerDown} flow={view === 'workflow'} empty={state.projects.length === 0 && view !== 'workflow' ? <ProjectsEmptyState onConfigureProjects={() => setConfiguration('Projects')} /> : null}>
+        {view === 'workflow'
+          ? <WorkflowDiagram
+              key={activeBoard!.id}
+              hubId={activeHub!.id}
+              boardId={activeBoard!.id}
+              state={state}
+              tasks={visible}
+              optimistic={optimistic}
+              drag={drag}
+              beginDrag={begin}
+              shouldSuppressClick={shouldSuppressClick}
+              run={run}
+              revision={state.revision}
+              onOpenTask={openTask}
+              onError={error => setActionError(asProblem(error))}
+              card={{
+                attention: snapshot?.attention ?? {},
+                projectNames: new Map((state.projects).map(project => [project.id, project.name])),
+                autoRun,
+                autoModePending,
+                selectionMode,
+                selectedIds,
+                onToggleAutoMode: toggleAutoMode,
+                onToggleSelect: toggleSelect,
+                advancePending,
+                onAdvance: advanceTask,
+                onRun: moves.requestRun,
+              }}
+            />
+          : <BoardColumnsView plan={columnPlan} layoutKeys={layoutKeys} resetKey={motionResetKey} workflow={state.workflow} drag={drag} renderCard={renderCard} renderNewTaskButton={renderNewTaskButton} />}
+      </BoardBody>
       {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} conversationAttention={snapshot?.conversationAttention} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} onForce={destructive.openForce} onToggleAutoMode={toggleAutoMode} autoModePending={autoModePending.has(selected.id)} sessionTitles={sessionTitles} {...(conversationLeases === undefined ? {} : { conversationLeases })} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} />}
-
-    {newTask && state && <NewTaskDialog state={state} run={run} onClose={() => setNewTask(false)} onCreated={startCreatedTask} />}
-    {destructive.state.view && (() => {
-      const view = destructive.state.view;
-      const task = state.tasks.find(value => value.id === view.request.taskId);
-      if (!task) return null;
-      if (view.kind === 'force') return <ForceRemovalDialog key={'force-' + task.id} request={view.request} blockers={view.blockers} sessionTitles={sessionTitles} pending={destructive.state.pending} problem={destructive.state.error} onCancel={destructive.close} onConfirm={destructive.confirmForce} />;
-      if (view.kind === 'discard') return <DiscardDialog key={'discard-' + task.id} request={view.request} run={command => {
-        const current = latest.current ? allTasks(latest.current).find(value => value.id === view.request.taskId) : undefined;
-        if (!current || (current.worktree?.path ?? null) !== view.request.expectedWorktreePath) return Promise.reject({ code: 'CONTEXT_CHANGED', message: 'The task worktree changed while confirmation was open. Cancel and review the current target before trying again.' });
-        return run(command, false);
-      }} onClose={destructive.close} onDeleted={() => setSelectedId(null)} />;
-      const Dialog = view.request.command.type === 'task.delete' ? DeleteTaskDialog : RemoveWorktreeDialog;
-      return <Dialog request={view.request} task={task} project={state.projects.find(value => value.id === task.projectId)} attention={snapshot?.attention[task.id] ?? EMPTY_ATTENTION} sessionTitles={sessionTitles} pending={destructive.state.pending} problem={destructive.state.error} onCancel={destructive.close} onConfirm={destructive.confirm} onRetry={destructive.retry} onReturn={destructive.returnToBase} onForce={() => destructive.openForce(task.id)} />;
-    })()}
-    {batchConfirm && <BulkDeleteDialog tasks={batchTasks} attention={snapshot?.attention ?? {}} onCancel={() => setBatchConfirm(false)} onConfirm={deleteSelected} />}
+      {destructive.state.view && (() => {
+        const view = destructive.state.view;
+        const task = state.tasks.find(value => value.id === view.request.taskId);
+        if (!task) return null;
+        if (view.kind === 'force') return <ForceRemovalDialog key={'force-' + task.id} request={view.request} blockers={view.blockers} sessionTitles={sessionTitles} pending={destructive.state.pending} problem={destructive.state.error} onCancel={destructive.close} onConfirm={destructive.confirmForce} />;
+        if (view.kind === 'discard') return <DiscardDialog key={'discard-' + task.id} request={view.request} run={command => {
+          const current = latest.current ? allTasks(latest.current).find(value => value.id === view.request.taskId) : undefined;
+          if (!current || (current.worktree?.path ?? null) !== view.request.expectedWorktreePath) return Promise.reject({ code: 'CONTEXT_CHANGED', message: 'The task worktree changed while confirmation was open. Cancel and review the current target before trying again.' });
+          return run(command, false);
+        }} onClose={destructive.close} onDeleted={() => setSelectedId(null)} />;
+        const Dialog = view.request.command.type === 'task.delete' ? DeleteTaskDialog : RemoveWorktreeDialog;
+        return <Dialog request={view.request} task={task} project={state.projects.find(value => value.id === task.projectId)} attention={snapshot?.attention[task.id] ?? EMPTY_ATTENTION} sessionTitles={sessionTitles} pending={destructive.state.pending} problem={destructive.state.error} onCancel={destructive.close} onConfirm={destructive.confirm} onRetry={destructive.retry} onReturn={destructive.returnToBase} onForce={() => destructive.openForce(task.id)} />;
+      })()}
+      {batchConfirm && <BulkDeleteDialog tasks={batchTasks} attention={snapshot?.attention ?? {}} onCancel={() => setBatchConfirm(false)} onConfirm={deleteSelected} />}
     </>}
-    {newHub && <CreateHubDialog run={run} onClose={() => setNewHub(false)} onCreated={id => { setActiveHubIdState(id); writeStorage(ACTIVE_HUB_KEY, id); setNewHub(false); }} />}
-    {newBoard && activeHub && <CreateBoardDialog hubId={activeHub.id} run={run} onClose={() => setNewBoard(false)} onCreated={id => { selectBoard(activeHub.id, id); setNewBoard(false); }} />}
+    <BoardCreationDialogs boardState={state} hub={activeHub} board={activeBoard} run={run} newTask={newTask} newHub={newHub} newBoard={newBoard} onCloseNewTask={() => setNewTask(false)} onCloseNewHub={() => setNewHub(false)} onCloseNewBoard={() => setNewBoard(false)} onTaskCreated={startCreatedTask} onHubCreated={id => { setActiveHubIdState(id); writeStorage(ACTIVE_HUB_KEY, id); setNewHub(false); }} onBoardCreated={id => { if (activeHub) selectBoard(activeHub.id, id); setNewBoard(false); }} />
     {moves.overrideDialog && <div hidden={preparation.dialog !== null}>{moves.overrideDialog}</div>}
     {preparation.dialog}
   </section></DirectoryPickerProvider>;

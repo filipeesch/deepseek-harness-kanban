@@ -4,7 +4,7 @@ import type { Attention, ConversationFacts, FullHostSnapshot } from '../shared/t
 import { EMPTY_CONVERSATION_FACTS } from '../shared/types.js';
 import { samePendingUserWork } from '../domain/pending-user-work.js';
 import { aggregateTaskAttention, projectConversation } from './attention-projection.js';
-import { allTasks } from './hub-view.js';
+import { allTasks } from './snapshot-normalize.js';
 
 /** Conversation-level and task-level attention derived from one Host snapshot. */
 export interface TaskAttentionProjection {

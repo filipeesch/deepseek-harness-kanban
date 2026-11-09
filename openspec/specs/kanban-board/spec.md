@@ -24,34 +24,81 @@ Each board SHALL start with a default workflow containing Backlog, Plan, In Prog
 - **WHEN** the user saves a customized workflow for one board
 - **THEN** every other board keeps its own saved workflow
 
-
 ### Requirement: YAML workflow configuration
-Each board SHALL support its own workflow configuration in YAML, including the initial stage, grouped columns, allowed transitions, and optional stage entry instructions. The active board's workflow SHALL be used for rendering, transitions, and task creation. The product SHALL honor configured transition restrictions by requiring explicit confirmation before a restricted transition can proceed, and it SHALL honor column grouping. This version SHALL NOT implement WIP limits and SHALL NOT introduce reusable workflow templates.
+
+Each board SHALL support its own workflow configuration in YAML, including the initial stage, grouped columns, allowed transitions with an optional condition for each target, optional stage entry instructions, each stage's stored placement, each stage's stored size, and the board's default presentation. A transition entry SHALL be authored either as a bare target identifier or as a mapping that carries the target identifier and an optional condition. Both forms SHALL be accepted, neither form SHALL be deprecated, both forms SHALL describe the same transition, and a single list MAY mix them. The condition SHALL describe when that transition is followed; it SHALL NOT change which transitions the workflow permits. The active board's workflow SHALL be used for rendering, transitions, and task creation. The product SHALL honor configured transition restrictions by requiring explicit confirmation before a restricted transition can proceed, and it SHALL honor column grouping. This version SHALL NOT implement WIP limits and SHALL NOT introduce reusable workflow templates.
 
 #### Scenario: Render a configured column group
+
 - **WHEN** the active board's workflow groups multiple stages together
 - **THEN** the board presents those stages as a group while retaining each stage as a distinct task destination
 
 #### Scenario: Reject a prohibited transition
+
 - **WHEN** a user requests a move that the active board's workflow does not permit from its current stage and does not confirm the override
 - **THEN** the task remains in its current stage
 - **AND** the prohibited move does not initiate an agent execution
 
 #### Scenario: Restricted transition requires confirmation
+
 - **WHEN** a user requests a move that the active board's workflow does not permit
 - **THEN** the board asks for explicit confirmation before moving the task
 - **AND** the task remains in its current stage until the user confirms
 - **AND** the request does not initiate an agent execution
 
+#### Scenario: Read a stage's stored size
+
+- **WHEN** the active board's workflow stores a size for a stage
+- **THEN** the board presents that stage at that size, bounded by the minimum size
+
+#### Scenario: Reject an invalid stage size
+
+- **WHEN** a workflow configuration stores a stage size that is not a finite number, is below the minimum, or lies outside the accepted range
+- **THEN** the configuration is rejected as invalid
+- **AND** the last valid workflow remains in effect
+
 #### Scenario: Do not enforce a WIP capacity
+
 - **WHEN** a user makes an otherwise permitted move into a stage that already contains tasks
 - **THEN** the board does not reject the move because of a WIP capacity limit
 
 #### Scenario: Validate against the active board's workflow
+
 - **WHEN** the user edits the workflow of the active board
 - **THEN** the editor validates that board's YAML
 - **AND** no other board's workflow is read or replaced
 
+#### Scenario: Reject an unsupported default presentation
+
+- **WHEN** a workflow configuration sets a default presentation other than the column board or the workflow diagram
+- **THEN** the configuration is rejected as invalid
+- **AND** the last valid workflow remains in effect
+
+#### Scenario: Accept a bare transition identifier
+
+- **WHEN** a stage configures a transition as a bare target identifier
+- **THEN** the workflow is accepted and the transition is drawn and followed as before
+
+#### Scenario: Accept a transition with a condition
+
+- **WHEN** a stage configures a transition as a mapping with a target identifier and a condition
+- **THEN** the workflow is accepted and the condition is kept with that transition
+
+#### Scenario: Accept a mixed transition list
+
+- **WHEN** one stage mixes bare target identifiers and conditioned transitions in the same list
+- **THEN** the workflow is accepted and every entry describes one transition
+
+#### Scenario: Reject a transition to an unknown stage
+
+- **WHEN** a stage configures a transition whose target stage does not exist
+- **THEN** the configuration is rejected as invalid
+- **AND** the last valid workflow remains in effect
+
+#### Scenario: Keep the permitted set unchanged by a condition
+
+- **WHEN** a stage configures the same targets with and without conditions
+- **THEN** the same requests are permitted and the same requests require confirmation
 
 ### Requirement: Top-level task creation
 The active board SHALL provide one New task action at the top of its workflow's configured initial column. It SHALL collect a title, description, and project from the active Hub's project registry. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. Saving a new task SHALL place it in the active board's configured initial stage without creating a native DSH conversation and without initiating an agent execution. The board header SHALL NOT provide a separate New task action.
@@ -84,7 +131,6 @@ The active board SHALL provide one New task action at the top of its workflow's 
 - **THEN** the task has no native conversation
 - **AND** the section presents the explicit start state defined by `task-conversations`
 
-
 ### Requirement: Edit task text at any stage
 The user SHALL be able to edit a task's title and description in any workflow stage, including after a worktree has been created. Saving those edits SHALL NOT automatically send a message to any task conversation or initiate an agent execution.
 
@@ -95,7 +141,6 @@ The user SHALL be able to edit a task's title and description in any workflow st
 #### Scenario: Save edits without messaging agents
 - **WHEN** the user saves task title or description changes
 - **THEN** the changes do not automatically append a message to any task chat or initiate a new agent execution
-
 
 ### Requirement: Open a task drawer
 Activating a task card SHALL open its task drawer, giving access to that task's conversations and supporting task information. The whole card surface SHALL be activatable except for nested controls, which SHALL perform their own action without opening the drawer. A focused card SHALL be activatable from the keyboard.
@@ -111,7 +156,6 @@ Activating a task card SHALL open its task drawer, giving access to that task's 
 #### Scenario: Activate a card from the keyboard
 - **WHEN** a task card has keyboard focus and the user presses Enter
 - **THEN** the task drawer opens for the selected task
-
 
 ### Requirement: Execution preparation before a task's first execution
 When a user move into an instructed stage or a card run action would start a task's first execution — the task has no native conversation — the system SHALL present one execution preparation before applying the move or admitting the instruction. The preparation SHALL contain the worktree choice defined by the Worktree choice before a card's first execution requirement in `worktree-management` when that choice applies, and the model selection defined by Model selection for the first conversation in `task-conversations` when DSH's native model selector is available. When the task already has a conversation, or when neither part applies, the system SHALL NOT present the preparation and SHALL follow the current move and run behavior. A restricted-transition confirmation SHALL be presented before the preparation; canceling that confirmation SHALL present nothing else. The preparation SHALL NOT start an agent execution and SHALL NOT change the task's stage or position. Completing the preparation SHALL leave the move or run action to proceed as defined by its own requirement. Canceling the preparation after it created a worktree or the first conversation SHALL keep those resources and SHALL leave the task's stage and position unchanged. The preparation SHALL NOT be presented for a same-stage reorder or by an automatic advance.
@@ -153,7 +197,6 @@ When a user move into an instructed stage or a card run action would start a tas
 - **THEN** the created worktree and conversation are kept
 - **AND** the task's stage and position are unchanged
 - **AND** no agent instruction is sent
-
 
 ### Requirement: Direct stage manipulation on the board
 The task card SHALL NOT provide an independent stage selector. A user SHALL change a task's stage through board drag and drop or through the stage control in the open task drawer. A stage change that requests no position, including a drawer stage change and a confirmed restricted drawer change, SHALL place the task at the top of the destination stage. A drag SHALL present a distinct dragged representation and a drop indicator, and a drop SHALL place the task at the dropped position, including before a chosen card and after the last card of the destination stage. Dropping on a permitted stage SHALL move the task immediately, whether or not that stage has an entry instruction, except when the drop would start the task's first execution: that drop SHALL present the execution preparation defined by Execution preparation before a task's first execution, and the move SHALL follow the preparation. Hovering a restricted stage during a drag SHALL present a distinct warning affordance. Dropping on a restricted stage SHALL require explicit confirmation before moving the task; canceling SHALL leave the task's stage and position unchanged. An instructed destination SHALL arm the timed stage instruction defined by the Timed stage instruction after a move requirement; neither the drop, the drawer stage change, nor a restricted-move confirmation SHALL initiate an execution. Dropping within the current stage SHALL reorder the task relative to its neighbors without arming a new timed instruction. A prohibited or canceled change SHALL leave the task unchanged. The board SHALL offer worktree creation during a drop only through that execution preparation. The host's automatic advance, defined by Automatic advance after a completed turn, SHALL NOT be presented as board stage manipulation, SHALL NOT add a card stage selector, and SHALL NOT require a confirmation.
@@ -233,9 +276,8 @@ The task card SHALL NOT provide an independent stage selector. A user SHALL chan
 - **THEN** the card does not present a stage selector
 - **AND** no confirmation or drop indicator is shown
 
-
 ### Requirement: Text search and project filtering
-The active board SHALL support text search over its task titles and descriptions and filtering by project, separately and together. The project filter SHALL list the projects owned by the active Hub. This scope SHALL NOT add activity or worktree-status filters.
+The active board SHALL support text search over its task titles and descriptions and filtering by project, separately and together. The project filter SHALL list the projects owned by the active Hub. The two inputs SHALL be presented by the board filter control defined by the Board filter control requirement. This scope SHALL NOT add activity or worktree-status filters.
 
 #### Scenario: Find a task by its title or description
 - **WHEN** the user searches for text that matches a task's title or description
@@ -254,6 +296,9 @@ The active board SHALL support text search over its task titles and descriptions
 - **THEN** the project filter options are limited to the active Hub's projects
 - **AND** tasks from the previous board are not shown
 
+#### Scenario: Reach both filters from one control
+- **WHEN** the user wants to combine a text search with a project filter
+- **THEN** both inputs are available in the same filter popover without leaving it
 
 ### Requirement: Execution activity is independent of workflow and attention
 The board SHALL represent task execution state independently of the task's workflow stage and of its unread, awaiting-reply, and failure attention indicators. Execution state SHALL consist of two distinct facts. Agent execution SHALL mean that at least one agent owned by the task's conversations is running: a conversation's own assistant turn or an owned native subagent descendant. Background activity SHALL mean that the task owns unsettled work other than agent execution, such as jobs or schedules. Both facts SHALL aggregate across all of the task's conversations rather than only the currently selected conversation. Completing or failing an execution SHALL NOT, by itself, redefine the task's workflow stage. A task SHALL be presented as working while at least one owned agent is running, including when the main turn has ended and only an owned subagent descendant is still running. Work that is not agent execution and outlives the turn SHALL be presented as background activity instead.
@@ -280,41 +325,55 @@ The board SHALL represent task execution state independently of the task's workf
 - **WHEN** the last owned agent and the last background activity for a task have settled
 - **THEN** the board presents neither an agent execution state nor background activity for that task
 
-
 ### Requirement: Coexisting attention indicators across task conversations
-The board SHALL derive attention per task conversation and aggregate it across all conversations belonging to a task. It SHALL distinguish blue unread-message indicators, orange awaiting-reply indicators, and red failure indicators. Blue and red SHALL be derived by the conversation's last settled assistant turn and its stored per-conversation read acknowledgment: unread SHALL mean that the conversation has a settled turn newer than its acknowledgment, and failure SHALL mean that the settled turn ended with an error outcome and is still unread. Blue and red SHALL NOT be presented while any agent owned by that conversation is running. The orange indicator SHALL reflect a live awaiting-reply state and SHALL NOT require acknowledgment. Attention SHALL be derived from durable conversation facts and the stored acknowledgment, SHALL survive a reload or plugin restart, and SHALL NOT depend on a per-client native unread transition. A conversation with no stored acknowledgment SHALL present its last settled turn as unread. Simultaneously applicable indicators SHALL coexist rather than collapse to a single highest-priority indicator. Those attention indicators SHALL also coexist with the agent execution and background activity presentation rather than replacing one another. Background activity SHALL present a count of the task's unsettled activities; counts are not required for the blue, orange, or red attention indicators.
+
+The board SHALL derive attention per task conversation and aggregate it across all conversations belonging to a task. It SHALL distinguish blue unread-message indicators, orange awaiting-reply indicators, and red failure indicators. Blue and red SHALL be derived by the conversation's last settled assistant turn and its stored per-conversation read acknowledgment: unread SHALL mean that the conversation has a settled turn newer than its acknowledgment, and failure SHALL mean that the settled turn ended with an error outcome and is still unread. Blue and red SHALL NOT be presented while any agent owned by that conversation is running. The orange indicator SHALL reflect a live awaiting-reply state and SHALL NOT require acknowledgment. Attention SHALL be derived from durable conversation facts and the stored acknowledgment, SHALL survive a reload or plugin restart, and SHALL NOT depend on a per-client native unread transition. A conversation with no stored acknowledgment SHALL present its last settled turn as unread. Simultaneously applicable indicators SHALL coexist rather than collapse to a single highest-priority indicator. Those attention indicators SHALL also coexist with the card's agent execution accent rather than replacing one another.
+
+Background activity SHALL remain derived per task as the unsettled work other than agent execution, and SHALL NOT be presented on the task card. It SHALL remain available through the task drawer's section navigation, whose Conversations entry SHALL expose the number of unsettled activities and their labels on hover and to assistive technology.
 
 #### Scenario: Attention from a nonselected conversation
+
 - **WHEN** an unread message, awaiting-reply state, or failure is present in a task conversation that is not selected
 - **THEN** the corresponding task-level attention indicator is still represented on the board
 
 #### Scenario: Multiple attention states coexist with activity
-- **WHEN** a task has unread messages, a conversation awaiting a reply, a conversation with a failure, a conversation running an owned agent, and unsettled background activity
+
+- **WHEN** a task has unread messages, a conversation awaiting a reply, a conversation with a failure, and a conversation running an owned agent
 - **THEN** blue, orange, and red attention indicators are all represented together
-- **AND** the agent execution state and the background activity count are represented separately from those attention indicators
+- **AND** the agent execution accent is represented separately from those attention indicators
+
+#### Scenario: Background activity leaves the card
+
+- **WHEN** a task owns unsettled jobs or schedules
+- **THEN** its card does not present a background activity indicator
+- **AND** the task drawer's Conversations section entry presents the background activity count and labels on hover and to assistive technology
 
 #### Scenario: Unread waits for every owned agent to finish
+
 - **WHEN** a conversation's assistant turn ends while an owned subagent descendant is still running
 - **THEN** the board does not present that conversation's settled turn as unread or failed
 - **AND** the board presents the settled turn as unread once the last owned agent finishes
 
 #### Scenario: Reading a conversation clears its indicators
+
 - **WHEN** a conversation with an unread or failed settled turn is read in the task drawer
 - **THEN** the board stops presenting that conversation's blue and red indicators
 - **AND** a reload does not bring the cleared indicators back
 
 #### Scenario: Unread survives a reload
+
 - **WHEN** a turn settles while no conversation content is being read
 - **THEN** the board presents the conversation as unread after a reload
 
 #### Scenario: A conversation never read stays unread
+
 - **WHEN** a conversation has a settled turn and no stored acknowledgment
 - **THEN** the board presents the unread indicator for that turn
 
 #### Scenario: A later error marks the conversation again
+
 - **WHEN** a read conversation later settles a new turn with an error outcome
 - **THEN** the board presents the failure indicator for that new settled turn
-
 
 ### Requirement: Truthful and self-healing turn execution state
 The board SHALL stop presenting a task's agent execution when the last agent owned by its conversations finishes, without requiring another session event, a reload, or any user action. The board SHALL NOT present agent execution when no owned agent is running. When an activity update is missed or a transient read fails, the board SHALL recover the correct execution state within at most two seconds. Background activity SHALL NOT be presented as agent execution.
@@ -335,116 +394,102 @@ The board SHALL stop presenting a task's agent execution when the last agent own
 - **WHEN** the only active work for a task is a job or schedule
 - **THEN** the task is not presented as running an agent
 
-
 ### Requirement: Task card layout
-The board SHALL render each task as a card composed of distinct regions in a fixed order: a title region, a context region, an activity region, and a status region. The context region SHALL present the task's project name, the auto-mode control defined by Auto mode on a task card, and its unread, awaiting-reply, and failure attention indicators. The activity region SHALL present turn execution, background activity, and the stage run action defined by Run a stage instruction from a card. The status region SHALL present unresolved context-operation, confirmed-transition, and automatic-advance state as defined by Task card status strip.
+
+The board SHALL render each task as a card composed of distinct regions in a fixed order: a title region, a context region, an activity region, and a status region. The context region SHALL present the task's project name and its unread, awaiting-reply, and failure attention indicators. The activity region SHALL present the auto-mode control defined by Auto mode on a task card, the stage run action defined by Run a stage instruction from a card, and the advance action defined by Advance a task from its card, kept on one line at the trailing edge of the card. The status region SHALL present unresolved context-operation, confirmed-transition, and automatic-advance state as defined by Task card status strip. The card's agent execution state SHALL be presented by the execution accent defined by Execution accent on task cards and SHALL NOT occupy a region of its own.
 
 The project name SHALL remain visible on every card, SHALL be visually quieter than the title, and SHALL expose the complete name when the available width truncates it. The title SHALL NOT be clamped to a fixed number of lines. In selection mode the card SHALL present its selection control at the leading edge of the context region. The whole card surface SHALL remain activatable as defined by Open a task drawer, except for nested controls, which SHALL perform their own action without opening the drawer.
 
 #### Scenario: Present the card regions in order
+
 - **WHEN** a task card renders
 - **THEN** the title, the context region, the activity region, and the status region appear in that order
-- **AND** the project name, the auto-mode control, and the attention indicators are in the context region, not the activity region
-- **AND** turn execution and background activity are in the activity region, not the context region
+- **AND** the project name and the attention indicators are in the context region
+- **AND** the auto-mode control, the run action, and the advance action are in the activity region
 
 #### Scenario: Keep a long title readable
+
 - **WHEN** a task title is wider than the card
 - **THEN** the title wraps onto additional lines without a fixed line clamp
 - **AND** the complete title remains available to assistive technology
 
 #### Scenario: Keep a long project name available
+
 - **WHEN** a project name is wider than the context region
 - **THEN** the context region truncates the visible name
 - **AND** the complete project name is available on hover and to assistive technology
 
 #### Scenario: Place the selection control
+
 - **WHEN** the board is in selection mode
 - **THEN** each card presents its selection control at the leading edge of the context region
 - **AND** the card does not overlay the control on the title region
-- **AND** the auto-mode control is not presented in selection mode
+- **AND** the auto-mode control, the run action, and the advance action are not presented in selection mode
 
 #### Scenario: Place the auto-mode control
+
 - **WHEN** a task card renders outside selection mode
-- **THEN** the auto-mode control appears in the context region
-- **AND** it stays on one line with the project name and the attention indicators
+- **THEN** the auto-mode control appears in the activity region
+- **AND** it keeps its label and its state indicator
 - **AND** activating it does not open the task drawer and does not begin a drag
 
+#### Scenario: Share the activity row
+
+- **WHEN** a card presents the auto-mode control together with the run action or the advance action
+- **THEN** the controls share one row in the activity region
+- **AND** they present the same control height and the same pill styling
+
 #### Scenario: Omit an empty status region
+
 - **WHEN** a card has no unresolved context operation, confirmed transition, automatic-advance state, or run-action failure
 - **THEN** the card presents no status-region content
 
-
-### Requirement: Visible execution state on task cards
-A task card SHALL present agent execution through a visible working indicator and a distinct card accent rather than a text label alone. The indicator SHALL remain legible in the host's light and dark appearances and SHALL follow the host theme. The working state SHALL be announced to assistive technology when it begins, and periodic animation updates SHALL NOT be announced. The card SHALL follow the host's reduced-motion preference by keeping the indicator and accent visible without animation. When the task owns background activity, the card SHALL present a separate background indicator that shows the number of unsettled activities and makes their labels available on hover and to assistive technology. The background indicator SHALL be visually quieter than the working indicator, and it SHALL be present on its own when no owned agent is running. The working label SHALL be presented no larger than the background indicator's text and SHALL NOT add letter-spacing. The working and background indicators SHALL be presented in the card's activity region defined by Single-line activity strip on task cards, separate from the project name and attention indicators.
-
-#### Scenario: Card shows a running turn
-- **WHEN** a task is running an assistant turn
-- **THEN** its card shows the working indicator and the card accent
-- **AND** the working state is announced once to assistive technology
-
-#### Scenario: Card shows working while a subagent runs
-- **WHEN** a task's assistant turn has ended and an owned subagent descendant is still running
-- **THEN** its card still shows the working indicator and the card accent
-- **AND** the running subagent is not shown as background activity
-
-#### Scenario: Card shows background work only
-- **WHEN** a task has no owned agent running and still owns unsettled jobs or schedules
-- **THEN** its card shows the background indicator with the activity count and no working indicator
-
-#### Scenario: Working label matches the background indicator
-- **WHEN** a card presents the working indicator next to a background indicator
-- **THEN** the working label's text is no larger than the background indicator's text
-- **AND** the working label does not add letter-spacing
-
-#### Scenario: Background labels are available
-- **WHEN** the user points at or focuses the background indicator
-- **THEN** the labels of the task's unsettled activities are available
-- **AND** the labels are exposed to assistive technology
-
-#### Scenario: Activity is separate from identity
-- **WHEN** a card presents a working indicator or a background indicator
-- **THEN** those indicators are in the activity region
-- **AND** the project name and attention indicators are in the context region
-
-#### Scenario: Reduced motion
-- **WHEN** the user prefers reduced motion
-- **THEN** the working indicator and card accent remain visible without animation
-
-#### Scenario: Theme appearance
-- **WHEN** the host application uses its light or dark appearance
-- **THEN** the working and background indicators remain legible and use host theme colors
-
-
 ### Requirement: Single-line activity strip on task cards
-The card's activity region SHALL keep its content on one line. When the task owns exactly one background activity kind, the background indicator SHALL present that kind's label and count. When the task owns more than one background kind, the indicator SHALL present the total number of unsettled activities instead of per-kind text, and SHALL expose every activity label on hover and to assistive technology. The card SHALL reserve the activity region's height in every task state, so that starting or ending a turn, changing the background count, or showing the run action SHALL NOT change the card's height. The run action and its countdown control SHALL render at the trailing edge of the activity region and SHALL NOT add a separate action row.
+
+The card's activity region SHALL keep its content on one line. It SHALL present the auto-mode control, the stage run action or its countdown control, and the advance action at the trailing edge, and it SHALL NOT present a background activity indicator. The card SHALL reserve the activity region's height in every task state, so that starting or ending a turn, or showing or hiding the run and advance actions, SHALL NOT change the card's height. The controls SHALL share one row and SHALL NOT add a separate action row.
 
 #### Scenario: Label a single background kind
+
 - **WHEN** a task owns unsettled activities of exactly one kind
-- **THEN** its card's background indicator presents that kind's count and label
-- **AND** the activity region stays on one line
+- **THEN** the card presents no background activity indicator
+- **AND** the task drawer's Conversations section entry presents that kind's count and label
 
 #### Scenario: Aggregate multiple background kinds
+
 - **WHEN** a task owns unsettled activities of more than one kind
-- **THEN** its card's background indicator presents the total number of unsettled activities
-- **AND** the indicator does not present per-kind counts
-- **AND** every activity label is available on hover and to assistive technology
-- **AND** the activity region stays on one line
+- **THEN** the card presents no background activity indicator
+- **AND** the task drawer's Conversations section entry presents the total number of unsettled activities and their labels
 
 #### Scenario: Keep the card height stable
-- **WHEN** a turn starts or ends, the background count changes, or the run action appears or disappears while no status is shown
+
+- **WHEN** a turn starts or ends, the background count changes, or the run or advance action appears or disappears while no status is shown
 - **THEN** the card keeps the same height
 - **AND** the activity region keeps one line
 
 #### Scenario: Present execution and background together
+
 - **WHEN** a task is running a turn and also owns unsettled background work
-- **THEN** the working indicator and the background indicator both appear in the activity region
+- **THEN** the card presents the execution accent
+- **AND** the task drawer's Conversations section entry presents the background activity
 - **AND** the activity region stays on one line
 
 #### Scenario: Place the run action in the activity region
+
 - **WHEN** a card exposes the run action or its countdown control
 - **THEN** the control appears at the trailing edge of the activity region
 - **AND** the card does not add a separate action row
 
+#### Scenario: Share the row with the auto-mode control
+
+- **WHEN** a card presents the auto-mode control, the run action, and the advance action together
+- **THEN** they appear on one line in the activity region
+- **AND** the activity region does not wrap
+
+#### Scenario: Place the advance action
+
+- **WHEN** a card exposes the advance action
+- **THEN** it appears at the trailing edge of the activity region, next to the run action
+- **AND** it is presented in the same control style and height as the auto-mode control
 
 ### Requirement: Task card status strip
 The board SHALL present a card's unresolved context operation, confirmed transition, and automatic-advance state in one status region below the activity region. Each status SHALL carry a tone that distinguishes a failure from a pending state and SHALL present a short label that names the state. A destructive operation's label SHALL use task-deletion or worktree-removal language and SHALL distinguish checking, queued, in progress, and failed states rather than exposing a raw phase token. A status SHALL remain visible while its operation or transition is unresolved. The automatic-advance status SHALL name the destination stage while an advance is admitted, name a failure when an admitted advance failed, and name the pause reason when auto mode is paused. The status region SHALL NOT report the held state defined by Auto mode on a task card, which the auto-mode control presents instead. A run-action admission failure SHALL be reported in the same status region. When a card has more than one such fact, the status region SHALL present them together without replacing one with another.
@@ -506,7 +551,6 @@ The board SHALL present a card's unresolved context operation, confirmed transit
 - **THEN** the corresponding status is no longer presented in the status region
 - **AND** reading a conversation does not clear an automatic-advance pause by itself
 
-
 ### Requirement: Host-themed board controls
 The board SHALL follow the host application's light and dark appearance for its primary actions, focus indicators, and selection accents. Enabled primary actions SHALL use host theme colors for their fill, foreground, and hover state in both appearances. Primary-action text SHALL maintain at least 4.5:1 contrast against its fill at rest and on hover. The board SHALL NOT use the browser's selection highlight color as a product fill or accent.
 
@@ -529,7 +573,6 @@ The board SHALL follow the host application's light and dark appearance for its 
 - **WHEN** the board renders in either appearance
 - **THEN** primary-action fills and board accents do not use the browser selection highlight color or its matching foreground color
 
-
 ### Requirement: General board configuration with worktree base path
 The Kanban configuration experience SHALL include a General section that is presented first and opened by default. The General section SHALL provide an optional worktree base path used as the parent directory for future task worktree destinations across all Hubs and boards. A non-empty worktree base path SHALL be an absolute path; saving SHALL require it to resolve to an existing directory and SHALL retain that canonical directory. Saving an empty worktree base path SHALL remove the configured value. Changing or clearing the worktree base path SHALL NOT move, remove, or rename any existing worktree or branch.
 
@@ -551,11 +594,12 @@ The Kanban configuration experience SHALL include a General section that is pres
 - **WHEN** the user changes or clears the worktree base path while tasks have existing worktrees
 - **THEN** every existing worktree, branch, and recorded destination remains unchanged
 
-
 ### Requirement: Run a stage instruction from a card
-When a task's current stage has an entry instruction, its card SHALL expose a run action only while the current entry into that stage is unresolved. The entry SHALL be unresolved when a persisted entry marker exists for the current stage and no successful user prompt has been sent in any open conversation of the task since that entry. The marker SHALL be created on every move into an instructed stage, including a task created directly in an instructed initial stage. A same-stage reorder SHALL NOT reset the marker; leaving and re-entering the stage SHALL create a new marker. A successful user prompt in any open conversation SHALL clear the marker. An admission failure SHALL NOT clear it. A task already in an instructed stage without a marker SHALL NOT show the action until its next entry. While the timed instruction for the entry is counting down or being sent, the card SHALL expose the countdown control defined by the Timed stage instruction after a move requirement instead of the run action; canceling that countdown or a failed timed send SHALL expose the run action for the same unresolved entry. When visible, the action SHALL send the stage's entry instruction verbatim to the task's first open conversation in conversation order. When the task has no conversation, activating the action SHALL first present the execution preparation defined by Execution preparation before a task's first execution; when no conversation is open after the preparation, the action SHALL create a new conversation and use that conversation as the target. The action SHALL carry the entry identity it was displayed for — the entry's stage and entry timestamp — and the host SHALL reject a request for an entry that has been resolved or replaced. The action SHALL NOT move the task or change its position, SHALL NOT offer a conversation picker, and SHALL NOT be available in selection mode. It SHALL be unavailable while the task has an unresolved context operation or confirmed transition. The submitted message SHALL contain only the stage instruction; the conversation's first-turn task context supplies the task context. Admission failures SHALL be reported without changing the stage or position and without creating another conversation beyond the resolved target.
+
+When a task's current stage has an entry instruction, its card SHALL expose a run action only while the current entry into that stage is unresolved. The entry SHALL be unresolved when a persisted entry marker exists for the current stage and no successful user prompt has been sent in any open conversation of the task since that entry. The marker SHALL be created on every move into an instructed stage, including a task created directly in an instructed initial stage. A same-stage reorder SHALL NOT reset the marker; leaving and re-entering the stage SHALL create a new marker. A successful user prompt in any open conversation SHALL clear the marker. An admission failure SHALL NOT clear it. A task already in an instructed stage without a marker SHALL NOT show the action until its next entry. While the timed instruction for the entry is counting down or being sent, the card SHALL expose the countdown control defined by the Timed stage instruction after a move requirement instead of the run action; canceling that countdown or a failed timed send SHALL expose the run action for the same unresolved entry. When visible, the action SHALL send the stage's entry instruction to the task's first open conversation in conversation order, followed by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies. When the task has no conversation, activating the action SHALL first present the execution preparation defined by Execution preparation before a task's first execution; when no conversation is open after the preparation, the action SHALL create a new conversation and use that conversation as the target. The action SHALL carry the entry identity it was displayed for — the entry's stage and entry timestamp — and the host SHALL reject a request for an entry that has been resolved or replaced. The action SHALL NOT move the task or change its position, SHALL NOT offer a conversation picker, and SHALL NOT be available in selection mode. It SHALL be unavailable while the task has an unresolved context operation or confirmed transition. The submitted message SHALL contain the stage instruction and, when it applies, the transition briefing; the conversation's first-turn task context supplies the task context. Admission failures SHALL be reported without changing the stage or position and without creating another conversation beyond the resolved target.
 
 #### Scenario: Show the action after a transition
+
 - **WHEN** a card enters a stage with an entry instruction and no prompt has been sent since that entry
 - **THEN** the card exposes the countdown control for that entry
 - **AND** no instruction is sent before the countdown ends
@@ -563,21 +607,25 @@ When a task's current stage has an entry instruction, its card SHALL expose a ru
 - **AND** the task's stage and position are that of the transition
 
 #### Scenario: Restore the action after the countdown ends without sending
+
 - **WHEN** the countdown for an unresolved entry is canceled or its send fails
 - **THEN** the card exposes the run action for the same entry
 - **AND** the task's stage and position are unchanged
 
 #### Scenario: Countdown replaces the run action
+
 - **WHEN** a move into an instructed stage arms the countdown
 - **THEN** the card exposes the countdown control instead of the run action
 - **AND** the run action is exposed again only after the countdown is canceled or the send fails
 
 #### Scenario: Hide the action after any prompt
+
 - **WHEN** a successful user prompt is sent in any open conversation of the task while the card remains in the instructed stage
 - **THEN** the run action is no longer shown
 - **AND** the task's stage and position are unchanged
 
 #### Scenario: Report an admission failure
+
 - **WHEN** the run action is activated and the instruction cannot be admitted
 - **THEN** the failure is reported on the board
 - **AND** the task's stage and position are unchanged
@@ -585,70 +633,86 @@ When a task's current stage has an entry instruction, its card SHALL expose a ru
 - **AND** the run action remains available for the same entry
 
 #### Scenario: Do not reset on same-stage reorder
+
 - **WHEN** the card is reordered within the instructed stage
 - **THEN** the entry marker is unchanged
 - **AND** the action remains hidden if a prompt was already sent for that entry
 
 #### Scenario: Reset on leaving and re-entering
+
 - **WHEN** the card leaves the instructed stage and later enters it again
 - **THEN** a new unresolved entry is created
 - **AND** the action is shown again by the new countdown and returns after cancel or failure
 
 #### Scenario: New task in an instructed initial stage
+
 - **WHEN** a task is created directly in an instructed initial stage
 - **THEN** the card exposes the run action until a prompt is sent
 - **AND** no countdown is armed by the creation
 - **AND** the task is not moved by the action
 
 #### Scenario: Existing task without an entry marker
+
 - **WHEN** a task is already in an instructed stage without an entry marker
 - **THEN** the card does not expose the run action
 - **AND** the action becomes available only after its next entry
 
 #### Scenario: Run an instruction from a card
+
 - **WHEN** the user activates the run action on a card whose stage has an entry instruction and whose first conversation is open
 - **THEN** the stage instruction is sent to that first open conversation
 - **AND** the task's stage and position are unchanged
 - **AND** no conversation picker is presented
 
+#### Scenario: Include the transition briefing
+
+- **WHEN** the user activates the run action on a card whose stage configures two or more targets
+- **THEN** the sent message contains the stage instruction followed by the transition briefing
+
 #### Scenario: Prepare the first run from a card
+
 - **WHEN** the user activates the run action on a card whose task has no conversation
 - **THEN** the execution preparation is presented before a conversation is created or the instruction is admitted
 - **AND** after the preparation the instruction is sent to the conversation created by it
 - **AND** the task's stage and position are unchanged
 
 #### Scenario: Run the instruction again
+
 - **WHEN** a stage instruction has already been admitted and the card later re-enters that instructed stage
 - **THEN** a new unresolved entry is created
 - **AND** the action is available and sends the current stage instruction again to the resolved target
 
 #### Scenario: Run when every conversation is closed
+
 - **WHEN** the user activates the run action and every task conversation is closed
 - **THEN** a new conversation is created and becomes the target
 - **AND** the stage instruction is sent to that new conversation
 - **AND** the task's stage and position are unchanged
 
 #### Scenario: Reject a changed instruction
+
 - **WHEN** the stage's entry instruction changes after the card action was displayed and the user activates the action
 - **THEN** the run is rejected
 - **AND** the task, its stage, and its conversations are unchanged
 - **AND** the user can review and run the current instruction
 
 #### Scenario: Reject a resolved or replaced entry
+
 - **WHEN** a run request carries an entry identity that has since been resolved or replaced
 - **THEN** the request is rejected
 - **AND** no instruction is sent
 - **AND** the task's stage, position, and conversations are unchanged
 
 #### Scenario: Action unavailable while the task is busy
+
 - **WHEN** the task has an unresolved context operation, a confirmed transition, or selection mode is active
 - **THEN** the run action is unavailable
 - **AND** no instruction is sent
 
 #### Scenario: No action without an entry instruction
+
 - **WHEN** a card's current stage has no entry instruction
 - **THEN** the card does not expose the run action
-
 
 ### Requirement: Movement never runs an agent
 A user movement of a task, including into a stage with an entry instruction, SHALL update its workflow stage and position without initiating an agent execution at the time of the move. An instructed user move SHALL arm the timed stage instruction defined by the Timed stage instruction after a move requirement; that scheduled execution is separate from the move. Execution SHALL otherwise require a separate explicit card run action or a user-sent message from the conversation composer. The automatic advance defined by Automatic advance after a completed turn SHALL be the only movement that dispatches the destination instruction itself, SHALL NOT arm the timed stage instruction, and SHALL NOT be available for a task whose auto mode is disabled. Optional worktree creation and directory switching SHALL follow the separate worktree-management requirements.
@@ -670,7 +734,6 @@ A user movement of a task, including into a stage with an entry instruction, SHA
 - **AND** no five-second countdown is armed
 - **AND** no worktree choice is requested by the advance
 
-
 ### Requirement: Rich workflow YAML editing
 The Board configuration SHALL present the active board's workflow YAML in a code-editor surface rather than a plain textarea. The surface SHALL provide YAML syntax highlighting, line numbers, folding, search, and a vertically resizable editing area, and it SHALL preserve the text and comments entered by the user without reformatting.
 
@@ -683,7 +746,6 @@ The Board configuration SHALL present the active board's workflow YAML in a code
 - **WHEN** the user saves a workflow whose text was not changed
 - **THEN** the stored YAML matches the editor text without normalization or reformatting
 
-
 ### Requirement: Expanded workflow editing area
 The Board section SHALL use a larger Configuration surface than the other sections, and the editor SHALL support vertical resizing and a maximize action that expands the editing area without closing Configuration.
 
@@ -695,7 +757,6 @@ The Board section SHALL use a larger Configuration surface than the other sectio
 #### Scenario: Resize the workflow editor
 - **WHEN** the user drags the editor's vertical resize handle
 - **THEN** the editing area grows or shrinks without changing the YAML or closing the dialog
-
 
 ### Requirement: Live workflow diagnostics and guarded save
 The Board section SHALL validate the active board's YAML locally while the user edits, using the same accepted workflow semantics as the host save path. Syntax problems SHALL be shown at their document positions, schema problems SHALL be shown inline or in an issue summary, and Save SHALL remain disabled while the current text is invalid or validation is pending.
@@ -714,7 +775,6 @@ The Board section SHALL validate the active board's YAML locally while the user 
 - **THEN** the host error remains visible after the save attempt
 - **AND** the active board's last valid workflow is not replaced
 
-
 ### Requirement: Workflow draft preservation
 The active board's Workflow draft SHALL survive switching between Configuration tabs. Closing Configuration with unsaved changes, or replacing the draft with Reload, SHALL require explicit confirmation; canceling SHALL keep the draft and the dialog open.
 
@@ -731,7 +791,6 @@ The active board's Workflow draft SHALL survive switching between Configuration 
 - **WHEN** the user activates Reload saved workflow while the draft is dirty
 - **THEN** the user is asked to confirm replacing the draft
 
-
 ### Requirement: Content-height workflow columns
 Each workflow column SHALL size itself to its own cards and controls. A column in a grouped workflow SHALL grow to fit its cards instead of receiving an equal share of a fixed group height. When the columns exceed the viewport, the board page SHALL scroll vertically; cards SHALL NOT be clipped or overflow their column background.
 
@@ -743,7 +802,6 @@ Each workflow column SHALL size itself to its own cards and controls. A column i
 #### Scenario: Short column stays content-sized
 - **WHEN** another column in the same group has fewer cards
 - **THEN** that column ends at its own content instead of stretching to match the taller peer
-
 
 ### Requirement: Animated task drawer transitions
 Opening a task drawer from a card SHALL use a short slide-and-fade transition. Closing the drawer from the header action, Escape, or a board-background click SHALL use a symmetric exit transition before the drawer is removed. The entrance SHALL replay only when opening from a closed drawer, not when switching cards while the drawer is open. Reopening during the exit SHALL cancel the exit, and reduced-motion preferences SHALL disable these animations.
@@ -770,7 +828,6 @@ Opening a task drawer from a card SHALL use a short slide-and-fade transition. C
 - **WHEN** the user prefers reduced motion
 - **THEN** the drawer opens and closes without the entrance or exit transition
 
-
 ### Requirement: Narrower board columns
 The board SHALL render workflow columns with a 240px default width, 20% narrower than the previous 300px default, and a 208px minimum. Content-driven column heights and horizontal board scrolling SHALL remain available.
 
@@ -779,14 +836,13 @@ The board SHALL render workflow columns with a 240px default width, 20% narrower
 - **THEN** the slot is 240px wide
 - **AND** the column keeps its content-driven height and the board scrolls horizontally when needed
 
-
 ### Requirement: Board header clears collapsed-sidebar window chrome
-When the host sidebar is fully collapsed on macOS, the Kanban board header SHALL offset its leading content by the host-published frame leading clearance so the title, subtitle, and toolbar do not overlap the window traffic lights or the shell's sidebar and new-session controls. The header SHALL use its normal leading inset when the clearance is absent, SHALL use the fullscreen clearance when the host reports fullscreen, and SHALL wrap its content without clipping at supported widths.
+When the host sidebar is fully collapsed on macOS, the Kanban board header SHALL offset its leading content by the host-published frame leading clearance so the Kanban title, the Hub tabs, and the toolbar do not overlap the window traffic lights or the shell's sidebar and new-session controls. The header SHALL use its normal leading inset when the clearance is absent, SHALL use the fullscreen clearance when the host reports fullscreen, and SHALL wrap its content without clipping at supported widths.
 
 #### Scenario: Collapse the sidebar on macOS
 - **WHEN** the DSH sidebar is fully collapsed on macOS and the host publishes a frame leading clearance
 - **THEN** the board header's leading content starts after that clearance
-- **AND** the Kanban title, subtitle, and toolbar do not sit under the traffic lights or shell controls
+- **AND** the Kanban title, the Hub tabs, and the toolbar do not sit under the traffic lights or shell controls
 
 #### Scenario: Keep the normal inset when expanded
 - **WHEN** the sidebar is expanded or the host publishes no frame leading clearance
@@ -797,9 +853,8 @@ When the host sidebar is fully collapsed on macOS, the Kanban board header SHALL
 - **THEN** the header clears the remaining shell controls without reserving the traffic-light band
 
 #### Scenario: Wrap at a narrow width
-- **WHEN** the board header is narrower than its title, subtitle, and toolbar together
+- **WHEN** the board header is narrower than its title, Hub tabs, and toolbar together
 - **THEN** the header content wraps or reflows without clipping or overlapping the window chrome
-
 
 ### Requirement: Multiple boards within a Hub
 The product SHALL provide multiple boards inside each Hub. A board SHALL have a required nonempty name and its own workflow. Board names SHALL be unique after trimming, compared case-insensitively within the Hub. The board tabs SHALL list only the boards of the active Hub.
@@ -816,7 +871,6 @@ The product SHALL provide multiple boards inside each Hub. A board SHALL have a 
 #### Scenario: Keep workflows independent
 - **WHEN** the user changes the workflow of one board
 - **THEN** the workflows and tasks of every other board are unchanged
-
 
 ### Requirement: Board creation and lifecycle
 Creating a board SHALL require a name and SHALL initialize it with the default workflow. Renaming a board SHALL NOT change its tasks, workflow, conversations, or worktrees. A board SHALL be deletable only when it contains no tasks. Deleting a board that is bound to the team's shared configuration SHALL require choosing whether the removal applies only to this installation or to the team. A local-only removal SHALL remove the board locally and SHALL keep it out of later team updates. A team-wide removal SHALL remove the board locally and SHALL be included in the team's shared configuration on the next synchronization: the next explicit publish for Git, or the next automatic synchronization for Google Drive or a local folder. Deleting the last board SHALL leave the Hub with no boards and SHALL present the Hub's create-board empty state. Deleting a board SHALL NOT delete its projects, project directories, worktrees, branches, native conversations, or native workspaces.
@@ -888,7 +942,6 @@ The Kanban page SHALL present the boards of the active Hub as tabs below the Hub
 - **AND** the instruction is sent when the remaining time elapses unless it is canceled
 - **AND** the switch does not send, cancel, or duplicate the instruction
 
-
 ### Requirement: Board attention aggregation
 The board tab SHALL present aggregated attention for all tasks on that board. Attention SHALL consist of the unread indicator, the awaiting-reply indicator, the failure indicator, and a running-task indicator. The unread, awaiting-reply, and failure indicators SHALL be presented first, in that order, and the running-task indicator SHALL follow them. The running-task indicator SHALL be presented as a pulsing ring in the host accent with an adjacent numeral, and SHALL be present whenever at least one task on the board is running, including when exactly one task is running. The numeral SHALL be the number of running tasks, counting each task once regardless of how many agents, subagents, jobs, or schedules it owns. A task SHALL count as running while it has a running agent turn, an owned subagent still running after the turn ends, or unsettled background work such as jobs or schedules. The numeral SHALL be legible in the host's light and dark appearances, SHALL use tabular figures so the board label does not shift as the count changes, and SHALL remain visible without animation when the host prefers reduced motion. Hovering the indicator SHALL expose the titles of the running tasks. The board tab's accessible name SHALL include the running-task count. The unread, awaiting-reply, and failure indicators SHALL coexist with the running-task indicator. The running-task indicator SHALL communicate both the presence and the number of running tasks rather than a static status color alone. The running count SHALL clear when no task on the board is running. Attention on a board that is not active SHALL remain visible on its tab.
 
@@ -946,7 +999,6 @@ The board tab SHALL present aggregated attention for all tasks on that board. At
 - **WHEN** a task on a board in the active Hub gains unread activity, awaits a reply, or starts running while another board is active
 - **THEN** the inactive board's tab presents the corresponding indicator
 
-
 ### Requirement: Explicit confirmation for a restricted transition
 When a user requests a transition that the active board's workflow does not permit, the system SHALL require explicit confirmation before moving the task. The confirmation SHALL identify the task, the source stage, and the destination stage, and SHALL state that the override affects only that card and does not change that board's workflow configuration. Cancel SHALL receive the initial action focus. Canceling SHALL leave the task's stage and position unchanged and SHALL NOT send an agent instruction. Confirming SHALL move the task and SHALL NOT modify the workflow configuration or initiate an agent execution. When the confirmed destination would start the task's first execution, the execution preparation defined by Execution preparation before a task's first execution SHALL be presented after the confirmation and before the move; canceling that preparation SHALL leave the task in its current stage and position. If the confirmed move fails, the confirmation SHALL remain the active context, present the failure, and offer a retry that revalidates the task and the active board's workflow; it SHALL NOT present the task as moved. When the task or destination no longer matches the confirmed context, the system SHALL report the failure without offering a retry that cannot succeed.
 
@@ -989,9 +1041,9 @@ When a user requests a transition that the active board's workflow does not perm
 - **THEN** the confirmation reports the changed context
 - **AND** it does not offer a retry that cannot succeed
 
-
 ### Requirement: Timed stage instruction after a move
-When a permitted move changes a task's stage to a stage with an entry instruction, the system SHALL arm one five-second countdown for that entry. The countdown SHALL be armed for board drops and drawer stage changes. It SHALL NOT be armed for a same-stage reorder, for a task created directly in an instructed initial stage, or for a move into a stage without an entry instruction. When the task has no conversation, the countdown SHALL be armed only after the execution preparation defined by Execution preparation before a task's first execution completes, and the conversation that preparation created SHALL be the target. The target SHALL be the task's first open conversation in conversation order; when no conversation is open, the system SHALL create a new conversation and use it. When the five seconds elapse without cancellation, the system SHALL send only that stage's entry instruction to the target. Cancel SHALL stop only the automatic send: the task's stage, position, and unresolved entry SHALL remain, and the card's run action SHALL be available. A new instructed entry for the task SHALL replace the pending countdown for the previous entry. The countdown SHALL be canceled without sending when a successful user prompt resolves the entry, when the task is deleted, or when the entry marker is removed for any other reason. The card SHALL present the countdown as a control that cancels when activated. The drawer for the task SHALL present a matching countdown notice above its section panel with the same cancel action. Both notices SHALL identify the stage whose instruction will run. A countdown SHALL continue when its card is not rendered, when the Kanban panel is not visible, or when the user switches to another board or Hub. The automatic send SHALL NOT depend on the board that armed it being mounted or visible. Unsent composer text or attachments in the target conversation SHALL NOT prevent the send and SHALL remain unchanged. The countdown SHALL NOT be persisted: a reload or plugin restart SHALL send nothing and SHALL leave the entry unresolved with its run action available. A failed timed send SHALL stop the countdown, report the failure on the card and in the drawer notice, restore the run action for the unresolved entry, and SHALL NOT retry automatically. When admission reports that the entry was already resolved, the countdown SHALL end without reporting a failure. The delay SHALL be fixed at five seconds and SHALL NOT be configurable.
+
+When a permitted move changes a task's stage to a stage with an entry instruction, the system SHALL arm one five-second countdown for that entry. The countdown SHALL be armed for board drops and drawer stage changes. It SHALL NOT be armed for a same-stage reorder, for a task created directly in an instructed initial stage, or for a move into a stage without an entry instruction. When the task has no conversation, the countdown SHALL be armed only after the execution preparation defined by Execution preparation before a task's first execution completes, and the conversation that preparation created SHALL be the target. The target SHALL be the task's first open conversation in conversation order; when no conversation is open, the system SHALL create a new conversation and use it. When the five seconds elapse without cancellation, the system SHALL send that stage's entry instruction to the target, followed by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies. Cancel SHALL stop only the automatic send: the task's stage, position, and unresolved entry SHALL remain, and the card's run action SHALL be available. A new instructed entry for the task SHALL replace the pending countdown for the previous entry. The countdown SHALL be canceled without sending when a successful user prompt resolves the entry, when the task is deleted, or when the entry marker is removed for any other reason. The card SHALL present the countdown as a control that cancels when activated. The drawer for the task SHALL present a matching countdown notice above its section panel with the same cancel action. Both notices SHALL identify the stage whose instruction will run. A countdown SHALL continue when its card is not rendered, when the Kanban panel is not visible, or when the user switches to another board or Hub. The automatic send SHALL NOT depend on the board that armed it being mounted or visible. Unsent composer text or attachments in the target conversation SHALL NOT prevent the send and SHALL remain unchanged. The countdown SHALL NOT be persisted: a reload or plugin restart SHALL send nothing and SHALL leave the entry unresolved with its run action available. A failed timed send SHALL stop the countdown, report the failure on the card and in the drawer notice, restore the run action for the unresolved entry, and SHALL NOT retry automatically. When admission reports that the entry was already resolved, the countdown SHALL end without reporting a failure. The delay SHALL be fixed at five seconds and SHALL NOT be configurable.
 
 #### Scenario: Arm on a board drop
 - **WHEN** the user drops a card on a permitted stage with an entry instruction
@@ -1010,14 +1062,19 @@ When a permitted move changes a task's stage to a stage with an entry instructio
 
 #### Scenario: Send only the instruction on expiry
 - **WHEN** the five-second countdown ends without cancellation
-- **THEN** only the stage's entry instruction is sent to the task's first open conversation
+- **THEN** the stage's entry instruction is sent to the task's first open conversation, followed by the transition briefing when the stage configures two or more targets
 - **AND** the unresolved entry is resolved
 - **AND** no conversation picker or confirmation is presented
+
+#### Scenario: Include the briefing with the timed send
+- **WHEN** the countdown ends for a stage that configures two or more transition targets
+- **THEN** the sent message contains the instruction followed by the transition briefing
+- **AND** the briefing is derived at the moment of sending
 
 #### Scenario: Create a conversation when none is open
 - **WHEN** the countdown ends and every task conversation is closed
 - **THEN** a new conversation is created and becomes the target
-- **AND** only the stage's entry instruction is sent to that new conversation
+- **AND** the stage's entry instruction is sent to that new conversation
 - **AND** the task's stage and position are unchanged
 
 #### Scenario: Cancel from the card
@@ -1065,7 +1122,7 @@ When a permitted move changes a task's stage to a stage with an entry instructio
 
 #### Scenario: Send while the Kanban panel is hidden
 - **WHEN** the countdown ends while the Kanban panel is not visible and its board is not mounted
-- **THEN** only the stage's entry instruction is sent to the resolved target
+- **THEN** the stage's entry instruction is sent to the resolved target
 - **AND** the unresolved entry is resolved without requiring the board to be reopened
 
 #### Scenario: Unsent draft does not block the send
@@ -1098,7 +1155,6 @@ When a permitted move changes a task's stage to a stage with an entry instructio
 - **AND** the entry remains unresolved
 - **AND** the card exposes the run action after reload
 
-
 ### Requirement: Stable board frame during commands
 The active board SHALL keep its frame stable while a command is in flight. Command progress SHALL NOT insert, remove, or resize any element between the board header and the task columns, and the board SHALL NOT present a global saving indicator, either visually or through a live region. A task move or same-stage reorder SHALL be reflected in its destination position immediately, and that immediate placement SHALL be the board-level feedback for the move. Progress that a specific action needs SHALL be reported inside the surface that started it, and a command failure SHALL remain a board-level notice.
 
@@ -1122,7 +1178,6 @@ The active board SHALL keep its frame stable while a command is in flight. Comma
 - **WHEN** a board command fails
 - **THEN** a board-level notice states the failure
 - **AND** no global saving indicator or live save announcement is added for that command
-
 
 ### Requirement: Board destructive-operation notice
 The active board SHALL present one persistent notice above the board body while a destructive operation is queued or running, while a destructive operation needs attention, or while a deletion retained a checkout path on disk. The notice SHALL summarize in-progress and queued deletions and worktree removals with the affected task titles. For a failed operation, the notice SHALL identify the task and offer recovery actions appropriate to the recorded operation, including retry, return when permitted, and force when the failure is `SHARED_WORKTREE`. The notice SHALL update from host state without a reload, SHALL not claim success for an unresolved or failed operation, and SHALL NOT replace the drawer operation status or the card status. A completed deletion that retained a checkout path — because the checkout is not Git-managed or because the project path or Git root could not be resolved — SHALL be reported with that path and SHALL be dismissible.
@@ -1194,52 +1249,70 @@ Pending user work SHALL be derived from the conversations' durable state and SHA
 - **AND** the failure is reported
 - **AND** the control is not required to present a pending-work kind for it
 
-
 ### Requirement: Auto mode on a task card
+
 A task SHALL have an optional auto-mode setting that is disabled unless the user enables it, is persisted with the task, and is independent of its stage, position, and conversations. The card SHALL present the setting as an always-visible toggle that also indicates its state, SHALL expose its pressed state and purpose to assistive technology, and SHALL NOT open the task drawer or begin a drag when activated. The control SHALL NOT be presented in selection mode.
 
-Enabling auto mode SHALL arm the task and SHALL NOT move it, change its position, or send an instruction; the next completed turn remains the only trigger. Disabling it SHALL stop future automatic advances and SHALL NOT retract an advance that is already admitted. A user movement of the task SHALL preserve the setting. The indicator SHALL distinguish disabled, armed, advancing, held, and paused. A paused state SHALL be explained in the status region defined by Task card status strip. A held state SHALL be presented by the control itself, including its accessible name, and SHALL NOT add a status-region entry, because it is derived from pending user work rather than a recorded cause. Held SHALL mean the task has pending user work as defined by Pending user work, and the state SHALL clear when that work is consumed, SHALL NOT be persisted, and SHALL NOT require a user action. Reading a conversation SHALL NOT change the setting and SHALL NOT clear a pause.
+Enabling auto mode SHALL arm the task and SHALL NOT move it, change its position, or send an instruction; the next completed turn remains the only trigger. Disabling it SHALL stop future automatic advances and SHALL NOT retract an advance that is already admitted. A user movement of the task SHALL preserve the setting. The indicator SHALL distinguish disabled, armed, advancing, held, and paused. A paused state SHALL be explained in the status region defined by Task card status strip. A held state SHALL be presented by the control itself, including its accessible name, and SHALL NOT add a status-region entry, because it is derived from pending user work rather than a recorded cause. Held SHALL mean the task has pending user work as defined by Pending user work, and the state SHALL clear when that work is consumed, SHALL NOT be persisted, and SHALL NOT require a user action. The control SHALL name the stage the next completed turn reaches: the recorded transition's stage while that transition resolves, otherwise the default destination. A recorded transition that no longer resolves SHALL be presented as a pause with the `transition-stale` reason, and reading a conversation SHALL NOT change the setting or clear that pause.
 
 #### Scenario: Auto mode is disabled by default
+
 - **WHEN** a task is created
 - **THEN** its auto mode is disabled
 - **AND** the card presents the auto-mode control in its disabled state
 
 #### Scenario: Enable auto mode
+
 - **WHEN** the user enables auto mode on a card
 - **THEN** the task is armed
 - **AND** its stage and position are unchanged
 - **AND** no instruction is sent and no agent execution starts
 
 #### Scenario: Disable auto mode
+
 - **WHEN** the user disables auto mode while no advance is in progress
 - **THEN** future automatic advances stop
 - **AND** the task's stage and position are unchanged
 
 #### Scenario: Disable during an admitted advance
+
 - **WHEN** the user disables auto mode while an automatic advance is already admitted
 - **THEN** the admitted advance is not retracted
 - **AND** no later advance is admitted
 
 #### Scenario: Preserve auto mode across a manual move
+
 - **WHEN** the user moves a task whose auto mode is enabled
 - **THEN** auto mode remains enabled
 - **AND** the next completed turn advances from the new stage
 
 #### Scenario: Present the held state
+
 - **WHEN** an armed task has pending user work
 - **THEN** the auto-mode control presents the held state
 - **AND** the card's status region presents no entry for that state
 
 #### Scenario: Clear the held state when pending work is consumed
+
 - **WHEN** the task's last pending user work is consumed
 - **THEN** the auto-mode control stops presenting the held state without a reload
 - **AND** the task's stage and position are unchanged by the change
 
 #### Scenario: Reading does not change auto mode
+
 - **WHEN** the user opens and reads a task conversation
 - **THEN** auto mode keeps its setting and paused state
 
+#### Scenario: Present the recorded destination
+
+- **WHEN** an armed task has a recorded transition that still resolves
+- **THEN** the control names that transition's stage as the destination of the next completed turn
+
+#### Scenario: Present a stale recorded transition
+
+- **WHEN** an armed task has a recorded transition that no longer resolves
+- **THEN** the control presents a pause whose label states that the recorded transition is no longer valid
+- **AND** the task's stage and position are unchanged
 
 ### Requirement: Automatic advance after a completed turn
 When a conversation of a task with auto mode enabled ends a turn whose reason is `completed`, and no open conversation of the task is running a turn, and the task has no pending user work as defined by Pending user work, the host SHALL admit exactly one automatic advance. The host SHALL perform the advance without requiring the board to be mounted, without a confirmation, without a conversation picker, and without arming the timed stage instruction. An admitted advance SHALL be durable: reloading the board SHALL NOT cancel it, and a host restart SHALL dispatch it when it had not been dispatched.
@@ -1321,63 +1394,92 @@ The host SHALL NOT replay a turn that ended while it was not observing the task'
 - **THEN** no advance is admitted for that turn
 - **AND** the task remains in its stage until its next completed turn
 
-
 ### Requirement: Automatic advance destination and dispatch
-The automatic advance destination SHALL be the first entry of the current stage's configured `allowed_transitions` when that list is configured, otherwise the stage that follows the current stage in workflow order. There SHALL be no destination when the configured list is empty or the resolved stage is the current stage.
 
-While the resolved destination has no entry instruction, resolution SHALL continue from that destination. Resolution SHALL stop at the first stage that has an entry instruction, or at the last reachable stage when no reachable stage has one. A stage already visited during the same resolution SHALL NOT be revisited. The resolved destination and its entry instruction SHALL be captured when the advance is admitted, so a workflow edit after admission SHALL NOT change that advance.
+The automatic advance destination SHALL be the stage of the task's recorded transition for its current stage while that transition resolves. Otherwise it SHALL be the first entry of the current stage's configured transitions, or the stage that follows the current stage in workflow order when the stage does not configure transitions. There SHALL be no default destination when the configured list is empty or the resolved stage is the current stage.
 
-The task SHALL be placed at the top of the destination stage, before every card that stage already contains. When the destination has an entry instruction, that instruction SHALL be sent verbatim to the task's first open conversation; when no conversation is open, a new conversation SHALL be created and used as the target. The submitted message SHALL contain only the stage instruction. The advance SHALL NOT create more than one conversation beyond that target. The destination entry SHALL remain unresolved until a prompt is sent.
+When the destination is the recorded transition, the advance SHALL move the task exactly to that stage and SHALL NOT continue resolution beyond it. While the default destination has no entry instruction, resolution SHALL continue from that destination. Resolution SHALL stop at the first stage that has an entry instruction, or at the last reachable stage when no reachable stage has one. A stage already visited during the same resolution SHALL NOT be revisited. The resolved destination and its entry instruction SHALL be captured when the advance is admitted, so a workflow edit after admission SHALL NOT change that advance.
+
+A recorded transition that no longer resolves SHALL NOT be replaced by the default destination. The host SHALL NOT advance the task and SHALL pause auto mode with the `transition-stale` reason defined by Auto mode on a task card.
+
+The task SHALL be placed at the top of the destination stage, before every card that stage already contains. When the destination has an entry instruction, that instruction SHALL be sent to the task's first open conversation, followed by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies; when no conversation is open, a new conversation SHALL be created and used as the target. The submitted message SHALL contain the stage instruction and, when it applies, the briefing. The advance SHALL NOT create more than one conversation beyond that target. The destination entry SHALL remain unresolved until a prompt is sent.
+
+#### Scenario: Use the recorded transition
+
+- **WHEN** the current stage configures multiple permitted transitions, the task recorded one of them, and a completed turn advances the task
+- **THEN** the task moves to the stage of the recorded transition
+
+#### Scenario: Stop at the recorded destination
+
+- **WHEN** the recorded transition names a stage without an entry instruction and a later reachable stage has one
+- **THEN** the task moves exactly to the recorded stage
+- **AND** no later stage is crossed and no instruction is sent
+
+#### Scenario: Pause on a recorded transition that no longer resolves
+
+- **WHEN** a completed turn would advance a task whose recorded transition is no longer a configured target of its current stage
+- **THEN** no advance is admitted
+- **AND** auto mode is paused with the `transition-stale` reason
+- **AND** the task remains in its current stage
 
 #### Scenario: Use the first configured transition
-- **WHEN** the current stage configures multiple permitted transitions and a completed turn advances the task
+
+- **WHEN** the current stage configures multiple permitted transitions, no transition is recorded, and a completed turn advances the task
 - **THEN** the task moves to the first configured transition's stage
 
 #### Scenario: Fall back to workflow order
+
 - **WHEN** the current stage does not configure transitions and a completed turn advances the task
 - **THEN** the task moves to the next stage in workflow order
 
 #### Scenario: Cross a stage without an instruction
+
 - **WHEN** the next stage has no entry instruction and a later reachable stage has one
 - **THEN** the task moves to that later stage in one advance
 - **AND** that stage's instruction is sent
 
 #### Scenario: Stop at the last reachable stage
+
 - **WHEN** no reachable stage ahead has an entry instruction
 - **THEN** the task moves to the last reachable stage
 - **AND** no instruction is sent
 
 #### Scenario: Place at the top of the destination
+
 - **WHEN** an advance is dispatched to a destination stage that already contains tasks
 - **THEN** the task is placed before every existing card of that stage
 - **AND** the existing cards retain their relative order
 
 #### Scenario: Never revisit a stage
+
 - **WHEN** the resolution would return to a stage it already visited
 - **THEN** resolution stops before the repeat
 - **AND** no advance loops
 
 #### Scenario: Capture the instruction at admission
+
 - **WHEN** the destination instruction changes after an advance is admitted
 - **THEN** the admitted advance sends the captured instruction
 - **AND** the task moves to the captured destination
 
 #### Scenario: Target the first open conversation
+
 - **WHEN** an advance with an instructed destination is dispatched and the task has open conversations
 - **THEN** the first open conversation receives the instruction
 - **AND** no conversation picker is presented
 
 #### Scenario: Create the target conversation
+
 - **WHEN** an advance with an instructed destination is dispatched and the task has no open conversation
 - **THEN** one new conversation is created and receives the instruction
 - **AND** no additional conversation is created
 
 #### Scenario: Keep a failed destination entry unresolved
+
 - **WHEN** the instruction cannot be sent after the task moved
 - **THEN** the task stays in the destination
 - **AND** the destination entry remains unresolved
 - **AND** the card exposes the stage run action for that entry
-
 
 ### Requirement: Automatic advance pause and failure
 A pause SHALL be recorded with the task when a turn ends for a reason other than `completed`, or when an advance cannot be admitted before a durable transition exists. The pause SHALL identify its reason, SHALL be presented on the card and in the task drawer, SHALL persist across reloads and restarts, and SHALL NOT be cleared by reading or acknowledging a conversation. The pause SHALL be cleared when an advance is admitted, when auto mode is disabled, or when the task moves.
@@ -1415,7 +1517,6 @@ An admitted advance that fails SHALL be reported through the task's transition s
 - **WHEN** an admitted advance fails
 - **THEN** the plugin does not retry it automatically
 - **AND** the task presents the failure with its existing recovery actions
-
 
 ### Requirement: Bulk deletion fan-out
 The board SHALL provide an explicit selection mode that presents a selection control on each card and disables card dragging while active. The user SHALL be able to select multiple tasks across visible stages. A bulk deletion SHALL require one confirmation and SHALL apply the individual task deletion semantics to each selected task. On accept, the board SHALL close the confirmation, SHALL leave selection mode, and SHALL NOT present a result summary. A selected task whose persisted state permits admission SHALL be accepted for background deletion rather than reported as already deleted. A selected task that cannot be admitted SHALL remain on the board and SHALL be reported as a board error naming that task. The board SHALL NOT stop a conversation, resolve an operation, or discard local changes to force a bulk deletion, and SHALL present a later failure of an accepted task through the card status and the destructive-operation notice instead of as a bulk result. Leaving selection mode SHALL clear the selection.
@@ -1631,3 +1732,354 @@ Motion SHALL NOT change board data, commands, card content, the drag-and-drop co
 - **WHEN** the board animates any card movement
 - **THEN** no command is sent and no board data changes because of the motion
 - **AND** the presented positions match the board state the client already holds
+
+### Requirement: Board presentation selection
+
+The board SHALL present the active board in one of two presentations: the column board and the workflow diagram. A board SHALL open with the presentation that the user last chose for that board in this browser; when the user has not chosen for that board, it SHALL open with that board's configured default presentation, and a workflow without that setting SHALL open the column board. A view control in the board header SHALL switch the presentation, and switching SHALL store the chosen presentation for the active board in the browser. The stored choice SHALL be local to the browser: it SHALL NOT be sent to the host, SHALL NOT change the board's workflow, SHALL NOT be published to the team, and SHALL NOT be presented on another board or in another browser. A reload SHALL present the stored choice when there is one. Switching the presentation SHALL NOT change board data, tasks, commands, task positions, or the workflow, and every existing board behavior — drag and drop, the task drawer, search, the project filter, notices, and selection — SHALL remain available in the column board presentation.
+
+#### Scenario: Open the column board by default
+
+- **WHEN** the user opens a board whose workflow does not configure a default presentation and the browser stores no choice for that board
+- **THEN** the board presents the column board
+
+#### Scenario: Open the configured presentation
+
+- **WHEN** the user opens a board whose workflow configures the workflow diagram as its default presentation and the browser stores no choice for that board
+- **THEN** the board presents the workflow diagram
+
+#### Scenario: Switch the presentation
+
+- **WHEN** the user activates the workflow diagram in the board header's view control
+- **THEN** the board presents the workflow diagram for the active board
+- **AND** no command is sent to the host
+
+#### Scenario: Return to the configured default after a reload
+
+- **WHEN** the browser stores no choice for a board and the user reloads it
+- **THEN** the board presents its configured default presentation
+
+#### Scenario: Remember the chosen presentation
+
+- **WHEN** the user switches the presentation and then reloads the board
+- **THEN** the board presents the presentation the user chose for that board
+
+#### Scenario: Use each board's own default
+
+- **WHEN** the user switches from a board that presents the workflow diagram to a board that stores no choice and does not configure a default presentation
+- **THEN** the second board presents the column board
+
+#### Scenario: Keep each board's own choice
+
+- **WHEN** the user chose a presentation for one board and switches to another board
+- **THEN** the other board opens with its own stored choice, or with its configured default when it has none
+
+#### Scenario: Switch without changing board data
+
+- **WHEN** the user switches the presentation
+- **THEN** no command is sent
+- **AND** no task, stage, position, size, or workflow changes
+
+### Requirement: Recorded transition for the next advance
+
+A task SHALL be able to record at most one transition for its current stage. The recorded transition SHALL name an existing stage that the current stage's configured transitions list. A recording SHALL be rejected when the current stage does not configure transitions, when the named stage is the task's current stage, or when the named stage is not one of the configured targets. Recording, replacing, or clearing a recorded transition SHALL NOT move the task, change its position, send a message, or change auto mode, and SHALL be available while auto mode is disabled.
+
+The recorded transition SHALL be the destination of the next automatic advance and the target of the drawer's next-stage action while it resolves. It SHALL be discarded when the task leaves the stage it was recorded for, including a manual move, a confirmed transition, and an automatic advance; a same-stage reorder SHALL preserve it. A recorded transition SHALL no longer resolve when its target stage no longer exists or when the current stage no longer lists it as a configured target.
+
+#### Scenario: Record a transition
+
+- **WHEN** a task in a stage that configures two targets records one of them
+- **THEN** the task stores that transition as the one it will follow next
+- **AND** its stage and position are unchanged
+- **AND** no message is sent and no agent execution starts
+
+#### Scenario: Replace a recorded transition
+
+- **WHEN** a task with a recorded transition records the other configured target
+- **THEN** the recorded transition becomes the newly named target
+- **AND** the task's stage and position are unchanged
+
+#### Scenario: Clear a recorded transition
+
+- **WHEN** a task with a recorded transition records no target
+- **THEN** the task has no recorded transition
+- **AND** its stage and position are unchanged
+
+#### Scenario: Reject a target the stage does not configure
+
+- **WHEN** a recording names a stage that is not one of the current stage's configured targets
+- **THEN** the recording is rejected without changing the task
+- **AND** any previously recorded transition is preserved
+
+#### Scenario: Reject a recording without configured transitions
+
+- **WHEN** a recording is attempted for a stage that does not configure transitions
+- **THEN** the recording is rejected without changing the task
+
+#### Scenario: Record while auto mode is disabled
+
+- **WHEN** a task without auto mode records a transition
+- **THEN** the recording is stored
+- **AND** auto mode remains disabled
+
+#### Scenario: Discard the recording on leaving the stage
+
+- **WHEN** a task with a recorded transition moves to another stage
+- **THEN** the task no longer has a recorded transition
+
+#### Scenario: Preserve the recording across a same-stage reorder
+
+- **WHEN** a task with a recorded transition is reordered inside its stage
+- **THEN** the recorded transition is preserved
+
+### Requirement: Transition briefing for an instructed stage
+
+When a stage configures two or more transition targets and the host sends that stage's entry instruction, the send SHALL include a host-generated briefing after the instruction. The briefing SHALL list every configured target with its stage name and its authored condition when the stage authored one, SHALL name the recorded transition when the task already recorded one for that stage, SHALL name the target that applies when nothing is recorded, and SHALL name the tool that records the choice. The briefing SHALL be derived from the active workflow at the moment of sending and SHALL appear on every send path: the card run action, the timed stage instruction after a move, a confirmed transition, and an automatic advance. A stage that configures fewer than two targets SHALL produce no briefing, and its message SHALL contain only the entry instruction.
+
+#### Scenario: Include the briefing with two or more targets
+
+- **WHEN** the host sends the entry instruction of a stage that configures two or more targets
+- **THEN** the message contains the instruction followed by the transition briefing
+
+#### Scenario: Omit the briefing with one target
+
+- **WHEN** the host sends the entry instruction of a stage that configures exactly one target
+- **THEN** the message contains only the entry instruction
+
+#### Scenario: Omit the briefing without configured transitions
+
+- **WHEN** the host sends the entry instruction of a stage that does not configure transitions
+- **THEN** the message contains only the entry instruction
+
+#### Scenario: List each target with its condition
+
+- **WHEN** the briefing is generated for a stage whose targets carry authored conditions
+- **THEN** every target is listed with its stage name and its condition
+- **AND** a target without a condition is listed without one
+
+#### Scenario: Name the target that applies without a recording
+
+- **WHEN** the briefing is generated and the task has no recorded transition for that stage
+- **THEN** the briefing names the target the host uses when nothing is recorded
+
+#### Scenario: Name the recorded transition
+
+- **WHEN** the briefing is generated and the task already recorded a transition for that stage
+- **THEN** the briefing names the recorded transition
+
+#### Scenario: Derive the briefing at send time
+
+- **WHEN** the workflow changes between the admission of an instruction and its send
+- **THEN** the briefing reflects the targets the stage configures at the moment of sending
+
+#### Scenario: Include the briefing on every send path
+
+- **WHEN** a stage instruction is sent by the card run action, the timed stage instruction after a move, a confirmed transition, or an automatic advance
+- **THEN** the message includes the briefing whenever the stage configures two or more targets
+### Requirement: Execution accent on task cards
+
+A task card SHALL present agent execution through one visible execution accent: a bar at the trailing edge of the card. The accent SHALL pulse while agent execution is running and SHALL use the host theme's accent color, remaining legible in the host's light and dark appearances. The card SHALL NOT present a working text label. The working state SHALL be announced to assistive technology when it begins, and periodic animation updates SHALL NOT be announced. The card SHALL follow the host's reduced-motion preference by keeping the accent visible without animation. The execution accent SHALL NOT replace or hide the attention indicators, and it SHALL be presented whether or not the card also presents the run or advance actions. The card SHALL NOT present a background activity indicator; background activity SHALL remain available through the task drawer's Conversations section entry as defined by Coexisting attention indicators across task conversations.
+
+#### Scenario: Card shows a running turn
+
+- **WHEN** a task is running an assistant turn
+- **THEN** its card presents the execution accent at its trailing edge
+- **AND** the working state is announced once to assistive technology
+- **AND** the card presents no working text label
+
+#### Scenario: Card shows working while a subagent runs
+
+- **WHEN** a task's assistant turn has ended and an owned subagent descendant is still running
+- **THEN** its card still presents the execution accent
+- **AND** the running subagent is not presented as background activity
+
+#### Scenario: Background work does not use the accent
+
+- **WHEN** a task has no owned agent running and still owns unsettled jobs or schedules
+- **THEN** its card presents no execution accent
+- **AND** its card presents no background activity indicator
+
+#### Scenario: Activity is separate from identity
+
+- **WHEN** a card presents an execution accent
+- **THEN** the project name and the attention indicators remain presented in the context region
+- **AND** the accent does not replace an attention indicator
+
+#### Scenario: Reduced motion
+
+- **WHEN** the user prefers reduced motion
+- **THEN** the execution accent remains visible without animation
+
+#### Scenario: Theme appearance
+
+- **WHEN** the host application uses its light or dark appearance
+- **THEN** the execution accent remains legible and uses host theme colors
+
+### Requirement: Advance a task from its card
+
+A task card SHALL expose an advance action that moves the task to the next stage in workflow order. The action SHALL present the drawer's next-stage affordance — the same icon, the same accessible name, and the same indication when the next stage requires confirmation — and SHALL use the board's move pipeline, so a restricted next stage requires explicit confirmation, a first execution presents Execution preparation before a task's first execution, and a move into an instructed stage arms the timed stage instruction. The action SHALL be presented only while a next stage exists. It SHALL be hidden while the task's agent execution is running and SHALL be unavailable while the task has an unresolved context operation or a confirmed transition, while selection mode is active, or while a move from the card is in flight. Activating it SHALL NOT open the task drawer, SHALL NOT begin a drag, and SHALL NOT change the task's diagram size or placement.
+
+#### Scenario: Advance to the next stage
+
+- **WHEN** the user activates the card's advance action on a task whose next stage is permitted
+- **THEN** the task moves to that stage
+- **AND** the task drawer does not open
+
+#### Scenario: Hide while the task is running
+
+- **WHEN** the task's agent execution is running
+- **THEN** the card does not present the advance action
+- **AND** the action returns when the execution settles
+
+#### Scenario: Confirm a restricted next stage
+
+- **WHEN** the next stage is not permitted from the task's current stage
+- **THEN** the board asks for explicit confirmation before moving
+- **AND** the accessible name of the action states that the move requires confirmation
+- **AND** the task remains in its stage until the user confirms
+
+#### Scenario: Prepare a first execution
+
+- **WHEN** the user activates the advance action on a task that has no conversation
+- **THEN** the execution preparation is presented before the task moves
+- **AND** canceling the preparation leaves the task in its stage
+
+#### Scenario: Arm the timed instruction
+
+- **WHEN** the user activates the advance action and the destination stage has an entry instruction
+- **THEN** the timed stage instruction is armed exactly as after a board drag
+- **AND** the task moves to the destination
+
+#### Scenario: No action without a next stage
+
+- **WHEN** the task is in the last stage of the workflow
+- **THEN** the card does not present the advance action
+
+#### Scenario: Unavailable while busy
+
+- **WHEN** the task has an unresolved context operation or a confirmed transition, or selection mode is active
+- **THEN** the advance action is unavailable or not presented
+- **AND** no move is sent
+
+#### Scenario: Action does not disturb the diagram
+
+- **WHEN** the user advances a task from its card in the workflow diagram
+- **THEN** the task moves to the next stage
+- **AND** no stage changes size or placement
+
+### Requirement: Compact board header
+The Kanban page SHALL present its chrome inside the board header in two rows: a first row with the Kanban title, the Hub tabs of the available Hubs in Hub order followed by the create-Hub action, and the page toolbar; and a second row with the board tabs of the active Hub in board order followed by the create-board action. The header SHALL NOT present a subtitle beneath the title, and the title SHALL keep its current size as the leading content of the first row.
+
+Every interactive control in the first-row toolbar SHALL have the same height, and that height SHALL equal the height of a Hub tab so that the row reads as one line. Both rows SHALL stay horizontally scrollable rather than truncated when their tabs exceed the available width. When a row cannot present its content on one line, the toolbar SHALL wrap below that row and no control SHALL be hidden.
+
+At a viewport width of at least 1100px each row SHALL fit on a single line, and the board header SHALL NOT be taller than 112px.
+
+The board tabs SHALL be presented as compact chips visually smaller than the Hub tabs while the second row keeps its height, so that content below the header does not shift when the chips change. Each board chip SHALL keep the attention and publishing indicators, the running-task count, and the accessible name defined by Board attention aggregation, and the active board SHALL remain visibly distinguishable.
+
+#### Scenario: Present the header in two rows
+- **WHEN** the Kanban page renders a Hub with at least one board
+- **THEN** the first row shows the Kanban title, the Hub tabs with the create-Hub action, and the page toolbar
+- **AND** the second row shows the board tabs with the create-board action
+- **AND** the two rows sit above the board body
+
+#### Scenario: Omit the header subtitle
+- **WHEN** the Kanban page renders its header
+- **THEN** no subtitle is presented beneath the Kanban title
+- **AND** the title is presented at its existing size
+
+#### Scenario: Keep one line height across the toolbar
+- **WHEN** the user inspects the filter control, the presentation switch, the select-cards action, and the configuration action
+- **THEN** each has the same height as a Hub tab
+- **AND** they share one baseline on the first row
+
+#### Scenario: Stay on single rows at a desktop width
+- **WHEN** the Kanban page renders at a viewport width of at least 1100px
+- **THEN** the first row and the second row each occupy one line
+- **AND** the board header is no taller than 112px
+
+#### Scenario: Reflow the header at a narrow width
+- **WHEN** the board header is narrower than the first row's title, Hub tabs, and toolbar together
+- **THEN** the toolbar wraps below the row
+- **AND** the tab rows scroll horizontally
+- **AND** no title, tab, or toolbar control is hidden or clipped
+
+#### Scenario: Present compact board chips
+- **WHEN** the active Hub has more than one board
+- **THEN** each board is a chip smaller than a Hub tab
+- **AND** the second row keeps its height
+- **AND** each chip keeps its attention indicators, its running-task count, and its publishing indicator
+- **AND** the active board is visibly distinguishable
+
+### Requirement: Board filter control
+The board header SHALL present one filter control in the page toolbar that opens an anchored, non-modal popover containing the text-search input and the project select. Those two inputs are the only way to set the filters from the header: the header SHALL NOT present an always-visible search field or a separate clear-filters button, and it SHALL NOT require a keyboard shortcut to reach the search input. The project select SHALL NOT size itself to its longest option; it SHALL truncate the selected value and expose the full name through its tooltip.
+
+Filtering SHALL apply live as the user types or changes the selected project. The popover SHALL NOT require an apply action and SHALL remain open while either input changes. The popover SHALL present a footer with a clear action and a close action, each icon-only and each carrying its name in its accessible name and tooltip. The clear action SHALL remove both filters and close the popover. The close action SHALL leave the filters unchanged.
+
+When at least one of the two filters is active, the filter control SHALL present an accent indicator. When both are active it SHALL present a numeral stating the count of active filters. The indicator SHALL NOT change the control's height, and the control's accessible name SHALL state which filters are active.
+
+The filter control SHALL be presented together with the presentation switch, the select-cards action, and the configuration action, and SHALL NOT be presented while card selection is active. The popover SHALL close on Escape and on an outside click and SHALL return focus to the filter control; while a task drawer is open, Escape SHALL dismiss only the popover. The popover belongs to its caller's layer: it SHALL present above the board content and below the task drawer, leaving other components free to overlap it, and it SHALL NOT move the board or change its size. When the popover opens, focus SHALL move to the search input. When the active Hub or board changes, the filters SHALL reset as defined by Board selection and persistence and the popover SHALL close. The filter control and the filters it holds SHALL remain available in both presentations defined by Board presentation selection.
+
+#### Scenario: Open the filter popover
+- **WHEN** the user activates the filter control
+- **THEN** an anchored non-modal popover presents the text-search input and the project select
+- **AND** focus moves to the search input
+- **AND** the board keeps its position and size
+
+#### Scenario: Filter while the popover stays open
+- **WHEN** the user types in the search input or selects a project inside the popover
+- **THEN** the board updates with that filter
+- **AND** the popover remains open with both inputs available
+
+#### Scenario: Indicate one active filter
+- **WHEN** the user has entered search text or selected a project and closed the popover
+- **THEN** the filter control presents an accent indicator
+- **AND** its accessible name states which filter is active
+
+#### Scenario: Indicate two active filters with a count
+- **WHEN** search text and a project filter are both active
+- **THEN** the filter control presents the indicator with the numeral 2
+- **AND** the control keeps the same height as the other toolbar controls
+
+#### Scenario: Clear both filters from the popover
+- **WHEN** the user activates the clear action in the popover footer
+- **THEN** the search text and the project filter are both removed
+- **AND** the board presents all of its tasks
+- **AND** the popover closes
+- **AND** focus returns to the filter control
+
+#### Scenario: Close the popover without changing filters
+- **WHEN** the user activates the close action in the popover footer
+- **THEN** the popover closes
+- **AND** the search text and the project filter are unchanged
+
+#### Scenario: Present the popover under the task drawer
+- **WHEN** the filter popover is open over the board and a task drawer opens over it
+- **THEN** the task drawer presents above the popover
+- **AND** the popover stays open until the user dismisses it
+
+#### Scenario: Dismiss the popover without closing the drawer
+- **WHEN** the filter popover is open, a task drawer is open over it, and the user presses Escape or clicks the task drawer
+- **THEN** only the popover closes
+- **AND** the task drawer remains open
+- **AND** Escape returns focus to the filter control
+- **AND** a click that lands on a control in the drawer leaves focus on that control
+
+#### Scenario: Keep the popover inside the viewport on a narrow header
+- **WHEN** the filter popover is open and the page is narrower than 760 pixels
+- **THEN** the popover is anchored to the leading edge of the filter control
+- **AND** both of its edges stay inside the viewport
+- **AND** the search input and the project select can both be reached and used
+
+#### Scenario: Hide the filter control during card selection
+- **WHEN** the user enters card selection mode
+- **THEN** the filter control is not presented
+- **AND** the selection count, delete, and cancel actions are presented instead
+
+#### Scenario: Keep filtering available in the workflow diagram
+- **WHEN** the board presents the workflow diagram and a filter is active
+- **THEN** the filter control is presented in the toolbar
+- **AND** the diagram presents only the tasks that match the active filters
+
+#### Scenario: Reset and close the popover on navigation
+- **WHEN** the user switches the active Hub or the active board while the filter popover is open
+- **THEN** the popover closes
+- **AND** the search text and the project filter are cleared
