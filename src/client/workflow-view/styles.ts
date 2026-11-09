@@ -13,13 +13,20 @@ export const workflowViewStyles = String.raw`
 .dsh-kanban .kb-flow-control-divider{height:1px;margin:2px 4px;background:var(--kb-line)}
 .dsh-kanban .kb-flow-stage{position:relative;display:flex;flex-direction:column;background:var(--kb-surface);border:1px solid var(--kb-line);border-radius:14px;box-shadow:0 8px 22px #00000014;font:inherit;color:inherit;overflow:hidden;box-sizing:border-box}
 .dsh-kanban .kb-flow-stage[data-drop=true]{border-color:var(--dsw-alias-state-business-primary,CanvasText);box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-state-business-primary,CanvasText) 35%,transparent)}
-.dsh-kanban .kb-flow-stage-header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;cursor:grab;border-bottom:1px solid var(--kb-line);user-select:none}
+.dsh-kanban .kb-flow-stage-header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;min-height:24px;cursor:grab;border-bottom:1px solid var(--kb-line);user-select:none}
 .dsh-kanban .kb-flow-stage-header[data-locked=true]{cursor:default}
 .dsh-kanban .kb-flow-stage-header:active{cursor:grabbing}
 .dsh-kanban .kb-flow-stage-header[data-locked=true]:active{cursor:default}
 .dsh-kanban .kb-flow-stage .react-flow__handle{opacity:0;pointer-events:none}
 .dsh-kanban .kb-flow-stage-header h2{font-size:13px;font-weight:650;margin:0;overflow-wrap:anywhere}
 .dsh-kanban .kb-flow-stage-header span{font-size:11px;opacity:.7;font-variant-numeric:tabular-nums}
+/* The card count and the creation action travel together, so presenting the action
+   never shifts the title or the count. The action is a compact icon button, and the
+   stage clips overflow, so it names itself with a native tooltip rather than the
+   control stack's positioned one. The header above reserves the row a 24px control
+   needs, so a stage offering the action is no taller than one that does not. */
+.dsh-kanban .kb-flow-stage-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.dsh-kanban .kb-flow-stage-create{width:24px;height:24px;min-width:24px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;flex:0 0 24px}
 .dsh-kanban .kb-flow-stage .kb-card-list{padding:8px;display:flex;flex-direction:column;gap:8px;position:relative;min-height:34px}
 .dsh-kanban .kb-flow-card-slot{display:block;min-width:0}
 .dsh-kanban .kb-flow-resize{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;border-right:2px solid var(--kb-line);border-bottom:2px solid var(--kb-line);border-bottom-right-radius:12px;opacity:.55}

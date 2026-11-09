@@ -1,38 +1,27 @@
-import React from 'react';
-import type { Board, BoardState, HubState, KanbanSnapshot } from '../../shared/types.js';
-import { creatableProjects, isBoardClosedForCreation } from '../../domain/board-project-scope.js';
+import React, { type ReactNode } from 'react';
+import type { HubState } from '../../shared/types.js';
 import { CreateBoardDialog, CreateHubDialog } from '../create-dialogs.js';
-import { NewTaskDialog, type CreatedTaskOptions } from '../forms.js';
+import type { ContainerCreation } from '../use-creation-dialogs.js';
 import type { RunCommand } from '../ui.js';
 
 export interface BoardCreationDialogsProps {
-  boardState: BoardState | undefined;
   hub: HubState | undefined;
-  board: Board | undefined;
   run: RunCommand;
-  newTask: boolean;
-  newHub: boolean;
-  newBoard: boolean;
-  onCloseNewTask: () => void;
-  onCloseNewHub: () => void;
-  onCloseNewBoard: () => void;
-  onTaskCreated: (taskId: string, options: CreatedTaskOptions) => void;
-  onHubCreated: (hubId: string) => void;
-  onBoardCreated: (boardId: string) => void;
+  /** The board's one New task dialog, whichever presentation asked for it. */
+  taskDialog: ReactNode;
+  /** The New Hub and New Board dialogs, owned by their own hook. */
+  containers: ContainerCreation;
 }
 
-/** The dialogs that create a task, a Hub, or a board. */
-export function BoardCreationDialogs({ boardState, hub, board, run, newTask, newHub, newBoard, onCloseNewTask, onCloseNewHub, onCloseNewBoard, onTaskCreated, onHubCreated, onBoardCreated }: BoardCreationDialogsProps) {
+/**
+ * The dialogs that create a task, a Hub, or a board. Each is mounted from the state
+ * its concern owns, so the New task dialog appears whichever presentation asked for
+ * it and never twice.
+ */
+export function BoardCreationDialogs({ hub, run, taskDialog, containers }: BoardCreationDialogsProps) {
   return <>
-    {newTask && boardState !== undefined && <NewTaskDialog
-      state={boardState}
-      projects={board === undefined ? boardState.projects : creatableProjects(board, hub?.projects ?? boardState.projects)}
-      closedForCreation={board !== undefined && isBoardClosedForCreation(board)}
-      run={run}
-      onClose={onCloseNewTask}
-      onCreated={onTaskCreated}
-    />}
-    {newHub && <CreateHubDialog run={run} onClose={onCloseNewHub} onCreated={onHubCreated} />}
-    {newBoard && hub !== undefined && <CreateBoardDialog hubId={hub.id} run={run} onClose={onCloseNewBoard} onCreated={onBoardCreated} />}
+    {taskDialog}
+    {containers.newHub && <CreateHubDialog run={run} onClose={containers.closeHub} onCreated={containers.onHubCreated} />}
+    {containers.newBoard && hub !== undefined && <CreateBoardDialog hubId={hub.id} run={run} onClose={containers.closeBoard} onCreated={containers.onBoardCreated} />}
   </>;
 }

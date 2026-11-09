@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useRef } from 'react';
 import { Handle, Position, useStore } from '@xyflow/react';
 import type { StageSize } from '../../shared/types.js';
+import { PlusIcon } from '../icons.js';
+import { EMPTY_STAGE_COPY, NEW_TASK_LABEL } from '../board-copy.js';
 import { useCardEnvironment } from './card-environment.js';
 import { beginStageResize } from './gestures/stage-resize.js';
 import type { GestureHandle, PointerEventsPort } from './gestures/stage-drag.js';
@@ -15,6 +17,8 @@ export type StageNodeModel = {
   /** The minimum height the stage renders at; it still grows with its cards. */
   readonly height: number;
   readonly locked: boolean;
+  /** True for the stage the board creates tasks in: the workflow's configured initial stage. */
+  readonly creatable: boolean;
 };
 
 export interface StageCallbacks {
@@ -26,10 +30,59 @@ export interface StageCallbacks {
   onStageResize?(stageId: string, size: StageSize): void;
   onStageResizeEnd?(stageId: string, size: StageSize): void;
   onStageResizeCancel?(stageId: string): void;
+  /**
+   * Opens the board's New task experience, supplied by the view from the board's
+   * single creation instance. It takes no stage: the action appears on the initial
+   * stage alone, so the press carries no target choice, and the board decides where a
+   * task is created. Absent when no registered project can own a task, which is what
+   * leaves the action presented but unavailable. It is a creation action, not a
+   * layout edit, so it stays available while the layout is locked.
+   */
+  onCreateTask?(): void;
 }
 
 /** Shared by every stage node so node data stays serializable and stable. */
 export const StageCallbacksContext = createContext<StageCallbacks | null>(null);
+
+export interface StageHeaderProps {
+  readonly id: string;
+  readonly label: string;
+  readonly cardCount: number;
+  readonly locked: boolean;
+  /** True for the stage the board creates tasks in; the action appears only there. */
+  readonly creatable: boolean;
+  /** The board's creation action, absent when no registered project can own a task. */
+  readonly onCreateTask?: () => void;
+  /** The canvas's stage-drag start; a harness without dragging leaves it out. */
+  readonly onPointerDown?: (event: React.PointerEvent<HTMLElement>, stageId: string) => void;
+}
+
+/**
+ * A stage's title, its creation action, and its card count.
+ *
+ * Exported so a harness renders this markup instead of imitating it: the creation
+ * action only earns trust when the markup under test is the markup the canvas
+ * paints. The pointer gesture is stopped here on purpose — the header is the stage's
+ * drag handle, and pressing the action must never pick the stage up.
+ */
+export function StageHeader({ id, label, cardCount, locked, creatable, onCreateTask, onPointerDown }: StageHeaderProps) {
+  return <header className="kb-column-header kb-flow-stage-header nopan" data-locked={locked ? 'true' : undefined} onPointerDown={event => onPointerDown?.(event, id)}>
+    <h2>{label}</h2>
+    {/* One group, so presenting the action never shifts the title or the card count. */}
+    <div className="kb-flow-stage-actions">
+      {creatable && <button
+        type="button"
+        className="kb-button kb-icon-button kb-flow-stage-create nodrag nopan"
+        disabled={onCreateTask === undefined}
+        aria-label={NEW_TASK_LABEL}
+        title={NEW_TASK_LABEL}
+        onPointerDown={event => { event.stopPropagation(); }}
+        onClick={event => { event.stopPropagation(); onCreateTask?.(); }}
+      ><PlusIcon size={14} /></button>}
+      <span aria-label={cardCount + ' cards'}>{cardCount}</span>
+    </div>
+  </header>;
+}
 
 /** The stage under the card drag; a separate context so dragging never re-syncs nodes. */
 export interface StageDragState { readonly stageId: string | null; readonly indicatorY: number | null }
@@ -88,13 +141,18 @@ export function StageNodeView({ id, data }: { id: string; data: StageNodeModel }
     data-column-id={id}
     data-drop={drop ? 'true' : undefined}
   >
-    <header className="kb-column-header kb-flow-stage-header nopan" data-locked={data.locked ? 'true' : undefined} onPointerDown={event => callbacks?.onStagePointerDown?.(event, id)}>
-      <h2>{data.label}</h2>
-      <span aria-label={data.cardIds.length + ' cards'}>{data.cardIds.length}</span>
-    </header>
+    <StageHeader
+      id={id}
+      label={data.label}
+      cardCount={data.cardIds.length}
+      locked={data.locked}
+      creatable={data.creatable}
+      onCreateTask={callbacks?.onCreateTask}
+      onPointerDown={(event, stageId) => callbacks?.onStagePointerDown?.(event, stageId)}
+    />
     <div className="kb-card-list">
       {data.cardIds.map(cardId => <div key={cardId} className="kb-flow-card-slot nodrag nopan">{environment?.renderCard(cardId) ?? null}</div>)}
-      {data.cardIds.length === 0 && <p className="kb-empty-column">No matching tasks</p>}
+      {data.cardIds.length === 0 && <p className="kb-empty-column">{EMPTY_STAGE_COPY}</p>}
       {drop && drag.indicatorY !== null && <div className="kb-drop-indicator" style={{ top: drag.indicatorY / (zoom === 0 ? 1 : zoom) }} aria-hidden="true" />}
     </div>
     {/* Position anchors for the drawn connections; they are not interactive. */}
