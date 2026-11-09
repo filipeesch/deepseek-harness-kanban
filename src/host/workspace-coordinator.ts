@@ -2,6 +2,7 @@ import path from 'node:path';
 import { ownedSessionIds } from '../domain/session-lineage.js';
 import type { SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { HubTask, Project } from '../shared/types.js';
+import { requireProjectPath } from '../shared/project.js';
 
 /** One task/project pair the coordinator may provision a workspace for. */
 export interface WorkspaceTaskRef {
@@ -45,7 +46,7 @@ export class WorkspaceCoordinator {
 
   /** Bind the project to a workspace for its current path even when the previous binding still resolves. */
   async rebindProject(hubId: string, project: Project): Promise<string | undefined> {
-    const ensured = await this.options.workspaces.ensure(project.projectPath, { title: project.name });
+    const ensured = await this.options.workspaces.ensure(requireProjectPath(project), { title: project.name });
     if (ensured.workspace.hidden) await this.setVisibility(ensured.workspace.id, false);
     if (project.workspaceId !== ensured.workspace.id || project.workspaceOwned !== ensured.owned) {
       await this.options.store.setProjectWorkspace(hubId, project.id, ensured.workspace.id, ensured.owned);
@@ -54,7 +55,7 @@ export class WorkspaceCoordinator {
   }
 
   async ensureTaskWorkspace(hubId: string, task: HubTask, project: Project): Promise<string | undefined> {
-    if (task.effectiveCwd === project.projectPath) return this.ensureProject(hubId, project);
+    if (task.effectiveCwd === requireProjectPath(project)) return this.ensureProject(hubId, project);
     const existing = task.worktreeWorkspaceId;
     if (existing && this.options.workspaces.get(existing)) return existing;
     const title = project.name + ' · ' + (task.worktree?.branch ?? path.basename(task.effectiveCwd));

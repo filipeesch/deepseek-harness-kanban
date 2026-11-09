@@ -26,7 +26,7 @@ function deps() {
 function hub() {
   const value = initialHubState('hub', 'Hub', NOW);
   value.boards.push(createBoard('board', 'Board', NOW, FLOW));
-  value.projects.push({ id: 'project', name: 'Project', projectPath: '/repos/project' });
+  value.projects.push({ id: 'project', projectKey: 'project', name: 'Project', projectPath: '/repos/project' });
   return value;
 }
 

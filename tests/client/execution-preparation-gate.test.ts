@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { executionPreparationPlan } from '../../src/client/execution-preparation/gate.js';
 import type { Project, Task } from '../../src/shared/types.js';
 
-const gitProject: Project = { id: 'p', name: 'Web', projectPath: '/repo/apps/web', gitRootPath: '/repo' };
-const folderProject: Project = { id: 'f', name: 'Folder', projectPath: '/repo/apps/web' };
+const gitProject: Project = { id: 'p', projectKey: 'p', name: 'Web', projectPath: '/repo/apps/web', gitRootPath: '/repo' };
+const folderProject: Project = { id: 'f', projectKey: 'f', name: 'Folder', projectPath: '/repo/apps/web' };
 const ready: Task['worktree'] = { path: '/trees/web', branch: 'feature', owned: true, status: 'ready' };
 const preparing: Task['worktree'] = { path: '/trees/web', branch: 'feature', owned: true, status: 'preparing' };
 const failed: Task['worktree'] = { path: '/trees/web', branch: 'feature', owned: true, status: 'error' };

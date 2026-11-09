@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 import React, { useEffect } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import type { BoardState, KanbanSnapshot, Command } from '../../src/shared/types.js';
 import type { RunCommand } from '../../src/client/ui.js';
 import { AutoRunController } from '../../src/client/auto-run.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import { WorkflowView, type WorkflowCardPort, type WorkflowViewProps } from '../../src/client/workflow-view/workflow-view.js';
+import { readWorkflowViewport, writeWorkflowViewport } from '../../src/client/workflow-preference.js';
 import type { WorkflowCanvasProps } from '../../src/client/workflow-view/canvas.js';
 import { StageHeader } from '../../src/client/workflow-view/stage-node.js';
 import { EMPTY_STAGE_COPY } from '../../src/client/stage-empty.js';
@@ -29,7 +30,7 @@ function task(id: string, title: string, columnId: string) {
 function boardState(): BoardState {
   return {
     schemaVersion: 2, revision: 7, workflowYaml: yaml, workflow: parseWorkflow(yaml),
-    projects: [{ id: 'p', name: 'Project', projectPath: '/repo' }],
+    projects: [{ id: 'p', projectKey: 'p', name: 'Project', projectPath: '/repo' }],
     tasks: [task('a', 'Alpha', 'one'), task('b', 'Beta', 'two')],
     notes: [], settings: {},
   };
@@ -64,7 +65,8 @@ function StubCanvas(props: WorkflowCanvasProps) {
   useEffect(() => {
     for (const stage of props.stages) props.callbacks.onMeasure(stage.id, { width: stage.width, height: stage.height });
   }, [props.stages]);
-  return <div data-testid="canvas" data-ready={String(props.ready)} data-fit={props.fitRequest} data-snap={props.snap === noSnap ? 'off' : 'on'} data-connections={JSON.stringify(props.connections.map(connection => [connection.id, connection.source ?? null, connection.target ?? null, connection.segments ?? null]))}>
+  const restore = props.viewRequest.kind === 'restore' ? props.viewRequest.viewport : null;
+  return <div data-testid="canvas" data-ready={String(props.ready)} data-view={props.viewRequest.kind} data-view-token={String(props.viewToken)} data-restore-x={restore === null ? '' : String(restore.x)} data-restore-zoom={restore === null ? '' : String(restore.zoom)} data-snap={props.snap === noSnap ? 'off' : 'on'} data-connections={JSON.stringify(props.connections.map(connection => [connection.id, connection.source ?? null, connection.target ?? null, connection.segments ?? null]))}>
     {props.stages.map(stage => <section key={stage.id} aria-label={stage.label} data-testid={'stage-' + stage.id} data-x={stage.x} data-y={stage.y} data-w={stage.width} data-h={stage.height}>
       {/* The real header, so the creation action under test is the one the canvas paints. */}
       <StageHeader
@@ -99,6 +101,7 @@ function StubCanvas(props: WorkflowCanvasProps) {
       }}
     >adjust</button>)}
     {props.controls !== undefined && props.controls({ zoomIn: vi.fn(), zoomOut: vi.fn(), fit: vi.fn() })}
+    <button type="button" aria-label="report-viewport" onClick={() => props.onViewportChange?.({ x: 12, y: 34, zoom: 1.5 })}>report</button>
     {props.overlay}
   </div>;
 }
@@ -651,5 +654,49 @@ describe('workflow diagram task creation', () => {
     const stage = screen.getByTestId('stage-one');
     expect(within(stage).getByText(EMPTY_STAGE_COPY)).toBeTruthy();
     expect((within(stage).getByRole('button', { name: 'New task' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe('workflow viewport persistence', () => {
+  afterEach(() => { globalThis.localStorage?.clear(); });
+
+  function canvas(): HTMLElement { return screen.getByTestId('canvas'); }
+
+  it('restores the position stored for the open board', () => {
+    writeWorkflowViewport('board-1', { x: 120, y: -40, zoom: 1.5 });
+    setup();
+    expect(canvas().getAttribute('data-view')).toBe('restore');
+    expect(canvas().getAttribute('data-restore-x')).toBe('120');
+    expect(canvas().getAttribute('data-restore-zoom')).toBe('1.5');
+  });
+
+  it('frames the diagram when the board has no stored position', () => {
+    setup();
+    expect(canvas().getAttribute('data-view')).toBe('fit');
+  });
+
+  it('keeps a separate position for each board', () => {
+    writeWorkflowViewport('board-1', { x: 1, y: 1, zoom: 1 });
+    writeWorkflowViewport('board-2', { x: 2, y: 2, zoom: 2 });
+    const view = setup();
+    expect(canvas().getAttribute('data-restore-x')).toBe('1');
+    view.update({ boardId: 'board-2' });
+    expect(canvas().getAttribute('data-view')).toBe('restore');
+    expect(canvas().getAttribute('data-restore-x')).toBe('2');
+  });
+
+  it('stores the position the diagram settled on', () => {
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: 'report-viewport' }));
+    expect(readWorkflowViewport('board-1')).toEqual({ x: 12, y: 34, zoom: 1.5 });
+  });
+
+  it('frames the diagram again after a structural workflow change', async () => {
+    writeWorkflowViewport('board-1', { x: 5, y: 5, zoom: 2 });
+    const view = setup();
+    expect(canvas().getAttribute('data-view')).toBe('restore');
+    const nextYaml = yaml + ['  - id: four', '    label: Four', ''].join(String.fromCharCode(10));
+    view.update({ state: { ...view.props.state, workflow: parseWorkflow(nextYaml) } });
+    await waitFor(() => expect(canvas().getAttribute('data-view')).toBe('fit'));
   });
 });

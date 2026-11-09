@@ -115,7 +115,7 @@ function fixture() {
 
 beforeEach(async () => {
   root = await mkdtemp(join(fixturesRoot, '.fixture-'));
-  project = { id: 'p', name: 'Project', projectPath: root, gitRootPath: root };
+  project = { id: 'p', projectKey: 'p', name: 'Project', projectPath: root, gitRootPath: root };
   spawnMock.mockReset();
   output();
 });

@@ -6,7 +6,7 @@ import { DEFAULT_WORKFLOW_YAML, parseWorkflow } from './workflow.js';
 const settings = z.strictObject({ worktreeBasePath: absolutePath.optional() });
 
 /** Validates persisted data without resetting unknown versions or dropping orphaned records. */
-export const BoardStateSchema: z.ZodType<BoardState> = z.strictObject({
+export const BoardStateSchema = z.strictObject({
   schemaVersion: z.literal(DATA_VERSION), revision, workflowYaml: nonempty, workflow,
   projects: z.array(project), tasks: z.array(baseTask), notes: z.array(note), settings: settings.optional(),
 }).superRefine((state, context) => {
@@ -36,7 +36,7 @@ export const BoardStateSchema: z.ZodType<BoardState> = z.strictObject({
   } catch (error) {
     issue(['workflowYaml'], error instanceof Error ? error.message : 'Invalid workflow YAML.');
   }
-});
+}) as unknown as z.ZodType<BoardState>;
 
 export function initialState(): BoardState {
   return {

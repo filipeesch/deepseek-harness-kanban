@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { WorkspaceCoordinator, type WorkspaceBindingStore, type WorkspaceTaskRef } from '../../src/host/workspace-coordinator.js';
-import type { HubTask, Project } from '../../src/shared/types.js';
+import type { HubTask, RegisteredProject } from '../../src/shared/types.js';
 import { TestSessions, TestWorkspaces } from './helpers.js';
 
 const projectPath = '/repo/apps/web';
 const worktreePath = '/repo/.worktrees/task-1/apps/web';
 
-function project(overrides: Partial<Project> = {}): Project {
-  return { id: 'project-1', name: 'Web', projectPath, gitRootPath: '/repo', ...overrides };
+function project(overrides: Partial<RegisteredProject> = {}): RegisteredProject {
+  return { id: 'project-1', projectKey: 'project-1', name: 'Web', projectPath, gitRootPath: '/repo', ...overrides };
 }
 
 function task(overrides: Partial<HubTask> = {}): HubTask {

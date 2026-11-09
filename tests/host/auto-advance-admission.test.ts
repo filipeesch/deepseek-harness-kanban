@@ -24,7 +24,7 @@ function routedBoard(): Board {
   value.workflow.columns[0] = { ...value.workflow.columns[0]!, allowedTransitions: transitions('done', 'plan') };
   return value;
 }
-const project: Project = { id: 'project', name: 'Project', projectPath: '/repo' };
+const project: Project = { id: 'project', projectKey: 'project', name: 'Project', projectPath: '/repo' };
 function task(overrides: Partial<HubTask> = {}): HubTask {
   return {
     id: 'task', boardId: 'board', projectId: 'project', title: 'Task', description: '', columnId: 'backlog', position: 0,

@@ -14,7 +14,7 @@ function task(overrides: Partial<HubTask> = {}): HubTask {
 
 function folderHub(): HubState {
   const hub = sampleHub();
-  hub.projects = [{ id: 'project', name: 'Project', projectPath: '/repo/app' }];
+  hub.projects = [{ id: 'project', projectKey: 'project', name: 'Project', projectPath: '/repo/app' }];
   return hub;
 }
 
@@ -73,7 +73,7 @@ describe('project registration conversions', () => {
       started: true,
       createdAt: '2026-01-01T00:00:00.000Z',
     };
-    const project = buildProject('project', { id: 'project', name: 'Project', projectPath: '/repo/app', gitRootPath: '/repo' }, { id: 'project', name: 'Project', projectPath: '/repo/app', gitRootPath: '/repo', operation });
+    const project = buildProject('project', { id: 'project', name: 'Project', projectPath: '/repo/app', gitRootPath: '/repo' }, { id: 'project', name: 'Project', projectKey: 'project', projectPath: '/repo/app', gitRootPath: '/repo', operation });
     expect(project.operation).toEqual(operation);
   });
 

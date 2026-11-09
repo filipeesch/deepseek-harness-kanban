@@ -5,9 +5,18 @@ import { BOARD_STATE_LABEL, HUB_STATUS_LABEL } from '../../sharing/status.js';
 
 export type Act = (label: string, command: SharingCommand) => Promise<boolean>;
 
-export function VersionDiff({ detail }: { detail?: { local: string; team: string; localName: string; teamName: string } }) {
+function scopeLabel(keys: readonly string[] | undefined): string {
+  if (keys === undefined) return 'every project';
+  if (keys.length === 0) return 'no project (closed to creation)';
+  return keys.join(', ');
+}
+
+export function VersionDiff({ detail }: { detail?: { local: string; team: string; localName: string; teamName: string; localProjectKeys?: string[]; teamProjectKeys?: string[] } }) {
   if (!detail) return null;
-  return <details className="kb-share-diff"><summary>Compare the workflow versions</summary><div className="kb-share-diff-body">
+  const scopeDiffers = detail.localProjectKeys !== undefined || detail.teamProjectKeys !== undefined;
+  const summary = scopeDiffers ? 'Compare the versions and project scopes' : 'Compare the workflow versions';
+  return <details className="kb-share-diff"><summary>{summary}</summary><div className="kb-share-diff-body">
+    {scopeDiffers && <p className="kb-hint">Project scope — this machine: {scopeLabel(detail.localProjectKeys)}; team: {scopeLabel(detail.teamProjectKeys)}.</p>}
     <div><h5>This machine: {detail.localName}</h5><pre>{detail.local}</pre></div>
     <div><h5>Team: {detail.teamName}</h5><pre>{detail.team}</pre></div>
   </div></details>;

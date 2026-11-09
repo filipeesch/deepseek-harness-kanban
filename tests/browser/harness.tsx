@@ -20,7 +20,15 @@ const refuse = query.get('refuse');
 const sharingViews: Record<string, HubSharingView> = sharingCase === null ? {} : { hub: harnessSharing(sharingCase) };
 const driveCase = query.get('drive') as 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error' | null;
 const sharingAuth = sharingCase?.startsWith('drive') === true && !sharingCase.startsWith('drive-local') ? { status: 'connected' as const, email: 'member@example.test' } : undefined;
-const harness = createHarnessApi({ recorded: scenario === 'routed', staleRoute: scenario === 'stale-route', attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs' || scenario === 'project-relocation', hubs: scenario === 'hubs' ? 2 : 1, initialInstruction: scenario === 'create', restricted: scenario === 'move' || scenario === 'prepare-restricted' || scenario === 'flow-restricted', ...(scenario === 'restricted-next' || scenario === 'flow-restricted-next' ? { restrictedNext: true } : {}), persist: scenario === 'board' || scenario === 'relocation-board', pending: scenario === 'appearance', auto: scenario === 'auto', detect: scenario === 'project-editor' || scenario === 'project-relocation' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, ...(driveCase === null ? {} : { drive: driveCase }), shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', folderRefusal: refuse === 'folder', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}), ...(scenario === 'retained' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo' }] } : {}), ...(scenario === 'relocation-list' ? { relocation: ['waiting', 'failed', 'waiting'] as Array<'waiting' | 'failed' | null> } : scenario === 'relocation-board' ? { relocation: ['waiting', 'failed'] as Array<'waiting' | 'failed' | null> } : {}), ...(scenario === 'relocation-list' ? { extraProject: true } : {}) });
+const scheduleFixtures = [
+  { id: 'schedule', title: 'Morning review', prompt: 'Summarize the pull requests.', cron: '0 9 * * *', timeZone: 'Europe/Lisbon', projectId: 'p', newConversation: true, archiveWhenIdle: true, enabled: true, createdAt: '2026-10-21T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' },
+  { id: 'schedule-2', title: 'Weekly report', prompt: 'Write the weekly report.', cron: '0 0 * * 1', timeZone: 'Europe/Lisbon', projectId: 'p', newConversation: true, archiveWhenIdle: true, enabled: false, createdAt: '2026-10-21T00:01:00Z', updatedAt: '2026-10-21T00:01:00Z' },
+];
+const scheduleRuntimeFixture = {
+  schedule: { running: false, lastRun: { status: 'sent' as const, at: '2026-10-21T09:00:00Z', manual: false, sessionId: 's-schedule' } },
+  'schedule-2': { running: false },
+};
+const harness = createHarnessApi({ ...(scenario === 'schedules' ? { schedules: scheduleFixtures, scheduleRuntime: scheduleRuntimeFixture } : {}), recorded: scenario === 'routed', staleRoute: scenario === 'stale-route', attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs' || scenario === 'project-relocation', hubs: scenario === 'hubs' ? 2 : 1, initialInstruction: scenario === 'create', restricted: scenario === 'move' || scenario === 'prepare-restricted' || scenario === 'flow-restricted', ...(scenario === 'restricted-next' || scenario === 'flow-restricted-next' ? { restrictedNext: true } : {}), persist: scenario === 'board' || scenario === 'relocation-board', pending: scenario === 'appearance', auto: scenario === 'auto', detect: scenario === 'project-editor' || scenario === 'project-relocation' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, ...(driveCase === null ? {} : { drive: driveCase }), shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', folderRefusal: refuse === 'folder', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}), ...(scenario === 'retained' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo' }] } : {}), ...(scenario === 'relocation-list' ? { relocation: ['waiting', 'failed', 'waiting'] as Array<'waiting' | 'failed' | null> } : scenario === 'relocation-board' ? { relocation: ['waiting', 'failed'] as Array<'waiting' | 'failed' | null> } : {}), ...(scenario === 'relocation-list' ? { extraProject: true } : {}) });
 
 function harnessSharing(kind: string): HubSharingView {
   const view: HubSharingView = {
@@ -137,6 +145,30 @@ function RelocationEditorScenario() {
   </DirectoryPickerProvider>;
 }
 
+function SchedulesScenario() {
+  const [snapshot, setSnapshot] = useState<TestSnapshot>(harness.snapshot());
+  const [opened, setOpened] = useState('');
+  const hub = snapshot.state.hubs[0]!;
+  const run = async (command: Command) => { const next = await harness.api.command(command); setSnapshot(next as TestSnapshot); return next; };
+  return <div className="dsh-kanban" style={{ height: '100%' }}>
+    <Configuration
+      state={snapshot.state as unknown as BoardState}
+      hub={hub}
+      board={null}
+      hubCount={1}
+      settings={snapshot.state.settings}
+      settingsRevision={snapshot.state.settings.revision}
+      run={run}
+      api={harness.api}
+      scheduleRuntime={snapshot.scheduleRuntime?.[hub.id]}
+      onOpenSession={sessionId => setOpened(sessionId)}
+      initial="Schedules"
+      onClose={() => {}}
+    />
+    <p role="status" data-opened={opened}>{opened}</p>
+  </div>;
+}
+
 function RelocationListScenario() {
   const [snapshot, setSnapshot] = useState<TestSnapshot>(harness.snapshot());
   const hub = snapshot.state.hubs[0]!;
@@ -199,6 +231,7 @@ function App() {
   if (scenario === 'stale-route') return <><style>{themeFixture}</style><ThemeSync /><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></>;
   if (scenario === 'project-relocation') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><RelocationEditorScenario /></div></>;
   if (scenario === 'relocation-list') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><RelocationListScenario /></>;
+  if (scenario === 'schedules') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><SchedulesScenario /></>;
   if (scenario === 'project-editor') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><ProjectEditorScenario /></div></>;
   if (scenario === 'workflow') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario /></div></>;
   if (flowScenario) return themed

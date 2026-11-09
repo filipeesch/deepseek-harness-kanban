@@ -9,7 +9,7 @@ export function HubPublishingBadge({ view }: { view?: HubSharingView }) {
     {view.syncing && <span className="kb-dot kb-share-dot kb-share-updates" role="img" aria-label="Synchronizing team configuration" title="Synchronizing team configuration" />}
     {(view.conflicts > 0 || view.status === 'needs-review' || view.blockers.length > 0) && <span className="kb-dot kb-share-dot kb-share-review" role="img" aria-label="Team review needed" title="Team review needed" />}
     {view.updates > 0 && <span className="kb-dot kb-share-dot kb-share-updates" role="img" aria-label="Team updates available" title="Team updates available" />}
-    {view.status === 'unavailable' && <span className="kb-dot kb-share-dot kb-share-unavailable" role="img" aria-label="Team updates unavailable" title="Team updates unavailable" />}
+    {view.status === 'unavailable' && <span className="kb-dot kb-share-dot kb-share-unavailable" role="img" aria-label="Team updates unavailable" title={view.error?.message ?? 'Team updates unavailable'} />}
     {view.drafts > 0 && <span className="kb-dot kb-share-dot kb-share-draft" role="img" aria-label="Unsynced team changes" title="Unsynced team changes" />}
   </>;
 }

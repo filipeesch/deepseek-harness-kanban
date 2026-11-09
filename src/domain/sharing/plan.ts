@@ -1,6 +1,7 @@
 import { KanbanError } from '../../shared/errors.js';
 import { parseWorkflow } from '../workflow.js';
-import { boardContentKey, sameSharedDocument, type SharedBoardEntry, type SharedHubDocument } from './document.js';
+import { SHARED_DOCUMENT_VERSION, boardContentKey, sameSharedDocument, type SharedBoardEntry, type SharedHubDocument } from './document.js';
+import { canonicalProjectKeys } from '../project-key.js';
 import { boardKeyFromName, normalizeBoardName, type BoardBindings, type OrphanMap } from './identity.js';
 import type { LocalSharedBoard } from './projection.js';
 import { mergeWorkflowPlacements } from './workflow-merge.js';
@@ -18,7 +19,12 @@ export interface SharingBlocker {
   tasks?: number;
 }
 
-export interface SharingContent { name: string; workflow: string }
+export interface SharingContent {
+  name: string;
+  workflow: string;
+  /** Absent means the board allows every project; an empty list closes it to creation. */
+  projectKeys?: readonly string[];
+}
 
 export interface BoardComparison {
   decision: BoardDecision;
@@ -65,7 +71,7 @@ export type ApplyDecision = 'updates-available' | 'create' | 'adopt' | 'reconnec
 
 export interface SharingPlan {
   comparison: SharingComparison;
-  apply: Array<{ boardId?: string; key: string; name: string; workflow: string }>;
+  apply: Array<{ boardId?: string; key: string; name: string; workflow: string; projectKeys?: readonly string[] }>;
   removals: string[];
   orphans: Array<{ boardId: string; lastKey: string; lastPublishedName: string }>;
   reconnections: Array<{ boardId: string; key: string }>;
@@ -75,8 +81,15 @@ export interface SharingPlan {
   nextBase: SharedHubDocument;
 }
 
-function content(value: { name: string; workflow: string }): SharingContent {
-  return { name: value.name, workflow: value.workflow };
+function content(value: { name: string; workflow: string; projectKeys?: readonly string[] }): SharingContent {
+  return { name: value.name, workflow: value.workflow, ...(value.projectKeys === undefined ? {} : { projectKeys: [...value.projectKeys] }) };
+}
+
+/** Two scopes are the same when both are absent, or both name the same keys in order. */
+function sameProjectKeys(left: SharingContent, right: SharingContent): boolean {
+  if (left.projectKeys === undefined || right.projectKeys === undefined) return left.projectKeys === right.projectKeys;
+  const canonical = (keys: readonly string[]): string => canonicalProjectKeys(keys).join('\u0000');
+  return canonical(left.projectKeys) === canonical(right.projectKeys);
 }
 
 function sameContent(left: SharingContent, right: SharingContent): boolean {
@@ -141,10 +154,13 @@ export function compareSharing(input: SharingInput): SharingComparison {
       else if (baseContent === undefined) decision = 'updates-available';
       else {
         // A difference limited to stage placement merges instead of asking for a
-        // choice; only a meaning changed differently on both sides still does.
-        const merge = mergeWorkflowPlacements({ base: baseContent, local: localContent, published: publishedContent });
+        // choice; only a meaning changed differently on both sides still does. A
+        // project scope difference is a meaning change, so it never merges this way.
+        const merge = sameProjectKeys(localContent, publishedContent)
+          ? mergeWorkflowPlacements({ base: baseContent, local: localContent, published: publishedContent })
+          : null;
         if (merge !== null) {
-          const merged: SharingContent = { name: merge.name, workflow: merge.workflow };
+          const merged: SharingContent = { name: merge.name, workflow: merge.workflow, ...(localContent.projectKeys === undefined ? {} : { projectKeys: [...localContent.projectKeys] }) };
           decision = sameContent(merged, localContent) ? 'draft' : 'updates-available';
           if (!sameContent(merged, publishedContent)) resolved = merged;
         } else if (sameContent(localContent, baseContent)) decision = 'updates-available';
@@ -269,6 +285,7 @@ export function buildUpdatePlan(input: SharingInput): SharingPlan {
         key: board.key!,
         name: source.name,
         workflow: source.workflow,
+        ...(source.projectKeys === undefined ? {} : { projectKeys: [...source.projectKeys] }),
       };
     });
   const removals = comparison.boards.filter(board => board.decision === 'remove' && board.boardId !== undefined).map(board => board.boardId!);
@@ -289,7 +306,7 @@ export function buildUpdatePlan(input: SharingInput): SharingPlan {
     : undefined;
   const conflictKeys = new Set(conflicts.map(conflict => conflict.key));
   const nextBase: SharedHubDocument = {
-    version: 1,
+    version: SHARED_DOCUMENT_VERSION,
     boards: input.published.boards.map(entry => {
       if (!conflictKeys.has(entry.key)) return { ...entry };
       const baseEntry = (input.base?.boards ?? []).find(candidate => candidate.key === entry.key);
@@ -331,7 +348,7 @@ export function buildPublishDocument(input: {
       bindings[board.boardId] = key;
     }
     if (pending.has(key) || localKeys.has(key)) continue;
-    entries.push({ key, name: board.name, workflow: board.workflow });
+    entries.push({ key, name: board.name, workflow: board.workflow, ...(board.projectKeys === undefined ? {} : { projectKeys: [...board.projectKeys] }) });
     localKeys.add(key);
   }
   // A board deleted only from this installation stays in the team document, at
@@ -356,7 +373,7 @@ export function buildPublishDocument(input: {
     if (names.has(normalized)) throw new KanbanError('SHARING_NAME_CONFLICT', 'Publishing would duplicate the board name "' + entry.name + '".', { board: entry.name });
     names.add(normalized);
   }
-  return { document: { version: 1, boards: entries }, bindings };
+  return { document: { version: SHARED_DOCUMENT_VERSION, boards: entries }, bindings };
 }
 
 export function publishIsDirty(document: SharedHubDocument, base: SharedHubDocument | null): boolean {

@@ -25,7 +25,7 @@ describe('shared document', () => {
     expect(() => parseSharedDocument(serializeSharedDocument(documentOf([{ key: 'a', name: 'Same', workflow: flow() }, { key: 'b', name: ' same ', workflow: flow() }])))).toThrow(/repeats a board name/);
     expect(() => parseSharedDocument('version: 1\nboards:\n  - key: "Bad Key!"\n    name: A\n    workflow: "name: x"\n')).toThrow(/invalid/i);
     expect(() => parseSharedDocument(serializeSharedDocument(documentOf([{ key: 'a', name: 'A', workflow: 'columns: []' }])))).toThrow(/invalid workflow/);
-    expect(() => parseSharedDocument('version: 2\nboards: []\n')).toThrow(/invalid/i);
+    expect(() => parseSharedDocument('version: 3\nboards: []\n')).toThrow(/newer plugin version/i);
   });
 
   it('keys documents by meaning, not by formatting', () => {

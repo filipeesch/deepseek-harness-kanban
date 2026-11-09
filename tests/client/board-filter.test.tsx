@@ -5,7 +5,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { BoardView, createBoardPageState } from '../../src/client/board.js';
 import type { HubState } from '../../src/shared/types.js';
-import { fakeApi, fixture, openFilterPopover, type TestSnapshot } from './helpers.js';
+import { fakeApi, fixture, openFilterPopover, task, type TestSnapshot } from './helpers.js';
 
 afterEach(cleanup);
 
@@ -15,6 +15,9 @@ function fixtureWithScope(): TestSnapshot {
   const hub = value.state.hubs[0]!;
   const secondBoard = { ...hub.boards[0]!, id: 'board-2', name: 'Ops' };
   hub.boards.push(secondBoard);
+  // The project filter offers the projects the presented board already holds cards for,
+  // so the navigation fixture needs a card on the second board too.
+  hub.tasks.push({ ...task('ops-task', 'Ops task', 'p1', secondBoard.workflow.initialColumnId), boardId: secondBoard.id });
   const other: HubState = { ...structuredClone(hub), id: 'hub-2', name: 'Other Hub', boards: [secondBoard], tasks: [] };
   value.state.hubs.push(other);
   return value;

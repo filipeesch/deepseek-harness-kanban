@@ -10,6 +10,8 @@ import { entryInstruction, nextEnteredAt } from './stage-entry.js';
 import { compareTaskOrder } from './task-order.js';
 import { assertId, assertRevision, isAbsolutePath } from './validation.js';
 import { assertProjectSave, buildProject } from './project-registration.js';
+import { requireProjectPath } from '../shared/project.js';
+import { withProjectKeys } from './project-key.js';
 import { applyNoteTags, validateNoteWrite, type NoteInput } from './note.js';
 
 export type { NoteInput } from './note.js';
@@ -86,6 +88,7 @@ export class BoardStore {
         }
       }
       migrated.schemaVersion = DATA_VERSION;
+      if (Array.isArray(migrated.projects)) migrated.projects = withProjectKeys(migrated.projects as Array<{ name: string; projectKey?: string }>);
       if (Array.isArray(migrated.tasks)) {
         migrated.tasks = migrated.tasks.map(item => {
           if (!item || typeof item !== 'object') return item;
@@ -176,7 +179,7 @@ export class BoardStore {
       const projectId = value.id ?? nextId(state.projects);
       const current = state.projects.find(project => project.id === projectId);
       assertProjectSave(state, projectId, value);
-      const project = buildProject(projectId, value, current);
+      const project = buildProject(projectId, value, current, state.projects.filter(item => item.id !== projectId).map(item => item.projectKey));
       if (current) state.projects[state.projects.indexOf(current)] = project;
       else state.projects.push(project);
       return project;
@@ -248,7 +251,7 @@ export class BoardStore {
       const initialInstruction = entryInstruction(initialColumn);
       const task: Task = {
         id: nextId(state.tasks), projectId: project.id, title: value.title.trim(), description: value.description,
-        columnId: state.workflow.initialColumnId, position, sessionIds: [], closedSessionIds: [], effectiveCwd: project.projectPath,
+        columnId: state.workflow.initialColumnId, position, sessionIds: [], closedSessionIds: [], effectiveCwd: requireProjectPath(project),
         worktree: null, operation: null, ...(value.autoMode === true ? { autoMode: { enabled: true as const } } : {}), ...(initialInstruction !== undefined ? { instructionPending: { columnId: initialColumn!.id, enteredAt: nextEnteredAt() } } : {}), createdAt: timestamp, updatedAt: timestamp,
       };
       state.tasks.push(task);

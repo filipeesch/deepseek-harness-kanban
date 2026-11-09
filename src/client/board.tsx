@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { Board, ClientApi, Column, Command, KanbanSnapshot, Problem, Task, Workflow, WorkflowView as WorkflowPresentation } from '../shared/types.js';
+import type { Board, ClientApi, Column, Command, KanbanSnapshot, Problem, Project, Task, Workflow, WorkflowView as WorkflowPresentation } from '../shared/types.js';
 import { EMPTY_ATTENTION } from '../shared/types.js';
+import { creatableProjects, isBoardClosedForCreation } from '../domain/board-project-scope.js';
 import { Configuration } from './settings/configuration.js';
 import { DirectoryPickerProvider } from './services.js';
 import type { DirectoryPickerPort } from './directory-picker.js';
@@ -55,9 +56,11 @@ export interface BoardViewProps {
   autoRun?: AutoRunController;
   /** Native slots and locale used by the first-execution model stage; absent in isolated harnesses. */
   nativeSeat?: PreparationSeat;
+  /** Opens one native conversation, used by a schedule's last-run link. */
+  onOpenSession?: (sessionId: string) => void;
 }
 
-export function BoardView({ api, renderConversation, pageState, sessionTitles, conversationLeases, picker = null, autoRun: providedAutoRun, nativeSeat }: BoardViewProps) {
+export function BoardView({ api, renderConversation, pageState, sessionTitles, conversationLeases, picker = null, autoRun: providedAutoRun, nativeSeat, onOpenSession }: BoardViewProps) {
   const [localPageState] = useState(createBoardPageState); const preferences = pageState ?? localPageState;
   const [snapshot, setSnapshot] = useState<KanbanSnapshot | null>(null); const latest = useRef<KanbanSnapshot | null>(null); const live = useRef(false); const currentApi = useRef(api); currentApi.current = api;
   const [loadError, setLoadError] = useState<Problem | null>(null); const [loadAttempt, setLoadAttempt] = useState(0);
@@ -191,9 +194,14 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   }, [setDrawerClosing, setDrawerEntering, setSelectedId]);
   // One creation instance serves both presentations: the column board renders the
   // button it returns and the diagram opens the same dialog through its port, so the
-  // two New task actions cannot drift in label, enablement, or start handoff.
+  // two New task actions cannot drift in label, enablement, or start handoff. The
+  // board answers the scope questions, because only it knows the active board and Hub.
   const creation = useTaskCreation({
     state,
+    projects: state === undefined ? []
+      : activeBoard === undefined ? state.projects
+      : creatableProjects(activeBoard, activeHub?.projects ?? state.projects),
+    closedForCreation: activeBoard !== undefined && isBoardClosedForCreation(activeBoard),
     run,
     autoRun,
     onOpenTask: openTask,
@@ -256,6 +264,13 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
 
   const selectedTasks = state?.tasks.filter(task => selectedIds.has(task.id)) ?? [];
   const visible = state === undefined ? [] : filterTasks(state.tasks, { search, projectFilter });
+  // The filter narrows the cards of the board, so it offers the projects those cards
+  // already belong to; the board's project scope governs creation instead.
+  const filterProjects = useMemo(() => {
+    if (state === undefined) return [] as Project[];
+    const used = new Set(state.tasks.map(task => task.projectId));
+    return state.projects.filter(project => used.has(project.id));
+  }, [state]);
   // Local plain-checkout reports combine with the host's transient retention
   // notices; dismissal is per path and lasts for this board session.
   const retainedNotices = [
@@ -332,7 +347,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       batchPending={batch.pending}
       search={search}
       projectFilter={projectFilter}
-      projects={state?.projects ?? []}
+      projects={filterProjects}
       canSelectCards={state !== undefined && state.tasks.length > 0}
       onSearch={setSearch}
       onProjectFilter={setProjectFilter}
@@ -343,7 +358,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       {...(state === undefined ? {} : { viewControl: <WorkflowViewControl view={view} onChange={chooseView} /> })}
     />
     <ShareBanner view={activeHub ? snapshot?.sharing?.[activeHub.id] : undefined} onReview={() => setConfiguration('Team Settings')} />
-    {configuration && <Configuration key={configuration} state={state ?? null} hub={activeHub ?? null} board={activeBoard ?? null} hubCount={snapshot?.state.hubs.length ?? 1} settings={snapshot?.state.settings} settingsRevision={snapshot?.state.settings?.revision ?? 0} run={run} api={api} sharing={activeHub ? snapshot?.sharing?.[activeHub.id] : undefined} sharingAuth={snapshot?.sharingAuth} conversationAttention={snapshot?.conversationAttention} initial={configuration} onClose={() => setConfiguration(null)} onHubDeleted={() => { setConfiguration(null); setActiveHubIdState(null); writeStorage(ACTIVE_HUB_KEY, null); }} onBoardDeleted={() => { setConfiguration(null); }} onBoardCreated={id => { selectBoard(activeHub!.id, id); setConfiguration(null); }} />}
+    {configuration && <Configuration key={configuration} state={state ?? null} hub={activeHub ?? null} board={activeBoard ?? null} hubCount={snapshot?.state.hubs.length ?? 1} settings={snapshot?.state.settings} settingsRevision={snapshot?.state.settings?.revision ?? 0} run={run} api={api} sharing={activeHub ? snapshot?.sharing?.[activeHub.id] : undefined} sharingAuth={snapshot?.sharingAuth} conversationAttention={snapshot?.conversationAttention} scheduleRuntime={activeHub ? snapshot?.scheduleRuntime?.[activeHub.id] : undefined} {...(onOpenSession === undefined ? {} : { onOpenSession })} initial={configuration} onClose={() => setConfiguration(null)} onHubDeleted={() => { setConfiguration(null); setActiveHubIdState(null); writeStorage(ACTIVE_HUB_KEY, null); }} onBoardDeleted={() => { setConfiguration(null); }} onBoardCreated={id => { selectBoard(activeHub!.id, id); setConfiguration(null); }} />}
     <BoardProblemNotices
       loadError={loadError}
       actionError={actionError}

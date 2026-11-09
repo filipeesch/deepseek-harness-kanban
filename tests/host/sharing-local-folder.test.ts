@@ -8,7 +8,7 @@ import { abbreviateHome, absoluteFolderPath, folderIdentity, suggestedFolderPath
 import type { BindingCandidate } from '../../src/host/sharing/provider.js';
 
 const flow = (column = 'backlog'): string => ['name: Flow', 'initial_column: ' + column, 'columns:', '  - id: ' + column, '    label: ' + column, ''].join('\n');
-const documentOf = (name: string): SharedHubDocument => ({ version: 1, boards: [{ key: 'flow', name, workflow: flow() }] });
+const documentOf = (name: string): SharedHubDocument => ({ version: 2, boards: [{ key: 'flow', name, workflow: flow() }] });
 
 const roots: string[] = [];
 async function tempRoot(): Promise<string> {
@@ -30,6 +30,28 @@ async function fixture(seed?: SharedHubDocument) {
   if (seed) await writeFile(path.join(directory, SHARED_DOCUMENT_FILE), serializeSharedDocument(seed), 'utf8');
   return { directory, store };
 }
+
+describe('local folder version policy', () => {
+  it('refuses a document written by a newer plugin and writes nothing over it', async () => {
+    const directory = await tempRoot();
+    const store = new LocalFolderSharedConfigStore({ directory, state: {} });
+    const newer = ['version: 3', 'boards: []', ''].join('\n');
+    await writeFile(path.join(directory, SHARED_DOCUMENT_FILE), newer, 'utf8');
+    await expect(store.read()).rejects.toMatchObject({ code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED' });
+    await expect(store.write(documentOf('Kanban'), { expectedToken: null, message: 'Publish the board.' })).rejects.toMatchObject({ code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED' });
+    expect(await readFile(path.join(directory, SHARED_DOCUMENT_FILE), 'utf8')).toBe(newer);
+  });
+
+  it('reads a version one document as boards without a project scope', async () => {
+    const directory = await tempRoot();
+    const store = new LocalFolderSharedConfigStore({ directory, state: {} });
+    const legacy = serializeSharedDocument(documentOf('Kanban')).replace(/^version: 2/, 'version: 1');
+    await writeFile(path.join(directory, SHARED_DOCUMENT_FILE), legacy, 'utf8');
+    const read = await store.read();
+    expect(read?.document.version).toBe(2);
+    expect(read?.document.boards[0]!.projectKeys).toBeUndefined();
+  });
+});
 
 describe('local folder path', () => {
   it('expands the home shorthand and resolves a relative path', () => {

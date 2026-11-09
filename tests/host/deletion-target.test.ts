@@ -12,8 +12,8 @@ function task(overrides: Partial<Task> = {}): Task {
   };
 }
 
-const gitProject: Project = { id: 'project', name: 'Web', projectPath: '/repo/apps/web', gitRootPath: '/repo' };
-const folderProject: Project = { id: 'project', name: 'Notes', projectPath: '/plain/notes' };
+const gitProject: Project = { id: 'project', projectKey: 'project', name: 'Web', projectPath: '/repo/apps/web', gitRootPath: '/repo' };
+const folderProject: Project = { id: 'project', projectKey: 'project', name: 'Notes', projectPath: '/plain/notes' };
 const binding = { path: '/trees/task', branch: 'task', owned: true, status: 'ready' as const };
 const unavailable = new KanbanError('PATH_UNAVAILABLE', 'The directory cannot be resolved.', { path: '/repo/apps/web' });
 

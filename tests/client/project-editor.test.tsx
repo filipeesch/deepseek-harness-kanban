@@ -87,7 +87,7 @@ describe('project editor detection', () => {
     await user.clear(screen.getByRole('textbox', { name: 'Git root' }));
     await user.click(screen.getByRole('button', { name: 'Save project' }));
     await waitFor(() => expect(mock.command).toHaveBeenLastCalledWith(expect.objectContaining({
-      type: 'project.save', project: { id: 'p2', name: 'Web', projectPath: '/web' }, expectedRevision: 1,
+      type: 'project.save', project: { id: 'p2', name: 'Web', projectKey: 'p2', projectPath: '/web' }, expectedRevision: 1,
     })));
   });
 

@@ -1,12 +1,16 @@
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { AutoModePause, Board, BoardSettings, HubState, HubTask, Note, Project, ProjectInput, Workflow } from '../shared/types.js';
+import type { AutoModePause, Board, BoardSettings, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ScheduleModelSelection, Workflow } from '../shared/types.js';
 import { assertId, isAbsolutePath } from './validation.js';
+import { assertSchedulable } from './cron.js';
+import { isPublishedProject, requireProjectPath } from '../shared/project.js';
 import { createBoard } from './hub-schema.js';
 import { parseWorkflow } from './workflow.js';
 import { applyWorkflowEdits, type WorkflowTextEdit } from './workflow-edit.js';
 import { entryInstruction, nextEnteredAt } from './stage-entry.js';
 import { transitionTargets } from './transitions.js';
 import { assertProjectSave, buildProject } from './project-registration.js';
+import { assertKnownProjectKeys, assertProjectCreatable, boardsAllowingKey, normalizeProjectKeys } from './board-project-scope.js';
+import { requireProjectKey } from './project-key.js';
 import { applyNoteTags, validateNoteWrite, type NoteInput } from './note.js';
 import { placementIndex, type Placement } from './placement.js';
 import { compareTaskOrder } from './task-order.js';
@@ -14,6 +18,22 @@ import { compareTaskOrder } from './task-order.js';
 export type { NoteInput } from './note.js';
 export interface TaskTextPatch { title?: string; description?: string }
 export interface OperationDeps { id: () => string; now: () => string }
+/** Defensive limits that keep one Hub's schedule collection bounded. */
+export const MAX_SCHEDULES_PER_HUB = 50;
+export const MAX_SCHEDULE_TITLE = 120;
+export const MAX_SCHEDULE_PROMPT = 20_000;
+/** The editable schedule fields; enabled state has its own operation. */
+export interface ScheduleInput {
+  id?: string;
+  title: string;
+  prompt: string;
+  cron: string;
+  timeZone: string;
+  projectId: string;
+  model?: ScheduleModelSelection;
+  newConversation: boolean;
+  archiveWhenIdle: boolean;
+}
 
 function clone<T>(value: T): T {
   try { return structuredClone(value); }
@@ -64,6 +84,79 @@ export function requireProject(hub: HubState, projectId: string): Project {
 }
 
 export function boardForTask(hub: HubState, task: HubTask): Board { return requireBoard(hub, task.boardId); }
+
+export function requireSchedule(hub: HubState, scheduleId: string): HubSchedule {
+  assertId(scheduleId, 'Schedule ID');
+  const schedule = (hub.schedules ?? []).find(value => value.id === scheduleId);
+  invariant(schedule, 'SCHEDULE_NOT_FOUND', 'Schedule does not exist in this Hub.');
+  return schedule;
+}
+
+function normalizeScheduleModel(value: ScheduleModelSelection | undefined): ScheduleModelSelection | undefined {
+  if (value === undefined) return undefined;
+  invariant(value && typeof value === 'object' && !Array.isArray(value), 'INVALID_INPUT', 'Schedule model must be a mapping.');
+  const provider = requiredText(value.provider, 'Model provider').trim();
+  const model = requiredText(value.model, 'Model id').trim();
+  const reasoningEffort = value.reasoningEffort === undefined ? undefined : requiredText(value.reasoningEffort, 'Reasoning effort').trim();
+  return { provider, model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }) };
+}
+
+/** Create or replace one schedule. The enabled state survives an edit. */
+export function saveSchedule(hub: HubState, input: ScheduleInput, deps: OperationDeps): HubSchedule {
+  const value = clone(input);
+  invariant(value && typeof value === 'object' && !Array.isArray(value), 'INVALID_INPUT', 'Schedule input must be a mapping.');
+  const title = requiredText(value.title, 'Schedule title').trim();
+  invariant(title.length <= MAX_SCHEDULE_TITLE, 'INVALID_SCHEDULE_TITLE', 'A schedule title must be at most ' + MAX_SCHEDULE_TITLE + ' characters.');
+  const prompt = requiredText(value.prompt, 'Schedule prompt').trim();
+  invariant(prompt.length <= MAX_SCHEDULE_PROMPT, 'INVALID_SCHEDULE_PROMPT', 'A schedule prompt must be at most ' + MAX_SCHEDULE_PROMPT + ' characters.');
+  invariant(typeof value.newConversation === 'boolean', 'INVALID_INPUT', 'The new-conversation option must be a boolean.');
+  invariant(typeof value.archiveWhenIdle === 'boolean', 'INVALID_INPUT', 'The archive option must be a boolean.');
+  const project = requireProject(hub, value.projectId);
+  // A published placeholder has no directory; it must be adopted before it can run work.
+  requireProjectPath(project);
+  const cron = assertSchedulable(value.cron, value.timeZone, new Date(deps.now()));
+  const existing = value.id === undefined ? undefined : requireSchedule(hub, value.id);
+  if (existing === undefined) {
+    invariant((hub.schedules?.length ?? 0) < MAX_SCHEDULES_PER_HUB, 'SCHEDULE_LIMIT', 'A Hub can hold at most ' + MAX_SCHEDULES_PER_HUB + ' schedules.');
+  }
+  const at = timestamp(deps);
+  const model = normalizeScheduleModel(value.model);
+  const schedule: HubSchedule = {
+    id: existing?.id ?? nextId(hub.schedules ?? [], deps.id),
+    title, prompt, cron, timeZone: value.timeZone.trim(), projectId: project.id,
+    ...(model === undefined ? {} : { model }),
+    newConversation: value.newConversation,
+    // A continuous conversation exists to be resumed, so it is never archived.
+    archiveWhenIdle: value.newConversation ? value.archiveWhenIdle : false,
+    enabled: existing?.enabled ?? true,
+    createdAt: existing?.createdAt ?? at,
+    updatedAt: at,
+  };
+  if (existing) hub.schedules![hub.schedules!.indexOf(existing)] = schedule;
+  else (hub.schedules ??= []).push(schedule);
+  hub.updatedAt = at;
+  return schedule;
+}
+
+export function setScheduleEnabled(hub: HubState, scheduleId: string, enabled: boolean, deps: OperationDeps): HubSchedule {
+  invariant(typeof enabled === 'boolean', 'INVALID_INPUT', 'The enabled option must be a boolean.');
+  const schedule = requireSchedule(hub, scheduleId);
+  if (schedule.enabled === enabled) return schedule;
+  schedule.enabled = enabled;
+  schedule.updatedAt = timestamp(deps);
+  hub.updatedAt = schedule.updatedAt;
+  return schedule;
+}
+
+export function deleteSchedule(hub: HubState, scheduleId: string, deps: OperationDeps): HubSchedule {
+  const schedule = requireSchedule(hub, scheduleId);
+  hub.schedules = (hub.schedules ?? []).filter(value => value.id !== schedule.id);
+  // Removing the last schedule removes the optional collection, so a downgrade
+  // to a strict older schema can still parse the Hub.
+  if (hub.schedules.length === 0) delete hub.schedules;
+  hub.updatedAt = timestamp(deps);
+  return schedule;
+}
 
 export function renameHub(hub: HubState, name: string, deps: OperationDeps): string {
   hub.name = normalizedName(name, 'Hub name');
@@ -130,7 +223,16 @@ export function saveProject(hub: HubState, input: ProjectInput, deps: OperationD
   const projectId = value.id ?? nextId(hub.projects, deps.id);
   const current = hub.projects.find(project => project.id === projectId);
   assertProjectSave(hub, projectId, value);
-  const project = buildProject(projectId, value, current);
+  const takenKeys = hub.projects.filter(project => project.id !== projectId).map(project => project.projectKey);
+  const project = buildProject(projectId, value, current, takenKeys);
+  // A key edit is a local reference migration: every board scope of the Hub follows it
+  // in the same write, so no board is left naming a key that no project owns.
+  if (current !== undefined && current.projectKey !== project.projectKey) {
+    for (const board of boardsAllowingKey(hub.boards, current.projectKey)) {
+      board.allowedProjectKeys = normalizeProjectKeys((board.allowedProjectKeys ?? []).map(key => key === current.projectKey ? project.projectKey : key));
+      board.updatedAt = timestamp(deps);
+    }
+  }
   if (current) hub.projects[hub.projects.indexOf(current)] = project;
   else hub.projects.push(project);
   hub.updatedAt = timestamp(deps);
@@ -141,14 +243,37 @@ export function deleteProject(hub: HubState, projectId: string, deps: OperationD
   const project = requireProject(hub, projectId);
   invariant(!project.operation, 'PROJECT_BUSY', 'Resolve the project relocation before deleting the project.');
   invariant(!hub.tasks.some(task => task.projectId === projectId), 'PROJECT_IN_USE', 'Delete the tasks in this project before deleting the project.');
+  invariant(!(hub.schedules ?? []).some(schedule => schedule.projectId === projectId), 'PROJECT_IN_USE', 'Delete or repoint the schedules in this project before deleting the project.');
+  // A deleted project cannot stay in a board's scope: the key leaves every board that
+  // names it, which may leave a restricted board with fewer keys or with none at all.
+  for (const board of boardsAllowingKey(hub.boards, project.projectKey)) {
+    board.allowedProjectKeys = normalizeProjectKeys((board.allowedProjectKeys ?? []).filter(key => key !== project.projectKey));
+    board.updatedAt = timestamp(deps);
+  }
   hub.projects.splice(hub.projects.indexOf(project), 1);
   hub.updatedAt = timestamp(deps);
   return project;
 }
 
+/** Set or clear one board's project scope; an absent list allows every project of the Hub. */
+export function setBoardProjectScope(hub: HubState, boardId: string, projectKeys: readonly string[] | undefined, deps: OperationDeps): Board {
+  const board = requireBoard(hub, boardId);
+  if (projectKeys === undefined) {
+    delete board.allowedProjectKeys;
+  } else {
+    const keys = normalizeProjectKeys(projectKeys.map(requireProjectKey));
+    assertKnownProjectKeys(keys, hub.projects);
+    board.allowedProjectKeys = keys;
+  }
+  board.updatedAt = timestamp(deps);
+  hub.updatedAt = timestamp(deps);
+  return board;
+}
+
 export function setProjectWorkspace(hub: HubState, projectId: string, workspaceId: string, owned: boolean, deps: OperationDeps): Project {
   assertId(workspaceId, 'Workspace ID');
   const project = requireProject(hub, projectId);
+  invariant(!isPublishedProject(project), 'PROJECT_NOT_ADOPTED', 'Adopt the published project before binding a native workspace to it.');
   project.workspaceId = workspaceId;
   project.workspaceOwned = owned;
   hub.updatedAt = timestamp(deps);
@@ -176,6 +301,7 @@ export function createTask(hub: HubState, input: { boardId: string; projectId: s
   invariant(value.autoMode === undefined || typeof value.autoMode === 'boolean', 'INVALID_INPUT', 'Task auto mode must be a boolean.');
   const board = requireBoard(hub, value.boardId);
   const project = requireProject(hub, value.projectId);
+  assertProjectCreatable(board, project);
   const peers = hub.tasks.filter(task => task.boardId === board.id && task.columnId === board.workflow.initialColumnId);
   let position = peers.length ? peers.reduce((minimum, task) => Math.min(minimum, task.position), Infinity) - 1 : 0;
   if (!Number.isFinite(position) || peers.some(task => task.position === position)) {
@@ -186,7 +312,7 @@ export function createTask(hub: HubState, input: { boardId: string; projectId: s
   const initialColumn = board.workflow.columns.find(column => column.id === board.workflow.initialColumnId);
   const task: HubTask = {
     id: nextId(hub.tasks, deps.id), boardId: board.id, projectId: project.id, title: value.title.trim(), description: value.description,
-    columnId: board.workflow.initialColumnId, position, sessionIds: [], closedSessionIds: [], effectiveCwd: project.projectPath,
+    columnId: board.workflow.initialColumnId, position, sessionIds: [], closedSessionIds: [], effectiveCwd: requireProjectPath(project),
     worktree: null, operation: null,
     ...(value.autoMode === true ? { autoMode: { enabled: true as const } } : {}),
     ...(entryInstruction(initialColumn) !== undefined ? { instructionPending: { columnId: initialColumn!.id, enteredAt: nextEnteredAt(Date.parse(at)) } } : {}),

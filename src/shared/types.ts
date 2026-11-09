@@ -20,9 +20,22 @@ export interface ProjectRelocation {
   started: boolean;
   createdAt: string;
 }
-export interface Project { id: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string; workspaceId?: string; workspaceOwned?: boolean; /** Absent means no relocation is recorded. */ operation?: ProjectRelocation }
+/** The fields every project carries, whatever its kind. */
+export interface ProjectBase {
+  id: string; name: string;
+  /** Stable identity across boards and installations; unique within its Hub. */
+  projectKey: string;
+  gitRootPath?: string; defaultBranch?: string; workspaceId?: string; workspaceOwned?: boolean;
+  /** Absent means no relocation is recorded. */
+  operation?: ProjectRelocation;
+}
+/** A project registered in a Hub, with the directory its tasks use. */
+export interface RegisteredProject extends ProjectBase { projectPath: string; origin?: undefined }
+/** A project that exists only because a received board names its key; it has no directory until adopted. */
+export interface PublishedProject extends ProjectBase { origin: 'published'; projectPath?: undefined }
+export type Project = RegisteredProject | PublishedProject;
 /** A project whose Git root is known; required by every Git and worktree operation. */
-export type GitProject = Project & { gitRootPath: string };
+export type GitProject = RegisteredProject & { gitRootPath: string };
 /** Non-persistent result of inspecting a folder for project registration. */
 export type ProjectLocation =
   | { kind: 'git'; projectPath: string; gitRootPath: string; defaultBranch?: string }
@@ -102,14 +115,45 @@ export interface Task {
 }
 export interface Note { id: string; taskId: string; content: string; createdAt: string; updatedAt: string; tags?: string[] }
 export interface BoardSettings { worktreeBasePath?: string }
-export interface Board { id: string; name: string; workflowYaml: string; workflow: Workflow; createdAt: string; updatedAt: string }
+export interface Board {
+  id: string; name: string; workflowYaml: string; workflow: Workflow;
+  /** Absent means every project of the Hub may create tasks on this board; an empty list closes it to creation. */
+  allowedProjectKeys?: string[];
+  createdAt: string; updatedAt: string;
+}
 /** A task that belongs to a board. The legacy BoardState keeps plain Task for migration compatibility. */
 export interface HubTask extends Task { boardId: string }
 export interface HubState {
   id: string; name: string; revision: number;
   projects: Project[]; boards: Board[]; tasks: HubTask[]; notes: Note[];
+  /** Local session schedules; absent on a Hub stored before the capability existed. */
+  schedules?: HubSchedule[];
   createdAt: string; updatedAt: string;
 }
+/** One native model selection stored on a schedule. */
+export interface ScheduleModelSelection { provider: string; model: string; reasoningEffort?: string }
+/** One Hub-scoped session schedule. Stored in the Hub aggregate, never published. */
+export interface HubSchedule {
+  id: string; title: string; prompt: string; cron: string; timeZone: string; projectId: string;
+  model?: ScheduleModelSelection; newConversation: boolean; archiveWhenIdle: boolean; enabled: boolean;
+  createdAt: string; updatedAt: string;
+}
+/** How the latest occurrence of one schedule ended. */
+export type ScheduleRunStatus = 'sent' | 'failed';
+/** The JSON-safe failure reason kept on a schedule's last run. */
+export interface ScheduleRunProblem { code: string; message: string; details?: Record<string, string | number | boolean> }
+/** One schedule's most recent run, as the settings surface presents it. */
+export interface ScheduleRunView { status: ScheduleRunStatus; at: string; manual: boolean; sessionId?: string; error?: ScheduleRunProblem; /** Set when the conversation could not be archived; delivery is unchanged. */ archiveError?: ScheduleRunProblem }
+/** Runtime state of one schedule; it never changes the Hub revision. */
+export interface ScheduleRuntimeView { running: boolean; lastRun?: ScheduleRunView }
+/** Every schedule's runtime state for one Hub, keyed by schedule identity. */
+export type HubScheduleRuntime = Record<string, ScheduleRuntimeView>
+/** One adapter-owned reasoning effort offered for an exact model route. */
+export interface ScheduleModelEffort { id: string; name: string }
+/** One provider group in the model catalog offered to the schedule editor. */
+export interface ScheduleModelProvider { id: string; name: string; models: Array<{ id: string; name: string; description?: string; reasoning?: { efforts: ScheduleModelEffort[]; defaultEffort?: string } }> }
+/** The selectable models and the deployment default, projected for the editor. */
+export interface ScheduleModelCatalog { default: ScheduleModelSelection; providers: ScheduleModelProvider[]; failures: Array<{ id: string; name: string; message: string }> }
 export interface KanbanSettings { revision: number; worktreeBasePath?: string }
 /** Global metadata stored beside the Hub records. */
 export interface KanbanMeta { initializedAt?: string; settingsRevision: number; worktreeBasePath?: string }
@@ -138,7 +182,7 @@ export const EMPTY_CONVERSATION_FACTS: ConversationFacts = { running: false, bac
 /** One conversation's projected attention, including the client-owned read state. */
 export interface Attention { running: boolean; background: BackgroundActivity[]; unread: boolean; awaitingReply: boolean; failed: boolean; pending: PendingUserWork }
 /** Transient identity of the entity created by this exact command, never persisted. */
-export interface CommandReceipt { kind: 'hub' | 'board' | 'project' | 'task' | 'conversation' | 'note'; id: string }
+export interface CommandReceipt { kind: 'hub' | 'board' | 'project' | 'task' | 'conversation' | 'note' | 'schedule'; id: string }
 /** One board's publishing state, projected from the stored sharing record. */
 export type SharingBoardState = 'in-sync' | 'draft' | 'updates-available' | 'needs-review' | 'orphan';
 export type SharingHubStatus = 'not-published' | 'preview' | 'published' | 'updates-available' | 'needs-review' | 'unavailable';
@@ -157,7 +201,17 @@ export interface SharingAuthView {
   folders?: Array<{ id: string; name: string }>;
 }
 export interface SharingBlockerView { code: string; message: string; boardId?: string; boardName?: string; columnId?: string; tasks?: number }
-export interface SharingBoardView { boardId: string; key?: string; name: string; state: SharingBoardState; bound: boolean; /** The decision still requires review. */ pending: boolean; /** Both workflow versions, present for a board that needs a choice. */ detail?: { local: string; team: string; localName: string; teamName: string } }
+export interface SharingBoardView {
+  boardId: string; key?: string; name: string; state: SharingBoardState; bound: boolean;
+  /** The decision still requires review. */
+  pending: boolean;
+  /** Both versions, present for a board that needs a choice. */
+  detail?: {
+    local: string; team: string; localName: string; teamName: string;
+    /** The local project scope; absent means every project, an empty list means closed. */
+    localProjectKeys?: string[]; teamProjectKeys?: string[];
+  };
+}
 export interface HubSharingView {
   status: SharingHubStatus;
   provider: SharingStorage;
@@ -260,7 +314,7 @@ export interface RetainedCheckout { path: string; projectId: string; taskTitle: 
  * `state` is present on baselines and command responses and omitted from an update frame that
  * did not change the state revision; the client merges it with the state it already holds.
  */
-export interface HostSnapshot { commandReceipt?: CommandReceipt; state?: KanbanState; stateRevision: number; conversations: Record<string, ConversationFacts>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; /** Transient, in-memory retained checkouts; omitted when empty. */ retainedCheckouts?: RetainedCheckout[]; sequence: number }
+export interface HostSnapshot { commandReceipt?: CommandReceipt; state?: KanbanState; stateRevision: number; conversations: Record<string, ConversationFacts>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; /** Runtime state of every Hub's schedules; omitted when empty. */ scheduleRuntime?: Record<string, HubScheduleRuntime>; /** Transient, in-memory retained checkouts; omitted when empty. */ retainedCheckouts?: RetainedCheckout[]; sequence: number }
 /** A snapshot that carries the board state: every unary response, baseline, and command result. */
 export type FullHostSnapshot = HostSnapshot & { state: KanbanState };
 /** A request for one unary snapshot; every field is an optional hint, never a required read. */
@@ -275,7 +329,7 @@ export interface SnapshotRequest {
 /** Client snapshot: host facts plus the client-owned attention projection. State is always merged. */
 export interface KanbanSnapshot extends Omit<HostSnapshot, 'conversations' | 'state'> { state: KanbanState; attention: Record<string, Attention>; conversationAttention: Record<string, Attention>; clientEpoch?: number }
 export const EMPTY_ATTENTION: Attention = { running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
-export interface ProjectInput { id?: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string }
+export interface ProjectInput { id?: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string; projectKey?: string }
 export type Command =
   | { type: 'hub.create'; name: string }
   | { type: 'hub.rename'; hubId: string; name: string; expectedRevision?: number }
@@ -284,6 +338,8 @@ export type Command =
   | { type: 'board.rename'; hubId: string; boardId: string; name: string; expectedRevision?: number }
   | { type: 'board.delete'; hubId: string; boardId: string; confirmed: boolean; expectedRevision?: number; sharing?: 'local' | 'team' }
   | { type: 'board.workflow.save'; hubId: string; boardId: string; yaml: string; expectedRevision?: number }
+  /** An absent `projectKeys` allows every project of the Hub; an empty list closes the board to creation. */
+  | { type: 'board.projects.save'; hubId: string; boardId: string; projectKeys?: string[]; expectedRevision?: number }
   | { type: 'project.save'; hubId?: string; project: ProjectInput; expectedRevision?: number }
   | { type: 'project.relocate'; hubId?: string; project: ProjectInput & { id: string }; confirmed: boolean; expectedRevision?: number }
   | { type: 'project.relocationRetry'; hubId?: string; projectId: string }
@@ -309,7 +365,11 @@ export type Command =
   | { type: 'operation.retry' | 'operation.return'; hubId?: string; taskId: string }
   | { type: 'operation.dismiss'; hubId?: string; taskId: string }
   | { type: 'note.save'; hubId?: string; taskId: string; noteId?: string; content?: string; tags?: string[] }
-  | { type: 'note.delete'; hubId?: string; taskId: string; noteId: string };
+  | { type: 'note.delete'; hubId?: string; taskId: string; noteId: string }
+  | { type: 'schedule.save'; hubId: string; scheduleId?: string; title: string; prompt: string; cron: string; timeZone: string; projectId: string; model?: ScheduleModelSelection; newConversation: boolean; archiveWhenIdle: boolean; expectedRevision?: number }
+  | { type: 'schedule.delete'; hubId: string; scheduleId: string; confirmed: boolean; expectedRevision?: number }
+  | { type: 'schedule.setEnabled'; hubId: string; scheduleId: string; enabled: boolean; expectedRevision?: number }
+  | { type: 'schedule.runNow'; hubId: string; scheduleId: string };
 export type Outcome<T> = { ok: true; value: T } | { ok: false; error: Problem };
 export interface ClientApi {
   snapshot(request?: SnapshotRequest): Promise<KanbanSnapshot>;
@@ -317,6 +377,8 @@ export interface ClientApi {
   sharing(command: SharingCommand): Promise<KanbanSnapshot>;
   localDrive(request: LocalDriveRequest): Promise<LocalDriveResult>;
   branches(taskId: string): Promise<string[]>;
+  /** The host model catalog; `refresh` asks the host to rebuild it for a newly opened editor. */
+  modelCatalog(refresh?: boolean): Promise<ScheduleModelCatalog>;
   worktreeDefault(taskId: string): Promise<WorktreeDefaults>;
   detectProject(path: string): Promise<ProjectLocation>;
   subscribe(listener: (snapshot: KanbanSnapshot) => void): () => void;

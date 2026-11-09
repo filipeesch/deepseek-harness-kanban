@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState, type ReactNode } from 'react';
-import type { BoardState, KanbanSnapshot } from '../shared/types.js';
+import type { BoardState, KanbanSnapshot, Project } from '../shared/types.js';
 import { entryInstruction } from '../domain/stage-entry.js';
 import type { AutoRunController } from './auto-run.js';
 import { NewTaskDialog, type CreatedTaskOptions } from './forms.js';
@@ -9,6 +9,10 @@ import type { RunCommand } from './ui.js';
 /** What the board owns and task creation only drives. */
 export interface UseTaskCreationPort {
   readonly state: BoardState | undefined;
+  /** The projects the board may create a task in, already narrowed by its scope. */
+  readonly projects: readonly Project[];
+  /** A board whose scope records no project accepts no new task. */
+  readonly closedForCreation: boolean;
   readonly run: RunCommand;
   readonly autoRun: AutoRunController;
   /** Opens the task drawer; a created task is always shown. */
@@ -63,10 +67,13 @@ export function useTaskCreation(port: UseTaskCreationPort): TaskCreation {
       await current.run({ type: 'task.prepareFirstExecution', taskId, columnId: task.columnId, expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
     });
   }, []);
+  // Availability is the board's, not the scope's: an action that only one of the two
+  // presentations could see would be a different feature. The board's project scope is
+  // the dialog's concern, and it says so itself when the board accepts no task.
   const canCreate = port.state !== undefined && port.state.projects.length > 0;
   const renderButton = useCallback((): ReactNode => <div className="kb-column-create"><button type="button" className="kb-button kb-primary" disabled={!canCreate} onClick={openDialog} aria-label="New task"><PlusIcon size={14} /> New task</button></div>, [canCreate, openDialog]);
   const dialog = open && port.state !== undefined
-    ? <NewTaskDialog state={port.state} run={port.run} onClose={closeDialog} onCreated={onCreated} />
+    ? <NewTaskDialog state={port.state} projects={port.projects} closedForCreation={port.closedForCreation} run={port.run} onClose={closeDialog} onCreated={onCreated} />
     : null;
   return { canCreate, open, openDialog, closeDialog, renderButton, dialog };
 }

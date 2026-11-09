@@ -1,5 +1,6 @@
-import type { BoardState, ClientApi, Command, DriveBrowseView, DriveDiscoveryView, HubSharingView, HubState, HubTask, KanbanSnapshot, KanbanState, LocalDriveRequest, LocalDriveResult, Note, SharingCommand } from '../../src/shared/types.js';
+import type { BoardState, ClientApi, Command, DriveBrowseView, DriveDiscoveryView, HubSchedule, HubScheduleRuntime, HubSharingView, HubState, HubTask, KanbanSnapshot, KanbanState, LocalDriveRequest, LocalDriveResult, Note, SharingCommand } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
+import { requireProjectPath } from '../../src/shared/project.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import { defaultWorktreeDestination, taskTitleSlug } from '../../src/shared/worktree-name.js';
 import { applyInitialEntry, applyMove, applyRunInstruction, createEnteredAtSource } from '../support/in-memory-board.js';
@@ -16,7 +17,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { recorded?: boolean; staleRoute?: boolean; attention?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error' }
+export interface HarnessOptions { recorded?: boolean; staleRoute?: boolean; attention?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -72,8 +73,8 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
   const hub: HubState = {
     id: 'hub', name: 'Harness Hub', revision: 1,
     projects: [
-      { id: 'p', name: 'Project', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' },
-      { id: 'p2', name: 'A very long project name that must truncate inside the card', projectPath: '/repo/long', gitRootPath: '/repo', defaultBranch: 'main' },
+      { id: 'p', projectKey: 'p', name: 'Project', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' },
+      { id: 'p2', projectKey: 'p2', name: 'A very long project name that must truncate inside the card', projectPath: '/repo/long', gitRootPath: '/repo', defaultBranch: 'main' },
     ],
 boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(options.restricted, options.prepare !== undefined, options.restrictedNext), workflow: { name: 'Harness flow', initialColumnId: 'explore', columns: [{ id: 'explore', name: 'Explore', ...(options.initialInstruction ? { onEnterPrompt: 'Start the task.' } : {}), ...(options.restrictedNext ? { allowedTransitions: transitions('apply') } : options.restricted ? { allowedTransitions: transitions('propose') } : {}) }, { id: 'propose', name: 'Propose', ...(options.restricted ? {} : { onEnterPrompt: 'Plan this task.' }) }, { id: 'apply', name: 'Apply', ...(options.prepare === undefined ? {} : { onEnterPrompt: 'Apply the plan.' }) }], groups: [{ id: 'planning', name: 'Planning', columnIds: ['explore', 'propose'] }] }, createdAt: now, updatedAt: now }],
     tasks, notes: options.notes ? [
@@ -97,13 +98,14 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
     routed.autoMode = { enabled: true };
     routed.recordedTransition = { fromColumnId: 'explore', columnId: 'done', at: now };
   }
-  if (options.extraProject) hub.projects.push({ id: 'p3', name: 'Relocation-only project', projectPath: '/repo/free', gitRootPath: '/repo', defaultBranch: 'main' });
+  if (options.schedules !== undefined) hub.schedules = structuredClone(options.schedules);
+  if (options.extraProject) hub.projects.push({ id: 'p3', projectKey: 'p3', name: 'Relocation-only project', projectPath: '/repo/free', gitRootPath: '/repo', defaultBranch: 'main' });
   options.relocation?.forEach((state, index) => {
     const project = hub.projects[index];
     if (!project || state === null || state === undefined) return;
     project.operation = {
       id: 'relocation-' + project.id,
-      request: { from: { projectPath: project.projectPath, gitRootPath: project.gitRootPath }, to: { name: project.name, projectPath: '/moved/' + project.id, gitRootPath: '/moved' } },
+      request: { from: { projectPath: requireProjectPath(project), gitRootPath: project.gitRootPath }, to: { name: project.name, projectPath: '/moved/' + project.id, gitRootPath: '/moved' } },
       phase: state,
       migratedSessionIds: [],
       started: state !== 'waiting',
@@ -112,7 +114,7 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
     };
   });
   const settings = { revision: 1, worktreeBasePath: '/worktrees' };
-  const raw: KanbanSnapshot = { sequence: 1, stateRevision: 1, attention, conversationAttention, sharing: options.sharing ?? {}, ...(options.retained === undefined ? {} : { retainedCheckouts: options.retained }), state: { hubs: [hub], settings } };
+  const raw: KanbanSnapshot = { sequence: 1, stateRevision: 1, attention, conversationAttention, sharing: options.sharing ?? {}, ...(options.retained === undefined ? {} : { retainedCheckouts: options.retained }), ...(options.scheduleRuntime === undefined ? {} : { scheduleRuntime: { hub: options.scheduleRuntime } }), state: { hubs: [hub], settings } };
   let value = withLegacy(raw);
   if ((options.hubs ?? 1) > 1) value.state.hubs.push({ id: 'hub-2', name: 'Second Hub', revision: 0, projects: [], boards: [], tasks: [], notes: [], createdAt: now, updatedAt: now });
   const listeners = new Set<(snapshot: TestSnapshot) => void>();
@@ -221,6 +223,42 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
           receipt = { kind: 'note', id };
         }
       }
+      if (command.type === 'schedule.save') {
+        const hub = value.state.hubs.find(item => item.id === command.hubId);
+        if (hub) {
+          const current = command.scheduleId === undefined ? undefined : (hub.schedules ?? []).find(item => item.id === command.scheduleId);
+          const id = current?.id ?? 'schedule-' + (commands.length + 1);
+          const schedule: HubSchedule = {
+            id, title: command.title, prompt: command.prompt, cron: command.cron, timeZone: command.timeZone, projectId: command.projectId,
+            ...(command.model === undefined ? {} : { model: command.model }),
+            newConversation: command.newConversation, archiveWhenIdle: command.newConversation ? command.archiveWhenIdle : false,
+            enabled: current?.enabled ?? true, createdAt: current?.createdAt ?? now, updatedAt: now,
+          };
+          hub.schedules = [...(hub.schedules ?? []).filter(item => item.id !== id), schedule];
+          hub.revision += 1;
+          receipt = { kind: 'schedule', id };
+        }
+      }
+      if (command.type === 'schedule.setEnabled') {
+        const hub = value.state.hubs.find(item => item.id === command.hubId);
+        const schedule = hub?.schedules?.find(item => item.id === command.scheduleId);
+        if (hub && schedule) { schedule.enabled = command.enabled; schedule.updatedAt = now; hub.revision += 1; }
+      }
+      if (command.type === 'schedule.delete') {
+        const hub = value.state.hubs.find(item => item.id === command.hubId);
+        if (hub) {
+          const found = hub.schedules?.find(item => item.id === command.scheduleId);
+          if (found) { hub.schedules = (hub.schedules ?? []).filter(item => item.id !== command.scheduleId); hub.revision += 1; receipt = { kind: 'schedule', id: found.id }; }
+        }
+      }
+      if (command.type === 'schedule.runNow') {
+        const hub = value.state.hubs.find(item => item.id === command.hubId);
+        const schedule = hub?.schedules?.find(item => item.id === command.scheduleId);
+        if (hub && schedule) {
+          const runtime = value.scheduleRuntime ?? {};
+          value.scheduleRuntime = { ...runtime, [hub.id]: { ...(runtime[hub.id] ?? {}), [schedule.id]: { running: false, lastRun: { status: 'sent', at: now, manual: true, sessionId: 's-' + schedule.id } } } };
+        }
+      }
       if (command.type === 'note.delete') {
         const hub = value.state.hubs.find(item => item.notes.some(note => note.id === command.noteId));
         if (hub !== undefined) hub.notes = hub.notes.filter(note => !(note.id === command.noteId && note.taskId === command.taskId));
@@ -239,6 +277,10 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
       return receipt ? { ...snapshot, commandReceipt: receipt } : snapshot;
     },
     branches: async () => ['main', 'feature'],
+    modelCatalog: async () => {
+      if (options.modelCatalogFailure) throw { code: 'MODEL_CATALOG_UNAVAILABLE', message: 'The model catalog is unavailable.' };
+      return { default: { provider: 'deepseek', model: 'chat' }, providers: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'chat', name: 'Chat' }, { id: 'reason', name: 'Reason' }] }], failures: [] };
+    },
     worktreeDefault: async taskId => { const task = value.state.hubs[0]!.tasks.find(item => item.id === taskId); const project = value.state.hubs[0]!.projects.find(item => item.id === task?.projectId); const branchName = taskTitleSlug(task?.title ?? 'task'); return { kind: 'derived' as const, branchName, path: defaultWorktreeDestination({ gitRootPath: project?.gitRootPath, basePath: value.state.settings?.worktreeBasePath, branchName }) }; },
     detectProject: async (pathValue: string) => options.detect === 'git'
       ? { kind: 'git' as const, projectPath: pathValue, gitRootPath: '/repo', defaultBranch: 'main' }
@@ -292,6 +334,7 @@ function clone(value: KanbanSnapshot): KanbanSnapshot {
     sharing: normalized.sharing ?? {},
     ...(normalized.sharingAuth === undefined ? {} : { sharingAuth: normalized.sharingAuth }),
     ...(normalized.retainedCheckouts === undefined ? {} : { retainedCheckouts: normalized.retainedCheckouts }),
+    ...(normalized.scheduleRuntime === undefined ? {} : { scheduleRuntime: normalized.scheduleRuntime }),
     state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } },
   });
 }
