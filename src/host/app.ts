@@ -2,14 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { canTransition, transitionAccess } from '../domain/transitions.js';
-import { nextEnteredAt } from '../domain/stage-entry.js';
+import { entryInstruction, nextEnteredAt } from '../domain/stage-entry.js';
 import { placementFromAnchor } from '../domain/placement.js';
 import { AUTO_ADVANCE_SETTLE_MS, AutoAdvanceCoordinator } from './auto-advance.js';
 import type { AutoAdvancePlan } from '../domain/auto-advance.js';
 import { admitAutoAdvance } from './auto-advance-admission.js';
 import { readPendingUserWork, withQuestionPending } from './pending-source.js';
 import type { ConversationFactsSource } from './native-facts.js';
-import type { AutoModePauseReason, BoardSettings, Command, ConversationFacts, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, RetainedCheckout, SharingCommand, SnapshotRequest, Task } from '../shared/types.js';
+import type { AutoModePauseReason, BoardSettings, Command, ConversationFacts, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, RetainedCheckout, SharingCommand, SnapshotRequest, Task, WorktreeDefaults } from '../shared/types.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionStore } from './question-storage.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
@@ -27,7 +27,8 @@ import { PendingWorkRunner } from './pending-work.js';
 import { PublishScheduler } from './publish-scheduler.js';
 import { isGitProject, requireGitProject } from '../shared/project.js';
 import { containsPath } from './git.js';
-import { taskTitleSlug, worktreePathForBranch } from '../shared/worktree-name.js';
+import { defaultWorktreeDestination, taskTitleSlug } from '../shared/worktree-name.js';
+import { prepareFirstExecution } from './first-execution.js';
 import { firstOpenSessionId } from '../shared/conversations.js';
 import { admitStageInstruction, type StageInstructionDeps } from './stage-instruction.js';
 import { requiresWorktreeDecision, unresolvedWorktreeBinding } from '../shared/worktree-decision.js';
@@ -313,9 +314,13 @@ export class KanbanApp {
   return this.snapshot({refreshAuth:true});
  }
  async branches(taskId:string):Promise<string[]>{const located=this.locatedTask(taskId);return this.git.branches(requireGitProject(located.project),located.task.sessionIds);}
- async worktreeDefault(taskId:string):Promise<{branchName:string;path:string}>{
-  const located=this.locatedTask(taskId);const project=requireGitProject(located.project);const state=this.hubs.snapshot();const basePath=state.settings.worktreeBasePath;const slug=taskTitleSlug(located.task.title);
-  const branches=await this.git.branches(project,located.task.sessionIds);const occupied=new Set<string>();
+ async worktreeDefault(taskId:string):Promise<WorktreeDefaults>{
+  const located=this.locatedTask(taskId);return this.worktreeDefaultsFor(located.task);
+ }
+ private async worktreeDefaultsFor(task:HubTask):Promise<WorktreeDefaults>{
+  const located=this.locator.byTask(task.id);invariant(located,'TASK_NOT_FOUND','Task does not exist.');
+  const project=requireGitProject(located.project);const state=this.hubs.snapshot();const basePath=state.settings.worktreeBasePath;const slug=taskTitleSlug(task.title);
+  const branches=await this.git.branches(project,task.sessionIds);const occupied=new Set<string>();
   for(const other of this.locator.summaries()){
    if(other.worktreePath)occupied.add(other.worktreePath);
    for(const pathValue of other.unclaimedWorktreePaths)occupied.add(pathValue);
@@ -323,11 +328,13 @@ export class KanbanApp {
    if(other.pendingWorktreePath)occupied.add(other.pendingWorktreePath);
   }
   for(let index=1;index<=100;index++){
-   const branchName=index===1?slug:slug+'-'+index;if(branches.includes(branchName))continue;if(!basePath)return {branchName,path:''};
-   const pathValue=worktreePathForBranch(basePath,branchName);if(!pathValue)throw new KanbanError('INVALID_WORKTREE_PATH','The task title cannot be converted into a usable worktree path.');
-   if(occupied.has(pathValue)||await pathExists(pathValue))continue;return {branchName,path:pathValue};
+   const branchName=index===1?slug:slug+'-'+index;if(branches.includes(branchName))continue;
+   const pathValue=defaultWorktreeDestination({gitRootPath:project.gitRootPath,basePath,branchName});
+   if(!pathValue)return {kind:'unavailable',reason:{code:'INVALID_WORKTREE_PATH',message:'The task title cannot be converted into a usable worktree path.'}};
+   if(occupied.has(pathValue)||await pathExists(pathValue))continue;
+   return {kind:'derived',branchName,path:pathValue,...(project.defaultBranch===undefined?{}:{sourceBranch:project.defaultBranch})};
   }
-  throw new KanbanError('WORKTREE_NAME_UNAVAILABLE','Could not derive an available worktree name from the task title.');
+  return {kind:'unavailable',reason:{code:'WORKTREE_NAME_UNAVAILABLE',message:'Could not derive an available worktree name from the task title.'}};
  }
  async detectProject(pathValue:string):Promise<ProjectLocation>{const probe=this.options.probe;invariant(probe,'PROJECT_PROBE_UNAVAILABLE','Project detection is unavailable in this host.');return probe.inspect(pathValue);}
  async localDrive(request:LocalDriveRequest):Promise<LocalDriveResult>{
@@ -409,6 +416,53 @@ export class KanbanApp {
   const store=this.hubs.hub(hubId);
   return store.createTask({...input,boardId});
  }
+ startFirstExecution(taskId:string,request:{send:boolean;columnId:string;expectedEnteredAt?:number;expectedInstruction?:string}):Promise<{sessionId:string;sent:boolean}>{
+  return this.serial(()=>this.startFirstExecutionNow(taskId,request));
+ }
+ /**
+  * One serialized creation-and-start use case for agent-created cards. Reading the
+  * board and the created entry inside the same serialization means a queued
+  * workflow save cannot leave the tool deciding from a pre-create snapshot.
+  */
+ createTaskAndStart(input:NewTask&{hubId?:string},send:boolean):Promise<{task:HubTask;firstExecution:FirstExecutionOutcome}>{
+  return this.serial(()=>this.createTaskAndStartNow(input,send));
+ }
+ private async createTaskAndStartNow(input:NewTask&{hubId?:string},send:boolean):Promise<{task:HubTask;firstExecution:FirstExecutionOutcome}>{
+  const created=await this.createTaskNow(input);const located=this.locatedTask(created.id);const board=located.board;
+  const initial=board.workflow.columns.find(column=>column.id===board.workflow.initialColumnId);
+  const instruction=entryInstruction(initial);const marker=located.task.instructionPending;
+  if(!send||initial===undefined||instruction===undefined||marker?.columnId!==initial.id){
+   return {task:located.task,firstExecution:{status:'not-applicable'}};
+  }
+  try{
+   await this.startFirstExecutionNow(created.id,{send:true,columnId:initial.id,expectedEnteredAt:marker.enteredAt,expectedInstruction:instruction});
+   return {task:this.locatedTask(created.id).task,firstExecution:{status:'sent'}};
+  }catch(error){
+   return {task:this.locatedTask(created.id).task,firstExecution:{status:'failed',error:problem(error)}};
+  }
+ }
+ /**
+  * The one application entry for an automatic first execution. The preparation
+  * creates the default worktree and the first conversation; `send` then dispatches
+  * the stage instruction through the same admission as a user run action.
+  */
+ private async startFirstExecutionNow(taskId:string,request:{send:boolean;columnId:string;expectedEnteredAt?:number;expectedInstruction?:string}):Promise<{sessionId:string;sent:boolean}>{
+  const located=this.locatedTask(taskId);const marker=located.task.instructionPending;
+  invariant(located.task.columnId===request.columnId,'TASK_MOVED','The task moved to another stage. Review the current stage before starting its first execution.');
+  invariant(marker!==undefined&&marker.columnId===request.columnId,'INSTRUCTION_ALREADY_RESOLVED','The stage entry is no longer unresolved.');
+  const columnId=request.columnId;const instruction=entryInstruction(located.board.workflow.columns.find(column=>column.id===columnId));
+  invariant(instruction!==undefined,'EMPTY_PROMPT','The stage has no entry instruction.');
+  const expectedEnteredAt=request.expectedEnteredAt??marker.enteredAt;
+  const prepared=await prepareFirstExecution({
+   locate:value=>this.locatedTask(value),
+   worktreeDefaults:value=>this.worktreeDefaultsFor(value),
+   createWorktree:async(value,draft)=>{await this.worktrees.request(value,{kind:'create',...draft});},
+   createConversation:value=>this.createConversationNow(value),
+  },{taskId,columnId,expectedEnteredAt,...(request.expectedInstruction===undefined?{}:{expectedInstruction:request.expectedInstruction})});
+  if(!request.send)return {...prepared,sent:false};
+  await admitStageInstruction(this.stageInstructionDeps(),{taskId,columnId,instruction,expectedEnteredAt,sessionId:prepared.sessionId});
+  return {...prepared,sent:true};
+ }
  saveNote(input:Extract<Command,{type:'note.save'}>){return this.serial(()=>this.saveNoteNow(input));}
  private async saveNoteNow(input:Extract<Command,{type:'note.save'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).saveNote(input.taskId,{id:input.noteId,content:input.content,tags:input.tags});}
  private async deleteNoteNow(input:Extract<Command,{type:'note.delete'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).deleteNote(input.taskId,input.noteId);}
@@ -444,6 +498,7 @@ export class KanbanApp {
    case 'project.delete':{const store=this.hubStore(command.hubId);invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the project registration.');const project=store.requireProject(command.projectId);invariant(!project.operation,'PROJECT_BUSY','Resolve the project relocation before deleting the project.');await store.deleteProject(command.projectId,command.expectedRevision);break;}
    case 'settings.save':await this.settings(command.settings,command.expectedRevision);break;
    case 'task.create':{const value=await this.createTaskNow(command);commandReceipt={kind:'task',id:value.id};break;}
+   case 'task.prepareFirstExecution':{const value=await this.startFirstExecutionNow(command.taskId,{send:false,columnId:command.columnId,expectedEnteredAt:command.expectedEnteredAt,...(command.expectedInstruction===undefined?{}:{expectedInstruction:command.expectedInstruction})});commandReceipt={kind:'conversation',id:value.sessionId};break;}
    case 'task.edit':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).editTask(command.taskId,{...(command.title!==undefined?{title:command.title}:{}),...(command.description!==undefined?{description:command.description}:{})},command.expectedRevision);break;}
    case 'conversation.create':{const id=await this.createConversationNow(command.taskId);commandReceipt={kind:'conversation',id};break;}
    case 'conversation.close':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).closeSession(command.taskId,command.sessionId);break;}

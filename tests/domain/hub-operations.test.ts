@@ -91,6 +91,17 @@ describe('Hub operations', () => {
     expect(() => operations.createTask(hub, { boardId: 'board', projectId: 'missing', title: 'No', description: '' }, deps)).toThrowError(/Project/);
   });
 
+  it('records auto mode on creation without changing the entry marker', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    hub.boards[0]!.workflow.columns[0]!.onEnterPrompt = 'Start here.';
+    const enabled = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Auto', description: '', autoMode: true }, deps);
+    expect(enabled.autoMode).toEqual({ enabled: true });
+    expect(enabled.instructionPending).toBeDefined();
+    const plain = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Plain', description: '' }, deps);
+    expect(plain.autoMode).toBeUndefined();
+    expect(() => operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Bad', description: '', autoMode: 'yes' as never }, deps)).toThrowError(/auto mode/);
+  });
+
   it('blocks deleting a project used by a task on another board', () => {
     const hub = sampleHub(); const deps = operationDeps(); const other = operations.addBoard(hub, 'Other', deps);
     operations.createTask(hub, { boardId: other.id, projectId: 'project', title: 'Task', description: '' }, deps);

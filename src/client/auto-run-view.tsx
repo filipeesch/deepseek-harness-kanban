@@ -33,15 +33,16 @@ export function CardInstructionAction({ task, column, controller, onRun }: { tas
   const instruction = entryInstruction(column);
   const seconds = useCountdown(current?.status === 'counting' ? current.deadline : null);
   if (!unresolved) return null;
+  const preparing = current?.status === 'preparing';
   const counting = current?.status === 'counting';
   const sending = current?.status === 'sending';
   const failed = current?.status === 'failed';
   const playable = instruction !== undefined;
-  const showButton = counting || sending || playable;
+  const showButton = preparing || counting || sending || playable;
   if (!showButton) return null;
   const blocked = Boolean(task.operation || (task.pendingTransition && !(task.pendingTransition.origin === 'auto' && task.pendingTransition.status === 'failed')));
-  const mode = counting ? 'counting' : sending ? 'sending' : 'play';
-  const label = counting ? 'Cancel automatic ' + column.name + ' instruction' : sending ? 'Sending ' + column.name + ' instruction' : 'Run ' + column.name + ' instruction';
+  const mode = preparing ? 'preparing' : counting ? 'counting' : sending ? 'sending' : 'play';
+  const label = preparing ? 'Preparing ' + column.name + ' instruction' : counting ? 'Cancel automatic ' + column.name + ' instruction' : sending ? 'Sending ' + column.name + ' instruction' : 'Run ' + column.name + ' instruction';
   const marker = task.instructionPending!;
   const input: AutoRunInput = { taskId: task.id, columnId: column.id, enteredAt: marker.enteredAt, instruction: instruction ?? '' };
   const activate = mode === 'counting'
@@ -54,13 +55,13 @@ export function CardInstructionAction({ task, column, controller, onRun }: { tas
       type="button"
       className={'kb-button ' + (counting ? 'kb-card-countdown' : 'kb-card-action' + (mode === 'play' ? ' kb-icon-button' : ''))}
       aria-label={label}
-      aria-busy={sending ? true : undefined}
-      aria-disabled={sending ? true : undefined}
-      title={counting ? 'Cancel the automatic ' + column.name + ' instruction.' : sending ? 'The ' + column.name + ' instruction is being admitted.' : 'Run ' + column.name + ' instruction in the first open conversation'}
-      disabled={mode === 'play' && blocked}
+      aria-busy={sending || preparing ? true : undefined}
+      aria-disabled={sending || preparing ? true : undefined}
+      title={preparing ? 'Preparing the first execution for the ' + column.name + ' instruction.' : counting ? 'Cancel the automatic ' + column.name + ' instruction.' : sending ? 'The ' + column.name + ' instruction is being admitted.' : 'Run ' + column.name + ' instruction in the first open conversation'}
+      disabled={preparing || (mode === 'play' && blocked)}
       onClick={() => activate?.()}
     >
-      {counting ? <>
+      {preparing ? '…' : counting ? <>
         <span className="kb-countdown-bar" aria-hidden="true" style={{ width: Math.max(0, Math.min(100, (seconds / (AUTO_RUN_DELAY_MS / 1000)) * 100)) + '%' }} />
         <span className="kb-countdown-label">{seconds}s</span>
         <span className="kb-countdown-cancel" aria-hidden="true">×</span>
@@ -80,6 +81,9 @@ export function DrawerAutoRunNotice({ task, controller, columns, sessionTitles }
   const stage = column?.name ?? entry.columnId;
   const open = firstOpenSessionId(task);
   const target = open === undefined ? 'a new conversation' : conversationLabel(task, open, sessionTitles);
+  if (entry.status === 'preparing') return <div className="kb-drawer-autorun kb-drawer-autorun-preparing" data-status="preparing">
+    <p role="status">Preparing the first execution for the {stage} instruction…</p>
+  </div>;
   if (entry.status === 'failed') return <div className="kb-drawer-autorun kb-drawer-autorun-failed" data-status="failed">
     <p role="alert"><strong>Automatic {stage} instruction failed</strong><span>{entry.error?.message ?? RUN_FAILURE_FALLBACK}</span></p>
   </div>;

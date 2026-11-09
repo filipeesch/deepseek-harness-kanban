@@ -24,7 +24,7 @@ describe('unclaimed checkout recovery metadata', () => {
     for (const entry of unclaimed) { expect(within(notice).getByText(entry.path)).toBeTruthy(); expect(within(notice).getByText(entry.branch)).toBeTruthy(); expect(within(notice).getByText(entry.error.message)).toBeTruthy(); }
     expect(within(notice).getByText(/not the task's active worktree/)).toBeTruthy(); expect(within(notice).getByText(/will not be attached or removed automatically/)).toBeTruthy();
     expect(within(notice).queryAllByRole('button')).toHaveLength(0); expect(within(notice).queryAllByRole('link')).toHaveLength(0);
-    expect(screen.queryByRole('button', { name: 'Remove worktree' })).toBeNull(); expect((screen.getByRole('textbox', { name: 'Worktree path' }) as HTMLInputElement).value).toBe(''); expect(mock.command).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Remove worktree' })).toBeNull(); expect((screen.getByRole('textbox', { name: 'Worktree path' }) as HTMLInputElement).value).toBe('/repo-alpha-task'); expect(mock.command).not.toHaveBeenCalled();
   });
 
   it.each([false, true])('warns that unclaimed checkouts remain on disk and uses only the %s active target for deletion', async hasActive => {

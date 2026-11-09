@@ -7,6 +7,7 @@ import type { DirectoryPickerPort } from './directory-picker.js';
 import { TaskDrawer } from './drawer.js';
 import type { SessionTitles } from './conversation-label.js';
 import type { ConversationLeaseEnvironment } from './conversation-leases.js';
+import { entryInstruction } from '../domain/stage-entry.js';
 import { AutoRunController } from './auto-run.js';
 import { BoardCard } from './board-card.js';
 import { BoardHeader } from './board/board-header.js';
@@ -188,6 +189,23 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     const entering = selectedIdRef.current === null && !prefersReducedMotion();
     setDrawerClosing(false); setDrawerEntering(entering); setSelectedId(taskId);
   }, [setDrawerClosing, setDrawerEntering, setSelectedId]);
+  // Creation opens the drawer immediately; an instructed initial stage then prepares
+  // the first execution and arms the countdown through the existing controller.
+  const startCreatedTask = useCallback((taskId: string, options: { start: boolean }) => {
+    openTask(taskId);
+    if (!options.start) return;
+    const current = latest.current;
+    if (!current) return;
+    const task = current.state.hubs.flatMap(hub => hub.tasks).find(value => value.id === taskId);
+    if (!task) return;
+    const board = current.state.hubs.flatMap(hub => hub.boards).find(value => value.id === task.boardId);
+    const instruction = entryInstruction(board?.workflow.columns.find(value => value.id === task.columnId));
+    const marker = task.instructionPending;
+    if (instruction === undefined || marker?.columnId !== task.columnId) return;
+    void autoRun.prepare({ taskId, columnId: task.columnId, enteredAt: marker.enteredAt, instruction }, async () => {
+      await runRef.current({ type: 'task.prepareFirstExecution', taskId, columnId: task.columnId, expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
+    });
+  }, [openTask, autoRun]);
   // The open drawer's conversations are resolved before historical ones; the response is
   // a hint-only snapshot, so opening a drawer never waits for conversation history.
   useEffect(() => {
@@ -395,7 +413,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       })()}
       {batchConfirm && <BulkDeleteDialog tasks={batchTasks} attention={snapshot?.attention ?? {}} onCancel={() => setBatchConfirm(false)} onConfirm={deleteSelected} />}
     </>}
-    <BoardCreationDialogs boardState={state} hub={activeHub} board={activeBoard} run={run} newTask={newTask} newHub={newHub} newBoard={newBoard} onCloseNewTask={() => setNewTask(false)} onCloseNewHub={() => setNewHub(false)} onCloseNewBoard={() => setNewBoard(false)} onTaskCreated={openTask} onHubCreated={id => { setActiveHubIdState(id); writeStorage(ACTIVE_HUB_KEY, id); setNewHub(false); }} onBoardCreated={id => { if (activeHub) selectBoard(activeHub.id, id); setNewBoard(false); }} />
+    <BoardCreationDialogs boardState={state} hub={activeHub} board={activeBoard} run={run} newTask={newTask} newHub={newHub} newBoard={newBoard} onCloseNewTask={() => setNewTask(false)} onCloseNewHub={() => setNewHub(false)} onCloseNewBoard={() => setNewBoard(false)} onTaskCreated={startCreatedTask} onHubCreated={id => { setActiveHubIdState(id); writeStorage(ACTIVE_HUB_KEY, id); setNewHub(false); }} onBoardCreated={id => { if (activeHub) selectBoard(activeHub.id, id); setNewBoard(false); }} />
     {moves.overrideDialog && <div hidden={preparation.dialog !== null}>{moves.overrideDialog}</div>}
     {preparation.dialog}
   </section></DirectoryPickerProvider>;

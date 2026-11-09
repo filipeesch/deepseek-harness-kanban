@@ -1,7 +1,7 @@
 import React from 'react';
 import type { Board, BoardState, HubState, KanbanSnapshot } from '../../shared/types.js';
 import { CreateBoardDialog, CreateHubDialog } from '../create-dialogs.js';
-import { NewTaskDialog } from '../forms.js';
+import { NewTaskDialog, type CreatedTaskOptions } from '../forms.js';
 import type { RunCommand } from '../ui.js';
 
 export interface BoardCreationDialogsProps {
@@ -15,7 +15,7 @@ export interface BoardCreationDialogsProps {
   onCloseNewTask: () => void;
   onCloseNewHub: () => void;
   onCloseNewBoard: () => void;
-  onTaskCreated: (taskId: string) => void;
+  onTaskCreated: (taskId: string, options: CreatedTaskOptions) => void;
   onHubCreated: (hubId: string) => void;
   onBoardCreated: (boardId: string) => void;
 }

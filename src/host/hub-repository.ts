@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { AutoModePause, Board, BoardSettings, HubState, HubTask, KanbanMeta, KanbanState, Note, Project, ProjectInput, Workflow } from '../shared/types.js';
+import type { AutoModePause, Board, BoardSettings, HubState, HubTask, KanbanMeta, KanbanState, NewTask, Note, Project, ProjectInput, Workflow } from '../shared/types.js';
 import type { HubStorage } from '../shared/ports.js';
 import { HubStateSchema, initialHubState, defaultHubState } from '../domain/hub-schema.js';
 import type { NoteInput, OperationDeps, TaskTextPatch } from '../domain/hub-operations.js';
@@ -475,7 +475,7 @@ export class HubStore {
   async setTaskWorktreeWorkspace(taskId: string, workspaceId: string, owned: boolean): Promise<HubTask> {
     return this.transact(draft => operations.setTaskWorktreeWorkspace(draft, taskId, workspaceId, owned, this.deps()));
   }
-  async createTask(input: { projectId: string; title: string; description: string; boardId?: string }): Promise<HubTask> {
+  async createTask(input: NewTask): Promise<HubTask> {
     return this.transact(draft => {
       const boardId = input.boardId ?? draft.boards[0]?.id;
       invariant(boardId, 'BOARD_NOT_FOUND', 'The Hub has no board.');

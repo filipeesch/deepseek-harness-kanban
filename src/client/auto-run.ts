@@ -25,7 +25,7 @@ export interface AutoRunInput {
   instruction: string;
 }
 
-export type AutoRunStatus = 'counting' | 'sending' | 'failed';
+export type AutoRunStatus = 'preparing' | 'counting' | 'sending' | 'failed';
 
 export interface AutoRunEntry extends AutoRunInput {
   deadline: number | null;
@@ -97,11 +97,40 @@ export class AutoRunController {
     this.remove(taskId);
   };
 
+  /**
+   * Prepare a created task's first execution; arm the countdown only after the
+   * preparation resolves. A failure is recorded for the card and the drawer.
+   */
+  prepare = async (input: AutoRunInput, prepare: () => Promise<void>): Promise<void> => {
+    if (this.disposed) return;
+    this.clearTimer(input.taskId);
+    this.commit({ ...input, deadline: null, status: 'preparing' });
+    try {
+      await prepare();
+      if (this.disposed) return;
+      const current = this.entries[input.taskId];
+      if (!current || current.status !== 'preparing' || current.columnId !== input.columnId || current.enteredAt !== input.enteredAt) return;
+      this.arm(input);
+    } catch (error) {
+      if (this.disposed) return;
+      const current = this.entries[input.taskId];
+      if (!current || current.status !== 'preparing' || current.columnId !== input.columnId || current.enteredAt !== input.enteredAt) return;
+      this.recordFailure(input, asProblem(error));
+    }
+  };
+
+  /** Record a failed first-execution preparation without arming a timer. */
+  recordFailure = (input: AutoRunInput, failure: Problem): void => {
+    if (this.disposed) return;
+    this.clearTimer(input.taskId);
+    this.commit({ ...input, deadline: null, status: 'failed', error: failure });
+  };
+
   /** Cancel a pending window and execute immediately through the shared path. */
   runNow = async (input: AutoRunInput): Promise<KanbanSnapshot | null> => {
     if (this.disposed) return null;
     const current = this.entries[input.taskId];
-    if (current?.status === 'sending') return null;
+    if (current?.status === 'sending' || current?.status === 'preparing') return null;
     this.clearTimer(input.taskId);
     this.commit({ ...input, deadline: null, status: 'sending' });
     return this.execute(input);

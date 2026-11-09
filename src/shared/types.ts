@@ -1,3 +1,7 @@
+import type { NewTask } from './task-creation.js';
+
+export type { NewTask };
+
 export const DATA_VERSION = 2 as const;
 export interface Problem { code: string; message: string; details?: Record<string, unknown> }
 /** One project location as it is recorded before, and applied as, a relocation target. */
@@ -36,6 +40,15 @@ export interface ColumnGroup { id: string; name: string; columnIds: string[] }
 export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[]; /** Absent means the board opens the column board. */ defaultView?: WorkflowView }
 export interface Worktree { path: string; branch: string; owned: boolean; status: 'preparing' | 'ready' | 'error'; error?: Problem }
 export interface CreateWorktree { mode: 'new' | 'existing'; path: string; branchName: string; sourceBranch?: string }
+/**
+ * The host-derived default for a new worktree. `unavailable` is a real derivation
+ * failure (an invalid path or exhausted names), never an unconfigured base path.
+ */
+export type WorktreeDefaults =
+  | { kind: 'derived'; branchName: string; path: string; sourceBranch?: string }
+  | { kind: 'unavailable'; reason: Problem };
+/** The outcome of a tool-created task's automatic first execution. */
+export interface FirstExecutionOutcome { status: 'not-applicable' | 'sent' | 'failed'; error?: Problem }
 export type OperationRequest =
   | ({ kind: 'create' } & CreateWorktree)
   | { kind: 'attach'; path: string }
@@ -253,7 +266,6 @@ export interface SnapshotRequest {
 export interface KanbanSnapshot extends Omit<HostSnapshot, 'conversations' | 'state'> { state: KanbanState; attention: Record<string, Attention>; conversationAttention: Record<string, Attention>; clientEpoch?: number }
 export const EMPTY_ATTENTION: Attention = { running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
 export interface ProjectInput { id?: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string }
-export interface NewTask { projectId: string; title: string; description: string; boardId?: string }
 export type Command =
   | { type: 'hub.create'; name: string }
   | { type: 'hub.rename'; hubId: string; name: string; expectedRevision?: number }
@@ -276,6 +288,7 @@ export type Command =
   /** An omitted `columnId` clears the recording. */
   | { type: 'task.recordTransition'; hubId?: string; taskId: string; columnId?: string }
   | { type: 'task.runInstruction'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction: string }
+  | { type: 'task.prepareFirstExecution'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction?: string }
   | { type: 'conversation.create'; hubId?: string; taskId: string }
   | { type: 'conversation.close' | 'conversation.reopen'; hubId?: string; taskId: string; sessionId: string }
   | { type: 'task.delete'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; force?: boolean }
@@ -294,7 +307,7 @@ export interface ClientApi {
   sharing(command: SharingCommand): Promise<KanbanSnapshot>;
   localDrive(request: LocalDriveRequest): Promise<LocalDriveResult>;
   branches(taskId: string): Promise<string[]>;
-  worktreeDefault(taskId: string): Promise<{ branchName: string; path: string }>;
+  worktreeDefault(taskId: string): Promise<WorktreeDefaults>;
   detectProject(path: string): Promise<ProjectLocation>;
   subscribe(listener: (snapshot: KanbanSnapshot) => void): () => void;
 }

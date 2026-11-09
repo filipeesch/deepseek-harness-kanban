@@ -1,5 +1,5 @@
 import type { Project, Task } from '../../shared/types.js';
-import { requiresWorktreeDecision, unresolvedWorktreeBinding } from '../../shared/worktree-decision.js';
+import { planFirstExecution } from '../../domain/first-execution.js';
 
 /** The worktree part of a preparation: ask, blocked by a binding, or nothing. */
 export type PreparationWorktree = 'ask' | 'blocked' | 'none';
@@ -27,9 +27,8 @@ export function executionPreparationPlan(
   project: Project | undefined,
   modelSeatAvailable: boolean,
 ): ExecutionPreparationPlan | null {
-  if (task.sessionIds.length > 0) return null;
-  if (unresolvedWorktreeBinding(task, project)) return { worktree: 'blocked', model: false };
-  const worktree: PreparationWorktree = requiresWorktreeDecision(task, project) ? 'ask' : 'none';
-  if (worktree === 'none' && !modelSeatAvailable) return null;
-  return { worktree, model: modelSeatAvailable };
+  const plan = planFirstExecution({ task, project, modelSeatAvailable, mode: 'interactive' });
+  if (plan === null) return null;
+  const worktree: PreparationWorktree = plan.worktree === 'ask' ? 'ask' : plan.worktree === 'blocked' ? 'blocked' : 'none';
+  return { worktree, model: plan.model };
 }

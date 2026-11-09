@@ -1,4 +1,4 @@
-import type { CreateWorktree, Problem, Project } from '../../shared/types.js';
+import type { CreateWorktree, Problem, Project, WorktreeDefaults } from '../../shared/types.js';
 import { asProblem } from '../problem.js';
 import { cleanWorktree, validWorktree } from '../worktree-draft.js';
 import type { PreparationRequest } from './contract.js';
@@ -6,7 +6,7 @@ import { executionPreparationPlan, type PreparationWorktree } from './gate.js';
 
 /** Everything the controller needs from the host, the board, and the native seat. */
 export interface PreparationPorts {
-  defaults(taskId: string): Promise<{ branchName: string; path: string }>;
+  defaults(taskId: string): Promise<WorktreeDefaults>;
   createWorktree(taskId: string, draft: CreateWorktree): Promise<void>;
   dismissWorktree(taskId: string): Promise<void>;
   /** Creates the task's first conversation and returns its native session identity. */
@@ -181,7 +181,11 @@ export class ExecutionPreparationController {
     try {
       const defaults = await this.ports.defaults(request.task.id);
       if (generation !== this.generation) return;
-      const draft: CreateWorktree = { mode: 'new', branchName: defaults.branchName, path: defaults.path, sourceBranch: this.project?.defaultBranch ?? '' };
+      if (defaults.kind === 'unavailable') {
+        this.set({ pending: false, draft: null, destinationMissing: true, error: defaults.reason, failedStep: null });
+        return;
+      }
+      const draft: CreateWorktree = { mode: 'new', branchName: defaults.branchName, path: defaults.path, sourceBranch: defaults.sourceBranch ?? this.project?.defaultBranch ?? '' };
       this.set({ pending: false, draft, destinationMissing: !validWorktree(draft), error: null, failedStep: null });
     } catch (failure) {
       if (generation !== this.generation) return;

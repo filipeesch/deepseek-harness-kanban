@@ -3,7 +3,9 @@ import { createTypertContribution } from './sdk/typert.js';
 import type { RemoteResult, RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol';
 import type { TypertContribution } from '@deepseek-ai/dsh-typert-registry';
 import { KanbanStateSchema } from './domain/hub-schema.js';
-import type { Command, DriveBrowseView, DriveDiscoveryView, HostSnapshot, HubSharingView, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingAuthView, SharingCommand, SnapshotRequest } from './shared/types.js';
+import { problem } from './domain/schema-parts.js';
+import { newTaskSchema } from './shared/task-creation.js';
+import type { Command, DriveBrowseView, DriveDiscoveryView, HostSnapshot, HubSharingView, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingAuthView, SharingCommand, SnapshotRequest, WorktreeDefaults } from './shared/types.js';
 import { SHARING_STORAGES } from './shared/types.js';
 export const PACKAGE_NAME = 'dsh-kanban';
 const id=z.string().min(1).max(200);
@@ -15,7 +17,7 @@ const boardId=id.optional();
 const projectLocation=z.discriminatedUnion('kind',[z.object({kind:z.literal('git'),projectPath:z.string(),gitRootPath:z.string(),defaultBranch:z.string().optional()}).strict(),z.object({kind:z.literal('folder'),projectPath:z.string()}).strict()]);
 const tree={mode:z.enum(['new','existing']),path:z.string().min(1),branchName:z.string().min(1),sourceBranch:z.string().optional()};
 const boardSettings=z.object({worktreeBasePath:z.string().optional()}).strict();
-const worktreeDefault=z.object({branchName:z.string().min(1),path:z.string()}).strict();
+const worktreeDefault=z.discriminatedUnion('kind',[z.object({kind:z.literal('derived'),branchName:z.string().min(1),path:z.string().min(1),sourceBranch:z.string().optional()}).strict(),z.object({kind:z.literal('unavailable'),reason:problem}).strict()]);
 export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('hub.create'),name:z.string().min(1)}).strict(),
  z.object({type:z.literal('hub.rename'),hubId:id,name:z.string().min(1),expectedRevision:revision}).strict(),
@@ -30,11 +32,12 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('project.relocationCancel'),hubId,projectId:id}).strict(),
  z.object({type:z.literal('project.delete'),hubId,projectId:id,confirmed:z.boolean(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('settings.save'),settings:boardSettings,expectedRevision:revision}).strict(),
- z.object({type:z.literal('task.create'),hubId,boardId,projectId:id,title:z.string().min(1),description:z.string()}).strict(),
+ newTaskSchema.extend({type:z.literal('task.create'),hubId}).strict(),
  z.object({type:z.literal('task.edit'),hubId,taskId:id,title:z.string().optional(),description:z.string().optional(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('task.move'),hubId,taskId:id,columnId:id,beforeTaskId:id.nullable().optional(),overrideTransition:z.boolean().optional()}).strict(),
  z.object({type:z.literal('task.autoMode'),hubId,taskId:id,enabled:z.boolean()}).strict(),
  z.object({type:z.literal('task.runInstruction'),hubId,taskId:id,columnId:id,expectedEnteredAt:z.number().finite(),expectedInstruction:z.string()}).strict(),
+ z.object({type:z.literal('task.prepareFirstExecution'),hubId,taskId:id,columnId:id,expectedEnteredAt:z.number().finite(),expectedInstruction:z.string().optional()}).strict(),
  z.object({type:z.literal('conversation.create'),hubId,taskId:id}).strict(),
  z.object({type:z.enum(['conversation.close','conversation.reopen']),hubId,taskId:id,sessionId:id}).strict(),
  z.object({type:z.literal('task.delete'),hubId,taskId:id,confirmed:z.boolean(),expectedWorktreePath:z.string().nullable(),discardChanges:z.boolean().optional(),force:z.boolean().optional()}).strict(),
@@ -134,7 +137,7 @@ export interface KanbanRemote {
  command(request:Command):Promise<RemoteResult<Outcome<HostSnapshot>>>;
  sharing(request:SharingCommand):Promise<RemoteResult<Outcome<HostSnapshot>>>;
  branches(request:{taskId:string}):Promise<RemoteResult<Outcome<string[]>>>;
- worktreeDefault(request:{taskId:string}):Promise<RemoteResult<Outcome<{branchName:string;path:string}>>>;
+ worktreeDefault(request:{taskId:string}):Promise<RemoteResult<Outcome<WorktreeDefaults>>>;
  detectProject(request:{path:string}):Promise<RemoteResult<Outcome<ProjectLocation>>>;
  localDrive(request:LocalDriveRequest):Promise<RemoteResult<Outcome<LocalDriveResult>>>;
  dismissQuestions(request:{sessionId:string;roundId:string}):Promise<RemoteResult<Outcome<QuestionRound[]>>>;

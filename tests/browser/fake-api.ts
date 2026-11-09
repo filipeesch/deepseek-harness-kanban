@@ -1,8 +1,8 @@
 import type { BoardState, ClientApi, Command, DriveBrowseView, DriveDiscoveryView, HubSharingView, HubState, HubTask, KanbanSnapshot, KanbanState, LocalDriveRequest, LocalDriveResult, Note, SharingCommand } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
-import { taskTitleSlug, worktreePathForBranch } from '../../src/shared/worktree-name.js';
-import { applyMove, applyRunInstruction, createEnteredAtSource } from '../support/in-memory-board.js';
+import { defaultWorktreeDestination, taskTitleSlug } from '../../src/shared/worktree-name.js';
+import { applyInitialEntry, applyMove, applyRunInstruction, createEnteredAtSource } from '../support/in-memory-board.js';
 import { transitions } from '../support/transition-rules.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 
@@ -16,7 +16,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { recorded?: boolean; staleRoute?: boolean; attention?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error' }
+export interface HarnessOptions { recorded?: boolean; staleRoute?: boolean; attention?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error' }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -75,7 +75,7 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
       { id: 'p', name: 'Project', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' },
       { id: 'p2', name: 'A very long project name that must truncate inside the card', projectPath: '/repo/long', gitRootPath: '/repo', defaultBranch: 'main' },
     ],
-    boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(options.restricted, options.prepare !== undefined, options.restrictedNext), workflow: { name: 'Harness flow', initialColumnId: 'explore', columns: [{ id: 'explore', name: 'Explore', ...(options.restrictedNext ? { allowedTransitions: transitions('apply') } : options.restricted ? { allowedTransitions: transitions('propose') } : {}) }, { id: 'propose', name: 'Propose', ...(options.restricted ? {} : { onEnterPrompt: 'Plan this task.' }) }, { id: 'apply', name: 'Apply', ...(options.prepare === undefined ? {} : { onEnterPrompt: 'Apply the plan.' }) }], groups: [{ id: 'planning', name: 'Planning', columnIds: ['explore', 'propose'] }] }, createdAt: now, updatedAt: now }],
+boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(options.restricted, options.prepare !== undefined, options.restrictedNext), workflow: { name: 'Harness flow', initialColumnId: 'explore', columns: [{ id: 'explore', name: 'Explore', ...(options.initialInstruction ? { onEnterPrompt: 'Start the task.' } : {}), ...(options.restrictedNext ? { allowedTransitions: transitions('apply') } : options.restricted ? { allowedTransitions: transitions('propose') } : {}) }, { id: 'propose', name: 'Propose', ...(options.restricted ? {} : { onEnterPrompt: 'Plan this task.' }) }, { id: 'apply', name: 'Apply', ...(options.prepare === undefined ? {} : { onEnterPrompt: 'Apply the plan.' }) }], groups: [{ id: 'planning', name: 'Planning', columnIds: ['explore', 'propose'] }] }, createdAt: now, updatedAt: now }],
     tasks, notes: options.notes ? [
       { id: 'n1', taskId: 'short', content: 'Design note with **bold** text', tags: ['design'], createdAt: now, updatedAt: now },
       { id: 'n2', taskId: 'short', content: 'Todo note', tags: ['todo'], createdAt: now, updatedAt: now },
@@ -186,6 +186,22 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
         const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);
         if (task) { if (command.enabled) task.autoMode = { enabled: true }; else delete task.autoMode; }
       }
+      if (command.type === 'task.create') {
+        const id = 't-created-' + commands.length;
+        const created = { ...task(id, command.title, firstBoard.workflow.initialColumnId, 0), projectId: command.projectId, boardId: firstBoard.id, description: command.description, sessionIds: [], ...(command.autoMode === true ? { autoMode: { enabled: true } } : {}) };
+        applyInitialEntry({ schemaVersion: 2, revision: firstHub.revision, workflowYaml: firstBoard.workflowYaml, workflow: firstBoard.workflow, projects: firstHub.projects, tasks: firstHub.tasks, notes: firstHub.notes }, created, nextEnteredAt);
+        firstHub.tasks.push(created);
+        receipt = { kind: 'task', id };
+      }
+      if (command.type === 'task.prepareFirstExecution') {
+        const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);
+        const hub = task ? value.state.hubs.find(item => item.tasks.some(candidate => candidate.id === task.id)) : undefined;
+        const project = task ? hub?.projects.find(item => item.id === task.projectId) : undefined;
+        if (task) {
+          if (project?.gitRootPath && task.worktree === null && task.worktreeDismissed !== true) { task.worktree = { path: '/worktrees/' + task.id, branch: task.title, owned: true, status: 'ready' }; task.effectiveCwd = task.worktree.path; }
+          if (task.sessionIds.length === 0) { const id = 's-created-' + commands.length; task.sessionIds.push(id); receipt = { kind: 'conversation', id }; }
+        }
+      }
       if (command.type === 'worktree.create') { const task = firstHub.tasks.find(item => item.id === command.taskId); if (task) { task.worktree = { path: command.path, branch: command.branchName, owned: true, status: 'ready' }; task.effectiveCwd = command.path; } }
       if (command.type === 'worktree.dismiss') { const task = firstHub.tasks.find(item => item.id === command.taskId); if (task) task.worktreeDismissed = true; }
       if (command.type === 'conversation.create') {
@@ -223,7 +239,7 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
       return receipt ? { ...snapshot, commandReceipt: receipt } : snapshot;
     },
     branches: async () => ['main', 'feature'],
-    worktreeDefault: async taskId => { const task = value.state.hubs[0]!.tasks.find(item => item.id === taskId); const branchName = taskTitleSlug(task?.title ?? 'task'); return { branchName, path: worktreePathForBranch(value.state.settings.worktreeBasePath, branchName) }; },
+    worktreeDefault: async taskId => { const task = value.state.hubs[0]!.tasks.find(item => item.id === taskId); const project = value.state.hubs[0]!.projects.find(item => item.id === task?.projectId); const branchName = taskTitleSlug(task?.title ?? 'task'); return { kind: 'derived' as const, branchName, path: defaultWorktreeDestination({ gitRootPath: project?.gitRootPath, basePath: value.state.settings?.worktreeBasePath, branchName }) }; },
     detectProject: async (pathValue: string) => options.detect === 'git'
       ? { kind: 'git' as const, projectPath: pathValue, gitRootPath: '/repo', defaultBranch: 'main' }
       : { kind: 'folder' as const, projectPath: pathValue },

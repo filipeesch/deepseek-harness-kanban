@@ -452,4 +452,13 @@ describe('board settings', () => {
     const store = await BoardStore.open(storage);
     expect(store.snapshot().settings).toBeUndefined();
   });
+
+  it('records auto mode at creation and rejects a non-boolean value', async () => {
+    const { store } = await fixture();
+    const enabled = await store.createTask({ ...newTask, autoMode: true });
+    expect(enabled.autoMode).toEqual({ enabled: true });
+    const plain = await store.createTask(newTask);
+    expect(plain.autoMode).toBeUndefined();
+    await expect(store.createTask({ ...newTask, autoMode: 'yes' } as never)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+  });
 });

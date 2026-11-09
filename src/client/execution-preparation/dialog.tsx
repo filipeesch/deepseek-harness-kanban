@@ -45,7 +45,7 @@ export function ExecutionPreparationDialog({ state, controller, seat }: Executio
           : 'Moving this card to ' + state.stageName + ' starts the task\'s first execution. Create an isolated worktree for it, or continue in the base project.'}</p>
         <p>Create a worktree for this task?</p>
         {state.pending && <p className="kb-hint" role="status">Resolving the worktree defaults…</p>}
-        {!state.pending && state.destinationMissing && <p className="kb-hint" role="note">No worktree destination can be derived. Configure a worktree base path before creating a worktree.</p>}
+        {!state.pending && state.destinationMissing && <p className="kb-hint" role="note">No worktree destination can be derived for this task. Review the current values in the Git section.</p>}
         <ProblemNotice problem={state.error} title="The worktree defaults need attention" />
         <div className="kb-actions">
           <button type="button" className="kb-button" data-kb-initial-focus disabled={busy} onClick={close}>Cancel</button>
