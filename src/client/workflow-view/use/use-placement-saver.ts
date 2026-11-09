@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef } from 'react';
-import type { StagePosition, StageSize, Workflow } from '../../../shared/types.js';
+import type { ConnectionLayout, StagePosition, StageSize, Workflow } from '../../../shared/types.js';
 import { readStagePositions, setStagePositions, type StagePositions } from '../../../domain/workflow-positions.js';
 import { readStageSizes, setStageSizes, type StageSizes } from '../../../domain/workflow-sizes.js';
+import { readConnections, setConnections, type ConnectionLayouts } from '../../../domain/workflow-connections.js';
 import { sameStageSize } from '../../../domain/stage-size.js';
+import { samePosition } from '../../../domain/stage-position.js';
+import { sameConnectionLayout } from '../../../domain/connection-anchor.js';
 import type { RunCommand } from '../../ui.js';
 
 /** How long a layout edit waits before it stores the workflow; one edit, one save. */
@@ -13,16 +16,20 @@ export interface PlacementSaver {
   readonly desiredPositions: React.MutableRefObject<Record<string, StagePosition>>;
   /** The sizes this view intends to persist. */
   readonly desiredSizes: React.MutableRefObject<Record<string, StageSize>>;
+  /** The connection layout this view intends to persist. */
+  readonly desiredConnections: React.MutableRefObject<Record<string, ConnectionLayout>>;
   intendPositions(positions: StagePositions): void;
   intendSizes(sizes: StageSizes): void;
+  intendConnections(connections: ConnectionLayouts): void;
   queueSave(): void;
   saveNow(): void;
   cancelTimer(): void;
 }
 
-function samePosition(left: StagePosition | undefined, right: StagePosition | undefined): boolean {
-  if (left === undefined || right === undefined) return left === right;
-  return left.x === right.x && left.y === right.y;
+/** One authored layout field: how two values are compared and how the intended record is normalized. */
+interface LayoutField<V> {
+  readonly same: (left: V | undefined, right: V | undefined) => boolean;
+  readonly record: (values: Record<string, V | undefined>) => Record<string, V>;
 }
 
 function positionRecord(positions: StagePositions): Record<string, StagePosition> {
@@ -34,6 +41,46 @@ function positionRecord(positions: StagePositions): Record<string, StagePosition
 function sizeRecord(sizes: StageSizes): Record<string, StageSize> {
   const next: Record<string, StageSize> = Object.create(null) as Record<string, StageSize>;
   for (const [id, size] of Object.entries(sizes)) if (size !== undefined) next[id] = { width: size.width, height: size.height };
+  return next;
+}
+
+function connectionRecord(connections: ConnectionLayouts): Record<string, ConnectionLayout> {
+  const next: Record<string, ConnectionLayout> = Object.create(null) as Record<string, ConnectionLayout>;
+  for (const [id, layout] of Object.entries(connections)) if (layout !== undefined) next[id] = layout;
+  return next;
+}
+
+const positions: LayoutField<StagePosition> = { same: samePosition, record: positionRecord };
+const sizes: LayoutField<StageSize> = { same: sameStageSize, record: sizeRecord };
+const connections: LayoutField<ConnectionLayout> = { same: sameConnectionLayout, record: connectionRecord };
+
+/** One layout as the view intends it: every field at once. */
+interface LayoutValues {
+  readonly positions: Record<string, StagePosition>;
+  readonly sizes: Record<string, StageSize>;
+  readonly connections: Record<string, ConnectionLayout>;
+}
+
+function readLayout(workflow: Workflow): LayoutValues {
+  return { positions: readStagePositions(workflow), sizes: readStageSizes(workflow), connections: readConnections(workflow) };
+}
+
+function writeLayout(text: string, values: LayoutValues): string {
+  return setConnections(setStageSizes(setStagePositions(text, values.positions), values.sizes), values.connections);
+}
+
+/**
+ * Rebase one field: start from the newly acknowledged values and carry over only
+ * the entries this view changed, so a concurrent edit survives a pending save.
+ */
+function rebaseField<V>(field: LayoutField<V>, fresh: Readonly<Record<string, V>>, adopted: Readonly<Record<string, V>>, desired: Readonly<Record<string, V>>): Record<string, V> {
+  const next: Record<string, V> = { ...fresh };
+  for (const id of new Set([...Object.keys(adopted), ...Object.keys(desired)])) {
+    if (field.same(desired[id], adopted[id])) continue;
+    const wanted = desired[id];
+    if (wanted === undefined) delete next[id];
+    else next[id] = wanted;
+  }
   return next;
 }
 
@@ -69,17 +116,27 @@ export function usePlacementSaver(input: PlacementSaverInput): PlacementSaver {
   const desiredYaml = useRef<string | null>(null);
   const desiredPositions = useRef<Record<string, StagePosition>>(Object.create(null) as Record<string, StagePosition>);
   const desiredSizes = useRef<Record<string, StageSize>>(Object.create(null) as Record<string, StageSize>);
+  const desiredConnections = useRef<Record<string, ConnectionLayout>>(Object.create(null) as Record<string, ConnectionLayout>);
   const adoptedPositions = useRef<Record<string, StagePosition>>(Object.create(null) as Record<string, StagePosition>);
   const adoptedSizes = useRef<Record<string, StageSize>>(Object.create(null) as Record<string, StageSize>);
+  const adoptedConnections = useRef<Record<string, ConnectionLayout>>(Object.create(null) as Record<string, ConnectionLayout>);
   const boardRef = useRef(input.boardId);
   const sentYaml = useRef<string | null>(null);
   const saving = useRef(false);
   const queued = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const adopt = useCallback((values: LayoutValues) => {
+    desiredPositions.current = values.positions;
+    desiredSizes.current = values.sizes;
+    desiredConnections.current = values.connections;
+    adoptedPositions.current = { ...values.positions };
+    adoptedSizes.current = { ...values.sizes };
+    adoptedConnections.current = { ...values.connections };
+  }, []);
+
   useEffect(() => {
-    const freshPositions = readStagePositions(input.workflow);
-    const freshSizes = readStageSizes(input.workflow);
+    const fresh = readLayout(input.workflow);
     const unsaved = desiredYaml.current !== null && desiredYaml.current !== sentYaml.current;
     // A pending layout edit belongs to its board. The board presentation
     // remounts this view on a board switch, so the pending timer flushes that
@@ -89,37 +146,27 @@ export function usePlacementSaver(input: PlacementSaverInput): PlacementSaver {
     if (!unsaved) {
       desiredYaml.current = input.workflowYaml;
       sentYaml.current = input.workflowYaml;
-      desiredPositions.current = freshPositions;
-      desiredSizes.current = freshSizes;
-      adoptedPositions.current = { ...freshPositions };
-      adoptedSizes.current = { ...freshSizes };
+      adopt(fresh);
       return;
     }
     // A new acknowledged workflow arrived while a layout edit is still unsaved.
-    // Rebase only the stages this view changed onto the new text, so a concurrent
+    // Rebase only the entries this view changed onto the new text, so a concurrent
     // edit (a rename, new instructions, another stage's placement) survives the
     // pending save instead of being overwritten by the older text.
-    const positions: Record<string, StagePosition> = { ...freshPositions };
-    for (const id of new Set([...Object.keys(adoptedPositions.current), ...Object.keys(desiredPositions.current)])) {
-      if (samePosition(desiredPositions.current[id], adoptedPositions.current[id])) continue;
-      const wanted = desiredPositions.current[id];
-      if (wanted === undefined) delete positions[id];
-      else positions[id] = wanted;
-    }
-    const sizes: Record<string, StageSize> = { ...freshSizes };
-    for (const id of new Set([...Object.keys(adoptedSizes.current), ...Object.keys(desiredSizes.current)])) {
-      if (sameStageSize(desiredSizes.current[id], adoptedSizes.current[id])) continue;
-      const wanted = desiredSizes.current[id];
-      if (wanted === undefined) delete sizes[id];
-      else sizes[id] = wanted;
-    }
-    desiredPositions.current = positions;
-    desiredSizes.current = sizes;
-    desiredYaml.current = setStageSizes(setStagePositions(input.workflowYaml, positions), sizes);
+    const rebased: LayoutValues = {
+      positions: rebaseField(positions, fresh.positions, adoptedPositions.current, desiredPositions.current),
+      sizes: rebaseField(sizes, fresh.sizes, adoptedSizes.current, desiredSizes.current),
+      connections: rebaseField(connections, fresh.connections, adoptedConnections.current, desiredConnections.current),
+    };
+    desiredPositions.current = rebased.positions;
+    desiredSizes.current = rebased.sizes;
+    desiredConnections.current = rebased.connections;
+    desiredYaml.current = writeLayout(input.workflowYaml, rebased);
     sentYaml.current = input.workflowYaml;
-    adoptedPositions.current = freshPositions;
-    adoptedSizes.current = freshSizes;
-  }, [input.workflowYaml, input.workflow]);
+    adoptedPositions.current = fresh.positions;
+    adoptedSizes.current = fresh.sizes;
+    adoptedConnections.current = fresh.connections;
+  }, [input.workflowYaml, input.workflow, adopt]);
 
   const cancelTimer = useCallback(() => {
     if (saveTimer.current !== null) clearTimeout(saveTimer.current);
@@ -142,10 +189,7 @@ export function usePlacementSaver(input: PlacementSaverInput): PlacementSaver {
       const acknowledged = acknowledgedRef.current;
       desiredYaml.current = acknowledged.workflowYaml;
       sentYaml.current = acknowledged.workflowYaml;
-      desiredPositions.current = readStagePositions(acknowledged.workflow);
-      desiredSizes.current = readStageSizes(acknowledged.workflow);
-      adoptedPositions.current = { ...desiredPositions.current };
-      adoptedSizes.current = { ...desiredSizes.current };
+      adopt(readLayout(acknowledged.workflow));
       rejectedRef.current?.();
       errorRef.current(error);
     } finally {
@@ -153,7 +197,7 @@ export function usePlacementSaver(input: PlacementSaverInput): PlacementSaver {
     }
     if (queued.current) { queued.current = false; void runSave(); return; }
     if (desiredYaml.current !== null && desiredYaml.current !== sentYaml.current) void runSave();
-  }, [input.hubId, input.boardId, input.run]);
+  }, [adopt, input.hubId, input.boardId, input.run]);
 
   const queueSave = useCallback(() => {
     cancelTimer();
@@ -166,17 +210,30 @@ export function usePlacementSaver(input: PlacementSaverInput): PlacementSaver {
   // A completed edit is already a user decision: send it before the view goes away.
   useEffect(() => () => { cancelTimer(); void runSave(); }, [cancelTimer, runSave]);
 
-  const intendPositions = useCallback((positions: StagePositions) => {
-    desiredPositions.current = positionRecord(positions);
-    desiredYaml.current = setStageSizes(setStagePositions(desiredYaml.current ?? acknowledgedRef.current.workflowYaml, desiredPositions.current), desiredSizes.current);
+  const compose = useCallback(() => {
+    desiredYaml.current = writeLayout(desiredYaml.current ?? acknowledgedRef.current.workflowYaml, {
+      positions: desiredPositions.current,
+      sizes: desiredSizes.current,
+      connections: desiredConnections.current,
+    });
   }, []);
 
-  const intendSizes = useCallback((sizes: StageSizes) => {
-    desiredSizes.current = sizeRecord(sizes);
-    desiredYaml.current = setStageSizes(setStagePositions(desiredYaml.current ?? acknowledgedRef.current.workflowYaml, desiredPositions.current), desiredSizes.current);
-  }, []);
+  const intendPositions = useCallback((next: StagePositions) => {
+    desiredPositions.current = positionRecord(next);
+    compose();
+  }, [compose]);
+
+  const intendSizes = useCallback((next: StageSizes) => {
+    desiredSizes.current = sizeRecord(next);
+    compose();
+  }, [compose]);
+
+  const intendConnections = useCallback((next: ConnectionLayouts) => {
+    desiredConnections.current = connectionRecord(next);
+    compose();
+  }, [compose]);
 
   const saveNow = useCallback(() => { void runSave(); }, [runSave]);
 
-  return { desiredPositions, desiredSizes, intendPositions, intendSizes, queueSave, saveNow, cancelTimer };
+  return { desiredPositions, desiredSizes, desiredConnections, intendPositions, intendSizes, intendConnections, queueSave, saveNow, cancelTimer };
 }

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { parse as parseYaml } from 'yaml';
 
 const HARNESS = new URL('./.tmp/index.html', import.meta.url).href;
 
@@ -22,6 +23,36 @@ async function unlock(page: Page): Promise<void> {
 
 function commands(page: Page): Promise<HarnessCommand[]> {
   return page.evaluate(() => (window as unknown as HarnessWindow).__harness.commands());
+}
+
+const GRID_STEP = 8;
+
+/** The lattice point the diagram settles on. */
+function snapToLattice(value: number): number {
+  return Math.round(value / GRID_STEP) * GRID_STEP;
+}
+
+function workflowSaves(page: Page): Promise<HarnessCommand[]> {
+  return commands(page).then(commands => commands.filter(command => command.type === 'board.workflow.save'));
+}
+
+async function lastSavedWorkflow(page: Page): Promise<Array<{ id: string; position?: { x: number; y: number }; size?: { width: number; height: number } }>> {
+  const saves = await workflowSaves(page);
+  const yaml = saves[saves.length - 1]?.yaml;
+  if (yaml === undefined) throw new Error('no workflow save to read');
+  const doc = parseYaml(yaml) as { columns?: Array<{ id: string; position?: { x: number; y: number }; size?: { width: number; height: number } }> } | null;
+  return doc?.columns ?? [];
+}
+
+/** The centre of a rendered route segment, in diagram coordinates. */
+function segmentLine(page: Page, index: number, axis: 'x' | 'y'): Promise<number | null> {
+  return page.locator('.react-flow__edge').nth(index).locator('.kb-flow-segment[data-axis="' + axis + '"]').first()
+    .evaluate((element, axis) => {
+      const rect = element as SVGRectElement;
+      const start = Number(rect.getAttribute(axis));
+      const size = Number(rect.getAttribute(axis === 'x' ? 'width' : 'height'));
+      return Number.isFinite(start) && Number.isFinite(size) ? start + size / 2 : null;
+    }, axis).catch(() => null);
 }
 
 function viewportStyle(page: Page): Promise<string | null> {
@@ -354,7 +385,9 @@ test('moves focus through the cards in stage order and can leave the diagram', a
   }
   expect(seen).toEqual(ids);
   let inside = await page.evaluate(() => document.activeElement?.closest('.kb-flow-canvas') !== null);
-  for (let index = 0; index < 6 && inside; index += 1) {
+  // The control stack is part of the diagram's tab order, and the snapping
+  // toggle adds exactly one stop after the stage content.
+  for (let index = 0; index < 7 && inside; index += 1) {
     await page.keyboard.press('Tab');
     inside = await page.evaluate(() => document.activeElement?.closest('.kb-flow-canvas') !== null);
   }
@@ -538,4 +571,396 @@ test('asks before advancing a card to a restricted next stage', async ({ page })
   await expect(dialog).toHaveCount(0);
   expect((await commands(page)).filter(command => command.type === 'task.move')).toHaveLength(0);
   await expect(page.getByRole('region', { name: 'Explore stage' }).locator('.kb-card', { hasText: 'Long column task 0' })).toBeVisible();
+});
+
+async function connectionEnd(page: Page, index: number, end: 'source' | 'target') {
+  return page.locator('.react-flow__edge').nth(index).locator('.kb-flow-contact[data-end="' + end + '"]');
+}
+
+/** Points at a place the edge's interaction path owns, revealing its handles. */
+async function revealEdge(page: Page, index: number): Promise<void> {
+  const point = await page.evaluate(index => {
+    const paths = [...document.querySelectorAll('.react-flow__edge-interaction')];
+    const path = paths[index] as SVGPathElement | undefined;
+    if (path === undefined) return null;
+    const box = path.getBoundingClientRect();
+    for (let x = Math.ceil(box.left); x <= Math.floor(box.right); x += 4) {
+      for (let y = Math.ceil(box.top); y <= Math.floor(box.bottom); y += 4) {
+        if (document.elementFromPoint(x, y) === path) return { x, y };
+      }
+    }
+    return null;
+  }, index);
+  if (point === null) throw new Error('the edge has no reachable point');
+  await page.mouse.move(point.x, point.y);
+}
+
+/** The screen point of a stage edge, a few pixels outside the stage box. */
+async function stageEdge(page: Page, label: string, side: 'top' | 'bottom'): Promise<{ x: number; y: number }> {
+  const box = (await page.getByRole('region', { name: label + ' stage' }).boundingBox())!;
+  return { x: box.x + box.width / 2, y: side === 'top' ? box.y - 8 : box.y + box.height + 8 };
+}
+
+async function dragHandle(page: Page, handle: ReturnType<typeof connectionEnd>, target: { x: number; y: number }, outward = 4): Promise<void> {
+  const box = (await (await handle).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2 + outward, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(target.x, target.y, { steps: 12 });
+  await page.mouse.up();
+}
+
+test('re-anchors a connection end and stores one change', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  await revealEdge(page, 0);
+  await dragHandle(page, connectionEnd(page, 0, 'source'), await stageEdge(page, 'Explore', 'top'));
+  await expect.poll(async () => (await commands(page)).length).toBe(1);
+  const command = (await commands(page))[0]!;
+  expect(command.type).toBe('board.workflow.save');
+  expect(command.yaml).toContain('connections:');
+  expect(command.yaml).toContain('source: {side: top, at: 2}');
+  // The handle now sits on the top edge, so its drawn position follows the anchor.
+  const circle = await (await connectionEnd(page, 0, 'source')).boundingBox();
+  const stage = (await page.getByRole('region', { name: 'Explore stage' }).boundingBox())!;
+  expect(Math.abs((circle!.y + circle!.height / 2) - stage.y)).toBeLessThan(3);
+});
+
+test('does not adjust a connection while the diagram is locked', async ({ page }) => {
+  await openFlow(page);
+  await revealEdge(page, 0);
+  await dragHandle(page, connectionEnd(page, 0, 'target'), await stageEdge(page, 'Propose', 'bottom'), -4);
+  await page.waitForTimeout(700);
+  expect(await commands(page)).toHaveLength(0);
+});
+
+test('adjusts a connection end with the keyboard', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  const handle = await connectionEnd(page, 0, 'source');
+  await handle.focus();
+  await expect(handle).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(500);
+  expect(await commands(page)).toHaveLength(0);
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => (await commands(page)).length).toBe(1);
+  const command = (await commands(page))[0]!;
+  expect(command.yaml).toContain('source: {side: right, at: 4}');
+});
+
+test('restores the anchor when the keyboard adjustment is cancelled', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  const handle = await connectionEnd(page, 0, 'source');
+  await handle.focus();
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(700);
+  expect(await commands(page)).toHaveLength(0);
+});
+
+test('presents a stored connection layout on open', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(HARNESS + '?scenario=flow-anchored');
+  await page.waitForFunction(() => (window as unknown as { __harnessReady?: boolean }).__harnessReady === true);
+  await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-ready', 'true');
+  await page.waitForTimeout(250);
+  const source = await (await connectionEnd(page, 0, 'source')).boundingBox();
+  const stage = (await page.getByRole('region', { name: 'Explore stage' }).boundingBox())!;
+  // The stored anchor puts the touch point on the stage's top edge, not its right edge.
+  expect(Math.abs((source!.y + source!.height / 2) - stage.y)).toBeLessThan(3);
+  expect(Math.abs((source!.x + source!.width / 2) - (stage.x + stage.width / 2))).toBeLessThan(3);
+});
+
+test('reaches a connection end by keyboard and never traps focus', async ({ page }) => {
+  await openFlow(page);
+  const handle = await connectionEnd(page, 0, 'source');
+  await handle.focus();
+  await expect(handle).toBeFocused();
+  // The handles sit in the diagram's tab sequence, and tabbing on from one of
+  // them keeps moving until focus leaves the diagram.
+  const labels: string[] = [];
+  let left = false;
+  for (let step = 0; step < 400; step++) {
+    await page.keyboard.press('Tab');
+    const state = await page.evaluate(() => ({
+      label: document.activeElement?.getAttribute('aria-label') ?? '',
+      inside: document.activeElement !== null && document.activeElement.closest('.kb-flow-shell') !== null,
+    }));
+    if (!state.inside) { left = true; break; }
+    labels.push(state.label);
+  }
+  expect(labels.filter(label => label.startsWith('Arrow from')).length).toBeGreaterThan(0);
+  expect(left).toBe(true);
+});
+
+test('ignores a stored layout whose connection the diagram does not draw', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(HARNESS + '?scenario=flow-orphan');
+  await page.waitForFunction(() => (window as unknown as { __harnessReady?: boolean }).__harnessReady === true);
+  await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-ready', 'true');
+  await page.waitForTimeout(250);
+  // The workflow still draws its two real arrows, and the orphan entry adds none.
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+  expect(await page.locator('.kb-flow-contact[data-end="source"]').count()).toBe(2);
+});
+
+
+async function dragHeader(page: Page, label: string, delta: { x: number; y: number }, modifier?: 'Alt'): Promise<void> {
+  const header = page.getByRole('region', { name: label + ' stage' }).locator('.kb-flow-stage-header');
+  const box = (await header.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  if (modifier !== undefined) await page.keyboard.down(modifier);
+  await page.mouse.move(box.x + box.width / 2 + delta.x, box.y + box.height / 2 + delta.y, { steps: 12 });
+  await page.mouse.up();
+  if (modifier !== undefined) await page.keyboard.up(modifier);
+}
+
+test('settles a dragged stage on the nearest lattice point', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  const before = await stageTranslate(page, 'Explore');
+  const zoom = scaleOf(await viewportStyle(page));
+  await dragHeader(page, 'Explore', { x: 90, y: 70 });
+  await expect.poll(async () => (await workflowSaves(page)).length).toBe(1);
+  const explore = (await lastSavedWorkflow(page)).find(column => column.id === 'explore');
+  expect(explore?.position).toEqual({
+    x: snapToLattice(before.x + 90 / zoom),
+    y: snapToLattice(before.y + 70 / zoom),
+  });
+  await expect.poll(async () => (await stageTranslate(page, 'Explore')).x).toBe(explore!.position!.x);
+});
+
+test('settles an off-lattice stored stage on the nearest lattice point', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(HARNESS + '?scenario=flow-offgrid');
+  await page.waitForFunction(() => (window as unknown as { __harnessReady?: boolean }).__harnessReady === true);
+  await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-ready', 'true');
+  await page.waitForTimeout(250);
+  // The stored 13x7 placement is presented as stored before any edit.
+  expect(await stageTranslate(page, 'Explore')).toEqual({ x: 13, y: 7 });
+  await unlock(page);
+  const zoom = scaleOf(await viewportStyle(page));
+  await dragHeader(page, 'Explore', { x: 10 * zoom, y: 6 * zoom });
+  await expect.poll(async () => (await workflowSaves(page)).length).toBe(1);
+  const explore = (await lastSavedWorkflow(page)).find(column => column.id === 'explore');
+  // Absolute: 13+10=23 and 7+6=13 settle on 24 and 16. A lattice of the gesture's
+  // displacement would settle on 21 and 15 instead.
+  expect(explore!.position).toEqual({ x: 24, y: 16 });
+});
+
+test('settles a resized stage on the nearest lattice size', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  const region = page.getByRole('region', { name: 'Explore stage' });
+  const before = (await region.boundingBox())!;
+  const zoom = scaleOf(await viewportStyle(page));
+  // The rendered rectangle is the origin an outward drag grows from.
+  const rendered = { width: Math.round(before.width / zoom), height: Math.round(before.height / zoom) };
+  const resize = region.locator('.kb-flow-resize');
+  const box = (await resize.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 90, box.y + box.height / 2 + 60, { steps: 12 });
+  await page.mouse.up();
+  await expect.poll(async () => (await workflowSaves(page)).length).toBe(1);
+  const explore = (await lastSavedWorkflow(page)).find(column => column.id === 'explore');
+  expect(explore?.size).toEqual({
+    width: snapToLattice(rendered.width + 90 / zoom),
+    height: snapToLattice(rendered.height + 60 / zoom),
+  });
+  // The accepted minimum is a floor, not a lattice point, so a settled height
+  // starts at the first lattice point above it.
+  expect(explore!.size!.height).toBeGreaterThanOrEqual(144);
+});
+
+test('settles an adjusted route segment on the grid', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  const zoom = scaleOf(await viewportStyle(page));
+  const startLine = await segmentLine(page, 0, 'x');
+  const segment = page.locator('.react-flow__edge').nth(0).locator('.kb-flow-segment[data-axis="x"]').first();
+  const box = (await segment.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 37, box.y + box.height / 2, { steps: 12 });
+  await page.mouse.up();
+  await expect.poll(async () => (await workflowSaves(page)).length).toBe(1);
+  const saves = await workflowSaves(page);
+  const doc = parseYaml(saves[0]!.yaml ?? '') as { connections?: Array<{ from: string; to: string; segments?: Array<{ axis: string; offset: number }> }> };
+  const connection = doc.connections?.find(value => value.from === 'explore' && value.to === 'propose');
+  expect(connection?.segments?.some(value => value.axis === 'x')).toBe(true);
+  // The drawn line, not the relative offset, is what lands on the lattice.
+  const line = await segmentLine(page, 0, 'x');
+  expect(line).not.toBeNull();
+  expect(line).toBeCloseTo(snapToLattice(startLine! + 37 / zoom), 6);
+
+  // With Alt the same gesture keeps the pointer's own displacement: thirteen
+  // units past the settled line, which is not a lattice multiple, so the stored
+  // offset cannot move by a whole number of lattice steps.
+  const firstOffset = connection?.segments?.find(value => value.axis === 'x')?.offset;
+  const moved = page.locator('.react-flow__edge').nth(0).locator('.kb-flow-segment[data-axis="x"]').first();
+  const movedBox = (await moved.boundingBox())!;
+  await page.mouse.move(movedBox.x + movedBox.width / 2, movedBox.y + movedBox.height / 2);
+  await page.mouse.down();
+  await page.keyboard.down('Alt');
+  await page.mouse.move(movedBox.x + movedBox.width / 2 + 13 * zoom, movedBox.y + movedBox.height / 2, { steps: 12 });
+  await page.mouse.up();
+  await page.keyboard.up('Alt');
+  await expect.poll(async () => (await workflowSaves(page)).length).toBe(2);
+  const secondSave = (await workflowSaves(page))[1]!;
+  const secondDoc = parseYaml(secondSave.yaml ?? '') as { connections?: Array<{ from: string; to: string; segments?: Array<{ axis: string; offset: number }> }> };
+  const secondOffset = secondDoc.connections?.find(value => value.from === 'explore' && value.to === 'propose')?.segments?.find(value => value.axis === 'x')?.offset;
+  expect(secondOffset).toBeDefined();
+  expect(Math.abs(secondOffset! - firstOffset!) % 8).not.toBe(0);
+});
+
+test('moves a stage freely while the bypass modifier is held', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  const before = await stageTranslate(page, 'Explore');
+  const zoom = scaleOf(await viewportStyle(page));
+  await dragHeader(page, 'Explore', { x: 37 * zoom, y: 21 * zoom }, 'Alt');
+  await expect.poll(async () => (await workflowSaves(page)).length).toBe(1);
+  const explore = (await lastSavedWorkflow(page)).find(column => column.id === 'explore');
+  // The pointer moved 37 and 21 units with the bypass on, so the workflow stores
+  // exactly that whole-unit displacement and not a lattice neighbour.
+  expect(explore!.position).toEqual({ x: Math.round(before.x + 37), y: Math.round(before.y + 21) });
+});
+
+test('resizes a stage freely while the bypass modifier is held', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  const region = page.getByRole('region', { name: 'Explore stage' });
+  const before = (await region.boundingBox())!;
+  const zoom = scaleOf(await viewportStyle(page));
+  const rendered = { width: Math.round(before.width / zoom), height: Math.round(before.height / zoom) };
+  const resize = region.locator('.kb-flow-resize');
+  const box = (await resize.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.keyboard.down('Alt');
+  await page.mouse.move(box.x + box.width / 2 + 37 * zoom, box.y + box.height / 2 + 21 * zoom, { steps: 12 });
+  await page.mouse.up();
+  await page.keyboard.up('Alt');
+  await expect.poll(async () => (await workflowSaves(page)).length).toBe(1);
+  const explore = (await lastSavedWorkflow(page)).find(column => column.id === 'explore');
+  // The pointer's own displacement, rounded to whole units, and not a lattice size.
+  expect(explore!.size).toEqual({ width: rendered.width + 37, height: rendered.height + 21 });
+});
+
+test('stores nothing for a press without movement', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  const undo = page.getByRole('button', { name: 'Undo layout change' });
+  await expect(undo).toBeDisabled();
+  const header = page.getByRole('region', { name: 'Explore stage' }).locator('.kb-flow-stage-header');
+  const box = (await header.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.up();
+  await page.waitForTimeout(700);
+  expect(await workflowSaves(page)).toHaveLength(0);
+  await expect(undo).toBeDisabled();
+});
+
+test('keeps the snapping control available and effective while the layout is locked', async ({ page }) => {
+  await openFlow(page);
+  // The diagram starts locked, so the layout controls are unavailable.
+  await expect(page.getByRole('button', { name: 'Organize stages' })).toBeDisabled();
+  const toggle = page.getByRole('button', { name: 'Turn off grid snapping' });
+  await expect(toggle).toBeEnabled();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await toggle.click();
+  const restored = page.getByRole('button', { name: 'Turn on grid snapping' });
+  await expect(restored).toHaveAttribute('aria-pressed', 'false');
+  expect(await workflowSaves(page)).toHaveLength(0);
+  // A locked diagram still does not rearrange, with snapping on or off.
+  const header = page.getByRole('region', { name: 'Explore stage' }).locator('.kb-flow-stage-header');
+  const box = (await header.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 90, box.y + box.height / 2 + 70, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(700);
+  expect(await workflowSaves(page)).toHaveLength(0);
+});
+
+test('remembers the snapping preference after a reload', async ({ page }) => {
+  await openFlow(page);
+  await page.getByRole('button', { name: 'Turn off grid snapping' }).click();
+  await page.reload();
+  await page.waitForFunction(() => (window as unknown as { __harnessReady?: boolean }).__harnessReady === true);
+  await expect(page.getByRole('button', { name: 'Turn on grid snapping' })).toBeVisible();
+  // The remembered preference drives the edit, not only the control: the same
+  // unsnapped displacement that is a lattice point under snapping.
+  await unlock(page);
+  const before = await stageTranslate(page, 'Explore');
+  const zoom = scaleOf(await viewportStyle(page));
+  await dragHeader(page, 'Explore', { x: 37 * zoom, y: 21 * zoom });
+  await expect.poll(async () => (await workflowSaves(page)).length).toBe(1);
+  const explore = (await lastSavedWorkflow(page)).find(column => column.id === 'explore');
+  // The free pointer result, rounded to the whole units the workflow stores.
+  expect(explore!.position).toEqual({ x: Math.round(before.x + 37), y: Math.round(before.y + 21) });
+});
+
+test('organizes every stage with the same geometry as without snapping', async ({ page }) => {
+  await openFlow(page);
+  const labels = ['Explore', 'Propose', 'Apply'];
+  const automatic = new Map<string, { x: number; y: number }>();
+  for (const label of labels) automatic.set(label, await stageTranslate(page, label));
+  await unlock(page);
+  await dragHeader(page, 'Explore', { x: 90, y: 70 });
+  await expect.poll(async () => (await workflowSaves(page)).length).toBe(1);
+  await page.getByRole('button', { name: 'Organize stages' }).click();
+  await expect.poll(async () => (await workflowSaves(page)).length).toBe(2);
+  const organized = new Map((await lastSavedWorkflow(page)).map(column => [column.id, column.position]));
+  expect(organized.get('explore')).toEqual(automatic.get('Explore'));
+  expect(organized.get('propose')).toEqual(automatic.get('Propose'));
+  expect(organized.get('apply')).toEqual(automatic.get('Apply'));
+});
+
+
+test('keeps the bypass when the modifier is held at pointer down', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  const before = await stageTranslate(page, 'Explore');
+  const zoom = scaleOf(await viewportStyle(page));
+  const header = page.getByRole('region', { name: 'Explore stage' }).locator('.kb-flow-stage-header');
+  const box = (await header.boundingBox())!;
+  await page.keyboard.down('Alt');
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  // Released before the pointer moves: the gesture began with the bypass.
+  await page.keyboard.up('Alt');
+  await page.mouse.move(box.x + box.width / 2 + 37 * zoom, box.y + box.height / 2 + 21 * zoom, { steps: 12 });
+  await page.mouse.up();
+  await expect.poll(async () => (await workflowSaves(page)).length).toBe(1);
+  const explore = (await lastSavedWorkflow(page)).find(column => column.id === 'explore');
+  expect((explore!.position!.x - before.x) % 8).not.toBe(0);
+  expect((explore!.position!.y - before.y) % 8).not.toBe(0);
+});
+
+test('stores nothing when an adjusted route segment returns to its line', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  const handle = () => page.locator('.react-flow__edge').nth(0).locator('.kb-flow-segment[data-axis="x"]').first();
+  const first = (await (await handle()).boundingBox())!;
+  await page.mouse.move(first.x + first.width / 2, first.y + first.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(first.x + first.width / 2 + 37, first.y + first.height / 2, { steps: 12 });
+  await page.mouse.up();
+  await expect.poll(async () => (await workflowSaves(page)).length).toBe(1);
+  // The settled line is a lattice point, so a gesture that returns the segment to
+  // it settles exactly where it started and must store nothing.
+  const settled = (await (await handle()).boundingBox())!;
+  await page.mouse.move(settled.x + settled.width / 2, settled.y + settled.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(settled.x + settled.width / 2 + 37, settled.y + settled.height / 2, { steps: 6 });
+  await page.mouse.move(settled.x + settled.width / 2, settled.y + settled.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(700);
+  expect(await workflowSaves(page)).toHaveLength(1);
 });

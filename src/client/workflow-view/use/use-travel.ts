@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { StagePosition, StageSize, Task, Workflow } from '../../../shared/types.js';
+import type { ConnectionLayout, StagePosition, StageSize, Task, Workflow } from '../../../shared/types.js';
 import { prefersReducedMotion } from '../../card-motion/preference.js';
 import { buildWorkflowScene } from '../scene.js';
 import { planTravel } from '../travel.js';
@@ -18,6 +18,8 @@ export interface TravelInput {
   readonly tasks: readonly Task[];
   readonly placements: ReadonlyMap<string, StagePosition>;
   readonly measured: ReadonlyMap<string, StageSize>;
+  /** The connection layouts the diagram presents, so a card follows the drawn arrow. */
+  readonly connections?: Readonly<Record<string, ConnectionLayout | undefined>>;
 }
 
 /** The card travel that plays after a committed stage change. */
@@ -38,7 +40,10 @@ export function useTravel(input: TravelInput): TravelState {
     previousStages.current = stageByTask;
     if (before === null || prefersReducedMotion()) return;
     // Only cards the active search and project filter present may travel.
-    const committed = buildWorkflowScene({ workflow: current.workflow, tasks: current.tasks, placements: current.placements, sizes: current.measured });
+    const committed = buildWorkflowScene({
+      workflow: current.workflow, tasks: current.tasks, placements: current.placements, sizes: current.measured,
+      ...(current.connections === undefined ? {} : { connections: current.connections }),
+    });
     const moves = planTravel({ previousStageByTask: before, tasks: current.tasks, scene: committed });
     if (moves.length === 0) {
       setTravel(currentTravel => currentTravel.length === 0 ? currentTravel : []);

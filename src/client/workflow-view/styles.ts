@@ -31,8 +31,14 @@ export const workflowViewStyles = String.raw`
 .dsh-kanban .kb-flow-edge.is-implicit{stroke-dasharray:6 5}
 .dsh-kanban .kb-flow-arrow{fill:currentColor;opacity:.4}
 .dsh-kanban .kb-flow-canvas .react-flow__edge-interaction{pointer-events:stroke}
-.dsh-kanban .kb-flow-contact{fill:var(--kb-surface);stroke:var(--kb-line);stroke-width:1.4;opacity:0;transition:opacity 110ms ease}
+.dsh-kanban .kb-flow-contact{fill:var(--kb-surface);stroke:var(--kb-line);stroke-width:1.4;opacity:0;transition:opacity 110ms ease;pointer-events:all;cursor:grab}
 .dsh-kanban .react-flow__edge:hover .kb-flow-contact,.dsh-kanban .react-flow__edge:focus-within .kb-flow-contact{opacity:1}
+.dsh-kanban .kb-flow-contact:focus-visible{outline:none;stroke:var(--dsw-alias-state-business-primary,CanvasText);stroke-width:2;opacity:1}
+.dsh-kanban .kb-flow-contact-hit{fill:transparent;stroke:none;pointer-events:all;cursor:grab}
+.dsh-kanban .kb-flow-canvas[data-locked=true] .kb-flow-contact-hit{cursor:default}
+.dsh-kanban .kb-flow-segment{fill:var(--kb-surface);stroke:var(--kb-line);stroke-width:1.2;opacity:0;transition:opacity 110ms ease;pointer-events:all;cursor:move}
+.dsh-kanban .react-flow__edge:hover .kb-flow-segment,.dsh-kanban .react-flow__edge:focus-within .kb-flow-segment{opacity:1}
+.dsh-kanban .kb-flow-canvas[data-locked=true] .kb-flow-contact,.dsh-kanban .kb-flow-canvas[data-locked=true] .kb-flow-segment{cursor:default}
 .dsh-kanban .kb-flow-travel{position:absolute;pointer-events:none;z-index:8;width:190px}
 .dsh-kanban .kb-flow-travel-card{display:flex;flex-direction:column;gap:2px;padding:7px 8px;border-radius:8px;border:1px solid var(--kb-line);background:var(--kb-surface);box-shadow:0 8px 20px #00000024;font-size:12px;line-height:1.35;overflow-wrap:anywhere}
 .dsh-kanban .kb-flow-canvas .react-flow__attribution{background:transparent;color:inherit;opacity:.55}

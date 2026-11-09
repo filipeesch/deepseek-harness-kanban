@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { webAnimations, type AnimatePort } from '../card-motion/animator.js';
-import type { DiagramPoint } from './connections.js';
+import type { DiagramPoint } from './routing/orthogonal.js';
 import { TRAVEL } from './travel.js';
 
 export interface TravelMoveView {

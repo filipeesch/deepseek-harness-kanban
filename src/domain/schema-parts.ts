@@ -1,9 +1,10 @@
 import { z } from 'zod';
-import type { Task, TransitionRule, Workflow } from '../shared/types.js';
+import type { ConnectionLayout, Task, TransitionRule, Workflow } from '../shared/types.js';
 import { STAGE_MIN_SIZE, STAGE_SIZE_LIMIT } from './stage-size.js';
 import { PROJECT_KEY_PATTERN } from './project-key.js';
 import { transitionRule as normalizeTransitionRule } from './transition-rule.js';
 import { isAbsolutePath, isDomainId } from './validation.js';
+import { ANCHOR_POINTS_PER_SIDE, CONNECTION_OFFSET_LIMIT } from './connection-anchor.js';
 
 /**
  * Shared persisted-schema fragments. The legacy board aggregate and the Hub
@@ -65,12 +66,27 @@ export const stageSize = z.strictObject({
   width: z.number().finite().min(STAGE_MIN_SIZE.width).max(STAGE_SIZE_LIMIT),
   height: z.number().finite().min(STAGE_MIN_SIZE.height).max(STAGE_SIZE_LIMIT),
 });
+/** One authored touch point on a stage boundary. */
+export const connectionAnchor = z.strictObject({
+  side: z.enum(['top', 'right', 'bottom', 'left']),
+  at: z.number().int().min(0).max(ANCHOR_POINTS_PER_SIDE - 1),
+});
+/** One authored displacement of an adjustable connection segment. */
+export const connectionSegment = z.strictObject({
+  axis: z.enum(['x', 'y']),
+  offset: z.number().finite().min(-CONNECTION_OFFSET_LIMIT).max(CONNECTION_OFFSET_LIMIT),
+});
+/** One authored connection layout; the workflow parser owns the pair rule. */
+export const connectionLayout = z.strictObject({
+  from: id, to: id, source: connectionAnchor.optional(), target: connectionAnchor.optional(), segments: z.array(connectionSegment).optional(),
+});
 export const column = z.strictObject({
   id, name: nonempty, onEnterPrompt: z.string().optional(), allowedTransitions: z.array(transitionRule).optional(), position: stagePosition.optional(), size: stageSize.optional(),
 });
 export const group = z.strictObject({ id, name: nonempty, columnIds: z.array(id).min(1) });
 export const workflow = z.strictObject({
   name: nonempty, initialColumnId: id, defaultView: z.enum(['board', 'workflow']).optional(), columns: z.array(column).min(1), groups: z.array(group),
+  connections: z.array(connectionLayout).optional(),
 });
 export const note = z.strictObject({
   id, taskId: id, content: nonempty, createdAt: timestamp, updatedAt: timestamp, tags: z.array(nonempty).optional(),
@@ -141,6 +157,22 @@ export const baseTask = z.strictObject({
 /** The task fields the shared invariant check reads. */
 export type TaskCheckValue = Pick<Task, 'projectId' | 'columnId' | 'sessionIds' | 'closedSessionIds' | 'operation' | 'pendingTransition' | 'instructionPending' | 'recordedTransition'>;
 
+/** The authored connection layouts in a stable order, so identity does not depend on edit order. */
+function sortedConnections(value: readonly ConnectionLayout[] | undefined): ConnectionLayout[] {
+  if (value === undefined) return [];
+  return [...value].sort((left, right) => left.from.localeCompare(right.from) || left.to.localeCompare(right.to));
+}
+
+function shapeConnection(value: ConnectionLayout): Record<string, unknown> {
+  return {
+    from: value.from,
+    to: value.to,
+    source: value.source,
+    target: value.target,
+    segments: value.segments?.map(segment => ({ axis: segment.axis, offset: segment.offset })),
+  };
+}
+
 function workflowShape(value: Workflow, includeLayout: boolean): string {
   return JSON.stringify({
     name: value.name,
@@ -152,6 +184,7 @@ function workflowShape(value: Workflow, includeLayout: boolean): string {
       ...(includeLayout ? { position: item.position, size: item.size } : {}),
     })),
     groups: value.groups.map(item => ({ id: item.id, name: item.name, columnIds: item.columnIds })),
+    ...(includeLayout ? { connections: sortedConnections(value.connections).map(shapeConnection) } : {}),
   });
 }
 

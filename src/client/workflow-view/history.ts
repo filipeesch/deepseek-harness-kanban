@@ -1,11 +1,12 @@
+import type { ConnectionLayouts } from '../../domain/workflow-connections.js';
 import type { StagePositions } from '../../domain/workflow-positions.js';
 import type { StageSizes } from '../../domain/workflow-sizes.js';
 
 /**
  * One layout change: the authored positions before and after a drag, resize, or
- * an Organize, the sizes that applied at the same time, and the visual
- * placements of that moment. The visual snapshot is what restores an automatic
- * layout computed with sizes that no longer exist.
+ * an Organize, the sizes and connection layouts that applied at the same time,
+ * and the visual placements of that moment. The visual snapshot is what restores
+ * an automatic layout computed with sizes that no longer exist.
  */
 export interface PlacementStep {
   readonly before: StagePositions;
@@ -13,6 +14,9 @@ export interface PlacementStep {
   /** Present when the step changed or preserved stage sizes. */
   readonly beforeSizes?: StageSizes;
   readonly afterSizes?: StageSizes;
+  /** Present when the step changed or preserved a connection layout. */
+  readonly beforeConnections?: ConnectionLayouts;
+  readonly afterConnections?: ConnectionLayouts;
   readonly beforeLayout?: StagePositions;
   readonly afterLayout?: StagePositions;
 }
@@ -44,6 +48,7 @@ export interface LayoutStepResult {
   readonly history: PlacementHistory;
   readonly positions: StagePositions;
   readonly sizes?: StageSizes;
+  readonly connections?: ConnectionLayouts;
 }
 
 export function undoStep(history: PlacementHistory): LayoutStepResult | null {
@@ -53,6 +58,7 @@ export function undoStep(history: PlacementHistory): LayoutStepResult | null {
     history: { ...history, cursor: history.cursor - 1 },
     positions: step.before,
     ...(step.beforeSizes === undefined ? {} : { sizes: step.beforeSizes }),
+    ...(step.beforeConnections === undefined ? {} : { connections: step.beforeConnections }),
   };
 }
 
@@ -63,5 +69,6 @@ export function redoStep(history: PlacementHistory): LayoutStepResult | null {
     history: { ...history, cursor: history.cursor + 1 },
     positions: step.after,
     ...(step.afterSizes === undefined ? {} : { sizes: step.afterSizes }),
+    ...(step.afterConnections === undefined ? {} : { connections: step.afterConnections }),
   };
 }

@@ -1,5 +1,5 @@
 import type { Task } from '../../shared/types.js';
-import { directShape, type DiagramPoint } from './connections.js';
+import { directShape, type DiagramPoint } from './routing/orthogonal.js';
 import { nodeRect, type WorkflowScene } from './scene.js';
 
 /** How the card travel reads: a glide along the drawn curve with short fades. */
