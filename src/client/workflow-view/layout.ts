@@ -1,12 +1,13 @@
-import type { StagePosition } from '../../shared/types.js';
+import type { StagePosition, StageSize } from '../../shared/types.js';
+import { STAGE_MIN_SIZE } from '../../domain/stage-size.js';
 
-export interface StageSize { readonly width: number; readonly height: number }
+export type { StageSize };
 export interface LayoutNode { readonly id: string; readonly index: number; readonly groupId?: string }
 export interface LayoutConnection { readonly from: string; readonly to: string; readonly returning: boolean }
 export interface PlacementBounds { readonly width: number; readonly height: number }
 export interface StageLayout { readonly placements: ReadonlyMap<string, StagePosition>; readonly bounds: PlacementBounds }
 
-export const DEFAULT_STAGE_SIZE: StageSize = { width: 264, height: 140 };
+export const DEFAULT_STAGE_SIZE: StageSize = STAGE_MIN_SIZE;
 export const STAGE_COLUMN_GAP = 128;
 export const STAGE_ROW_GAP = 36;
 

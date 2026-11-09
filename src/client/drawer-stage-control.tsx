@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Column } from '../shared/types.js';
 import type { TransitionDestination } from '../domain/transitions.js';
+import { advanceStageLabel } from './stage-advance.js';
 import { AdvanceStageIcon } from './icons.js';
 
 export interface DrawerStageControlProps {
@@ -11,10 +12,6 @@ export interface DrawerStageControlProps {
   movingTo: string | null;
   blocked: boolean;
   onMove: (column: Column) => void;
-}
-
-function advanceLabel(next: TransitionDestination): string {
-  return 'Move to ' + next.column.name + (next.access === 'restricted' ? ', requires confirmation' : '');
 }
 
 /** The workflow stage select and the one-click next-stage action. */
@@ -32,7 +29,7 @@ export function DrawerStageControl({ id, destinations, currentColumnId, next, mo
         {destinations.map(({ column, access }) => <option key={column.id} value={column.id} className={access === 'restricted' ? 'kb-stage-option-restricted' : undefined} aria-label={access === 'restricted' ? column.name + ', requires confirmation' : undefined}>{column.name}</option>)}
       </select>
     </label>
-    {next !== undefined && <button type="button" className="kb-button kb-icon-button kb-stage-advance" aria-label={advanceLabel(next)} title={advanceLabel(next)} disabled={disabled} onClick={() => onMove(next.column)}><AdvanceStageIcon size={15} /></button>}
+    {next !== undefined && <button type="button" className="kb-button kb-icon-button kb-stage-advance" aria-label={advanceStageLabel(next)} title={advanceStageLabel(next)} disabled={disabled} onClick={() => onMove(next.column)}><AdvanceStageIcon size={15} /></button>}
     <span className="kb-sr" id={hintId}>Stages that this workflow does not permit require confirmation before moving.</span>
   </div>;
 }

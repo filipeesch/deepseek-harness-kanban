@@ -10,8 +10,8 @@ describe('card focus target', () => {
     expect(cardFocusTarget('t1')?.className).toBe('kb-card-open');
   });
 
-  it('finds the diagram card button itself', () => {
-    document.body.innerHTML = '<button data-task-id="t2" class="kb-card kb-flow-card">Task</button>';
+  it('uses a card that is itself the activation control', () => {
+    document.body.innerHTML = '<button data-task-id="t2" class="kb-card">Task</button>';
     expect(cardFocusTarget('t2')?.getAttribute('data-task-id')).toBe('t2');
   });
 

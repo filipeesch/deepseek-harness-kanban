@@ -1,7 +1,8 @@
 import type { StagePosition, Task, Workflow } from '../../shared/types.js';
 import { workflowGraph, type WorkflowConnectionKind } from '../../domain/workflow-graph.js';
+import { effectiveStageSize } from '../../domain/stage-size.js';
 import { connectionShape, type ConnectionShape, type DiagramRect } from './connections.js';
-import { DEFAULT_STAGE_SIZE, placementBounds, type PlacementBounds, type StageSize } from './layout.js';
+import { placementBounds, type PlacementBounds, type StageSize } from './layout.js';
 
 export interface WorkflowSceneNode {
   readonly id: string;
@@ -52,8 +53,9 @@ export function buildWorkflowScene(input: {
     if (list === undefined) cards.set(task.columnId, [task]); else list.push(task);
   }
   const sizes = new Map<string, StageSize>();
+  const columns = new Map(input.workflow.columns.map(column => [column.id, column]));
   const nodes = graph.nodes.map(node => {
-    const size = input.sizes?.get(node.id) ?? DEFAULT_STAGE_SIZE;
+    const size = input.sizes?.get(node.id) ?? effectiveStageSize(columns.get(node.id)?.size);
     sizes.set(node.id, size);
     return {
       id: node.id,
