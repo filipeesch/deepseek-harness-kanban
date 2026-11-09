@@ -108,8 +108,34 @@ export interface HubTask extends Task { boardId: string }
 export interface HubState {
   id: string; name: string; revision: number;
   projects: Project[]; boards: Board[]; tasks: HubTask[]; notes: Note[];
+  /** Local session schedules; absent on a Hub stored before the capability existed. */
+  schedules?: HubSchedule[];
   createdAt: string; updatedAt: string;
 }
+/** One native model selection stored on a schedule. */
+export interface ScheduleModelSelection { provider: string; model: string; reasoningEffort?: string }
+/** One Hub-scoped session schedule. Stored in the Hub aggregate, never published. */
+export interface HubSchedule {
+  id: string; title: string; prompt: string; cron: string; timeZone: string; projectId: string;
+  model?: ScheduleModelSelection; newConversation: boolean; archiveWhenIdle: boolean; enabled: boolean;
+  createdAt: string; updatedAt: string;
+}
+/** How the latest occurrence of one schedule ended. */
+export type ScheduleRunStatus = 'sent' | 'failed';
+/** The JSON-safe failure reason kept on a schedule's last run. */
+export interface ScheduleRunProblem { code: string; message: string; details?: Record<string, string | number | boolean> }
+/** One schedule's most recent run, as the settings surface presents it. */
+export interface ScheduleRunView { status: ScheduleRunStatus; at: string; manual: boolean; sessionId?: string; error?: ScheduleRunProblem; /** Set when the conversation could not be archived; delivery is unchanged. */ archiveError?: ScheduleRunProblem }
+/** Runtime state of one schedule; it never changes the Hub revision. */
+export interface ScheduleRuntimeView { running: boolean; lastRun?: ScheduleRunView }
+/** Every schedule's runtime state for one Hub, keyed by schedule identity. */
+export type HubScheduleRuntime = Record<string, ScheduleRuntimeView>
+/** One adapter-owned reasoning effort offered for an exact model route. */
+export interface ScheduleModelEffort { id: string; name: string }
+/** One provider group in the model catalog offered to the schedule editor. */
+export interface ScheduleModelProvider { id: string; name: string; models: Array<{ id: string; name: string; description?: string; reasoning?: { efforts: ScheduleModelEffort[]; defaultEffort?: string } }> }
+/** The selectable models and the deployment default, projected for the editor. */
+export interface ScheduleModelCatalog { default: ScheduleModelSelection; providers: ScheduleModelProvider[]; failures: Array<{ id: string; name: string; message: string }> }
 export interface KanbanSettings { revision: number; worktreeBasePath?: string }
 /** Global metadata stored beside the Hub records. */
 export interface KanbanMeta { initializedAt?: string; settingsRevision: number; worktreeBasePath?: string }
@@ -138,7 +164,7 @@ export const EMPTY_CONVERSATION_FACTS: ConversationFacts = { running: false, bac
 /** One conversation's projected attention, including the client-owned read state. */
 export interface Attention { running: boolean; background: BackgroundActivity[]; unread: boolean; awaitingReply: boolean; failed: boolean; pending: PendingUserWork }
 /** Transient identity of the entity created by this exact command, never persisted. */
-export interface CommandReceipt { kind: 'hub' | 'board' | 'project' | 'task' | 'conversation' | 'note'; id: string }
+export interface CommandReceipt { kind: 'hub' | 'board' | 'project' | 'task' | 'conversation' | 'note' | 'schedule'; id: string }
 /** One board's publishing state, projected from the stored sharing record. */
 export type SharingBoardState = 'in-sync' | 'draft' | 'updates-available' | 'needs-review' | 'orphan';
 export type SharingHubStatus = 'not-published' | 'preview' | 'published' | 'updates-available' | 'needs-review' | 'unavailable';
@@ -260,7 +286,7 @@ export interface RetainedCheckout { path: string; projectId: string; taskTitle: 
  * `state` is present on baselines and command responses and omitted from an update frame that
  * did not change the state revision; the client merges it with the state it already holds.
  */
-export interface HostSnapshot { commandReceipt?: CommandReceipt; state?: KanbanState; stateRevision: number; conversations: Record<string, ConversationFacts>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; /** Transient, in-memory retained checkouts; omitted when empty. */ retainedCheckouts?: RetainedCheckout[]; sequence: number }
+export interface HostSnapshot { commandReceipt?: CommandReceipt; state?: KanbanState; stateRevision: number; conversations: Record<string, ConversationFacts>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; /** Runtime state of every Hub's schedules; omitted when empty. */ scheduleRuntime?: Record<string, HubScheduleRuntime>; /** Transient, in-memory retained checkouts; omitted when empty. */ retainedCheckouts?: RetainedCheckout[]; sequence: number }
 /** A snapshot that carries the board state: every unary response, baseline, and command result. */
 export type FullHostSnapshot = HostSnapshot & { state: KanbanState };
 /** A request for one unary snapshot; every field is an optional hint, never a required read. */
@@ -309,7 +335,11 @@ export type Command =
   | { type: 'operation.retry' | 'operation.return'; hubId?: string; taskId: string }
   | { type: 'operation.dismiss'; hubId?: string; taskId: string }
   | { type: 'note.save'; hubId?: string; taskId: string; noteId?: string; content?: string; tags?: string[] }
-  | { type: 'note.delete'; hubId?: string; taskId: string; noteId: string };
+  | { type: 'note.delete'; hubId?: string; taskId: string; noteId: string }
+  | { type: 'schedule.save'; hubId: string; scheduleId?: string; title: string; prompt: string; cron: string; timeZone: string; projectId: string; model?: ScheduleModelSelection; newConversation: boolean; archiveWhenIdle: boolean; expectedRevision?: number }
+  | { type: 'schedule.delete'; hubId: string; scheduleId: string; confirmed: boolean; expectedRevision?: number }
+  | { type: 'schedule.setEnabled'; hubId: string; scheduleId: string; enabled: boolean; expectedRevision?: number }
+  | { type: 'schedule.runNow'; hubId: string; scheduleId: string };
 export type Outcome<T> = { ok: true; value: T } | { ok: false; error: Problem };
 export interface ClientApi {
   snapshot(request?: SnapshotRequest): Promise<KanbanSnapshot>;
@@ -317,6 +347,8 @@ export interface ClientApi {
   sharing(command: SharingCommand): Promise<KanbanSnapshot>;
   localDrive(request: LocalDriveRequest): Promise<LocalDriveResult>;
   branches(taskId: string): Promise<string[]>;
+  /** The host model catalog; `refresh` asks the host to rebuild it for a newly opened editor. */
+  modelCatalog(refresh?: boolean): Promise<ScheduleModelCatalog>;
   worktreeDefault(taskId: string): Promise<WorktreeDefaults>;
   detectProject(path: string): Promise<ProjectLocation>;
   subscribe(listener: (snapshot: KanbanSnapshot) => void): () => void;

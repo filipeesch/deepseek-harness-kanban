@@ -55,9 +55,11 @@ export interface BoardViewProps {
   autoRun?: AutoRunController;
   /** Native slots and locale used by the first-execution model stage; absent in isolated harnesses. */
   nativeSeat?: PreparationSeat;
+  /** Opens one native conversation, used by a schedule's last-run link. */
+  onOpenSession?: (sessionId: string) => void;
 }
 
-export function BoardView({ api, renderConversation, pageState, sessionTitles, conversationLeases, picker = null, autoRun: providedAutoRun, nativeSeat }: BoardViewProps) {
+export function BoardView({ api, renderConversation, pageState, sessionTitles, conversationLeases, picker = null, autoRun: providedAutoRun, nativeSeat, onOpenSession }: BoardViewProps) {
   const [localPageState] = useState(createBoardPageState); const preferences = pageState ?? localPageState;
   const [snapshot, setSnapshot] = useState<KanbanSnapshot | null>(null); const latest = useRef<KanbanSnapshot | null>(null); const live = useRef(false); const currentApi = useRef(api); currentApi.current = api;
   const [loadError, setLoadError] = useState<Problem | null>(null); const [loadAttempt, setLoadAttempt] = useState(0);
@@ -348,7 +350,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       {...(state === undefined ? {} : { viewControl: <WorkflowViewControl view={view} onChange={chooseView} /> })}
     />
     <ShareBanner view={activeHub ? snapshot?.sharing?.[activeHub.id] : undefined} onReview={() => setConfiguration('Team Settings')} />
-    {configuration && <Configuration key={configuration} state={state ?? null} hub={activeHub ?? null} board={activeBoard ?? null} hubCount={snapshot?.state.hubs.length ?? 1} settings={snapshot?.state.settings} settingsRevision={snapshot?.state.settings?.revision ?? 0} run={run} api={api} sharing={activeHub ? snapshot?.sharing?.[activeHub.id] : undefined} sharingAuth={snapshot?.sharingAuth} conversationAttention={snapshot?.conversationAttention} initial={configuration} onClose={() => setConfiguration(null)} onHubDeleted={() => { setConfiguration(null); setActiveHubIdState(null); writeStorage(ACTIVE_HUB_KEY, null); }} onBoardDeleted={() => { setConfiguration(null); }} onBoardCreated={id => { selectBoard(activeHub!.id, id); setConfiguration(null); }} />}
+    {configuration && <Configuration key={configuration} state={state ?? null} hub={activeHub ?? null} board={activeBoard ?? null} hubCount={snapshot?.state.hubs.length ?? 1} settings={snapshot?.state.settings} settingsRevision={snapshot?.state.settings?.revision ?? 0} run={run} api={api} sharing={activeHub ? snapshot?.sharing?.[activeHub.id] : undefined} sharingAuth={snapshot?.sharingAuth} conversationAttention={snapshot?.conversationAttention} scheduleRuntime={activeHub ? snapshot?.scheduleRuntime?.[activeHub.id] : undefined} {...(onOpenSession === undefined ? {} : { onOpenSession })} initial={configuration} onClose={() => setConfiguration(null)} onHubDeleted={() => { setConfiguration(null); setActiveHubIdState(null); writeStorage(ACTIVE_HUB_KEY, null); }} onBoardDeleted={() => { setConfiguration(null); }} onBoardCreated={id => { selectBoard(activeHub!.id, id); setConfiguration(null); }} />}
     <BoardProblemNotices
       loadError={loadError}
       actionError={actionError}

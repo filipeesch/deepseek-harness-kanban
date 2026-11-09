@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { AutoModePause, Board, BoardSettings, HubState, HubTask, KanbanMeta, KanbanState, NewTask, Note, Project, ProjectInput, Workflow } from '../shared/types.js';
+import type { AutoModePause, Board, BoardSettings, HubSchedule, HubState, HubTask, KanbanMeta, KanbanState, NewTask, Note, Project, ProjectInput, Workflow } from '../shared/types.js';
 import type { HubStorage } from '../shared/ports.js';
 import { HubStateSchema, initialHubState, defaultHubState } from '../domain/hub-schema.js';
 import type { NoteInput, OperationDeps, TaskTextPatch } from '../domain/hub-operations.js';
@@ -110,6 +110,7 @@ export class HubRepository {
     const sessionIds = new Set<string>();
     const projectIds = new Set<string>();
     const boardIds = new Set<string>();
+    const scheduleIds = new Set<string>();
     const names = new Set<string>();
     for (const hub of this.hubs.values()) {
       invariant(!names.has(nameKey(hub.name)), 'INVALID_STATE', 'A Hub name is owned by more than one Hub.');
@@ -121,6 +122,10 @@ export class HubRepository {
       for (const project of hub.projects) {
         invariant(!projectIds.has(project.id), 'INVALID_STATE', 'A project identifier is owned by more than one Hub.');
         projectIds.add(project.id);
+      }
+      for (const schedule of hub.schedules ?? []) {
+        invariant(!scheduleIds.has(schedule.id), 'INVALID_STATE', 'A schedule identifier is owned by more than one Hub.');
+        scheduleIds.add(schedule.id);
       }
       for (const task of hub.tasks) {
         invariant(!taskIds.has(task.id), 'INVALID_STATE', 'A task identifier is owned by more than one Hub.');
@@ -138,10 +143,12 @@ export class HubRepository {
     const sessionIds = new Set<string>();
     const projectIds = new Set<string>();
     const boardIds = new Set<string>();
+    const scheduleIds = new Set<string>();
     for (const hub of this.hubs.values()) {
       if (hub.id === next.id) continue;
       for (const project of hub.projects) projectIds.add(project.id);
       for (const board of hub.boards) boardIds.add(board.id);
+      for (const schedule of hub.schedules ?? []) scheduleIds.add(schedule.id);
       for (const task of hub.tasks) {
         taskIds.add(task.id);
         for (const sessionId of task.sessionIds) sessionIds.add(sessionId);
@@ -149,6 +156,7 @@ export class HubRepository {
     }
     for (const project of next.projects) invariant(!projectIds.has(project.id), 'PROJECT_ID_CONFLICT', 'A project identifier is already owned by another Hub.');
     for (const board of next.boards) invariant(!boardIds.has(board.id), 'BOARD_ID_CONFLICT', 'A board identifier is already owned by another Hub.');
+    for (const schedule of next.schedules ?? []) invariant(!scheduleIds.has(schedule.id), 'SCHEDULE_ID_CONFLICT', 'A schedule identifier is already owned by another Hub.');
     for (const task of next.tasks) {
       invariant(!taskIds.has(task.id), 'TASK_ID_CONFLICT', 'A task identifier is already owned by another Hub.');
       for (const sessionId of task.sessionIds) invariant(!sessionIds.has(sessionId), 'SESSION_IN_USE', 'A native session is already owned by another Hub.');
@@ -460,6 +468,7 @@ export class HubStore {
   }
 
   requireTask(taskId: string, state: HubState = this.snapshot()): HubTask { return operations.requireTask(state, taskId); }
+  requireSchedule(scheduleId: string, state: HubState = this.snapshot()): HubSchedule { return operations.requireSchedule(state, scheduleId); }
   requireProject(projectId: string, state: HubState = this.snapshot()): Project { return operations.requireProject(state, projectId); }
   requireBoard(boardId: string, state: HubState = this.snapshot()): Board { return operations.requireBoard(state, boardId); }
 
@@ -509,6 +518,16 @@ export class HubStore {
   }
   async saveNote(taskId: string, input: NoteInput): Promise<Note> {
     return this.transact(draft => operations.saveNote(draft, taskId, input, this.deps()));
+  }
+  /** Create or replace one schedule and return its stored record. */
+  async saveSchedule(input: operations.ScheduleInput, expectedRevision?: number): Promise<HubSchedule> {
+    return this.transact(draft => operations.saveSchedule(draft, input, this.deps()), expectedRevision);
+  }
+  async deleteSchedule(scheduleId: string, expectedRevision?: number): Promise<HubSchedule> {
+    return this.transact(draft => operations.deleteSchedule(draft, scheduleId, this.deps()), expectedRevision);
+  }
+  async setScheduleEnabled(scheduleId: string, enabled: boolean, expectedRevision?: number): Promise<HubSchedule> {
+    return this.transact(draft => operations.setScheduleEnabled(draft, scheduleId, enabled, this.deps()), expectedRevision);
   }
   async deleteNote(taskId: string, noteId: string): Promise<Note> {
     return this.transact(draft => operations.deleteNote(draft, taskId, noteId, this.deps()));

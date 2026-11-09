@@ -14,7 +14,7 @@ if (args.includes('--only') && only === undefined) {
   process.exit(2);
 }
 if (!checkoutArg) {
-  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only background-delete|board|conversation|deletion|hubs|override|native-drawer|auto-run|auto-mode|create-start|prepare|project]');
+  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only background-delete|board|conversation|deletion|hubs|schedules|override|native-drawer|auto-run|auto-mode|create-start|prepare|project]');
   process.exit(2);
 }
 const checkout = resolve(checkoutArg);
@@ -58,6 +58,7 @@ const scenarioTemplates = new Map([
   ['deletion', ['kanban-deletion.e2e.template.ts', 'kanban-deletion.e2e.ts']],
   ['background-delete', ['kanban-background-delete.e2e.template.ts', 'kanban-background-delete.e2e.ts']],
   ['hubs', ['kanban-hubs.e2e.template.ts', 'kanban-hubs.e2e.ts']],
+  ['schedules', ['kanban-schedules.e2e.template.ts', 'kanban-schedules.e2e.ts']],
   ['override', ['kanban-move-override.e2e.template.ts', 'kanban-move-override.e2e.ts']],
   ['native-drawer', ['kanban-native-drawer.e2e.template.ts', 'kanban-native-drawer.e2e.ts']],
   ['auto-run', ['kanban-auto-run.e2e.template.ts', 'kanban-auto-run.e2e.ts']],

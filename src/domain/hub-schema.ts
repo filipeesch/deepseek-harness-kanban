@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import type { Board, HubState, HubTask, KanbanMeta, KanbanSettings } from '../shared/types.js';
+import type { Board, HubSchedule, HubState, HubTask, KanbanMeta, KanbanSettings } from '../shared/types.js';
 import { DEFAULT_WORKFLOW_YAML, parseWorkflow } from './workflow.js';
 import { absolutePath, baseTask, canonicalWorkflow, createTaskInvariantChecker, id, nonempty, note, project, revision, timestamp, workflow } from './schema-parts.js';
+import { isTimeZone, parseCron } from './cron.js';
 
 export { canonicalWorkflow } from './schema-parts.js';
 
@@ -9,6 +10,13 @@ const board = z.strictObject({
   id, name: nonempty, workflowYaml: nonempty, workflow, createdAt: timestamp, updatedAt: timestamp,
 });
 const task = baseTask.extend({ boardId: id });
+const scheduleModel = z.strictObject({ provider: nonempty, model: nonempty, reasoningEffort: nonempty.optional() });
+/** One Hub-scoped session schedule; the operations layer owns the field limits. */
+export const scheduleSchema: z.ZodType<HubSchedule> = z.strictObject({
+  id, title: nonempty, prompt: nonempty, cron: nonempty, timeZone: nonempty, projectId: id,
+  model: scheduleModel.optional(), newConversation: z.boolean(), archiveWhenIdle: z.boolean(), enabled: z.boolean(),
+  createdAt: timestamp, updatedAt: timestamp,
+});
 
 /** Persisted settings and initialization marker stored in the domain global slot. */
 export const KanbanMetaSchema: z.ZodType<KanbanMeta> = z.strictObject({
@@ -25,7 +33,7 @@ export const KanbanSettingsSchema: z.ZodType<KanbanSettings> = z.strictObject({
 
 /** Validates one Hub aggregate. Cross-Hub ownership is enforced by the repository. */
 export const HubStateSchema: z.ZodType<HubState> = z.strictObject({
-  id, name: nonempty, revision, projects: z.array(project), boards: z.array(board), tasks: z.array(task), notes: z.array(note), createdAt: timestamp, updatedAt: timestamp,
+  id, name: nonempty, revision, projects: z.array(project), boards: z.array(board), tasks: z.array(task), notes: z.array(note), schedules: z.array(scheduleSchema).optional(), createdAt: timestamp, updatedAt: timestamp,
 }).superRefine((state, context) => {
   const issue = (path: (string | number)[], message: string): void => { context.addIssue({ code: 'custom', path, message }); };
   const unique = (values: string[], path: (string | number)[]): void => {
@@ -60,6 +68,14 @@ export const HubStateSchema: z.ZodType<HubState> = z.strictObject({
   }
   for (const [index, value] of state.notes.entries()) {
     if (!taskIds.has(value.taskId)) issue(['notes', index, 'taskId'], 'Note task does not exist.');
+  }
+  unique((state.schedules ?? []).map(value => value.id), ['schedules']);
+  for (const [index, value] of (state.schedules ?? []).entries()) {
+    if (!projectIds.has(value.projectId)) issue(['schedules', index, 'projectId'], 'Schedule project does not exist.');
+    if (!value.newConversation && value.archiveWhenIdle) issue(['schedules', index, 'archiveWhenIdle'], 'A continuous schedule cannot archive its conversation.');
+    if (!isTimeZone(value.timeZone)) issue(['schedules', index, 'timeZone'], 'Schedule time zone is not a known IANA zone.');
+    try { parseCron(value.cron); }
+    catch (error) { issue(['schedules', index, 'cron'], error instanceof Error ? error.message : 'Invalid cron expression.'); }
   }
 });
 

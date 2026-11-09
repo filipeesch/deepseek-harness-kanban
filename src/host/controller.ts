@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis';
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
-import type { Command, FullHostSnapshot, HostSnapshot, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingCommand, SnapshotRequest, WorktreeDefaults } from '../shared/types.js';
+import type { Command, FullHostSnapshot, HostSnapshot, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, ScheduleModelCatalog, SharingCommand, SnapshotRequest, WorktreeDefaults } from '../shared/types.js';
 import { problem, KanbanError } from '../shared/errors.js';
 import type { KanbanApp } from './app.js';
 export class KanbanController extends TypertRemoteService {
@@ -15,6 +15,7 @@ export class KanbanController extends TypertRemoteService {
  @Remote async detectProject(request:{path:string}):Promise<Outcome<ProjectLocation>>{return this.attempt(()=>this.app.detectProject(request.path));}
  @Remote async localDrive(request:LocalDriveRequest):Promise<Outcome<LocalDriveResult>>{return this.attempt(()=>this.app.localDrive(request));}
  @Remote async dismissQuestions(request:{sessionId:string;roundId:string}):Promise<Outcome<QuestionRound[]>>{return this.attempt(()=>this.app.dismissQuestions(request.sessionId,request.roundId));}
+ @Remote async modelCatalog(request:{refresh?:boolean}):Promise<Outcome<ScheduleModelCatalog>>{return this.attempt(()=>this.app.modelCatalog(request.refresh===true));}
  @Remote({mode:'stream'}) async *follow(signal:AbortSignal):AsyncGenerator<HostSnapshot>{
   this.owner();let dirty=true;let wake:(()=>void)|undefined;let lastRevision=-1;
   const changed=()=>{dirty=true;wake?.();};const off=this.app.subscribe(changed);

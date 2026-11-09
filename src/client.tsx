@@ -11,6 +11,7 @@ import type {} from '@deepseek-ai/dsh-client-locale/client';
 import type { PropsRuntime, PropsRenderSlots, PropsRenderFactories } from '@deepseek-ai/dsh-client-ui-slots';
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import { TYPERT_REMOTE } from './remote.js';
+import { createWorkspaceNavigation } from './client/settings/schedules/workspace-navigation.js';
 import { ClientBridge } from './client-bridge.js';
 import { createDirectoryPicker } from './client/directory-picker.js';
 import { BoardView, createBoardPageState, type BoardPageState } from './client/board.js';
@@ -138,6 +139,11 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       t={props.t}
     />;
   }
+  function workspaceNavigation(): ((sessionId: string) => void) | undefined {
+    let workspace: Parameters<typeof createWorkspaceNavigation>[0];
+    try { workspace = ctx.get('uiWorkspace') as unknown as Parameters<typeof createWorkspaceNavigation>[0]; } catch { workspace = undefined; }
+    return createWorkspaceNavigation(workspace);
+  }
   function BoardPage(props: MainProps & { api: ClientApi; autoRun: AutoRunController }) {
     const leaseEnvironment = useMemo<ConversationLeaseEnvironment>(() => ({
       sessions: scopedSessions,
@@ -173,6 +179,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       owner={surfaceOwner}
       services={surfaceServices}
     />, [surfaceOwner, surfaceServices]);
+    const openSession = useMemo(workspaceNavigation, [ctx]);
     return <BoardView
       api={props.api}
       pageState={pageState}
@@ -180,6 +187,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       picker={picker}
       autoRun={props.autoRun}
       nativeSeat={nativeSeat}
+      {...(openSession === undefined ? {} : { onOpenSession: openSession })}
       conversationLeases={leaseEnvironment}
       renderConversation={renderConversation}
     />;

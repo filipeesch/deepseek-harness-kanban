@@ -1,0 +1,43 @@
+# Tasks
+
+## 1. Foundations
+
+- [x] 1.1 Verify the host's public session-scoped model selection surface and record the 0.2.2+ compatibility boundary; keep the plugin free of any installation-default-model dependency
+- [x] 1.2 Create `src/domain/cron.ts` with parse, normalize, describe, and next-occurrence functions over a five-field expression and an IANA zone, and verify `tests/domain/cron.test.ts` covers wildcards, lists, ranges, steps, month/weekday names, `@hourly`/`@daily`/`@weekly`, wrong arity, out-of-range fields, an unsatisfiable expression, a daylight-saving gap, a repeated local time, and February 29
+- [x] 1.3 Add the schedule value types to `src/shared/types.ts` (`HubSchedule`, model selection, behavior options, last-run view, per-Hub runtime projection) and verify the host and client TypeScript programs compile
+- [x] 1.4 Extend `src/domain/hub-schema.ts` with the optional `schedules` collection and its per-field validation, and verify `tests/domain/hub-schema.test.ts` accepts a Hub stored without schedules, rejects an invalid schedule, and keeps the collection optional in the serialized shape
+- [x] 1.5 Add `saveSchedule`, `deleteSchedule`, and `setScheduleEnabled` to `src/domain/hub-operations.ts` with project-ownership checks, the 50-schedule limit, identity/timestamp assignment, and normalized cron storage, expose them through `HubStore`, and verify `tests/domain/hub-schedules.test.ts` covers create, update, revision conflict, cross-Hub project rejection, the limit, enable/pause, and delete
+
+## 2. Run-state storage
+
+- [x] 2.1 Create `src/host/schedule-run-storage.ts` opening a `kanban_schedule_runs` per-record domain keyed by schedule id, following `openQuestionStorage`, and verify `tests/host/schedule-run-store.test.ts` round-trips a record and survives a reopen
+- [x] 2.2 Implement the run store API (begin a run, finish with outcome, read all, finalize interrupted runs on startup, persist the continuous-session binding) and verify the same suite covers a started-but-never-finished record becoming an interrupted failed run
+
+## 3. Execution
+
+- [x] 3.1 Create the model port that reads `sessionController.modelCatalog()` and installs the selection through the Agent's session-scoped `agent.model.select` face after `resolveCallConfig`, never writing the installation default, and verify `tests/host/schedule-model.test.ts` covers session-only application, an unavailable model, a missing session-only face, and a route-validation failure; verify `tests/host/model-catalog.test.ts` covers projection, cache, refresh, and fetch failure
+- [x] 3.2 Create the schedule runner (durable admission before side effects, relocating-project refusal, visible project workspace, validated continuous reuse, session-only model, title, directory revalidation before the prompt, send, record) and verify `tests/host/schedule-runner.test.ts` covers a new conversation, validated reuse and rebinding, a deleted directory, relocation, directory drift before send, abort, an unavailable model, a rejected prompt admission, and no task/board/worktree change
+- [x] 3.3 Create the archive watcher that reads question-aware facts after `turn/end` and agent-idle events, coalesces observations made during an awaited evaluation, archives only a genuinely idle session created by an occurrence, never archives a continuous session, and reports failed archives without failing the run, and verify `tests/host/schedule-archive.test.ts` covers idle, pending interaction, background work, coalescing, retries, continuous, and failure callbacks
+
+## 4. Coordinator and host wiring
+
+- [x] 4.1 Create `src/host/schedule-coordinator.ts` with injectable clock, schedule/cancel, runner, and store ports, arming one timer per enabled schedule, clamping `setTimeout`, running the armed occurrence once after a late fire, recomputing the next occurrence strictly after the current time, skipping overlaps, rejecting run-now while running, re-arming on enable/pause/delete, and disposing cleanly, and verify `tests/host/schedule-coordinator.test.ts` covers those paths with fake timers
+- [x] 4.2 Wire the runtime in `src/index.ts`: open the run storage with the other domains, construct the model port, runner with the plugin lifetime signal, question-aware watcher, and coordinator, prune stale runtime and finalize interrupted runs at startup, start arming after `app.initialize()`, and on shutdown abort, drain admitted executions, and close storage; verify a host fixture starts and closes without leaving timers or open domains
+- [x] 4.3 Add `schedule.save`, `schedule.delete`, `schedule.setEnabled`, and `schedule.runNow` to the command union, the `KanbanApp` dispatch, `KanbanController`, and the `src/remote.ts` codecs, and verify `tests/host/schedule-commands.test.ts` covers save/update, revision conflict, delete confirmation, enable/pause, run-now for a saved schedule, and run-now rejection while running
+- [x] 4.4 Publish the per-Hub schedule runtime projection in the host snapshot and update `src/remote.ts` plus the client types, and verify `tests/host/schedule-runtime-snapshot.test.ts` shows a finished run updating the projection while `stateRevision` stays unchanged and the client merge keeps the last state
+- [x] 4.5 Add the `kanban/modelCatalog` remote with a short-lived host cache, expose it on `ClientApi` through the bridge, and verify `tests/host/model-catalog.test.ts` covers a cache hit, an explicit refresh, and an unavailable catalog surfaced as a problem
+
+## 5. Client surface
+
+- [x] 5.1 Create `src/client/settings/schedules/schedule-draft.ts` with the pure draft, cron validation, description, occurrence preview, and save payload mapping, and verify `tests/client/schedule-draft.test.ts` covers creation, edit round-trip, invalid cron, missing project, and the continuous-session option disabling auto-archive
+- [x] 5.2 Create the model-catalog hook and the schedules list (`schedules-settings.tsx`) showing title, cron description, next occurrence, project, model or host default, enabled state, last-run summary, running badge, and the create/edit/pause/delete/run-now actions with an empty state, and verify `tests/client/schedules-settings.test.tsx` covers the populated list, the empty state, pause, delete confirmation, and run-now
+- [x] 5.3 Create the overlay editor (`schedule-editor-dialog.tsx` and its controller) with every field, inline validation, the cron description, next three occurrences, hourly/daily/weekly/manual quick choices, project, catalog-refreshed model select with reasoning effort, and the two behavior toggles; verify `tests/client/schedule-editor.test.tsx` covers save, inline rejection, catalog load failure, revision capture, catalog membership, effort round-trip, and cancel
+- [x] 5.4 Add the last-run link that unarchives and opens the session through the optional `uiWorkspace` service for a sent or failed run, falls back to the conversation identity, and shows a recorded archive failure; verify `tests/client/schedule-last-run-link.test.tsx` and `tests/client/workspace-navigation.test.ts` cover both hosts and the unarchive-before-open order
+- [x] 5.5 Register the `Schedules` section in `src/client/settings/configuration.tsx` with the no-Hub state, and verify `tests/client/configuration-schedules.test.tsx` shows the section for a selected Hub and the explanatory state without one
+
+## 6. Verification and documentation
+
+- [x] 6.1 Run `pnpm check` and verify host and client typechecks, the full vitest suite, and the build pass
+- [x] 6.2 Add `tests/browser/schedules.spec.ts` using the existing harness API for the list, editor, validation, and light/dark appearance, capture screenshots under `.verification/`, and verify `pnpm test:browser` passes
+- [x] 6.3 Add a new `--only schedules` real-composition scenario that creates a schedule, runs one occurrence, verifies exactly one session, its directory, the delivered prompt, and the scaffold's deterministic model-call failure; verify `node scripts/e2e-dsh.mjs --checkout <checkout> --only schedules` passes against a temporary profile
+- [x] 6.4 Document the Schedules section, unattended execution, dispatch admission, session-only model (0.2.2+), archiving and archive failures, durable run state, shutdown drain, and the downgrade shape in `README.md` and `docs/operations.md`; restore the pre-existing documentation untouched and verify the documented steps match the shipped controls

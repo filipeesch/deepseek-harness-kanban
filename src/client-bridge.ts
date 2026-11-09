@@ -75,6 +75,7 @@ export class ClientBridge {
       sharing: (command: SharingCommand) => this.unarySnapshot(() => remote.kanban.sharing(command)),
       localDrive: async request => unwrap(await remote.kanban.localDrive(request)),
       branches: async (taskId: string) => unwrap(await remote.kanban.branches({ taskId })),
+      modelCatalog: async (refresh = false) => unwrap(await remote.kanban.modelCatalog(refresh ? { refresh: true } : {})),
       worktreeDefault: async (taskId: string) => unwrap(await remote.kanban.worktreeDefault({ taskId })),
       detectProject: async (path: string) => unwrap(await remote.kanban.detectProject({ path })),
       subscribe: (listener) => {
