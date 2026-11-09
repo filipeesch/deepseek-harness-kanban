@@ -18,7 +18,9 @@ describe('board and editor style contracts', () => {
     for (const value of ['@keyframes kb-drawer-enter', '@keyframes kb-drawer-exit', '[data-entering=true]', '[data-closing=true]', 'prefers-reduced-motion:reduce']) expect(styles).toContain(value);
   });
   it('defines the card regions, activity strip, and status tones on host tokens', () => {
-    for (const value of ['.kb-working{', '.kb-working-dot', '.kb-background{', '.kb-background:focus-visible', '.kb-activity-dot', '.kb-icon-tab', '.kb-icon-tab:focus-visible', '.kb-drawer-title', '.kb-auto-chip-header', '@container (max-width:560px)', '.kb-card-context{', '.kb-card-project{', '.kb-card-activity{', '.kb-card-status{', '.kb-card-status-line.is-danger', '.kb-card-status-line.is-pending', '.kb-card[data-working=true]', '@keyframes kb-working-pulse', '--dsw-alias-label-deep-diving']) expect(styles).toContain(value);
+    for (const value of ['.kb-card-actions{', '.kb-card-action{', '.kb-activity-dot', '.kb-icon-tab', '.kb-icon-tab:focus-visible', '.kb-drawer-title', '.kb-auto-chip-header', '@container (max-width:560px)', '.kb-card-context{', '.kb-card-project{', '.kb-card-activity{', '.kb-card-status{', '.kb-card-status-line.is-danger', '.kb-card-status-line.is-pending', '.kb-card[data-working=true]::after', '@keyframes kb-working-bar', '--dsw-alias-label-deep-diving']) expect(styles).toContain(value);
+    expect(styles).not.toContain('.kb-working{');
+    expect(styles).not.toContain('.kb-background{');
     expect(styles).not.toContain('.kb-task-background');
     expect(styles).not.toContain('.kb-drawer-automode');
     expect(styles).not.toContain('.kb-running');
@@ -64,5 +66,34 @@ describe('board and editor style contracts', () => {
 describe('destructive and operation surfaces', () => {
   it('defines the status stack, consequence list, and problem disclosure', () => {
     for (const selector of ['.kb-status-stack', '.kb-operation-failed', '.kb-operation-facts', '.kb-destructive-dialog', '.kb-consequence-list', '.kb-problem-details', '.kb-problem-facts']) expect(styles).toContain(selector);
+  });
+});
+
+describe('compact header and popover surfaces', () => {
+  it('keeps the two header rows and the shared control size', () => {
+    for (const selector of ['.kb-header{', '.kb-hub-row{', '.kb-board-row{', '.kb-hub-tabs{', '.kb-board-tabs{', '.kb-toolbar{', '.kb-control{', '.kb-filter-trigger{', '.kb-filter-dot{', '.kb-filter-badge{', '.kb-filter-popover{', '.kb-view-switch{']) expect(styles).toContain(selector);
+    expect(styles).toMatch(/\.kb-toolbar \.kb-button\.kb-control\{[^}]*height:32px/);
+    expect(styles).toMatch(/\.kb-toolbar \.kb-icon-button\.kb-control\{[^}]*width:32px/);
+  });
+  it('retires the subtitle heading, the Hub wrapper, and the inline header search', () => {
+    for (const retired of ['.kb-heading', '.kb-hub-nav', '.kb-search{']) expect(styles).not.toContain(retired);
+    // The hint class survives for dialogs, relocation notices, and the Git section.
+    expect(styles).toContain('.kb-hint{');
+  });
+  it('stacks a popover above the board content and below the task drawer', () => {
+    const popoverLayer = Number(/\.kb-popover\{[^}]*z-index:(\d+)/.exec(styles)?.[1]);
+    const drawerLayer = Number(/\.kb-drawer\{[^}]*z-index:(\d+)/.exec(styles)?.[1]);
+    expect(popoverLayer).toBeGreaterThan(8); // the diagram travel overlay is the busiest board layer
+    expect(popoverLayer).toBeLessThan(drawerLayer);
+    expect(styles).toContain('.kb-popover-anchor,');
+  });
+  it('keeps the narrow toolbar popover inside the clipped page root', () => {
+    // The cap is the painted width, so padding and border have to be included in it.
+    expect(styles).toMatch(/\.kb-filter-popover\{[^}]*box-sizing:border-box;[^}]*width:min\(300px,calc\(100vw - 48px\)\)/);
+    // The breakpoint that hands the toolbar the whole line also has to move the popover to the
+    // leading edge of its trigger, or the funnel's popover is dragged off screen by the root.
+    const narrowBlock = styles.indexOf('@media(max-width:760px)');
+    expect(narrowBlock).toBeGreaterThanOrEqual(0);
+    expect(styles.indexOf('.kb-toolbar .kb-popover.is-end{left:0;right:auto}')).toBeGreaterThan(narrowBlock);
   });
 });

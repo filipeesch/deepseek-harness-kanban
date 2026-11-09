@@ -46,8 +46,9 @@ describe('task card regions', () => {
     expect(card.children[2]).toBe(activity);
     expect(within(context as HTMLElement).getByText('API')).toBeTruthy();
     expect(within(context as HTMLElement).getAllByRole('img')).toHaveLength(3);
-    expect(within(context as HTMLElement).queryByText('Working')).toBeNull();
-    expect(within(activity as HTMLElement).getByText('Working')).toBeTruthy();
+    expect(within(context as HTMLElement).queryByRole('button', { name: 'Turn on auto mode' })).toBeNull();
+    expect(within(activity as HTMLElement).getByRole('button', { name: 'Turn on auto mode' })).toBeTruthy();
+    expect(within(activity as HTMLElement).getByRole('status').textContent).toBe('Working on Alpha task');
     expect(within(activity as HTMLElement).queryByText('API')).toBeNull();
     expect(card.querySelector('.kb-card-status')).toBeNull();
   });
@@ -80,24 +81,18 @@ describe('task card regions', () => {
 });
 
 describe('task card activity region', () => {
-  it('labels a single background family and keeps the chip outside the open button', () => {
-    const { card } = setup({ attention: attentionWith({ background: [{ kind: 'job', label: 'Run tests' }] }) });
-    const chip = within(card).getByRole('note');
-    expect(chip.textContent).toBe('1 job');
-    expect(chip.getAttribute('aria-label')).toBe('Background activity: 1 job. Run tests');
-    expect(chip.getAttribute('title')).toBe('Run tests');
-    expect(chip.getAttribute('tabindex')).toBe('0');
-    expect(chip.closest('button')).toBeNull();
-    expect(card.querySelector('.kb-card-activity')?.contains(chip)).toBe(true);
+  it('does not present a background activity indicator', () => {
+    const { card } = setup({ attention: attentionWith({ background: [{ kind: 'job', label: 'Run tests' }, { kind: 'schedule', label: 'Wake later' }] }) });
+    expect(within(card).queryByRole('note')).toBeNull();
+    expect(card.querySelector('.kb-background')).toBeNull();
+    expect(card.querySelector('.kb-card-activity')?.textContent).not.toContain('2 activities');
   });
 
-  it('aggregates mixed background families in one line', () => {
-    const { card } = setup({ attention: attentionWith({ background: [{ kind: 'job', label: 'Run tests' }, { kind: 'schedule', label: 'Wake later' }] }) });
-    const chip = within(card).getByRole('note');
-    expect(chip.textContent).toBe('2 activities');
-    expect(chip.getAttribute('aria-label')).toBe('Background activity: 2 activities. Run tests · Wake later');
-    expect(chip.textContent).not.toContain('job');
-    expect(chip.textContent).not.toContain('subagent');
+  it('presents the execution accent instead of a working label', () => {
+    const { card } = setup({ attention: attentionWith({ running: true }) });
+    expect(card.getAttribute('data-working')).toBe('true');
+    expect(card.querySelector('.kb-working')).toBeNull();
+    expect(within(card).getByRole('status').textContent).toBe('Working on Alpha task');
   });
 
   it('keeps one persistent working announcement across updates', () => {
@@ -183,21 +178,10 @@ describe('task card interaction surface', () => {
     expect(onOpen).toHaveBeenCalledWith('t1');
   });
 
-  it('activates the card from the context row and the background chip', () => {
-    const { onOpen } = setup({ attention: attentionWith({ background: [{ kind: 'job', label: 'Run tests' }] }) });
+  it('activates the card from the context row', () => {
+    const { onOpen } = setup();
     fireEvent.click(document.querySelector('.kb-card-context')!);
     expect(onOpen).toHaveBeenCalledWith('t1');
-    fireEvent.click(document.querySelector('.kb-background')!);
-    expect(onOpen).toHaveBeenCalledTimes(2);
-  });
-
-  it('activates the card from the background chip by keyboard', () => {
-    const { onOpen } = setup({ attention: attentionWith({ background: [{ kind: 'job', label: 'Run tests' }] }) });
-    const chip = document.querySelector('.kb-background')!;
-    fireEvent.keyDown(chip, { key: 'Enter' });
-    expect(onOpen).toHaveBeenCalledWith('t1');
-    fireEvent.keyDown(chip, { key: ' ' });
-    expect(onOpen).toHaveBeenCalledTimes(2);
   });
 
   it('toggles selection from the card in selection mode', () => {
@@ -212,10 +196,10 @@ describe('task card interaction surface', () => {
   });
 
   it('starts a drag from card surface but not from the activity controls', () => {
-    const { card, onBeginDrag } = setup({ attention: attentionWith({ background: [{ kind: 'job', label: 'Run tests' }] }) });
+    const { card, onBeginDrag } = setup();
     fireEvent.pointerDown(card.querySelector('.kb-card-project')!, { button: 0 });
     expect(onBeginDrag).toHaveBeenCalledTimes(1);
-    fireEvent.pointerDown(card.querySelector('.kb-background')!, { button: 0 });
+    fireEvent.pointerDown(card.querySelector('.kb-card-actions')!, { button: 0 });
     expect(onBeginDrag).toHaveBeenCalledTimes(1);
   });
 
@@ -226,10 +210,54 @@ describe('task card interaction surface', () => {
   });
 });
 
+describe('advance action on the card', () => {
+  const next = { column: { id: 'doing', name: 'Doing' }, access: 'allowed' as const };
+
+  it('advances to the next stage without opening the drawer', () => {
+    const onMove = vi.fn();
+    const { card, onOpen } = setup({ next, onMove });
+    fireEvent.click(within(card).getByRole('button', { name: 'Move to Doing' }));
+    expect(onMove).toHaveBeenCalledWith({ id: 'doing', name: 'Doing' });
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('names a restricted next stage as requiring confirmation', () => {
+    const { card } = setup({ next: { ...next, access: 'restricted' }, onMove: vi.fn() });
+    expect(within(card).getByRole('button', { name: 'Move to Doing, requires confirmation' })).toBeTruthy();
+  });
+
+  it('hides the action while the task is running', () => {
+    const { card } = setup({ next, onMove: vi.fn(), attention: attentionWith({ running: true }) });
+    expect(within(card).queryByRole('button', { name: 'Move to Doing' })).toBeNull();
+  });
+
+  it('omits the action without a next stage and in selection mode', () => {
+    const first = setup({ onMove: vi.fn() });
+    expect(within(first.card).queryByRole('button', { name: /^Move to / })).toBeNull();
+    first.unmount();
+    const second = setup({ next, onMove: vi.fn(), selectionMode: true });
+    expect(within(second.card).queryByRole('button', { name: /^Move to / })).toBeNull();
+  });
+
+  it('stays disabled while the board reports a move in flight', () => {
+    const onMove = vi.fn();
+    const { card } = setup({ next, onMove, advancePending: true });
+    const button = within(card).getByRole('button', { name: 'Move to Doing' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(onMove).not.toHaveBeenCalled();
+  });
+
+  it('disables the action while the task is busy', () => {
+    const { card } = setup({ next, onMove: vi.fn(), task: { ...baseTask, pendingTransition: { id: 'p', fromColumnId: 'intake', columnId: 'done', mode: 'move', status: 'waiting' } } });
+    expect((within(card).getByRole('button', { name: 'Move to Doing' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
 describe('auto-mode control on the card', () => {
-  it('renders an always-visible unpressed chip in the context region', () => {
+  it('renders an always-visible unpressed chip in the activity region', () => {
     const { card } = setup();
-    const chip = within(card.querySelector('.kb-card-context') as HTMLElement).getByRole('button', { name: 'Turn on auto mode' });
+    const chip = within(card.querySelector('.kb-card-activity') as HTMLElement).getByRole('button', { name: 'Turn on auto mode' });
     expect(chip.getAttribute('aria-pressed')).toBe('false');
     expect(chip.textContent).toContain('Auto');
   });

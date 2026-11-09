@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { userEvent } from '@testing-library/user-event';
 import { BoardView, createBoardPageState } from '../../src/client/board.js';
 import type { KanbanSnapshot } from '../../src/shared/types.js';
-import { fakeApi, fixture } from './helpers.js';
+import { fakeApi, fixture, openFilterPopover } from './helpers.js';
 
 afterEach(cleanup);
 const renderNative = (id: string) => <div data-testid={'native-' + id}>Native session {id}</div>;
@@ -57,6 +57,7 @@ describe('plugin-owned page bookmarks', () => {
     const native = (id: string) => <Native id={id} />;
     const first = render(<BoardView api={mock.api} pageState={pageState} renderConversation={native} />);
     await screen.findByRole('button', { name: 'Open task Alpha task' });
+    await openFilterPopover(user);
     await user.type(screen.getByRole('searchbox', { name: 'Search tasks' }), 'Alpha');
     await user.selectOptions(screen.getByRole('combobox', { name: 'Project filter' }), 'p1');
     await user.click(screen.getByRole('button', { name: 'Open task Alpha task' }));
@@ -66,6 +67,7 @@ describe('plugin-owned page bookmarks', () => {
     expect(pageState.search).toBe('Alpha'); expect(pageState.projectFilter).toBe('p1'); expect(pageState.selectedTaskId).toBe('t1'); expect(pageState.drawers.t1?.conversationId).toBe('s2');
     render(<BoardView api={mock.api} pageState={pageState} renderConversation={native} />);
     await screen.findByTestId('retained-s2');
+    await openFilterPopover(user);
     expect((screen.getByRole('searchbox', { name: 'Search tasks' }) as HTMLInputElement).value).toBe('Alpha');
     expect((screen.getByRole('combobox', { name: 'Project filter' }) as HTMLSelectElement).value).toBe('p1');
     expect(screen.getByRole('tab', { name: 'Agent 2' }).getAttribute('aria-selected')).toBe('true'); expect([...mounted]).toEqual(['s2']);
@@ -87,7 +89,7 @@ describe('plugin-owned page bookmarks', () => {
     const mock = fakeApi(); const pageState = createBoardPageState(); const user = userEvent.setup();
     const first = render(<BoardView api={mock.api} pageState={pageState} renderConversation={renderNative} />);
     await screen.findByRole('button', { name: 'Open task Beta task' });
-    await user.type(screen.getByRole('searchbox', { name: 'Search tasks' }), 'Alpha'); await user.selectOptions(screen.getByRole('combobox', { name: 'Project filter' }), 'p1');
+    await openFilterPopover(user); await user.type(screen.getByRole('searchbox', { name: 'Search tasks' }), 'Alpha'); await user.selectOptions(screen.getByRole('combobox', { name: 'Project filter' }), 'p1');
     await user.click(screen.getByRole('button', { name: 'Open task Alpha task' })); await user.click(screen.getByRole('tab', { name: 'Info' })); first.unmount();
     render(<BoardView api={mock.api} pageState={pageState} renderConversation={renderNative} />);
     await screen.findByRole('button', { name: 'Close task details' });

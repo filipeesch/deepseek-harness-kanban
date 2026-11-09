@@ -29,7 +29,9 @@ export type WorkflowView = 'board' | 'workflow'
 export interface StagePosition { x: number; y: number }
 /** One authored transition target and the condition under which it is followed. */
 export type TransitionRule = { to: string; when?: string }
-export interface Column { id: string; name: string; onEnterPrompt?: string; allowedTransitions?: TransitionRule[]; /** Absent means the diagram places the stage automatically. */ position?: StagePosition }
+/** An authored minimum size for one stage, in diagram pixels. */
+export interface StageSize { width: number; height: number }
+export interface Column { id: string; name: string; onEnterPrompt?: string; allowedTransitions?: TransitionRule[]; /** Absent means the diagram places the stage automatically. */ position?: StagePosition; /** Absent means the stage renders at the accepted minimum size. */ size?: StageSize }
 export interface ColumnGroup { id: string; name: string; columnIds: string[] }
 export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[]; /** Absent means the board opens the column board. */ defaultView?: WorkflowView }
 export interface Worktree { path: string; branch: string; owned: boolean; status: 'preparing' | 'ready' | 'error'; error?: Problem }

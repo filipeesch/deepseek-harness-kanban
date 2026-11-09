@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { Context } from '@deepseek-ai/cordis';
 import { RemoteStream, type RemoteStreamOptions } from '@deepseek-ai/dsh-api-gateway/client';
+import { openFilterPopoverByClick } from '../client/helpers.js';
 import type { RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol';
 import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client';
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots';
@@ -442,6 +443,8 @@ describe('public SDK plugin binding contracts', () => {
     const active = (select: (value: { activePanelId: string | null }) => unknown) => select({ activePanelId: 'kanban' });
     const inactive = (select: (value: { activePanelId: string | null }) => unknown) => select({ activePanelId: null });
     const mounted = render(<Main {...props} usePanelInfo={active} />);
+    await screen.findByRole('button', { name: /^Filter tasks/ });
+    openFilterPopoverByClick();
     fireEvent.change(await screen.findByRole('searchbox', { name: 'Search tasks' }), { target: { value: 'Native' } });
     fireEvent.change(screen.getByRole('combobox', { name: 'Project filter' }), { target: { value: 'p' } });
     fireEvent.click(await screen.findByRole('button', { name: 'Open task Native task' }));
@@ -451,6 +454,8 @@ describe('public SDK plugin binding contracts', () => {
     expect(screen.queryByRole('region', { name: 'Kanban' })).toBeNull();
     expect(screen.queryByTestId('retained-body')).toBeNull();
     mounted.rerender(<Main {...props} usePanelInfo={active} />);
+    await screen.findByRole('button', { name: /^Filter tasks/ });
+    openFilterPopoverByClick();
     const search = await screen.findByRole('searchbox', { name: 'Search tasks' }) as HTMLInputElement;
     await waitFor(() => expect(search.value).toBe('Native'));
     expect((screen.getByRole('combobox', { name: 'Project filter' }) as HTMLSelectElement).value).toBe('p');

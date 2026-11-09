@@ -6,21 +6,26 @@ import { PlusIcon } from './icons.js';
 import { BoardPublishingBadge, HubPublishingBadge } from './sharing/indicators.js';
 import { boardSharing } from './sharing/status.js';
 
-export interface HubNavProps {
+export interface HubTabRowProps {
   hubs: readonly HubState[];
-  /** Omitted when no Hub is active; an empty list still renders the row with its create action. */
+  activeHubId?: string;
+  /** Aggregated activity per Hub id, already projected for the whole snapshot. */
+  hubActivity: ReadonlyMap<string, ScopeActivity>;
+  onSelectHub: (hubId: string) => void;
+  onCreateHub: () => void;
+  /** Publishing state per Hub, projected from the host snapshot. */
+  sharing?: Readonly<Record<string, HubSharingView>>;
+}
+
+export interface BoardTabRowProps {
+  /** Omitted when no Hub is active; the row renders nothing. */
   boards?: readonly Board[];
   activeHubId?: string;
   activeBoardId?: string;
-  /** Aggregated activity per Hub id, already projected for the whole snapshot. */
-  hubActivity: ReadonlyMap<string, ScopeActivity>;
   /** Aggregated activity per board id of the active Hub. */
   boardActivity: ReadonlyMap<string, ScopeActivity>;
-  onSelectHub: (hubId: string) => void;
   onSelectBoard: (hubId: string, boardId: string) => void;
-  onCreateHub: () => void;
   onCreateBoard: () => void;
-  /** Publishing state per Hub, projected from the host snapshot. */
   sharing?: Readonly<Record<string, HubSharingView>>;
 }
 
@@ -43,9 +48,12 @@ function ScopeTab({ scope, name, className, selected, activity, sharing, onSelec
   </button>;
 }
 
-/** Hub and board tab rows; every fact and callback arrives through props. */
-export function HubNav({ hubs, boards, activeHubId, activeBoardId, hubActivity, boardActivity, onSelectHub, onSelectBoard, onCreateHub, onCreateBoard, sharing = {} }: HubNavProps) {
-  return <nav className="kb-hub-nav" aria-label="Hub and board navigation">
+/**
+ * The Hub row of the header. Each row is its own landmark and tablist so the two can be
+ * placed on different lines by the header and scroll on their own.
+ */
+export function HubTabRow({ hubs, activeHubId, hubActivity, onSelectHub, onCreateHub, sharing = {} }: HubTabRowProps) {
+  return <nav className="kb-scope-row kb-hub-row" aria-label="Hubs">
     <div className="kb-hub-tabs" role="tablist" aria-label="Hubs">
       {hubs.map(hub => <ScopeTab
         key={hub.id}
@@ -59,7 +67,14 @@ export function HubNav({ hubs, boards, activeHubId, activeBoardId, hubActivity, 
       />)}
       <button type="button" className="kb-tab-add" aria-label="Create Hub" title="Create Hub" onClick={onCreateHub}><PlusIcon size={13} /></button>
     </div>
-    {boards !== undefined && <div className="kb-board-tabs" role="tablist" aria-label="Boards">
+  </nav>;
+}
+
+/** The board row of the header, scoped to the active Hub. */
+export function BoardTabRow({ boards, activeHubId, activeBoardId, boardActivity, onSelectBoard, onCreateBoard, sharing = {} }: BoardTabRowProps) {
+  if (boards === undefined) return null;
+  return <nav className="kb-scope-row kb-board-row" aria-label="Boards">
+    <div className="kb-board-tabs" role="tablist" aria-label="Boards">
       {boards.map(board => <ScopeTab
         key={board.id}
         scope="Board"
@@ -71,6 +86,6 @@ export function HubNav({ hubs, boards, activeHubId, activeBoardId, hubActivity, 
         onSelect={() => { if (activeHubId !== undefined) onSelectBoard(activeHubId, board.id); }}
       />)}
       <button type="button" className="kb-tab-add" aria-label="Create board" title="Create board" onClick={onCreateBoard}><PlusIcon size={13} /></button>
-    </div>}
+    </div>
   </nav>;
 }

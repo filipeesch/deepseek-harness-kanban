@@ -1,18 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import { readStagePositions } from '../../src/domain/workflow-positions.js';
+import { readStageSizes } from '../../src/domain/workflow-sizes.js';
 import { mergeWorkflowPlacements } from '../../src/domain/sharing/workflow-merge.js';
 import type { WorkflowVersion } from '../../src/domain/sharing/workflow-merge.js';
 
 const nl = String.fromCharCode(10);
-type ColumnSpec = readonly [id: string, label: string, position?: readonly [number, number]];
+type ColumnSpec = readonly [id: string, label: string, position?: readonly [number, number], size?: readonly [number, number]];
 
 function yaml(columns: readonly ColumnSpec[], leading: readonly string[] = []): string {
   const lines = [...leading, 'columns:'];
-  for (const [id, label, position] of columns) {
+  for (const [id, label, position, size] of columns) {
     lines.push('  - id: ' + id);
     lines.push('    label: ' + label);
     if (position !== undefined) lines.push('    position: {x: ' + position[0] + ', y: ' + position[1] + '}');
+    if (size !== undefined) lines.push('    size: {width: ' + size[0] + ', height: ' + size[1] + '}');
   }
   lines.push('');
   return lines.join(nl);
@@ -27,6 +29,10 @@ function version(name: string, columns: readonly ColumnSpec[], leading: readonly
 
 function positionsOf(value: string): Record<string, unknown> {
   return readStagePositions(parseWorkflow(value));
+}
+
+function sizesOf(value: string): Record<string, unknown> {
+  return readStageSizes(parseWorkflow(value));
 }
 
 describe('workflow placement merge', () => {
@@ -108,6 +114,43 @@ describe('workflow placement merge', () => {
     const result = mergeWorkflowPlacements({ base, local, published });
     expect(result?.name).toBe('Local name');
     expect(positionsOf(result!.workflow).todo).toEqual({ x: 5, y: 5 });
+  });
+
+  it('merges a size-only difference from both sides', () => {
+    const local = version('Delivery', [['todo', 'To do', [0, 0], [400, 300]], ['doing', 'Doing', [200, 0]], ['done', 'Done']]);
+    const published = version('Delivery', [['todo', 'To do', [0, 0], [300, 200]], ['doing', 'Doing', [200, 0], [500, 400]], ['done', 'Done']]);
+    const result = mergeWorkflowPlacements({ base, local, published });
+    expect(result).not.toBeNull();
+    expect(sizesOf(result!.workflow)).toEqual({ todo: { width: 400, height: 300 }, doing: { width: 500, height: 400 } });
+  });
+
+  it('keeps the local size when both sides resized the same stage', () => {
+    const local = version('Delivery', [['todo', 'To do', [0, 0], [400, 300]], ['doing', 'Doing', [200, 0]], ['done', 'Done']]);
+    const published = version('Delivery', [['todo', 'To do', [0, 0], [320, 220]], ['doing', 'Doing', [200, 0]], ['done', 'Done']]);
+    const result = mergeWorkflowPlacements({ base, local, published });
+    expect(sizesOf(result!.workflow).todo).toEqual({ width: 400, height: 300 });
+  });
+
+  it('merges a local move with a published resize', () => {
+    const local = version('Delivery', [['todo', 'To do', [50, 0]], ['doing', 'Doing', [200, 0]], ['done', 'Done']]);
+    const published = version('Delivery', [['todo', 'To do', [0, 0], [400, 300]], ['doing', 'Doing', [200, 0]], ['done', 'Done']]);
+    const result = mergeWorkflowPlacements({ base, local, published });
+    expect(positionsOf(result!.workflow).todo).toEqual({ x: 50, y: 0 });
+    expect(sizesOf(result!.workflow).todo).toEqual({ width: 400, height: 300 });
+  });
+
+  it('treats a size difference as layout rather than a meaning conflict', () => {
+    const local = version('Delivery', [['todo', 'To do', [0, 0], [400, 300]], ['doing', 'Doing', [200, 0]], ['done', 'Done']]);
+    const published = version('Delivery', [['todo', 'To do', [0, 0]], ['doing', 'Doing', [200, 0], [500, 400]], ['done', 'Done']]);
+    expect(mergeWorkflowPlacements({ base, local, published })).not.toBeNull();
+  });
+
+  it('drops a size of a stage the winning meaning no longer defines', () => {
+    const local = version('Delivery', [['todo', 'To do', [0, 0], [400, 300]], ['doing', 'Doing', [200, 0], [300, 200]]]);
+    const published = version('Delivery', [['todo', 'To do', [0, 0]], ['doing', 'Doing', [200, 0]], ['done', 'Done']]);
+    const result = mergeWorkflowPlacements({ base, local, published });
+    expect(result!.workflow).not.toContain('id: done');
+    expect(sizesOf(result!.workflow).done).toBeUndefined();
   });
 
   it('drops a placement of a stage the winning meaning no longer defines', () => {

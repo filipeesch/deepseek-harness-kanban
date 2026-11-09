@@ -8,12 +8,9 @@ const OUT = path.resolve('.verification');
 interface Appearance {
   theme: 'light' | 'dark';
   token: string;
-  working: string;
+  accent: string;
   background: string;
   contrast: number;
-  shadow: string;
-  chip: string;
-  chipContrast: number;
   drawerContrast: number;
   dotContrast: number;
   pendingContrast: number;
@@ -72,15 +69,11 @@ function appearance(page: Page): Promise<Appearance> {
       const statusBackground = effectiveBackground(card);
       return contrast(getComputedStyle(line).color, statusBackground);
     };
-    const working = document.querySelector<HTMLElement>('.kb-working');
     const card = document.querySelector<HTMLElement>('.kb-card[data-working=true]');
-    const chip = document.querySelector<HTMLElement>('.kb-background');
     const drawer = document.querySelector<HTMLElement>('.kb-drawer');
     const drawerDetail = drawer?.querySelector<HTMLElement>('.kb-drawer-project') ?? null;
     const dot = drawer?.querySelector<HTMLElement>('.kb-activity-dot') ?? null;
-    const workingColor = working === null ? '' : getComputedStyle(working).color;
-    const chipColor = chip === null ? '' : getComputedStyle(chip).color;
-    const chipOpacity = chip === null ? 1 : Number(getComputedStyle(chip).opacity);
+    const accentColor = card === null ? '' : getComputedStyle(card, '::after').backgroundColor;
     const background = effectiveBackground(card);
     const drawerBackground = effectiveBackground(drawer?.querySelector('.kb-drawer-header') ?? drawer);
     const drawerColor = drawerDetail === null ? '' : getComputedStyle(drawerDetail).color;
@@ -89,12 +82,9 @@ function appearance(page: Page): Promise<Appearance> {
     return {
       theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light',
       token: probe('--dsw-alias-label-deep-diving'),
-      working: workingColor,
+      accent: accentColor,
       background,
-      contrast: workingColor === '' ? 0 : contrast(workingColor, background),
-      shadow: card === null ? '' : getComputedStyle(card).boxShadow,
-      chip: chipColor,
-      chipContrast: chipColor === '' ? 0 : contrast(composite(chipColor, background, chipOpacity), background),
+      contrast: accentColor === '' ? 0 : contrast(accentColor, background),
       drawerContrast: drawerColor === '' ? 0 : contrast(composite(drawerColor, drawerBackground, drawerOpacity), drawerBackground),
       dotContrast: dotColor === '' ? 0 : contrast(dotColor, drawerBackground),
       pendingContrast: statusContrast('.kb-card-status-line.is-pending'),
@@ -109,22 +99,22 @@ test('working indicator uses the host token and stays legible in both appearance
   await page.emulateMedia({ colorScheme: 'light' });
   await page.goto(HARNESS + '?scenario=appearance');
   const working = page.locator('[data-task-id="long-0"]');
-  await expect(working.locator('.kb-working')).toBeVisible();
+  await expect(working).toHaveAttribute('data-working', 'true');
+  await expect(working.locator('.kb-working')).toHaveCount(0);
   const light = await appearance(page);
   expect(light.theme).toBe('light');
-  expect(light.token).toBe(light.working);
-  expect(light.contrast).toBeGreaterThanOrEqual(4.5);
+  expect(light.token).toBe(light.accent);
+  expect(light.contrast).toBeGreaterThanOrEqual(3);
   expect(light.pendingContrast, 'the pending status tone is legible in light').toBeGreaterThanOrEqual(4.5);
   expect(light.dangerContrast, 'the failure status tone is legible in light').toBeGreaterThanOrEqual(4.5);
-  expect(light.shadow).toContain('inset');
   await page.screenshot({ path: path.join(OUT, 'appearance-light.png') });
 
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('');
   const dark = await appearance(page);
   expect(dark.theme).toBe('dark');
-  expect(dark.token).toBe(dark.working);
-  expect(dark.contrast).toBeGreaterThanOrEqual(4.5);
+  expect(dark.token).toBe(dark.accent);
+  expect(dark.contrast).toBeGreaterThanOrEqual(3);
   expect(dark.pendingContrast, 'the pending status tone is legible in dark').toBeGreaterThanOrEqual(4.5);
   expect(dark.dangerContrast, 'the failure status tone is legible in dark').toBeGreaterThanOrEqual(4.5);
   expect(dark.token).not.toBe(light.token);
@@ -151,12 +141,11 @@ test('drawer header and project chip keep the host appearance across sections', 
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('');
   const dark = await appearance(page);
-  expect(dark.chip).not.toBe('');
-  expect(dark.chipContrast, 'the background chip is legible').toBeGreaterThanOrEqual(4.5);
   expect(dark.drawerContrast, 'the drawer detail is legible in dark').toBeGreaterThanOrEqual(4.5);
   expect(dark.dotContrast, 'the activity dot is distinguishable in dark').toBeGreaterThanOrEqual(3);
   await page.screenshot({ path: path.join(OUT, 'appearance-drawer-dark.png') });
-  await expect(page.locator('[data-task-id="long-1"]')).toContainText('1 job');
+  await expect(page.locator('[data-task-id="long-1"]')).not.toContainText('1 job');
+  await expect(page.locator('[data-task-id="long-1"] .kb-background')).toHaveCount(0);
 });
 
 test('conversation tab shows every attention state in both appearances', async ({ page }) => {

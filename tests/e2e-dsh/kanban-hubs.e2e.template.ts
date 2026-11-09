@@ -32,7 +32,7 @@ it('creates a second Hub and board and keeps their cards isolated', async () => 
 
   await page.getByRole('button', { name: 'Create Hub' }).click();
   await page.getByRole('dialog', { name: 'Create Hub' }).getByRole('textbox', { name: 'Hub name' }).fill('Second Hub');
-  await page.getByRole('dialog', { name: 'Create Hub' }).getByRole('button', { name: 'Create Hub' }).click();
+  await page.getByRole('dialog', { name: 'Create Hub' }).getByRole('button', { name: 'Create Hub', exact: true }).click();
   await expect(page.getByRole('tab', { name: 'Second Hub' })).toHaveAttribute('aria-selected', 'true');
   await page.locator('.kb-empty').getByRole('button', { name: 'Create board' }).click();
   await page.getByRole('dialog', { name: 'Create board' }).getByRole('textbox', { name: 'Board name' }).fill('Second board');

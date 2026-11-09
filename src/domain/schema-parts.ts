@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Task, TransitionRule, Workflow } from '../shared/types.js';
+import { STAGE_MIN_SIZE, STAGE_SIZE_LIMIT } from './stage-size.js';
 import { transitionRule as normalizeTransitionRule } from './transition-rule.js';
 import { isAbsolutePath, isDomainId } from './validation.js';
 
@@ -58,8 +59,13 @@ export const transitionRule = z.union([
 ]).transform((value): TransitionRule => typeof value === 'string'
   ? normalizeTransitionRule(value)
   : normalizeTransitionRule(value.to, value.when));
+/** An authored stage size; the workflow parser owns the accepted minimum and range. */
+export const stageSize = z.strictObject({
+  width: z.number().finite().min(STAGE_MIN_SIZE.width).max(STAGE_SIZE_LIMIT),
+  height: z.number().finite().min(STAGE_MIN_SIZE.height).max(STAGE_SIZE_LIMIT),
+});
 export const column = z.strictObject({
-  id, name: nonempty, onEnterPrompt: z.string().optional(), allowedTransitions: z.array(transitionRule).optional(), position: stagePosition.optional(),
+  id, name: nonempty, onEnterPrompt: z.string().optional(), allowedTransitions: z.array(transitionRule).optional(), position: stagePosition.optional(), size: stageSize.optional(),
 });
 export const group = z.strictObject({ id, name: nonempty, columnIds: z.array(id).min(1) });
 export const workflow = z.strictObject({
@@ -106,7 +112,7 @@ export const baseTask = z.strictObject({
 /** The task fields the shared invariant check reads. */
 export type TaskCheckValue = Pick<Task, 'projectId' | 'columnId' | 'sessionIds' | 'closedSessionIds' | 'operation' | 'pendingTransition' | 'instructionPending' | 'recordedTransition'>;
 
-function workflowShape(value: Workflow, includePosition: boolean): string {
+function workflowShape(value: Workflow, includeLayout: boolean): string {
   return JSON.stringify({
     name: value.name,
     defaultView: value.defaultView,
@@ -114,18 +120,18 @@ function workflowShape(value: Workflow, includePosition: boolean): string {
     columns: value.columns.map(item => ({
       id: item.id, name: item.name, onEnterPrompt: item.onEnterPrompt,
       allowedTransitions: item.allowedTransitions?.map(rule => normalizeTransitionRule(rule.to, rule.when)),
-      ...(includePosition ? { position: item.position } : {}),
+      ...(includeLayout ? { position: item.position, size: item.size } : {}),
     })),
     groups: value.groups.map(item => ({ id: item.id, name: item.name, columnIds: item.columnIds })),
   });
 }
 
-/** The persisted workflow identity, including its diagram placement. */
+/** The persisted workflow identity, including its diagram layout. */
 export function canonicalWorkflow(value: Workflow): string {
   return workflowShape(value, true);
 }
 
-/** The workflow without its diagram placement: the flow two versions must share to merge. */
+/** The workflow without its diagram layout: the flow two versions must share to merge. */
 export function workflowMeaning(value: Workflow): string {
   return workflowShape(value, false);
 }
