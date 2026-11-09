@@ -3,14 +3,14 @@
 ## MODIFIED Requirements
 
 ### Requirement: Top-level task creation
-The active board SHALL provide the New task action in each of its presentations: at the top of its workflow's configured initial column in the column board, and in the header of that stage in the workflow diagram as defined by `workflow-view` Task creation in the initial stage. The two presentations SHALL open one shared creation experience, and neither SHALL build creation inputs, enablement, or receipt handling of its own. It SHALL collect a title, description, and project from the active Hub's project registry, an Auto mode option that is off by default, and, only when the initial stage has an entry instruction, a Start execution now option that is on by default. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. Saving a new task SHALL place it in the active board's configured initial stage whichever presentation opened it, and SHALL record the selected auto-mode value. The board SHALL NOT offer any other stage as a creation target. When the initial stage has an entry instruction and the Start execution now option remains enabled, saving SHALL start the automatic first execution defined by Automatic first execution on task creation. Otherwise, saving SHALL NOT create a native DSH conversation, a workspace, or an agent execution. The board header SHALL NOT provide a separate New task action.
+The active board SHALL provide the New task action in each of its presentations: at the top of its workflow's configured initial column in the column board, and in the header of that stage in the workflow diagram as defined by `workflow-view` Task creation in the initial stage. The two presentations SHALL open one shared creation experience, and neither SHALL build creation inputs, enablement, or receipt handling of its own. It SHALL collect a title, description, and project, an Auto mode option that is off by default, and, only when the initial stage has an entry instruction, a Start execution now option that is on by default. The project input SHALL offer only the projects of the active Hub that the active board allows, as defined by Board project scope configuration; a project that the board does not allow SHALL NOT be offered and SHALL NOT be accepted. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. A board that allows no project SHALL present no selectable project and SHALL explain that the board accepts no new task, and saving SHALL be unavailable. Saving a new task SHALL place it in the active board's configured initial stage whichever presentation opened it, and SHALL record the selected auto-mode value. The board SHALL NOT offer any other stage as a creation target. When the initial stage has an entry instruction and the Start execution now option remains enabled, saving SHALL start the automatic first execution defined by Automatic first execution on task creation. Otherwise, saving SHALL NOT create a native DSH conversation, a workspace, or an agent execution. The board header SHALL NOT provide a separate New task action.
 
 #### Scenario: Open task creation from the board
 - **WHEN** the user selects the New task action at the top of the active board's configured initial column
 - **THEN** the creation experience provides title, description, project, and Auto mode inputs without asking the user to choose a stage
 - **AND** it presents Start execution now only when the initial stage has an entry instruction
 - **AND** the project input is unselected
-- **AND** the project list contains only projects owned by the active Hub
+- **AND** the project list contains only projects of the active Hub that the board allows
 
 #### Scenario: Open the same creation experience from either presentation
 - **WHEN** the user opens New task from the column board's initial column and, separately, from the workflow diagram's initial stage
@@ -48,9 +48,19 @@ The active board SHALL provide the New task action in each of its presentations:
 - **AND** task creation does not initiate an agent execution
 
 #### Scenario: Require an explicit project choice
-- **WHEN** the user opens New task with one or more registered Hub projects and does not select a project
+- **WHEN** the user opens New task with one or more allowed projects and does not select a project
 - **THEN** the task cannot be created
 - **AND** no project is silently chosen from the project list or the active project filter
+
+#### Scenario: Offer only the allowed projects
+- **WHEN** the active Hub has projects that the active board does not allow and the user opens New task from either presentation
+- **THEN** the project input lists the allowed projects of that Hub only
+- **AND** no project the board does not allow is offered
+
+#### Scenario: Create from another board of the same Hub
+- **WHEN** a task of one board creates a task on another board of the same Hub with a project that the destination board allows
+- **THEN** the task is created on the destination board
+- **AND** the creating board's own scope does not restrict the destination
 
 #### Scenario: No task creation without a board
 - **WHEN** the active Hub has no boards

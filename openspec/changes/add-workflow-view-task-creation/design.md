@@ -59,11 +59,11 @@ The control sits outside the lock check. The lock governs layout editing, and th
 
 ### One `useTaskCreation` instance, owned by the board
 
-The board instantiates the hook once and consumes it three ways: the column board's button renderer reads its enablement and open action, the diagram's port calls its open action, and the board mounts the single dialog it returns. The hook holds the open/closed state, the project-registry enablement, the creation command, the receipt validation, and the first-execution handoff, which today sit in the board component.
+The board instantiates the hook once and consumes it three ways: the column board's button renderer reads its enablement and open action, the diagram's port calls its open action, and the board mounts the single dialog it returns. The hook holds what today sits in the board component: the open/closed state, the project-registry enablement, and the first-execution handoff. The creation command and its receipt validation stay where they already are, inside the dialog — moving them would relocate working code without making either presentation thinner.
 
 Alternatives considered: each presentation calling the hook itself, which would produce two open states, two mounted dialogs, and two copies of the receipt validation and start handoff, and would only appear to work because one presentation is mounted at a time; and providing the hook through a context above the board, which adds indirection with no second consumer to serve.
 
-The hook's collaborators — opening the task, the auto-run controller, and the latest snapshot — are passed in, so the hook depends on the board through its arguments rather than reaching into it.
+The hook's collaborators — opening the task, the auto-run controller, the latest snapshot, and the board's own answers about which projects may receive a task and whether it is closed to creation — are passed in, so the hook depends on the board through its arguments rather than reaching into it. The board keeps the project-scope decision because only it knows the active board and Hub; the hook forwards those values to the dialog it mounts.
 
 ### Container creation stays in its own hook
 

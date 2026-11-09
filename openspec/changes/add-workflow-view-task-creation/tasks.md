@@ -35,5 +35,5 @@
 
 - [x] 6.1 Run `pnpm check` and confirm host and client typechecks, vitest, and the build are green.
 - [x] 6.2 Run `pnpm test:browser` and confirm the plugin-owned Playwright lane is green, capturing light and dark appearance evidence for the new header control under `.verification/` with the host theme state and contrast asserted.
-- [ ] 6.3 Run the isolated real-composition lane with `node scripts/e2e-dsh.mjs --checkout <dsh-checkout> --only board` against an installed and built DSH checkout, extending that lane's check to reach the workflow presentation rather than adding a new lane; verify the action is present on the initial stage only and creates a task, with `MISSING_CREDENTIAL` accepted as the send outcome.
-- [ ] 6.4 Bump `version` in `package.json` for the release this change publishes, since a released version is never reused; verify the value is new against the published tags.
+- [x] 6.3 Run the isolated real-composition lane with `node scripts/e2e-dsh.mjs --checkout <dsh-checkout> --only board` against an installed and built DSH checkout, extending that lane's check to reach the workflow presentation rather than adding a new lane; verify the action is present on the initial stage only and creates a task, with `MISSING_CREDENTIAL` accepted as the send outcome.
+- [x] 6.4 Bump `version` in `package.json` for the release this change publishes, since a released version is never reused; verify the value is new against the published tags.
