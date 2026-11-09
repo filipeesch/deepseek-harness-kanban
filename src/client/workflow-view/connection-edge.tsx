@@ -46,6 +46,7 @@ export function ConnectionEdgeView({ id, data }: EdgeProps) {
       rx={2 * scale}
       aria-hidden="true"
       data-line={line.index}
+      data-axis={line.axis}
       onPointerDown={event => { if (canAdjust) handlers?.onSegmentPointerDown(event, id, line.index); }}
     />)}
     {start !== undefined && <circle

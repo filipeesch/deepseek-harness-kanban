@@ -4,6 +4,7 @@ import { readStagePositions, setStagePositions, type StagePositions } from '../.
 import { readStageSizes, setStageSizes, type StageSizes } from '../../../domain/workflow-sizes.js';
 import { readConnections, setConnections, type ConnectionLayouts } from '../../../domain/workflow-connections.js';
 import { sameStageSize } from '../../../domain/stage-size.js';
+import { samePosition } from '../../../domain/stage-position.js';
 import { sameConnectionLayout } from '../../../domain/connection-anchor.js';
 import type { RunCommand } from '../../ui.js';
 
@@ -29,11 +30,6 @@ export interface PlacementSaver {
 interface LayoutField<V> {
   readonly same: (left: V | undefined, right: V | undefined) => boolean;
   readonly record: (values: Record<string, V | undefined>) => Record<string, V>;
-}
-
-function samePosition(left: StagePosition | undefined, right: StagePosition | undefined): boolean {
-  if (left === undefined || right === undefined) return left === right;
-  return left.x === right.x && left.y === right.y;
 }
 
 function positionRecord(positions: StagePositions): Record<string, StagePosition> {

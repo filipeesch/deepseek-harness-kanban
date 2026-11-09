@@ -4,6 +4,7 @@ import type { StageSize } from '../../shared/types.js';
 import { useCardEnvironment } from './card-environment.js';
 import { beginStageResize } from './gestures/stage-resize.js';
 import type { GestureHandle, PointerEventsPort } from './gestures/stage-drag.js';
+import type { SnapPolicy } from './gestures/grid-snap.js';
 
 export type StageNodeModel = {
   readonly id: string;
@@ -20,6 +21,8 @@ export interface StageCallbacks {
   onMeasure(stageId: string, size: StageSize): void;
   /** Added by the canvas, which owns stage dragging; the view does not provide it. */
   onStagePointerDown?(event: React.PointerEvent<HTMLElement>, stageId: string): void;
+  /** The lattice the resize gesture settles on; the canvas supplies it. */
+  readonly snap?: SnapPolicy;
   onStageResize?(stageId: string, size: StageSize): void;
   onStageResizeEnd?(stageId: string, size: StageSize): void;
   onStageResizeCancel?(stageId: string): void;
@@ -65,11 +68,12 @@ export function StageNodeView({ id, data }: { id: string; data: StageNodeModel }
     const origin = { width: element.offsetWidth, height: element.offsetHeight };
     resizing.current = beginStageResize({
       stageId: id,
-      start: { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY },
+      start: { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, altKey: event.altKey },
       origin,
       authored: { width: data.width, height: data.height },
       zoom: () => zoom,
       events: document as unknown as PointerEventsPort,
+      snap: callbacks?.snap,
       onResize: (stageId, size) => callbacks?.onStageResize?.(stageId, size),
       onCommit: (stageId, size) => { resizing.current = null; callbacks?.onStageResizeEnd?.(stageId, size); },
       onCancel: () => { resizing.current = null; callbacks?.onStageResizeCancel?.(id); },

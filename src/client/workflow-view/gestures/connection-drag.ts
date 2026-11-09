@@ -11,6 +11,9 @@ export interface ConnectionDragInput {
   readonly events: PointerEventsPort;
   /** Present when the gesture can be cancelled with Escape. */
   readonly keys?: KeyboardEventsPort;
+  /** Called on every move, including the ones below the drag threshold. */
+  readonly onSample?: (pointer: PointerPosition) => void;
+  /** Called once the pointer has passed the threshold. */
   readonly onMove: (pointer: PointerPosition) => void;
   /** Called once, only when the pointer actually moved. */
   readonly onCommit: () => void;
@@ -48,6 +51,7 @@ export function beginConnectionDrag(input: ConnectionDragInput): GestureHandle {
 
   const move = (event: PointerPosition) => {
     if (disposed || event.pointerId !== input.start.pointerId) return;
+    input.onSample?.(event);
     if (!active) {
       if (!movedPastThreshold(input.start, event, threshold)) return;
       active = true;
