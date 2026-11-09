@@ -64,6 +64,31 @@ describe('persisted board schema', () => {
     expect(BoardStateSchema.safeParse(state).success).toBe(true);
   });
 
+  it('persists authored stage sizes', () => {
+    const yaml = 'name: Flow\ncolumns:\n  - id: todo\n    label: To do\n    size: {width: 400, height: 300}\n  - id: done\n    label: Done\n';
+    const state = populatedState();
+    state.tasks[0]!.columnId = 'todo';
+    state.workflowYaml = yaml;
+    state.workflow = parseWorkflow(yaml);
+    expect(BoardStateSchema.safeParse(state).success).toBe(true);
+  });
+
+  it('rejects a stored stage size below the accepted minimum', () => {
+    const yaml = 'name: Flow\ncolumns:\n  - id: todo\n    label: To do\n  - id: done\n    label: Done\n';
+    const state = populatedState();
+    state.tasks[0]!.columnId = 'todo';
+    state.workflowYaml = yaml;
+    state.workflow = parseWorkflow(yaml);
+    (state.workflow.columns[0] as { size?: { width: number; height: number } }).size = { width: 10, height: 10 };
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+
+  it('rejects a stored stage size that the authored YAML does not carry', () => {
+    const state = initialState();
+    state.workflow.columns[0]!.size = { width: 400, height: 300 };
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+
   it('rejects an unknown default presentation in the stored workflow', () => {
     const state = initialState();
     (state.workflow as { defaultView?: string }).defaultView = 'diagram';

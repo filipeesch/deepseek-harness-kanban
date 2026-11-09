@@ -27,7 +27,9 @@ export type ProjectLocation =
 export type WorkflowView = 'board' | 'workflow'
 /** An authored diagram position for one stage, in diagram coordinates. */
 export interface StagePosition { x: number; y: number }
-export interface Column { id: string; name: string; onEnterPrompt?: string; allowedTransitions?: string[]; /** Absent means the diagram places the stage automatically. */ position?: StagePosition }
+/** An authored minimum size for one stage, in diagram pixels. */
+export interface StageSize { width: number; height: number }
+export interface Column { id: string; name: string; onEnterPrompt?: string; allowedTransitions?: string[]; /** Absent means the diagram places the stage automatically. */ position?: StagePosition; /** Absent means the stage renders at the accepted minimum size. */ size?: StageSize }
 export interface ColumnGroup { id: string; name: string; columnIds: string[] }
 export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[]; /** Absent means the board opens the column board. */ defaultView?: WorkflowView }
 export interface Worktree { path: string; branch: string; owned: boolean; status: 'preparing' | 'ready' | 'error'; error?: Problem }

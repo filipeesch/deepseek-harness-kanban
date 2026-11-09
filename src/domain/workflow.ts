@@ -1,7 +1,8 @@
 import { parseDocument } from 'yaml';
-import type { Column, ColumnGroup, StagePosition, Workflow, WorkflowView } from '../shared/types.js';
+import type { Column, ColumnGroup, StagePosition, StageSize, Workflow, WorkflowView } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
 import { createYamlFields, invalidWorkflow } from './yaml-fields.js';
+import { STAGE_MIN_SIZE, STAGE_SIZE_LIMIT } from './stage-size.js';
 
 export const DEFAULT_WORKFLOW_YAML = [
   'name: Delivery Flow',
@@ -27,6 +28,7 @@ const { record, keys, text, id, ids } = createYamlFields(invalidWorkflow);
 
 const COLUMN_NOTE = 'WIP and agent-engine settings are not supported.';
 const POSITION_NOTE = 'Only x and y are supported.';
+const SIZE_NOTE = 'Only width and height are supported.';
 
 function view(value: unknown): WorkflowView {
   if (value === 'board' || value === 'workflow') return value;
@@ -45,6 +47,23 @@ function stagePosition(value: unknown, context: string): StagePosition {
   const map = record(value, context);
   keys(map, ['x', 'y'], context, POSITION_NOTE);
   return { x: coordinate(map, 'x', context), y: coordinate(map, 'y', context) };
+}
+
+function dimension(map: Record<string, unknown>, axis: 'width' | 'height', context: string): number {
+  const value = map[axis];
+  if (typeof value !== 'number' || !Number.isFinite(value) || value > STAGE_SIZE_LIMIT) {
+    invalidWorkflow(context + ' ' + axis + ' must be a finite number within ' + STAGE_SIZE_LIMIT + '.');
+  }
+  if (value < (axis === 'width' ? STAGE_MIN_SIZE.width : STAGE_MIN_SIZE.height)) {
+    invalidWorkflow(context + ' ' + axis + ' must not be smaller than ' + (axis === 'width' ? STAGE_MIN_SIZE.width : STAGE_MIN_SIZE.height) + '.');
+  }
+  return value;
+}
+
+function stageSize(value: unknown, context: string): StageSize {
+  const map = record(value, context);
+  keys(map, ['width', 'height'], context, SIZE_NOTE);
+  return { width: dimension(map, 'width', context), height: dimension(map, 'height', context) };
 }
 
 function label(value: Record<string, unknown>, context: string): string {
@@ -74,7 +93,7 @@ export function parseWorkflow(yaml: string): Workflow {
   if (!Array.isArray(input.columns) || input.columns.length === 0) invalidWorkflow('Workflow requires at least one column.');
   const columns: Column[] = input.columns.map((item, index) => {
     const value = record(item, 'Column ' + index);
-    keys(value, ['id', 'label', 'name', 'description', 'allowed_transitions', 'on_enter_prompt', 'position'], 'column', COLUMN_NOTE);
+    keys(value, ['id', 'label', 'name', 'description', 'allowed_transitions', 'on_enter_prompt', 'position', 'size'], 'column', COLUMN_NOTE);
     if (value.description !== undefined && typeof value.description !== 'string') invalidWorkflow('Column description must be text.');
     const column: Column = { id: id(value.id, 'Column ID'), name: label(value, 'Column') };
     if (value.allowed_transitions !== undefined) column.allowedTransitions = ids(value.allowed_transitions, 'allowed_transitions');
@@ -83,6 +102,7 @@ export function parseWorkflow(yaml: string): Workflow {
       if (value.on_enter_prompt.trim()) column.onEnterPrompt = value.on_enter_prompt;
     }
     if (value.position !== undefined) column.position = stagePosition(value.position, 'Column ' + column.id + ' position');
+    if (value.size !== undefined) column.size = stageSize(value.size, 'Column ' + column.id + ' size');
     return column;
   });
   const columnIds = new Set(columns.map(column => column.id));

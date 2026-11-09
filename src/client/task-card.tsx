@@ -1,11 +1,13 @@
 import React, { useRef } from 'react';
 import type { Attention, Column, Task } from '../shared/types.js';
-import { backgroundAccessibleName, backgroundDetails, backgroundIndicatorText, WorkingAnnouncement, WorkingBadge } from './activity.js';
+import type { TransitionDestination } from '../domain/transitions.js';
+import { WorkingAnnouncement } from './activity.js';
 import { AttentionDots } from './attention-dots.js';
 import { autoRunEntryForColumn, RUN_FAILURE_FALLBACK, type AutoRunController, type AutoRunInput } from './auto-run.js';
 import { CardInstructionAction, useAutoRunEntry } from './auto-run-view.js';
 import { AutoModeControl, type AutoModeStatus, type AutoModeView } from './auto-mode.js';
-import { AlertIcon, ClockIcon } from './icons.js';
+import { advanceStageLabel } from './stage-advance.js';
+import { AdvanceStageIcon, AlertIcon, ClockIcon } from './icons.js';
 
 export interface TaskCardProps {
   task: Task;
@@ -22,6 +24,12 @@ export interface TaskCardProps {
   onToggleSelect: (taskId: string) => void;
   onBeginDrag: (event: React.PointerEvent<HTMLElement>, taskId: string, columnId: string) => void;
   shouldSuppressClick: () => boolean;
+  /** The next workflow stage, when the card may advance the task. */
+  next?: TransitionDestination;
+  /** Moves the task to the next stage through the board's move pipeline. */
+  onMove?: (column: Column) => Promise<unknown> | void;
+  /** True while a move from this card is in flight; the board owns it by task id. */
+  advancePending?: boolean;
   /** Prepares the first execution before the card's run action sends anything. */
   onRun?: (input: AutoRunInput) => void;
 }
@@ -58,29 +66,35 @@ export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: 
   return entries;
 }
 
-function CardContext({ taskId, title, projectName, attention, selectionMode, selected, autoMode, autoModePending, onToggleAutoMode, onToggleSelect, onActivate }: {
+function CardContext({ taskId, title, projectName, attention, selectionMode, selected, onToggleSelect, onActivate }: {
   taskId: string; title: string; projectName: string; attention: Attention; selectionMode: boolean; selected: boolean;
-  autoMode: AutoModeView; autoModePending?: boolean; onToggleAutoMode: (taskId: string, enabled: boolean) => void;
   onToggleSelect: (taskId: string) => void; onActivate: () => void;
 }) {
   return <div className="kb-card-context" onClick={onActivate}>
     {selectionMode && <input type="checkbox" className="kb-card-select" aria-label={'Select ' + title} checked={selected} onClick={event => event.stopPropagation()} onChange={() => onToggleSelect(taskId)} />}
     <span className="kb-card-project" title={projectName}>{projectName}</span>
-    {!selectionMode && <AutoModeControl view={autoMode} pending={autoModePending === true} onToggle={enabled => onToggleAutoMode(taskId, enabled)} />}
     <AttentionDots value={attention} label={'Attention for ' + title} />
   </div>;
 }
 
-function CardActivity({ attention, label, action, onActivate }: { attention: Attention; label: string; action?: React.ReactNode; onActivate: () => void }) {
-  const { running, background } = attention;
-  const details = backgroundDetails(background);
+function CardActivity({ attention, label, controls }: { attention: Attention; label: string; controls: React.ReactNode }) {
   return <div className="kb-card-activity">
-    <WorkingAnnouncement running={running} label={label} />
-    {running && <WorkingBadge decorative />}
-    {background.length > 0 && <span className="kb-background" role="note" tabIndex={0} title={details} aria-label={backgroundAccessibleName(background)} onClick={onActivate}
-      onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onActivate(); } }}>{backgroundIndicatorText(background)}</span>}
-    {action}
+    <WorkingAnnouncement running={attention.running} label={label} />
+    <div className="kb-card-actions">{controls}</div>
   </div>;
+}
+
+function CardAdvanceAction({ next, disabled, onMove }: { next: TransitionDestination; disabled: boolean; onMove: () => void }) {
+  const label = advanceStageLabel(next);
+  return <button
+    type="button"
+    className="kb-button kb-card-action"
+    aria-label={label}
+    title={label}
+    disabled={disabled}
+    onPointerDown={event => event.stopPropagation()}
+    onClick={onMove}
+  ><AdvanceStageIcon size={15} /></button>;
 }
 
 function CardStatus({ entries }: { entries: readonly CardStatusEntry[] }) {
@@ -94,17 +108,27 @@ function CardStatus({ entries }: { entries: readonly CardStatusEntry[] }) {
 }
 
 /** One task card; every board concern arrives through props. */
-export function TaskCard({ task, column, projectName, attention, selectionMode, selected, autoRun, autoMode, autoModePending, onToggleAutoMode, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick, onRun }: TaskCardProps) {
+export function TaskCard({ task, column, projectName, attention, selectionMode, selected, autoRun, autoMode, autoModePending, onToggleAutoMode, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick, next, onMove, advancePending = false, onRun }: TaskCardProps) {
   const openButton = useRef<HTMLButtonElement>(null);
   const runEntry = useAutoRunEntry(autoRun, task.id);
   const currentRun = autoRunEntryForColumn(runEntry, column.id);
   const runFailure = currentRun?.status === 'failed' ? currentRun.error?.message ?? RUN_FAILURE_FALLBACK : undefined;
+  const blocked = Boolean(task.operation || task.pendingTransition);
   function activate() {
     openButton.current?.focus();
     if (shouldSuppressClick()) return;
     if (selectionMode) { onToggleSelect(task.id); return; }
     onOpen(task.id);
   }
+  const advance = () => {
+    if (next === undefined || onMove === undefined || advancePending || blocked) return;
+    void onMove(next.column);
+  };
+  const controls = selectionMode ? null : <>
+    <AutoModeControl view={autoMode} pending={autoModePending === true} onToggle={enabled => onToggleAutoMode(task.id, enabled)} />
+    <CardInstructionAction key={column.id} task={task} column={column} controller={autoRun} {...(onRun === undefined ? {} : { onRun })} />
+    {next !== undefined && !attention.running && <CardAdvanceAction next={next} disabled={blocked || advancePending} onMove={advance} />}
+  </>;
   return <article className={'kb-card' + (selected ? ' kb-card-selected' : '')} data-task-id={task.id} data-working={attention.running ? 'true' : undefined}
     onPointerDown={event => {
       if (selectionMode) return;
@@ -114,8 +138,8 @@ export function TaskCard({ task, column, projectName, attention, selectionMode, 
     <button ref={openButton} type="button" className="kb-card-open" aria-label={(selectionMode ? 'Select task ' : 'Open task ') + task.title} aria-pressed={selectionMode ? selected : undefined} onClick={activate}>
       <strong>{task.title}</strong>
     </button>
-    <CardContext taskId={task.id} title={task.title} projectName={projectName} attention={attention} selectionMode={selectionMode} selected={selected} autoMode={autoMode} autoModePending={autoModePending} onToggleAutoMode={onToggleAutoMode} onToggleSelect={onToggleSelect} onActivate={activate} />
-    <CardActivity attention={attention} label={task.title} onActivate={activate} action={!selectionMode ? <CardInstructionAction key={column.id} task={task} column={column} controller={autoRun} {...(onRun === undefined ? {} : { onRun })} /> : undefined} />
+    <CardContext taskId={task.id} title={task.title} projectName={projectName} attention={attention} selectionMode={selectionMode} selected={selected} onToggleSelect={onToggleSelect} onActivate={activate} />
+    <CardActivity attention={attention} label={task.title} controls={controls} />
     <CardStatus entries={cardStatusEntries(task, runFailure, autoMode.status)} />
   </article>;
 }

@@ -18,7 +18,9 @@ describe('board and editor style contracts', () => {
     for (const value of ['@keyframes kb-drawer-enter', '@keyframes kb-drawer-exit', '[data-entering=true]', '[data-closing=true]', 'prefers-reduced-motion:reduce']) expect(styles).toContain(value);
   });
   it('defines the card regions, activity strip, and status tones on host tokens', () => {
-    for (const value of ['.kb-working{', '.kb-working-dot', '.kb-background{', '.kb-background:focus-visible', '.kb-activity-dot', '.kb-icon-tab', '.kb-icon-tab:focus-visible', '.kb-drawer-title', '.kb-auto-chip-header', '@container (max-width:560px)', '.kb-card-context{', '.kb-card-project{', '.kb-card-activity{', '.kb-card-status{', '.kb-card-status-line.is-danger', '.kb-card-status-line.is-pending', '.kb-card[data-working=true]', '@keyframes kb-working-pulse', '--dsw-alias-label-deep-diving']) expect(styles).toContain(value);
+    for (const value of ['.kb-card-actions{', '.kb-card-action{', '.kb-activity-dot', '.kb-icon-tab', '.kb-icon-tab:focus-visible', '.kb-drawer-title', '.kb-auto-chip-header', '@container (max-width:560px)', '.kb-card-context{', '.kb-card-project{', '.kb-card-activity{', '.kb-card-status{', '.kb-card-status-line.is-danger', '.kb-card-status-line.is-pending', '.kb-card[data-working=true]::after', '@keyframes kb-working-bar', '--dsw-alias-label-deep-diving']) expect(styles).toContain(value);
+    expect(styles).not.toContain('.kb-working{');
+    expect(styles).not.toContain('.kb-background{');
     expect(styles).not.toContain('.kb-task-background');
     expect(styles).not.toContain('.kb-drawer-automode');
     expect(styles).not.toContain('.kb-running');

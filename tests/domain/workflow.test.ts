@@ -29,6 +29,12 @@ describe('workflow configuration', () => {
     expect(result.columns[1]?.position).toBeUndefined();
   });
 
+  it('accepts authored stage sizes and leaves an absent one to the minimum', () => {
+    const result = parseWorkflow('columns:\n  - id: todo\n    label: To do\n    size: {width: 400, height: 300}\n  - id: done\n    label: Done\n');
+    expect(result.columns[0]?.size).toEqual({ width: 400, height: 300 });
+    expect(result.columns[1]?.size).toBeUndefined();
+  });
+
   it('keeps an explicit board default and omits an absent one', () => {
     expect(parseWorkflow('default_view: board\n' + minimal).defaultView).toBe('board');
     expect(parseWorkflow(minimal).defaultView).toBeUndefined();
@@ -74,6 +80,14 @@ describe('workflow configuration', () => {
     'columns: [{id: one, label: One, position: {x: \"1\", y: 2}}]',
     'columns: [{id: one, label: One, position: {x: 1, y: 2, z: 3}}]',
     'columns: [{id: one, label: One, position: {x: .inf, y: 2}}]',
+    'columns: [{id: one, label: One, size: 3}]',
+    'columns: [{id: one, label: One, size: {width: 264}}]',
+    'columns: [{id: one, label: One, size: {width: "264", height: 140}}]',
+    'columns: [{id: one, label: One, size: {width: 263, height: 140}}]',
+    'columns: [{id: one, label: One, size: {width: 264, height: 139}}]',
+    'columns: [{id: one, label: One, size: {width: 264, height: 140, depth: 1}}]',
+    'columns: [{id: one, label: One, size: {width: .inf, height: 140}}]',
+    'columns: [{id: one, label: One, size: {width: 10001, height: 140}}]',
     'columns: [{id: one, label: One, limit: 2}]',
     'columns: [{id: one, label: One, tools: [shell]}]',
     'columns: [{id: one, label: One, stage_instructions: Execute}]',

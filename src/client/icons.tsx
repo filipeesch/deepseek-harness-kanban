@@ -6,21 +6,29 @@ import {
   Clock as ClockGlyph,
   Cloud as CloudGlyph,
   Folder as FolderGlyph,
+  Frame as FrameGlyph,
   GitBranch as GitBranchGlyph,
   HardDrive as HardDriveGlyph,
   Info as InfoGlyph,
+  LayoutGrid as LayoutGridGlyph,
+  Lock as LockGlyph,
+  LockOpen as LockOpenGlyph,
   MessagesSquare as MessagesSquareGlyph,
   NotebookPen as NotebookPenGlyph,
   Pencil as PencilGlyph,
   Play as PlayGlyph,
   Plus as PlusGlyph,
+  Redo2 as Redo2Glyph,
   RotateCcw as RotateCcwGlyph,
   Search as SearchGlyph,
   Settings as SettingsGlyph,
   SquareCheck as SquareCheckGlyph,
   Trash as TrashGlyph,
   TriangleExclamationPoint as TriangleExclamationPointGlyph,
+  Undo2 as Undo2Glyph,
   X as XGlyph,
+  ZoomIn as ZoomInGlyph,
+  ZoomOut as ZoomOutGlyph,
   type LucideProps,
 } from 'lucide-react';
 
@@ -68,3 +76,13 @@ export const MessageIcon = icon(MessagesSquareGlyph);
 export const NoteIcon = icon(NotebookPenGlyph);
 /** The header action that advances the task to the next workflow stage. */
 export const AdvanceStageIcon = icon(ChevronsRightGlyph);
+
+/** Diagram control stack. */
+export const ZoomInIcon = icon(ZoomInGlyph);
+export const ZoomOutIcon = icon(ZoomOutGlyph);
+export const FitViewIcon = icon(FrameGlyph);
+export const UndoIcon = icon(Undo2Glyph);
+export const RedoIcon = icon(Redo2Glyph);
+export const OrganizeIcon = icon(LayoutGridGlyph);
+export const LockIcon = icon(LockGlyph);
+export const UnlockIcon = icon(LockOpenGlyph);

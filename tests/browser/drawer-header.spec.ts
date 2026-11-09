@@ -26,7 +26,7 @@ async function expectHeaderControls(page: Page) {
     await expect(page.locator('.kb-drawer').getByRole('tab', { name: new RegExp('^' + tab) })).toBeVisible();
   }
   await expect(page.getByRole('combobox', { name: 'Move task to' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Move to Propose' })).toBeVisible();
+  await expect(page.locator('.kb-drawer').getByRole('button', { name: 'Move to Propose' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Delete task' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Close task details' })).toBeVisible();
   await expect(page.locator('.kb-drawer-header .kb-auto-chip')).toBeVisible();
@@ -117,7 +117,7 @@ test('captures the header in both appearances at three widths', async ({ page })
 
 test('the next-stage action prepares the first execution before moving', async ({ page }) => {
   await openDrawer(page, 620, 'First execution task', 'prepare');
-  await page.getByRole('button', { name: 'Move to Propose' }).click();
+  await page.locator('.kb-drawer').getByRole('button', { name: 'Move to Propose' }).click();
   const dialog = page.getByRole('dialog', { name: 'Prepare the first execution' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText('First execution task')).toBeVisible();
@@ -129,7 +129,7 @@ test('the next-stage action prepares the first execution before moving', async (
 
 test('the next-stage action confirms a restricted destination before moving', async ({ page }) => {
   await openDrawer(page, 620, 'Long column task 0', 'restricted-next');
-  await page.getByRole('button', { name: 'Move to Propose, requires confirmation' }).click();
+  await page.locator('.kb-drawer').getByRole('button', { name: 'Move to Propose, requires confirmation' }).click();
   const dialog = page.getByRole('dialog', { name: 'Move to Propose?' });
   await expect(dialog).toBeVisible();
   expect(await commands(page)).toEqual([]);
@@ -139,7 +139,7 @@ test('the next-stage action confirms a restricted destination before moving', as
 
 test('the next-stage action moves to the next workflow column and arms its instruction', async ({ page }) => {
   await openDrawer(page, 620, 'Long column task 0');
-  await page.getByRole('button', { name: 'Move to Propose' }).click();
+  await page.locator('.kb-drawer').getByRole('button', { name: 'Move to Propose' }).click();
   await expect.poll(async () => (await commands(page)).find(command => command.type === 'task.move')).toMatchObject({ type: 'task.move', taskId: 'long-0', columnId: 'propose' });
   await expect(page.locator('.kb-drawer-autorun')).toContainText('Propose');
   await expect(page.getByRole('tab', { name: /^Conversations/ })).toHaveAttribute('aria-selected', 'true');

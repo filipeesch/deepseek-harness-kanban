@@ -1,24 +1,49 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Attention, BoardState, StagePosition, Task } from '../../shared/types.js';
+import type { Attention, BoardState, Column, StagePosition, StageSize, Task } from '../../shared/types.js';
 import { EMPTY_ATTENTION } from '../../shared/types.js';
 import { placementIndex } from '../../domain/placement.js';
-import { readStagePositions, setStagePositions, type StagePositions } from '../../domain/workflow-positions.js';
-import { prefersReducedMotion } from '../card-motion/preference.js';
+import { effectiveStageSize } from '../../domain/stage-size.js';
+import { readStagePositions, type StagePositions } from '../../domain/workflow-positions.js';
+import { readStageSizes, type StageSizes } from '../../domain/workflow-sizes.js';
+import type { AutoRunController, AutoRunInput } from '../auto-run.js';
+import { BoardCard } from '../board-card.js';
+import type { CardEnvironment } from './card-environment.js';
 import type { RunCommand } from '../ui.js';
 import type { CardDragState } from '../useCardDrag.js';
 import type { OptimisticMove } from '../useMoveRequest.js';
 import { WorkflowCanvas, type CanvasConnection, type CanvasStage, type WorkflowCanvasComponent } from './canvas.js';
-import type { FlowCard, StageCallbacks } from './stage-node.js';
 import { buildWorkflowScene } from './scene.js';
 import { computeAutoLayout, freezeAutoLayout, graphKey, mergePlacements, samePosition, type FrozenAutoLayout } from './placement.js';
 import { placementBounds, type StageLayout } from './layout.js';
-import { canRedo, canUndo, emptyHistory, pushStep, redoStep, undoStep, type PlacementHistory, type PlacementStep } from './history.js';
-import { planTravel } from './travel.js';
-import { TravelLayer, type TravelMoveView } from './travel-layer.js';
-import type { StageSize } from './layout.js';
+import { canRedo, canUndo, redoStep, undoStep, type PlacementStep } from './history.js';
+import { TravelLayer } from './travel-layer.js';
+import { ViewControls } from './controls/view-controls.js';
+import { useFlowLock } from './use/use-flow-lock.js';
+import { useStageMeasurements } from './use/use-stage-measurements.js';
+import { usePlacementHistory } from './use/use-placement-history.js';
+import { usePlacementSaver } from './use/use-placement-saver.js';
+import { useTravel } from './use/use-travel.js';
 
-/** How long a drag waits before it stores the workflow; one drag, one save. */
-export const PLACEMENT_SAVE_DELAY_MS = 400;
+export { PLACEMENT_SAVE_DELAY_MS } from './use/use-placement-saver.js';
+
+/**
+ * The board's card, rendered inside a stage. The diagram never builds a card of
+ * its own, so the two presentations cannot drift apart.
+ */
+export interface WorkflowCardPort {
+  readonly attention: Readonly<Record<string, Attention>>;
+  readonly projectNames: ReadonlyMap<string, string>;
+  readonly autoRun: AutoRunController;
+  readonly autoModePending: ReadonlySet<string>;
+  readonly selectionMode: boolean;
+  readonly selectedIds: ReadonlySet<string>;
+  /** The tasks whose next-stage move is in flight, owned by the board. */
+  readonly advancePending: ReadonlySet<string>;
+  readonly onToggleAutoMode: (taskId: string, enabled: boolean) => void;
+  readonly onToggleSelect: (taskId: string) => void;
+  readonly onAdvance: (task: Task, column: Column) => Promise<unknown> | void;
+  readonly onRun: (input: AutoRunInput) => void;
+}
 
 export interface WorkflowViewProps {
   hubId: string;
@@ -26,7 +51,6 @@ export interface WorkflowViewProps {
   state: BoardState;
   /** The cards the board shows for the active search and project filter. */
   tasks: readonly Task[];
-  attention: Record<string, Attention>;
   optimistic: OptimisticMove | null;
   drag: CardDragState | null;
   beginDrag: (event: React.PointerEvent<HTMLElement>, taskId: string, columnId: string) => void;
@@ -36,6 +60,8 @@ export interface WorkflowViewProps {
   revision: number;
   onOpenTask: (taskId: string) => void;
   onError: (error: unknown) => void;
+  /** Everything the board's card needs; the diagram only renders it. */
+  card: WorkflowCardPort;
   /** Isolated harnesses substitute the canvas; production uses React Flow. */
   canvas?: WorkflowCanvasComponent;
 }
@@ -66,36 +92,54 @@ function applyOptimistic(tasks: readonly Task[], move: OptimisticMove | null): r
 
 /**
  * The workflow diagram presentation of the active board. It owns presentation
- * state only: measured stage sizes, frozen automatic placement, manual
- * overrides, the placement history, and the card travel. Every move still runs
- * through the board's move pipeline, and every placement change is a workflow
- * save.
+ * state only: manual overrides, the frozen automatic placement, and the fit
+ * request. Stage measurement, the save queue, the layout history, the card
+ * travel, and the lock live in their own hooks; every move still runs through
+ * the board's move pipeline, and every layout change is a workflow save.
  */
 export function WorkflowView(props: WorkflowViewProps) {
   const stateRef = useRef(props.state); stateRef.current = props.state;
-  const revisionRef = useRef(props.revision); revisionRef.current = props.revision;
-  const errorRef = useRef(props.onError); errorRef.current = props.onError;
   const Canvas = props.canvas ?? WorkflowCanvas;
+  const lock = useFlowLock();
+  const measurements = useStageMeasurements(props.state.workflow.columns);
+  const measurementRef = measurements.measuredRef;
 
-  const [measured, setMeasured] = useState<Map<string, StageSize>>(() => new Map());
-  const measuredRef = useRef(measured); measuredRef.current = measured;
-  const [revealed, setRevealed] = useState(false);
   const [overrides, setOverrides] = useState<Record<string, StagePosition>>({});
   const overridesRef = useRef(overrides); overridesRef.current = overrides;
-  const [history, setHistory] = useState<PlacementHistory>(emptyHistory);
-  const historyRef = useRef(history); historyRef.current = history;
-  const [travel, setTravel] = useState<readonly TravelMoveView[]>([]);
-  const travelSerial = useRef(0);
+  const [sizeOverrides, setSizeOverrides] = useState<Record<string, StageSize>>({});
   const [fitRequest, setFitRequest] = useState(0);
   const [layoutVersion, setLayoutVersion] = useState(0);
   const frozen = useRef<FrozenAutoLayout | null>(null);
-  const previousStages = useRef<Map<string, string> | null>(null);
   const baselines = useRef<Record<string, StagePosition | undefined>>({});
+  const sizeBaselines = useRef<Record<string, StageSize | undefined>>({});
 
   const workflowKey = useMemo(() => graphKey(props.state.workflow), [props.state.workflow]);
   const workflowKeyRef = useRef(workflowKey); workflowKeyRef.current = workflowKey;
   const stored = useMemo(() => readStagePositions(props.state.workflow), [props.state.workflow]);
   const storedRef = useRef(stored); storedRef.current = stored;
+  const storedSizes = useMemo(() => readStageSizes(props.state.workflow), [props.state.workflow]);
+  const storedSizesRef = useRef(storedSizes); storedSizesRef.current = storedSizes;
+
+  const history = usePlacementHistory();
+  const resetHistory = history.reset;
+  const resetAfterRejected = useCallback(() => {
+    setOverrides({});
+    setSizeOverrides({});
+    sizeBaselines.current = {};
+    frozen.current = null;
+    setLayoutVersion(value => value + 1);
+    resetHistory();
+  }, [resetHistory]);
+  const saver = usePlacementSaver({
+    hubId: props.hubId,
+    boardId: props.boardId,
+    run: props.run,
+    revision: props.revision,
+    workflow: props.state.workflow,
+    workflowYaml: props.state.workflowYaml,
+    onError: props.onError,
+    onRejected: resetAfterRejected,
+  });
 
   const lastWorkflowKey = useRef<string | null>(null);
   useEffect(() => {
@@ -105,36 +149,21 @@ export function WorkflowView(props: WorkflowViewProps) {
     frozen.current = null;
     // A structural change normally resizes at least one stage, but a new stage at a
     // default size must still be measured before the diagram is shown again.
-    if (!first) setRevealed(false);
-  }, [workflowKey]);
+    if (!first) measurements.hide();
+  }, [workflowKey, measurements.hide]);
 
   useEffect(() => {
-    if (revealed) return;
-    if (props.state.workflow.columns.every(column => measured.has(column.id))) setRevealed(true);
-  }, [measured, revealed, props.state.workflow.columns]);
-
-  useEffect(() => {
-    if (!revealed) return;
+    if (!measurements.revealed) return;
     setFitRequest(value => value + 1);
-  }, [revealed]);
-
-  const onMeasure = useCallback((stageId: string, size: StageSize) => {
-    setMeasured(current => {
-      const existing = current.get(stageId);
-      if (existing !== undefined && existing.width === size.width && existing.height === size.height) return current;
-      const next = new Map(current);
-      next.set(stageId, { width: size.width, height: size.height });
-      return next;
-    });
-  }, []);
+  }, [measurements.revealed]);
 
   const autoLayout = useMemo(() => {
-    const compute = () => computeAutoLayout(props.state.workflow, measured);
-    if (!revealed) return compute();
+    const compute = () => computeAutoLayout(props.state.workflow, measurements.measured);
+    if (!measurements.revealed) return compute();
     const frozenLayout = freezeAutoLayout(frozen.current, workflowKey, compute);
     frozen.current = frozenLayout;
     return frozenLayout.layout;
-  }, [props.state.workflow, workflowKey, measured, revealed, layoutVersion]);
+  }, [props.state.workflow, workflowKey, measurements.measured, measurements.revealed, layoutVersion]);
 
   const placements = useMemo(() => mergePlacements(Object.fromEntries(autoLayout.placements), stored, overrides), [autoLayout, stored, overrides]);
   const placementsRef = useRef(placements); placementsRef.current = placements;
@@ -161,6 +190,28 @@ export function WorkflowView(props: WorkflowViewProps) {
     });
   }, [stored]);
 
+  // A size override is settled by the same save that stores it, or yields to an
+  // external change, exactly like a placement override: an acknowledged size
+  // that differs from the baseline the edit started from wins. A stage whose
+  // authored size is gone renders at the minimum, so that also settles.
+  useEffect(() => {
+    setSizeOverrides(current => {
+      const entries = Object.entries(current);
+      if (entries.length === 0) return current;
+      let changed = false;
+      const next: Record<string, StageSize> = {};
+      for (const [id, size] of entries) {
+        const saved = effectiveStageSize(storedSizes[id]);
+        const baseline = effectiveStageSize(sizeBaselines.current[id]);
+        const landed = saved.width === size.width && saved.height === size.height;
+        const replaced = saved.width !== baseline.width || saved.height !== baseline.height;
+        if (landed || replaced) { changed = true; continue; }
+        next[id] = size;
+      }
+      return changed ? next : current;
+    });
+  }, [storedSizes]);
+
   const visualPositions = useCallback((): Record<string, StagePosition> => {
     const result: Record<string, StagePosition> = {};
     for (const [id, position] of placementsRef.current) result[id] = { x: position.x, y: position.y };
@@ -170,121 +221,10 @@ export function WorkflowView(props: WorkflowViewProps) {
   const layoutFrom = useCallback((positions: StagePositions): StageLayout => {
     const map = new Map<string, StagePosition>();
     for (const [id, position] of Object.entries(positions)) if (position !== undefined) map.set(id, position);
-    return { placements: map, bounds: placementBounds(map, measuredRef.current) };
-  }, []);
+    return { placements: map, bounds: placementBounds(map, measurementRef.current) };
+  }, [measurementRef]);
   const diagramTasks = useMemo(() => applyOptimistic(props.tasks, props.optimistic), [props.tasks, props.optimistic]);
-  const scene = useMemo(() => buildWorkflowScene({ workflow: props.state.workflow, tasks: diagramTasks, placements, sizes: measured }), [props.state.workflow, diagramTasks, placements, measured]);
-
-  const projectNames = useMemo(() => new Map(props.state.projects.map(project => [project.id, project.name])), [props.state.projects]);
-  const cardOf = useCallback((task: Task): FlowCard => {
-    const attention = props.attention[task.id] ?? EMPTY_ATTENTION;
-    return {
-      id: task.id,
-      title: task.title,
-      projectName: projectNames.get(task.projectId) ?? task.projectId,
-      running: attention.running,
-      unread: attention.unread,
-      failed: attention.failed,
-    };
-  }, [props.attention, projectNames]);
-
-  const stages: CanvasStage[] = scene.nodes.map(node => ({
-    id: node.id,
-    label: node.name,
-    x: node.position.x,
-    y: node.position.y,
-    cards: node.tasks.map(cardOf),
-  }));
-  const connections: CanvasConnection[] = scene.edges.map(edge => ({
-    id: edge.id,
-    from: edge.from,
-    to: edge.to,
-    path: edge.shape.path,
-    points: edge.shape.points,
-    kind: edge.kind,
-    returning: edge.returning,
-  }));
-
-  const callbacks = useMemo<StageCallbacks>(() => ({
-    onOpenCard: props.onOpenTask,
-    onCardPointerDown: (event, taskId, stageId) => props.beginDrag(event, taskId, stageId),
-    shouldSuppressClick: props.shouldSuppressClick,
-    onMeasure,
-  }), [props.onOpenTask, props.beginDrag, props.shouldSuppressClick, onMeasure]);
-
-  // Placement edits compose against the text this view intends to persist, never
-  // against the last acknowledged snapshot: an Undo that follows an already
-  // dispatched save must queue a compensating save instead of becoming a no-op.
-  const desiredYaml = useRef<string | null>(null);
-  const desiredPositions = useRef<Record<string, StagePosition>>(Object.create(null) as Record<string, StagePosition>);
-  const sentYaml = useRef<string | null>(null);
-  const saving = useRef(false);
-  const queued = useRef(false);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    // Adopt an acknowledged workflow only while no local placement is unsaved.
-    if (desiredYaml.current !== null && desiredYaml.current !== sentYaml.current) return;
-    desiredYaml.current = props.state.workflowYaml;
-    sentYaml.current = props.state.workflowYaml;
-    desiredPositions.current = readStagePositions(props.state.workflow);
-  }, [props.state.workflowYaml, props.state.workflow]);
-
-  const cancelSaveTimer = useCallback(() => {
-    if (saveTimer.current !== null) clearTimeout(saveTimer.current);
-    saveTimer.current = null;
-  }, []);
-
-  const runSave = useCallback(async (): Promise<void> => {
-    if (saving.current) { queued.current = true; return; }
-    const text = desiredYaml.current;
-    if (text === null || text === sentYaml.current) return;
-    saving.current = true;
-    try {
-      const result = await props.run({ type: 'board.workflow.save', hubId: props.hubId, boardId: props.boardId, yaml: text, expectedRevision: revisionRef.current });
-      sentYaml.current = text;
-      const hubRevision = result.state?.hubs.find(hub => hub.id === props.hubId)?.revision;
-      if (typeof hubRevision === 'number') revisionRef.current = hubRevision;
-    } catch (error) {
-      // The placement is not persisted: return to the acknowledged workflow and
-      // drop the pending visual and history state that belonged to it.
-      desiredYaml.current = stateRef.current.workflowYaml;
-      sentYaml.current = desiredYaml.current;
-      desiredPositions.current = readStagePositions(stateRef.current.workflow);
-      setOverrides({});
-      frozen.current = null;
-      setLayoutVersion(value => value + 1);
-      setHistory(emptyHistory());
-      errorRef.current(error);
-    } finally {
-      saving.current = false;
-    }
-    if (queued.current) { queued.current = false; void runSave(); return; }
-    if (desiredYaml.current !== null && desiredYaml.current !== sentYaml.current) void runSave();
-  }, [props.hubId, props.boardId, props.run]);
-
-  const queueSave = useCallback(() => {
-    cancelSaveTimer();
-    saveTimer.current = setTimeout(() => {
-      saveTimer.current = null;
-      void runSave();
-    }, PLACEMENT_SAVE_DELAY_MS);
-  }, [cancelSaveTimer, runSave]);
-
-  // A completed drag is already a user decision: send it before the view goes away.
-  useEffect(() => () => { cancelSaveTimer(); void runSave(); }, [cancelSaveTimer, runSave]);
-
-  const pushHistory = useCallback((step: PlacementStep) => {
-    setHistory(current => pushStep(current, step));
-  }, []);
-
-  /** Replace the intended placement and its authored text with a complete map. */
-  const intend = useCallback((positions: StagePositions) => {
-    const next: Record<string, StagePosition> = Object.create(null) as Record<string, StagePosition>;
-    for (const [id, position] of Object.entries(positions)) if (position !== undefined) next[id] = { x: position.x, y: position.y };
-    desiredPositions.current = next;
-    desiredYaml.current = setStagePositions(desiredYaml.current ?? stateRef.current.workflowYaml, next);
-  }, []);
+  const scene = useMemo(() => buildWorkflowScene({ workflow: props.state.workflow, tasks: diagramTasks, placements, sizes: measurements.measured }), [props.state.workflow, diagramTasks, placements, measurements.measured]);
 
   const reposition = useCallback((positions: StagePositions, options: { readonly layout?: StagePositions; readonly clearOverrides: boolean; readonly immediate: boolean }) => {
     if (options.clearOverrides) setOverrides({});
@@ -292,55 +232,113 @@ export function WorkflowView(props: WorkflowViewProps) {
       frozen.current = { key: workflowKeyRef.current, layout: layoutFrom(options.layout) };
       setLayoutVersion(value => value + 1);
     }
-    intend(positions);
-    cancelSaveTimer();
-    if (options.immediate) void runSave(); else queueSave();
-  }, [cancelSaveTimer, intend, layoutFrom, queueSave, runSave]);
+    saver.intendPositions(positions);
+    saver.cancelTimer();
+    if (options.immediate) saver.saveNow(); else saver.queueSave();
+  }, [layoutFrom, saver]);
 
   const moveStage = useCallback((stageId: string, position: { x: number; y: number }) => {
     const rounded = { x: Math.round(position.x), y: Math.round(position.y) };
-    const before: Record<string, StagePosition> = { ...desiredPositions.current };
+    const before: Record<string, StagePosition> = { ...saver.desiredPositions.current };
     const after: Record<string, StagePosition> = { ...before, [stageId]: rounded };
     const beforeLayout = visualPositions();
     const afterLayout: Record<string, StagePosition> = { ...beforeLayout, [stageId]: rounded };
+    const sizes: StageSizes = { ...saver.desiredSizes.current };
     const nextBaselines = Object.create(null) as Record<string, StagePosition | undefined>;
     Object.assign(nextBaselines, baselines.current, { [stageId]: storedRef.current[stageId] });
     baselines.current = nextBaselines;
     setOverrides(current => ({ ...current, [stageId]: rounded }));
-    pushHistory({ before, after, beforeLayout, afterLayout });
+    history.push({ before, after, beforeSizes: sizes, afterSizes: sizes, beforeLayout, afterLayout });
     reposition(after, { clearOverrides: false, immediate: false });
-  }, [pushHistory, reposition, visualPositions]);
+  }, [history, reposition, saver, visualPositions]);
+
+  const resizeStage = useCallback((stageId: string, size: StageSize) => {
+    setSizeOverrides(current => ({ ...current, [stageId]: size }));
+  }, []);
+
+  const cancelResize = useCallback((stageId: string) => {
+    setSizeOverrides(current => {
+      if (!Object.prototype.hasOwnProperty.call(current, stageId)) return current;
+      const next = { ...current };
+      delete next[stageId];
+      return next;
+    });
+  }, []);
+
+  const commitResize = useCallback((stageId: string, size: StageSize) => {
+    const committed = { width: Math.round(size.width), height: Math.round(size.height) };
+    const authored = saver.desiredSizes.current[stageId];
+    const unchanged = authored === undefined
+      ? committed.width === effectiveStageSize(undefined).width && committed.height === effectiveStageSize(undefined).height
+      : authored.width === committed.width && authored.height === committed.height;
+    // A press that never changed the size is not a layout edit.
+    if (unchanged) { cancelResize(stageId); return; }
+    // The override stays until the save lands, so a resized stage never snaps
+    // back while its workflow save is still queued.
+    sizeBaselines.current = { ...sizeBaselines.current, [stageId]: storedSizesRef.current[stageId] };
+    setSizeOverrides(current => ({ ...current, [stageId]: committed }));
+    const beforeSizes: Record<string, StageSize> = { ...saver.desiredSizes.current };
+    const afterSizes: Record<string, StageSize> = { ...beforeSizes, [stageId]: committed };
+    const positions: Record<string, StagePosition> = { ...saver.desiredPositions.current };
+    const layout = visualPositions();
+    history.push({ before: positions, after: positions, beforeSizes, afterSizes, beforeLayout: layout, afterLayout: layout });
+    saver.intendSizes(afterSizes);
+    saver.cancelTimer();
+    saver.queueSave();
+  }, [cancelResize, history, saver, visualPositions]);
 
   const organize = useCallback(() => {
-    const layout = computeAutoLayout(stateRef.current.workflow, measuredRef.current);
+    if (lock.locked) return;
+    const layout = computeAutoLayout(stateRef.current.workflow, measurementRef.current);
     const next: Record<string, StagePosition> = Object.create(null) as Record<string, StagePosition>;
     for (const [id, position] of layout.placements) next[id] = { x: Math.round(position.x), y: Math.round(position.y) };
-    const before: Record<string, StagePosition> = { ...desiredPositions.current };
+    const before = { ...saver.desiredPositions.current };
+    const sizes: StageSizes = { ...saver.desiredSizes.current };
     const beforeLayout = visualPositions();
     frozen.current = { key: graphKey(stateRef.current.workflow), layout };
     setLayoutVersion(value => value + 1);
-    pushHistory({ before, after: next, beforeLayout, afterLayout: next });
+    history.push({ before, after: next, beforeSizes: sizes, afterSizes: sizes, beforeLayout, afterLayout: next });
     reposition(next, { clearOverrides: true, immediate: true });
     setFitRequest(value => value + 1);
-  }, [pushHistory, reposition, visualPositions]);
+  }, [history, lock.locked, measurementRef, reposition, saver, visualPositions]);
+
+  /** Show the intended sizes right away, the way a layout snapshot restores positions. */
+  const previewSizes = useCallback((target: StageSizes) => {
+    const ids = new Set([...Object.keys(saver.desiredSizes.current), ...Object.keys(target)]);
+    const next: Record<string, StageSize> = {};
+    const nextBaselines: Record<string, StageSize | undefined> = { ...sizeBaselines.current };
+    for (const id of ids) {
+      const intended = effectiveStageSize(target[id]);
+      const current = effectiveStageSize(storedSizesRef.current[id]);
+      // An override that changes nothing would outlive the edit and mask a later
+      // acknowledged size, so it is only set when the rendition must change now.
+      if (intended.width === current.width && intended.height === current.height) continue;
+      next[id] = intended;
+      nextBaselines[id] = storedSizesRef.current[id];
+    }
+    sizeBaselines.current = nextBaselines;
+    setSizeOverrides(next);
+  }, [saver]);
 
   const undo = useCallback(() => {
-    const current = historyRef.current;
-    const step = undoStep(current);
+    if (lock.locked) return;
+    const step = undoStep(history.historyRef.current);
     if (step === null) return;
-    const entry = current.entries[current.cursor - 1];
-    setHistory(step.history);
+    const entry = history.historyRef.current.entries[history.historyRef.current.cursor - 1];
+    history.replace(step.history);
+    if (step.sizes !== undefined) { previewSizes(step.sizes); saver.intendSizes(step.sizes); }
     reposition(step.positions, { ...(entry?.beforeLayout === undefined ? {} : { layout: entry.beforeLayout }), clearOverrides: true, immediate: true });
-  }, [reposition]);
+  }, [history, lock.locked, previewSizes, reposition, saver]);
 
   const redo = useCallback(() => {
-    const current = historyRef.current;
-    const step = redoStep(current);
+    if (lock.locked) return;
+    const step = redoStep(history.historyRef.current);
     if (step === null) return;
-    const entry = current.entries[current.cursor];
-    setHistory(step.history);
+    const entry = history.historyRef.current.entries[history.historyRef.current.cursor];
+    history.replace(step.history);
+    if (step.sizes !== undefined) { previewSizes(step.sizes); saver.intendSizes(step.sizes); }
     reposition(step.positions, { ...(entry?.afterLayout === undefined ? {} : { layout: entry.afterLayout }), clearOverrides: true, immediate: true });
-  }, [reposition]);
+  }, [history, lock.locked, previewSizes, reposition, saver]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -355,46 +353,81 @@ export function WorkflowView(props: WorkflowViewProps) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [redo, undo]);
 
-  const stagesKey = useMemo(() => props.state.tasks.map(task => task.id + ':' + task.columnId).join('|'), [props.state.tasks]);
-  const visibleKey = useMemo(() => props.tasks.map(task => task.id).join('|'), [props.tasks]);
-  useEffect(() => {
-    const current = new Map(props.state.tasks.map(task => [task.id, task.columnId]));
-    const before = previousStages.current;
-    previousStages.current = current;
-    if (before === null || prefersReducedMotion()) return;
-    // Only cards the active search and project filter present may travel.
-    const committed = buildWorkflowScene({ workflow: props.state.workflow, tasks: props.tasks, placements, sizes: measured });
-    const moves = planTravel({ previousStageByTask: before, tasks: props.tasks, scene: committed });
-    if (moves.length === 0) {
-      setTravel(currentTravel => currentTravel.length === 0 ? currentTravel : []);
-      return;
-    }
-    const titles = new Map(props.tasks.map(task => [task.id, task.title]));
-    setTravel(moves.map(move => ({
-      id: move.taskId + ':' + (travelSerial.current += 1),
-      title: titles.get(move.taskId) ?? move.taskId,
-      points: move.points,
-    })));
-  }, [stagesKey, visibleKey]);
+  const travel = useTravel({
+    workflow: props.state.workflow,
+    stateTasks: props.state.tasks,
+    tasks: props.tasks,
+    placements,
+    measured: measurements.measured,
+  });
 
-  const finishTravel = useCallback(() => setTravel([]), []);
+  const stageSizeOf = useCallback((stageId: string): StageSize => effectiveStageSize(sizeOverrides[stageId] ?? storedSizes[stageId]), [sizeOverrides, storedSizes]);
+  const stages: CanvasStage[] = scene.nodes.map(node => {
+    const size = stageSizeOf(node.id);
+    return { id: node.id, label: node.name, x: node.position.x, y: node.position.y, width: size.width, height: size.height, cardIds: node.tasks.map(task => task.id) };
+  });
+  const connections: CanvasConnection[] = scene.edges.map(edge => ({
+    id: edge.id, from: edge.from, to: edge.to, kind: edge.kind, returning: edge.returning, fanOut: edge.fanOut, fanOutCount: edge.fanOutCount,
+  }));
+
+  const tasksById = useMemo(() => new Map(props.state.tasks.map(task => [task.id, task])), [props.state.tasks]);
+  const columnsById = useMemo(() => new Map(props.state.workflow.columns.map(column => [column.id, column])), [props.state.workflow.columns]);
+  const cardEnvironment = useMemo<CardEnvironment>(() => ({
+    renderCard(taskId: string) {
+      const task = tasksById.get(taskId);
+      if (task === undefined) return null;
+      const column = columnsById.get(task.columnId);
+      if (column === undefined) return null;
+      return <BoardCard
+        task={task}
+        column={column}
+        projectName={props.card.projectNames.get(task.projectId) ?? task.projectId}
+        attention={props.card.attention[task.id] ?? EMPTY_ATTENTION}
+        workflow={props.state.workflow}
+        selectionMode={props.card.selectionMode}
+        selected={props.card.selectedIds.has(task.id)}
+        autoRun={props.card.autoRun}
+        autoModePending={props.card.autoModePending.has(task.id)}
+        onToggleAutoMode={props.card.onToggleAutoMode}
+        onOpen={props.onOpenTask}
+        onToggleSelect={props.card.onToggleSelect}
+        onBeginDrag={props.beginDrag}
+        shouldSuppressClick={props.shouldSuppressClick}
+        onMoveTask={(_task, target) => props.card.onAdvance(task, target)}
+        advancePending={props.card.advancePending.has(task.id)}
+        onRun={props.card.onRun}
+      />;
+    },
+  }), [tasksById, columnsById, props.card, props.state.workflow, props.onOpenTask, props.beginDrag, props.shouldSuppressClick]);
 
   return <div className="kb-flow-shell" role="region" aria-label="Workflow diagram">
-    <div className="kb-flow-toolbar" role="group" aria-label="Diagram actions">
-      <button type="button" className="kb-button" onClick={organize}>Organize</button>
-      <button type="button" className="kb-button" disabled={!canUndo(history)} onClick={undo}>Undo</button>
-      <button type="button" className="kb-button" disabled={!canRedo(history)} onClick={redo}>Redo</button>
-    </div>
     <Canvas
       stages={stages}
       connections={connections}
-      ready={revealed}
+      ready={measurements.revealed}
       fitRequest={fitRequest}
-      callbacks={callbacks}
+      locked={lock.locked}
+      callbacks={{ onMeasure: measurements.onMeasure }}
+      cardEnvironment={cardEnvironment}
       dropStageId={props.drag?.overColumnId ?? null}
       dropIndicatorY={props.drag?.overColumnId === undefined ? null : props.drag.indicatorY}
-      {...(travel.length === 0 ? {} : { overlay: <TravelLayer moves={travel} onFinished={finishTravel} /> })}
+      {...(travel.travel.length === 0 ? {} : { overlay: <TravelLayer moves={travel.travel} onFinished={travel.finish} /> })}
+      controls={viewport => <ViewControls
+        locked={lock.locked}
+        canUndo={canUndo(history.history)}
+        canRedo={canRedo(history.history)}
+        onZoomIn={viewport.zoomIn}
+        onZoomOut={viewport.zoomOut}
+        onFit={viewport.fit}
+        onUndo={undo}
+        onRedo={redo}
+        onOrganize={organize}
+        onToggleLock={lock.toggle}
+      />}
       onStageMove={moveStage}
+      onStageResize={resizeStage}
+      onStageResizeEnd={commitResize}
+      onStageResizeCancel={cancelResize}
     />
   </div>;
 }
