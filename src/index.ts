@@ -33,6 +33,13 @@ import { registerProductTools } from './host/tools.js';
 import { KanbanError } from './shared/errors.js';
 import { registerTaskContextInjection } from './host/task-context.js';
 import { createSessionHistory } from './host/session-history.js';
+import { openScheduleRunStorage } from './host/schedule-run-storage.js';
+import { ScheduleRunRegistry } from './host/schedule-runs.js';
+import { ScheduleArchiveWatcher } from './host/schedule-archive.js';
+import { ScheduleRunner } from './host/schedule-runner.js';
+import { ScheduleCoordinator, type ScheduledEntry } from './host/schedule-coordinator.js';
+import { createScheduleModelPort } from './host/schedule-model.js';
+import { SessionId } from '@deepseek-ai/dsh-session';
 import { abortableSleep, ForkAdopter } from './host/conversation-adoption.js';
 import type { TaskLocator } from './host/task-locator.js';
 
@@ -159,6 +166,12 @@ export async function openHubSharing(ctx:Context,hubs:HubRepository,options:HubS
   close:async()=>{scheduler.dispose();try{await service.close();await auth.close();}finally{await storage.close();}},
  };
 }
+/** Every stored schedule, with the Hub that owns it, for the coordinator. */
+function scheduleEntries(hubs:HubRepository):ScheduledEntry[]{
+ const entries:ScheduledEntry[]=[];
+ for(const hub of hubs.list())for(const schedule of hub.schedules??[])entries.push({hubId:hub.id,schedule});
+ return entries;
+}
 export const name='kanban';
 export const inject=['storageDomain','sessionController','sessionQuery','sessions','agents','workingDirectory','workspaceRegistry','sandboxPolicy','tools','typert','credentials','llm'];
 export async function apply(ctx:Context):Promise<void>{
@@ -172,16 +185,75 @@ export async function apply(ctx:Context):Promise<void>{
  let conversationFacts!:Awaited<ReturnType<typeof registerConversationFacts>>;
  try{conversationFacts=await registerConversationFacts(ctx);ctx.effect(()=>()=>conversationFacts.dispose());}catch(error){conversationFacts?.dispose();await questions.close().catch(()=>undefined);await storage.close().catch(()=>undefined);throw error;}
  const native=createNativePorts(ctx,{conversationFacts,history});const hubs=await HubRepository.open(opened.storage);
+ let schedules:{storage:import('./host/schedule-run-storage.js').ScheduleRunStorage;close:()=>Promise<void>};
+ try{schedules=await openScheduleRunStorage(ctx);}catch(error){await hubs.close();await questions.close();await storage.close();throw error;}
  let sharing:HubSharingRuntime;
- try{sharing=await openHubSharing(ctx,hubs,{report});}catch(error){await hubs.close();await questions.close();await storage.close();throw error;}
+ try{sharing=await openHubSharing(ctx,hubs,{report});}catch(error){await schedules.close();await hubs.close();await questions.close();await storage.close();throw error;}
  const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler},native.workspaces);
  sharing.setNotify(()=>app.sharingChanged());
- let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offSignals:(()=>void)|undefined;let offAdoption:(()=>void)|undefined;
- ctx.effect(()=>async()=>{lifetime.abort();offTools?.();offWire?.();offGuards?.();offContext?.();offSignals?.();offAdoption?.();try{await app.close();}finally{try{await sharing.close();}finally{try{await hubs.close();}finally{await questions.close();}}}});
+ const scheduleModels=createScheduleModelPort(ctx);
+ const scheduleRuns=new ScheduleRunRegistry({storage:schedules.storage,now:()=>new Date().toISOString(),onChange:()=>app.activityChanged(),report});
+ const scheduleWatcher=new ScheduleArchiveWatcher({
+  facts:id=>app.conversationFacts(id),
+  archive:id=>native.sessions.archive(id),
+  onChange:()=>app.activityChanged(),
+  onArchiveFailure:(scheduleId,sessionId,error)=>{void scheduleRuns.recordArchiveFailure(scheduleId,sessionId,error).catch(report);},
+  onArchived:(scheduleId,sessionId)=>{void scheduleRuns.clearArchiveFailure(scheduleId,sessionId).catch(report);},
+  report,
+ });
+ const scheduleRunner=new ScheduleRunner({
+  now:()=>new Date().toISOString(),
+  requireHub:id=>hubs.requireHub(id),
+  ensureProjectWorkspace:(hubId,project)=>app.ensureProjectWorkspace(hubId,project.id),
+  signal:lifetime.signal,
+  createSession:(projectPath,workspaceId)=>native.sessions.create(projectPath,workspaceId),
+  validateDirectory:(id,expected)=>native.sessions.validateDirectory(id,expected),
+  renameSession:async(id,title)=>{await ctx.sessionController.rename({sessionId:SessionId(id),title});},
+  send:(id,text,requestId)=>native.sessions.send(id,text,requestId),
+  models:scheduleModels,runs:scheduleRuns,watcher:scheduleWatcher,report,
+ });
+ const scheduleCoordinator=new ScheduleCoordinator({
+  clock:()=>Date.now(),
+  timer:{schedule:(run,ms)=>setTimeout(run,ms),cancel:handle=>clearTimeout(handle as ReturnType<typeof setTimeout>)},
+  schedules:()=>scheduleEntries(hubs),
+  run:async request=>{await scheduleRunner.run(request);},
+  isRunning:id=>scheduleRuns.isRunning(id),
+  report,
+ });
+ const offSchedules=hubs.subscribe(()=>{scheduleCoordinator.sync();void scheduleRuns.pruneHubs(new Set(hubs.list().map(hub=>hub.id))).catch(report);});
+ app.attachScheduleRuntime({
+  runNow:async(hubId,scheduleId)=>{scheduleCoordinator.runNow(hubId,scheduleId);},
+  scheduleDeleted:async scheduleId=>{await scheduleRuns.remove(scheduleId);},
+  runtime:()=>scheduleRuns.runtimeByHub(),
+  modelCatalog:refresh=>scheduleModels.catalog(refresh),
+ });
+ let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offSignals:(()=>void)|undefined;let offAdoption:(()=>void)|undefined;let offScheduleStatus:(()=>void)|undefined;
+ ctx.effect(()=>async()=>{
+  lifetime.abort();offTools?.();offWire?.();offGuards?.();offContext?.();offSignals?.();offAdoption?.();offScheduleStatus?.();offSchedules();
+  scheduleCoordinator.dispose();
+  try{await scheduleCoordinator.settle();}finally{
+   scheduleWatcher.dispose();
+   try{await scheduleWatcher.settle();}finally{
+    try{await scheduleRuns.settle();}finally{
+     scheduleRuns.dispose();
+    }
+   }
+  }
+  try{await app.close();}finally{
+   try{await scheduleRuns.settle();}finally{
+    try{await sharing.close();}finally{
+     try{await hubs.close();}finally{
+      try{await schedules.close();}finally{await questions.close();}
+     }
+    }
+   }
+  }
+ });
  offWire=ctx.typert.register(TYPERT_HOST);
  ctx.plugin(KanbanController,app);
  offTools=registerProductTools(ctx,app);
- ctx.on('session/event',(session,event)=>{app.observe(session.id,event);});
+ ctx.on('session/event',(session,event)=>{app.observe(session.id,event);if(event.type==='turn/end')scheduleWatcher.observe(String(session.id));});
+ offScheduleStatus=ctx.on('agent/status',({agent})=>scheduleWatcher.observe(String(agent.id)));
  offSignals=registerAttentionSignals(ctx,app);
  offGuards=registerTaskExecutionGuards(ctx,app.locator,app);
  offContext=registerTaskContextInjection(ctx,app.locator,{history,report});
@@ -195,5 +267,8 @@ export async function apply(ctx:Context):Promise<void>{
  });
  offAdoption=registerForkAdoption(ctx,adopter,{signal:lifetime.signal,report});
  await app.initialize();
+ await scheduleRuns.pruneSchedules(new Set(scheduleEntries(hubs).map(entry=>entry.schedule.id)));
+ await scheduleRuns.finalizeInterrupted();
+ scheduleCoordinator.start();
  sharing.scheduler.sync();
 }

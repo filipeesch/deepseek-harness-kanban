@@ -32,6 +32,7 @@ describe('board card render isolation', () => {
       sharing: vi.fn(async () => data),
       localDrive: vi.fn(async (request: { action: string; path?: string }) => request.action === 'roots' ? { action: 'roots' as const, discovery: { state: 'empty' as const, locations: [] } } : { action: 'list' as const, page: { rootId: '/drive', path: '/drive', parent: null, entries: [], hasDocument: false, truncated: false, shown: 0 } }),
       branches: vi.fn(async () => []),
+      modelCatalog: vi.fn(async () => ({ default: { provider: 'deepseek', model: 'chat' }, providers: [], failures: [] })),
       worktreeDefault: vi.fn(async () => ({ kind: 'derived' as const, branchName: 'task', path: '/worktrees/task' })),
       detectProject: vi.fn(async (pathValue: string) => ({ kind: 'folder' as const, projectPath: pathValue })),
       subscribe: vi.fn(listener => { notify = listener; return () => {}; }),

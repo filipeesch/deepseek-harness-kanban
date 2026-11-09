@@ -44,6 +44,8 @@ import type { GoogleDriveLocalDiscovery } from './sharing/google-drive-local/dis
 import { isAuthorizationCommand, type GoogleDriveAuthCoordinator } from './sharing/auth-coordinator.js';
 import { WorkspaceCoordinator } from './workspace-coordinator.js';
 import { resolveCanonicalPath } from './path-resolution.js';
+import type { ScheduleRuntimePort } from './schedule-port.js';
+import type { ScheduleModelCatalog } from '../shared/types.js';
 
 async function pathExists(value:string):Promise<boolean>{try{await lstat(value);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}}
 function isEvent(value:unknown):value is {type:string;seq:number;data:unknown}{return Boolean(value&&typeof value==='object'&&'type'in value&&typeof value.type==='string'&&'seq'in value&&typeof value.seq==='number'&&Number.isSafeInteger(value.seq)&&'data'in value);}
@@ -89,6 +91,7 @@ export class KanbanApp {
  /** The one conversation-fact read every host consumer shares; the question projection is folded in here. */
  private readonly factsSource:ConversationFactsSource;
  private readonly workspaceCoordinator?:WorkspaceCoordinator;
+ private scheduleRuntime:ScheduleRuntimePort|undefined;
  constructor(readonly hubs:HubRepository,readonly sessions:SessionPort,readonly git:GitPort,private readonly options:AppOptions={},private readonly workspaces?:WorkspacePort){
   this.locator=new TaskLocator(hubs);
   this.boards=new BoardAdministration({hubs,...(options.sharing?{sharing:boardSharingPort(options.sharing)}:{}),...(options.report?{report:options.report}:{})});
@@ -120,6 +123,13 @@ export class KanbanApp {
   this.pendingTransitions.refresh(this.locator.summaries());
   this.disposers.push(hubs.subscribe(()=>{this.assembler.invalidateState();this.pendingTransitions.refresh(this.locator.summaries());this.markChanged();void this.dispatchPending().catch(error=>options.report?.(error));}));
  }
+ /** Attach the live schedule runtime once the app exists; commands require it. */
+ attachScheduleRuntime(port:ScheduleRuntimePort):void{this.scheduleRuntime=port;}
+ private requireScheduleRuntime():ScheduleRuntimePort{
+  invariant(this.scheduleRuntime,'SCHEDULES_UNAVAILABLE','Session schedules are unavailable in this host.');
+  return this.scheduleRuntime;
+ }
+ async modelCatalog(refresh=false):Promise<ScheduleModelCatalog>{return this.requireScheduleRuntime().modelCatalog(refresh);}
  /** The first/default Hub facade retained for single-Hub callers and tests. */
  get store():HubStore{return this.hubs.defaultHub();}
  private hubStore(hubId?:string):HubStore{return this.hubs.hub(this.hubs.resolveHubId(hubId));}
@@ -276,6 +286,8 @@ export class KanbanApp {
   if(prompted)await this.hubStore(located.hubId).transact(draft=>{const current=draft.tasks.find(value=>value.id===task.id);if(current?.instructionPending?.enteredAt===marker.enteredAt)delete current.instructionPending;});
  }
  activityChanged():void{if(this.disposed)return;this.attention.touch();this.markChanged();}
+ /** The question-aware conversation facts shared by attention and scheduled archiving. */
+ conversationFacts(sessionId:string):Promise<ConversationFacts>{return this.factsSource.read(sessionId);}
  sessionActivity(sessionId?:string):void{if(this.disposed)return;if(sessionId!==undefined&&!this.locator.hasSession(sessionId))return;this.attention.touch(sessionId);this.markChanged();}
  /**
   * One snapshot request. Presentation projects only resolved facts and schedules the
@@ -294,7 +306,8 @@ export class KanbanApp {
   else if(request.refreshSessionIds!==undefined&&request.refreshSessionIds.length>0){sequence=++this.sequence;conversations=await this.attention.refresh(request.refreshSessionIds,tasks);}
   else{sequence=this.sequence;conversations=this.attention.present(tasks);}
   const parts=await this.assembler.assemble(conversations,{refreshAuth:request.refreshAuth===true,allowAuthRefresh:mode==='full'});
-  return {...parts,sequence,...(this.retainedCheckouts.length===0?{}:{retainedCheckouts:[...this.retainedCheckouts]})};
+  const scheduleRuntime=this.scheduleRuntime?.runtime()??{};
+  return {...parts,sequence,...(Object.keys(scheduleRuntime).length===0?{}:{scheduleRuntime}),...(this.retainedCheckouts.length===0?{}:{retainedCheckouts:[...this.retainedCheckouts]})};
  }
  /** Publish a new snapshot after publishing or authorization state changed outside a board command. */
  sharingChanged():void{this.assembler.invalidateAuth();this.assembler.invalidateSharing();this.markChanged();}
@@ -363,6 +376,11 @@ export class KanbanApp {
   await this.sessions.validateDirectory(sessionId,expected);
   const latest=this.locator.bySession(sessionId);
   invariant(latest&&latest.hubId===located.hubId&&latest.task.projectId===task.projectId&&latest.project.projectPath===project.projectPath&&latest.project.gitRootPath===project.gitRootPath&&latest.task.sessionIds.includes(sessionId)&&latest.task.effectiveCwd===expected,'CONTEXT_CHANGED','The task context changed while execution was being validated. Review its directory before retrying.');
+ }
+ /** The visible native workspace of one Hub project, provisioned on demand. */
+ async ensureProjectWorkspace(hubId:string,projectId:string):Promise<string|undefined>{
+  const project=this.hubStore(hubId).requireProject(projectId);
+  return this.workspaceCoordinator?.ensureProject(hubId,project);
  }
  private async settings(input:BoardSettings,expectedRevision?:number):Promise<BoardSettings>{
   // One shared shape rule keeps the command path and the domain normalizer from diverging.
@@ -520,6 +538,22 @@ export class KanbanApp {
    case 'task.autoMode':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).setAutoMode(command.taskId,command.enabled);if(!command.enabled)this.autoAdvance.forget(command.taskId);break;}
    case 'task.recordTransition':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).recordTransition(command.taskId,command.columnId);break;}
    case 'task.runInstruction':await this.runInstruction(command);break;
+   case 'schedule.save':{
+    const store=this.hubStore(command.hubId);
+    const saved=await store.saveSchedule({...(command.scheduleId===undefined?{}:{id:command.scheduleId}),title:command.title,prompt:command.prompt,cron:command.cron,timeZone:command.timeZone,projectId:command.projectId,...(command.model===undefined?{}:{model:command.model}),newConversation:command.newConversation,archiveWhenIdle:command.archiveWhenIdle},command.expectedRevision);
+    commandReceipt={kind:'schedule',id:saved.id};
+    break;
+   }
+   case 'schedule.delete':{
+    invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the schedule.');
+    const store=this.hubStore(command.hubId);
+    store.requireSchedule(command.scheduleId);
+    const removed=await store.deleteSchedule(command.scheduleId,command.expectedRevision);
+    await this.scheduleRuntime?.scheduleDeleted(removed.id);
+    break;
+   }
+   case 'schedule.setEnabled':{const store=this.hubStore(command.hubId);await store.setScheduleEnabled(command.scheduleId,command.enabled,command.expectedRevision);break;}
+   case 'schedule.runNow':{const store=this.hubStore(command.hubId);store.requireSchedule(command.scheduleId);await this.requireScheduleRuntime().runNow(store.hubId,command.scheduleId);break;}
   }
   await this.dispatchPending();const snapshot=await this.snapshot({},'cache');return {...snapshot,...(commandReceipt?{commandReceipt}:{})};
  }

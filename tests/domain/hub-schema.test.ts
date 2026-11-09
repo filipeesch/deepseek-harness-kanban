@@ -135,3 +135,32 @@ describe('HubState schema', () => {
     expect(HubStateSchema.safeParse(hubWith(task({ pendingTransition: { id: 'p', fromColumnId: 'backlog', columnId: 'backlog', mode: 'move', status: 'waiting', origin: 'user' as never } }))).success).toBe(false);
   });
 });
+describe('HubState schedule schema', () => {
+  const schedule = {
+    id: 'schedule', title: 'Morning', prompt: 'Summarize', cron: '0 9 * * *', timeZone: 'Europe/Lisbon', projectId: 'project',
+    newConversation: true, archiveWhenIdle: true, enabled: true,
+    createdAt: now, updatedAt: now,
+  };
+  it('accepts a Hub with schedules and one stored before schedules existed', () => {
+    expect(HubStateSchema.safeParse({ ...hubWith(), schedules: [schedule] }).success).toBe(true);
+    const legacy = hubWith();
+    expect(HubStateSchema.safeParse(legacy).success).toBe(true);
+    expect('schedules' in legacy).toBe(false);
+  });
+  it('rejects a schedule project outside the Hub', () => {
+    expect(HubStateSchema.safeParse({ ...hubWith(), schedules: [{ ...schedule, projectId: 'other' }] }).success).toBe(false);
+  });
+  it('rejects an invalid cron expression', () => {
+    expect(HubStateSchema.safeParse({ ...hubWith(), schedules: [{ ...schedule, cron: '61 * * * *' }] }).success).toBe(false);
+  });
+  it('rejects an unknown time zone', () => {
+    expect(HubStateSchema.safeParse({ ...hubWith(), schedules: [{ ...schedule, timeZone: 'Mars/Olympus' }] }).success).toBe(false);
+  });
+  it('rejects archiving a continuous conversation', () => {
+    expect(HubStateSchema.safeParse({ ...hubWith(), schedules: [{ ...schedule, newConversation: false, archiveWhenIdle: true }] }).success).toBe(false);
+    expect(HubStateSchema.safeParse({ ...hubWith(), schedules: [{ ...schedule, newConversation: false, archiveWhenIdle: false }] }).success).toBe(true);
+  });
+  it('rejects duplicate schedule identities', () => {
+    expect(HubStateSchema.safeParse({ ...hubWith(), schedules: [schedule, { ...schedule }] }).success).toBe(false);
+  });
+});
