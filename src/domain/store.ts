@@ -234,6 +234,7 @@ export class BoardStore {
     invariant(value && typeof value === 'object' && !Array.isArray(value), 'INVALID_INPUT', 'New task input must be a mapping.');
     requiredText(value.title, 'Task title');
     invariant(typeof value.description === 'string', 'INVALID_INPUT', 'Task description must be text.');
+    invariant(value.autoMode === undefined || typeof value.autoMode === 'boolean', 'INVALID_INPUT', 'Task auto mode must be a boolean.');
     return this.transact(state => {
       const project = this.requireProject(value.projectId, state);
       const peers = state.tasks.filter(task => task.columnId === state.workflow.initialColumnId);
@@ -248,7 +249,7 @@ export class BoardStore {
       const task: Task = {
         id: nextId(state.tasks), projectId: project.id, title: value.title.trim(), description: value.description,
         columnId: state.workflow.initialColumnId, position, sessionIds: [], closedSessionIds: [], effectiveCwd: project.projectPath,
-        worktree: null, operation: null, ...(initialInstruction !== undefined ? { instructionPending: { columnId: initialColumn!.id, enteredAt: nextEnteredAt() } } : {}), createdAt: timestamp, updatedAt: timestamp,
+        worktree: null, operation: null, ...(value.autoMode === true ? { autoMode: { enabled: true as const } } : {}), ...(initialInstruction !== undefined ? { instructionPending: { columnId: initialColumn!.id, enteredAt: nextEnteredAt() } } : {}), createdAt: timestamp, updatedAt: timestamp,
       };
       state.tasks.push(task);
       return task;

@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ClientApi, CreateWorktree, Project, Task } from '../shared/types.js';
-import { taskTitleSlug, worktreePathForBranch } from '../shared/worktree-name.js';
+import { defaultWorktreeDestination, taskTitleSlug } from '../shared/worktree-name.js';
 import { asProblem } from './ui.js';
 
 export interface WorktreeSuggestion { branchName: string; path: string }
 
 export function initialWorktree(task: Task, project?: Project, basePath?: string): CreateWorktree {
   const branchName = taskTitleSlug(task.title);
-  return { mode: 'new', branchName, path: worktreePathForBranch(basePath, branchName), sourceBranch: project?.defaultBranch ?? '' };
+  return { mode: 'new', branchName, path: defaultWorktreeDestination({ gitRootPath: project?.gitRootPath, basePath, branchName }), sourceBranch: project?.defaultBranch ?? '' };
 }
 
 /** The host accepts an omitted source and falls back to its default branch or HEAD. */
@@ -53,13 +53,18 @@ export function useWorktreeDraft({ api, task, project, basePath, enabled }: { ap
     setSuggestionPending(true); setSuggestionError(null);
     try {
       const result = await api.worktreeDefault(task.id);
+      if (result.kind === 'unavailable') {
+        if (mounted.current) { setSuggestion(null); setSuggestionError(result.reason); }
+        return null;
+      }
+      const suggestion = { branchName: result.branchName, path: result.path };
       if (mounted.current) {
-        setSuggestion(result);
+        setSuggestion(suggestion);
         if (!touchedRef.current.branch && !touchedRef.current.path) {
-          setValue(current => ({ ...current, branchName: result.branchName, path: result.path }));
+          setValue(current => ({ ...current, branchName: suggestion.branchName, path: suggestion.path }));
         }
       }
-      return result;
+      return suggestion;
     } catch (failure) {
       if (mounted.current) setSuggestionError(asProblem(failure));
       return null;
@@ -76,10 +81,10 @@ export function useWorktreeDraft({ api, task, project, basePath, enabled }: { ap
   useEffect(() => {
     if (touchedRef.current.path) return;
     setValue(current => {
-      const next = worktreePathForBranch(basePath, current.branchName);
+      const next = defaultWorktreeDestination({ gitRootPath: project?.gitRootPath, basePath, branchName: current.branchName });
       return current.path === next ? current : { ...current, path: next };
     });
-  }, [basePath, value.branchName]);
+  }, [basePath, value.branchName, project?.gitRootPath]);
 
   // Keep the displayed source in sync with the project default until the user overrides it.
   useEffect(() => {
@@ -100,7 +105,7 @@ export function useWorktreeDraft({ api, task, project, basePath, enabled }: { ap
   }
   function resetPath() {
     touchedRef.current.path = false; setPathTouched(false);
-    setValue(current => ({ ...current, path: worktreePathForBranch(basePath, current.branchName) }));
+    setValue(current => ({ ...current, path: defaultWorktreeDestination({ gitRootPath: project?.gitRootPath, basePath, branchName: current.branchName }) }));
   }
   function reloadSuggestion() { setAttempt(value => value + 1); }
 

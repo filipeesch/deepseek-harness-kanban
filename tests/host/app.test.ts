@@ -225,6 +225,21 @@ describe('host command orchestration',()=>{
   expect(CommandSchema.parse(forcedRemove)).toEqual(forcedRemove);
   expect(()=>CommandSchema.parse({...forcedRemove,force:1})).toThrow();
  });
+ it('accepts the first-execution and auto-mode creation wire commands',()=>{
+  const prepare={type:'task.prepareFirstExecution' as const,taskId:'task-1',columnId:'plan',expectedEnteredAt:42,expectedInstruction:'Plan exactly.'};
+  expect(CommandSchema.parse(prepare)).toEqual(prepare);
+  expect(CommandSchema.parse({...prepare,expectedInstruction:undefined})).toEqual({type:'task.prepareFirstExecution',taskId:'task-1',columnId:'plan',expectedEnteredAt:42});
+  expect(()=>CommandSchema.parse({type:'task.prepareFirstExecution',taskId:'task-1',columnId:'plan'})).toThrow();
+  expect(()=>CommandSchema.parse({...prepare,columnId:undefined})).toThrow();
+  expect(()=>CommandSchema.parse({...prepare,expectedEnteredAt:Infinity})).toThrow();
+  expect(()=>CommandSchema.parse({...prepare,expectedEnteredAt:'42'})).toThrow();
+  expect(()=>CommandSchema.parse({...prepare,extra:true})).toThrow();
+  const create={type:'task.create' as const,projectId:'project-1',title:'Task',description:'',autoMode:true};
+  expect(CommandSchema.parse(create)).toEqual(create);
+  expect(CommandSchema.parse({type:'task.create',projectId:'project-1',title:'Task',description:''})).toEqual({type:'task.create',projectId:'project-1',title:'Task',description:''});
+  expect(()=>CommandSchema.parse({...create,autoMode:'yes'})).toThrow();
+  expect(()=>CommandSchema.parse({...create,extra:true})).toThrow();
+ });
 });
 describe('task deletion lineage and workspace cleanup', () => {
   async function worktreeTask(f: Awaited<ReturnType<typeof setup>>) {

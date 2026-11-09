@@ -12,14 +12,15 @@ async function base(f: Awaited<ReturnType<typeof fixture>>) {
   await f.app.command({ type: 'settings.save', settings: { worktreeBasePath: trees } });
   return trees;
 }
+const derived = (branchName: string, pathValue: string) => ({ kind: 'derived' as const, branchName, path: pathValue });
 
 describe('worktreeDefault', () => {
-  it('derives an accented title with and without a configured base path', async () => {
+  it('derives an accented title with or without a configured base path', async () => {
     const f = await setup();
     const task = await f.app.createTask({ projectId: f.project.id, title: 'Criação de tarefas', description: '' });
-    await expect(f.app.worktreeDefault(task.id)).resolves.toEqual({ branchName: 'criacao-de-tarefas', path: '' });
+    await expect(f.app.worktreeDefault(task.id)).resolves.toEqual(derived('criacao-de-tarefas', path.join(f.root, 'repo-criacao-de-tarefas')));
     const trees = await base(f);
-    await expect(f.app.worktreeDefault(task.id)).resolves.toEqual({ branchName: 'criacao-de-tarefas', path: path.join(trees, 'criacao-de-tarefas') });
+    await expect(f.app.worktreeDefault(task.id)).resolves.toEqual(derived('criacao-de-tarefas', path.join(trees, 'criacao-de-tarefas')));
   });
 
   it('increments the branch and destination together for a branch collision', async () => {
@@ -27,7 +28,14 @@ describe('worktreeDefault', () => {
     const trees = await base(f);
     f.git.branchNames.push('fix-login');
     const task = await f.app.createTask({ projectId: f.project.id, title: 'Fix login', description: '' });
-    await expect(f.app.worktreeDefault(task.id)).resolves.toEqual({ branchName: 'fix-login-2', path: path.join(trees, 'fix-login-2') });
+    await expect(f.app.worktreeDefault(task.id)).resolves.toEqual(derived('fix-login-2', path.join(trees, 'fix-login-2')));
+  });
+
+  it('increments the sibling destination for a repository-sibling collision', async () => {
+    const f = await setup();
+    await mkdir(path.join(f.root, 'repo-fix-login'));
+    const task = await f.app.createTask({ projectId: f.project.id, title: 'Fix login', description: '' });
+    await expect(f.app.worktreeDefault(task.id)).resolves.toEqual(derived('fix-login-2', path.join(f.root, 'repo-fix-login-2')));
   });
 
   it('increments when the destination already exists on disk', async () => {
@@ -35,7 +43,7 @@ describe('worktreeDefault', () => {
     const trees = await base(f);
     await mkdir(path.join(trees, 'fix-login'));
     const task = await f.app.createTask({ projectId: f.project.id, title: 'Fix login', description: '' });
-    await expect(f.app.worktreeDefault(task.id)).resolves.toEqual({ branchName: 'fix-login-2', path: path.join(trees, 'fix-login-2') });
+    await expect(f.app.worktreeDefault(task.id)).resolves.toEqual(derived('fix-login-2', path.join(trees, 'fix-login-2')));
   });
 
   it('treats a dangling symlink destination as occupied', async () => {
@@ -43,7 +51,7 @@ describe('worktreeDefault', () => {
     const trees = await base(f);
     await symlink(path.join(trees, 'missing-target'), path.join(trees, 'fix-login'));
     const task = await f.app.createTask({ projectId: f.project.id, title: 'Fix login', description: '' });
-    await expect(f.app.worktreeDefault(task.id)).resolves.toEqual({ branchName: 'fix-login-2', path: path.join(trees, 'fix-login-2') });
+    await expect(f.app.worktreeDefault(task.id)).resolves.toEqual(derived('fix-login-2', path.join(trees, 'fix-login-2')));
   });
 
   it('avoids a destination recorded by another task', async () => {
@@ -56,7 +64,7 @@ describe('worktreeDefault', () => {
       task.effectiveCwd = path.join(trees, 'fix-login');
     });
     const second = await f.app.createTask({ projectId: f.project.id, title: 'Fix login', description: '' });
-    await expect(f.app.worktreeDefault(second.id)).resolves.toEqual({ branchName: 'fix-login-2', path: path.join(trees, 'fix-login-2') });
+    await expect(f.app.worktreeDefault(second.id)).resolves.toEqual(derived('fix-login-2', path.join(trees, 'fix-login-2')));
   });
 
   it('avoids a destination used by another project and a pending request', async () => {
@@ -73,7 +81,7 @@ describe('worktreeDefault', () => {
       task.effectiveCwd = path.join(trees, 'fix-login');
     });
     const first = await f.app.createTask({ projectId: f.project.id, title: 'Fix login', description: '' });
-    await expect(f.app.worktreeDefault(first.id)).resolves.toEqual({ branchName: 'fix-login-2', path: path.join(trees, 'fix-login-2') });
+    await expect(f.app.worktreeDefault(first.id)).resolves.toEqual(derived('fix-login-2', path.join(trees, 'fix-login-2')));
 
     const pending = await f.app.createTask({ projectId: f.project.id, title: 'Fix login', description: '' });
     await f.store.transact(state => {
@@ -84,14 +92,14 @@ describe('worktreeDefault', () => {
       };
     });
     const skipped = await f.app.createTask({ projectId: f.project.id, title: 'Fix login', description: '' });
-    await expect(f.app.worktreeDefault(skipped.id)).resolves.toEqual({ branchName: 'fix-login-3', path: path.join(trees, 'fix-login-3') });
+    await expect(f.app.worktreeDefault(skipped.id)).resolves.toEqual(derived('fix-login-3', path.join(trees, 'fix-login-3')));
   });
 
-  it('reports exhaustion after every numbered candidate is occupied', async () => {
+  it('reports name exhaustion as an unavailable derivation', async () => {
     const f = await setup();
     const trees = await base(f);
     for (let index = 1; index <= 100; index++) await mkdir(path.join(trees, index === 1 ? 'fix-login' : 'fix-login-' + index));
     const task = await f.app.createTask({ projectId: f.project.id, title: 'Fix login', description: '' });
-    await expect(f.app.worktreeDefault(task.id)).rejects.toMatchObject({ code: 'WORKTREE_NAME_UNAVAILABLE' });
+    await expect(f.app.worktreeDefault(task.id)).resolves.toMatchObject({ kind: 'unavailable', reason: { code: 'WORKTREE_NAME_UNAVAILABLE' } });
   });
 });

@@ -129,15 +129,28 @@ describe('first-execution preparation', () => {
     expect(get().state.tasks[0]!.columnId).toBe('review');
   });
 
-  it('disables creating a worktree when no destination can be derived', async () => {
+  it('creates the worktree beside the repository without a base path', async () => {
     const { user, command } = mount(firstTaskWithoutConversation());
+    await openAlpha(user);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
+    const dialog = await screen.findByRole('dialog', { name: 'Prepare the first execution' });
+    const create = within(dialog).getByRole('button', { name: 'Create worktree' }) as HTMLButtonElement;
+    await waitFor(() => expect(create.disabled).toBe(false));
+    await user.click(create);
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'worktree.create', taskId: 't1', mode: 'new', branchName: 'alpha-task', path: '/repo-alpha-task', sourceBranch: 'main' }));
+  });
+
+  it('disables creating a worktree when the defaults are unavailable', async () => {
+    const mock = fakeApi(firstTaskWithoutConversation());
+    vi.mocked(mock.api.worktreeDefault).mockImplementation(async () => ({ kind: 'unavailable', reason: { code: 'WORKTREE_NAME_UNAVAILABLE', message: 'No name.' } }));
+    const user = userEvent.setup(); render(<BoardView api={mock.api} renderConversation={() => null} />);
     await openAlpha(user);
     await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
     const dialog = await screen.findByRole('dialog', { name: 'Prepare the first execution' });
     await waitFor(() => expect(within(dialog).getByText(/No worktree destination can be derived/)).toBeTruthy());
     const create = within(dialog).getByRole('button', { name: 'Create worktree' }) as HTMLButtonElement;
     expect(create.disabled).toBe(true);
-    expect(command).not.toHaveBeenCalled();
+    expect(mock.command).not.toHaveBeenCalled();
   });
 
   it('cancels without moving or creating anything', async () => {

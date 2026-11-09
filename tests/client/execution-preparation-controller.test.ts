@@ -34,7 +34,7 @@ function ports(overrides: Partial<PreparationPorts> = {}): FakePorts {
   const calls: string[] = [];
   const fakeDefs = {
     calls,
-    defaults: vi.fn(async () => { calls.push('defaults'); return { branchName: 'alpha-task', path: '/trees/alpha-task' }; }),
+    defaults: vi.fn(async () => { calls.push('defaults'); return { kind: 'derived', branchName: 'alpha-task', path: '/trees/alpha-task' }; }),
     createWorktree: vi.fn(async (_taskId: string, _draft: CreateWorktree) => { calls.push('createWorktree'); }),
     dismissWorktree: vi.fn(async () => { calls.push('dismissWorktree'); }),
     createConversation: vi.fn(async () => { calls.push('createConversation'); return 'session-new'; }),
@@ -98,8 +98,8 @@ describe('ExecutionPreparationController', () => {
     expect(fake.createConversation).toHaveBeenCalledWith('t1');
   });
 
-  it('disables creating a worktree when no destination can be derived', async () => {
-    const fake = ports({ defaults: vi.fn(async () => ({ branchName: 'alpha-task', path: '' })) });
+  it('disables creating a worktree when the defaults are unavailable', async () => {
+    const fake = ports({ defaults: vi.fn(async () => ({ kind: 'unavailable' as const, reason: { code: 'WORKTREE_NAME_UNAVAILABLE', message: 'No name.' } })) });
     const controller = controllerWith(fake);
     const pending = controller.open(request());
     await atPhase(controller, 'worktree');
@@ -114,7 +114,7 @@ describe('ExecutionPreparationController', () => {
   it('reports a defaults failure and retries it without closing the question', async () => {
     const defaults = vi.fn()
       .mockRejectedValueOnce(new Error('Defaults failed.'))
-      .mockResolvedValueOnce({ branchName: 'alpha-task', path: '/trees/alpha-task' });
+      .mockResolvedValueOnce({ kind: 'derived', branchName: 'alpha-task', path: '/trees/alpha-task' });
     const fake = ports({ defaults });
     const controller = controllerWith(fake);
     const pending = controller.open(request());
@@ -212,8 +212,8 @@ describe('ExecutionPreparationController', () => {
   });
 
   it('accepts the base-project choice while the worktree defaults are still loading', async () => {
-    let releaseDefaults: ((value: { branchName: string; path: string }) => void) | undefined;
-    const defaults = vi.fn(() => new Promise<{ branchName: string; path: string }>(resolve => { releaseDefaults = resolve; }));
+    let releaseDefaults: ((value: { kind: 'derived'; branchName: string; path: string }) => void) | undefined;
+    const defaults = vi.fn(() => new Promise<{ kind: 'derived'; branchName: string; path: string }>(resolve => { releaseDefaults = resolve; }));
     const fake = ports({ defaults });
     const controller = controllerWith(fake);
     const pending = controller.open(request());
@@ -223,22 +223,22 @@ describe('ExecutionPreparationController', () => {
     await expect(pending).resolves.toBe(true);
     expect(fake.dismissWorktree).toHaveBeenCalledWith('t1');
     expect(fake.createConversation).toHaveBeenCalledTimes(1);
-    releaseDefaults?.({ branchName: 'late', path: '/trees/late' });
+    releaseDefaults?.({ kind: 'derived', branchName: 'late', path: '/trees/late' });
     await Promise.resolve();
     expect(controller.getSnapshot().phase).toBe('closed');
     expect(controller.getSnapshot().draft).toBeNull();
   });
 
   it('ignores a late defaults response after the dialog is cancelled', async () => {
-    let releaseDefaults: ((value: { branchName: string; path: string }) => void) | undefined;
-    const defaults = vi.fn(() => new Promise<{ branchName: string; path: string }>(resolve => { releaseDefaults = resolve; }));
+    let releaseDefaults: ((value: { kind: 'derived'; branchName: string; path: string }) => void) | undefined;
+    const defaults = vi.fn(() => new Promise<{ kind: 'derived'; branchName: string; path: string }>(resolve => { releaseDefaults = resolve; }));
     const fake = ports({ defaults });
     const controller = controllerWith(fake);
     const pending = controller.open(request());
     await atPhase(controller, 'worktree');
     controller.cancel();
     await expect(pending).resolves.toBe(false);
-    releaseDefaults?.({ branchName: 'late', path: '/trees/late' });
+    releaseDefaults?.({ kind: 'derived', branchName: 'late', path: '/trees/late' });
     await Promise.resolve();
     expect(controller.getSnapshot().phase).toBe('closed');
     expect(controller.getSnapshot().draft).toBeNull();

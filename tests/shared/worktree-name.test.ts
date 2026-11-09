@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { taskTitleSlug, worktreePathForBranch } from '../../src/shared/worktree-name.js';
+import { defaultWorktreeDestination, repositoryName, repositoryParent, taskTitleSlug, worktreePathForBranch } from '../../src/shared/worktree-name.js';
 
 describe('taskTitleSlug', () => {
   it.each([
@@ -69,5 +69,42 @@ describe('worktreePathForBranch', () => {
 
   it('returns an empty path for an undefined base', () => {
     expect(worktreePathForBranch(undefined, 'fix-login')).toBe('');
+  });
+});
+
+describe('defaultWorktreeDestination', () => {
+  const cases: Array<[string | undefined, string | undefined, string, string]> = [
+    ['/worktrees', '/projects/foo', 'fix-login', '/worktrees/fix-login'],
+    [undefined, '/projects/foo', 'fix-login', '/projects/foo-fix-login'],
+    [undefined, '/projects/foo/', 'fix-login', '/projects/foo-fix-login'],
+    [undefined, 'C:\\projects\\foo', 'fix-login', 'C:\\projects\\foo-fix-login'],
+    [undefined, '\\\\server\\share\\foo', 'fix-login', '\\\\server\\share\\foo-fix-login'],
+    [undefined, '/projects/foo', 'feature/x', '/projects/foo-feature/x'],
+    [undefined, '/projects/foo', 'criacao-de-tarefas', '/projects/foo-criacao-de-tarefas'],
+    ['C:\\trees', '/projects/foo', 'fix-login', 'C:\\trees\\fix-login'],
+  ];
+  it.each(cases)('derives base %j, root %j and branch %j as %s', (basePath, gitRootPath, branchName, expected) => {
+    expect(defaultWorktreeDestination({ basePath, gitRootPath, branchName })).toBe(expected);
+  });
+
+  const emptyCases: Array<[string | undefined, string | undefined, string]> = [
+    [undefined, undefined, 'fix-login'],
+    [undefined, '/projects/foo', '   '],
+    [undefined, '/projects/foo', '../escape'],
+    [undefined, '/projects/foo', 'feature/../escape'],
+    ['/worktrees', '/projects/foo', 'back\\slash'],
+    ['', '', 'fix-login'],
+  ];
+  it.each(emptyCases)('returns an empty path for base %j, root %j and branch %j', (basePath, gitRootPath, branchName) => {
+    expect(defaultWorktreeDestination({ basePath, gitRootPath, branchName })).toBe('');
+  });
+
+  it('exposes the repository name and parent', () => {
+    expect(repositoryName('/projects/foo')).toBe('foo');
+    expect(repositoryName('C:\\projects\\foo')).toBe('foo');
+    expect(repositoryParent('/projects/foo')).toBe('/projects/');
+    expect(repositoryParent('C:\\projects\\foo')).toBe('C:\\projects\\');
+    expect(repositoryParent('/foo')).toBe('/');
+    expect(repositoryParent('relative')).toBe('');
   });
 });

@@ -9,6 +9,7 @@ import { TaskDrawer } from './drawer.js';
 import type { SessionTitles } from './conversation-label.js';
 import type { ConversationLeaseEnvironment } from './conversation-leases.js';
 import { transitionAccess } from '../domain/transitions.js';
+import { entryInstruction } from '../domain/stage-entry.js';
 import { compareTaskOrder } from '../domain/task-order.js';
 import { AutoRunController } from './auto-run.js';
 import { BoardCard } from './board-card.js';
@@ -173,6 +174,23 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     const entering = selectedIdRef.current === null && !prefersReducedMotion();
     setDrawerClosing(false); setDrawerEntering(entering); setSelectedId(taskId);
   }, [setDrawerClosing, setDrawerEntering, setSelectedId]);
+  // Creation opens the drawer immediately; an instructed initial stage then prepares
+  // the first execution and arms the countdown through the existing controller.
+  const startCreatedTask = useCallback((taskId: string, options: { start: boolean }) => {
+    openTask(taskId);
+    if (!options.start) return;
+    const current = latest.current;
+    if (!current) return;
+    const task = current.state.hubs.flatMap(hub => hub.tasks).find(value => value.id === taskId);
+    if (!task) return;
+    const board = current.state.hubs.flatMap(hub => hub.boards).find(value => value.id === task.boardId);
+    const instruction = entryInstruction(board?.workflow.columns.find(value => value.id === task.columnId));
+    const marker = task.instructionPending;
+    if (instruction === undefined || marker?.columnId !== task.columnId) return;
+    void autoRun.prepare({ taskId, columnId: task.columnId, enteredAt: marker.enteredAt, instruction }, async () => {
+      await runRef.current({ type: 'task.prepareFirstExecution', taskId, columnId: task.columnId, expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
+    });
+  }, [openTask, autoRun]);
   // The open drawer's conversations are resolved before historical ones; the response is
   // a hint-only snapshot, so opening a drawer never waits for conversation history.
   useEffect(() => {
@@ -301,7 +319,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
         return <section className={'kb-column' + (restricted ? ' kb-drop-restricted' : '')} key={column.id} aria-label={column.name + ' column'} data-column-id={column.id}><header className="kb-column-header"><h2>{column.name}</h2><span aria-label={tasks.length + ' tasks'}>{tasks.length}</span></header>{column.id === state.workflow.initialColumnId && renderNewTaskButton(column)}<div className="kb-card-list">{tasks.map(task => renderCard(task, column, state.workflow))}{drag?.overColumnId === column.id && <div className={'kb-drop-indicator' + (restricted ? ' kb-drop-indicator-restricted' : '')} style={{ top: drag.indicatorY }} aria-hidden="true" />}{tasks.length === 0 && <p className="kb-empty-column">No matching tasks</p>}</div></section>; })}</section>)}</CardMotionFrame></div>
       {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} conversationAttention={snapshot?.conversationAttention} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} onForce={destructive.openForce} onToggleAutoMode={toggleAutoMode} autoModePending={autoModePending.has(selected.id)} sessionTitles={sessionTitles} {...(conversationLeases === undefined ? {} : { conversationLeases })} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} />}
 
-    {newTask && state && <NewTaskDialog state={state} run={run} onClose={() => setNewTask(false)} onCreated={openTask} />}
+    {newTask && state && <NewTaskDialog state={state} run={run} onClose={() => setNewTask(false)} onCreated={startCreatedTask} />}
     {destructive.state.view && (() => {
       const view = destructive.state.view;
       const task = state.tasks.find(value => value.id === view.request.taskId);

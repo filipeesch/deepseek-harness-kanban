@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis';
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
-import type { Command, FullHostSnapshot, HostSnapshot, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingCommand, SnapshotRequest } from '../shared/types.js';
+import type { Command, FullHostSnapshot, HostSnapshot, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, SharingCommand, SnapshotRequest, WorktreeDefaults } from '../shared/types.js';
 import { problem, KanbanError } from '../shared/errors.js';
 import type { KanbanApp } from './app.js';
 export class KanbanController extends TypertRemoteService {
@@ -11,7 +11,7 @@ export class KanbanController extends TypertRemoteService {
  @Remote async command(request:Command):Promise<Outcome<FullHostSnapshot>>{return this.attempt(()=>this.app.command(request));}
  @Remote async sharing(request:SharingCommand):Promise<Outcome<FullHostSnapshot>>{return this.attempt(()=>this.app.sharingCommand(request));}
  @Remote async branches(request:{taskId:string}):Promise<Outcome<string[]>>{return this.attempt(()=>this.app.branches(request.taskId));}
- @Remote async worktreeDefault(request:{taskId:string}):Promise<Outcome<{branchName:string;path:string}>>{return this.attempt(()=>this.app.worktreeDefault(request.taskId));}
+ @Remote async worktreeDefault(request:{taskId:string}):Promise<Outcome<WorktreeDefaults>>{return this.attempt(()=>this.app.worktreeDefault(request.taskId));}
  @Remote async detectProject(request:{path:string}):Promise<Outcome<ProjectLocation>>{return this.attempt(()=>this.app.detectProject(request.path));}
  @Remote async localDrive(request:LocalDriveRequest):Promise<Outcome<LocalDriveResult>>{return this.attempt(()=>this.app.localDrive(request));}
  @Remote async dismissQuestions(request:{sessionId:string;roundId:string}):Promise<Outcome<QuestionRound[]>>{return this.attempt(()=>this.app.dismissQuestions(request.sessionId,request.roundId));}

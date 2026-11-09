@@ -156,3 +156,25 @@ test('keeps the countdown legible in both appearances and removes the progress b
   expect(await page.locator('.kb-countdown-bar').evaluate(element => getComputedStyle(element).display)).toBe('none');
   await page.clock.resume();
 });
+test('starts a created task with a cancelable countdown and its auto-mode setting', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=create');
+  await page.waitForSelector('.kb-column');
+  await page.clock.install({ time: new Date() });
+  await page.getByRole('button', { name: 'New task' }).click();
+  const dialog = page.getByRole('dialog', { name: 'New task' });
+  await expect(dialog.getByRole('checkbox', { name: 'Start execution now' })).toBeChecked();
+  await dialog.getByRole('textbox', { name: 'Title' }).fill('Started from creation');
+  await dialog.getByRole('combobox', { name: 'Project' }).selectOption('p');
+  await dialog.getByRole('checkbox', { name: 'Auto mode' }).check();
+  await dialog.getByRole('button', { name: 'Create task' }).click();
+  const card = page.locator('.kb-card', { hasText: 'Started from creation' });
+  await expect(card.locator('.kb-card-countdown')).toContainText('5s');
+  await expect(card.locator('.kb-auto-chip')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.kb-drawer-autorun')).toContainText('Sending the Explore instruction');
+  await page.screenshot({ path: path.join(OUT, 'creation-countdown.png') });
+  await card.locator('.kb-card-countdown').click();
+  await expect(card.getByRole('button', { name: 'Run Explore instruction' })).toBeVisible();
+  await page.clock.runFor(5000);
+  expect((await commands(page)).some(command => command.type === 'task.runInstruction')).toBe(false);
+  await page.clock.resume();
+});

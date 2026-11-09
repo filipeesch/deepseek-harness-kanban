@@ -32,7 +32,7 @@ describe('board card render isolation', () => {
       sharing: vi.fn(async () => data),
       localDrive: vi.fn(async (request: { action: string; path?: string }) => request.action === 'roots' ? { action: 'roots' as const, discovery: { state: 'empty' as const, locations: [] } } : { action: 'list' as const, page: { rootId: '/drive', path: '/drive', parent: null, entries: [], hasDocument: false, truncated: false, shown: 0 } }),
       branches: vi.fn(async () => []),
-      worktreeDefault: vi.fn(async () => ({ branchName: 'task', path: '' })),
+      worktreeDefault: vi.fn(async () => ({ kind: 'derived' as const, branchName: 'task', path: '/worktrees/task' })),
       detectProject: vi.fn(async (pathValue: string) => ({ kind: 'folder' as const, projectPath: pathValue })),
       subscribe: vi.fn(listener => { notify = listener; return () => {}; }),
     };

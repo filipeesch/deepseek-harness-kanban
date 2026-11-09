@@ -167,11 +167,12 @@ function assertAvailableSession(hub: HubState, sessionId: string): void {
   invariant(!hub.tasks.some(task => task.sessionIds.includes(sessionId)), 'SESSION_IN_USE', 'Native session is already associated with a task.');
 }
 
-export function createTask(hub: HubState, input: { boardId: string; projectId: string; title: string; description: string }, deps: OperationDeps): HubTask {
+export function createTask(hub: HubState, input: { boardId: string; projectId: string; title: string; description: string; autoMode?: boolean }, deps: OperationDeps): HubTask {
   const value = clone(input);
   invariant(value && typeof value === 'object' && !Array.isArray(value), 'INVALID_INPUT', 'New task input must be a mapping.');
   requiredText(value.title, 'Task title');
   invariant(typeof value.description === 'string', 'INVALID_INPUT', 'Task description must be text.');
+  invariant(value.autoMode === undefined || typeof value.autoMode === 'boolean', 'INVALID_INPUT', 'Task auto mode must be a boolean.');
   const board = requireBoard(hub, value.boardId);
   const project = requireProject(hub, value.projectId);
   const peers = hub.tasks.filter(task => task.boardId === board.id && task.columnId === board.workflow.initialColumnId);
@@ -186,6 +187,7 @@ export function createTask(hub: HubState, input: { boardId: string; projectId: s
     id: nextId(hub.tasks, deps.id), boardId: board.id, projectId: project.id, title: value.title.trim(), description: value.description,
     columnId: board.workflow.initialColumnId, position, sessionIds: [], closedSessionIds: [], effectiveCwd: project.projectPath,
     worktree: null, operation: null,
+    ...(value.autoMode === true ? { autoMode: { enabled: true as const } } : {}),
     ...(entryInstruction(initialColumn) !== undefined ? { instructionPending: { columnId: initialColumn!.id, enteredAt: nextEnteredAt(Date.parse(at)) } } : {}),
     createdAt: at, updatedAt: at,
   };

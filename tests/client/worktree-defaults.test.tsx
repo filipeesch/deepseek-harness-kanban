@@ -39,18 +39,18 @@ describe('title-derived worktree defaults', () => {
 
   it('applies the host suggestion when both fields are untouched', async () => {
     const mock = fakeApi(withBase());
-    vi.mocked(mock.api.worktreeDefault).mockResolvedValueOnce({ branchName: 'alpha-task-2', path: '/worktrees/alpha-task-2' });
+    vi.mocked(mock.api.worktreeDefault).mockResolvedValueOnce({ kind: 'derived', branchName: 'alpha-task-2', path: '/worktrees/alpha-task-2' });
     const user = userEvent.setup(); render(<BoardView api={mock.api} renderConversation={() => null} />);
     await openGit(user);
     await waitFor(() => expect(branchField().value).toBe('alpha-task-2'));
     expect(pathField().value).toBe('/worktrees/alpha-task-2');
   });
 
-  it('leaves the destination empty without a board base path', async () => {
+  it('derives the repository-sibling destination without a board base path', async () => {
     const initial = fixture(); const { user } = mount(initial); await openGit(user);
     await waitFor(() => expect(branchField().value).toBe('alpha-task'));
-    expect(pathField().value).toBe('');
-    expect(screen.getByText(/A destination is required before creating a worktree/)).toBeTruthy();
+    expect(pathField().value).toBe('/repo-alpha-task');
+    expect(screen.getByText(/Worktree destinations default beside the repository/)).toBeTruthy();
   });
 
   it('updates an untouched destination when the branch changes', async () => {

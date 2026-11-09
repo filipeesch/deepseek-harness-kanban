@@ -16,6 +16,9 @@ describe('worktree draft helpers', () => {
   it('derives a title branch and base-path destination with the project source', () => {
     expect(initialWorktree({ ...task, title: 'Criação de tarefas' }, project, '/worktrees')).toEqual({ mode: 'new', branchName: 'criacao-de-tarefas', path: '/worktrees/criacao-de-tarefas', sourceBranch: 'main' });
   });
+  it('derives a repository-sibling destination without a base path', () => {
+    expect(initialWorktree({ ...task, title: 'Fix login' }, project)).toEqual({ mode: 'new', branchName: 'fix-login', path: '/repo-fix-login', sourceBranch: 'main' });
+  });
   it('accepts an omitted source for the host fallback and normalizes the command', () => {
     expect(validWorktree({ mode: 'new', branchName: 'fix', path: '/tree' })).toBe(true);
     expect(validWorktree({ mode: 'new', branchName: '', path: '/tree' })).toBe(false);
@@ -86,11 +89,11 @@ describe('WorktreeNotice', () => {
     await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'worktree.create', taskId: 't1', mode: 'new', branchName: 'edited-branch', path: '/worktrees/edited-branch', sourceBranch: 'main' }));
     expect(vi.mocked(api.worktreeDefault).mock.calls.length).toBe(calls);
   });
-  it('routes to Git when no destination is configured', async () => {
+  it('creates beside the repository without a configured base path', async () => {
     const { user, command, onReview } = await noticeSetup('');
-    await user.click(screen.getByRole('button', { name: 'Set destination in Git' }));
-    expect(onReview).toHaveBeenCalledTimes(1);
-    expect(command).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Create worktree' }));
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'worktree.create', taskId: 't1', mode: 'new', branchName: 'alpha-task', path: '/repo-alpha-task', sourceBranch: 'main' }));
+    expect(onReview).not.toHaveBeenCalled();
   });
   it('shows a create failure inline and stays available', async () => {
     const { user, command } = await noticeSetup();
@@ -106,7 +109,7 @@ describe('WorktreeNotice', () => {
 
   it('refreshes untouched defaults and uses the collision-free suggestion', async () => {
     const { user, command, api } = await noticeSetup();
-    vi.mocked(api.worktreeDefault).mockResolvedValueOnce({ branchName: 'alpha-task-2', path: '/worktrees/alpha-task-2' });
+    vi.mocked(api.worktreeDefault).mockResolvedValueOnce({ kind: 'derived', branchName: 'alpha-task-2', path: '/worktrees/alpha-task-2' });
     await user.click(screen.getByRole('button', { name: 'Create worktree' }));
     await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'worktree.create', taskId: 't1', mode: 'new', branchName: 'alpha-task-2', path: '/worktrees/alpha-task-2', sourceBranch: 'main' }));
   });

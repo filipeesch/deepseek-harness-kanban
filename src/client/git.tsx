@@ -93,9 +93,9 @@ export function GitPanel({ task, project, api, run, worktreeBasePath, draft }: {
         </div>
         <ErrorNotice problem={branches.error} /><ErrorNotice problem={draft.suggestionError} />{draft.suggestionError && <button type="button" className="kb-button" disabled={draft.suggestionPending} onClick={draft.reloadSuggestion}>Retry suggestion</button>}
         {createMode === 'create' ? <>
-          <p className="kb-hint">{worktreeBasePath ? <>Worktree destinations default to <code>{worktreeBasePath}</code> plus the branch name.</> : 'Set a worktree base path in Configuration → General to prefill destinations. A destination is required before creating a worktree.'}</p>
+          <p className="kb-hint">{worktreeBasePath ? <>Worktree destinations default to <code>{worktreeBasePath}</code> plus the branch name.</> : 'Worktree destinations default beside the repository as <repository>-<branch>. Set a worktree base path in Configuration → General to override it.'}</p>
           {draft.suggestionPending && <p className="kb-hint" role="status">Resolving worktree defaults…</p>}
-          <WorktreeFields value={draft.value} onChange={draft.assign} branches={branches.branches} disabled={blocked || action.pending} defaultBranchName={defaultBranchName} canReset={Boolean(worktreeBasePath)} onResetPath={draft.resetPath} />
+          <WorktreeFields value={draft.value} onChange={draft.assign} branches={branches.branches} disabled={blocked || action.pending} defaultBranchName={defaultBranchName} canReset={true} onResetPath={draft.resetPath} />
           <div className="kb-git-card-actions"><button type="button" className="kb-button kb-primary" disabled={blocked || action.pending || !validWorktree(draft.value)} onClick={() => void create()}>{action.pending ? 'Preparing…' : 'Create worktree'}</button></div>
         </> : <>
           <label className="kb-field">Existing worktree path<input className="kb-input" required value={attachPath} disabled={blocked || action.pending} onChange={event => setAttachPath(event.target.value)} /></label>

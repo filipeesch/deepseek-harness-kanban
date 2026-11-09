@@ -212,6 +212,78 @@ describe('scoped Kanban page', () => {
     expect((within(filtered).getByRole('combobox', { name: 'Project' }) as HTMLSelectElement).value).toBe('');
   });
 
+  it('starts a created task when the initial stage has an entry instruction', async () => {
+    const data = fixture();
+    data.state.hubs[0]!.boards[0]!.workflow.columns.find(column => column.id === 'intake')!.onEnterPrompt = 'Start work.';
+    const { user, command } = mount(data); await loaded();
+    await user.click(screen.getByRole('button', { name: 'New task' }));
+    const dialog = screen.getByRole('dialog', { name: 'New task' });
+    expect((within(dialog).getByRole('checkbox', { name: 'Start execution now' }) as HTMLInputElement).checked).toBe(true);
+    expect((within(dialog).getByRole('checkbox', { name: 'Auto mode' }) as HTMLInputElement).checked).toBe(false);
+    await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'Started task');
+    await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Project' }), 'p1');
+    await user.click(within(dialog).getByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'task.prepareFirstExecution', columnId: 'intake', expectedInstruction: 'Start work.' })));
+    const card = (await screen.findByRole('button', { name: 'Open task Started task' })).closest('.kb-card') as HTMLElement;
+    await waitFor(() => expect(within(card).getByRole('button', { name: 'Cancel automatic Intake instruction' })).toBeTruthy());
+  });
+
+  it('creates without starting when the start option is disabled', async () => {
+    const data = fixture();
+    data.state.hubs[0]!.boards[0]!.workflow.columns.find(column => column.id === 'intake')!.onEnterPrompt = 'Start work.';
+    const { user, command } = mount(data); await loaded();
+    await user.click(screen.getByRole('button', { name: 'New task' }));
+    const dialog = screen.getByRole('dialog', { name: 'New task' });
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Start execution now' }));
+    await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'Capture only');
+    await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Project' }), 'p1');
+    await user.click(within(dialog).getByRole('button', { name: 'Create task' }));
+    const card = (await screen.findByRole('button', { name: 'Open task Capture only' })).closest('.kb-card') as HTMLElement;
+    await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'task.create', title: 'Capture only' })));
+    expect(command.mock.calls.some(([value]) => value.type === 'task.prepareFirstExecution')).toBe(false);
+    expect(within(card).getByRole('button', { name: 'Run Intake instruction' })).toBeTruthy();
+  });
+
+  it('records auto mode when the creation enables it', async () => {
+    const { user, command } = mount(); await loaded();
+    await user.click(screen.getByRole('button', { name: 'New task' }));
+    const dialog = screen.getByRole('dialog', { name: 'New task' });
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Auto mode' }));
+    await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'Armed task');
+    await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Project' }), 'p1');
+    await user.click(within(dialog).getByRole('button', { name: 'Create task' }));
+    expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'task.create', autoMode: true }));
+    const card = (await screen.findByRole('button', { name: 'Open task Armed task' })).closest('.kb-card') as HTMLElement;
+    await waitFor(() => expect(within(card).getByRole('button', { name: 'Turn off auto mode' })).toBeTruthy());
+  });
+
+  it('hides the start option when the initial stage has no entry instruction', async () => {
+    const { user } = mount(); await loaded();
+    await user.click(screen.getByRole('button', { name: 'New task' }));
+    const dialog = screen.getByRole('dialog', { name: 'New task' });
+    expect(within(dialog).queryByRole('checkbox', { name: 'Start execution now' })).toBeNull();
+    expect(within(dialog).getByText('Creates in Intake. No agent starts automatically.')).toBeTruthy();
+  });
+
+  it('reports a failed creation preparation and restores the play action', async () => {
+    const data = fixture();
+    data.state.hubs[0]!.boards[0]!.workflow.columns.find(column => column.id === 'intake')!.onEnterPrompt = 'Start work.';
+    const { user, command } = mount(data); await loaded();
+    const original = command.getMockImplementation()!;
+    command.mockImplementation(async (input: Command) => {
+      if (input.type === 'task.prepareFirstExecution') throw { code: 'WORKTREE_FAILED', message: 'No checkout could be created.' };
+      return original(input);
+    });
+    await user.click(screen.getByRole('button', { name: 'New task' }));
+    const dialog = screen.getByRole('dialog', { name: 'New task' });
+    await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'Failed start');
+    await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Project' }), 'p1');
+    await user.click(within(dialog).getByRole('button', { name: 'Create task' }));
+    const card = (await screen.findByRole('button', { name: 'Open task Failed start' })).closest('.kb-card') as HTMLElement;
+    await waitFor(() => expect(within(card).getByText('No checkout could be created.')).toBeTruthy());
+    expect(within(card).getByRole('button', { name: 'Run Intake instruction' })).toBeTruthy();
+  });
+
   it('shows read-only Info and edits inline without a worktree-stage restriction', async () => {
     const { user, command } = mount(); await loaded(); await user.click(screen.getByRole('button', { name: 'Open task Beta task' })); await user.click(screen.getByRole('tab', { name: 'Info' }));
     expect(screen.queryByRole('textbox', { name: 'Title' })).toBeNull();
@@ -403,12 +475,12 @@ describe('workflow confirmation', () => {
 describe('Git controls and destructive actions', () => {
   it('creates a new branch using real branch discovery and the exact shared command', async () => {
     const { user, api, command } = mount(); await openAlpha(user); await user.click(screen.getByRole('tab', { name: 'Git' })); await waitFor(() => expect(api.branches).toHaveBeenCalledWith('t1'));
-    await user.clear(screen.getByRole('textbox', { name: 'Branch name' })); await user.type(screen.getByRole('textbox', { name: 'Branch name' }), 'feature/work'); await user.type(screen.getByRole('textbox', { name: 'Worktree path' }), '/trees/work'); await user.click(screen.getByRole('button', { name: 'Create worktree' }));
+    await user.clear(screen.getByRole('textbox', { name: 'Branch name' })); await user.type(screen.getByRole('textbox', { name: 'Branch name' }), 'feature/work'); await user.clear(screen.getByRole('textbox', { name: 'Worktree path' })); await user.type(screen.getByRole('textbox', { name: 'Worktree path' }), '/trees/work'); await user.click(screen.getByRole('button', { name: 'Create worktree' }));
     await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'worktree.create', taskId: 't1', mode: 'new', branchName: 'feature/work', sourceBranch: 'main', path: '/trees/work' })); expect(screen.getByText('/trees/work/apps/api')).toBeTruthy();
   });
 
   it('creates for an existing branch rather than treating it as an existing worktree', async () => {
-    const { user, command } = mount(); await openAlpha(user); await user.click(screen.getByRole('tab', { name: 'Git' })); await screen.findByDisplayValue('main'); await user.selectOptions(screen.getByRole('combobox', { name: 'Branch mode' }), 'existing'); const existing = screen.getByRole('combobox', { name: 'Existing branch' }); await user.clear(existing); await user.type(existing, 'feature'); await user.type(screen.getByRole('textbox', { name: 'Worktree path' }), '/trees/existing'); await user.click(screen.getByRole('button', { name: 'Create worktree' })); await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'worktree.create', taskId: 't1', mode: 'existing', branchName: 'feature', path: '/trees/existing' }));
+    const { user, command } = mount(); await openAlpha(user); await user.click(screen.getByRole('tab', { name: 'Git' })); await screen.findByDisplayValue('main'); await user.selectOptions(screen.getByRole('combobox', { name: 'Branch mode' }), 'existing'); const existing = screen.getByRole('combobox', { name: 'Existing branch' }); await user.clear(existing); await user.type(existing, 'feature'); await user.clear(screen.getByRole('textbox', { name: 'Worktree path' })); await user.type(screen.getByRole('textbox', { name: 'Worktree path' }), '/trees/existing'); await user.click(screen.getByRole('button', { name: 'Create worktree' })); await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'worktree.create', taskId: 't1', mode: 'existing', branchName: 'feature', path: '/trees/existing' }));
   });
 
   it('attaches an external checkout with a separate form', async () => {
@@ -693,7 +765,7 @@ describe('responsive board opening', () => {
       sharing: vi.fn(async () => data),
       localDrive: vi.fn(async (request: { action: string; path?: string }) => request.action === 'roots' ? { action: 'roots' as const, discovery: { state: 'empty' as const, locations: [] } } : { action: 'list' as const, page: { rootId: '/drive', path: '/drive', parent: null, entries: [], hasDocument: false, truncated: false, shown: 0 } }),
       branches: vi.fn(async () => []),
-      worktreeDefault: vi.fn(async () => ({ branchName: 'task', path: '' })),
+      worktreeDefault: vi.fn(async () => ({ kind: 'derived' as const, branchName: 'task', path: '/worktrees/task' })),
       detectProject: vi.fn(async (pathValue: string) => ({ kind: 'folder' as const, projectPath: pathValue })),
       subscribe: vi.fn(listener => { listener(data); return () => {}; }),
     };

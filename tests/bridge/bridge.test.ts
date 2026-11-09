@@ -95,8 +95,8 @@ describe('real native stream bridge', () => {
   });
   it('forwards the worktree default lookup and unwraps its result', async () => {
     const f = fixture();
-    vi.mocked(f.remote.kanban.worktreeDefault).mockResolvedValueOnce({ ok: true, value: { ok: true, value: { branchName: 'fix-login', path: '/worktrees/fix-login' } } });
-    await expect(f.bridge.api.worktreeDefault('t1')).resolves.toEqual({ branchName: 'fix-login', path: '/worktrees/fix-login' });
+    vi.mocked(f.remote.kanban.worktreeDefault).mockResolvedValueOnce({ ok: true, value: { ok: true, value: { kind: 'derived', branchName: 'fix-login', path: '/worktrees/fix-login' } } });
+    await expect(f.bridge.api.worktreeDefault('t1')).resolves.toEqual({ kind: 'derived', branchName: 'fix-login', path: '/worktrees/fix-login' });
     expect(f.remote.kanban.worktreeDefault).toHaveBeenCalledWith({ taskId: 't1' });
   });
 

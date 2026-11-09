@@ -178,4 +178,69 @@ describe('auto-run controller', () => {
     expect(run).toHaveBeenCalledTimes(1);
     expect(controller.getSnapshot().t1).toBeUndefined();
   });
+
+  it('prepares before arming and counts only after the preparation resolves', async () => {
+    const prepared = deferred<void>();
+    const { clock, run, controller } = create();
+    void controller.prepare(input(), () => prepared.promise);
+    expect(controller.getSnapshot().t1).toMatchObject({ status: 'preparing', deadline: null });
+    expect(clock.pending()).toBe(0);
+    prepared.resolve();
+    await flush();
+    expect(controller.getSnapshot().t1).toMatchObject({ status: 'counting', deadline: 5000 });
+    expect(clock.pending()).toBe(1);
+    await advance(clock, 5000);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a failed preparation without arming or retrying', async () => {
+    const { clock, run, controller } = create();
+    await controller.prepare(input(), async () => { throw { code: 'WORKTREE_FAILED', message: 'No tree.' }; });
+    expect(controller.getSnapshot().t1).toMatchObject({ status: 'failed', error: { code: 'WORKTREE_FAILED' } });
+    expect(clock.pending()).toBe(0);
+    await advance(clock, 5000);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('cancels during preparation so a late resolution does not arm', async () => {
+    const prepared = deferred<void>();
+    const { clock, run, controller } = create();
+    void controller.prepare(input(), () => prepared.promise);
+    controller.cancel('t1');
+    prepared.resolve();
+    await flush();
+    expect(controller.getSnapshot().t1).toBeUndefined();
+    expect(clock.pending()).toBe(0);
+    await advance(clock, 5000);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('ignores a preparation that resolves after another entry replaces it', async () => {
+    const prepared = deferred<void>();
+    const { controller } = create();
+    void controller.prepare(input({ enteredAt: 1 }), () => prepared.promise);
+    controller.arm(input({ enteredAt: 2, instruction: 'Second.' }));
+    prepared.resolve();
+    await flush();
+    expect(controller.getSnapshot().t1).toMatchObject({ status: 'counting', enteredAt: 2 });
+  });
+
+  it('does not run immediately while preparing', async () => {
+    const prepared = deferred<void>();
+    const { controller } = create();
+    void controller.prepare(input(), () => prepared.promise);
+    await expect(controller.runNow(input())).resolves.toBeNull();
+    prepared.resolve();
+  });
+
+  it('keeps a preparing record while its marker matches and drops it when resolved', async () => {
+    const prepared = deferred<void>();
+    const { controller } = create();
+    void controller.prepare(input(), () => prepared.promise);
+    controller.reconcile([{ id: 't1', columnId: 'review', instructionPending: { columnId: 'review', enteredAt: 42 } }]);
+    expect(controller.getSnapshot().t1?.status).toBe('preparing');
+    controller.reconcile([{ id: 't1', columnId: 'review' }]);
+    expect(controller.getSnapshot().t1).toBeUndefined();
+    prepared.resolve();
+  });
 });

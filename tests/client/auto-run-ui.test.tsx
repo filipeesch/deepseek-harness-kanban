@@ -216,19 +216,22 @@ describe('instructed move auto-run', () => {
     expect(runCalls(mock)).toHaveLength(1);
   });
 
-  it('does not arm a countdown for a task created in an instructed initial stage', async () => {
+  it('arms a countdown for a task created in an instructed initial stage', async () => {
     const initial = fixture();
     initial.state.workflow.initialColumnId = 'review';
     const mock = await mount(initial);
+    vi.useFakeTimers();
     fireEvent.click(screen.getByRole('button', { name: 'New task' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), { target: { value: 'Created in review' } });
     fireEvent.change(screen.getByRole('combobox', { name: 'Project' }), { target: { value: 'p1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
     await settle(50);
-    expect(screen.getByRole('button', { name: 'Run Review instruction' })).toBeTruthy();
-    vi.useFakeTimers();
+    const created = mock.get().state.tasks.find(task => task.title === 'Created in review')!;
+    const marker = created.instructionPending!;
+    const card = screen.getByRole('button', { name: 'Open task Created in review' }).closest('.kb-card') as HTMLElement;
+    expect(within(card).getByRole('button', { name: 'Cancel automatic Review instruction' })).toBeTruthy();
     await advance(5000);
-    expect(runCalls(mock)).toEqual([]);
+    expect(runCalls(mock)).toEqual([{ type: 'task.runInstruction', taskId: created.id, columnId: 'review', expectedEnteredAt: marker.enteredAt, expectedInstruction: 'Review **carefully**.' }]);
   });
 
   it('arms from a board drop into an instructed stage', async () => {
@@ -358,6 +361,33 @@ describe('instructed move auto-run', () => {
     await advance(5000);
     expect(run).toHaveBeenCalledTimes(1);
     expect(run.mock.calls[0]![0]).toMatchObject({ type: 'task.runInstruction', taskId: 't1', columnId: 'review', expectedEnteredAt: marker.enteredAt, expectedInstruction: 'Review **carefully**.' });
+    controller.dispose();
+  });
+});
+describe('creation preparation presentation', () => {
+  it('presents preparing on the card and drawer before arming the countdown', async () => {
+    const initial = fixture();
+    const hub = initial.state.hubs[0]!;
+    const task = hub.tasks[0]!;
+    task.columnId = 'intake'; task.instructionPending = { columnId: 'intake', enteredAt: 7 }; task.sessionIds = [];
+    hub.boards[0]!.workflow.columns.find(column => column.id === 'intake')!.onEnterPrompt = 'Start work.';
+    const prepared = deferred<void>();
+    const controller = new AutoRunController({ run: vi.fn(async () => initial) });
+    const mock = fakeApi(initial);
+    render(<BoardView api={mock.api} autoRun={controller} renderConversation={native} />);
+    await screen.findByRole('button', { name: 'Open task Alpha task' });
+    await openAlpha();
+    void controller.prepare({ taskId: 't1', columnId: 'intake', enteredAt: 7, instruction: 'Start work.' }, () => prepared.promise);
+    await settle();
+    const card = document.querySelector('[data-task-id="t1"]') as HTMLElement;
+    const busy = within(card).getByRole('button', { name: 'Preparing Intake instruction' });
+    expect((busy as HTMLButtonElement).disabled).toBe(true);
+    expect(busy.getAttribute('aria-busy')).toBe('true');
+    expect(within(drawer()).getByText('Preparing the first execution for the Intake instruction…')).toBeTruthy();
+    prepared.resolve();
+    await settle();
+    expect(countdown()?.textContent).toContain('5s');
+    expect(within(drawer()).getByText('Sending the Intake instruction to a new conversation in 5s.')).toBeTruthy();
     controller.dispose();
   });
 });
