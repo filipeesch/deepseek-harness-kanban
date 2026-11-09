@@ -1,8 +1,9 @@
 import { parseDocument } from 'yaml';
-import type { Column, ColumnGroup, StagePosition, StageSize, Workflow, WorkflowView } from '../shared/types.js';
+import type { Column, ColumnGroup, ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset, StagePosition, StageSize, Workflow, WorkflowView } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
 import { createYamlFields, invalidWorkflow } from './yaml-fields.js';
 import { STAGE_MIN_SIZE, STAGE_SIZE_LIMIT } from './stage-size.js';
+import { ANCHOR_POINTS_PER_SIDE, CONNECTION_AXES, STAGE_SIDES, connectionKey, isAcceptedAnchorPoint, isAcceptedOffset } from './connection-anchor.js';
 
 export const DEFAULT_WORKFLOW_YAML = [
   'name: Delivery Flow',
@@ -29,6 +30,8 @@ const { record, keys, text, id, ids, rules } = createYamlFields(invalidWorkflow)
 const COLUMN_NOTE = 'WIP and agent-engine settings are not supported.';
 const POSITION_NOTE = 'Only x and y are supported.';
 const SIZE_NOTE = 'Only width and height are supported.';
+const ANCHOR_NOTE = 'Only side and at are supported.';
+const SEGMENT_NOTE = 'Only axis and offset are supported.';
 
 function view(value: unknown): WorkflowView {
   if (value === 'board' || value === 'workflow') return value;
@@ -66,6 +69,42 @@ function stageSize(value: unknown, context: string): StageSize {
   return { width: dimension(map, 'width', context), height: dimension(map, 'height', context) };
 }
 
+/** One authored touch point: one of the four sides and one of its five points. */
+function connectionAnchor(value: unknown, context: string): ConnectionAnchor {
+  const map = record(value, context);
+  keys(map, ['side', 'at'], context, ANCHOR_NOTE);
+  if (!STAGE_SIDES.includes(map.side as never)) invalidWorkflow(context + ' side must be top, right, bottom or left.');
+  if (!isAcceptedAnchorPoint(map.at)) invalidWorkflow(context + ' at must be an integer from 0 to ' + (ANCHOR_POINTS_PER_SIDE - 1) + '.');
+  return { side: map.side as ConnectionAnchor['side'], at: map.at };
+}
+
+/** One authored displacement of an adjustable segment. */
+function connectionSegment(value: unknown, context: string): ConnectionSegmentOffset {
+  const map = record(value, context);
+  keys(map, ['axis', 'offset'], context, SEGMENT_NOTE);
+  if (!CONNECTION_AXES.includes(map.axis as never)) invalidWorkflow(context + ' axis must be x or y.');
+  if (!isAcceptedOffset(map.offset)) invalidWorkflow(context + ' offset must be a finite displacement.');
+  return { axis: map.axis as ConnectionSegmentOffset['axis'], offset: map.offset };
+}
+
+/**
+ * One authored connection layout. The pair does not have to correspond to a drawn
+ * connection: an entry for a pair the workflow does not draw is kept and ignored,
+ * so reordering stages can never invalidate a saved board.
+ */
+function connectionLayout(value: unknown, context: string): ConnectionLayout {
+  const map = record(value, context);
+  keys(map, ['from', 'to', 'source', 'target', 'segments'], context);
+  const layout: ConnectionLayout = { from: id(map.from, context + ' source stage'), to: id(map.to, context + ' target stage') };
+  if (map.source !== undefined) layout.source = connectionAnchor(map.source, 'Column ' + layout.from + ' connection source anchor');
+  if (map.target !== undefined) layout.target = connectionAnchor(map.target, 'Column ' + layout.from + ' connection target anchor');
+  if (map.segments !== undefined) {
+    if (!Array.isArray(map.segments)) invalidWorkflow(context + ' segments must be an array of displacements.');
+    layout.segments = map.segments.map((item, index) => connectionSegment(item, context + ' segment ' + index));
+  }
+  return layout;
+}
+
 function label(value: Record<string, unknown>, context: string): string {
   if (value.label !== undefined && value.name !== undefined && value.label !== value.name) {
     invalidWorkflow(context + ' cannot have conflicting label and name values.');
@@ -87,7 +126,7 @@ export function parseWorkflow(yaml: string): Workflow {
     invalidWorkflow('Invalid workflow YAML: ' + (error instanceof Error ? error.message : String(error)));
   }
   const input = record(raw, 'Workflow');
-  keys(input, ['id', 'name', 'initial_column', 'default_view', 'columns', 'groups'], 'workflow', COLUMN_NOTE);
+  keys(input, ['id', 'name', 'initial_column', 'default_view', 'columns', 'groups', 'connections'], 'workflow', COLUMN_NOTE);
   if (input.id !== undefined) id(input.id, 'Workflow ID');
   const name = input.name === undefined ? 'Workflow' : text(input.name, 'Workflow name');
   if (!Array.isArray(input.columns) || input.columns.length === 0) invalidWorkflow('Workflow requires at least one column.');
@@ -136,5 +175,16 @@ export function parseWorkflow(yaml: string): Workflow {
   if (groups.some(group => columnIds.has(group.id))) invalidWorkflow('Group IDs must not collide with column IDs.');
   const workflow: Workflow = { name, initialColumnId, columns, groups };
   if (input.default_view !== undefined) workflow.defaultView = view(input.default_view);
+  if (input.connections !== undefined) {
+    if (!Array.isArray(input.connections)) invalidWorkflow('Workflow connections must be an array.');
+    const parsed = input.connections.map((item, index) => connectionLayout(item, 'Connection ' + index));
+    const seen = new Set<string>();
+    for (const entry of parsed) {
+      const key = connectionKey(entry.from, entry.to);
+      if (seen.has(key)) invalidWorkflow('Connection entries must name a distinct source and target pair: ' + entry.from + ' to ' + entry.to + '.');
+      seen.add(key);
+    }
+    if (parsed.length > 0) workflow.connections = parsed;
+  }
   return workflow;
 }

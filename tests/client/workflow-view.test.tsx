@@ -53,7 +53,7 @@ function StubCanvas(props: WorkflowCanvasProps) {
   useEffect(() => {
     for (const stage of props.stages) props.callbacks.onMeasure(stage.id, { width: stage.width, height: stage.height });
   }, [props.stages]);
-  return <div data-testid="canvas" data-ready={String(props.ready)} data-fit={props.fitRequest}>
+  return <div data-testid="canvas" data-ready={String(props.ready)} data-fit={props.fitRequest} data-connections={JSON.stringify(props.connections.map(connection => [connection.id, connection.source ?? null, connection.target ?? null, connection.segments ?? null]))}>
     {props.stages.map(stage => <section key={stage.id} aria-label={stage.label} data-testid={'stage-' + stage.id} data-x={stage.x} data-y={stage.y} data-w={stage.width} data-h={stage.height}>
       {stage.cardIds.map(cardId => <React.Fragment key={cardId}>{props.cardEnvironment.renderCard(cardId)}</React.Fragment>)}
       <button type="button" aria-label={'drop-' + stage.id} onClick={() => { if (!props.locked) props.onStageMove(stage.id, { x: 42, y: 84 }); }}>drop</button>
@@ -63,6 +63,15 @@ function StubCanvas(props: WorkflowCanvasProps) {
         props.onStageResizeEnd(stage.id, { width: 400, height: 200 });
       }}>resize</button>
     </section>)}
+    {props.connections.map(connection => <button
+      key={connection.id}
+      type="button"
+      aria-label={'adjust-' + connection.id}
+      onClick={() => {
+        if (props.locked) return;
+        props.onConnectionEdit({ connectionId: connection.id, source: { side: 'bottom', at: 4 }, segments: [{ axis: 'x', offset: 40 }] });
+      }}
+    >adjust</button>)}
     {props.controls !== undefined && props.controls({ zoomIn: vi.fn(), zoomOut: vi.fn(), fit: vi.fn() })}
     {props.overlay}
   </div>;
@@ -414,5 +423,73 @@ describe('workflow view', () => {
     const moved: BoardState = { ...view.props.state, tasks: [task('a', 'Alpha', 'two'), task('b', 'Beta', 'two')] };
     await act(async () => { view.update({ state: moved, tasks: moved.tasks }); });
     expect(document.querySelector('.kb-flow-travel-card')?.textContent).toBe('Alpha');
+  });
+  it('stores one workflow save per completed connection adjustment', async () => {
+    vi.useFakeTimers();
+    const { run } = setup();
+    unlock();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'adjust-one->two:0' })); });
+    expect(run).not.toHaveBeenCalled();
+    await act(async () => { vi.advanceTimersByTime(400); });
+    expect(run).toHaveBeenCalledTimes(1);
+    const command = run.mock.calls[0]![0] as unknown as { type: string; yaml: string };
+    expect(command.type).toBe('board.workflow.save');
+    expect(command.yaml).toContain('connections:');
+    expect(command.yaml).toContain('source: {side: bottom, at: 4}');
+    expect(command.yaml).toContain('segments: [{axis: x, offset: 40}]');
+    const layouts = JSON.parse(screen.getByTestId('canvas').dataset['connections']!) as unknown[][];
+    expect(layouts[0]![1]).toEqual({ side: 'bottom', at: 4 });
+  });
+
+  it('stores nothing from a connection adjustment while the layout is locked', async () => {
+    vi.useFakeTimers();
+    const { run } = setup();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'adjust-one->two:0' })); });
+    await act(async () => { vi.advanceTimersByTime(400); });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('removes the created entry when the adjustment is undone', async () => {
+    vi.useFakeTimers();
+    const { run, applyCommand } = setup();
+    unlock();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'adjust-one->two:0' })); });
+    await act(async () => { vi.advanceTimersByTime(400); });
+    await act(async () => { applyCommand(run.mock.calls[0]![0] as Command); });
+    expect(screen.getByTestId('canvas').dataset['connections']).toContain('bottom');
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Undo layout change' })); });
+    await act(async () => { vi.advanceTimersByTime(400); });
+    expect(run).toHaveBeenCalledTimes(2);
+    const command = run.mock.calls[1]![0] as unknown as { yaml: string };
+    expect(command.yaml).not.toContain('connections:');
+    expect(screen.getByTestId('canvas').dataset['connections']).not.toContain('bottom');
+  });
+
+  it('rebases a pending connection adjustment onto a workflow acknowledged mid-edit', async () => {
+    vi.useFakeTimers();
+    const { run, update, props } = setup();
+    unlock();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'adjust-one->two:0' })); });
+    const externalYaml = ['name: External delivery', 'columns:', '  - id: one', '    label: One', '    position: {x: 0, y: 0}', '    allowed_transitions: [two, three]', '  - id: two', '    label: Two', '  - id: three', '    label: Three', '    allowed_transitions: []', ''].join(String.fromCharCode(10));
+    const external = { ...props.state, revision: 8, workflowYaml: externalYaml, workflow: parseWorkflow(externalYaml) };
+    await act(async () => { update({ state: external, revision: 8, tasks: external.tasks }); });
+    await act(async () => { vi.advanceTimersByTime(400); });
+    expect(run).toHaveBeenCalledTimes(1);
+    const command = run.mock.calls[0]![0] as unknown as { yaml: string };
+    expect(command.yaml).toContain('name: External delivery');
+    expect(command.yaml).toContain('source: {side: bottom, at: 4}');
+  });
+
+  it('rolls back a failed connection save to the acknowledged workflow', async () => {
+    vi.useFakeTimers();
+    const onError = vi.fn();
+    const customRun = vi.fn(async (_command: Command): Promise<KanbanSnapshot> => { throw { code: 'STALE_REVISION', message: 'The revision changed.' }; });
+    setup({ run: customRun as unknown as RunCommand, onError });
+    unlock();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'adjust-one->two:0' })); });
+    await act(async () => { vi.advanceTimersByTime(400); });
+    await act(async () => {});
+    expect(onError).toHaveBeenCalled();
+    expect(screen.getByTestId('canvas').dataset['connections']).not.toContain('bottom');
   });
 });

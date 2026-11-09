@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { CONNECTION_SAMPLES, connectionShape, directShape } from '../../src/client/workflow-view/connections.js';
+import { automaticPoints } from '../../src/client/workflow-view/routing/automatic.js';
+import { CONNECTION_SAMPLES, buildShape, directShape, type ConnectionShape, type DiagramPoint, type DiagramRect } from '../../src/client/workflow-view/routing/orthogonal.js';
+
+/** The drawn shape of an automatic route, as the diagram has always drawn it. */
+function connectionShape(from: DiagramRect, to: DiagramRect, options: { readonly returning: boolean; readonly fanOut: number; readonly fanOutCount: number; readonly clearance?: number }): ConnectionShape {
+  return buildShape(automaticPoints(from, to, options));
+}
 
 const from = { x: 0, y: 0, width: 200, height: 100 };
 const to = { x: 400, y: 40, width: 200, height: 100 };

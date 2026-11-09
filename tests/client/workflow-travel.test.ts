@@ -56,3 +56,14 @@ describe('card travel', () => {
     expect(planTravel({ previousStageByTask: new Map([['task-1', 'missing']]), tasks: [task('task-1', 'two')], scene })).toEqual([]);
   });
 });
+describe('card travel along an adjusted connection', () => {
+  it('follows the connection layout the scene was given', () => {
+    const connections = { 'one->two': { from: 'one', to: 'two', source: { side: 'bottom' as const, at: 4 } } };
+    const adjusted = buildWorkflowScene({ workflow, tasks: [], placements, connections });
+    const plain = buildWorkflowScene({ workflow, tasks: [], placements });
+    const moves = planTravel({ previousStageByTask: new Map([['task-1', 'one']]), tasks: [task('task-1', 'two')], scene: adjusted });
+    expect(moves).toHaveLength(1);
+    expect(moves[0]!.points).toEqual(adjusted.edges.find(edge => edge.from === 'one' && edge.to === 'two')!.shape.points);
+    expect(moves[0]!.points).not.toEqual(plain.edges.find(edge => edge.from === 'one' && edge.to === 'two')!.shape.points);
+  });
+});

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Attention, BoardState, Column, StagePosition, StageSize, Task } from '../../shared/types.js';
+import type { Attention, BoardState, Column, ConnectionLayout, StagePosition, StageSize, Task } from '../../shared/types.js';
 import { EMPTY_ATTENTION } from '../../shared/types.js';
 import { placementIndex } from '../../domain/placement.js';
 import { effectiveStageSize } from '../../domain/stage-size.js';
@@ -11,7 +11,10 @@ import type { CardEnvironment } from './card-environment.js';
 import type { RunCommand } from '../ui.js';
 import type { CardDragState } from '../useCardDrag.js';
 import type { OptimisticMove } from '../useMoveRequest.js';
-import { WorkflowCanvas, type CanvasConnection, type CanvasStage, type WorkflowCanvasComponent } from './canvas.js';
+import { WorkflowCanvas, type CanvasConnection, type CanvasStage, type ConnectionEdit, type WorkflowCanvasComponent } from './canvas.js';
+import { connectionKey } from '../../domain/connection-anchor.js';
+import { readConnections, type ConnectionLayouts } from '../../domain/workflow-connections.js';
+import { mergeConnectionOverrides, useConnectionOverrides } from './use/use-connection-overrides.js';
 import { buildWorkflowScene } from './scene.js';
 import { computeAutoLayout, freezeAutoLayout, graphKey, mergePlacements, samePosition, type FrozenAutoLayout } from './placement.js';
 import { placementBounds, type StageLayout } from './layout.js';
@@ -119,6 +122,13 @@ export function WorkflowView(props: WorkflowViewProps) {
   const storedRef = useRef(stored); storedRef.current = stored;
   const storedSizes = useMemo(() => readStageSizes(props.state.workflow), [props.state.workflow]);
   const storedSizesRef = useRef(storedSizes); storedSizesRef.current = storedSizes;
+  const storedConnections = useMemo(() => readConnections(props.state.workflow), [props.state.workflow]);
+  const connectionsPort = useConnectionOverrides(storedConnections);
+  const intendConnection = connectionsPort.intend;
+  const previewConnections = connectionsPort.preview;
+  const resetConnections = connectionsPort.reset;
+  const connectionOverrides = connectionsPort.overrides;
+  const presentedConnections = useMemo(() => mergeConnectionOverrides(storedConnections, connectionOverrides), [storedConnections, connectionOverrides]);
 
   const history = usePlacementHistory();
   const resetHistory = history.reset;
@@ -128,8 +138,9 @@ export function WorkflowView(props: WorkflowViewProps) {
     sizeBaselines.current = {};
     frozen.current = null;
     setLayoutVersion(value => value + 1);
+    resetConnections();
     resetHistory();
-  }, [resetHistory]);
+  }, [resetConnections, resetHistory]);
   const saver = usePlacementSaver({
     hubId: props.hubId,
     boardId: props.boardId,
@@ -224,7 +235,10 @@ export function WorkflowView(props: WorkflowViewProps) {
     return { placements: map, bounds: placementBounds(map, measurementRef.current) };
   }, [measurementRef]);
   const diagramTasks = useMemo(() => applyOptimistic(props.tasks, props.optimistic), [props.tasks, props.optimistic]);
-  const scene = useMemo(() => buildWorkflowScene({ workflow: props.state.workflow, tasks: diagramTasks, placements, sizes: measurements.measured }), [props.state.workflow, diagramTasks, placements, measurements.measured]);
+  const scene = useMemo(() => buildWorkflowScene({
+    workflow: props.state.workflow, tasks: diagramTasks, placements, sizes: measurements.measured,
+    connections: presentedConnections,
+  }), [props.state.workflow, diagramTasks, placements, measurements.measured, presentedConnections]);
 
   const reposition = useCallback((positions: StagePositions, options: { readonly layout?: StagePositions; readonly clearOverrides: boolean; readonly immediate: boolean }) => {
     if (options.clearOverrides) setOverrides({});
@@ -287,6 +301,38 @@ export function WorkflowView(props: WorkflowViewProps) {
     saver.queueSave();
   }, [cancelResize, history, saver, visualPositions]);
 
+  /**
+   * One completed arrow adjustment: the connection layout changes, the layout
+   * history gains one step, and the coalesced save is queued. Only the edited
+   * connection's entry changes.
+   */
+  const editConnection = useCallback((edit: ConnectionEdit) => {
+    if (lock.locked) return;
+    const connection = connectionsRef.current.find(value => value.id === edit.connectionId);
+    if (connection === undefined) return;
+    const key = connectionKey(connection.from, connection.to);
+    const beforeConnections: ConnectionLayouts = { ...saver.desiredConnections.current };
+    const source = edit.source ?? connection.source;
+    const target = edit.target ?? connection.target;
+    const segments = edit.segments ?? connection.segments;
+    const after: ConnectionLayout = {
+      from: connection.from,
+      to: connection.to,
+      ...(source === undefined ? {} : { source }),
+      ...(target === undefined ? {} : { target }),
+      ...(segments === undefined || segments.length === 0 ? {} : { segments: [...segments] }),
+    };
+    intendConnection(key, after);
+    const afterConnections: ConnectionLayouts = { ...beforeConnections, [key]: after };
+    const positions: Record<string, StagePosition> = { ...saver.desiredPositions.current };
+    const sizes: Record<string, StageSize> = { ...saver.desiredSizes.current };
+    const layout = visualPositions();
+    history.push({ before: positions, after: positions, beforeSizes: sizes, afterSizes: sizes, beforeConnections, afterConnections, beforeLayout: layout, afterLayout: layout });
+    saver.intendConnections(afterConnections);
+    saver.cancelTimer();
+    saver.queueSave();
+  }, [history, intendConnection, lock.locked, saver, visualPositions]);
+
   const organize = useCallback(() => {
     if (lock.locked) return;
     const layout = computeAutoLayout(stateRef.current.workflow, measurementRef.current);
@@ -327,8 +373,9 @@ export function WorkflowView(props: WorkflowViewProps) {
     const entry = history.historyRef.current.entries[history.historyRef.current.cursor - 1];
     history.replace(step.history);
     if (step.sizes !== undefined) { previewSizes(step.sizes); saver.intendSizes(step.sizes); }
+    if (step.connections !== undefined) { previewConnections(step.connections); saver.intendConnections(step.connections); }
     reposition(step.positions, { ...(entry?.beforeLayout === undefined ? {} : { layout: entry.beforeLayout }), clearOverrides: true, immediate: true });
-  }, [history, lock.locked, previewSizes, reposition, saver]);
+  }, [history, lock.locked, previewConnections, previewSizes, reposition, saver]);
 
   const redo = useCallback(() => {
     if (lock.locked) return;
@@ -337,8 +384,9 @@ export function WorkflowView(props: WorkflowViewProps) {
     const entry = history.historyRef.current.entries[history.historyRef.current.cursor];
     history.replace(step.history);
     if (step.sizes !== undefined) { previewSizes(step.sizes); saver.intendSizes(step.sizes); }
+    if (step.connections !== undefined) { previewConnections(step.connections); saver.intendConnections(step.connections); }
     reposition(step.positions, { ...(entry?.afterLayout === undefined ? {} : { layout: entry.afterLayout }), clearOverrides: true, immediate: true });
-  }, [history, lock.locked, previewSizes, reposition, saver]);
+  }, [history, lock.locked, previewConnections, previewSizes, reposition, saver]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -359,6 +407,7 @@ export function WorkflowView(props: WorkflowViewProps) {
     tasks: props.tasks,
     placements,
     measured: measurements.measured,
+    connections: presentedConnections,
   });
 
   const stageSizeOf = useCallback((stageId: string): StageSize => effectiveStageSize(sizeOverrides[stageId] ?? storedSizes[stageId]), [sizeOverrides, storedSizes]);
@@ -366,9 +415,16 @@ export function WorkflowView(props: WorkflowViewProps) {
     const size = stageSizeOf(node.id);
     return { id: node.id, label: node.name, x: node.position.x, y: node.position.y, width: size.width, height: size.height, cardIds: node.tasks.map(task => task.id) };
   });
-  const connections: CanvasConnection[] = scene.edges.map(edge => ({
-    id: edge.id, from: edge.from, to: edge.to, kind: edge.kind, returning: edge.returning, fanOut: edge.fanOut, fanOutCount: edge.fanOutCount,
-  }));
+  const connections: CanvasConnection[] = scene.edges.map(edge => {
+    const layout = presentedConnections[connectionKey(edge.from, edge.to)];
+    return {
+      id: edge.id, from: edge.from, to: edge.to, kind: edge.kind, returning: edge.returning, fanOut: edge.fanOut, fanOutCount: edge.fanOutCount,
+      ...(layout?.source === undefined ? {} : { source: layout.source }),
+      ...(layout?.target === undefined ? {} : { target: layout.target }),
+      ...(layout?.segments === undefined ? {} : { segments: layout.segments }),
+    };
+  });
+  const connectionsRef = useRef(connections); connectionsRef.current = connections;
 
   const tasksById = useMemo(() => new Map(props.state.tasks.map(task => [task.id, task])), [props.state.tasks]);
   const columnsById = useMemo(() => new Map(props.state.workflow.columns.map(column => [column.id, column])), [props.state.workflow.columns]);
@@ -428,6 +484,7 @@ export function WorkflowView(props: WorkflowViewProps) {
       onStageResize={resizeStage}
       onStageResizeEnd={commitResize}
       onStageResizeCancel={cancelResize}
+      onConnectionEdit={editConnection}
     />
   </div>;
 }
