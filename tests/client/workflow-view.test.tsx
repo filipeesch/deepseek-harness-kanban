@@ -11,7 +11,7 @@ import { WorkflowView, type WorkflowCardPort, type WorkflowViewProps } from '../
 import { readWorkflowViewport, writeWorkflowViewport } from '../../src/client/workflow-preference.js';
 import type { WorkflowCanvasProps } from '../../src/client/workflow-view/canvas.js';
 import { StageHeader } from '../../src/client/workflow-view/stage-node.js';
-import { EMPTY_STAGE_COPY } from '../../src/client/stage-empty.js';
+import { EMPTY_STAGE_COPY } from '../../src/client/board-copy.js';
 import { noSnap } from '../../src/client/workflow-view/gestures/grid-snap.js';
 import { deferred, fixture } from './helpers.js';
 
@@ -630,11 +630,17 @@ describe('workflow diagram task creation', () => {
 
   it('creates while the layout is locked and while cards are being selected', () => {
     const onCreateTask = vi.fn();
-    setup({ onCreateTask, card: cardPort({ selectionMode: true }) });
+    const card = cardPort({ selectionMode: true, selectedIds: new Set(['a']) });
+    setup({ onCreateTask, card });
     const action = actionIn('one')! as HTMLButtonElement;
     expect(action.disabled).toBe(false);
     fireEvent.click(action);
     expect(onCreateTask).toHaveBeenCalledTimes(1);
+    // Selection is the diagram's other gesture, and creating is not it: the set the
+    // board handed in is untouched and no card ever asked to join or leave it.
+    expect(card.onToggleSelect).not.toHaveBeenCalled();
+    expect(card.selectedIds.has('a')).toBe(true);
+    expect(card.selectedIds.size).toBe(1);
     // Locking the layout still refuses the layout gesture, only never the action.
     fireEvent.pointerDown(screen.getByRole('heading', { name: 'One' }), { button: 0 });
     expect(headerDrags).toEqual([]);

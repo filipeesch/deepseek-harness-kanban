@@ -426,7 +426,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       })()}
       {batchConfirm && <BulkDeleteDialog tasks={batchTasks} attention={snapshot?.attention ?? {}} onCancel={() => setBatchConfirm(false)} onConfirm={deleteSelected} />}
     </>}
-    <BoardCreationDialogs hub={activeHub} run={run} task={creation} containers={containers} />
+    <BoardCreationDialogs hub={activeHub} run={run} taskDialog={creation.dialog} containers={containers} />
     {moves.overrideDialog && <div hidden={preparation.dialog !== null}>{moves.overrideDialog}</div>}
     {preparation.dialog}
   </section></DirectoryPickerProvider>;

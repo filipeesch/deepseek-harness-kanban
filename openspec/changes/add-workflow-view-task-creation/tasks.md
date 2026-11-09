@@ -22,13 +22,14 @@
 - [x] 4.1 Extend the workflow-view stub canvas so its stage header renders the creation control the way the real stage node does; verify the existing stub-based tests still pass, giving later tasks a harness that exercises the real component path.
 - [x] 4.2 Render the icon control in `StageNodeView`'s header for the flagged stage only, with an accessible name and a matching native tooltip carrying the same label, positioned beside the card count without changing the header's arrangement; verify tests assert the accessible name, its presence on the initial stage and absence from the other two, and the unchanged header structure.
 - [x] 4.3 Isolate the press from the stage drag by cancelling pointer propagation at the control and marking it non-draggable and non-panning; verify a test activates the control and asserts no stage move, no resize, no arrow adjustment, no stored workflow change, and no placement-history entry.
-- [x] 4.4 Keep the control available while the layout is locked and while card selection is active, and unavailable when the Hub has no registered project; verify three tests covering those states, with the locked diagram still refusing stage moves.
+- [x] 4.4 Keep the control available while the layout is locked and while card selection is active, and unavailable when the Hub holds no registered project — a published placeholder owns no directory and is not one — while a board whose own scope allows nothing keeps the control so that the dialog can explain the refusal; verify tests covering those states in both presentations, with the locked diagram still refusing stage moves.
 - [x] 4.5 Keep the control present when the search or project filter hides every card of the initial stage; verify a test filters the stage to its empty state and still finds the enabled control.
-- [x] 4.6 Activate the control from the keyboard; verify a test focuses it and activates it, asserting the creation path opened, the stage did not move, and the task drawer did not open.
+- [x] 4.6 Activate the control from the keyboard; verify a test focuses it and activates it, asserting the creation path opened, the stage did not move, and the task drawer did not open, and a board-level test that the shared dialog takes the keyboard when it opens and hands it back to the control when dismissed.
+- [x] 4.7 Press the control on the real canvas with layout editing unlocked; verify a browser test in which a drag begun on the control leaves the stage where it stood and stores nothing, the same drag on the stage title does move it, and keyboard activation opens the dialog and returns focus to the control.
 
 ## 5. Presentational cleanups
 
-- [x] 5.1 Define the empty-stage sentence once in a shared module and import it in the column board and the stage node, keeping the wording unchanged; verify the literal appears in exactly one source file and both presentations still render it in tests.
+- [x] 5.1 Define the words both presentations must agree on — the empty-stage sentence and the name of the creation action — once in `src/client/board-copy.ts`, imported by the column board, the stage node and the shared creation hook, keeping the wording unchanged; verify each literal appears in exactly one source file and both presentations still render it in tests.
 - [x] 5.2 Remove the unused column argument from the New task button renderer and its call site; verify `pnpm check` passes and the column board tests pass.
 
 ## 6. Validation

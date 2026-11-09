@@ -17,6 +17,11 @@ The active board SHALL provide the New task action in each of its presentations:
 - **THEN** both present the same creation experience with the same inputs and the same defaults
 - **AND** saving from either creates the task in the configured initial stage with the same effect
 
+#### Scenario: Enable the action identically in both presentations
+- **WHEN** a board is read in the column board and in the workflow diagram with the same Hub registry
+- **THEN** both presentations offer the action as available, or both withhold it, on the same condition: the Hub holds at least one registered project
+- **AND** the board's project scope never withholds the action from one presentation alone, since a board that allows no project must stay reachable through either of them to explain itself
+
 #### Scenario: Create into a customized initial stage
 - **WHEN** the user saves a new task, the active board's workflow has a configured initial stage, and the start option does not apply or is disabled
 - **THEN** the task is created in that stage with the supplied title, description, project, and auto-mode value

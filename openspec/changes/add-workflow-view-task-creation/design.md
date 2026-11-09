@@ -55,7 +55,7 @@ The control sits outside the lock check. The lock governs layout editing, and th
 
 ### A native tooltip, not the diagram's tooltip component
 
-`TooltipButton` positions its tooltip outside the control's box, and the stage clips overflow, so reusing it inside a header would render the tooltip invisible. Opening the stage's overflow to fix that would disturb the resize handle and the rounded corners. The control therefore names itself through an accessible name and a native tooltip carrying the same label, which is what the board header's own icon buttons already do.
+`TooltipButton` positions its tooltip outside the control's box, and the stage clips overflow, so reusing it inside a header would render the tooltip invisible. Opening the stage's overflow to fix that would disturb the resize handle and the rounded corners. The control therefore names itself through an accessible name and a native tooltip carrying the same label, which is what the board header's own icon buttons already do. Both carry `NEW_TASK_LABEL` from `src/client/board-copy.ts`, the constant the column board's button names itself by, so the two presentations cannot disagree about what the action is called.
 
 ### One `useTaskCreation` instance, owned by the board
 

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useRef } from 'react';
 import { Handle, Position, useStore } from '@xyflow/react';
 import type { StageSize } from '../../shared/types.js';
 import { PlusIcon } from '../icons.js';
-import { EMPTY_STAGE_COPY } from '../stage-empty.js';
+import { EMPTY_STAGE_COPY, NEW_TASK_LABEL } from '../board-copy.js';
 import { useCardEnvironment } from './card-environment.js';
 import { beginStageResize } from './gestures/stage-resize.js';
 import type { GestureHandle, PointerEventsPort } from './gestures/stage-drag.js';
@@ -74,8 +74,8 @@ export function StageHeader({ id, label, cardCount, locked, creatable, onCreateT
         type="button"
         className="kb-button kb-icon-button kb-flow-stage-create nodrag nopan"
         disabled={onCreateTask === undefined}
-        aria-label="New task"
-        title="New task"
+        aria-label={NEW_TASK_LABEL}
+        title={NEW_TASK_LABEL}
         onPointerDown={event => { event.stopPropagation(); }}
         onClick={event => { event.stopPropagation(); onCreateTask?.(); }}
       ><PlusIcon size={14} /></button>}

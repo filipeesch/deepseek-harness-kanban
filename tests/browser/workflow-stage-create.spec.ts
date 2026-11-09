@@ -180,3 +180,52 @@ test('creates from the initial stage while the layout is locked without touching
   // Creating is not a layout edit: the diagram stored nothing.
   expect(stored.some(command => command.type === 'board.workflow.save')).toBe(false);
 });
+
+test('pressing the action with layout editing unlocked moves nothing and answers the keyboard', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light' });
+  await openFlow(page);
+  // The locked diagram already proves the action works; this covers the other half,
+  // where the real canvas is listening for a drag and could steal the press.
+  await page.getByRole('button', { name: 'Unlock layout editing' }).click();
+  await expect(page.getByRole('button', { name: 'Lock layout editing' })).toBeVisible();
+  const stage = page.locator('.kb-flow-stage[data-column-id="explore"]');
+  const action = page.locator('.kb-flow-stage-create').first();
+  const before = await stage.boundingBox();
+  expect(before).not.toBeNull();
+
+  const press = await action.boundingBox();
+  expect(press).not.toBeNull();
+  await page.mouse.move(press!.x + press!.width / 2, press!.y + press!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(press!.x + 180, press!.y + 140, { steps: 8 });
+  await page.mouse.up();
+  // A press that starts on the action is never a gesture: the stage stays put, nothing
+  // is stored, and the drag that never began leaves no dialog behind either.
+  expect(await stage.boundingBox()).toEqual(before);
+  expect(await page.getByRole('dialog', { name: 'New task' }).count()).toBe(0);
+  expect((await commands(page)).some(command => command.type === 'board.workflow.save')).toBe(false);
+
+  // The same path on the title does move the stage, which proves the canvas was really
+  // listening: the assertion above is about the action, not about a dead diagram.
+  const handle = await stage.locator('.kb-flow-stage-header h2').boundingBox();
+  expect(handle).not.toBeNull();
+  await page.mouse.move(handle!.x + handle!.width / 2, handle!.y + handle!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handle!.x + 180, handle!.y + 140, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(async () => {
+    const now = await stage.boundingBox();
+    return now !== null && (Math.abs(now.x - before!.x) > 1 || Math.abs(now.y - before!.y) > 1);
+  }).toBe(true);
+
+  // Keyboard activation reaches the shared experience and leaves the keyboard where the
+  // user left it, which only the real composition can show.
+  await action.focus();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { name: 'New task' });
+  await expect(dialog).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.activeElement?.closest('[role="dialog"]') !== null)).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(action).toBeFocused();
+});

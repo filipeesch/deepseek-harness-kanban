@@ -1,6 +1,8 @@
 import React, { useCallback, useRef, useState, type ReactNode } from 'react';
 import type { BoardState, KanbanSnapshot, Project } from '../shared/types.js';
+import { isRegisteredProject } from '../shared/project.js';
 import { entryInstruction } from '../domain/stage-entry.js';
+import { NEW_TASK_LABEL } from './board-copy.js';
 import type { AutoRunController } from './auto-run.js';
 import { NewTaskDialog, type CreatedTaskOptions } from './forms.js';
 import { PlusIcon } from './icons.js';
@@ -67,11 +69,15 @@ export function useTaskCreation(port: UseTaskCreationPort): TaskCreation {
       await current.run({ type: 'task.prepareFirstExecution', taskId, columnId: task.columnId, expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
     });
   }, []);
-  // Availability is the board's, not the scope's: an action that only one of the two
-  // presentations could see would be a different feature. The board's project scope is
-  // the dialog's concern, and it says so itself when the board accepts no task.
-  const canCreate = port.state !== undefined && port.state.projects.length > 0;
-  const renderButton = useCallback((): ReactNode => <div className="kb-column-create"><button type="button" className="kb-button kb-primary" disabled={!canCreate} onClick={openDialog} aria-label="New task"><PlusIcon size={14} /> New task</button></div>, [canCreate, openDialog]);
+  // Availability asks the Hub registry one question: is there a project that could own
+  // a task at all. A published placeholder has no directory and is never offered by the
+  // dialog, so counting it would enable an action that cannot save. The board's own
+  // project scope is deliberately not asked here — a board that allows nothing must
+  // still reach the experience that explains why it accepts no task — and the same
+  // answer drives both presentations, because an action only one of them could see
+  // would be a different feature.
+  const canCreate = port.state !== undefined && port.state.projects.some(isRegisteredProject);
+  const renderButton = useCallback((): ReactNode => <div className="kb-column-create"><button type="button" className="kb-button kb-primary" disabled={!canCreate} onClick={openDialog} aria-label={NEW_TASK_LABEL}><PlusIcon size={14} /> {NEW_TASK_LABEL}</button></div>, [canCreate, openDialog]);
   const dialog = open && port.state !== undefined
     ? <NewTaskDialog state={port.state} projects={port.projects} closedForCreation={port.closedForCreation} run={port.run} onClose={closeDialog} onCreated={onCreated} />
     : null;

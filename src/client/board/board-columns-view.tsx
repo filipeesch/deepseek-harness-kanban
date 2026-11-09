@@ -3,7 +3,7 @@ import type { Column, Task, Workflow } from '../../shared/types.js';
 import { CardMotionFrame } from '../card-motion/frame.js';
 import { transitionAccess } from '../../domain/transitions.js';
 import type { PlannedSlot } from '../board-columns.js';
-import { EMPTY_STAGE_COPY } from '../stage-empty.js';
+import { EMPTY_STAGE_COPY } from '../board-copy.js';
 import type { CardDragState } from '../useCardDrag.js';
 
 export interface BoardColumnsViewProps {

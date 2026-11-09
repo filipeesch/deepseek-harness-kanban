@@ -5,12 +5,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { userEvent } from '@testing-library/user-event';
 import { BoardView } from '../../src/client/board.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
+import { EMPTY_STAGE_COPY } from '../../src/client/board-copy.js';
 import { fakeApi, fixture, openFilterPopoverByClick, type TestSnapshot } from './helpers.js';
 
 vi.mock('../../src/client/workflow-view/canvas.js', async () => {
   const React = await import('react');
   // The real header, so the creation action a test drives is the one the canvas paints.
   const { StageHeader } = await import('../../src/client/workflow-view/stage-node.js');
+  const { EMPTY_STAGE_COPY } = await import('../../src/client/board-copy.js');
   type StubProps = {
     stages: Array<{ id: string; label: string; width: number; height: number; cardIds: string[]; creatable: boolean }>;
     locked: boolean;
@@ -34,6 +36,7 @@ vi.mock('../../src/client/workflow-view/canvas.js', async () => {
             onCreateTask: props.callbacks.onCreateTask,
           }),
           stage.cardIds.map(cardId => React.createElement(React.Fragment, { key: cardId }, props.cardEnvironment.renderCard(cardId))),
+          stage.cardIds.length === 0 && React.createElement('p', { className: 'kb-empty-column' }, EMPTY_STAGE_COPY),
           React.createElement('button', { key: 'move', type: 'button', 'aria-label': 'move ' + stage.label, onClick: () => { if (!props.locked) props.onStageMove(stage.id, { x: 5, y: 6 }); } }, 'move'),
         )),
         props.controls?.({ zoomIn: () => {}, zoomOut: () => {}, fit: () => {} }),
@@ -188,14 +191,77 @@ describe('creating a task from the workflow diagram', () => {
     expect(await screen.findByRole('button', { name: 'Open task From the diagram' })).toBeTruthy();
   });
 
-  it('leaves the action unavailable when no project can own a task', async () => {
+  it('withholds the action from both presentations when only unadopted placeholders exist', async () => {
+    // A placeholder names a project a received board mentioned; it owns no directory,
+    // so no task can be created in it and the action must not promise one.
     const data = withDefault(fixture());
-    data.state.projects = [];
+    data.state.projects = [{ id: 'p1', projectKey: 'p1', name: 'API', origin: 'published' }];
     mount(data);
     await screen.findByTestId('flow-canvas');
-    const action = screen.getByRole('button', { name: 'New task' }) as HTMLButtonElement;
-    expect(action.disabled).toBe(true);
-    fireEvent.click(action);
+    const diagram = within(screen.getByTestId('flow-stage-intake')).getByRole('button', { name: 'New task' }) as HTMLButtonElement;
+    expect(diagram.disabled).toBe(true);
+    fireEvent.click(diagram);
     expect(screen.queryByRole('dialog', { name: 'New task' })).toBeNull();
+    // One creation instance, so the other presentation answers the same way.
+    fireEvent.click(screen.getByRole('button', { name: 'Board' }));
+    await screen.findByRole('region', { name: 'Intake column' });
+    expect((screen.getByRole('button', { name: 'New task' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('keeps the diagram action available when only the board refuses, and says why', async () => {
+    // The Hub can own a task; this board declined every project. Disabling the action
+    // here would hide the only text that explains the refusal and names the remedy.
+    const data = withDefault(fixture());
+    data.state.hubs[0]!.boards[0]!.allowedProjectKeys = [];
+    const user = userEvent.setup();
+    mount(data);
+    await screen.findByTestId('flow-canvas');
+    const action = within(screen.getByTestId('flow-stage-intake')).getByRole('button', { name: 'New task' }) as HTMLButtonElement;
+    expect(action.disabled).toBe(false);
+    await user.click(action);
+    const dialog = await screen.findByRole('dialog', { name: 'New task' });
+    expect(within(dialog).getByText(/accepts no new task/)).toBeTruthy();
+    expect((within(dialog).getByRole('button', { name: 'Create task' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('offers the diagram dialog only the projects the board allows', async () => {
+    const data = withDefault(fixture());
+    data.state.hubs[0]!.boards[0]!.allowedProjectKeys = ['p1'];
+    const user = userEvent.setup();
+    mount(data);
+    await screen.findByTestId('flow-canvas');
+    await user.click(within(screen.getByTestId('flow-stage-intake')).getByRole('button', { name: 'New task' }));
+    const dialog = await screen.findByRole('dialog', { name: 'New task' });
+    expect(within(dialog).getAllByRole('option').map(option => option.textContent)).toEqual(['Select a project', 'API']);
+  });
+
+  it('keeps the action offering the first card when a real search empties the stage', async () => {
+    mount(withDefault(fixture()));
+    await screen.findByTestId('flow-canvas');
+    openFilterPopoverByClick();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search tasks' }), { target: { value: 'no task carries this text' } });
+    const stage = screen.getByTestId('flow-stage-intake');
+    await waitFor(() => expect(within(stage).getByText(EMPTY_STAGE_COPY)).toBeTruthy());
+    // The stage shows nothing, yet it still offers the way to make the first card:
+    // emptiness is a projection of the cards, never a judgement about creating.
+    expect((within(stage).getByRole('button', { name: 'New task' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('hands focus to the shared dialog and back to the diagram action', async () => {
+    const user = userEvent.setup();
+    mount(withDefault(fixture()));
+    await screen.findByTestId('flow-canvas');
+    const action = within(screen.getByTestId('flow-stage-intake')).getByRole('button', { name: 'New task' });
+    action.focus();
+    await user.keyboard('{Enter}');
+    const dialog = await screen.findByRole('dialog', { name: 'New task' });
+    // Keyboard activation reaches a real modal, not a stubbed callback: the keyboard
+    // goes into the dialog, which is what a keyboard user needs to fill it in.
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New task' })).toBeNull());
+    // And comes back to the control that opened it, so the tab order stays where the
+    // user left it instead of dropping to the top of the document.
+    expect(document.activeElement).toBe(action);
   });
 });
