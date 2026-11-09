@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { KanbanError, invariant } from '../../shared/errors.js';
 import type { HubSharingView, SharingCommand } from '../../shared/types.js';
 import { applySharingPlan, type ApplySharingResult } from '../../domain/sharing/apply.js';
-import { sharedDocumentToken, type SharedBoardEntry, type SharedHubDocument } from '../../domain/sharing/document.js';
+import { SHARED_DOCUMENT_VERSION, sharedDocumentToken, type SharedBoardEntry, type SharedHubDocument } from '../../domain/sharing/document.js';
 import { normalizeBoardName } from '../../domain/sharing/identity.js';
 import { buildPublishDocument, buildUpdatePlan, publishIsDirty, type SharingBlocker, type SharingPlan } from '../../domain/sharing/plan.js';
 import { projectSharingBoards } from '../../domain/sharing/projection.js';
@@ -16,7 +16,7 @@ import { buildSharingView, publishedDocument, sharingComparison } from './view.j
 
 export const DEFAULT_SHARING_INTERVAL_MINUTES = 5;
 const MAX_INTERVAL_MINUTES = 1440;
-const EMPTY_DOCUMENT: SharedHubDocument = { version: 1, boards: [] };
+const EMPTY_DOCUMENT: SharedHubDocument = { version: SHARED_DOCUMENT_VERSION, boards: [] };
 const COMMIT_MESSAGE = 'Update published Kanban configuration';
 
 export interface HubSharingOptions {
@@ -40,10 +40,24 @@ export function normalizeSharingInterval(value: number | undefined, fallback = D
   return minutes;
 }
 
+/**
+ * One apply entry for a board the team owns. The scope travels with the workflow, so a
+ * conflict resolution or a restore never silently reopens a restricted board.
+ */
+function applyEntry(entry: SharedBoardEntry, boardId?: string): SharingPlan['apply'][number] {
+  return {
+    ...(boardId === undefined ? {} : { boardId }),
+    key: entry.key,
+    name: entry.name,
+    workflow: entry.workflow,
+    ...(entry.projectKeys === undefined ? {} : { projectKeys: [...entry.projectKeys] }),
+  };
+}
+
 function withEntry(base: SharedHubDocument, entry: SharedBoardEntry): SharedHubDocument {
   const boards = base.boards.map(value => value.key === entry.key ? { ...entry } : value);
   if (!boards.some(value => value.key === entry.key)) boards.push({ ...entry });
-  return { version: 1, boards };
+  return { version: SHARED_DOCUMENT_VERSION, boards };
 }
 
 function stored(document: SharedHubDocument): { token: string; document: SharedHubDocument } {
@@ -357,7 +371,7 @@ export class HubSharingService {
       if (choice === 'team') {
         const plan: SharingPlan = {
           comparison,
-          apply: [{ boardId, key: entry.key, name: entry.name, workflow: entry.workflow }],
+          apply: [applyEntry(entry, boardId)],
           removals: [], orphans: [], reconnections: [], conflicts: [],
           nextBase: withEntry(record.base?.document ?? publishedDocument(record), entry),
         };
@@ -432,7 +446,7 @@ export class HubSharingService {
       const comparison = sharingComparison(record, hub);
       const plan: SharingPlan = {
         comparison,
-        apply: [{ key: entry.key, name: entry.name, workflow: entry.workflow }],
+        apply: [applyEntry(entry)],
         removals: [], orphans: [], reconnections: [], conflicts: [],
         nextBase: withEntry(record.base?.document ?? publishedDocument(record), entry),
       };

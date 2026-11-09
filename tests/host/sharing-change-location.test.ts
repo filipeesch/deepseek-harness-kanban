@@ -10,7 +10,7 @@ import { MemoryHubStorage } from './helpers.js';
 
 const NOW = '2026-01-01T00:00:00.000Z';
 const flow = (name: string): string => ['name: Flow', 'initial_column: backlog', 'columns:', '  - id: backlog', '    label: ' + name, ''].join('\n');
-const documentOf = (name: string): SharedHubDocument => ({ version: 1, boards: [{ key: 'flow', name, workflow: flow(name) }] });
+const documentOf = (name: string): SharedHubDocument => ({ version: 2, boards: [{ key: 'flow', name, workflow: flow(name) }] });
 
 class FakeStore implements SharedConfigStore {
   document: SharedHubDocument | null;
@@ -117,7 +117,7 @@ describe('changing a Google Drive Local folder', () => {
     await f.service.connect({ type: 'sharing.connect', hubId: f.hubId, provider: 'google-drive-local', settings: { path: '/mount/one' } });
     const revision = f.hubs.requireHub(f.hubId).revision;
     await f.hubs.hub(f.hubId).transact(draft => {
-      draft.projects.push({ id: 'project-1', name: 'Project', projectPath: '/repo' });
+      draft.projects.push({ id: 'project-1', projectKey: 'project-1', name: 'Project', projectPath: '/repo' });
       draft.tasks.push({
         id: 'task-1', boardId: f.board.id, projectId: 'project-1', title: 'Keep me', description: 'Body', columnId: f.board.workflow.initialColumnId,
         position: 1, sessionIds: [], closedSessionIds: [], effectiveCwd: '/repo', worktree: null, operation: null, createdAt: NOW, updatedAt: NOW,

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Task, TransitionRule, Workflow } from '../shared/types.js';
 import { STAGE_MIN_SIZE, STAGE_SIZE_LIMIT } from './stage-size.js';
+import { PROJECT_KEY_PATTERN } from './project-key.js';
 import { transitionRule as normalizeTransitionRule } from './transition-rule.js';
 import { isAbsolutePath, isDomainId } from './validation.js';
 
@@ -91,11 +92,39 @@ export const projectRelocation = z.strictObject({
   started: z.boolean(),
   createdAt: timestamp,
 });
-export const project = z.strictObject({
-  id, name: nonempty, projectPath: absolutePath, gitRootPath: absolutePath.optional(), defaultBranch: nonempty.optional(), workspaceId: id.optional(), workspaceOwned: z.boolean().optional(), operation: projectRelocation.optional(),
-}).superRefine((value, context) => {
-  if (value.defaultBranch !== undefined && value.gitRootPath === undefined) context.addIssue({ code: 'custom', path: ['defaultBranch'], message: 'A default branch requires a Git root.' });
-});
+/** A stable project key: lowercase, hyphen-separated, bounded. */
+export const projectKey = z.string().refine(value => PROJECT_KEY_PATTERN.test(value), 'Expected a safe project key.');
+/**
+ * The project fields both record shapes share. A project is either registered with a
+ * directory, or a placeholder that exists only because a received board names its key.
+ * A placeholder never carries a path, a Git root, or a default branch, so no
+ * path-dependent operation can read a fake directory.
+ */
+const projectFields = {
+  id, name: nonempty,
+  projectPath: absolutePath.optional(),
+  gitRootPath: absolutePath.optional(), defaultBranch: nonempty.optional(), workspaceId: id.optional(), workspaceOwned: z.boolean().optional(), operation: projectRelocation.optional(),
+  /** Present only on a placeholder created from a received document. */
+  origin: z.literal('published').optional(),
+};
+function projectIssues(value: { origin?: 'published'; projectPath?: string; gitRootPath?: string; defaultBranch?: string; workspaceId?: string; workspaceOwned?: boolean; operation?: unknown }, context: z.RefinementCtx): void {
+  const issue = (path: string, message: string): void => { context.addIssue({ code: 'custom', path: [path], message }); };
+  if (value.origin === 'published') {
+    if (value.projectPath !== undefined) issue('projectPath', 'A published placeholder has no project path.');
+    if (value.gitRootPath !== undefined) issue('gitRootPath', 'A published placeholder is not Git-backed.');
+    if (value.defaultBranch !== undefined) issue('defaultBranch', 'A published placeholder has no default branch.');
+    if (value.workspaceId !== undefined || value.workspaceOwned !== undefined) issue('workspaceId', 'A published placeholder has no native workspace.');
+    if (value.operation !== undefined) issue('operation', 'A published placeholder has no relocation.');
+    return;
+  }
+  if (value.projectPath === undefined) issue('projectPath', 'A project requires a project path.');
+  if (value.defaultBranch !== undefined && value.gitRootPath === undefined) issue('defaultBranch', 'A default branch requires a Git root.');
+}
+/** A stored project whose key may still be missing until the open backfill assigns one. */
+export const storedProject = z.strictObject({ ...projectFields, projectKey: projectKey.optional() }).superRefine(projectIssues);
+/** A project in an opened Hub: it always carries its key. */
+export const project = z.strictObject({ ...projectFields, projectKey }).superRefine(projectIssues);
+
 
 /** The task fields both aggregates persist; the Hub aggregate adds `boardId`. */
 export const baseTask = z.strictObject({

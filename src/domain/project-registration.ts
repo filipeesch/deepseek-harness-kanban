@@ -1,6 +1,7 @@
 import path from 'node:path';
-import { invariant } from '../shared/errors.js';
-import type { Project, ProjectInput, ProjectLocationPaths } from '../shared/types.js';
+import { KanbanError, invariant } from '../shared/errors.js';
+import type { Project, ProjectInput, ProjectLocationPaths, RegisteredProject } from '../shared/types.js';
+import { allocateProjectKey, requireProjectKey } from './project-key.js';
 
 /** The task facts that make a Git-association change unsafe while work is in flight. */
 export interface ProjectRegistrationTask {
@@ -100,11 +101,21 @@ export function planProjectRelocation(from: ProjectLocationPaths, to: ProjectLoc
   return plan;
 }
 
-/** Build the stored project, discarding a default branch that has no Git root to belong to. */
-export function buildProject(projectId: string, input: ProjectInput, current?: Project): Project {
+/**
+ * Build the stored project, discarding a default branch that has no Git root to belong
+ * to. The key is kept when the project already has one, generated deterministically
+ * when it does not, and validated for uniqueness against the Hub's other projects.
+ */
+export function buildProject(projectId: string, input: ProjectInput, current?: Project, takenKeys: Iterable<string> = []): RegisteredProject {
   const gitRootPath = projectGitRoot(input);
-  const project: Project = {
-    id: projectId, name: input.name.trim(), projectPath: input.projectPath,
+  const taken = new Set(takenKeys);
+  const requested = input.projectKey === undefined ? undefined : requireProjectKey(input.projectKey);
+  if (requested !== undefined && requested !== current?.projectKey && taken.has(requested)) {
+    throw new KanbanError('PROJECT_KEY_CONFLICT', 'Another project of this Hub already uses this key.', { projectKey: requested });
+  }
+  const projectKey = requested ?? current?.projectKey ?? allocateProjectKey(input.name, taken);
+  const project: RegisteredProject = {
+    id: projectId, name: input.name.trim(), projectPath: input.projectPath, projectKey,
     ...(gitRootPath === undefined ? {} : { gitRootPath }),
     ...(current?.workspaceId ? { workspaceId: current.workspaceId } : {}),
     ...(current?.workspaceOwned !== undefined ? { workspaceOwned: current.workspaceOwned } : {}),

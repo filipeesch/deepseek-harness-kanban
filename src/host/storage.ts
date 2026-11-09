@@ -2,11 +2,12 @@ import type { Context } from '@deepseek-ai/cordis';
 import { defineDomain, domainTable, type Domain } from '@deepseek-ai/dsh-storage-domain';
 import { z } from 'zod';
 import { BoardStateSchema, initialState } from '../domain/schema.js';
-import { HubStateSchema } from '../domain/hub-schema.js';
+import { StoredHubStateSchema } from '../domain/hub-schema.js';
 import type { BoardState, HubState, KanbanMeta } from '../shared/types.js';
 import type { HubStorage, LegacyStateReader } from '../shared/ports.js';
 import { KanbanError } from '../shared/errors.js';
 import { migrateLegacyState } from './legacy-migration.js';
+import { withProjectKeys } from '../domain/project-key.js';
 
 const current = () => new Date().toISOString();
 
@@ -15,7 +16,8 @@ const HubDomainSpec = defineDomain({
   version: 1,
   layout: 'per-record',
   tables: {
-    hubs: domainTable<string, HubState>(HubStateSchema as unknown as z.ZodType<HubState>),
+    // The stored record may still lack a project key; the repository backfills it on open.
+    hubs: domainTable<string, HubState>(StoredHubStateSchema as unknown as z.ZodType<HubState>),
   },
   global: {
     schema: z.strictObject({
@@ -43,6 +45,11 @@ const LegacyDomainSpec = defineDomain({
 type HubDomain = Domain<typeof HubDomainSpec>;
 type LegacyDomain = Domain<typeof LegacyDomainSpec>;
 
+/** Fill in the key a legacy project record predates, before any schema reads it. */
+function keyedLegacyProjects(state: Record<string, unknown>): Record<string, unknown> {
+  return Array.isArray(state.projects) ? { ...state, projects: withProjectKeys(state.projects as Array<{ name: string; projectKey?: string }>) } : state;
+}
+
 function migratedV1State(raw: unknown): BoardState {
   if (typeof raw !== 'object' || raw === null || !('schemaVersion' in raw) || (raw as { schemaVersion?: unknown }).schemaVersion !== 1) {
     throw new KanbanError('UNSUPPORTED_VERSION', 'Stored Kanban state schema version is not supported.', { supportedVersion: 2 });
@@ -64,7 +71,7 @@ function migratedV1State(raw: unknown): BoardState {
     delete copy.archivedAt;
     return copy;
   });
-  return BoardStateSchema.parse(state);
+  return BoardStateSchema.parse(keyedLegacyProjects(state));
 }
 
 class DomainHubStorage implements HubStorage {
@@ -100,7 +107,7 @@ class DomainLegacyReader implements LegacyStateReader {
     const raw = this.domain.global.get();
     if (typeof raw === 'object' && raw !== null && 'schemaVersion' in raw) {
       const version = (raw as { schemaVersion?: unknown }).schemaVersion;
-      if (version === 2) return BoardStateSchema.parse(structuredClone(raw));
+      if (version === 2) return BoardStateSchema.parse(keyedLegacyProjects(structuredClone(raw)));
       if (version === 1) return migratedV1State(raw);
     }
     throw new KanbanError('UNSUPPORTED_VERSION', 'Stored Kanban state schema version is not supported.', { supportedVersion: 2 });

@@ -1,19 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import type { Context } from '@deepseek-ai/cordis';
-import type { SharedHubDocument } from '../../src/domain/sharing/document.js';
+import { sharedDocumentToken, type SharedHubDocument } from '../../src/domain/sharing/document.js';
 import { SHARING_STORAGES } from '../../src/shared/types.js';
 import { migrateSharingRecord, openSharingStorage, type HubSharingRecord } from '../../src/host/sharing/state.js';
 
 const NOW = '2026-01-01T00:00:00.000Z';
-const document: SharedHubDocument = { version: 1, boards: [{ key: 'kanban', name: 'Kanban', workflow: 'name: Flow\ninitial_column: backlog\ncolumns:\n  - id: backlog\n    label: Backlog\n' }] };
+const document: SharedHubDocument = { version: 2, boards: [{ key: 'kanban', name: 'Kanban', workflow: 'name: Flow\ninitial_column: backlog\ncolumns:\n  - id: backlog\n    label: Backlog\n' }] };
 function record(hubId: string): HubSharingRecord {
+  // Stored tokens are the document's canonical content identity, so a normalized
+  // read returns exactly what was written.
+  const token = sharedDocumentToken(document);
   return {
     version: 2, hubId,
     binding: { provider: 'git', intervalMinutes: 5, settings: { repository: '/team/repo' } },
     providerState: {}, syncedRevision: null,
-    base: { token: 'base', document }, seen: { token: 'seen', document },
+    base: { token, document }, seen: { token, document },
     bindings: { board: 'kanban' }, orphans: {}, removed: {}, pendingRemovals: [], preview: null,
-    lastCheck: { at: NOW, token: 'seen' }, lastError: null,
+    lastCheck: { at: NOW, token }, lastError: null,
   };
 }
 
@@ -59,6 +62,51 @@ describe('publishing state storage', () => {
     await second.close();
   });
 
+  it('normalizes a stored version one document instead of dropping the record', async () => {
+    const { tables, ctx } = facility();
+    const legacy = record('hub');
+    const old = { version: 1, boards: [{ key: 'kanban', name: 'Kanban', workflow: document.boards[0]!.workflow }] } as unknown as SharedHubDocument;
+    legacy.base = { token: 'base', document: old };
+    legacy.seen = { token: 'seen', document: old };
+    legacy.orphans = { gone: { lastKey: 'gone', lastPublishedName: 'Gone' } };
+    legacy.removed = { kanban: { boardId: 'board', name: 'Kanban' } };
+    legacy.pendingRemovals = ['kanban'];
+    const raw = tables.get('kanban_sharing') ?? new Map<string, unknown>();
+    raw.set('hub', structuredClone(legacy));
+    tables.set('kanban_sharing', raw);
+    const reported: unknown[] = [];
+    const opened = await openSharingStorage(ctx, { report: error => reported.push(error) });
+    const loaded = opened.storage.load('hub');
+    expect(reported).toEqual([]);
+    expect(loaded?.base?.document.version).toBe(2);
+    expect(loaded?.seen?.document.version).toBe(2);
+    expect(loaded?.bindings).toEqual({ board: 'kanban' });
+    expect(loaded?.orphans).toEqual({ gone: { lastKey: 'gone', lastPublishedName: 'Gone' } });
+    expect(loaded?.removed).toEqual({ kanban: { boardId: 'board', name: 'Kanban' } });
+    expect(loaded?.pendingRemovals).toEqual(['kanban']);
+    await opened.close();
+  });
+
+  it('keeps an unsupported stored document blocked instead of downgrading it', async () => {
+    const { tables, ctx } = facility();
+    const newer = record('hub');
+    const future = { version: 3, boards: [] } as unknown as SharedHubDocument;
+    newer.base = { token: 'base', document: future };
+    newer.seen = { token: 'seen', document: future };
+    const raw = tables.get('kanban_sharing') ?? new Map<string, unknown>();
+    raw.set('hub', structuredClone(newer));
+    tables.set('kanban_sharing', raw);
+    const reported: unknown[] = [];
+    const opened = await openSharingStorage(ctx, { report: error => reported.push(error) });
+    const loaded = opened.storage.load('hub');
+    expect(reported).toEqual([]);
+    expect(loaded?.base).toBeNull();
+    expect(loaded?.seen).toBeNull();
+    expect(loaded?.bindings).toEqual({ board: 'kanban' });
+    expect(loaded?.lastError).toMatchObject({ code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED' });
+    await opened.close();
+  });
+
   it('quarantines a corrupt record instead of failing the whole domain', async () => {
     const { tables, ctx } = facility();
     const valid = record('hub');
@@ -77,7 +125,7 @@ describe('publishing state storage', () => {
   it('quarantines a record whose stored document is semantically invalid', async () => {
     const { tables, ctx } = facility();
     const invalid = record('bad');
-    invalid.base = { token: 'x', document: { version: 1, boards: [
+    invalid.base = { token: 'x', document: { version: 2, boards: [
       { key: 'a', name: 'Same', workflow: document.boards[0]!.workflow },
       { key: 'b', name: 'same', workflow: document.boards[0]!.workflow },
     ] } };

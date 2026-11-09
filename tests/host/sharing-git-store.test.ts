@@ -7,7 +7,7 @@ import { parseSharedDocument, serializeSharedDocument, type SharedHubDocument } 
 import { GitSharedConfigStore, createGitProviderDescriptor } from '../../src/host/sharing/git-store.js';
 
 const flow = (column = 'backlog'): string => ['name: Flow', 'initial_column: ' + column, 'columns:', '  - id: ' + column, '    label: ' + column, ''].join('\n');
-const documentOf = (name: string): SharedHubDocument => ({ version: 1, boards: [{ key: 'flow', name, workflow: flow() }] });
+const documentOf = (name: string): SharedHubDocument => ({ version: 2, boards: [{ key: 'flow', name, workflow: flow() }] });
 
 let root: string;
 function git(cwd: string, args: string[]): string { return execFileSync('git', args, { cwd, encoding: 'utf8' }); }

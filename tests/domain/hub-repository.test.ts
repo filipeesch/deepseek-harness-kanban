@@ -106,7 +106,7 @@ describe('HubRepository', () => {
     const secondBoard = await secondStore.addBoard('B');
     secondStore.requireProject; // keep the facade shape used by callers
     await expect(secondStore.transact(draft => {
-      draft.projects.push({ id: 'p', name: 'P', projectPath: '/repo2', gitRootPath: '/repo2' });
+      draft.projects.push({ id: 'p', projectKey: 'p', name: 'P', projectPath: '/repo2', gitRootPath: '/repo2' });
       draft.tasks.push({ ...shared, id: 'other', boardId: secondBoard.id, projectId: 'p' });
     })).rejects.toMatchObject({ code: 'SESSION_IN_USE' });
   });

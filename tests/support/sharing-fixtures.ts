@@ -6,8 +6,8 @@ const NOW = '2026-01-01T00:00:00.000Z';
 export function flow(columns: string[] = ['backlog', 'plan', 'done']): string {
   return ['name: Flow', 'initial_column: ' + columns[0], 'columns:', ...columns.flatMap(column => ['  - id: ' + column, '    label: ' + column]), ''].join('\n');
 }
-export function documentOf(entries: Array<{ key: string; name: string; workflow: string }>): SharedHubDocument {
-  return { version: 1, boards: entries };
+export function documentOf(entries: Array<{ key: string; name: string; workflow: string; projectKeys?: string[] }>): SharedHubDocument {
+  return { version: 2, boards: entries.map(entry => ({ key: entry.key, name: entry.name, workflow: entry.workflow, ...(entry.projectKeys === undefined ? {} : { projectKeys: entry.projectKeys }) })) };
 }
 export function hubWith(boards: Array<{ id: string; name: string; workflow?: string; tasks?: Array<{ columnId: string }> }>): HubState {
   const hub = initialHubState('hub', 'My Hub', NOW);
@@ -17,7 +17,7 @@ export function hubWith(boards: Array<{ id: string; name: string; workflow?: str
     id: 'task-' + (++index), boardId: board.id, projectId: 'project', title: 'Task ' + index, description: '', columnId: task.columnId, position: index,
     sessionIds: [], closedSessionIds: [], effectiveCwd: '/repo', worktree: null, operation: null, createdAt: NOW, updatedAt: NOW,
   })));
-  hub.projects = [{ id: 'project', name: 'Project', projectPath: '/repo' }];
+  hub.projects = [{ id: 'project', projectKey: 'project', name: 'Project', projectPath: '/repo' }];
   return hub;
 }
 

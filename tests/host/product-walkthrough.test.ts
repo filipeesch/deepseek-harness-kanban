@@ -275,7 +275,7 @@ describe('bounded integrated product walkthrough', () => {
     expect(f.app.store.snapshot()).toEqual(beforeInvalid);
     const a = await f.task(); const note = await addSharedNote(f, a);
     const b = await taskWithConversation(f.app, { projectId: 'root-project', title: 'Independent other task', description: 'Different shared-note collection' });
-    expect(await f.tool('list_projects', {})).toEqual(f.app.store.snapshot().projects);
+    expect(await f.tool('list_projects', {})).toEqual(f.app.store.snapshot().projects.map(project => ({ ...project, allowed: true })));
     expect(await f.tool('list_projects', {}, a.a)).toEqual(await f.tool('list_projects', {}));
     const boardId = f.app.store.snapshot().boards[0]!.id; const hubId = f.app.hubs.defaultHubId(); expect(await f.tool('list_boards', {})).toEqual([expect.objectContaining({ id: boardId, hubId, name: 'Kanban' })]);
     expect(await f.tool('list_boards', {}, a.b)).toEqual(await f.tool('list_boards', {}));

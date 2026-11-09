@@ -101,14 +101,14 @@ Each board SHALL support its own workflow configuration in YAML, including the i
 - **THEN** the same requests are permitted and the same requests require confirmation
 
 ### Requirement: Top-level task creation
-The active board SHALL provide one New task action at the top of its workflow's configured initial column. It SHALL collect a title, description, and project from the active Hub's project registry, an Auto mode option that is off by default, and, only when the initial stage has an entry instruction, a Start execution now option that is on by default. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. Saving a new task SHALL place it in the active board's configured initial stage and SHALL record the selected auto-mode value. When the initial stage has an entry instruction and the Start execution now option remains enabled, saving SHALL start the automatic first execution defined by Automatic first execution on task creation. Otherwise, saving SHALL NOT create a native DSH conversation, a workspace, or an agent execution. The board header SHALL NOT provide a separate New task action.
+The active board SHALL provide one New task action at the top of its workflow's configured initial column. It SHALL collect a title, description, and project, an Auto mode option that is off by default, and, only when the initial stage has an entry instruction, a Start execution now option that is on by default. The project input SHALL offer only the projects of the active Hub that the active board allows, as defined by Board project scope configuration; a project that the board does not allow SHALL NOT be offered and SHALL NOT be accepted. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. A board that allows no project SHALL present no selectable project and SHALL explain that the board accepts no new task, and saving SHALL be unavailable. Saving a new task SHALL place it in the active board's configured initial stage and SHALL record the selected auto-mode value. When the initial stage has an entry instruction and the Start execution now option remains enabled, saving SHALL start the automatic first execution defined by Automatic first execution on task creation. Otherwise, saving SHALL NOT create a native DSH conversation, a workspace, or an agent execution. The board header SHALL NOT provide a separate New task action.
 
 #### Scenario: Open task creation from the board
 - **WHEN** the user selects the New task action at the top of the active board's configured initial column
 - **THEN** the creation experience provides title, description, project, and Auto mode inputs without asking the user to choose a stage
 - **AND** it presents Start execution now only when the initial stage has an entry instruction
 - **AND** the project input is unselected
-- **AND** the project list contains only projects owned by the active Hub
+- **AND** the project list contains only projects of the active Hub that the board allows
 
 #### Scenario: Create into a customized initial stage
 - **WHEN** the user saves a new task, the active board's workflow has a configured initial stage, and the start option does not apply or is disabled
@@ -141,9 +141,19 @@ The active board SHALL provide one New task action at the top of its workflow's 
 - **AND** task creation does not initiate an agent execution
 
 #### Scenario: Require an explicit project choice
-- **WHEN** the user opens New task with one or more registered Hub projects and does not select a project
+- **WHEN** the user opens New task with one or more allowed projects and does not select a project
 - **THEN** the task cannot be created
 - **AND** no project is silently chosen from the project list or the active project filter
+
+#### Scenario: Offer only the allowed projects
+- **WHEN** the active Hub has projects that the active board does not allow and the user opens New task
+- **THEN** the project input lists the allowed projects of that Hub only
+- **AND** no project the board does not allow is offered
+
+#### Scenario: Create from another board of the same Hub
+- **WHEN** a task of one board creates a task on another board of the same Hub with a project that the destination board allows
+- **THEN** the task is created on the destination board
+- **AND** the creating board's own scope does not restrict the destination
 
 #### Scenario: No task creation without a board
 - **WHEN** the active Hub has no boards
@@ -353,7 +363,7 @@ The task card SHALL NOT provide an independent stage selector. A user SHALL chan
 - **AND** no confirmation or drop indicator is shown
 
 ### Requirement: Text search and project filtering
-The active board SHALL support text search over its task titles and descriptions and filtering by project, separately and together. The project filter SHALL list the projects owned by the active Hub. The two inputs SHALL be presented by the board filter control defined by the Board filter control requirement. This scope SHALL NOT add activity or worktree-status filters.
+The active board SHALL support text search over its task titles and descriptions and filtering by project, separately and together. The project filter SHALL list the projects that already have at least one card on the active board; it SHALL NOT list a project with no card on that board. The filter SHALL derive its options from the tasks of the active board, so removing a project from the board's scope SHALL NOT remove a project that still has cards there. The two inputs SHALL be presented by the board filter control defined by the Board filter control requirement. This scope SHALL NOT add activity or worktree-status filters.
 
 #### Scenario: Find a task by its title or description
 - **WHEN** the user searches for text that matches a task's title or description
@@ -367,9 +377,14 @@ The active board SHALL support text search over its task titles and descriptions
 - **WHEN** the user applies text search and a project filter together
 - **THEN** the displayed tasks satisfy both the text search and the selected project filter
 
+#### Scenario: List only projects with cards on the board
+- **WHEN** the active Hub has a project with no card on the active board
+- **THEN** the project filter does not offer that project
+- **AND** it offers every project that has at least one card on the board
+
 #### Scenario: Keep the filter inside the active board
 - **WHEN** the user changes from one board to another
-- **THEN** the project filter options are limited to the active Hub's projects
+- **THEN** the project filter options are limited to the projects with cards on the newly active board
 - **AND** tasks from the previous board are not shown
 
 #### Scenario: Reach both filters from one control
@@ -631,6 +646,7 @@ The board SHALL present a card's unresolved context operation, confirmed transit
 - **WHEN** the operation, confirmed transition, or automatic-advance state resolves
 - **THEN** the corresponding status is no longer presented in the status region
 - **AND** reading a conversation does not clear an automatic-advance pause by itself
+
 ### Requirement: Host-themed board controls
 The board SHALL follow the host application's light and dark appearance for its primary actions, focus indicators, and selection accents. Enabled primary actions SHALL use host theme colors for their fill, foreground, and hover state in both appearances. Primary-action text SHALL maintain at least 4.5:1 contrast against its fill at rest and on hover. The board SHALL NOT use the browser's selection highlight color as a product fill or accent.
 
@@ -678,6 +694,7 @@ The Kanban configuration experience SHALL include a General section that is pres
 #### Scenario: Existing worktrees survive a base path change
 - **WHEN** the user changes or clears the worktree base path while tasks have existing worktrees
 - **THEN** every existing worktree, branch, and recorded destination remains unchanged
+
 ### Requirement: Run a stage instruction from a card
 
 When a task's current stage has an entry instruction, its card SHALL expose a run action only while the current entry into that stage is unresolved. The entry SHALL be unresolved when a persisted entry marker exists for the current stage and no successful user prompt has been sent in any open conversation of the task since that entry. The marker SHALL be created on every move into an instructed stage, including a task created directly in an instructed initial stage. A same-stage reorder SHALL NOT reset the marker; leaving and re-entering the stage SHALL create a new marker. A successful user prompt in any open conversation SHALL clear the marker. An admission failure SHALL NOT clear it. A task already in an instructed stage without a marker SHALL NOT show the action until its next entry. While the timed instruction for the entry is counting down or being sent, the card SHALL expose the countdown control defined by the Timed stage instruction after a move requirement instead of the run action; canceling that countdown or a failed timed send SHALL expose the run action for the same unresolved entry. When visible, the action SHALL send the stage's entry instruction to the task's first open conversation in conversation order, followed by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies. When the task has no conversation, activating the action SHALL first present the execution preparation defined by Execution preparation before a task's first execution; when no conversation is open after the preparation, the action SHALL create a new conversation and use that conversation as the target. The action SHALL carry the entry identity it was displayed for — the entry's stage and entry timestamp — and the host SHALL reject a request for an entry that has been resolved or replaced. The action SHALL NOT move the task or change its position, SHALL NOT offer a conversation picker, and SHALL NOT be available in selection mode. It SHALL be unavailable while the task has an unresolved context operation or confirmed transition. The submitted message SHALL contain the stage instruction and, when it applies, the transition briefing; the conversation's first-turn task context supplies the task context. Admission failures SHALL be reported without changing the stage or position and without creating another conversation beyond the resolved target.
@@ -1243,6 +1260,7 @@ When a permitted move changes a task's stage to a stage with an entry instructio
 - **THEN** no instruction is sent automatically
 - **AND** the entry remains unresolved
 - **AND** the card exposes the run action after reload
+
 ### Requirement: Stable board frame during commands
 The active board SHALL keep its frame stable while a command is in flight. Command progress SHALL NOT insert, remove, or resize any element between the board header and the task columns, and the board SHALL NOT present a global saving indicator, either visually or through a live region. A task move or same-stage reorder SHALL be reflected in its destination position immediately, and that immediate placement SHALL be the board-level feedback for the move. Progress that a specific action needs SHALL be reported inside the surface that started it, and a command failure SHALL remain a board-level notice.
 
@@ -1407,6 +1425,7 @@ Enabling auto mode SHALL arm the task and SHALL NOT move it, change its position
 - **WHEN** an armed task has a recorded transition that no longer resolves
 - **THEN** the control presents a pause whose label states that the recorded transition is no longer valid
 - **AND** the task's stage and position are unchanged
+
 ### Requirement: Automatic advance after a completed turn
 When a conversation of a task with auto mode enabled ends a turn whose reason is `completed`, and no open conversation of the task is running a turn, and the task has no pending user work as defined by Pending user work, the host SHALL admit exactly one automatic advance. The host SHALL perform the advance without requiring the board to be mounted, without a confirmation, without a conversation picker, and without arming the timed stage instruction. An admitted advance SHALL be durable: reloading the board SHALL NOT cancel it, and a host restart SHALL dispatch it when it had not been dispatched.
 
@@ -1968,6 +1987,7 @@ When a stage configures two or more transition targets and the host sends that s
 
 - **WHEN** a stage instruction is sent by the card run action, the timed stage instruction after a move, a confirmed transition, or an automatic advance
 - **THEN** the message includes the briefing whenever the stage configures two or more targets
+
 ### Requirement: Execution accent on task cards
 
 A task card SHALL present agent execution through one visible execution accent: a bar at the trailing edge of the card. The accent SHALL pulse while agent execution is running and SHALL use the host theme's accent color, remaining legible in the host's light and dark appearances. The card SHALL NOT present a working text label. The working state SHALL be announced to assistive technology when it begins, and periodic animation updates SHALL NOT be announced. The card SHALL follow the host's reduced-motion preference by keeping the accent visible without animation. The execution accent SHALL NOT replace or hide the attention indicators, and it SHALL be presented whether or not the card also presents the run or advance actions. The card SHALL NOT present a background activity indicator; background activity SHALL remain available through the task drawer's Conversations section entry as defined by Coexisting attention indicators across task conversations.
@@ -2176,3 +2196,36 @@ The filter control SHALL be presented together with the presentation switch, the
 - **WHEN** the user switches the active Hub or the active board while the filter popover is open
 - **THEN** the popover closes
 - **AND** the search text and the project filter are cleared
+
+### Requirement: Board project scope configuration
+A board SHALL carry its own project scope that states which projects may create tasks on it. The scope SHALL be stored on the board and SHALL NOT be stored in the board's workflow YAML. The scope SHALL have two states: unrestricted, meaning every project of the Hub may create tasks, and restricted to an explicit set of project keys. A board with no recorded scope SHALL be unrestricted, and a restriction SHALL be recorded as an explicit set that SHALL be able to be empty. A board restricted to an empty set SHALL accept no new task and SHALL be presented as closed for creation. The board's configuration SHALL present both states with the projects of the active Hub so a user can choose between them and change the selected set. Removing a project from the scope SHALL NOT change the tasks already on the board, SHALL NOT move them, and SHALL NOT remove them. Saving the scope SHALL be a board write that carries the Hub revision as its precondition and SHALL follow the same publishing behavior as the other board writes. The scope SHALL be local to the Hub that owns the board and SHALL be published only as described by the hub-sharing specification.
+
+#### Scenario: Restrict a board to selected projects
+- **WHEN** the user selects specific projects for a board and saves the board configuration
+- **THEN** the board allows those projects and refuses every other project of the Hub
+- **AND** the New task input offers the selected projects only
+
+#### Scenario: Allow every project on a board
+- **WHEN** the user chooses to allow every project for a board that was restricted
+- **THEN** the board records no restriction
+- **AND** every project of the Hub may create tasks on that board again
+
+#### Scenario: Close a board to new tasks
+- **WHEN** the user selects specific projects and leaves none selected
+- **THEN** the board accepts no new task
+- **AND** New task explains that the board is closed for creation instead of offering an empty project input
+
+#### Scenario: Keep existing cards when a project leaves the scope
+- **WHEN** the user removes from the board's scope a project that has cards on that board
+- **THEN** the scope no longer allows that project
+- **AND** the existing cards stay in their stages with their conversations and worktrees unchanged
+
+#### Scenario: Present the scope beside the rest of the board configuration
+- **WHEN** the user opens the board's configuration
+- **THEN** the project scope is presented with the board's other configuration
+- **AND** it presents the board's current state and the projects of the active Hub
+
+#### Scenario: Do not store the scope in the workflow
+- **WHEN** the user saves a board project scope
+- **THEN** the board's workflow YAML is unchanged
+- **AND** the scope does not appear in the workflow editor

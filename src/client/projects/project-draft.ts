@@ -4,6 +4,8 @@ import type { Project, ProjectInput, ProjectLocation } from '../../shared/types.
 export interface ProjectDraft {
   id?: string;
   name: string;
+  /** Stable identity within the Hub; empty means the host derives it from the name. */
+  projectKey: string;
   projectPath: string;
   gitRootPath: string;
   defaultBranch: string;
@@ -17,6 +19,7 @@ export function createProjectDraft(project?: Project): ProjectDraft {
   return {
     ...(project === undefined ? {} : { id: project.id }),
     name: project?.name ?? '',
+    projectKey: project?.projectKey ?? '',
     projectPath: project?.projectPath ?? '',
     gitRootPath: project?.gitRootPath ?? '',
     defaultBranch: project?.defaultBranch ?? '',
@@ -25,7 +28,7 @@ export function createProjectDraft(project?: Project): ProjectDraft {
   };
 }
 
-export function editProjectDraft(draft: ProjectDraft, field: 'name' | 'projectPath' | 'gitRootPath' | 'defaultBranch', value: string): ProjectDraft {
+export function editProjectDraft(draft: ProjectDraft, field: 'name' | 'projectKey' | 'projectPath' | 'gitRootPath' | 'defaultBranch', value: string): ProjectDraft {
   return { ...draft, [field]: value, edited: { ...draft.edited, [field]: true } };
 }
 
@@ -60,9 +63,11 @@ export function canSaveProject(draft: ProjectDraft): boolean {
 export function toProjectInput(draft: ProjectDraft): ProjectInput {
   const gitRootPath = draft.gitRootPath.trim();
   const defaultBranch = draft.defaultBranch.trim();
+  const projectKey = draft.projectKey.trim();
   return {
     ...(draft.id === undefined ? {} : { id: draft.id }),
     name: draft.name.trim(),
+    ...(projectKey ? { projectKey } : {}),
     projectPath: draft.projectPath.trim(),
     ...(gitRootPath ? { gitRootPath } : {}),
     ...(gitRootPath && defaultBranch ? { defaultBranch } : {}),

@@ -2,7 +2,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain';
 import { z } from 'zod';
 import type { SharedHubDocument } from '../../domain/sharing/document.js';
-import { parseSharedDocument, serializeSharedDocument, SharedHubDocumentSchema } from '../../domain/sharing/document.js';
+import { SHARED_DOCUMENT_VERSION, parseSharedDocument, serializeSharedDocument, sharedDocumentToken, SharedHubDocumentSchema } from '../../domain/sharing/document.js';
 import type { OrphanMap, BoardBindings } from '../../domain/sharing/identity.js';
 import { KanbanError } from '../../shared/errors.js';
 import { SHARING_STORAGES } from '../../shared/types.js';
@@ -137,18 +137,52 @@ export async function openSharingStorage(ctx: Context, options: { report?: (erro
   }));
   const table = domain.table('records');
   const records = new Map<string, HubSharingRecord>();
-  const validDocument = (value: StoredSharedDocument | null): boolean => {
-    if (value === null) return true;
-    try { parseSharedDocument(serializeSharedDocument(value.document)); return true; }
-    catch { return false; }
+  /**
+   * Read one stored document through the current format. A document written by an
+   * older version is normalized instead of dropped, so an installation that already
+   * published keeps its bindings, orphans, and recorded removals across the upgrade.
+   * undefined means the document cannot be read at all.
+   */
+  const normalizedDocument = (value: StoredSharedDocument | null): StoredSharedDocument | null | undefined => {
+    if (value === null) return null;
+    try {
+      const document = parseSharedDocument(serializeSharedDocument(value.document));
+      return { token: sharedDocumentToken(document), document };
+    } catch { return undefined; }
+  };
+  /**
+   * Whether a stored document came from a newer format. Normalizing it would erase that
+   * fact, because serialization always writes the current version, so the version is
+   * read from the stored value before anything rewrites it.
+   */
+  const fromNewerVersion = (value: StoredSharedDocument | null): boolean => {
+    if (value === null) return false;
+    const version = (value.document as { version?: unknown }).version;
+    return typeof version === 'number' && version > SHARED_DOCUMENT_VERSION;
   };
   for (const [hubId, raw] of table.entries()) {
     const parsed = migrateSharingRecord(raw);
-    if (!parsed || parsed.hubId !== hubId || !validDocument(parsed.base) || !validDocument(parsed.seen) || !validDocument(parsed.preview)) {
+    if (!parsed || parsed.hubId !== hubId) {
       options.report?.(new KanbanError('SHARING_STORAGE_INVALID', 'Stored publishing state is invalid and was ignored.', { hubId }));
       continue;
     }
-    records.set(hubId, parsed);
+    if ([parsed.base, parsed.seen, parsed.preview].some(fromNewerVersion)) {
+      // Keep the binding and the recorded bookkeeping, drop only the documents this
+      // version cannot read, and report the state so apply and publish stay blocked.
+      records.set(hubId, {
+        ...parsed, base: null, seen: null, preview: null,
+        lastError: { code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED', message: 'The team configuration was written by a newer plugin version. Update the plugin to read or publish it.' },
+      });
+      continue;
+    }
+    const base = normalizedDocument(parsed.base);
+    const seen = normalizedDocument(parsed.seen);
+    const preview = normalizedDocument(parsed.preview);
+    if (base === undefined || seen === undefined || preview === undefined) {
+      options.report?.(new KanbanError('SHARING_STORAGE_INVALID', 'Stored publishing state is invalid and was ignored.', { hubId }));
+      continue;
+    }
+    records.set(hubId, { ...parsed, base, seen, preview });
   }
   const storage: HubSharingStore = {
     load: hubId => { const value = records.get(hubId); return value === undefined ? undefined : structuredClone(value); },

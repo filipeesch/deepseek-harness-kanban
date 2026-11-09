@@ -18,7 +18,7 @@ export interface ProjectEditorController {
   /** Present while the editor asks the user to confirm a relocation before sending it. */
   relocation: RelocationImpact | null;
   readonly canBrowse: boolean;
-  change(field: 'name' | 'projectPath' | 'gitRootPath' | 'defaultBranch', value: string): void;
+  change(field: 'name' | 'projectKey' | 'projectPath' | 'gitRootPath' | 'defaultBranch', value: string): void;
   browse(): Promise<void>;
   blurPath(): void;
   save(): Promise<void>;
@@ -59,7 +59,7 @@ export function useProjectEditor({ api, hubId, expectedRevision, project, tasks,
     setDraft(next);
   }
 
-  function change(field: 'name' | 'projectPath' | 'gitRootPath' | 'defaultBranch', value: string): void {
+  function change(field: 'name' | 'projectKey' | 'projectPath' | 'gitRootPath' | 'defaultBranch', value: string): void {
     if (pending) return;
     setError(null);
     // A manual path edit cancels an in-flight detection for the previous path.

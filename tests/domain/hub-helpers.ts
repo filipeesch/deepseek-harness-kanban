@@ -37,7 +37,7 @@ export function operationDeps() {
 export function sampleHub(id = 'hub', name = 'Hub'): HubState {
   const now = '2026-01-01T00:00:00.000Z';
   return {
-    id, name, revision: 0, projects: [{ id: 'project', name: 'Project', projectPath: '/repo/app', gitRootPath: '/repo' }],
+    id, name, revision: 0, projects: [{ id: 'project', projectKey: 'project', name: 'Project', projectPath: '/repo/app', gitRootPath: '/repo' }],
     boards: [{ id: 'board', name: 'Board', workflowYaml: 'name: Flow\ninitial_column: backlog\ncolumns:\n  - id: backlog\n    label: Backlog\n', workflow: { name: 'Flow', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] }, createdAt: now, updatedAt: now }],
     tasks: [], notes: [], createdAt: now, updatedAt: now,
   };

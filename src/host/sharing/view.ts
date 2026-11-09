@@ -2,12 +2,12 @@ import type { HubSharingView, HubState, Problem, SharingAuthStatus, SharingBlock
 import { displayState, type BoardDecision, type SharingComparison } from '../../domain/sharing/plan.js';
 import { compareSharing } from '../../domain/sharing/plan.js';
 import { projectSharingBoards } from '../../domain/sharing/projection.js';
-import type { SharedHubDocument } from '../../domain/sharing/document.js';
+import { SHARED_DOCUMENT_VERSION, type SharedHubDocument } from '../../domain/sharing/document.js';
 import type { ProviderDescription } from './provider.js';
 import type { HubSharingRecord } from './state.js';
 
 export function publishedDocument(record: HubSharingRecord): SharedHubDocument {
-  return record.preview?.document ?? record.seen?.document ?? { version: 1, boards: [] };
+  return record.preview?.document ?? record.seen?.document ?? { version: SHARED_DOCUMENT_VERSION, boards: [] };
 }
 
 export function sharingComparison(record: HubSharingRecord, hub: HubState): SharingComparison {
@@ -20,6 +20,14 @@ export function sharingComparison(record: HubSharingRecord, hub: HubState): Shar
     removed: record.removed,
     pendingRemovals: record.pendingRemovals,
   });
+}
+
+/** A review needs the two versions side by side, and a project scope difference counts too. */
+function needsDetail(local: { name: string; workflow: string; projectKeys?: readonly string[] }, published: { name: string; workflow: string; projectKeys?: readonly string[] }): boolean {
+  if (local.workflow !== published.workflow || local.name !== published.name) return true;
+  if (local.projectKeys === undefined || published.projectKeys === undefined) return local.projectKeys !== published.projectKeys;
+  const canonical = (keys: readonly string[]): string => [...new Set(keys)].sort().join('\u0000');
+  return canonical(local.projectKeys) !== canonical(published.projectKeys);
 }
 
 function boardState(decision: BoardDecision): SharingBoardState {
@@ -44,7 +52,15 @@ export function buildSharingView(record: HubSharingRecord, hub: HubState, contex
       state: boardState(board.decision),
       bound: record.bindings[board.boardId!] !== undefined,
       pending: board.pending,
-      ...(board.local !== undefined && board.published !== undefined && (board.local.workflow !== board.published.workflow || board.local.name !== board.published.name) ? { detail: { local: board.local.workflow, team: board.published.workflow, localName: board.local.name, teamName: board.published.name } } : {}),
+      ...(board.local !== undefined && board.published !== undefined && needsDetail(board.local, board.published)
+        ? {
+          detail: {
+            local: board.local.workflow, team: board.published.workflow, localName: board.local.name, teamName: board.published.name,
+            ...(board.local.projectKeys === undefined ? {} : { localProjectKeys: [...board.local.projectKeys] }),
+            ...(board.published.projectKeys === undefined ? {} : { teamProjectKeys: [...board.published.projectKeys] }),
+          },
+        }
+        : {}),
     }));
   const incoming = comparison.boards.filter(board => board.decision === 'create' && board.key !== undefined).map(board => ({ key: board.key!, name: board.name }));
   const removing = comparison.boards.filter(board => board.decision === 'remove' && board.boardId !== undefined).map(board => ({ boardId: board.boardId!, name: board.name }));

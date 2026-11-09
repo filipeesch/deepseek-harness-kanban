@@ -489,6 +489,41 @@ test('starts locked again after a reload', async ({ page }) => {
   await expect(page.locator('.kb-flow-resize')).toHaveCount(0);
 });
 
+test('restores the pan and zoom of the board after a reload', async ({ page }) => {
+  await openFlow(page);
+  const before = await viewportStyle(page);
+  await page.mouse.move(1000, 800);
+  await page.mouse.wheel(0, -240);
+  await expect.poll(async () => scaleOf(await viewportStyle(page))).toBeGreaterThan(scaleOf(before));
+  // The wheel zoom settles immediately; give the stored write its frame.
+  await page.waitForTimeout(250);
+  const zoomed = await viewportStyle(page);
+  await page.reload();
+  await page.waitForFunction(() => (window as unknown as { __harnessReady?: boolean }).__harnessReady === true);
+  await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-ready', 'true');
+  await expect.poll(async () => scaleOf(await viewportStyle(page))).toBeCloseTo(scaleOf(zoomed), 2);
+  expect(translateYOf(await viewportStyle(page))).toBeCloseTo(translateYOf(zoomed), 0);
+  expect(await commands(page)).toEqual([]);
+});
+
+test('stores the framed position when fit-to-view is used', async ({ page }) => {
+  await openFlow(page);
+  const before = await viewportStyle(page);
+  await page.mouse.move(1000, 800);
+  await page.mouse.wheel(0, -240);
+  await expect.poll(async () => scaleOf(await viewportStyle(page))).toBeGreaterThan(scaleOf(before));
+  const zoomed = scaleOf(await viewportStyle(page));
+  await page.getByRole('button', { name: 'Fit to view' }).click();
+  await expect.poll(async () => scaleOf(await viewportStyle(page))).not.toBeCloseTo(zoomed, 2);
+  // The fit animates, so the stored value is the one it settles on.
+  await page.waitForTimeout(400);
+  const fitted = scaleOf(await viewportStyle(page));
+  await page.reload();
+  await page.waitForFunction(() => (window as unknown as { __harnessReady?: boolean }).__harnessReady === true);
+  await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-ready', 'true');
+  await expect.poll(async () => scaleOf(await viewportStyle(page))).toBeCloseTo(fitted, 2);
+});
+
 test('asks before advancing a card to a restricted next stage', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(HARNESS + '?scenario=flow-restricted-next');

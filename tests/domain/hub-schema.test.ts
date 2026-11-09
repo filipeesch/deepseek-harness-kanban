@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HubStateSchema } from '../../src/domain/hub-schema.js';
+import { HubStateSchema, StoredHubStateSchema } from '../../src/domain/hub-schema.js';
 import type { HubState, HubTask } from '../../src/shared/types.js';
 import { sampleHub } from './hub-helpers.js';
 
@@ -17,6 +17,58 @@ describe('HubState schema', () => {
   it('rejects a duplicate board name within the Hub', () => {
     const hub = hubWith(); hub.boards.push({ ...hub.boards[0]!, id: 'board-2', name: ' board ' });
     expect(HubStateSchema.safeParse(hub).success).toBe(false);
+  });
+
+  it('accepts a board project scope of known keys and rejects an unknown or repeated one', () => {
+    const hub = hubWith();
+    hub.projects.push({ id: 'other', name: 'Other', projectKey: 'other', projectPath: '/repo/other' });
+    hub.boards[0]!.allowedProjectKeys = ['project', 'other'];
+    expect(HubStateSchema.safeParse(hub).success).toBe(true);
+    hub.boards[0]!.allowedProjectKeys = ['project', 'project'];
+    expect(HubStateSchema.safeParse(hub).success).toBe(false);
+    hub.boards[0]!.allowedProjectKeys = ['missing'];
+    expect(HubStateSchema.safeParse(hub).success).toBe(false);
+    hub.boards[0]!.allowedProjectKeys = [];
+    expect(HubStateSchema.safeParse(hub).success).toBe(true);
+  });
+
+  it('accepts a published placeholder without a path and rejects an inconsistent one', () => {
+    const placeholder = hubWith();
+    placeholder.projects.push({ id: 'ops', name: 'ops', projectKey: 'ops', origin: 'published' });
+    placeholder.boards[0]!.allowedProjectKeys = ['ops'];
+    expect(HubStateSchema.safeParse(placeholder).success).toBe(true);
+    const withPath = hubWith();
+    withPath.projects.push({ id: 'ops', name: 'ops', projectKey: 'ops', origin: 'published', projectPath: '/repo/ops' } as unknown as HubState['projects'][number]);
+    expect(HubStateSchema.safeParse(withPath).success).toBe(false);
+    const withoutPath = hubWith();
+    withoutPath.projects[0] = { ...withoutPath.projects[0]!, projectPath: undefined } as unknown as HubState['projects'][number];
+    expect(HubStateSchema.safeParse(withoutPath).success).toBe(false);
+  });
+
+  it('rejects a project without a key or with a key another project uses', () => {
+    const keyless = hubWith();
+    keyless.projects[0] = { id: 'project', name: 'Project', projectPath: '/repo/app' } as unknown as HubState['projects'][number];
+    expect(HubStateSchema.safeParse(keyless).success).toBe(false);
+    const duplicate = hubWith();
+    duplicate.projects.push({ id: 'other', name: 'Other', projectKey: 'project', projectPath: '/repo/other' });
+    expect(HubStateSchema.safeParse(duplicate).success).toBe(false);
+  });
+
+  it('reads a stored record whose project predates project keys, but not as an opened Hub', () => {
+    const stored = hubWith();
+    stored.projects[0] = { id: 'project', name: 'Project', projectPath: '/repo/app', gitRootPath: '/repo' } as unknown as HubState['projects'][number];
+    // The storage domain validates every record before the repository can backfill it.
+    expect(StoredHubStateSchema.safeParse(stored).success).toBe(true);
+    expect(HubStateSchema.safeParse(stored).success).toBe(false);
+  });
+
+  it('refuses workspace or relocation metadata on a placeholder, and a task that names one', () => {
+    const withWorkspace = hubWith();
+    withWorkspace.projects.push({ id: 'ops', name: 'ops', projectKey: 'ops', origin: 'published', workspaceId: 'workspace' } as unknown as HubState['projects'][number]);
+    expect(StoredHubStateSchema.safeParse(withWorkspace).success).toBe(false);
+    const taskOnPlaceholder = hubWith(task({ projectId: 'ops' }));
+    taskOnPlaceholder.projects.push({ id: 'ops', name: 'ops', projectKey: 'ops', origin: 'published' });
+    expect(HubStateSchema.safeParse(taskOnPlaceholder).success).toBe(false);
   });
 
   it('rejects a task whose board does not exist', () => {

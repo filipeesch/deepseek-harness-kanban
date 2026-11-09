@@ -195,6 +195,12 @@ describe('host command orchestration',()=>{
  it('accepts the project relocation wire commands and the retained-checkout projection',()=>{
   const relocate={type:'project.relocate' as const,project:{id:'project-1',name:'Web',projectPath:'/moved',gitRootPath:'/moved'},confirmed:true};
   expect(CommandSchema.parse(relocate)).toEqual(relocate);
+  const scoped={type:'board.projects.save' as const,hubId:'hub-1',boardId:'board-1',projectKeys:['p1'],expectedRevision:2};
+  expect(CommandSchema.parse(scoped)).toEqual(scoped);
+  expect(CommandSchema.parse({type:'board.projects.save',hubId:'hub-1',boardId:'board-1'})).toEqual({type:'board.projects.save',hubId:'hub-1',boardId:'board-1'});
+  expect(()=>CommandSchema.parse({...scoped,projectKeys:[]})).not.toThrow();
+  expect(()=>CommandSchema.parse({...scoped,projectKeys:['p1','p1']})).toThrow();
+  expect(()=>CommandSchema.parse({...scoped,extra:true})).toThrow();
   expect(()=>CommandSchema.parse({...relocate,project:{...relocate.project,id:undefined}})).toThrow();
   expect(()=>CommandSchema.parse({...relocate,confirmed:undefined})).toThrow();
   const retry={type:'project.relocationRetry' as const,projectId:'project-1'};

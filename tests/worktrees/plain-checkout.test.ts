@@ -42,7 +42,7 @@ async function setup() {
   const other = path.join(root, 'trees', 'other');
   await mkdir(nested, { recursive: true });
   await mkdir(other, { recursive: true });
-  const project: Project = { id: 'project', name: 'API', projectPath };
+  const project: Project = { id: 'project', projectKey: 'project', name: 'API', projectPath };
   const hub = board(project);
   hub.tasks[0]!.worktree = { path: checkout, branch: 'feature', owned: true, status: 'ready' };
   hub.tasks[0]!.effectiveCwd = nested;

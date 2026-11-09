@@ -45,6 +45,9 @@ export function relocationImpact(project: Project, input: ProjectInput, tasks: r
  */
 export function relocationBlockedReason(project: Project | undefined, input: ProjectInput, tasks: readonly Task[]): string | null {
   if (!project || projectTasks(project, tasks).length === 0) return null;
+  // The relocation command carries a location, not a key, so a key edit has to be a
+  // separate save; silently dropping it would report success for an ignored change.
+  if (input.projectKey !== undefined && input.projectKey !== project.projectKey) return 'Save the new project key before relocating the project location.';
   const currentRoot = project.gitRootPath ?? '';
   const nextRoot = input.gitRootPath ?? '';
   const kindChanged = (currentRoot === '') !== (nextRoot === '');

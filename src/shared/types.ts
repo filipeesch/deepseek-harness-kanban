@@ -20,9 +20,22 @@ export interface ProjectRelocation {
   started: boolean;
   createdAt: string;
 }
-export interface Project { id: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string; workspaceId?: string; workspaceOwned?: boolean; /** Absent means no relocation is recorded. */ operation?: ProjectRelocation }
+/** The fields every project carries, whatever its kind. */
+export interface ProjectBase {
+  id: string; name: string;
+  /** Stable identity across boards and installations; unique within its Hub. */
+  projectKey: string;
+  gitRootPath?: string; defaultBranch?: string; workspaceId?: string; workspaceOwned?: boolean;
+  /** Absent means no relocation is recorded. */
+  operation?: ProjectRelocation;
+}
+/** A project registered in a Hub, with the directory its tasks use. */
+export interface RegisteredProject extends ProjectBase { projectPath: string; origin?: undefined }
+/** A project that exists only because a received board names its key; it has no directory until adopted. */
+export interface PublishedProject extends ProjectBase { origin: 'published'; projectPath?: undefined }
+export type Project = RegisteredProject | PublishedProject;
 /** A project whose Git root is known; required by every Git and worktree operation. */
-export type GitProject = Project & { gitRootPath: string };
+export type GitProject = RegisteredProject & { gitRootPath: string };
 /** Non-persistent result of inspecting a folder for project registration. */
 export type ProjectLocation =
   | { kind: 'git'; projectPath: string; gitRootPath: string; defaultBranch?: string }
@@ -92,7 +105,12 @@ export interface Task {
 }
 export interface Note { id: string; taskId: string; content: string; createdAt: string; updatedAt: string; tags?: string[] }
 export interface BoardSettings { worktreeBasePath?: string }
-export interface Board { id: string; name: string; workflowYaml: string; workflow: Workflow; createdAt: string; updatedAt: string }
+export interface Board {
+  id: string; name: string; workflowYaml: string; workflow: Workflow;
+  /** Absent means every project of the Hub may create tasks on this board; an empty list closes it to creation. */
+  allowedProjectKeys?: string[];
+  createdAt: string; updatedAt: string;
+}
 /** A task that belongs to a board. The legacy BoardState keeps plain Task for migration compatibility. */
 export interface HubTask extends Task { boardId: string }
 export interface HubState {
@@ -147,7 +165,17 @@ export interface SharingAuthView {
   folders?: Array<{ id: string; name: string }>;
 }
 export interface SharingBlockerView { code: string; message: string; boardId?: string; boardName?: string; columnId?: string; tasks?: number }
-export interface SharingBoardView { boardId: string; key?: string; name: string; state: SharingBoardState; bound: boolean; /** The decision still requires review. */ pending: boolean; /** Both workflow versions, present for a board that needs a choice. */ detail?: { local: string; team: string; localName: string; teamName: string } }
+export interface SharingBoardView {
+  boardId: string; key?: string; name: string; state: SharingBoardState; bound: boolean;
+  /** The decision still requires review. */
+  pending: boolean;
+  /** Both versions, present for a board that needs a choice. */
+  detail?: {
+    local: string; team: string; localName: string; teamName: string;
+    /** The local project scope; absent means every project, an empty list means closed. */
+    localProjectKeys?: string[]; teamProjectKeys?: string[];
+  };
+}
 export interface HubSharingView {
   status: SharingHubStatus;
   provider: SharingStorage;
@@ -265,7 +293,7 @@ export interface SnapshotRequest {
 /** Client snapshot: host facts plus the client-owned attention projection. State is always merged. */
 export interface KanbanSnapshot extends Omit<HostSnapshot, 'conversations' | 'state'> { state: KanbanState; attention: Record<string, Attention>; conversationAttention: Record<string, Attention>; clientEpoch?: number }
 export const EMPTY_ATTENTION: Attention = { running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
-export interface ProjectInput { id?: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string }
+export interface ProjectInput { id?: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string; projectKey?: string }
 export type Command =
   | { type: 'hub.create'; name: string }
   | { type: 'hub.rename'; hubId: string; name: string; expectedRevision?: number }
@@ -274,6 +302,8 @@ export type Command =
   | { type: 'board.rename'; hubId: string; boardId: string; name: string; expectedRevision?: number }
   | { type: 'board.delete'; hubId: string; boardId: string; confirmed: boolean; expectedRevision?: number; sharing?: 'local' | 'team' }
   | { type: 'board.workflow.save'; hubId: string; boardId: string; yaml: string; expectedRevision?: number }
+  /** An absent `projectKeys` allows every project of the Hub; an empty list closes the board to creation. */
+  | { type: 'board.projects.save'; hubId: string; boardId: string; projectKeys?: string[]; expectedRevision?: number }
   | { type: 'project.save'; hubId?: string; project: ProjectInput; expectedRevision?: number }
   | { type: 'project.relocate'; hubId?: string; project: ProjectInput & { id: string }; confirmed: boolean; expectedRevision?: number }
   | { type: 'project.relocationRetry'; hubId?: string; projectId: string }

@@ -4,8 +4,8 @@ import type { PreparationRequest } from '../../src/client/execution-preparation/
 import type { CreateWorktree, Project, Task } from '../../src/shared/types.js';
 
 const now = '2026-10-21T12:00:00Z';
-const gitProject: Project = { id: 'p1', name: 'API', projectPath: '/repo/apps/api', gitRootPath: '/repo', defaultBranch: 'main' };
-const folderProject: Project = { id: 'p1', name: 'Folder', projectPath: '/repo/apps/api' };
+const gitProject: Project = { id: 'p1', projectKey: 'p1', name: 'API', projectPath: '/repo/apps/api', gitRootPath: '/repo', defaultBranch: 'main' };
+const folderProject: Project = { id: 'p1', projectKey: 'p1', name: 'Folder', projectPath: '/repo/apps/api' };
 const column = { id: 'review', name: 'Review', onEnterPrompt: 'Review carefully.' };
 
 function task(overrides: Partial<Task> = {}): Task {
