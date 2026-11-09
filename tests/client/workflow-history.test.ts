@@ -38,3 +38,35 @@ describe('placement history', () => {
     expect(canRedo(history)).toBe(false);
   });
 });
+const connectionStep = {
+  before: { one: { x: 0, y: 0 } },
+  after: { one: { x: 0, y: 0 } },
+  beforeConnections: {},
+  afterConnections: { 'one->two': { from: 'one', to: 'two', source: { side: 'top' as const, at: 1 } } },
+};
+
+describe('connection layout history', () => {
+  it('restores the connection layout on undo and redo', () => {
+    const history = pushStep(emptyHistory(), connectionStep);
+    const undone = undoStep(history)!;
+    expect(undone.connections).toEqual({});
+    expect(canRedo(undone.history)).toBe(true);
+    const redone = redoStep(undone.history)!;
+    expect(redone.connections).toEqual(connectionStep.afterConnections);
+  });
+
+  it('leaves the connection layout undefined for a step that changed none', () => {
+    const history = pushStep(emptyHistory(), step('a'));
+    expect(undoStep(history)!.connections).toBeUndefined();
+    expect(redoStep(undoStep(history)!.history)!.connections).toBeUndefined();
+  });
+
+  it('restores an entry that a later step removed', () => {
+    const removal = { before: {}, after: {}, beforeConnections: connectionStep.afterConnections, afterConnections: {} };
+    const history = pushStep(pushStep(emptyHistory(), connectionStep), removal);
+    const undone = undoStep(history)!;
+    expect(undone.connections).toEqual(connectionStep.afterConnections);
+    const redone = redoStep(undone.history)!;
+    expect(redone.connections).toEqual({});
+  });
+});

@@ -67,3 +67,36 @@ describe('workflow scene', () => {
     expect(scene.nodes.every(node => node.tasks.length === 0)).toBe(true);
   });
 });
+
+describe('workflow scene connection layout', () => {
+  it('draws an authored connection without changing the stage model', () => {
+    const connections = { 'one->two': { from: 'one', to: 'two', source: { side: 'bottom' as const, at: 4 } } };
+    const plain = buildWorkflowScene({ workflow, tasks: [], placements });
+    const adjusted = buildWorkflowScene({ workflow, tasks: [], placements, connections });
+    expect(adjusted.edges[0]!.shape.points[0]).toEqual({ x: 0 + 264 * 0.9, y: 140 });
+    expect(plain.edges[0]!.shape.points[0]).toEqual({ x: 264, y: 70 });
+    expect(adjusted.nodes.map(node => node.position)).toEqual(plain.nodes.map(node => node.position));
+  });
+
+  it('moves an authored segment without touching the other connections', () => {
+    const staggered = new Map([['one', { x: 0, y: 0 }], ['two', { x: 400, y: 120 }], ['three', { x: 800, y: 0 }]]);
+    const connections = { 'one->two': { from: 'one', to: 'two', segments: [{ axis: 'x' as const, offset: 30 }] } };
+    const plain = buildWorkflowScene({ workflow, tasks: [], placements: staggered });
+    const adjusted = buildWorkflowScene({ workflow, tasks: [], placements: staggered, connections });
+    expect(adjusted.edges[1]!.shape.points).toEqual(plain.edges[1]!.shape.points);
+    expect(adjusted.edges[0]!.shape.points).not.toEqual(plain.edges[0]!.shape.points);
+  });
+});
+describe('workflow scene connection defaults', () => {
+  it('draws the workflow own layouts when the caller passes none', () => {
+    const authored: Workflow = { ...workflow, connections: [{ from: 'one', to: 'two', source: { side: 'bottom', at: 4 } }] };
+    const scene = buildWorkflowScene({ workflow: authored, tasks: [], placements });
+    expect(scene.edges[0]!.shape.points[0]).toEqual({ x: 264 * 0.9, y: 140 });
+  });
+
+  it('prefers the layouts the caller presents over the stored ones', () => {
+    const authored: Workflow = { ...workflow, connections: [{ from: 'one', to: 'two', source: { side: 'bottom', at: 0 } }] };
+    const scene = buildWorkflowScene({ workflow: authored, tasks: [], placements, connections: { 'one->two': { from: 'one', to: 'two', source: { side: 'top', at: 2 } } } });
+    expect(scene.edges[0]!.shape.points[0]).toEqual({ x: 132, y: 0 });
+  });
+});

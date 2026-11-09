@@ -145,3 +145,43 @@ describe('workflow configuration', () => {
     expect(() => parseWorkflow(' '.repeat(1_000_001))).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
   });
 });
+
+describe('workflow connection layout', () => {
+  const base = 'columns:' + String.fromCharCode(10) + '  - id: one' + String.fromCharCode(10) + '    label: One' + String.fromCharCode(10) + '  - id: two' + String.fromCharCode(10) + '    label: Two' + String.fromCharCode(10);
+
+  it('parses authored anchors and segment displacements', () => {
+    const result = parseWorkflow(base + 'connections:' + String.fromCharCode(10) + '  - from: one' + String.fromCharCode(10) + '    to: two' + String.fromCharCode(10) + '    source: {side: right, at: 2}' + String.fromCharCode(10) + '    target: {side: top, at: 0}' + String.fromCharCode(10) + '    segments:' + String.fromCharCode(10) + '      - {axis: x, offset: 64}' + String.fromCharCode(10) + '      - {axis: y, offset: -20}' + String.fromCharCode(10));
+    expect(result.connections).toEqual([{ from: 'one', to: 'two', source: { side: 'right', at: 2 }, target: { side: 'top', at: 0 }, segments: [{ axis: 'x', offset: 64 }, { axis: 'y', offset: -20 }] }]);
+  });
+
+  it('keeps an entry the workflow draws no connection for', () => {
+    const result = parseWorkflow(base + 'connections: [{from: one, to: missing}]');
+    expect(result.connections).toEqual([{ from: 'one', to: 'missing' }]);
+  });
+
+  it('omits the field when the document authors none', () => {
+    expect(parseWorkflow(base).connections).toBeUndefined();
+    expect(parseWorkflow(base + 'connections: []').connections).toBeUndefined();
+  });
+
+  it.each([
+    'connections: {from: one, to: two}',
+    'connections: [{to: two}]',
+    'connections: [{from: one}]',
+    'connections: [{from: 3, to: two}]',
+    'connections: [{from: one, to: two, x: 1}]',
+    'connections: [{from: one, to: two, source: {side: middle, at: 1}}]',
+    'connections: [{from: one, to: two, source: {side: right, at: 5}}]',
+    'connections: [{from: one, to: two, source: {side: right, at: 1.5}}]',
+    'connections: [{from: one, to: two, source: {side: right, at: 1, extra: 2}}]',
+    'connections: [{from: one, to: two, target: {side: left}}]',
+    'connections: [{from: one, to: two, segments: 3}]',
+    'connections: [{from: one, to: two, segments: [{axis: z, offset: 1}]}]',
+    'connections: [{from: one, to: two, segments: [{axis: x}]}]',
+    'connections: [{from: one, to: two, segments: [{axis: x, offset: .inf}]}]',
+    'connections: [{from: one, to: two, segments: [{axis: x, offset: 1, weight: 2}]}]',
+    'connections: [{from: one, to: two}, {from: one, to: two}]',
+  ])('rejects a malformed connection layout %#', yaml => {
+    expect(() => parseWorkflow(base + yaml)).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+  });
+});

@@ -37,7 +37,17 @@ export type TransitionRule = { to: string; when?: string }
 export interface StageSize { width: number; height: number }
 export interface Column { id: string; name: string; onEnterPrompt?: string; allowedTransitions?: TransitionRule[]; /** Absent means the diagram places the stage automatically. */ position?: StagePosition; /** Absent means the stage renders at the accepted minimum size. */ size?: StageSize }
 export interface ColumnGroup { id: string; name: string; columnIds: string[] }
-export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[]; /** Absent means the board opens the column board. */ defaultView?: WorkflowView }
+/** One of the four sides of a stage boundary that a connection can touch. */
+export type StageSide = 'top' | 'right' | 'bottom' | 'left'
+/** The axis an adjustable connection segment runs along. */
+export type ConnectionAxis = 'x' | 'y'
+/** One authored touch point on a stage boundary: a side and one of its five points. */
+export interface ConnectionAnchor { side: StageSide; at: number }
+/** One authored displacement of an adjustable connection segment, relative to the automatic route. */
+export interface ConnectionSegmentOffset { axis: ConnectionAxis; offset: number }
+/** One authored connection layout, identified by its source and target stage. */
+export interface ConnectionLayout { from: string; to: string; source?: ConnectionAnchor; target?: ConnectionAnchor; segments?: ConnectionSegmentOffset[] }
+export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[]; /** Absent means the board opens the column board. */ defaultView?: WorkflowView; /** Authored connection layouts; an absent entry keeps the automatic route. */ connections?: ConnectionLayout[] }
 export interface Worktree { path: string; branch: string; owned: boolean; status: 'preparing' | 'ready' | 'error'; error?: Problem }
 export interface CreateWorktree { mode: 'new' | 'existing'; path: string; branchName: string; sourceBranch?: string }
 /**

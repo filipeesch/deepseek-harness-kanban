@@ -7,12 +7,8 @@ export interface ConnectionShape {
   readonly tipAngle: number;
 }
 
-/** How far apart multiple connections leave the same stage edge. */
-const FAN_OUT_SPACING = 20;
-/** How far a returning connection runs below the stages it passes. */
-const RETURNING_DEPTH = 72;
 /** The radius of every right-angle corner. */
-const CORNER_RADIUS = 12;
+export const CORNER_RADIUS = 12;
 /** How many points the travel animation samples from the drawn path. */
 export const CONNECTION_SAMPLES = 32;
 
@@ -28,7 +24,7 @@ function distance(from: DiagramPoint, to: DiagramPoint): number {
   return Math.hypot(to.x - from.x, to.y - from.y);
 }
 
-/** A point `span` away from `from`, on the line towards `to`. */
+/** A point span away from from, on the line towards to. */
 function towards(from: DiagramPoint, to: DiagramPoint, span: number): DiagramPoint {
   const length = distance(from, to);
   if (length === 0) return { x: from.x, y: from.y };
@@ -108,13 +104,6 @@ function sampleSegments(segments: readonly Segment[], count: number): DiagramPoi
   return points;
 }
 
-/**
- * The drawn shape of one connection. A forward connection leaves the source's
- * right edge at a fan-out offset and enters the target's left edge; a returning
- * connection leaves both bottom edges and runs below the stages. Both are
- * orthogonal with rounded corners, and the sampled points are the same path the
- * card travels.
- */
 function tipAngleOf(points: readonly DiagramPoint[]): number {
   const end = points[points.length - 1];
   const previous = points[points.length - 2];
@@ -122,65 +111,8 @@ function tipAngleOf(points: readonly DiagramPoint[]): number {
   return Math.atan2(end.y - previous.y, end.x - previous.x) * (180 / Math.PI);
 }
 
-/** Both edges leave and enter through the bottom, below every stage. */
-function bottomPoints(from: DiagramRect, to: DiagramRect, options: {
-  readonly fanOut: number;
-  readonly fanOutCount: number;
-  readonly clearance?: number;
-}): DiagramPoint[] {
-  // Distinct departures along the bottom edge, and a gutter below every stage so
-  // the route does not cut through a stacked stage on its way back.
-  const step = from.width / (options.fanOutCount + 1);
-  const start = { x: from.x + step * (options.fanOut + 1), y: from.y + from.height };
-  const end = { x: to.x + to.width / 2, y: to.y + to.height };
-  const floor = Math.max(start.y, end.y, options.clearance ?? 0) + RETURNING_DEPTH;
-  return [start, { x: start.x, y: floor }, { x: end.x, y: floor }, end];
-}
-
-/** The route that leaves and enters through the right edges, outside both stages. */
-function sidePoints(start: DiagramPoint, end: DiagramPoint): DiagramPoint[] {
-  const gutter = Math.max(start.x, end.x) + RETURNING_DEPTH;
-  return [start, { x: gutter, y: start.y }, { x: gutter, y: end.y }, end];
-}
-
-function rangesOverlap(from: DiagramRect, to: DiagramRect): { readonly x: boolean; readonly y: boolean } {
-  return {
-    x: from.x < to.x + to.width && to.x < from.x + from.width,
-    y: from.y < to.y + to.height && to.y < from.y + from.height,
-  };
-}
-
-export function connectionShape(from: DiagramRect, to: DiagramRect, options: {
-  readonly returning: boolean;
-  readonly fanOut: number;
-  readonly fanOutCount: number;
-  /** The lowest stage bottom the connection must stay below. */
-  readonly clearance?: number;
-}): ConnectionShape {
-  const spread = Math.max(0, from.height - 16);
-  const spacing = options.fanOutCount > 1 ? Math.min(FAN_OUT_SPACING, spread / (options.fanOutCount - 1)) : 0;
-  const offset = options.fanOutCount > 1 ? (options.fanOut - (options.fanOutCount - 1) / 2) * spacing : 0;
-  let points: DiagramPoint[];
-  if (options.returning) {
-    points = bottomPoints(from, to, options);
-  } else {
-    const start = { x: from.x + from.width, y: from.y + from.height / 2 + offset };
-    const end = { x: to.x, y: to.y + to.height / 2 };
-    // The target can sit physically before the source after stages are rearranged;
-    // a horizontal line would then cross both interiors. A stacked pair overlapping
-    // horizontally gets the side route, because a bottom gutter would run through
-    // the lower stage; every other arrangement uses the gutter below both.
-    if (end.x <= start.x) {
-      const overlap = rangesOverlap(from, to);
-      const sideEnd = { x: to.x + to.width, y: to.y + to.height / 2 };
-      points = overlap.x && !overlap.y ? sidePoints(start, sideEnd) : bottomPoints(from, to, options);
-    }
-    else if (Math.abs(end.y - start.y) < 1) points = [start, end];
-    else {
-      const middle = (start.x + end.x) / 2;
-      points = [start, { x: middle, y: start.y }, { x: middle, y: end.y }, end];
-    }
-  }
+/** The drawn shape of a polyline: a rounded orthogonal path, its sample points, and the tip angle. */
+export function buildShape(points: readonly DiagramPoint[]): ConnectionShape {
   const segments = roundedSegments(points, CORNER_RADIUS);
   return { path: segmentPath(segments), points: sampleSegments(segments, CONNECTION_SAMPLES), tipAngle: tipAngleOf(points) };
 }
@@ -189,6 +121,28 @@ export function connectionShape(from: DiagramRect, to: DiagramRect, options: {
 export function directShape(from: DiagramRect, to: DiagramRect): ConnectionShape {
   const start = { x: from.x + from.width, y: from.y + from.height / 2 };
   const end = { x: to.x, y: to.y + to.height / 2 };
-  const segments: Segment[] = [{ kind: 'line', from: start, to: end }];
-  return { path: segmentPath(segments), points: sampleSegments(segments, CONNECTION_SAMPLES), tipAngle: tipAngleOf([start, end]) };
+  return buildShape([start, end]);
+}
+
+/** Drop repeated points and the corners that add nothing, so every segment alternates axis. */
+export function normalizePolyline(points: readonly DiagramPoint[]): DiagramPoint[] {
+  const collapsed: DiagramPoint[] = [];
+  for (const point of points) {
+    const previous = collapsed[collapsed.length - 1];
+    if (previous !== undefined && Math.abs(previous.x - point.x) < 0.01 && Math.abs(previous.y - point.y) < 0.01) continue;
+    collapsed.push({ x: point.x, y: point.y });
+  }
+  const result: DiagramPoint[] = [];
+  for (const point of collapsed) {
+    while (result.length >= 2) {
+      const first = result[result.length - 2]!;
+      const second = result[result.length - 1]!;
+      const vertical = Math.abs(first.x - second.x) < 0.01 && Math.abs(second.x - point.x) < 0.01;
+      const horizontal = Math.abs(first.y - second.y) < 0.01 && Math.abs(second.y - point.y) < 0.01;
+      if (!vertical && !horizontal) break;
+      result.pop();
+    }
+    result.push(point);
+  }
+  return result;
 }

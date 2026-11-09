@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BoardStateSchema, initialState } from '../../src/domain/schema.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
+import { canonicalWorkflow, workflowMeaning } from '../../src/domain/schema-parts.js';
 import { populatedState, sampleTask } from './helpers.js';
 
 describe('persisted board schema', () => {
@@ -249,5 +250,31 @@ describe('persisted board schema', () => {
       switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false, createdAt: '2026-10-21T10:00:00.000Z',
     };
     expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+});
+
+describe('workflow connection layout identity', () => {
+  const columns = 'columns:' + String.fromCharCode(10) + '  - id: todo' + String.fromCharCode(10) + '    label: To do' + String.fromCharCode(10) + '  - id: done' + String.fromCharCode(10) + '    label: Done' + String.fromCharCode(10);
+
+  it('persists an authored connection layout', () => {
+    const yaml = 'name: Flow' + String.fromCharCode(10) + columns + 'connections:' + String.fromCharCode(10) + '  - from: todo' + String.fromCharCode(10) + '    to: done' + String.fromCharCode(10) + '    source: {side: top, at: 4}' + String.fromCharCode(10) + '    segments: [{axis: x, offset: 32}]' + String.fromCharCode(10);
+    const state = populatedState();
+    state.tasks[0]!.columnId = 'todo';
+    state.workflowYaml = yaml;
+    state.workflow = parseWorkflow(yaml);
+    expect(BoardStateSchema.safeParse(state).success).toBe(true);
+  });
+
+  it('treats a connection adjustment as layout, not as workflow meaning', () => {
+    const plain = parseWorkflow('name: Flow' + String.fromCharCode(10) + columns);
+    const adjusted = parseWorkflow('name: Flow' + String.fromCharCode(10) + columns + 'connections:' + String.fromCharCode(10) + '  - from: todo' + String.fromCharCode(10) + '    to: done' + String.fromCharCode(10) + '    target: {side: bottom, at: 1}' + String.fromCharCode(10));
+    expect(workflowMeaning(adjusted)).toBe(workflowMeaning(plain));
+    expect(canonicalWorkflow(adjusted)).not.toBe(canonicalWorkflow(plain));
+  });
+
+  it('keeps the workflow identity independent of the authored entry order', () => {
+    const forward = parseWorkflow('name: Flow' + String.fromCharCode(10) + columns + 'connections:' + String.fromCharCode(10) + '  - from: todo' + String.fromCharCode(10) + '    to: done' + String.fromCharCode(10) + '  - from: done' + String.fromCharCode(10) + '    to: todo' + String.fromCharCode(10));
+    const reversed = parseWorkflow('name: Flow' + String.fromCharCode(10) + columns + 'connections:' + String.fromCharCode(10) + '  - from: done' + String.fromCharCode(10) + '    to: todo' + String.fromCharCode(10) + '  - from: todo' + String.fromCharCode(10) + '    to: done' + String.fromCharCode(10));
+    expect(canonicalWorkflow(forward)).toBe(canonicalWorkflow(reversed));
   });
 });

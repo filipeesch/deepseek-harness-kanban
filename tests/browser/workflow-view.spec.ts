@@ -504,3 +504,136 @@ test('asks before advancing a card to a restricted next stage', async ({ page })
   expect((await commands(page)).filter(command => command.type === 'task.move')).toHaveLength(0);
   await expect(page.getByRole('region', { name: 'Explore stage' }).locator('.kb-card', { hasText: 'Long column task 0' })).toBeVisible();
 });
+
+async function connectionEnd(page: Page, index: number, end: 'source' | 'target') {
+  return page.locator('.react-flow__edge').nth(index).locator('.kb-flow-contact[data-end="' + end + '"]');
+}
+
+/** Points at a place the edge's interaction path owns, revealing its handles. */
+async function revealEdge(page: Page, index: number): Promise<void> {
+  const point = await page.evaluate(index => {
+    const paths = [...document.querySelectorAll('.react-flow__edge-interaction')];
+    const path = paths[index] as SVGPathElement | undefined;
+    if (path === undefined) return null;
+    const box = path.getBoundingClientRect();
+    for (let x = Math.ceil(box.left); x <= Math.floor(box.right); x += 4) {
+      for (let y = Math.ceil(box.top); y <= Math.floor(box.bottom); y += 4) {
+        if (document.elementFromPoint(x, y) === path) return { x, y };
+      }
+    }
+    return null;
+  }, index);
+  if (point === null) throw new Error('the edge has no reachable point');
+  await page.mouse.move(point.x, point.y);
+}
+
+/** The screen point of a stage edge, a few pixels outside the stage box. */
+async function stageEdge(page: Page, label: string, side: 'top' | 'bottom'): Promise<{ x: number; y: number }> {
+  const box = (await page.getByRole('region', { name: label + ' stage' }).boundingBox())!;
+  return { x: box.x + box.width / 2, y: side === 'top' ? box.y - 8 : box.y + box.height + 8 };
+}
+
+async function dragHandle(page: Page, handle: ReturnType<typeof connectionEnd>, target: { x: number; y: number }, outward = 4): Promise<void> {
+  const box = (await (await handle).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2 + outward, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(target.x, target.y, { steps: 12 });
+  await page.mouse.up();
+}
+
+test('re-anchors a connection end and stores one change', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  await revealEdge(page, 0);
+  await dragHandle(page, connectionEnd(page, 0, 'source'), await stageEdge(page, 'Explore', 'top'));
+  await expect.poll(async () => (await commands(page)).length).toBe(1);
+  const command = (await commands(page))[0]!;
+  expect(command.type).toBe('board.workflow.save');
+  expect(command.yaml).toContain('connections:');
+  expect(command.yaml).toContain('source: {side: top, at: 2}');
+  // The handle now sits on the top edge, so its drawn position follows the anchor.
+  const circle = await (await connectionEnd(page, 0, 'source')).boundingBox();
+  const stage = (await page.getByRole('region', { name: 'Explore stage' }).boundingBox())!;
+  expect(Math.abs((circle!.y + circle!.height / 2) - stage.y)).toBeLessThan(3);
+});
+
+test('does not adjust a connection while the diagram is locked', async ({ page }) => {
+  await openFlow(page);
+  await revealEdge(page, 0);
+  await dragHandle(page, connectionEnd(page, 0, 'target'), await stageEdge(page, 'Propose', 'bottom'), -4);
+  await page.waitForTimeout(700);
+  expect(await commands(page)).toHaveLength(0);
+});
+
+test('adjusts a connection end with the keyboard', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  const handle = await connectionEnd(page, 0, 'source');
+  await handle.focus();
+  await expect(handle).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(500);
+  expect(await commands(page)).toHaveLength(0);
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => (await commands(page)).length).toBe(1);
+  const command = (await commands(page))[0]!;
+  expect(command.yaml).toContain('source: {side: right, at: 4}');
+});
+
+test('restores the anchor when the keyboard adjustment is cancelled', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  const handle = await connectionEnd(page, 0, 'source');
+  await handle.focus();
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(700);
+  expect(await commands(page)).toHaveLength(0);
+});
+
+test('presents a stored connection layout on open', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(HARNESS + '?scenario=flow-anchored');
+  await page.waitForFunction(() => (window as unknown as { __harnessReady?: boolean }).__harnessReady === true);
+  await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-ready', 'true');
+  await page.waitForTimeout(250);
+  const source = await (await connectionEnd(page, 0, 'source')).boundingBox();
+  const stage = (await page.getByRole('region', { name: 'Explore stage' }).boundingBox())!;
+  // The stored anchor puts the touch point on the stage's top edge, not its right edge.
+  expect(Math.abs((source!.y + source!.height / 2) - stage.y)).toBeLessThan(3);
+  expect(Math.abs((source!.x + source!.width / 2) - (stage.x + stage.width / 2))).toBeLessThan(3);
+});
+
+test('reaches a connection end by keyboard and never traps focus', async ({ page }) => {
+  await openFlow(page);
+  const handle = await connectionEnd(page, 0, 'source');
+  await handle.focus();
+  await expect(handle).toBeFocused();
+  // The handles sit in the diagram's tab sequence, and tabbing on from one of
+  // them keeps moving until focus leaves the diagram.
+  const labels: string[] = [];
+  let left = false;
+  for (let step = 0; step < 400; step++) {
+    await page.keyboard.press('Tab');
+    const state = await page.evaluate(() => ({
+      label: document.activeElement?.getAttribute('aria-label') ?? '',
+      inside: document.activeElement !== null && document.activeElement.closest('.kb-flow-shell') !== null,
+    }));
+    if (!state.inside) { left = true; break; }
+    labels.push(state.label);
+  }
+  expect(labels.filter(label => label.startsWith('Arrow from')).length).toBeGreaterThan(0);
+  expect(left).toBe(true);
+});
+
+test('ignores a stored layout whose connection the diagram does not draw', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(HARNESS + '?scenario=flow-orphan');
+  await page.waitForFunction(() => (window as unknown as { __harnessReady?: boolean }).__harnessReady === true);
+  await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-ready', 'true');
+  await page.waitForTimeout(250);
+  // The workflow still draws its two real arrows, and the orphan entry adds none.
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+  expect(await page.locator('.kb-flow-contact[data-end="source"]').count()).toBe(2);
+});

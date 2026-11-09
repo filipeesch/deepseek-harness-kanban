@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import { readStagePositions } from '../../src/domain/workflow-positions.js';
 import { readStageSizes } from '../../src/domain/workflow-sizes.js';
+import { readConnections } from '../../src/domain/workflow-connections.js';
 import { mergeWorkflowPlacements } from '../../src/domain/sharing/workflow-merge.js';
 import type { WorkflowVersion } from '../../src/domain/sharing/workflow-merge.js';
 
@@ -158,5 +159,75 @@ describe('workflow placement merge', () => {
     const result = mergeWorkflowPlacements({ base, local: base, published });
     expect(result!.workflow).not.toContain('id: done');
     expect(positionsOf(result!.workflow).done).toBeUndefined();
+  });
+});
+
+function withConnections(columns: readonly ColumnSpec[], entries: readonly (readonly string[])[]): string {
+  const lines = [yaml(columns).trimEnd()];
+  if (entries.length > 0) {
+    lines.push('connections:');
+    for (const entry of entries) {
+      entry.forEach((line, index) => lines.push(index === 0 ? '  - ' + line : '    ' + line));
+    }
+  }
+  lines.push('');
+  return lines.join(nl);
+}
+
+function versionWithConnections(columns: readonly ColumnSpec[], entries: readonly (readonly string[])[]): WorkflowVersion {
+  return { name: 'Delivery', workflow: withConnections(columns, entries) };
+}
+
+function connectionsOf(value: string): Record<string, unknown> {
+  return readConnections(parseWorkflow(value));
+}
+
+describe('workflow connection layout merge', () => {
+  const plain = versionWithConnections(baseColumns, []);
+  const forward: readonly string[] = ['from: todo', 'to: doing', 'source: {side: right, at: 4}'];
+  const other: readonly string[] = ['from: doing', 'to: done', 'source: {side: bottom, at: 1}'];
+
+  it('applies a team-only connection adjustment', () => {
+    const published = versionWithConnections(baseColumns, [forward]);
+    const result = mergeWorkflowPlacements({ base: plain, local: plain, published });
+    expect(result).not.toBeNull();
+    expect(connectionsOf(result!.workflow)['todo->doing']).toEqual({ from: 'todo', to: 'doing', source: { side: 'right', at: 4 } });
+  });
+
+  it('keeps a local-only connection adjustment', () => {
+    const local = versionWithConnections(baseColumns, [forward]);
+    const result = mergeWorkflowPlacements({ base: plain, local, published: plain });
+    expect(connectionsOf(result!.workflow)['todo->doing']).toEqual({ from: 'todo', to: 'doing', source: { side: 'right', at: 4 } });
+  });
+
+  it('keeps the local adjustment when both sides adjusted the same connection', () => {
+    const local = versionWithConnections(baseColumns, [['from: todo', 'to: doing', 'source: {side: right, at: 0}']]);
+    const published = versionWithConnections(baseColumns, [['from: todo', 'to: doing', 'source: {side: right, at: 3}']]);
+    const result = mergeWorkflowPlacements({ base: plain, local, published });
+    expect(connectionsOf(result!.workflow)['todo->doing']).toEqual({ from: 'todo', to: 'doing', source: { side: 'right', at: 0 } });
+  });
+
+  it('keeps both sides when each adjusted a different connection', () => {
+    const local = versionWithConnections(baseColumns, [forward]);
+    const published = versionWithConnections(baseColumns, [other]);
+    const result = mergeWorkflowPlacements({ base: plain, local, published });
+    expect(connectionsOf(result!.workflow)['todo->doing']).toEqual({ from: 'todo', to: 'doing', source: { side: 'right', at: 4 } });
+    expect(connectionsOf(result!.workflow)['doing->done']).toEqual({ from: 'doing', to: 'done', source: { side: 'bottom', at: 1 } });
+  });
+
+  it('keeps a local connection adjustment beside a published meaning change', () => {
+    const local = versionWithConnections(baseColumns, [forward]);
+    const published = version('Delivery 2', [['todo', 'To do', [0, 0]], ['doing', 'In progress', [200, 0]], ['done', 'Done']]);
+    const result = mergeWorkflowPlacements({ base: plain, local, published });
+    expect(result).not.toBeNull();
+    expect(parseWorkflow(result!.workflow).columns[1]!.name).toBe('In progress');
+    expect(connectionsOf(result!.workflow)['todo->doing']).toEqual({ from: 'todo', to: 'doing', source: { side: 'right', at: 4 } });
+  });
+
+  it('does not treat a connection adjustment as a meaning change', () => {
+    const local = versionWithConnections(baseColumns, [forward]);
+    const published = versionWithConnections(baseColumns, [other]);
+    const result = mergeWorkflowPlacements({ base: plain, local, published });
+    expect(result).not.toBeNull();
   });
 });
