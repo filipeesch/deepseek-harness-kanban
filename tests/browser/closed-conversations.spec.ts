@@ -28,6 +28,12 @@ test('keeps closed conversations behind a compact chip and dismisses its popover
   await expect.poll(async () => popover.locator('.kb-closed-list').evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
   const panelAfter = await drawer.locator('.kb-conversation-panel').boundingBox();
   expect(panelAfter?.height).toBe(panelBefore?.height);
+  // The chip lives inside the drawer, so its popover rides the drawer layer and stays above it.
+  const aboveDrawerContent = await popover.evaluate(element => {
+    const box = element.getBoundingClientRect();
+    return element.contains(document.elementFromPoint(box.left + box.width / 2, box.bottom - 8));
+  });
+  expect(aboveDrawerContent).toBe(true);
   await page.screenshot({ path: path.join(OUT, 'closed-conversations-light.png') });
 
   await page.keyboard.press('Escape');

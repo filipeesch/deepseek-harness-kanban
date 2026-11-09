@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import { fireEvent, screen } from '@testing-library/react';
 import type { BoardState, ClientApi, Command, HubState, HubTask, KanbanSnapshot, KanbanState } from '../../src/shared/types.js';
 import { taskTitleSlug, worktreePathForBranch } from '../../src/shared/worktree-name.js';
 import { applyInitialEntry, applyMove, applyRunInstruction, createEnteredAtSource } from '../support/in-memory-board.js';
@@ -126,6 +127,21 @@ export function fakeApi(initial: TestSnapshot = fixture()) {
   });
   const api: ClientApi = { snapshot: vi.fn(async () => withLegacyView(cloneSnapshot(value))), command, sharing: vi.fn(async () => withLegacyView(cloneSnapshot(value))), localDrive: vi.fn(async (request: { action: string; path?: string }) => request.action === 'roots' ? { action: 'roots' as const, discovery: { state: 'empty' as const, locations: [] } } : { action: 'list' as const, page: { rootId: '/drive', path: request.path ?? '/drive', parent: null, entries: [], hasDocument: false, truncated: false, shown: 0 } }), branches: vi.fn(async () => ['main', 'feature']), worktreeDefault, detectProject: vi.fn(async (pathValue: string) => ({ kind: 'folder' as const, projectPath: pathValue })), subscribe: vi.fn(listener => { const wrapped = (snapshot: KanbanSnapshot) => listener(snapshot); listeners.add(wrapped as (snapshot: TestSnapshot) => void); return () => listeners.delete(wrapped as (snapshot: TestSnapshot) => void); }) };
   return { api, command, publish: (snapshot?: KanbanSnapshot) => publish(snapshot), get: () => withLegacyView(cloneSnapshot(value)), listeners };
+}
+
+/** The filter trigger keeps the same accessible-name stem whether or not a filter is active. */
+function filterTrigger(): HTMLElement {
+  return screen.getByRole('button', { name: /^Filter tasks/ });
+}
+
+/** Both filter inputs live inside the popover, so a test opens it before using them. */
+export async function openFilterPopover(user: { click: (element: Element) => Promise<unknown> }): Promise<void> {
+  await user.click(await screen.findByRole('button', { name: /^Filter tasks/ }));
+}
+
+/** The same for a test that drives the DOM with fireEvent instead of userEvent. */
+export function openFilterPopoverByClick(): void {
+  fireEvent.click(filterTrigger());
 }
 
 export function deferred<T>() {

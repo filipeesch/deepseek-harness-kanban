@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { BoardView } from '../../src/client/board.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
-import { fakeApi, fixture, type TestSnapshot } from './helpers.js';
+import { fakeApi, fixture, openFilterPopoverByClick, type TestSnapshot } from './helpers.js';
 
 vi.mock('../../src/client/workflow-view/canvas.js', async () => {
   const React = await import('react');
@@ -35,6 +35,16 @@ function mount(data = fixture()) {
 }
 
 describe('board presentation selection', () => {
+  it('keeps the filter control and its active filter in the workflow diagram', async () => {
+    mount(withDefault(fixture()));
+    await screen.findByTestId('flow-canvas');
+    openFilterPopoverByClick();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search tasks' }), { target: { value: 'documentation' } });
+    expect(screen.getByRole('button', { name: /^Filter tasks, filtering by search text/ })).toBeTruthy();
+    const cards = [...screen.getByTestId('flow-canvas').querySelectorAll('[data-task-id]')];
+    expect(cards.map(card => card.getAttribute('data-task-id'))).toEqual(['t2']);
+  });
+
   it('opens the column board when the workflow configures no default', async () => {
     mount();
     expect(await screen.findByRole('region', { name: 'Intake column' })).toBeTruthy();

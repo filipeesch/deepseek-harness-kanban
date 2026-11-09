@@ -24,11 +24,6 @@ export const workflowViewStyles = String.raw`
 .dsh-kanban .kb-flow-arrow{fill:currentColor;opacity:.4}
 .dsh-kanban .kb-flow-travel{position:absolute;pointer-events:none;z-index:8;width:190px}
 .dsh-kanban .kb-flow-travel-card{display:flex;flex-direction:column;gap:2px;padding:7px 8px;border-radius:8px;border:1px solid var(--kb-line);background:var(--kb-surface);box-shadow:0 8px 20px #00000024;font-size:12px;line-height:1.35;overflow-wrap:anywhere}
-.dsh-kanban .kb-view-switch{display:inline-flex;align-items:stretch;border:1px solid var(--kb-line);border-radius:7px;overflow:hidden;background:var(--kb-soft)}
-.dsh-kanban .kb-view-switch button{font:inherit;font-size:12px;color:inherit;background:transparent;border:0;padding:6px 10px;cursor:pointer;line-height:1.3}
-.dsh-kanban .kb-view-switch button:hover{background:color-mix(in srgb,currentColor 8%,transparent)}
-.dsh-kanban .kb-view-switch button[aria-pressed=true]{background:var(--dsw-alias-button-primary-fill,CanvasText);color:var(--dsw-alias-label-primary-foreground,Canvas)}
-.dsh-kanban .kb-view-switch button:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:-2px}
 .dsh-kanban .kb-flow-stage .react-flow__handle{opacity:0;pointer-events:none}
 .dsh-kanban .kb-flow-canvas .react-flow__attribution{background:transparent;color:inherit;opacity:.55}
 .dsh-kanban .kb-flow-canvas .react-flow__attribution a{color:inherit}

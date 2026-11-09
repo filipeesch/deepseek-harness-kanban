@@ -24,7 +24,7 @@ import { allTasks, normalizeSnapshot } from './snapshot-normalize.js';
 import { scopedCommand } from './command-scope.js';
 import { boardView } from './board-projection.js';
 import { projectScopeActivity, type ScopeActivity } from './scope-activity.js';
-import { HubNav } from './hub-nav.js';
+import { BoardTabRow, HubTabRow } from './hub-nav.js';
 import { asProblem } from './ui.js';
 import { adviseCommandFailure } from './command-failure.js';
 import { styles } from './styles/index.js';
@@ -268,19 +268,24 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
 
   return <DirectoryPickerProvider picker={picker}><section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style>
     <BoardHeader
-      hubNav={<HubNav
+      hubTabs={<HubTabRow
         hubs={snapshot?.state.hubs ?? []}
+        {...(activeHub ? { activeHubId: activeHub.id } : {})}
+        hubActivity={hubActivity}
+        onSelectHub={selectHub}
+        onCreateHub={() => setNewHub(true)}
+        sharing={snapshot?.sharing ?? {}}
+      />}
+      boardTabs={<BoardTabRow
         boards={activeHub?.boards}
         {...(activeHub ? { activeHubId: activeHub.id } : {})}
         {...(activeBoard ? { activeBoardId: activeBoard.id } : {})}
-        hubActivity={hubActivity}
         boardActivity={boardActivity}
-        onSelectHub={selectHub}
         onSelectBoard={selectBoard}
-        onCreateHub={() => setNewHub(true)}
         onCreateBoard={() => setNewBoard(true)}
         sharing={snapshot?.sharing ?? {}}
       />}
+      filterScope={(activeHub?.id ?? '') + ':' + (activeBoard?.id ?? '')}
       selectionMode={selectionMode}
       selectedCount={selectedIds.size}
       batchPending={batch.pending}

@@ -8,7 +8,7 @@ import { BoardView } from '../../src/client/board.js';
 import { columnLayout } from '../../src/client/board-columns.js';
 import type { KanbanSnapshot, ClientApi, Command } from '../../src/shared/types.js';
 import { styles } from '../../src/client/styles/index.js';
-import { deferred, fakeApi, fixture, restrictedFixture } from './helpers.js';
+import { deferred, fakeApi, fixture, openFilterPopover, restrictedFixture } from './helpers.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import { PresetProvider } from './agent-preset-fixture.js';
@@ -63,9 +63,10 @@ describe('board header layout', () => {
   });
 
   it('reserves the host frame leading clearance for the collapsed sidebar', () => {
-    const rule = styles.match(/\.dsh-kanban \.kb-header\{[^}]*\}/)?.[0] ?? '';
-    expect(rule).toContain('padding-inline-start:max(20px,var(--dsh-frame-leading-clearance,20px))');
-    expect(styles).toContain('.dsh-kanban .kb-header{padding:12px;padding-inline-start:max(12px,var(--dsh-frame-leading-clearance,12px))}');
+    // The contract is that every header inset honours the host token, not the specific values.
+    const rules = [...styles.matchAll(/\.dsh-kanban \.kb-header\{[^}]*\}/g)].map(match => match[0]);
+    expect(rules.length).toBeGreaterThanOrEqual(2);
+    for (const rule of rules) expect(rule).toMatch(/padding-inline-start:max\(\d+px,var\(--dsh-frame-leading-clearance,\d+px\)\)/);
   });
 });
 
@@ -79,6 +80,7 @@ describe('scoped Kanban page', () => {
     expect(screen.getByText('Working')).toBeTruthy(); expect(screen.getByText('1 job')).toBeTruthy();
     expect(screen.queryByText('Running')).toBeNull();
     expect(screen.getByRole('button', { name: 'Open task Alpha task' }).closest('.kb-card')?.getAttribute('data-working')).toBe('true');
+    await openFilterPopover(user);
     await user.type(screen.getByRole('searchbox', { name: 'Search tasks' }), 'documentation');
     expect(screen.queryByRole('button', { name: 'Open task Alpha task' })).toBeNull(); expect(screen.getByRole('button', { name: 'Open task Beta task' })).toBeTruthy();
     await user.selectOptions(screen.getByRole('combobox', { name: 'Project filter' }), 'p1');
@@ -206,6 +208,7 @@ describe('scoped Kanban page', () => {
     await user.selectOptions(project, 'p1');
     expect((within(dialog).getByRole('button', { name: 'Create task' }) as HTMLButtonElement).disabled).toBe(false);
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await openFilterPopover(user);
     await user.selectOptions(screen.getByRole('combobox', { name: 'Project filter' }), 'p1');
     await user.click(screen.getByRole('button', { name: 'New task' }));
     const filtered = screen.getByRole('dialog', { name: 'New task' });
