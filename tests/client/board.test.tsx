@@ -846,3 +846,52 @@ describe('responsive board opening', () => {
     await waitFor(() => expect(mock.api.snapshot).toHaveBeenCalledWith({ priorityTaskIds: ['t1'] }));
   });
 });
+
+describe('board-wide read action', () => {
+  it('acknowledges every conversation of the active board', async () => {
+    const onMarkAllRead = vi.fn();
+    render(<PresetProvider><BoardView api={fakeApi(fixture()).api} renderConversation={() => <div />} onMarkAllRead={onMarkAllRead} /></PresetProvider>);
+    await loaded();
+    const action = screen.getByRole('button', { name: 'Mark all cards as read' });
+    expect(action.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(action);
+    expect(onMarkAllRead).toHaveBeenCalledWith(['s1', 's2', 's-beta']);
+  });
+
+  it('is unavailable while the board has nothing unread or failed', async () => {
+    const data = fixture();
+    data.attention = {};
+    render(<PresetProvider><BoardView api={fakeApi(data).api} renderConversation={() => <div />} onMarkAllRead={vi.fn()} /></PresetProvider>);
+    await loaded();
+    expect(screen.getByRole('button', { name: 'Mark all cards as read' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('is not presented in card selection mode', async () => {
+    const mock = mount();
+    const user = userEvent.setup();
+    await loaded();
+    expect(screen.getByRole('button', { name: 'Mark all cards as read' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Select cards to delete' }));
+    expect(screen.queryByRole('button', { name: 'Mark all cards as read' })).toBeNull();
+  });
+
+  it('is unavailable while the host offers no acknowledgment capability', async () => {
+    render(<PresetProvider><BoardView api={fakeApi(fixture()).api} renderConversation={() => <div />} /></PresetProvider>);
+    await loaded();
+    expect(screen.getByRole('button', { name: 'Mark all cards as read' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('acknowledges only the active board', async () => {
+    const data = fixture();
+    const hub = data.state.hubs[0]!;
+    const source = hub.boards[0]!;
+    hub.boards.push({ ...source, id: 'board-2', name: 'Other board', workflow: structuredClone(source.workflow) });
+    hub.tasks.push({ ...hub.tasks[0]!, id: 't9', title: 'Other board task', boardId: 'board-2', sessionIds: ['s-other'] });
+    const onMarkAllRead = vi.fn();
+    render(<PresetProvider><BoardView api={fakeApi(data).api} renderConversation={() => <div />} onMarkAllRead={onMarkAllRead} /></PresetProvider>);
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: 'Mark all cards as read' }));
+    expect(onMarkAllRead).toHaveBeenCalledTimes(1);
+    expect(onMarkAllRead).toHaveBeenCalledWith(['s1', 's2', 's-beta']);
+  });
+});

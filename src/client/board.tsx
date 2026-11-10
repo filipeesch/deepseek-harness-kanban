@@ -58,9 +58,11 @@ export interface BoardViewProps {
   nativeSeat?: PreparationSeat;
   /** Opens one native conversation, used by a schedule's last-run link. */
   onOpenSession?: (sessionId: string) => void;
+  /** Acknowledges the settled turns of the given conversations; absent in isolated harnesses. */
+  onMarkAllRead?: (sessionIds: readonly string[]) => void;
 }
 
-export function BoardView({ api, renderConversation, pageState, sessionTitles, conversationLeases, picker = null, autoRun: providedAutoRun, nativeSeat, onOpenSession }: BoardViewProps) {
+export function BoardView({ api, renderConversation, pageState, sessionTitles, conversationLeases, picker = null, autoRun: providedAutoRun, nativeSeat, onOpenSession, onMarkAllRead }: BoardViewProps) {
   const [localPageState] = useState(createBoardPageState); const preferences = pageState ?? localPageState;
   const [snapshot, setSnapshot] = useState<KanbanSnapshot | null>(null); const latest = useRef<KanbanSnapshot | null>(null); const live = useRef(false); const currentApi = useRef(api); currentApi.current = api;
   const [loadError, setLoadError] = useState<Problem | null>(null); const [loadAttempt, setLoadAttempt] = useState(0);
@@ -120,6 +122,15 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     for (const board of activeHub.boards) values.set(board.id, projectScopeActivity(activeHub.tasks.filter(task => task.boardId === board.id), snapshot.attention));
     return values;
   }, [snapshot, activeHub]);
+  // The board's own aggregated attention already answers whether anything on it is
+  // unread or failed, so the header action reuses it instead of projecting again.
+  const activeBoardActivity = activeBoard === undefined ? undefined : boardActivity.get(activeBoard.id);
+  // Without the capability there is nothing to call, so the action is never offered.
+  const canMarkAllRead = onMarkAllRead !== undefined && activeBoardActivity !== undefined && (activeBoardActivity.unread || activeBoardActivity.failed);
+  const markAllRead = useCallback(() => {
+    if (state === undefined || onMarkAllRead === undefined) return;
+    onMarkAllRead(state.tasks.flatMap(task => task.sessionIds));
+  }, [state, onMarkAllRead]);
   function selectHub(hubId: string) { if (hubId === activeHub?.id) return; setActiveHubIdState(hubId); writeStorage(ACTIVE_HUB_KEY, hubId); setSearch(''); setProjectFilter(''); setSelectedId(null); setSelectionMode(false); setSelectedIds(new Set()); }
   function selectBoard(hubId: string, boardId: string) { setActiveBoardByHub(previous => writeBoardPreference(hubId, boardId, previous)); setSearch(''); setProjectFilter(''); setSelectedId(null); setSelectionMode(false); setSelectedIds(new Set()); }
   useEffect(() => { if (snapshot && activeHub && activeHub.id !== activeHubId) { setActiveHubIdState(activeHub.id); writeStorage(ACTIVE_HUB_KEY, activeHub.id); } }, [snapshot, activeHub, activeHubId]);
@@ -342,6 +353,8 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
         sharing={snapshot?.sharing ?? {}}
       />}
       filterScope={(activeHub?.id ?? '') + ':' + (activeBoard?.id ?? '')}
+      canMarkAllRead={canMarkAllRead}
+      onMarkAllRead={markAllRead}
       selectionMode={selectionMode}
       selectedCount={selectedIds.size}
       batchPending={batch.pending}

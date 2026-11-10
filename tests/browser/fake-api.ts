@@ -17,7 +17,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { recorded?: boolean; staleRoute?: boolean; attention?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean }
+export interface HarnessOptions { recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -47,6 +47,20 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     'long-2': { running: true, background: [{ kind: 'schedule', label: 'Wake later' }], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK },
     'long-3': { running: false, background: [{ kind: 'job', label: 'Run tests' }, { kind: 'schedule', label: 'Wake later' }], unread: true, awaitingReply: true, failed: true, pending: NO_PENDING_USER_WORK },
   } : {};
+  // One card per attention state, so each surface is visible on its own. The first four
+  // tasks carry the states; the rest stay quiet.
+  if (options.presence) {
+    const state = (overrides: Partial<KanbanSnapshot['attention'][string]>) => ({ running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK, ...overrides });
+    attention['long-0'] = state({ running: true });
+    attention['long-1'] = state({ unread: true });
+    attention['long-2'] = state({ awaitingReply: true });
+    attention['long-3'] = state({ failed: true, unread: true });
+    // Every painted card also carries status text, so contrast is measurable on each surface.
+    for (const id of ['long-0', 'long-1', 'long-2', 'long-3']) {
+      const card = tasks.find(value => value.id === id);
+      if (card) card.pendingTransition = { id: 'presence-' + id, fromColumnId: 'explore', columnId: 'propose', mode: 'move', status: 'waiting' };
+    }
+  }
   const conversationAttention: KanbanSnapshot['conversationAttention'] = options.attention ? {
     's-long-0': attention['long-0']!, 's-long-1': attention['long-1']!, 's-long-2': { running: true, background: [{ kind: 'schedule', label: 'Wake later' }], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK }, 's-long-3': attention['long-3']!,
   } : {};
@@ -59,7 +73,14 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     conversationAttention['s-other'] = held;
   }
   const shortTask = tasks.find(value => value.id === 'short')!;
-  if (options.pending) shortTask.pendingTransition = { id: 'pending-short', fromColumnId: 'propose', columnId: 'apply', mode: 'move', status: 'waiting' };
+  // The appearance scenario needs one card that is both painted and carries status text,
+  // so the contrast of the status region is measured on the surface it actually sits on.
+  if (options.pending) {
+    shortTask.pendingTransition = { id: 'pending-short', fromColumnId: 'propose', columnId: 'apply', mode: 'move', status: 'waiting' };
+    const pendingShort: KanbanSnapshot['attention'][string] = { running: false, background: [], unread: true, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
+    attention['short'] = pendingShort;
+    conversationAttention['s-short'] = pendingShort;
+  }
   if (options.auto) {
     tasks.find(value => value.id === 'long-0')!.autoMode = { enabled: true };
     tasks.find(value => value.id === 'other')!.autoMode = { enabled: true };

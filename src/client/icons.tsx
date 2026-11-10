@@ -1,6 +1,7 @@
 import React, { type ComponentType } from 'react';
 import {
   ArrowLeft as ArrowLeftGlyph,
+  CheckCheck as CheckCheckGlyph,
   ChevronRight as ChevronRightGlyph,
   ChevronsRight as ChevronsRightGlyph,
   Clock as ClockGlyph,
@@ -59,6 +60,7 @@ export const PencilIcon = icon(PencilGlyph);
 export const CloseIcon = icon(XGlyph);
 export const PlusIcon = icon(PlusGlyph);
 export const CheckSquareIcon = icon(SquareCheckGlyph);
+export const MarkAllReadIcon = icon(CheckCheckGlyph);
 export const FilterIcon = icon(FilterGlyph);
 export const FilterClearIcon = icon(FilterClearGlyph);
 export const InfoIcon = icon(InfoGlyph);
