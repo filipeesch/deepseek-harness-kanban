@@ -73,6 +73,9 @@ describe('compact header and popover surfaces', () => {
   it('keeps the two header rows and the shared control size', () => {
     for (const selector of ['.kb-header{', '.kb-hub-row{', '.kb-board-row{', '.kb-hub-tabs{', '.kb-board-tabs{', '.kb-toolbar{', '.kb-control{', '.kb-filter-trigger{', '.kb-filter-dot{', '.kb-filter-badge{', '.kb-filter-popover{', '.kb-view-switch{']) expect(styles).toContain(selector);
     expect(styles).toMatch(/\.kb-toolbar \.kb-button\.kb-control\{[^}]*height:32px/);
+    // The Hub tab takes its height from the row, not from the platform font metrics, or the
+    // first-row band only lines up on the platform the harness was written on.
+    expect(styles).toMatch(/\.dsh-kanban \.kb-hub-tab\{[^}]*height:32px/);
     expect(styles).toMatch(/\.kb-toolbar \.kb-icon-button\.kb-control\{[^}]*width:32px/);
   });
   it('retires the subtitle heading, the Hub wrapper, and the inline header search', () => {

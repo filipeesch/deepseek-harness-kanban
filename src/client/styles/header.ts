@@ -12,7 +12,7 @@ export const headerStyles = String.raw`
 .dsh-kanban .kb-hub-tabs,.dsh-kanban .kb-board-tabs{display:flex;align-items:center;gap:3px;overflow-x:auto;scrollbar-width:thin;padding-bottom:2px;min-width:0}
 .dsh-kanban .kb-hub-tabs{min-height:32px}
 .dsh-kanban .kb-hub-tab,.dsh-kanban .kb-board-tab{box-sizing:border-box;font:inherit;color:inherit;background:transparent;border:0;border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
-.dsh-kanban .kb-hub-tab{font-size:13px;padding:7px 10px;border-radius:6px 6px 0 0}
+.dsh-kanban .kb-hub-tab{height:32px;font-size:13px;padding:7px 10px;border-radius:6px 6px 0 0}
 .dsh-kanban .kb-board-tab{font-size:12px;padding:5px 7px;border-radius:7px}
 .dsh-kanban .kb-hub-tab:hover,.dsh-kanban .kb-board-tab:hover{background:var(--kb-soft)}
 .dsh-kanban .kb-hub-tab.is-active{background:var(--kb-soft);border-bottom-color:var(--dsw-alias-state-business-primary,CanvasText);font-weight:600}
