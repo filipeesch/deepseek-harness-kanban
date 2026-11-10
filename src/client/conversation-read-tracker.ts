@@ -41,6 +41,12 @@ export class ConversationReadTracker {
     };
   }
 
+  /** Acknowledge a conversation's settled turn without displaying it; a board-wide acknowledgment uses this. */
+  markRead(sessionId: string): void {
+    const facts = this.facts.get(sessionId);
+    if (facts) this.mark(sessionId, facts.settledTurn);
+  }
+
   /** A closed tab stops notifying about the turn that had already settled. */
   close(sessionId: string): void {
     const facts = this.facts.get(sessionId);

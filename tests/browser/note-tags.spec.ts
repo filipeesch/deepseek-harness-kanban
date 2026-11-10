@@ -65,7 +65,7 @@ test('renders tags, filters notes, and keeps chip and overlay contrast in both a
   await page.getByRole('button', { name: 'design' }).click();
   await expect(page.locator('.kb-note-card')).toHaveCount(1);
   await expect(page.locator('.kb-note-card').first()).toContainText('Design note');
-  await page.getByRole('button', { name: 'All' }).click();
+  await page.getByRole('button', { name: 'All', exact: true }).click();
   await expect(page.locator('.kb-note-card')).toHaveCount(2);
 
   const light = await renderedContrast(page);

@@ -1,6 +1,6 @@
 import React, { type ReactNode } from 'react';
 import type { Project } from '../../shared/types.js';
-import { CheckSquareIcon, SettingsIcon, TrashIcon } from '../icons.js';
+import { CheckSquareIcon, MarkAllReadIcon, SettingsIcon, TrashIcon } from '../icons.js';
 import { BoardFilterControl } from './board-filter-control.js';
 
 export interface BoardHeaderProps {
@@ -19,6 +19,10 @@ export interface BoardHeaderProps {
   canSelectCards: boolean;
   /** Changes with the Hub and board, so navigating closes the filter popover. */
   filterScope: string;
+  /** True while the active board has an unread or failed settled turn to clear. */
+  canMarkAllRead: boolean;
+  /** Acknowledges every settled turn on the active board. */
+  onMarkAllRead: () => void;
   onSearch: (value: string) => void;
   onProjectFilter: (value: string) => void;
   onEnterSelection: () => void;
@@ -30,7 +34,7 @@ export interface BoardHeaderProps {
 /** The Kanban frame's header: identity, the Hub row and toolbar on one line, then the board row. */
 export function BoardHeader({
   hubTabs, boardTabs, viewControl, selectionMode, selectedCount, batchPending, search, projectFilter, projects, canSelectCards,
-  filterScope, onSearch, onProjectFilter, onEnterSelection, onOpenConfiguration, onRequestDelete, onExitSelection,
+  filterScope, canMarkAllRead, onMarkAllRead, onSearch, onProjectFilter, onEnterSelection, onOpenConfiguration, onRequestDelete, onExitSelection,
 }: BoardHeaderProps) {
   return <header className="kb-header">
     <h1>Kanban</h1>
@@ -46,6 +50,7 @@ export function BoardHeader({
           onProjectFilter={onProjectFilter}
         />
         {viewControl}
+        <button type="button" className="kb-button kb-icon-button kb-control" disabled={!canMarkAllRead} aria-label="Mark all cards as read" title="Mark all cards as read" onClick={onMarkAllRead}><MarkAllReadIcon size={16} /></button>
         <button type="button" className="kb-button kb-icon-button kb-control" disabled={!canSelectCards} aria-label="Select cards to delete" title="Select cards to delete" onClick={onEnterSelection}><CheckSquareIcon size={16} /></button>
         <button type="button" className="kb-button kb-icon-button kb-control" aria-label="Configuration" title="Configuration" onClick={onOpenConfiguration}><SettingsIcon size={16} /></button>
       </> : <>

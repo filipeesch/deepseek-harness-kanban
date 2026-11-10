@@ -32,6 +32,11 @@ export class ConversationReadState {
     return this.tracker.view(sessionId);
   }
 
+  /** Acknowledge a conversation's settled turn without displaying it. */
+  markRead(sessionId: string): void {
+    this.tracker.markRead(sessionId);
+  }
+
   /** A closed tab stops notifying about the turn that had already settled. */
   close(sessionId: string): void {
     this.tracker.close(sessionId);

@@ -159,3 +159,82 @@ test('conversation tab shows every attention state in both appearances', async (
   await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('');
   await page.screenshot({ path: '.verification/attention-tabs-dark.png' });
 });
+
+const TINTED_CARDS = [
+  { id: 'long-3', label: 'failure' },
+  { id: 'long-2', label: 'awaiting reply' },
+  { id: 'long-0', label: 'agent execution' },
+  { id: 'long-1', label: 'unread' },
+] as const;
+
+test('every tinted surface keeps its title, project name, and status text legible', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1600 });
+  for (const scheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto(HARNESS + '?scenario=presence');
+    await page.waitForSelector('.kb-card');
+    if (scheme === 'dark') await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('');
+
+    for (const card of TINTED_CARDS) {
+      const values = await page.evaluate((taskId: string) => {
+        const channels = (value: string): [number, number, number] => {
+          const srgb = /color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\)/.exec(value);
+          if (srgb !== null) return [Number(srgb[1]) * 255, Number(srgb[2]) * 255, Number(srgb[3]) * 255];
+          const match = /rgba?\(([^)]+)\)/.exec(value);
+          if (match === null) return [0, 0, 0];
+          const parts = match[1]!.split(',').map(part => Number(part.trim()));
+          return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
+        };
+        const luminance = (value: string): number => {
+          const [red, green, blue] = channels(value).map(channel => {
+            const c = channel / 255;
+            return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+          });
+          return 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!;
+        };
+        const contrast = (left: string, right: string): number => {
+          const a = luminance(left);
+          const b = luminance(right);
+          return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+        };
+        const background = (element: Element | null): string => {
+          let current: Element | null = element;
+          while (current !== null) {
+            const value = getComputedStyle(current).backgroundColor;
+            if (value !== 'rgba(0, 0, 0, 0)' && value !== 'transparent') return value;
+            current = current.parentElement;
+          }
+          return getComputedStyle(document.body).backgroundColor;
+        };
+        const composite = (foreground: string, backdrop: string, alpha: number): string => {
+          const [red, green, blue] = channels(foreground);
+          const [backRed, backGreen, backBlue] = channels(backdrop);
+          return 'rgb(' + Math.round(red * alpha + backRed * (1 - alpha)) + ', ' + Math.round(green * alpha + backGreen * (1 - alpha)) + ', ' + Math.round(blue * alpha + backBlue * (1 - alpha)) + ')';
+        };
+        const card = document.querySelector('[data-task-id="' + taskId + '"]');
+        const surface = background(card);
+        const measure = (element: Element | null): number => {
+          if (element === null) return 0;
+          const color = getComputedStyle(element).color;
+          const opacity = Number(getComputedStyle(element).opacity);
+          return contrast(opacity < 1 ? composite(color, surface, opacity) : color, surface);
+        };
+        return {
+          presence: card?.getAttribute('data-presence') ?? 'missing',
+          title: measure(card?.querySelector('.kb-card-open strong') ?? null),
+          project: measure(card?.querySelector('.kb-card-project') ?? null),
+          status: measure(card?.querySelector('.kb-card-status-line') ?? null),
+          hasStatus: card?.querySelector('.kb-card-status-line') !== null,
+        };
+      }, card.id);
+
+      expect(values.presence, card.label + ' card carries its tint').not.toBe('none');
+      expect(values.hasStatus, card.label + ' card carries status text').toBe(true);
+      expect(values.title, card.label + ' title on the tinted surface').toBeGreaterThanOrEqual(4.5);
+      expect(values.project, card.label + ' project name on the tinted surface').toBeGreaterThanOrEqual(4.5);
+      expect(values.status, card.label + ' status text on the tinted surface').toBeGreaterThanOrEqual(4.5);
+    }
+
+    await page.screenshot({ path: path.join(OUT, 'card-presence-tint-' + scheme + '.png'), fullPage: false });
+  }
+});

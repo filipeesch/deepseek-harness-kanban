@@ -13,7 +13,7 @@ import { CardEnvironmentContext, type CardEnvironment } from './card-environment
 import type { GestureHandle, PointerEventsPort } from './gestures/stage-drag.js';
 import { noSnap, segmentOffset, type SnapPolicy } from './gestures/grid-snap.js';
 import { beginConnectionDrag, type KeyboardEventsPort } from './gestures/connection-drag.js';
-import { FLOW_ZOOM, clampZoom, nextZoom, zoomAroundPoint, type Viewport } from './gestures/viewport-policy.js';
+import { FLOW_ZOOM, clampZoom, markScale, nextZoom, zoomAroundPoint, type Viewport } from './gestures/viewport-policy.js';
 import { authoredOffsetAt, connectionLayoutOf, connectionRouteFor, edgeModel, withOffset, type ConnectionLayoutOverride, type LiveConnectionDescriptor, type LiveStageRect } from './edge-model.js';
 import { nearestAnchor } from './routing/ports.js';
 import type { DiagramPoint, DiagramRect } from './routing/orthogonal.js';
@@ -346,6 +346,13 @@ function CanvasInner(props: WorkflowCanvasProps) {
     describe,
   }), [anchorBlur, anchorKeyDown, describe, props.locked, startAnchorDrag, startSegmentDrag]);
 
+  // The card's attention marks counter-scale against the published zoom. Writing one
+  // custom property keeps the diagram out of the card's contract and avoids a card
+  // re-render on every zoom step.
+  const publishMarkScale = useCallback((zoom: number) => {
+    wrapper.current?.style.setProperty('--kb-mark-scale', String(markScale(zoom)));
+  }, []);
+
   const zoomBy = useCallback((direction: 'in' | 'out') => {
     const element = wrapper.current;
     if (element === null) return;
@@ -398,6 +405,7 @@ function CanvasInner(props: WorkflowCanvasProps) {
               maxZoom={FLOW_ZOOM.max}
               fitView={false}
               defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+              onMove={(_event, next) => { publishMarkScale(next.zoom); }}
               onMoveEnd={(_event, next) => props.onViewportChange?.({ x: next.x, y: next.y, zoom: next.zoom })}
             >
               {props.controls !== undefined && <Panel position="bottom-left">{props.controls(viewport)}</Panel>}

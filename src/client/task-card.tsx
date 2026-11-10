@@ -5,7 +5,9 @@ import { WorkingAnnouncement } from './activity.js';
 import { AttentionDots } from './attention-dots.js';
 import { autoRunEntryForColumn, RUN_FAILURE_FALLBACK, type AutoRunController, type AutoRunInput } from './auto-run.js';
 import { CardInstructionAction, useAutoRunEntry } from './auto-run-view.js';
-import { AutoModeControl, type AutoModeStatus, type AutoModeView } from './auto-mode.js';
+import { AutoModeControl, type AutoModeView } from './auto-mode.js';
+import { cardStatusEntries, type CardStatusEntry } from './card-status-entries.js';
+import { projectCardDominance } from '../domain/card-presence.js';
 import { advanceStageLabel } from './stage-advance.js';
 import { AdvanceStageIcon, AlertIcon, ClockIcon } from './icons.js';
 
@@ -32,38 +34,6 @@ export interface TaskCardProps {
   advancePending?: boolean;
   /** Prepares the first execution before the card's run action sends anything. */
   onRun?: (input: AutoRunInput) => void;
-}
-
-export interface CardStatusEntry { key: string; tone: 'danger' | 'pending'; label: string; alert?: boolean }
-
-/** The card's status lines, in a stable order: operation, transition, stage-instruction failure, auto mode. */
-export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: AutoModeStatus): CardStatusEntry[] {
-  const entries: CardStatusEntry[] = [];
-  if (task.operation) {
-    const operation = task.operation;
-    const failed = operation.phase === 'failed';
-    const destructive = operation.request.kind === 'delete' || operation.request.kind === 'remove';
-    const deleteKind = operation.request.kind === 'delete';
-    const label = destructive
-      ? failed
-        ? (deleteKind ? 'Deletion needs attention' : 'Worktree removal needs attention')
-        : operation.phase === 'queued'
-          ? (deleteKind ? 'Queued to delete' : 'Queued to remove worktree')
-          : operation.phase === 'waiting'
-            ? (deleteKind ? 'Deletion waiting for idle' : 'Removal waiting for idle')
-            : operation.phase === 'preflight'
-              ? (deleteKind ? 'Checking before deleting…' : 'Checking before removing…')
-              : (deleteKind ? 'Deleting…' : 'Removing worktree…')
-      : failed ? 'Operation failed' : 'Operation: ' + operation.phase;
-    entries.push({ key: 'operation', tone: failed ? 'danger' : 'pending', label });
-  }
-  if (task.pendingTransition && task.pendingTransition.origin !== 'auto') {
-    const failed = task.pendingTransition.status === 'failed';
-    entries.push({ key: 'transition', tone: failed ? 'danger' : 'pending', label: failed ? 'Confirmed action failed' : 'Confirmed action: ' + task.pendingTransition.status });
-  }
-  if (runFailure !== undefined) entries.push({ key: 'instruction', tone: 'danger', label: runFailure, alert: true });
-  if (autoStatus !== undefined) entries.push({ key: 'auto', tone: autoStatus.tone, label: autoStatus.label, ...(autoStatus.alert === true ? { alert: true } : {}) });
-  return entries;
 }
 
 function CardContext({ taskId, title, projectName, attention, selectionMode, selected, onToggleSelect, onActivate }: {
@@ -110,6 +80,7 @@ function CardStatus({ entries }: { entries: readonly CardStatusEntry[] }) {
 /** One task card; every board concern arrives through props. */
 export function TaskCard({ task, column, projectName, attention, selectionMode, selected, autoRun, autoMode, autoModePending, onToggleAutoMode, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick, next, onMove, advancePending = false, onRun }: TaskCardProps) {
   const openButton = useRef<HTMLButtonElement>(null);
+  const presence = projectCardDominance(attention);
   const runEntry = useAutoRunEntry(autoRun, task.id);
   const currentRun = autoRunEntryForColumn(runEntry, column.id);
   const runFailure = currentRun?.status === 'failed' ? currentRun.error?.message ?? RUN_FAILURE_FALLBACK : undefined;
@@ -129,7 +100,7 @@ export function TaskCard({ task, column, projectName, attention, selectionMode, 
     <CardInstructionAction key={column.id} task={task} column={column} controller={autoRun} {...(onRun === undefined ? {} : { onRun })} />
     {next !== undefined && !attention.running && <CardAdvanceAction next={next} disabled={blocked || advancePending} onMove={advance} />}
   </>;
-  return <article className={'kb-card' + (selected ? ' kb-card-selected' : '')} data-task-id={task.id} data-working={attention.running ? 'true' : undefined}
+  return <article className={'kb-card' + (selected ? ' kb-card-selected' : '')} data-task-id={task.id} data-working={attention.running ? 'true' : undefined} data-presence={presence}
     onPointerDown={event => {
       if (selectionMode) return;
       if ((event.target as Element).closest('.kb-card-activity, .kb-auto-chip, input, select, textarea, a')) return;
