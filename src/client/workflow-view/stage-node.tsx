@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useEffect, useRef } from 'react';
 import { Handle, Position, useStore } from '@xyflow/react';
 import type { StageSize } from '../../shared/types.js';
-import { PlusIcon } from '../icons.js';
-import { EMPTY_STAGE_COPY, NEW_TASK_LABEL } from '../board-copy.js';
+import { EMPTY_STAGE_COPY } from '../board-copy.js';
+import { StageHeader as SharedStageHeader } from '../stage/stage-header.js';
 import { useCardEnvironment } from './card-environment.js';
 import { beginStageResize } from './gestures/stage-resize.js';
 import type { GestureHandle, PointerEventsPort } from './gestures/stage-drag.js';
@@ -39,6 +39,8 @@ export interface StageCallbacks {
    * layout edit, so it stays available while the layout is locked.
    */
   onCreateTask?(): void;
+  /** Opens the board's stage editor; the board owns that dialog. */
+  onEditStage?(stageId: string): void;
 }
 
 /** Shared by every stage node so node data stays serializable and stable. */
@@ -53,35 +55,27 @@ export interface StageHeaderProps {
   readonly creatable: boolean;
   /** The board's creation action, absent when no registered project can own a task. */
   readonly onCreateTask?: () => void;
+  /** The board's stage editor, absent when the board offers no editing. */
+  readonly onEditStage?: () => void;
   /** The canvas's stage-drag start; a harness without dragging leaves it out. */
   readonly onPointerDown?: (event: React.PointerEvent<HTMLElement>, stageId: string) => void;
 }
 
 /**
- * A stage's title, its creation action, and its card count.
- *
- * Exported so a harness renders this markup instead of imitating it: the creation
- * action only earns trust when the markup under test is the markup the canvas
- * paints. The pointer gesture is stopped here on purpose — the header is the stage's
- * drag handle, and pressing the action must never pick the stage up.
+ * The diagram's adapter over the shared stage header: it adds this presentation's
+ * classes and turns the drag start into a stage-specific callback.
  */
-export function StageHeader({ id, label, cardCount, locked, creatable, onCreateTask, onPointerDown }: StageHeaderProps) {
-  return <header className="kb-column-header kb-flow-stage-header nopan" data-locked={locked ? 'true' : undefined} onPointerDown={event => onPointerDown?.(event, id)}>
-    <h2>{label}</h2>
-    {/* One group, so presenting the action never shifts the title or the card count. */}
-    <div className="kb-flow-stage-actions">
-      {creatable && <button
-        type="button"
-        className="kb-button kb-icon-button kb-flow-stage-create nodrag nopan"
-        disabled={onCreateTask === undefined}
-        aria-label={NEW_TASK_LABEL}
-        title={NEW_TASK_LABEL}
-        onPointerDown={event => { event.stopPropagation(); }}
-        onClick={event => { event.stopPropagation(); onCreateTask?.(); }}
-      ><PlusIcon size={14} /></button>}
-      <span aria-label={cardCount + ' cards'}>{cardCount}</span>
-    </div>
-  </header>;
+export function StageHeader({ id, label, cardCount, locked, creatable, onCreateTask, onEditStage, onPointerDown }: StageHeaderProps) {
+  return <SharedStageHeader
+    label={label}
+    cardCount={cardCount}
+    className="kb-flow-stage-header nopan"
+    locked={locked}
+    creatable={creatable}
+    {...(onCreateTask === undefined ? {} : { onCreateTask })}
+    {...(onEditStage === undefined ? {} : { onEditStage })}
+    {...(onPointerDown === undefined ? {} : { onPointerDown: event => onPointerDown(event, id) })}
+  />;
 }
 
 /** The stage under the card drag; a separate context so dragging never re-syncs nodes. */
@@ -148,6 +142,7 @@ export function StageNodeView({ id, data }: { id: string; data: StageNodeModel }
       locked={data.locked}
       creatable={data.creatable}
       onCreateTask={callbacks?.onCreateTask}
+      {...(callbacks?.onEditStage === undefined ? {} : { onEditStage: () => callbacks.onEditStage!(id) })}
       onPointerDown={(event, stageId) => callbacks?.onStagePointerDown?.(event, stageId)}
     />
     <div className="kb-card-list">

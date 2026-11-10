@@ -13,6 +13,7 @@ import { BoardCard } from './board-card.js';
 import { BoardHeader } from './board/board-header.js';
 import { BoardBody, BoardEmptyStates, BoardProblemNotices, ProjectsEmptyState, ShareBanner } from './board/board-notices.js';
 import { BoardColumnsView } from './board/board-columns-view.js';
+import { StageEditorDialog } from './stage/stage-editor-dialog.js';
 import { BoardCreationDialogs } from './board/board-dialogs.js';
 import { useCreationDialogs } from './use-creation-dialogs.js';
 import { useTaskCreation } from './use-task-creation.js';
@@ -69,6 +70,11 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   const [search, setSearch] = usePageField(preferences, 'search'); const [projectFilter, setProjectFilter] = usePageField(preferences, 'projectFilter'); const [selectedId, setSelectedId] = usePageField(preferences, 'selectedTaskId');
   const selectedIdRef = useRef(selectedId); selectedIdRef.current = selectedId;
   const [configuration, setConfiguration] = useState<string | null>(null);
+  /**
+   * The stage editor's frozen target: the stage and revision the user opened it on,
+   * so a background snapshot update cannot silently rebase the draft onto newer data.
+   */
+  const [stageEditor, setStageEditor] = useState<{ column: Column; columns: readonly Column[]; initialStageId: string; revision: number } | null>(null);
   const [actionError, setActionError] = useState<Problem | null>(null);
   const [selectionMode, setSelectionMode] = useState(false); const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [autoModePending, setAutoModePending] = useState<ReadonlySet<string>>(() => new Set());
@@ -110,6 +116,12 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     if (activeBoard !== undefined) writeBoardView(activeBoard.id, next);
   }, [activeBoard?.id, setView]);
   const state = useMemo(() => snapshot && activeHub && activeBoard ? boardView(activeHub, activeBoard, snapshot.state.settings ?? { revision: 0 }) : undefined, [snapshot, activeHub, activeBoard]);
+  const openStageEditor = useCallback((stageId: string) => {
+    if (state === undefined) return;
+    const column = state.workflow.columns.find(candidate => candidate.id === stageId);
+    if (column === undefined) return;
+    setStageEditor({ column, columns: state.workflow.columns, initialStageId: state.workflow.initialColumnId, revision: state.revision });
+  }, [state]);
   const hubActivity = useMemo(() => {
     const values = new Map<string, ScopeActivity>();
     if (!snapshot) return values;
@@ -404,6 +416,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
               revision={state.revision}
               onOpenTask={openTask}
               onError={error => setActionError(asProblem(error))}
+              onEditStage={openStageEditor}
               // Withheld, not hidden, when nothing can own a task: the same enablement
               // the column board's action carries, decided in one place.
               onCreateTask={creation.canCreate ? creation.openDialog : undefined}
@@ -421,7 +434,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
                 onRun: moves.requestRun,
               }}
             />
-          : <BoardColumnsView plan={columnPlan} layoutKeys={layoutKeys} resetKey={motionResetKey} workflow={state.workflow} drag={drag} renderCard={renderCard} renderNewTaskButton={creation.renderButton} />}
+          : <BoardColumnsView plan={columnPlan} layoutKeys={layoutKeys} resetKey={motionResetKey} workflow={state.workflow} drag={drag} renderCard={renderCard} renderNewTaskButton={creation.renderButton} onEditStage={openStageEditor} />}
       </BoardBody>
       {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} conversationAttention={snapshot?.conversationAttention} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} onForce={destructive.openForce} onToggleAutoMode={toggleAutoMode} autoModePending={autoModePending.has(selected.id)} sessionTitles={sessionTitles} {...(conversationLeases === undefined ? {} : { conversationLeases })} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} />}
       {destructive.state.view && (() => {
@@ -439,6 +452,19 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       })()}
       {batchConfirm && <BulkDeleteDialog tasks={batchTasks} attention={snapshot?.attention ?? {}} onCancel={() => setBatchConfirm(false)} onConfirm={deleteSelected} />}
     </>}
+    {stageEditor !== null && <StageEditorDialog
+      hubId={activeHub!.id}
+      boardId={activeBoard!.id}
+      revision={stageEditor.revision}
+      initialStageId={stageEditor.initialStageId}
+      column={stageEditor.column}
+      columns={stageEditor.columns}
+      tasks={state?.tasks ?? []}
+      attention={snapshot?.attention ?? {}}
+      run={run}
+      onClose={() => setStageEditor(null)}
+      onSaved={() => setStageEditor(null)}
+    />}
     <BoardCreationDialogs hub={activeHub} run={run} taskDialog={creation.dialog} containers={containers} />
     {moves.overrideDialog && <div hidden={preparation.dialog !== null}>{moves.overrideDialog}</div>}
     {preparation.dialog}

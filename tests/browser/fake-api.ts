@@ -6,6 +6,7 @@ import { defaultWorktreeDestination, taskTitleSlug } from '../../src/shared/work
 import { applyInitialEntry, applyMove, applyRunInstruction, createEnteredAtSource } from '../support/in-memory-board.js';
 import { transitions } from '../support/transition-rules.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
+import { renameTaskStage, updateStage } from '../../src/domain/stage-update.js';
 
 export interface HarnessApi {
   api: ClientApi;
@@ -17,7 +18,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; notes?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean }
+export interface HarnessOptions { recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -71,6 +72,14 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     const held: KanbanSnapshot['attention'][string] = { running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: pendingUserWork(['queued-prompt'], 1) };
     attention['other'] = held;
     conversationAttention['s-other'] = held;
+  }
+  // The idle scenario strips every piece of in-flight work, so the stage editor's
+  // identifier field is exercised in the state that allows a rename.
+  if (options.idle) for (const value of tasks) {
+    value.operation = null;
+    delete value.autoMode;
+    delete value.pendingTransition;
+    if (value.worktree !== null && value.worktree.status !== 'ready') value.worktree = null;
   }
   const shortTask = tasks.find(value => value.id === 'short')!;
   // The appearance scenario needs one card that is both painted and carries status text,
@@ -185,6 +194,20 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
       const firstHub = value.state.hubs[0]!; const firstBoard = firstHub.boards[0]!;
       let receipt: KanbanSnapshot['commandReceipt'];
       if (command.type === 'board.workflow.save') { const hub = value.state.hubs.find(item => item.id === command.hubId); const board = hub?.boards.find(item => item.id === command.boardId); if (board) { board.workflowYaml = command.yaml; board.workflow = parseWorkflow(command.yaml); if (hub) hub.revision += 1; } }
+      if (command.type === 'board.stage.update') {
+        const hub = value.state.hubs.find(item => item.id === command.hubId);
+        const board = hub?.boards.find(item => item.id === command.boardId);
+        if (hub && command.expectedRevision !== undefined && command.expectedRevision !== hub.revision) throw { code: 'REVISION_CONFLICT', message: 'Hub state has changed since this revision.' };
+        if (hub && board) {
+          // The fake runs the same domain operation the host runs, so a UI save test
+          // observes the text, the parse, and the task migration the host would store.
+          const result = updateStage({ text: board.workflowYaml, stageId: command.stageId, patch: command.patch });
+          if (result.renamedFrom !== undefined && result.renamedTo !== undefined) for (const task of hub.tasks) renameTaskStage(task, result.renamedFrom, result.renamedTo);
+          board.workflowYaml = result.text;
+          board.workflow = parseWorkflow(result.text);
+          hub.revision += 1;
+        }
+      }
       if (command.type === 'task.move') {
         const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);
         const hub = task ? value.state.hubs.find(item => item.tasks.some(candidate => candidate.id === task.id)) : undefined;

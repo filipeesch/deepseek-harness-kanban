@@ -507,7 +507,7 @@ The user SHALL be able to resize a stage by dragging a resize handle on the stag
 
 ### Requirement: Layout editing lock
 
-The diagram SHALL provide a layout lock that is on by default every time the diagram is presented. While the lock is on, stage move, stage resize, connection re-anchoring, route segment adjustment, Organize, Undo, and Redo SHALL NOT be available and SHALL NOT change the workflow. While the lock is off, those actions SHALL be available subject to their own availability rules. The lock SHALL NOT gate card activation, card drag, selection, the run action, the advance action, pan, zoom, or the shared search and project filter. Unlocking and locking SHALL NOT change board data, and the lock SHALL NOT persist across a reload.
+The diagram SHALL provide a layout lock that is on by default every time the diagram is presented. While the lock is on, stage move, stage resize, connection re-anchoring, route segment adjustment, Organize, Undo, and Redo SHALL NOT be available and SHALL NOT change the workflow. While the lock is off, those actions SHALL be available subject to their own availability rules. The lock SHALL NOT gate card activation, card drag, selection, the run action, the advance action, the stage edit action, pan, zoom, or the shared search and project filter. Unlocking and locking SHALL NOT change board data, and the lock SHALL NOT persist across a reload.
 
 #### Scenario: Start locked
 
@@ -537,7 +537,6 @@ The diagram SHALL provide a layout lock that is on by default every time the dia
 
 - **WHEN** the user unlocks the layout and reloads the board
 - **THEN** the layout lock is on again
-
 ### Requirement: Diagram controls and minimap
 
 The diagram SHALL present one control stack at its bottom-left with, in order: zoom in, zoom out, fit to view, undo, redo, organize, and the layout lock. Each control SHALL present an icon, a tooltip naming its action, and an accessible name, and undo, redo, organize, and the layout actions SHALL be unavailable when they cannot apply. The diagram SHALL present an always-visible minimap at its bottom-right that shows the stages within their extent and the current viewport, and that pans the diagram when the user drags within it. The minimap SHALL NOT replace the pan and zoom gestures and SHALL NOT change board data. The diagram SHALL NOT present the text action toolbars that previously carried Organize, Undo, and Redo.
@@ -896,3 +895,27 @@ The action SHALL be focusable and SHALL activate from the keyboard as readily as
 - **THEN** the stage has not moved from where it stood
 - **AND** no workflow change is stored
 - **AND** activating the same control by keyboard opens the New task experience
+
+### Requirement: Stage edit action in the diagram stage header
+
+The diagram's stage header SHALL present the stage edit action defined by `stage-editing` alongside the stage title, the card count, and, on the initial stage, the task creation action. The action SHALL sit at the header's top right after the card count and SHALL live in the same group of stage actions, so presenting it never moves the stage title.
+
+The action SHALL NOT be a layout edit. It SHALL stay available while the layout is locked, while card selection is active, and while the search or project filter hides every card of the stage; activating it SHALL NOT start a stage move, a stage resize, or a connection adjustment, SHALL NOT add a placement-history entry, and SHALL NOT store a workflow change by itself. The header is the stage's drag handle, so pressing the action SHALL NOT pick the stage up.
+
+#### Scenario: Present the action in the diagram
+
+- **WHEN** the diagram presents a board whose workflow has four stages
+- **THEN** each stage header presents the stage edit action after its card count
+
+#### Scenario: Pressing the action does not start a move
+
+- **WHEN** the user presses the stage edit action in a stage header
+- **THEN** the stage editor opens
+- **AND** the stage does not enter a drag or resize gesture
+- **AND** no placement-history entry is added
+
+#### Scenario: Keep the action available while the layout is locked
+
+- **WHEN** the layout is locked
+- **THEN** the stage edit action remains available
+- **AND** stage moves, resizes, and arrow adjustments remain refused

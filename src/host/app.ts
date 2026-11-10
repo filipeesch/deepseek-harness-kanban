@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { canTransition, transitionAccess } from '../domain/transitions.js';
+import { conversationStageActivity, persistedStageActivity } from '../shared/stage-activity.js';
 import { entryInstruction, nextEnteredAt } from '../domain/stage-entry.js';
 import { placementFromAnchor } from '../domain/placement.js';
 import { AUTO_ADVANCE_SETTLE_MS, AutoAdvanceCoordinator } from './auto-advance.js';
@@ -98,7 +99,7 @@ export class KanbanApp {
  constructor(readonly hubs:HubRepository,readonly sessions:SessionPort,readonly git:GitPort,private readonly options:AppOptions={},private readonly workspaces?:WorkspacePort){
   this.locator=new TaskLocator(hubs);
   if(options.teamFiles)this.teamFiles=options.teamFiles;
-  this.boards=new BoardAdministration({hubs,...(options.sharing?{sharing:boardSharingPort(options.sharing)}:{}),...(options.report?{report:options.report}:{})});
+  this.boards=new BoardAdministration({hubs,...(options.sharing?{sharing:boardSharingPort(options.sharing)}:{}),...(options.report?{report:options.report}:{}),activity:{inFlight:(hubId,boardId)=>this.boardActivity(hubId,boardId)}});
   this.factsSource=withQuestionPending({read:id=>this.sessions.facts(id)},this.questions);
   if(workspaces)this.workspaceCoordinator=new WorkspaceCoordinator({
    workspaces,sessions,store:{
@@ -292,6 +293,22 @@ export class KanbanApp {
  activityChanged():void{if(this.disposed)return;this.attention.touch();this.markChanged();}
  /** The question-aware conversation facts shared by attention and scheduled archiving. */
  conversationFacts(sessionId:string):Promise<ConversationFacts>{return this.factsSource.read(sessionId);}
+ /** The in-flight reasons one board reports: persisted task state plus the facts only the host can read. */
+ private async boardActivity(hubId:string,boardId:string):Promise<readonly string[]>{
+  const hub=this.hubs.requireHub(hubId);
+  const tasks=hub.tasks.filter(task=>task.boardId===boardId);
+  const reasons=new Set<string>();
+  for(const task of tasks)for(const reason of persistedStageActivity(task))reasons.add(reason);
+  const sessionIds=[...new Set(tasks.flatMap(task=>task.sessionIds))];
+  for(const sessionId of sessionIds){
+   let facts:ConversationFacts;
+   try{facts=await this.factsSource.read(sessionId);}
+   catch{continue;}
+   const conversation=conversationStageActivity(facts);
+   if(conversation.length>0){for(const reason of conversation)reasons.add(reason);break;}
+  }
+  return [...reasons];
+ }
  sessionActivity(sessionId?:string):void{if(this.disposed)return;if(sessionId!==undefined&&!this.locator.hasSession(sessionId))return;this.attention.touch(sessionId);this.markChanged();}
  /**
   * One snapshot request. Presentation projects only resolved facts and schedules the
@@ -506,6 +523,7 @@ export class KanbanApp {
    case 'board.rename':{await this.boards.update({hubId:command.hubId,boardId:command.boardId,name:command.name,expectedRevision:command.expectedRevision},'never');break;}
    case 'board.delete':{await this.boards.remove({hubId:command.hubId,boardId:command.boardId,confirmed:command.confirmed,expectedRevision:command.expectedRevision,sharing:command.sharing},'never');break;}
    case 'board.workflow.save':await this.boards.saveWorkflow({hubId:command.hubId,boardId:command.boardId,yaml:command.yaml,expectedRevision:command.expectedRevision},'never');break;
+   case 'board.stage.update':await this.boards.updateStage({hubId:command.hubId,boardId:command.boardId,stageId:command.stageId,patch:command.patch,expectedRevision:command.expectedRevision},'never');break;
    case 'board.projects.save':await this.boards.saveProjectScope({hubId:command.hubId,boardId:command.boardId,...(command.projectKeys===undefined?{}:{projectKeys:command.projectKeys}),...(command.expectedRevision===undefined?{}:{expectedRevision:command.expectedRevision})},'never');break;
    case 'project.save':{const store=this.hubStore(command.hubId);const state=this.hubs.requireHub(store.hubId);const existing=command.project.id===undefined?undefined:state.projects.find(project=>project.id===command.project.id);invariant(!existing?.operation,'PROJECT_BUSY','Resolve the recorded project relocation before saving the project.');const value=await store.saveProject(await this.project(command.project),command.expectedRevision);commandReceipt={kind:'project',id:value.id};break;}
    case 'project.relocate':{

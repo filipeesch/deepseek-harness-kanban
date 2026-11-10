@@ -2,7 +2,8 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { KanbanSnapshot, BoardState, Problem } from '../shared/types.js';
 import { CodeEditor } from './code-editor.js';
 import { analyzeWorkflow } from './workflow-diagnostics.js';
-import { asProblem, ErrorNotice, useAction, type RunCommand } from './ui.js';
+import { asProblem, ErrorNotice, type RunCommand } from './ui.js';
+import { useWorkflowSave } from './workflow-save.js';
 
 export interface WorkflowEditorProps {
   state: BoardState;
@@ -20,7 +21,7 @@ export interface WorkflowEditorProps {
 
 /** Rich workflow YAML editor backed by the shared parser and a controlled CodeMirror surface. */
 export function WorkflowEditor({ state, run, hubId, boardId, yaml, baseRevision, onYamlChange, onSaved, onReload, onShare }: WorkflowEditorProps) {
-  const action = useAction(run);
+  const action = useWorkflowSave(run);
   const [analysis, setAnalysis] = useState(() => analyzeWorkflow(yaml));
   const [checking, setChecking] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -51,7 +52,7 @@ export function WorkflowEditor({ state, run, hubId, boardId, yaml, baseRevision,
   }
   async function save(share = false) {
     if (!canSave) return;
-    const result = await action.execute({ type: 'board.workflow.save', hubId, boardId, yaml, expectedRevision: baseRevision });
+    const result = await action.save({ type: 'board.workflow.save', hubId, boardId, yaml, expectedRevision: baseRevision });
     if (!result) return;
     setSaved(true);
     setAnalysis(analyzeWorkflow(yaml));

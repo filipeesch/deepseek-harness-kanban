@@ -2259,6 +2259,35 @@ A board SHALL carry its own project scope that states which projects may create 
 - **THEN** the board's workflow YAML is unchanged
 - **AND** the scope does not appear in the workflow editor
 
+### Requirement: Stage edit action in the column board stage header
+
+Every stage header of the column board SHALL present the stage edit action defined by `stage-editing` at the header's top right, after the stage's card count and, on the initial stage, after the task creation action. The action SHALL carry an accessible name naming the stage it edits and SHALL activate from the keyboard as readily as from the pointer.
+
+The action SHALL be available while card selection is active and while the search or project filter hides every card of the stage. Activating it SHALL open the same stage editor the workflow diagram opens, with the same fields, validation, and effects, and SHALL NOT move, reorder, or otherwise change the stage by itself.
+
+#### Scenario: Present the action in the column board
+
+- **WHEN** the column board presents a workflow with four stages
+- **THEN** each stage header presents the stage edit action after its card count
+
+#### Scenario: Open the editor from the column board
+
+- **WHEN** the user activates the stage edit action of a stage in the column board
+- **THEN** the stage editor opens for that stage
+- **AND** it presents the same fields and validation the diagram's editor presents
+
+#### Scenario: Keep the action available during card selection
+
+- **WHEN** card selection is active and the user activates the stage edit action
+- **THEN** the stage editor opens
+- **AND** no card selection changes
+
+#### Scenario: Save from the column board
+
+- **WHEN** the user changes the stage name in the editor opened from the column board and saves
+- **THEN** the column board presents the stored name
+- **AND** the cards in that stage keep their order and stage
+
 ### Requirement: Card attention surface
 
 The board SHALL present a task's dominant attention state as a tint of the card surface. The dominant state SHALL be selected from the task's attention facts by a fixed priority: a failure, then an awaiting reply, then agent execution, then unread messages. The tint SHALL be the state's attention color mixed into the host surface at a low share, so that the card stays legible as text while its surface reads as area. The tint SHALL NOT be the only presentation of the state: the attention marks defined by Coexisting attention indicators across task conversations SHALL remain presented, including for every state that does not win the surface. The surface SHALL present no tint when none of those states applies. The tint SHALL NOT change the card's height, SHALL NOT add, remove, or reorder a region of the card, and SHALL NOT affect the task's workflow stage, its position, or its drag behavior. Task-level context-operation, confirmed-transition, and automatic-advance state SHALL NOT tint the card; those remain in the status region as defined by Task card status strip.

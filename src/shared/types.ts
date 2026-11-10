@@ -50,6 +50,19 @@ export type TransitionRule = { to: string; when?: string }
 export interface StageSize { width: number; height: number }
 export interface Column { id: string; name: string; onEnterPrompt?: string; allowedTransitions?: TransitionRule[]; /** Absent means the diagram places the stage automatically. */ position?: StagePosition; /** Absent means the stage renders at the accepted minimum size. */ size?: StageSize }
 export interface ColumnGroup { id: string; name: string; columnIds: string[] }
+/** The stage fields one stage edit may change; an absent field is left as authored. */
+export interface StagePatch {
+  /** New display name; absent leaves the name as authored. */
+  name?: string;
+  /** New entry instruction; `null` clears it, absent leaves it as authored. */
+  onEnterPrompt?: string | null;
+  /** `true` makes this stage the workflow's initial stage; absent leaves the initial stage as authored. */
+  initial?: true;
+  /** Allowed transition targets; `null` allows any stage, absent leaves them as authored. */
+  allowedTransitions?: TransitionRule[] | null;
+  /** New stage identifier; absent keeps the identifier. */
+  id?: string;
+}
 /** One of the four sides of a stage boundary that a connection can touch. */
 export type StageSide = 'top' | 'right' | 'bottom' | 'left'
 /** The axis an adjustable connection segment runs along. */
@@ -344,6 +357,7 @@ export type Command =
   | { type: 'board.rename'; hubId: string; boardId: string; name: string; expectedRevision?: number }
   | { type: 'board.delete'; hubId: string; boardId: string; confirmed: boolean; expectedRevision?: number; sharing?: 'local' | 'team' }
   | { type: 'board.workflow.save'; hubId: string; boardId: string; yaml: string; expectedRevision?: number }
+  | { type: 'board.stage.update'; hubId: string; boardId: string; stageId: string; patch: StagePatch; expectedRevision?: number }
   /** An absent `projectKeys` allows every project of the Hub; an empty list closes the board to creation. */
   | { type: 'board.projects.save'; hubId: string; boardId: string; projectKeys?: string[]; expectedRevision?: number }
   | { type: 'project.save'; hubId?: string; project: ProjectInput; expectedRevision?: number }
