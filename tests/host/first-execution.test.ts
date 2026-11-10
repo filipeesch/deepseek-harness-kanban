@@ -41,7 +41,9 @@ describe('prepareFirstExecution', () => {
     const opened = await f.app.startFirstExecution(task.id, { send: true, columnId: 'backlog' });
     const current = f.store.requireTask(task.id);
     expect(opened.sent).toBe(true);
-    expect(f.sessions.sent).toEqual([{ id: opened.sessionId, text: instruction, requestId: undefined }]);
+    expect(f.sessions.sent).toEqual([{
+      id: opened.sessionId, text: instruction, kind: 'stage-instruction', requestId: expect.any(String), summary: 'Stage: Backlog - next: Done',
+    }]);
     expect(current.instructionPending).toBeUndefined();
   });
 

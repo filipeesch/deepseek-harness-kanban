@@ -46,7 +46,7 @@ describe('legacy pending transitions', () => {
       value.pendingTransition = { id: 'legacy-failed', fromColumnId: 'backlog', columnId, mode: 'run', sessionId: t.sessionIds[0]!, text: 'Frozen instruction.', status: 'failed', error: { code: 'SEND_FAILED', message: 'The instruction was not delivered.' } };
     });
     await f.app.command({ type: 'operation.retry', taskId: t.id });
-    expect(f.sessions.sent).toEqual([{ id: t.sessionIds[0], text: 'Frozen instruction.', requestId: 'legacy-failed' }]);
+    expect(f.sessions.sent).toEqual([{ id: t.sessionIds[0], text: 'Frozen instruction.', requestId: 'legacy-failed', kind: 'stage-instruction', summary: 'Stage: Plan - next: In Progress' }]);
     expect(f.store.requireTask(t.id).pendingTransition).toBeUndefined();
   });
 

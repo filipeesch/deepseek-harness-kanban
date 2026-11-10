@@ -50,6 +50,14 @@ describe('queued prompt reader', () => {
     expect(read('s2', sequenced({ inbox: { 'next-turn': [message()], 'next-step': [notice('working-directory')] } }))).toBe(2);
   });
 
+  it('does not count a stage instruction as user work by its source alone', () => {
+    // No ledger entry: the plugin-sourced message is not user input by construction.
+    const read = createQueuedPromptReader({
+      live: () => ({ nextTurn: [notice('stage-instruction'), message()], nextStep: [notice('stage-instruction')] }),
+    }, new PluginPromptLedger());
+    expect(read('s1', undefined)).toBe(1);
+  });
+
   it('reads the durable projection for a conversation that is not live', async () => {
     const read = createQueuedPromptReader({ live: () => undefined }, new PluginPromptLedger());
     expect(read('s1', sequenced({ inbox: { 'next-turn': [message(), message('k')], 'next-step': [message()] } }))).toBe(3);

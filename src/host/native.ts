@@ -16,6 +16,8 @@ import { createNativeSessionFacts, inspectedOpenTurn, nativePending } from './na
 import type { ConversationFactsReader } from './conversation-facts.js';
 import { createSessionHistory, type SessionHistory, type SessionHistoryReader } from './session-history.js';
 import { createQueuedPromptReader, PluginPromptLedger } from './queued-prompts.js';
+import { createStageDelivery } from './stage-delivery.js';
+import { createStageInstructionMessage, STAGE_INSTRUCTION_SOURCE_KIND } from './stage-message.js';
 import { executeCommand } from './host-command.js';
 import { createHostProjectProbe } from './project-probe.js';
 
@@ -149,6 +151,22 @@ export function createNativePorts(ctx: Context, options: NativePortsOptions = {}
     return session === undefined ? undefined : options.conversationFacts!.read(session);
   };
   const sessionFacts = createNativeSessionFacts({ activity, projections, inspect: id => history.read(id), queuedPrompts, ...(liveFacts === undefined ? {} : { liveFacts }) });
+  // A stage instruction wakes its own turn from the next-turn boundary, so the
+  // delivery carries a plugin source instead of the human prompt source. The
+  // conversation resolves first so a cold session contributes the inbox the host
+  // restored to the delivery-identity check.
+  const stageDelivery = createStageDelivery({
+    resolve: async id => {
+      const agent = await resolveAgent(id);
+      return {
+        agent,
+        pending: (requestId: string) => [...agent.inbox.nextTurn, ...agent.inbox.nextStep].some(message =>
+          message.source.kind === STAGE_INSTRUCTION_SOURCE_KIND && message.source.requestId === requestId),
+      };
+    },
+    events: async id => (await history.read(id)).events,
+    deliver: (target, entry) => { target.agent.followup(createStageInstructionMessage(entry)); },
+  });
   const sessions: SessionPort = {
     async create(projectPath, workspaceId) {
       const cwd = await directoryPath(projectPath);
@@ -240,6 +258,9 @@ export function createNativePorts(ctx: Context, options: NativePortsOptions = {}
       admissions.set(key, { text, done });
       try { await done; }
       finally { if (admissions.get(key)?.done === done) admissions.delete(key); }
+    },
+    async deliverStageInstruction(id, delivery) {
+      await stageDelivery(id, delivery);
     },
     async archive(id) {
       invariant(await sessions.isIdle(id), 'SESSION_ACTIVE', 'Active conversations cannot be archived by task cleanup.');

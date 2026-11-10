@@ -27,12 +27,14 @@ function isUserInput(item: unknown): boolean {
 const MAX_TRACKED_PROMPTS = 64;
 
 /**
- * Prompt identities this host admitted itself, per conversation. A queued stage
- * instruction is the host's own work, not input the user still owes the task, so
- * the pending-user-work read skips it. The ledger is bounded rather than pruned by
- * the queue's current contents: a prompt is recorded before its queue insertion is
- * observable, so pruning on absence could forget an instruction that is about to
- * appear and read it back as user work.
+ * Prompt identities this host admitted itself through the human-prompt path, per
+ * conversation. A queued host prompt is the host's own work, not input the user
+ * still owes the task, so the pending-user-work read skips it. Only scheduled
+ * prompts need an entry: a stage instruction travels as a plugin-sourced message,
+ * which is not user input by source and needs no ledger record. The ledger is
+ * bounded rather than pruned by the queue's current contents: a prompt is recorded
+ * before its queue insertion is observable, so pruning on absence could forget a
+ * prompt that is about to appear and read it back as user work.
  */
 export class PluginPromptLedger {
   private readonly bySession = new Map<string, string[]>();

@@ -31,6 +31,15 @@ export interface SessionTopologyPort {
   /** Include related directories when `within` is set; lineage is always global. */
   topology(within?: string): Promise<SessionTopology>;
 }
+/** One stage instruction admitted to a conversation as a plugin-sourced context message. */
+export interface StageInstructionDelivery {
+  /** Stable delivery identity; a repeated identity is never delivered twice. */
+  readonly requestId: string;
+  /** Model-facing text: the entry instruction, then the transition briefing when one applies. */
+  readonly text: string;
+  /** One-line account the collapsed message row shows. */
+  readonly summary: string;
+}
 export interface SessionPort extends SessionTopologyPort {
   create(projectPath: string, workspaceId?: string): Promise<string>;
   /** Raw recorded native directory; recovery must still see a missing current worktree. */
@@ -40,6 +49,8 @@ export interface SessionPort extends SessionTopologyPort {
   setDirectory(sessionId: string, directory: string, signal?: AbortSignal): Promise<void>;
   isIdle(sessionId: string): Promise<boolean>;
   send(sessionId: string, text: string, requestId?: string): Promise<void>;
+  /** Deliver one stage instruction as a plugin-sourced message that starts the turn. */
+  deliverStageInstruction(sessionId: string, delivery: StageInstructionDelivery): Promise<void>;
   archive(sessionId: string): Promise<void>;
   /** Native execution facts: running agents, background work, pending interaction, and the last settled turn. */
   facts(sessionId: string): Promise<ConversationFacts>;

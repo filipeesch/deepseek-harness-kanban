@@ -92,8 +92,11 @@ it('starts the first execution on creation, cancels a Git start, and preserves t
   await page.clock.runFor(5000);
   await page.clock.resume();
   const conversation = page.locator('.kb-conversation-window');
-  const runMessage = conversation.locator('[class*="_plainRun_"]').filter({ hasText: INSTRUCTION });
-  await expect(runMessage).toBeVisible({ timeout: 20_000 });
+  // The instruction arrives as a plugin-sourced context row, not as a user message.
+  const stageRow = conversation.locator('[data-disclosure-row]').filter({ hasText: 'stage-instruction' });
+  await expect(stageRow).toBeVisible({ timeout: 20_000 });
+  await expect(stageRow).toContainText('Stage: Explore');
+  await expect(conversation.locator('[class*="_plainRun_"]').filter({ hasText: INSTRUCTION })).toHaveCount(0);
   await expect(conversation.getByText('Automatic instruction received.', { exact: false })).toBeVisible({ timeout: 20_000 });
   await expect(page.locator('.kb-card-countdown')).toHaveCount(0);
 
