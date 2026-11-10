@@ -16,23 +16,32 @@ The package is private and marked `UNLICENSED`; these instructions do not grant 
 
 ## Install
 
-### Install the released plugin
+### Install from the repository URL
 
-Every release publishes one installable file, `dsh-kanban.tgz`, built from the commit that landed on `main`. Its name is fixed and is part of the install contract, so the install specification never changes between versions. Releases are immutable: each manifest version is published once, and a merge that does not bump the version fails instead of overwriting an existing release.
+Install the plugin from this repository's URL. No build is published to download, so the host resolves that address as a Git dependency and the profile builds it during installation: the installed copy is always the commit the address resolved. Releases published before the check pipeline replaced the release workflow, and their assets, remain downloadable but do not advance.
 
 1. Open **Plugins → Add plugin**.
-2. Paste the release asset address into the package field:
+2. Paste the repository URL into the package field:
 
    ```text
-   https://github.com/filipeesch/deepseek-harness-kanban/releases/latest/download/dsh-kanban.tgz
+   https://github.com/filipeesch/deepseek-harness-kanban
    ```
 
-3. Enable **dsh-kanban** and inspect the native installation/application result.
-4. Refresh the **existing** GUI URL, then select **Kanban** in its sidebar. Use the URL the host printed on launch.
+3. Allow the plugin build when pnpm refuses it. A clone has no `lib/`, because that directory is build output ignored by Git, and the manifest's `prepare` script is what produces it; pnpm does not run the build script of a Git dependency unless the profile permits it, so the first attempt fails with `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` and the host restores the profile's `package.json` and `pnpm-lock.yaml`. Copy the exact key pnpm prints in the refusal into the profile's `pnpm-workspace.yaml` and add the plugin again:
+
+   ```yaml
+   allowBuilds:
+     "dsh-kanban@git+https://github.com/filipeesch/deepseek-harness-kanban#<commit>": true
+   ```
+
+   The key names the resolved commit, so it changes whenever the ref moves; pin the address to keep one key.
+4. Enable **dsh-kanban** and inspect the native installation/application result. The approved run installs the checkout's own dependencies and runs `node scripts/build.mjs`, so it needs the profile's package manager on `PATH` plus registry access.
+5. Confirm the installed copy carries its entries before trusting the result: `$DSH_HOME/profiles/<profile>/node_modules/dsh-kanban/lib/index.js` must exist. A copy without `lib/` can report a successful installation and fail to import on the next start; see [installation failure signatures](<docs/operations.md#installation-failure-signatures>).
+6. Refresh the **existing** GUI URL, then select **Kanban** in its sidebar. Use the URL the host printed on launch.
 
 If the item is missing after a reinstall, check for a stale user-layer override before treating it as an activation failure: a `- id: kanban` entry with `disabled: true` in the profile's `cordis.patch.yml` survives reinstalls and hides the row. Enable Kanban in the plugin manager or remove that override, then restart. Confirm with `dsh --profile <profile> --dump-config | grep -A2 'id: kanban'`; see [installation failure signatures](<docs/operations.md#installation-failure-signatures>).
 
-The asset already contains the compiled entries, so this path runs no build and needs no dependency build-script approval. The host treats the address as a tarball, not as a repository, and installs it without scripts. Most DSH SDK packages are peer dependencies that the host installation provides, so the profile does not need its own copy of them. The Typert protocol helper is compiled into the published entries instead: a profile can hoist an older copy of that package, and Node resolves the profile copy before the host installation (see [installation failure signatures](<docs/operations.md#installation-failure-signatures>)). pnpm still downloads the artifact's own runtime dependencies (`zod`, `yaml`, and the editor packages) from the registry, so the installation needs registry access but no build.
+Most DSH SDK packages are peer dependencies that the host installation provides, so the profile does not need its own copy of them. The Typert protocol helper is compiled into the built entries instead: a profile can hoist an older copy of that package, and Node resolves the profile copy before the host installation (see [installation failure signatures](<docs/operations.md#installation-failure-signatures>)). pnpm also downloads the artifact's own runtime dependencies (`zod`, `yaml`, and the editor packages) from the registry, so the installation needs registry access for the build and for those dependencies.
 
 ### Update an installed plugin
 
@@ -42,15 +51,18 @@ A profile keeps the version it resolved, so adding the same address again does n
 dsh plugin --profile <profile> update dsh-kanban
 ```
 
-The command runs pnpm in `$DSH_HOME/profiles/<profile>` (by default `~/.dsh/profiles/<profile>`), fetches the artifact from its release address again, and reports the new manifest version in **Plugins**. Use `--profile desktop` only through the Desktop-owned CLI, which manages that reserved profile.
+The command runs pnpm in `$DSH_HOME/profiles/<profile>` (by default `~/.dsh/profiles/<profile>`), re-resolves the specification the profile recorded, and reports the new manifest version in **Plugins**. A floating address (the bare repository URL) clones the default branch again, so it builds a new commit and needs a new `allowBuilds` key for it; an address pinned with `#<commit sha>` stays on that commit until you change the specification. Use `--profile desktop` only through the Desktop-owned CLI, which manages that reserved profile.
 
 ### Install or pin an exact version
 
-`releases/latest/download/dsh-kanban.tgz` moves to the newest published version. To install a fixed build, use the tag address instead, where the tag is `v` followed by the manifest version:
+The bare repository URL follows the default branch, so it moves whenever `main` moves. To install a fixed build, append a committish to the same URL:
 
 ```text
-https://github.com/filipeesch/deepseek-harness-kanban/releases/download/v0.1.2/dsh-kanban.tgz
+https://github.com/filipeesch/deepseek-harness-kanban#11edda3
+https://github.com/filipeesch/deepseek-harness-kanban#v0.15.0
 ```
+
+A commit sha is the only pin that cannot move. Tags exist for every version published while the release workflow still ran, and a tag for a later version is created by hand, so confirm the tag exists before pinning to it. Never pin a branch name: a branch is a moving ref, not a fixed build.
 
 No standalone web server is needed. Do not start Vite or a replacement DSH instance to make this plugin visible. The plugin adds navigation beside Automation tasks and Plugins; it does not configure a startup-page override.
 
@@ -82,18 +94,9 @@ Then use the **already-running DSH GUI**:
 
 After source changes, deliberately run `pnpm run build` again, explicitly reconcile the rebuilt plugin through the supported native Plugin Manager operation, and refresh that same GUI. On the inspected rc.2 host, public `pluginManager.setBundleEnabled('dsh-kanban', true)` reconciles changed loaded linked-target files even when already enabled; the optional helper exposes this as `enable`. See [the safe rebuild/reconcile procedure](<docs/operations.md#explicit-reconciliation-after-a-rebuild>). A linked checkout is **not** a promise of source HMR or automatic compilation. Inspect application/errors and honor any native restart-required result instead of reporting a hot update as successful.
 
-### Do not install with the repository URL
+### What the repository install builds
 
-Pasting `https://github.com/filipeesch/deepseek-harness-kanban` adds a **Git** dependency, not the release download: pnpm clones the default branch, which does not contain `lib/` because it is build output ignored by Git. The host validates the bundle patch after installing but not the package's public entry points, so an unbuilt clone can install as successful and then fail to import on the next start.
-
-The manifest declares a `prepare` script, so pnpm refuses to build a Git dependency unless the profile allows it. The install then fails, and the host restores the profile's `package.json` and `pnpm-lock.yaml` instead of selecting a bundle that cannot load. The host offers no approval button for that refusal. To install from Git anyway, copy the exact key pnpm prints in the refusal into the profile's `pnpm-workspace.yaml` and retry. The key names the resolved commit, so it changes whenever the ref moves:
-
-```yaml
-allowBuilds:
-  "dsh-kanban@git+https://github.com/filipeesch/deepseek-harness-kanban#<commit>": true
-```
-
-An approved run installs the dependency and then runs the build, which needs the profile's package manager on `PATH` plus registry access for the checkout's dependencies. The release asset skips that build and the inner install, but both paths download the artifact's own runtime dependencies from the registry. Prefer the release asset unless you are testing the Git path itself. See [installation diagnostics](<docs/operations.md#installation-and-update-diagnostics>) for the failure signatures.
+The repository URL is a **Git** dependency: pnpm clones the default branch, which does not contain `lib/` because that directory is build output ignored by Git, and the manifest's `prepare` script is what compiles it. Two consequences follow, both covered by the install procedure above and by [installation diagnostics](<docs/operations.md#installation-and-update-diagnostics>): the profile must approve the build for the resolved commit before the install can complete, and a copy that got installed without that build reports success and then fails to import on the next start. Confirm `lib/index.js` exists in the installed copy before treating an installation as good.
 
 The latest source installation attempt initially failed fetching from the default registry; a one-shot `https://registry.npmjs.org` override succeeded without changing package-manager or DSH settings. This is observed network troubleshooting, not a requirement to change your registry. See [installation diagnostics](<docs/operations.md#installation-and-update-diagnostics>) and the optional local Inspector procedure there.
 

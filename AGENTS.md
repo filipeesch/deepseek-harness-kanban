@@ -13,13 +13,23 @@
 
 ## Releases
 
-- Bump `version` in `package.json` in the pull request that changes the published
-  artifact. A released version is never reused.
-- The release workflow publishes one immutable release per version and fails
-  instead of overwriting an existing tag or asset.
-- Keep `releases/latest/download/dsh-kanban.tgz` as the documented install
-  address; document pinning an exact tag and updating an installed profile when
-  installation guidance changes.
+- Document installation from the repository URL:
+  `https://github.com/filipeesch/deepseek-harness-kanban`. Nothing publishes a
+  build artifact any more, so the repository URL is the install address.
+- Treat that address as a Git dependency: the clone carries no `lib/`, and the
+  profile must allow the manifest `prepare` build for the resolved commit before
+  the installed copy can load. Document the approval step and the unbuilt-clone
+  failure whenever the install guidance changes, and never present an install that
+  reported success as proof that the bundle activates.
+- Pin a reproducible install with a committish on the same URL. `#<commit sha>` is
+  the only pin that cannot move; a `#v<version>` tag exists for the versions that
+  were released and is created by hand after that, so document a tag as a
+  convenience and never document a branch name as a pin.
+- Bump `version` in `package.json` in the pull request that changes the installed
+  artifact, so the plugin manager and the profile can report which build they hold.
+- Do not document `releases/latest/download/dsh-kanban.tgz` as the install address.
+  The CI pipeline publishes nothing, so that asset resolves only to the last release
+  published before the pipeline replaced the release workflow.
 
 ## Host API deprecations
 

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines how the published `dsh-kanban` artifact is built, declared compatible with a DSH range, released as an immutable version, and installed or updated from its GitHub release asset, so that a supported host activates the bundle regardless of the other plugins sharing its profile.
+Defines how the `dsh-kanban` artifact is built, declared compatible with a DSH range, and installed or updated from the repository URL, where the profile builds the plugin during installation, so that a supported host activates the bundle regardless of the other plugins sharing its profile. No build artifact is published: the CI pipeline that verifies the solution produces nothing to install.
 
 ## Requirements
 
@@ -48,54 +48,32 @@ The plugin manifest SHALL declare `engines.dsh` as `>=0.2.1-rc.2 <0.3.0-0` so DS
 - **THEN** it declares `engines.dsh`
 - **AND** `@deepseek-ai/dsh-typert-protocol` appears only under `devDependencies`
 
-### Requirement: Every release is immutable
+### Requirement: Installation is documented from the repository URL
 
-The release workflow SHALL publish exactly one release per manifest version, using the fixed asset name `dsh-kanban.tgz`. A run SHALL fail, without publishing or overwriting anything, when the release tag or the release for the current manifest version already exists. The workflow SHALL NOT overwrite an existing release asset. The release tag SHALL be created on the commit that was built and published, and the workflow SHALL refuse to run for any ref other than `main`. The version in the manifest SHALL be bumped in the pull request that changes the published artifact.
+The installation documentation SHALL document `https://github.com/filipeesch/deepseek-harness-kanban` as the recommended install address. It SHALL state that the address installs a Git dependency whose `prepare` build the profile must allow for the resolved commit, SHALL give the `allowBuilds` entry that records that approval, and SHALL tell the reader to confirm the installed copy carries its `lib/` entries before trusting a reported success. It SHALL document pinning with a committish, updating an already installed profile, and diagnosing a stale DSH SDK copy inside a profile. The documentation SHALL NOT present `releases/latest/download/dsh-kanban.tgz` as the install address and SHALL NOT present a branch name as a pin.
 
-#### Scenario: New version publishes a release
-
-- **WHEN** a commit with manifest version `0.1.2` lands on `main` and no `v0.1.2` tag exists
-- **THEN** the workflow publishes `v0.1.2` with the single asset `dsh-kanban.tgz`
-
-#### Scenario: Existing version fails instead of overwriting
-
-- **WHEN** a commit lands on `main` with a manifest version whose tag already exists
-- **THEN** the workflow fails without replacing the release or its asset
-- **AND** the failure states that the manifest version must be bumped
-
-#### Scenario: A tag exists without a release
-
-- **WHEN** the tag `v<version>` already exists but no GitHub release was created for it
-- **THEN** the workflow fails before publishing and states that the manifest version must be bumped
-
-#### Scenario: Manual dispatch off main
-
-- **WHEN** the workflow is dispatched for a ref other than `main`
-- **THEN** the release job does not run and nothing is published
-
-#### Scenario: Install address stays stable
-
-- **WHEN** any new version is published
-- **THEN** `releases/latest/download/dsh-kanban.tgz` resolves to that release's asset
-
-### Requirement: Install and update guidance is documented
-
-The installation documentation SHALL keep `releases/latest/download/dsh-kanban.tgz` as the recommended install address, and SHALL document pinning an exact release tag, updating an already installed profile, and diagnosing a stale DSH SDK copy inside a profile.
-
-#### Scenario: Install from the latest release
+#### Scenario: Install from the repository URL
 
 - **WHEN** a reader follows the installation guide
-- **THEN** the guide gives the stable `latest` asset address as the recommended install specification
+- **THEN** the guide gives the repository URL as the install specification
+- **AND** the guide gives the build approval the profile must record before the install can complete
+
+#### Scenario: Install reports success without built entries
+
+- **WHEN** an installation completed without running the `prepare` build
+- **THEN** the guide tells the reader to check `lib/index.js` in the installed copy and names the missing approval as the cause
 
 #### Scenario: Pin an exact version
 
 - **WHEN** a reader needs a reproducible install
-- **THEN** the guide gives the exact-tag asset address for the installed version
+- **THEN** the guide gives the repository URL with a `#<commit sha>` committish as the pin that cannot move
+- **AND** the guide warns that a `#v<version>` tag exists only where one was published or pushed by hand
 
 #### Scenario: Update an installed profile
 
 - **WHEN** a reader already installed an older build from the same address
 - **THEN** the guide gives the command that updates the plugin in that profile
+- **AND** the guide states that a floating address builds a new commit and needs a new approval key, while a pinned address stays put
 
 #### Scenario: Diagnose a stale SDK copy
 
