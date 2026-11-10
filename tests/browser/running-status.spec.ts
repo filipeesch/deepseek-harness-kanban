@@ -7,6 +7,11 @@ function accent(locator: Locator, property: string): Promise<string> {
   return locator.evaluate((element: HTMLElement, name: string) => getComputedStyle(element, '::after').getPropertyValue(name), property);
 }
 
+/** The border accent's animated pseudo-element. */
+function ring(locator: Locator, property: string): Promise<string> {
+  return locator.evaluate((element: HTMLElement, name: string) => getComputedStyle(element, '::before').getPropertyValue(name), property);
+}
+
 test('cards show the execution accent with a real pulse', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=activity');
   await page.waitForSelector('.kb-card');
@@ -88,4 +93,34 @@ test('reduced motion keeps the accent visible without animation', async ({ page 
   await page.getByRole('button', { name: 'Open task Long column task 0', exact: true }).click();
   await expect(dot).toBeVisible();
   expect(await dot.evaluate(element => element.getAnimations().length)).toBe(0);
+});
+
+test('the running card carries the accent on its border as well as the trailing bar', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=activity');
+  await page.waitForSelector('.kb-card');
+
+  const working = page.locator('[data-task-id="long-0"]');
+  const idle = page.locator('[data-task-id="long-1"]');
+  await expect(working).toHaveAttribute('data-working', 'true');
+  // The border pulse rides the ring, so the card element itself stays animation-free.
+  expect(await ring(working, 'animation-name')).toBe('kb-working-frame');
+  expect(await working.evaluate(element => element.getAnimations().length)).toBe(0);
+  const workingBorder = await working.evaluate(element => getComputedStyle(element).borderTopColor);
+  const idleBorder = await idle.evaluate(element => getComputedStyle(element).borderTopColor);
+  expect(workingBorder).not.toBe(idleBorder);
+});
+
+test('reduced motion keeps the running border and removes both pulses', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto(HARNESS + '?scenario=activity');
+  await page.waitForSelector('.kb-card');
+  const working = page.locator('[data-task-id="long-0"]');
+  await expect(working).toHaveAttribute('data-working', 'true');
+  expect(await ring(working, 'animation-name')).toBe('none');
+  expect(await accent(working, 'animation-name')).toBe('none');
+  // The border keeps the execution accent even without the pulse, which is what tells a
+  // running card apart from an unread one once motion is gone.
+  const border = await working.evaluate(element => getComputedStyle(element).borderTopColor);
+  const bar = await accent(working, 'background-color');
+  expect(border).toBe(bar);
 });

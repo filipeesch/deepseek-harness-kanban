@@ -197,6 +197,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       nativeSeat={nativeSeat}
       {...(openSession === undefined ? {} : { onOpenSession: openSession })}
       conversationLeases={leaseEnvironment}
+      onMarkAllRead={sessionIds => bridge.markAllRead(sessionIds)}
       renderConversation={renderConversation}
     />;
   }

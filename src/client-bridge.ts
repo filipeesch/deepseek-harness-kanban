@@ -191,6 +191,20 @@ export class ClientBridge {
     this.readState.flush();
     return release;
   }
+  /**
+   * Acknowledge the settled turn of every given conversation without displaying it.
+   * The board's mark-all-read action uses this, so clearing a board needs no host
+   * round trip and no new command.
+   */
+  markAllRead(sessionIds: readonly string[]): void {
+    if (this.disposed || !this.host) return;
+    // The tracker acknowledges what its last sync recorded, so refresh from the host
+    // facts before marking a batch that was never displayed.
+    this.readState.sync(this.host.conversations);
+    for (const sessionId of sessionIds) this.readState.markRead(sessionId);
+    this.readState.flush();
+    this.publish();
+  }
   /** Prevent two plugin occurrences from mounting the same native composer simultaneously. */
   claimComposer(id: string): (() => void) | undefined {
     if (this.composers.has(id) || this.disposed) return undefined;

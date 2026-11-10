@@ -107,3 +107,44 @@ describe('conversation read tracker', () => {
     expect(tracker.acknowledged('s1')).toBe(4);
   });
 });
+
+describe('bulk read acknowledgment', () => {
+  it('acknowledges a conversation that was never displayed', () => {
+    const reads = new ReadAcknowledgments(memoryStorage());
+    const tracker = new ConversationReadTracker(reads);
+    tracker.sync({ s1: facts({ settledTurn: { seq: 5, outcome: 'ok' } }), s2: facts({ settledTurn: { seq: 9, outcome: 'error' } }) });
+    tracker.markRead('s1');
+    expect(tracker.acknowledged('s1')).toBe(5);
+    expect(tracker.acknowledged('s2')).toBeUndefined();
+  });
+
+  it('leaves an unknown conversation and an unsettled one untouched', () => {
+    const reads = new ReadAcknowledgments(memoryStorage());
+    const tracker = new ConversationReadTracker(reads);
+    tracker.sync({ s1: facts() });
+    tracker.markRead('missing');
+    tracker.markRead('s1');
+    expect(reads.acknowledged('missing')).toBeUndefined();
+    expect(reads.acknowledged('s1')).toBeUndefined();
+  });
+
+  it('persists the bulk acknowledgment across a reload', () => {
+    const storage = memoryStorage();
+    const reads = new ReadAcknowledgments(storage);
+    const tracker = new ConversationReadTracker(reads);
+    tracker.sync({ s1: facts({ settledTurn: { seq: 6, outcome: 'ok' } }) });
+    tracker.markRead('s1');
+    reads.flush();
+    expect(new ReadAcknowledgments(storage).acknowledged('s1')).toBe(6);
+  });
+
+  it('advances to a turn that settled after an earlier bulk read', () => {
+    const reads = new ReadAcknowledgments(memoryStorage());
+    const tracker = new ConversationReadTracker(reads);
+    tracker.sync({ s1: facts({ settledTurn: { seq: 3, outcome: 'ok' } }) });
+    tracker.markRead('s1');
+    tracker.sync({ s1: facts({ settledTurn: { seq: 8, outcome: 'error' } }) });
+    tracker.markRead('s1');
+    expect(tracker.acknowledged('s1')).toBe(8);
+  });
+});

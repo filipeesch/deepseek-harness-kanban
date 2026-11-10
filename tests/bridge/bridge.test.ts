@@ -321,6 +321,45 @@ describe('durable conversation attention', () => {
     await vi.waitFor(() => expect(last(notify).conversationAttention.a?.unread).toBe(true));
     expect(last(notify).attention.t1?.unread).toBe(true);
   });
+
+  it('acknowledges a whole board without displaying any conversation', async () => {
+    const f = fixture(); const notify = vi.fn(); f.bridge.api.subscribe(notify); await f.bridge.api.snapshot(); await stream(f);
+    f.feeds[0]!.push(hostSnapshot(2, { a: settled(3), b: settled(4), c: settled(5, 'error') }));
+    await vi.waitFor(() => expect(last(notify).attention.t1?.unread).toBe(true));
+    expect(last(notify).attention.t2?.failed).toBe(true);
+    f.bridge.markAllRead(['a', 'b']);
+    expect(last(notify).attention.t1?.unread).toBe(false);
+    expect(last(notify).attention.t2?.failed).toBe(true);
+    f.bridge.markAllRead(['c']);
+    expect(last(notify).attention.t2?.failed).toBe(false);
+  });
+
+  it('leaves a live awaiting reply in place when it acknowledges a board', async () => {
+    const f = fixture(); const notify = vi.fn(); f.bridge.api.subscribe(notify); await f.bridge.api.snapshot(); await stream(f);
+    const pending = { kinds: ['native-question' as const], queuedPrompts: 0 };
+    f.feeds[0]!.push(hostSnapshot(2, { a: { running: false, background: [], pending, settledTurn: { seq: 3, outcome: 'ok' } } }));
+    await vi.waitFor(() => expect(last(notify).attention.t1?.awaitingReply).toBe(true));
+    expect(last(notify).attention.t1?.unread).toBe(true);
+    f.bridge.markAllRead(['a', 'b', 'c']);
+    expect(last(notify).attention.t1?.unread).toBe(false);
+    expect(last(notify).attention.t1?.awaitingReply).toBe(true);
+  });
+
+  it('keeps a bulk acknowledgment across a new bridge over the same storage', async () => {
+    const storage = memoryStorage();
+    const first = fixture({ storage });
+    const notify = vi.fn(); first.bridge.api.subscribe(notify); await first.bridge.api.snapshot(); await stream(first);
+    first.feeds[0]!.push(hostSnapshot(2, { a: settled(3), b: settled(4) }));
+    await vi.waitFor(() => expect(last(notify).attention.t1?.unread).toBe(true));
+    first.bridge.markAllRead(['a', 'b']);
+    expect(last(notify).attention.t1?.unread).toBe(false);
+    await first.bridge.dispose();
+    const second = fixture({ storage });
+    const accepted = vi.fn(); second.bridge.api.subscribe(accepted); await second.bridge.api.snapshot(); await stream(second);
+    second.feeds[0]!.push(hostSnapshot(2, { a: settled(3), b: settled(4) }));
+    await vi.waitFor(() => expect(last(accepted).sequence).toBe(2));
+    expect(last(accepted).attention.t1?.unread).toBe(false);
+  });
 });
 
 describe('honest local view acknowledgement', () => {

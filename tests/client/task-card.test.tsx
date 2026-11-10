@@ -2,7 +2,8 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { TaskCard, cardStatusEntries, type TaskCardProps } from '../../src/client/task-card.js';
+import { TaskCard, type TaskCardProps } from '../../src/client/task-card.js';
+import { cardStatusEntries } from '../../src/client/card-status-entries.js';
 import { autoModeView } from '../../src/client/auto-mode.js';
 import { AutoRunController } from '../../src/client/auto-run.js';
 import { EMPTY_ATTENTION, type Attention, type Column, type ContextOperation, type Task } from '../../src/shared/types.js';
@@ -330,5 +331,34 @@ describe('auto-mode control on the card', () => {
     const line = card.querySelector('.kb-card-status-line')!;
     expect(line.textContent).toBe('Auto mode paused: the turn is waiting for you');
     expect(line.className).toContain('is-pending');
+  });
+});
+
+describe('card presence', () => {
+  it('presents the dominant state and keeps every mark', () => {
+    const { card } = setup({ attention: attentionWith({ running: true, unread: true, awaitingReply: true, failed: true }) });
+    expect(card.getAttribute('data-presence')).toBe('error');
+    expect(card.querySelectorAll('.kb-card-context .kb-attention-dots .kb-dot')).toHaveLength(3);
+  });
+
+  it('presents an awaiting reply over work in progress', () => {
+    const { card } = setup({ attention: attentionWith({ running: true, unread: true, awaitingReply: true }) });
+    expect(card.getAttribute('data-presence')).toBe('attention');
+  });
+
+  it('presents running without a mark of its own', () => {
+    const { card } = setup({ attention: attentionWith({ running: true, unread: true }) });
+    expect(card.getAttribute('data-presence')).toBe('running');
+    expect(card.querySelectorAll('.kb-dot')).toHaveLength(1);
+  });
+
+  it('stays quiet without attention', () => {
+    expect(setup().card.getAttribute('data-presence')).toBe('none');
+  });
+
+  it('does not let a status entry paint the card', () => {
+    const withOperation = setup({ task: { ...baseTask, operation: failedOperation } });
+    expect(withOperation.card.getAttribute('data-presence')).toBe('none');
+    expect(withOperation.card.querySelector('.kb-card-status-line')).toBeTruthy();
   });
 });
