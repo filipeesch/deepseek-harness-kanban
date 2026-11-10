@@ -1,7 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import type { Board, HubState, HubTask } from '../shared/types.js';
+import type { StageInstructionDelivery } from '../shared/ports.js';
 import { invariant } from '../shared/errors.js';
 import { entryInstruction } from '../domain/stage-entry.js';
 import { buildTransitionBriefing } from './stage-briefing.js';
+import { buildStageInstructionDelivery } from './stage-message.js';
 
 /** The task scope an admission needs; the host resolves it from its task locator. */
 export interface StageInstructionTarget { hubId: string; task: HubTask; board: Board }
@@ -12,7 +15,8 @@ export interface StageInstructionDeps {
   /** The first open conversation, creating one when every tab is closed. */
   resolveSession(task: HubTask): Promise<string>;
   assertExecutionContext(sessionId: string): Promise<void>;
-  send(sessionId: string, text: string, requestId?: string): Promise<void>;
+  /** Deliver the composed instruction as the plugin-sourced message that starts the turn. */
+  deliver(sessionId: string, delivery: StageInstructionDelivery): Promise<void>;
 }
 
 export interface StageInstructionRequest {
@@ -62,9 +66,17 @@ export async function admitStageInstruction(deps: StageInstructionDeps, request:
   // the send re-reads them. The message still belongs to the requested stage, and
   // a task that left it must not receive that stage's instruction.
   const live = deps.locate(request.taskId);
-  invariant(live.task.columnId === request.columnId, 'TASK_MOVED', 'The task moved to another stage before its instruction was sent.');
+  invariant(live.task.columnId === request.columnId, 'TASK_MOVED', 'The task moved to another stage before its instruction was delivered.');
   const briefing = buildTransitionBriefing(live.board.workflow, { columnId: request.columnId, recordedTransition: live.task.recordedTransition });
-  await deps.send(sessionId, briefing === undefined ? instruction : instruction + '\n\n' + briefing, request.requestId);
+  const stage = live.board.workflow.columns.find(value => value.id === request.columnId);
+  await deps.deliver(sessionId, buildStageInstructionDelivery({
+    instruction,
+    ...(briefing === undefined ? {} : { briefing }),
+    stageName: stage?.name ?? request.columnId,
+    task: live.task,
+    workflow: live.board.workflow,
+    requestId: request.requestId ?? randomUUID(),
+  }));
   await deps.transact(target.hubId, draft => {
     const current = draft.tasks.find(value => value.id === task.id);
     const marker = current?.instructionPending;

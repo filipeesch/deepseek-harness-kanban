@@ -100,13 +100,13 @@ it('runs an instructed move after five seconds, cancels, survives reload, and pr
     await expect(notice).toBeVisible();
   };
   const conversation = page.locator('.kb-conversation-window');
-  // Newer hosts add a session-hierarchy breadcrumb with the same text; target the plain run message.
-  const runMessage = () => conversation.locator('[class*="_plainRun_"]').filter({ hasText: INSTRUCTION });
+  // The instruction is delivered as a plugin-sourced context row, not as a user message.
+  const stageRow = () => conversation.locator('[data-disclosure-row]').filter({ hasText: 'stage-instruction' });
+  const userMessage = () => conversation.locator('[class*="_plainRun_"]').filter({ hasText: INSTRUCTION });
 
   await createTask('Auto run send');
   await createTask('Auto run cancel');
   await createTask('Auto run reload');
-  await createTask('Auto run draft');
   await page.clock.install({ time: new Date() });
 
   // Happy path: the card and drawer show the window; the host receives only the instruction.
@@ -116,21 +116,26 @@ it('runs an instructed move after five seconds, cancels, survives reload, and pr
   await expect(page.locator('.kb-drawer-autorun')).toContainText('Sending the Plan instruction to Agent 1 in 5s.');
   await page.clock.runFor(5000);
   await page.clock.resume();
-  await expect(runMessage()).toBeVisible({ timeout: 20_000 });
+  await expect(stageRow()).toHaveCount(1);
+  await expect(stageRow().first()).toBeVisible({ timeout: 20_000 });
   await expect(conversation.getByText('Automatic instruction received.', { exact: false })).toBeVisible({ timeout: 20_000 });
-  // A checkout that does not compose the plugin's task-context Chat Definition
-  // shows only the run message; the model-facing context is asserted by the host
-  // and isolated smoke lanes instead of this visual ordering check.
+  await expect(stageRow().first()).toContainText('Stage: Plan');
+  await expect(userMessage()).toHaveCount(0);
+  // The collapsed row keeps the instruction text behind its disclosure.
+  await stageRow().first().click();
+  await expect(conversation.locator('[data-context-injection-body]')).toContainText(INSTRUCTION);
+  // Ordering check: when the host composes the plugin's task-context Definition,
+  // its row precedes the stage-instruction row. Model-facing content is asserted by
+  // the host and isolated smoke lanes instead.
   const contextRow = page.getByRole('note', { name: 'Task context' });
   if (await contextRow.count() > 0) {
     await expect(contextRow).toBeVisible();
     await expect(contextRow).toContainText('Task: Auto run send');
     const contextBox = await contextRow.boundingBox();
-    const instructionBox = await runMessage().boundingBox();
+    const instructionBox = await stageRow().first().boundingBox();
     expect(contextBox!.y).toBeLessThan(instructionBox!.y);
   }
   await expect(page.getByRole('button', { name: 'Run Plan instruction' })).toHaveCount(0);
-  await closeDrawer();
 
   // Cancel: the instruction stays unsent and the play action returns.
   await openTask('Auto run cancel');
@@ -139,21 +144,24 @@ it('runs an instructed move after five seconds, cancels, survives reload, and pr
   await expect(page.locator('.kb-drawer-autorun')).toHaveCount(0);
   await page.clock.runFor(5000);
   await page.clock.resume();
-  await expect(runMessage()).toHaveCount(0);
+  await expect(stageRow()).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Run Plan instruction' })).toBeVisible();
   await closeDrawer();
 
-  // Draft: the timed send does not consume or clear unsent composer text. A host
-  // that does not expose the composer input selector still drives the send, so
-  // the replay fixture is consumed; only the draft assertion is skipped.
-  await openTask('Auto run draft');
+  // Draft: the timed send does not consume or clear unsent composer text. This
+  // phase runs in the same conversation as the first instruction, because the
+  // replay script covers one session.
+  await openTask('Auto run send');
+  await page.getByRole('combobox', { name: 'Move task to' }).selectOption('explore');
+  await expect(page.locator('.kb-drawer-autorun')).toHaveCount(0);
   const composer = page.locator('[data-composer-input][contenteditable="true"]').last();
   const hasComposer = await composer.count() > 0;
   if (hasComposer) { await expect(composer).toBeVisible(); await composer.fill('Unsent draft stays here.'); }
   await moveToPlan();
   await page.clock.runFor(5000);
   await page.clock.resume();
-  await expect(runMessage()).toBeVisible({ timeout: 20_000 });
+  await expect(stageRow()).toHaveCount(2);
+  await expect(stageRow().last()).toBeVisible({ timeout: 20_000 });
   await expect(conversation.getByText('Draft preserved while the instruction ran.', { exact: false })).toBeVisible({ timeout: 20_000 });
   if (hasComposer) expect(await composer.textContent()).toBe('Unsent draft stays here.');
   await closeDrawer();
@@ -170,6 +178,6 @@ it('runs an instructed move after five seconds, cancels, survives reload, and pr
   await page.waitForTimeout(5500);
   await expect(reloadCard.getByRole('button', { name: 'Run Plan instruction' })).toBeVisible();
   await openTask('Auto run reload');
-  await expect(runMessage()).toHaveCount(0);
+  await expect(stageRow()).toHaveCount(0);
   await closeDrawer();
 });

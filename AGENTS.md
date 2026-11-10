@@ -93,11 +93,15 @@ replace the existing GUI.
    - A later instruction does not add another task-context message.
    - A new conversation receives its own first-turn context, visible as the
      inline native task-context row in the drawer and ordinary native Chat.
+   - A delivered stage instruction appears as its own collapsed native context
+     row whose summary names the entering stage; expanding the row shows the
+     instruction, and no user message records it.
 
 6. The isolated instance has no model credentials. A send fails after the
    pre-step with `MISSING_CREDENTIAL`; this is acceptable for UI and context-log
    checks, but not for model execution. Verify context injection in the isolated
-   session log under `$SMOKE_HOME/sessions` and in the inline native task-context row.
+   session log under `$SMOKE_HOME/sessions` and in the inline native task-context and
+   stage-instruction rows.
 
 7. Capture screenshots and a short report under `.verification/`; never include
    tokens, credentials, or owner data. Stop the background job and remove
@@ -107,7 +111,9 @@ The plugin claims the plugin-owned `kanban-task` message with an exclusive
 visible Chat Definition and delegates rendering to the host's context-row
 component. The row is therefore part of the native chat flow in both the drawer
 and ordinary native Chat; the native `kanban-task` message remains the
-model-facing record. Do not expect a separate overlay in the Kanban
+model-facing record. A delivered stage instruction is claimed the same way: an
+exclusive Chat Definition over the plugin's own message source, delegating to the
+host's native context-row renderer with an inline fallback. Do not expect a separate overlay in the Kanban
 **Conversations** panel.
 
 ## Validation

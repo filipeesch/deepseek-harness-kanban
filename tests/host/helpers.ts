@@ -4,7 +4,7 @@ import { HubRepository } from '../../src/host/hub-repository.js';
 import { KanbanApp } from '../../src/host/app.js';
 import type { BoardState, ConversationFacts, CreateWorktree, GitProject, HubState, KanbanMeta, NewTask, PendingUserWorkKind, Project, ProjectLocation, SettledTurn, Task } from '../../src/shared/types.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
-import type { HubStorage, SessionPort, GitPort, GitTree, WorkspacePort, WorkspaceInfo, WorkspaceEnsureOptions, ProjectProbe } from '../../src/shared/ports.js';
+import type { HubStorage, SessionPort, StageInstructionDelivery, GitPort, GitTree, WorkspacePort, WorkspaceInfo, WorkspaceEnsureOptions, ProjectProbe } from '../../src/shared/ports.js';
 import { KanbanError } from '../../src/shared/errors.js';
 import { isGitProject } from '../../src/shared/project.js';
 import type { HubSharingService } from '../../src/host/sharing/service.js';
@@ -38,7 +38,7 @@ export class MemoryHubStorage implements HubStorage {
 /** @deprecated Use MemoryHubStorage. Kept for legacy migration tests. */
 export class MemoryStorage {value:BoardState|null=null;async load(){return structuredClone(this.value);}async save(value:BoardState){this.value=structuredClone(value);}}
 export class TestSessions implements SessionPort {
- dirs=new Map<string,string>();lineage=new Map<string,{parentSessionId?:string;origin?:'subagent'}>();workspaceIds=new Map<string,string|undefined>();busy=new Set<string>();awaiting=new Set<string>();approvals=new Set<string>();queued=new Set<string>();settled=new Map<string,SettledTurn>();sent:Array<{id:string;text:string;requestId?:string}>=[];archived:string[]=[];failSend=false;private count=0;private requests=new Set<string>();
+ dirs=new Map<string,string>();lineage=new Map<string,{parentSessionId?:string;origin?:'subagent'}>();workspaceIds=new Map<string,string|undefined>();busy=new Set<string>();awaiting=new Set<string>();approvals=new Set<string>();queued=new Set<string>();settled=new Map<string,SettledTurn>();sent:Array<{id:string;text:string;requestId?:string;kind:'prompt'|'stage-instruction';summary?:string}>=[];archived:string[]=[];failSend=false;private count=0;private requests=new Set<string>();
  async create(cwd:string,workspaceId?:string){const id='session-'+(++this.count);this.dirs.set(id,cwd);this.workspaceIds.set(id,workspaceId);return id;}
  async directory(id:string){const value=this.dirs.get(id);if(!value)throw new KanbanError('SESSION_NOT_FOUND','Missing test session.');return value;}
  async validateDirectory(id:string,expected:string):Promise<void>{
@@ -49,7 +49,8 @@ export class TestSessions implements SessionPort {
  }
  async setDirectory(id:string,cwd:string){if(this.busy.has(id))throw new KanbanError('SESSION_BUSY','Busy test session.');this.dirs.set(id,cwd);}
  async isIdle(id:string){return !this.busy.has(id);}
- async send(id:string,text:string,requestId?:string){if(this.failSend)throw new KanbanError('SEND_FAILED','Injected native admission failure.');if(requestId&&this.requests.has(requestId))return;if(requestId)this.requests.add(requestId);this.sent.push({id,text,requestId});}
+ async send(id:string,text:string,requestId?:string){if(this.failSend)throw new KanbanError('SEND_FAILED','Injected native admission failure.');if(requestId&&this.requests.has(requestId))return;if(requestId)this.requests.add(requestId);this.sent.push({id,text,requestId,kind:'prompt'});}
+ async deliverStageInstruction(id:string,delivery:StageInstructionDelivery){if(this.failSend)throw new KanbanError('SEND_FAILED','Injected native admission failure.');if(this.requests.has(delivery.requestId))return;this.requests.add(delivery.requestId);this.sent.push({id,text:delivery.text,requestId:delivery.requestId,kind:'stage-instruction',summary:delivery.summary});}
  async archive(id:string){this.archived.push(id);}
  async facts(id:string):Promise<ConversationFacts>{const kinds:PendingUserWorkKind[]=[];if(this.awaiting.has(id))kinds.push('native-question');if(this.approvals.has(id))kinds.push('approval');return {running:this.busy.has(id),background:[],pending:pendingUserWork(kinds,this.queued.has(id)?1:0),settledTurn:this.settled.get(id)??null};}
  async directories(){return [...this.dirs].map(([sessionId,directory])=>({sessionId,directory}));}

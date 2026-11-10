@@ -101,6 +101,7 @@ export class Sessions implements SessionPort {
   async setDirectory(id: string, directory: string, signal?: AbortSignal): Promise<void> { signal?.throwIfAborted(); this.setCalls.push({ id, directory }); await this.beforeSet?.(id, directory, signal); signal?.throwIfAborted(); this.dirs.set(id, directory); }
   async isIdle(id: string): Promise<boolean> { return !this.active.has(id); }
   async send(): Promise<void> {}
+  async deliverStageInstruction(): Promise<void> {}
   async archive(id: string): Promise<void> { await this.beforeArchive?.(id); this.archiveCalls.push(id); }
   async facts(): Promise<ConversationFacts> { return { running: false, background: [], pending: NO_PENDING_USER_WORK, settledTurn: null }; }
   async directories(): Promise<Array<{ sessionId: string; directory: string }>> { return [...this.dirs].map(([sessionId, directory]) => ({ sessionId, directory })); }

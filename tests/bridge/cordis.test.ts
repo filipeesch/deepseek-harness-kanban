@@ -88,10 +88,11 @@ describe('real Cordis + real gateway namespace injection', () => {
     root.provide('locale', { bind: () => (key: string) => key, getSnapshot: () => ({ revision: 0 }), subscribe: () => () => {} });
     root.provide('uiConversation', { events: { register: vi.fn(() => () => {}) } });
     const client = root.plugin(KanbanClient); fibers.push(client); await client;
-    expect(registrations).toHaveBeenCalledTimes(6);
+    expect(registrations).toHaveBeenCalledTimes(7);
     expect(components.has('main:kanban')).toBe(true);
     expect(components.has('kanban.conversation:')).toBe(true);
     expect(components.has('conversation.chat.node:kanban-task-context')).toBe(true);
+    expect(components.has('conversation.chat.node:kanban-stage-context')).toBe(true);
     // Invoke the page's own bridge API, not a separately authorized stand-in consumer.
     const Main = components.get('main:kanban') as (props: { usePanelInfo: (selector: (value: { activePanelId: string }) => boolean) => boolean }) => ReactNode;
     const page = Main({ usePanelInfo: selector => selector({ activePanelId: 'kanban' }) });

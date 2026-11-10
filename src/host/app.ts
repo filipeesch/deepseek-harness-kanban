@@ -585,7 +585,7 @@ export class KanbanApp {
    transact:(hubId,change)=>this.hubs.hub(hubId).transact(change),
    resolveSession:async task=>firstOpenSessionId(task)??await this.createConversationNow(task.id,{allowUndecided:true}),
    assertExecutionContext:sessionId=>this.assertExecutionContext(sessionId),
-   send:(sessionId,text,requestId)=>this.sessions.send(sessionId,text,requestId),
+   deliver:(sessionId,delivery)=>this.sessions.deliverStageInstruction(sessionId,delivery),
   };
  }
  private async move(command:Extract<Command,{type:'task.move'}>):Promise<void>{
