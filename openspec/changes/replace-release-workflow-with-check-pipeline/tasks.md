@@ -21,4 +21,4 @@
 ## 4. Verification
 
 - [x] 4.1 Re-run `pnpm run check` after the documentation edits; confirm the typechecks, the vitest suite, and the build stay green.
-- [ ] 4.2 Confirm the first `ci.yml` run on `ubuntu-latest` reproduces both gates. The first run reported 3 failures in `tests/browser/board-header.spec.ts` that pass on macOS: the first-row controls are pinned to `32px` while `.kb-hub-tab` measures `31px` with the runner fonts, so the equality only held on the authoring platform.
+- [x] 4.2 Confirm the `ci.yml` run on `ubuntu-latest` reproduces both gates. The first run reported 3 failures in `tests/browser/board-header.spec.ts` that pass on macOS: the first-row controls are pinned to `32px` while `.kb-hub-tab` measured `31px` with the runner fonts, so the equality only held on the authoring platform. Pinning `.kb-hub-tab` to `height:32px` and asserting that declaration in `tests/client/styles.test.ts` made run `42852518577` pass `pnpm run check` and `pnpm run test:browser` on the runner.
