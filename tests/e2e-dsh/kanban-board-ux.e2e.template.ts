@@ -112,6 +112,19 @@ it('edits a grouped workflow, grows columns, and animates the drawer', async () 
   await expect(drawer).not.toHaveAttribute('data-entering', 'true');
   await page.getByRole('button', { name: 'Close task details' }).click();
   await expect(drawer).toBeHidden({ timeout: 1_000 });
+
+  // Editing a stage from its header stores that stage alone, and it survives a reload.
+  await page.getByRole('button', { name: 'Edit stage Apply' }).click();
+  const stageDialog = page.getByRole('dialog', { name: 'Edit stage' });
+  await expect(stageDialog).toBeVisible();
+  await stageDialog.getByRole('textbox', { name: 'Stage name', exact: true }).fill('Ship');
+  await stageDialog.getByRole('textbox', { name: 'Stage entry instruction', exact: true }).fill('Ship the change.');
+  await stageDialog.getByRole('button', { name: 'Save stage' }).click();
+  await expect(stageDialog).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Edit stage Ship' })).toBeVisible();
+  await page.reload({ waitUntil: 'load' });
+  await page.getByRole('button', { name: 'Kanban', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Edit stage Ship' })).toBeVisible();
 });
 
 it('restricts which projects create tasks on a board and closes it to creation', async () => {

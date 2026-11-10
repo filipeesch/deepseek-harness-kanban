@@ -1,9 +1,10 @@
-import type { Board, HubSharingView, Problem } from '../shared/types.js';
+import type { Board, HubSharingView, Problem, StagePatch } from '../shared/types.js';
 import { invariant, problem } from '../shared/errors.js';
 import type { HubRepository } from './hub-repository.js';
 import type { OperationDeps } from '../domain/hub-operations.js';
 import * as operations from '../domain/hub-operations.js';
 import type { WorkflowTextEdit } from '../domain/workflow-edit.js';
+import { describeStageActivity, hasInFlightWork } from '../shared/stage-activity.js';
 
 /** The narrow publishing surface a board write needs; no dependency on the Kanban app. */
 export interface BoardSharingPort {
@@ -43,10 +44,21 @@ export interface BoardWriteResult extends BoardView {
   readonly sharing: BoardPublishingOutcome;
 }
 
+/**
+ * Why a board cannot take a stage rename right now. A port so the board writer
+ * stays independent of sessions: the composition root folds in the facts only the
+ * host can read.
+ */
+export interface BoardActivityPort {
+  /** The in-flight reasons for one board, empty when it is idle. */
+  inFlight(hubId: string, boardId: string): Promise<readonly string[]>;
+}
+
 export interface BoardAdministrationOptions {
   readonly hubs: HubRepository;
   readonly sharing?: BoardSharingPort;
   readonly report?: (error: unknown) => void;
+  readonly activity?: BoardActivityPort;
 }
 
 export interface CreateBoardInput { hubId?: string; name: string; workflowYaml?: string }
@@ -55,6 +67,7 @@ export interface SaveBoardWorkflowInput { hubId?: string; boardId: string; yaml:
 /** An absent `projectKeys` allows every project of the Hub; an empty list closes the board. */
 export interface SaveBoardProjectScopeInput { hubId?: string; boardId: string; projectKeys?: string[]; expectedRevision?: number }
 export interface EditBoardWorkflowInput { hubId?: string; boardId: string; edits: readonly WorkflowTextEdit[]; expectedRevision?: number }
+export interface UpdateBoardStageInput { hubId?: string; boardId: string; stageId: string; patch: StagePatch; expectedRevision?: number }
 export interface RemoveBoardInput { hubId?: string; boardId: string; confirmed: boolean; sharing?: 'local' | 'team'; expectedRevision?: number }
 
 /**
@@ -152,6 +165,26 @@ export class BoardAdministration {
     return this.enqueue(async () => {
       const located = this.locate(input.boardId, input.hubId);
       const board = await this.options.hubs.hub(located.hubId).setBoardProjectScope(input.boardId, input.projectKeys, input.expectedRevision);
+      this.noteLocalChange(located.hubId);
+      return this.result(located.hubId, board, await this.publishOutcome(located.hubId, board.id, policy));
+    });
+  }
+
+  /** Edit one stage through the authored workflow text and the one board write path. */
+  async updateStage(input: UpdateBoardStageInput, policy: BoardPublishingPolicy = 'never'): Promise<BoardWriteResult> {
+    return this.enqueue(async () => {
+      const located = this.locate(input.boardId, input.hubId);
+      const renaming = input.patch.id !== undefined && input.patch.id !== input.stageId;
+      if (renaming) {
+        const reasons = (await this.options.activity?.inFlight(located.hubId, input.boardId)) ?? [];
+        invariant(!hasInFlightWork(reasons), 'STAGE_RENAME_IN_FLIGHT', 'The board has work in flight (' + describeStageActivity(reasons) + '). Finish it before renaming a stage.');
+      }
+      const deps = this.deps();
+      await this.options.hubs.hub(located.hubId).transact(
+        draft => operations.updateBoardStage(draft, input.boardId, { stageId: input.stageId, patch: input.patch }, deps),
+        input.expectedRevision,
+      );
+      const board = this.requireBoard(located.hubId, input.boardId);
       this.noteLocalChange(located.hubId);
       return this.result(located.hubId, board, await this.publishOutcome(located.hubId, board.id, policy));
     });

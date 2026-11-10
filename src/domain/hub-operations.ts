@@ -1,5 +1,5 @@
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { AutoModePause, Board, BoardSettings, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ScheduleModelSelection, Workflow } from '../shared/types.js';
+import type { AutoModePause, Board, BoardSettings, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ScheduleModelSelection, StagePatch, Workflow } from '../shared/types.js';
 import { assertId, isAbsolutePath } from './validation.js';
 import { assertSchedulable } from './cron.js';
 import { isPublishedProject, requireProjectPath } from '../shared/project.js';
@@ -7,6 +7,8 @@ import { createBoard } from './hub-schema.js';
 import { parseWorkflow } from './workflow.js';
 import { applyWorkflowEdits, type WorkflowTextEdit } from './workflow-edit.js';
 import { entryInstruction, nextEnteredAt } from './stage-entry.js';
+import { renameTaskStage, updateStage } from './stage-update.js';
+import { describeStageActivity, hasInFlightWork, persistedStageActivity } from '../shared/stage-activity.js';
 import { transitionTargets } from './transitions.js';
 import { assertProjectSave, buildProject } from './project-registration.js';
 import { assertKnownProjectKeys, assertProjectCreatable, boardsAllowingKey, normalizeProjectKeys } from './board-project-scope.js';
@@ -207,6 +209,35 @@ export function saveBoardWorkflow(hub: HubState, boardId: string, yaml: string, 
   board.updatedAt = timestamp(deps);
   hub.updatedAt = timestamp(deps);
   return workflow;
+}
+
+/** One stage edit, applied through the authored workflow text. */
+export interface UpdateStageInput { stageId: string; patch: StagePatch }
+
+/**
+ * Edit one stage of a board's workflow. The authored document is rewritten by
+ * text range, a renamed identifier is carried into every task of the board, and
+ * the result is stored through the one workflow save path so the orphan rule and
+ * the parsed workflow stay the authority. A rename is refused inside the
+ * transaction when a task still carries persisted in-flight work, so a task
+ * cannot gain work between the caller's check and this write.
+ */
+export function updateBoardStage(hub: HubState, boardId: string, input: UpdateStageInput, deps: OperationDeps): Workflow {
+  const board = requireBoard(hub, boardId);
+  const result = updateStage({ text: board.workflowYaml, stageId: input.stageId, patch: input.patch });
+  if (result.renamedFrom !== undefined && result.renamedTo !== undefined) {
+    const reasons = new Set<string>();
+    for (const task of hub.tasks) {
+      if (task.boardId !== board.id) continue;
+      for (const reason of persistedStageActivity(task)) reasons.add(reason);
+    }
+    invariant(!hasInFlightWork([...reasons]), 'STAGE_RENAME_IN_FLIGHT', 'The board has work in flight (' + describeStageActivity([...reasons]) + '). Finish it before renaming a stage.');
+    for (const task of hub.tasks) {
+      if (task.boardId !== board.id) continue;
+      renameTaskStage(task, result.renamedFrom, result.renamedTo);
+    }
+  }
+  return saveBoardWorkflow(hub, boardId, result.text, deps);
 }
 
 /** Apply literal text edits to the authored YAML, then validate the result through the one save path. */

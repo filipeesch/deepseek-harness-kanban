@@ -65,12 +65,12 @@ afterEach(async () => {
   for (const repository of repositories.splice(0)) await repository.close();
 });
 
-async function setup(sharing?: FakeSharing) {
+async function setup(sharing?: FakeSharing, activity?: { inFlight: (hubId: string, boardId: string) => Promise<readonly string[]> }) {
   const storage = new MemoryHubStorage();
   let count = 0;
   const hubs = await HubRepository.open(storage, { id: () => 'test-' + (++count), now: () => NOW });
   repositories.push(hubs);
-  const service = new BoardAdministration({ hubs, ...(sharing === undefined ? {} : { sharing }) });
+  const service = new BoardAdministration({ hubs, ...(sharing === undefined ? {} : { sharing }), ...(activity === undefined ? {} : { activity }) });
   return { hubs, service, storage, hubId: hubs.defaultHubId(), boardId: 'board' };
 }
 
@@ -101,6 +101,30 @@ describe('board administration reads', () => {
     const { service } = await setup();
     expectCode(() => service.read('missing'), 'BOARD_NOT_FOUND');
     expectCode(() => service.read('board', 'other-hub'), 'HUB_NOT_FOUND');
+  });
+});
+
+describe('board administration stage edits', () => {
+  it('stores a stage edit and reports the local change on a bound board', async () => {
+    const sharing = new FakeSharing();
+    sharing.bound.add('board');
+    const { service, hubId, boardId } = await setup(sharing);
+    const value = await service.updateStage({ hubId, boardId, stageId: 'backlog', patch: { name: 'Queue' } });
+    expect(value.board.workflow.columns[0]?.name).toBe('Queue');
+    expect(sharing.localChanges).toEqual([hubId]);
+    expect(sharing.published).toEqual([]);
+  });
+
+  it('refuses a rename while the activity port reports in-flight work', async () => {
+    const { service, hubId, boardId } = await setup(undefined, { inFlight: async () => ['a running conversation'] });
+    await expect(service.updateStage({ hubId, boardId, stageId: 'backlog', patch: { id: 'queue' } })).rejects.toMatchObject({ code: 'STAGE_RENAME_IN_FLIGHT' });
+    expect(service.read(boardId).board.workflow.columns[0]?.id).toBe('backlog');
+  });
+
+  it('allows a rename when the activity port reports none', async () => {
+    const { service, hubId, boardId } = await setup(undefined, { inFlight: async () => [] });
+    const value = await service.updateStage({ hubId, boardId, stageId: 'backlog', patch: { id: 'queue' } });
+    expect(value.board.workflow.columns[0]?.id).toBe('queue');
   });
 });
 

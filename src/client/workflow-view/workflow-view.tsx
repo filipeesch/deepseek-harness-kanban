@@ -76,6 +76,11 @@ export interface WorkflowViewProps {
    * never owns creation state, the dialog, or the first-execution handoff.
    */
   onCreateTask?: () => void;
+  /**
+   * Opens the board's stage editor for one stage. The board owns the dialog, so the
+   * diagram never holds a stage draft of its own.
+   */
+  onEditStage?: (stageId: string) => void;
   /** Isolated harnesses substitute the canvas; production uses React Flow. */
   canvas?: WorkflowCanvasComponent;
 }
@@ -441,6 +446,9 @@ export function WorkflowView(props: WorkflowViewProps) {
         // can own a task, which leaves the action presented but unavailable; creating
         // is not a layout edit, so the lock never gates it.
         ...(props.onCreateTask === undefined ? {} : { onCreateTask: props.onCreateTask }),
+        // The stage edit action is not a layout edit either: it stays available while
+        // the lock is on, and the board's dialog owns every field it changes.
+        ...(props.onEditStage === undefined ? {} : { onEditStage: props.onEditStage }),
       }}
       cardEnvironment={cardEnvironment}
       dropStageId={props.drag?.overColumnId ?? null}

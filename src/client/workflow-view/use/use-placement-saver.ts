@@ -7,6 +7,7 @@ import { sameStageSize } from '../../../domain/stage-size.js';
 import { samePosition } from '../../../domain/stage-position.js';
 import { sameConnectionLayout } from '../../../domain/connection-anchor.js';
 import type { RunCommand } from '../../ui.js';
+import { hubRevisionOf } from '../../workflow-save.js';
 
 /** How long a layout edit waits before it stores the workflow; one edit, one save. */
 export const PLACEMENT_SAVE_DELAY_MS = 400;
@@ -181,7 +182,7 @@ export function usePlacementSaver(input: PlacementSaverInput): PlacementSaver {
     try {
       const result = await input.run({ type: 'board.workflow.save', hubId: input.hubId, boardId: input.boardId, yaml: text, expectedRevision: revisionRef.current });
       sentYaml.current = text;
-      const hubRevision = result.state?.hubs.find(hub => hub.id === input.hubId)?.revision;
+      const hubRevision = hubRevisionOf(result, input.hubId);
       if (typeof hubRevision === 'number') revisionRef.current = hubRevision;
     } catch (error) {
       // The layout is not persisted: return to the acknowledged workflow and

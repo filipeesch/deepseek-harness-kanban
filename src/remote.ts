@@ -27,6 +27,13 @@ export const ScheduleModelCatalogSchema:z.ZodType<ScheduleModelCatalog>=z.object
  failures:z.array(z.object({id:id,name:z.string().min(1),message:z.string()}).strict()),
 }).strict();
 const worktreeDefault=z.discriminatedUnion('kind',[z.object({kind:z.literal('derived'),branchName:z.string().min(1),path:z.string().min(1),sourceBranch:z.string().optional()}).strict(),z.object({kind:z.literal('unavailable'),reason:problem}).strict()]);
+const stagePatchSchema=z.object({
+ name:z.string().optional(),
+ onEnterPrompt:z.string().nullable().optional(),
+ initial:z.literal(true).optional(),
+ allowedTransitions:z.array(z.object({to:id,when:z.string().optional()}).strict()).nullable().optional(),
+ id:id.optional(),
+}).strict();
 export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('hub.create'),name:z.string().min(1)}).strict(),
  z.object({type:z.literal('hub.rename'),hubId:id,name:z.string().min(1),expectedRevision:revision}).strict(),
@@ -35,6 +42,7 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('board.rename'),hubId:id,boardId:id,name:z.string().min(1),expectedRevision:revision}).strict(),
  z.object({type:z.literal('board.delete'),hubId:id,boardId:id,confirmed:z.boolean(),expectedRevision:revision,sharing:z.enum(['local','team']).optional()}).strict(),
  z.object({type:z.literal('board.workflow.save'),hubId:id,boardId:id,yaml:z.string(),expectedRevision:revision}).strict(),
+ z.object({type:z.literal('board.stage.update'),hubId:id,boardId:id,stageId:id,patch:stagePatchSchema,expectedRevision:revision}).strict(),
  z.object({type:z.literal('board.projects.save'),hubId:id,boardId:id,projectKeys:z.array(z.string().min(1)).refine(keys=>new Set(keys).size===keys.length,'Project keys must be unique.').optional(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('project.save'),hubId,project,expectedRevision:revision}).strict(),
  z.object({type:z.literal('project.relocate'),hubId,project:relocationProject,confirmed:z.boolean(),expectedRevision:revision}).strict(),
