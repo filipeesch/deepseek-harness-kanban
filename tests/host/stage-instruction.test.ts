@@ -49,6 +49,13 @@ describe('stage instruction composition', () => {
     expect(f.delivered[0]!.delivery.text).toContain('set_next_transition');
   });
 
+  it('leaves the task flow record untouched when the instruction is delivered', async () => {
+    const history = [{ kind: 'created' as const, at: now, columnId: 'review' }];
+    const f = fixture(task({ history }), flow(column('review', { onEnterPrompt: 'Review it.' }), column('done')));
+    await admitStageInstruction(f.deps, { taskId: 'task', columnId: 'review', instruction: 'Review it.', reviewedInstruction: 'Review it.' });
+    expect(history).toEqual([{ kind: 'created', at: now, columnId: 'review' }]);
+  });
+
   it('delivers the instruction alone when the stage configures one target', async () => {
     const workflow = flow(column('review', { onEnterPrompt: 'Review it.', allowedTransitions: transitions('done') }), column('done'));
     const f = fixture(task(), workflow);

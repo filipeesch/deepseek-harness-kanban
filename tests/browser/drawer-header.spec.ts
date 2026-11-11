@@ -22,7 +22,7 @@ async function openDrawer(page: Page, width: number, taskName = 'Long column tas
 }
 
 async function expectHeaderControls(page: Page) {
-  for (const tab of ['Conversations', 'Info', 'Git', 'Notes']) {
+  for (const tab of ['Conversations', 'Info', 'Git', 'Notes', 'History']) {
     await expect(page.locator('.kb-drawer').getByRole('tab', { name: new RegExp('^' + tab) })).toBeVisible();
   }
   await expect(page.getByRole('combobox', { name: 'Move task to' })).toBeVisible();

@@ -12,6 +12,7 @@ import {
   Frame as FrameGlyph,
   GitBranch as GitBranchGlyph,
   HardDrive as HardDriveGlyph,
+  History as HistoryGlyph,
   Info as InfoGlyph,
   LayoutGrid as LayoutGridGlyph,
   Lock as LockGlyph,
@@ -81,6 +82,8 @@ export const SearchIcon = icon(SearchGlyph);
 export const MessageIcon = icon(MessagesSquareGlyph);
 /** Notes section navigation. */
 export const NoteIcon = icon(NotebookPenGlyph);
+/** History section navigation: the task's recorded flow. */
+export const HistoryIcon = icon(HistoryGlyph);
 /** The header action that advances the task to the next workflow stage. */
 export const AdvanceStageIcon = icon(ChevronsRightGlyph);
 

@@ -6,6 +6,7 @@ import { transitionRule as normalizeTransitionRule } from './transition-rule.js'
 import { isAbsolutePath, isDomainId } from './validation.js';
 import { AUTO_MODE_PAUSE_REASONS } from '../shared/types.js';
 import { ANCHOR_POINTS_PER_SIDE, CONNECTION_OFFSET_LIMIT } from './connection-anchor.js';
+import { taskHistorySchema } from './task-history/entry.js';
 
 /**
  * Shared persisted-schema fragments. The legacy board aggregate and the Hub
@@ -159,7 +160,7 @@ export const baseTask = z.strictObject({
   unclaimedWorktrees: z.array(z.strictObject({ path: absolutePath, branch: nonempty, error: problem })).optional(),
   worktreeWorkspaceId: id.optional(), worktreeWorkspaceOwned: z.boolean().optional(),
   operation: operation.nullable(), pendingTransition: pendingTransition.optional(), instructionPending: z.strictObject({ columnId: id, enteredAt: z.number().finite() }).optional(), autoMode: autoMode.optional(),
-  recordedTransition: z.strictObject({ fromColumnId: id, columnId: id, at: timestamp }).optional(), createdAt: timestamp, updatedAt: timestamp,
+  recordedTransition: z.strictObject({ fromColumnId: id, columnId: id, at: timestamp }).optional(), history: taskHistorySchema.optional(), createdAt: timestamp, updatedAt: timestamp,
 });
 
 /** The task fields the shared invariant check reads. */

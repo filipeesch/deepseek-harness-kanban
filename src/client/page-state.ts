@@ -2,7 +2,7 @@ import { useCallback, useState, type Dispatch, type SetStateAction } from 'react
 import type { WorkflowView } from '../shared/types.js';
 import { openSessionIds } from '../shared/conversations.js';
 
-export type DrawerSection = 'Conversations' | 'Info' | 'Git' | 'Notes';
+export type DrawerSection = 'Conversations' | 'Info' | 'Git' | 'Notes' | 'History';
 export interface InfoDraft { title: string; description: string }
 export interface TaskPageState { section: DrawerSection; conversationId: string | null; conversationSelectionRequired?: boolean; infoDraft?: InfoDraft; noteTagFilter?: string }
 /** Plugin-lifetime UI bookmarks only: never store native views, transports, or session references here. */

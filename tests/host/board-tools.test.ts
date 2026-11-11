@@ -78,6 +78,24 @@ async function run(f: F, name: string, args: Record<string, unknown>, id = 'ordi
 function boards(f: F) { return f.store.snapshot().boards; }
 function revision(f: F) { return f.store.snapshot().revision; }
 
+describe('task payloads', () => {
+  it('keeps the flow record out of every task the tools return', async () => {
+    const f = await setup();
+    const task = await f.app.createTask({ projectId: f.project.id, title: 'Recorded task', description: '' });
+    await f.store.transact(draft => {
+      draft.tasks.find(item => item.id === task.id)!.history = [{ kind: 'created', at: '2026-11-11T09:00:00.000Z', columnId: task.columnId }];
+    });
+    const listed = await run(f, 'list_cards', { board_id: f.board.id });
+    expect(listed.find((value: { id: string }) => value.id === task.id).history).toBeUndefined();
+    const read = await run(f, 'get_card', { task_id: task.id });
+    expect(read.task.history).toBeUndefined();
+    const created = await run(f, 'create_card', { board_id: f.board.id, project_id: f.project.id, title: 'Another', description: '' });
+    expect(created.history).toBeUndefined();
+    const edited = await run(f, 'edit_card', { task_id: task.id, title: 'Renamed' });
+    expect(edited.history).toBeUndefined();
+  });
+});
+
 describe('board workflow reads', () => {
   it('summarizes a board and includes the Hub revision without the workflow payload', async () => {
     const f = await setup();

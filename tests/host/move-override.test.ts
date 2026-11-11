@@ -29,6 +29,8 @@ describe('restricted move admission', () => {
     const f = await setup(); const task = await createTask(f);
     const before = f.store.snapshot();
     await expect(f.app.command({ type: 'task.move', taskId: task.id, columnId: 'done' })).rejects.toMatchObject({ code: 'TRANSITION_NOT_ALLOWED' });
+    expect((f.store.requireTask(task.id).history ?? []).filter(entry => entry.kind === 'stage')).toEqual([]);
+    expect((f.store.requireTask(task.id).history ?? []).filter(entry => entry.kind === 'intent')).toEqual([]);
     expect(f.store.snapshot()).toEqual(before);
     expect(f.sessions.sent).toEqual([]);
   });
@@ -119,6 +121,8 @@ describe('pending override completion', () => {
     const current = f.store.requireTask(task.id);
     expect(current.columnId).toBe('backlog');
     expect(current.pendingTransition).toMatchObject({ status: 'failed', error: { code: 'TRANSITION_NOT_ALLOWED' } });
+    // A refused advance never reached the placement, so it records no stage entry.
+    expect((current.history ?? []).filter(entry => entry.kind === 'stage')).toEqual([]);
   });
 
   it('refuses an override when the source stage changed', async () => {

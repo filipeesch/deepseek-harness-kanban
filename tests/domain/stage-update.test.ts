@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseWorkflow } from '../../src/domain/workflow.js';
-import { updateStage } from '../../src/domain/stage-update.js';
+import { renameTaskStage, updateStage } from '../../src/domain/stage-update.js';
 
 const AUTHORED = [
   '# The delivery flow, authored by hand.',
@@ -264,6 +264,38 @@ describe('stage update', () => {
     expect(parseWorkflow(result.text).groups[0]?.columnIds).toEqual(['planning', 'done']);
     expect(result.text).toContain('- label: Planning');
     expect(result.text).not.toContain('id: group-1');
+  });
+
+  it('carries a renamed identifier into the task references, including its flow record', () => {
+    const task = {
+      columnId: 'plan',
+      pendingTransition: { fromColumnId: 'plan', columnId: 'done' },
+      recordedTransition: { fromColumnId: 'plan', columnId: 'done' },
+      instructionPending: { columnId: 'plan' },
+      history: [
+        { kind: 'created' as const, at: '2026-11-11T09:00:00.000Z', columnId: 'backlog' },
+        { kind: 'stage' as const, at: '2026-11-11T10:00:00.000Z', fromColumnId: 'backlog', columnId: 'plan' },
+        { kind: 'intent' as const, at: '2026-11-11T10:05:00.000Z', fromColumnId: 'plan', columnId: 'done' },
+        { kind: 'worktree' as const, at: '2026-11-11T10:06:00.000Z', action: 'attached' as const, path: '/trees/one' },
+      ],
+    };
+    expect(renameTaskStage(task, 'plan', 'planning')).toBe(true);
+    expect(task).toMatchObject({
+      columnId: 'planning',
+      pendingTransition: { fromColumnId: 'planning', columnId: 'done' },
+      recordedTransition: { fromColumnId: 'planning', columnId: 'done' },
+      instructionPending: { columnId: 'planning' },
+    });
+    expect(task.history).toEqual([
+      { kind: 'created', at: '2026-11-11T09:00:00.000Z', columnId: 'backlog' },
+      { kind: 'stage', at: '2026-11-11T10:00:00.000Z', fromColumnId: 'backlog', columnId: 'planning' },
+      { kind: 'intent', at: '2026-11-11T10:05:00.000Z', fromColumnId: 'planning', columnId: 'done' },
+      { kind: 'worktree', at: '2026-11-11T10:06:00.000Z', action: 'attached', path: '/trees/one' },
+    ]);
+  });
+
+  it('reports no change when no task reference names the renamed stage', () => {
+    expect(renameTaskStage({ columnId: 'backlog', history: [{ kind: 'created', at: '2026-11-11T09:00:00.000Z', columnId: 'backlog' }] }, 'done', 'finished')).toBe(false);
   });
 
   it('rejects a stage the workflow does not define', () => {

@@ -14,6 +14,13 @@ describe('HubState schema', () => {
     expect(HubStateSchema.safeParse(hubWith(task())).success).toBe(true);
   });
 
+  it('accepts a task flow record and rejects a pause entry without its reason', () => {
+    const accepted = task({ history: [{ kind: 'created', at: now, columnId: 'backlog' }] });
+    expect(HubStateSchema.safeParse(hubWith(accepted)).success).toBe(true);
+    const rejected = task({ history: [{ kind: 'auto-mode', at: now, action: 'paused' }] });
+    expect(HubStateSchema.safeParse(hubWith(rejected)).success).toBe(false);
+  });
+
   it('rejects a duplicate board name within the Hub', () => {
     const hub = hubWith(); hub.boards.push({ ...hub.boards[0]!, id: 'board-2', name: ' board ' });
     expect(HubStateSchema.safeParse(hub).success).toBe(false);

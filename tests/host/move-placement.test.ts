@@ -19,6 +19,18 @@ async function create(app: KanbanApp, projectId: string, title: string) {
 }
 
 describe('move placement', () => {
+  it('records the stage entry, and none for a reorder inside the destination', async () => {
+    const f = await setup();
+    const task = await create(f.app, f.project.id, 'Recorded');
+    await f.app.command({ type: 'task.move', taskId: task.id, columnId: 'plan' });
+    const moved = f.store.requireTask(task.id);
+    expect((moved.history ?? []).filter(entry => entry.kind === 'stage')).toEqual([
+      { kind: 'stage', at: expect.any(String), fromColumnId: 'backlog', columnId: 'plan' },
+    ]);
+    await f.app.command({ type: 'task.move', taskId: task.id, columnId: 'plan', beforeTaskId: null });
+    expect((f.store.requireTask(task.id).history ?? []).filter(entry => entry.kind === 'stage')).toHaveLength(1);
+  });
+
   it('places an unanchored move at the top of the destination', async () => {
     const f = await setup();
     const first = await create(f.app, f.project.id, 'First');
