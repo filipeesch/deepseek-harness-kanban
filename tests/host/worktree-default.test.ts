@@ -103,3 +103,47 @@ describe('worktreeDefault', () => {
     await expect(f.app.worktreeDefault(task.id)).resolves.toMatchObject({ kind: 'unavailable', reason: { code: 'WORKTREE_NAME_UNAVAILABLE' } });
   });
 });
+
+describe('worktree.create with omitted defaults', () => {
+  it('creates with the derived branch and destination when the request omits them', async () => {
+    const f = await setup();
+    const trees = await base(f);
+    const task = await f.app.createTask({ projectId: f.project.id, title: 'Fix login', description: '' });
+    await f.app.command({ type: 'worktree.create', taskId: task.id, mode: 'new' });
+    const stored = f.hubs.requireTask(task.id).task;
+    expect(stored.worktree?.branch).toBe('fix-login');
+    expect(stored.worktree?.path).toBe(path.join(trees, 'fix-login'));
+    expect(stored.worktree?.status).toBe('ready');
+  });
+
+  it('derives the name at creation time, after the displayed default became occupied', async () => {
+    const f = await setup();
+    const trees = await base(f);
+    const task = await f.app.createTask({ projectId: f.project.id, title: 'Fix login', description: '' });
+    // The surfaces displayed fix-login; another local branch then took that name.
+    await expect(f.app.worktreeDefault(task.id)).resolves.toEqual(derived('fix-login', path.join(trees, 'fix-login')));
+    f.git.branchNames.push('fix-login');
+    await f.app.command({ type: 'worktree.create', taskId: task.id, mode: 'new' });
+    const stored = f.hubs.requireTask(task.id).task;
+    expect(stored.worktree?.branch).toBe('fix-login-2');
+    expect(stored.worktree?.path).toBe(path.join(trees, 'fix-login-2'));
+  });
+
+  it('never replaces the branch or destination the request supplied', async () => {
+    const f = await setup();
+    const trees = await base(f);
+    const task = await f.app.createTask({ projectId: f.project.id, title: 'Fix login', description: '' });
+    const requested = path.join(trees, 'manual-destination');
+    await f.app.command({ type: 'worktree.create', taskId: task.id, mode: 'new', path: requested, branchName: 'manual-branch' });
+    const stored = f.hubs.requireTask(task.id).task;
+    expect(stored.worktree?.branch).toBe('manual-branch');
+    expect(stored.worktree?.path).toBe(requested);
+  });
+
+  it('refuses an existing-branch creation that omits the branch or destination', async () => {
+    const f = await setup();
+    const task = await f.app.createTask({ projectId: f.project.id, title: 'Fix login', description: '' });
+    await expect(f.app.command({ type: 'worktree.create', taskId: task.id, mode: 'existing' })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    expect(f.hubs.requireTask(task.id).task.worktree).toBeNull();
+  });
+});

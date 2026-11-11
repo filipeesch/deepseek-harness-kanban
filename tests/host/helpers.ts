@@ -5,7 +5,7 @@ import { KanbanApp } from '../../src/host/app.js';
 import type { SessionModelPort } from '../../src/host/session-model.js';
 import type { BoardState, ConversationFacts, CreateWorktree, GitProject, HubState, KanbanMeta, NewTask, PendingUserWorkKind, Project, ProjectLocation, SettledTurn, Task } from '../../src/shared/types.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
-import type { HubStorage, SessionPort, StageInstructionDelivery, GitPort, GitTree, WorkspacePort, WorkspaceInfo, WorkspaceEnsureOptions, ProjectProbe } from '../../src/shared/ports.js';
+import type { HubStorage, SessionPort, StageInstructionDelivery, GitPort, GitRepository, GitTree, WorkspacePort, WorkspaceInfo, WorkspaceEnsureOptions, ProjectProbe } from '../../src/shared/ports.js';
 import { KanbanError } from '../../src/shared/errors.js';
 import { isGitProject } from '../../src/shared/project.js';
 import type { HubSharingService } from '../../src/host/sharing/service.js';
@@ -69,9 +69,12 @@ export class TestGit implements GitPort {
  async branches(){return [...this.branchNames];}
  async projectDirectory(project:GitProject,root?:string){this.projectDirectoryCalls++;if(this.projectDirectoryFailure)throw this.projectDirectoryFailure;return root?path.join(root,path.relative(project.gitRootPath,project.projectPath)):project.projectPath;}
  async inspect(_project:GitProject,root:string){const tree=this.trees.get(root);if(!tree)throw new KanbanError('NOT_WORKTREE','Not a test worktree.');return {...tree};}
+ async localChanges(_project:GitProject,root:string){return this.trees.get(root)?.dirty===true;}
+ async assertRemovable(_project:GitProject,root:string){if(this.trees.has(root))return;const present=await stat(root).then(()=>true,()=>false);if(present)throw new KanbanError('WORKTREE_NOT_REGISTERED','Refusing to remove a directory that is not a registered worktree.');}
  async create(project:GitProject,request:CreateWorktree){this.created++;await mkdir(await this.projectDirectory(project,request.path),{recursive:true});const tree={path:request.path,branch:request.branchName,dirty:false,commonDirectory:path.join(project.gitRootPath,'.git')};this.trees.set(request.path,tree);return tree;}
  async remove(_project:GitProject,root:string,discard:boolean){const tree=this.trees.get(root);if(tree?.dirty&&!discard)throw new KanbanError('DISCARD_REQUIRED','Confirm discard.',{path:root});this.trees.delete(root);this.removed.push(root);}
  async repair(_project:GitProject,roots:string[],sessionIds:string[]){this.repaired.push(...roots);this.repairCalls.push({paths:[...roots],sessionIds:[...sessionIds]});}
+ async resolve(project:GitProject):Promise<GitRepository>{return {project,root:project.gitRootPath,projectPath:project.projectPath,commonDirectory:path.join(project.gitRootPath,'.git'),registered:async()=>[...this.trees.keys()].map(value=>({path:value,locked:false})),invalidate(){}};}
  async assertPolicy(){}
 }
 export class TestProjectProbe implements ProjectProbe {

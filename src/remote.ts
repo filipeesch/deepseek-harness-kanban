@@ -16,6 +16,8 @@ const hubId=id.optional();
 const boardId=id.optional();
 const projectLocation=z.discriminatedUnion('kind',[z.object({kind:z.literal('git'),projectPath:z.string(),gitRootPath:z.string(),defaultBranch:z.string().optional()}).strict(),z.object({kind:z.literal('folder'),projectPath:z.string()}).strict()]);
 const tree={mode:z.enum(['new','existing']),path:z.string().min(1),branchName:z.string().min(1),sourceBranch:z.string().optional()};
+// New-branch creation may omit the branch and destination; the host derives them.
+const createTree={mode:z.enum(['new','existing']),path:z.string().min(1).optional(),branchName:z.string().min(1).optional(),sourceBranch:z.string().optional()};
 const boardSettings=z.object({worktreeBasePath:z.string().optional()}).strict();
 const modelSelection=z.object({provider:z.string().min(1),model:z.string().min(1),reasoningEffort:z.string().min(1).optional()}).strict();
 const scheduleRunProblem=z.object({code:z.string().min(1),message:z.string(),details:z.record(z.string(),z.union([z.string(),z.number(),z.boolean()])).optional()}).strict();
@@ -61,7 +63,7 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('conversation.create'),hubId,taskId:id}).strict(),
  z.object({type:z.enum(['conversation.close','conversation.reopen']),hubId,taskId:id,sessionId:id}).strict(),
  z.object({type:z.literal('task.delete'),hubId,taskId:id,confirmed:z.boolean(),expectedWorktreePath:z.string().nullable(),discardChanges:z.boolean().optional(),force:z.boolean().optional()}).strict(),
- z.object({type:z.literal('worktree.create'),hubId,taskId:id,...tree}).strict(),
+ z.object({type:z.literal('worktree.create'),hubId,taskId:id,...createTree}).strict(),
  z.object({type:z.literal('worktree.attach'),hubId,taskId:id,path:z.string().min(1)}).strict(),
  z.object({type:z.literal('worktree.dismiss'),hubId,taskId:id}).strict(),
  z.object({type:z.literal('worktree.remove'),hubId,taskId:id,confirmed:z.boolean(),expectedWorktreePath:z.string().nullable(),discardChanges:z.boolean().optional(),force:z.boolean().optional()}).strict(),

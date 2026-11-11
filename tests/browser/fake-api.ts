@@ -271,7 +271,7 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
           if (task.sessionIds.length === 0) { const id = 's-created-' + commands.length; task.sessionIds.push(id); receipt = { kind: 'conversation', id }; }
         }
       }
-      if (command.type === 'worktree.create') { const task = firstHub.tasks.find(item => item.id === command.taskId); if (task) { task.worktree = { path: command.path, branch: command.branchName, owned: true, status: 'ready' }; task.effectiveCwd = command.path; } }
+      if (command.type === 'worktree.create') { const task = firstHub.tasks.find(item => item.id === command.taskId); if (task) { const path = command.path ?? '/worktrees/derived'; task.worktree = { path, branch: command.branchName ?? 'derived', owned: true, status: 'ready' }; task.effectiveCwd = path; } }
       if (command.type === 'worktree.dismiss') { const task = firstHub.tasks.find(item => item.id === command.taskId); if (task) task.worktreeDismissed = true; }
       if (command.type === 'conversation.create') {
         const task = value.state.hubs.flatMap(item => item.tasks).find(item => item.id === command.taskId);
