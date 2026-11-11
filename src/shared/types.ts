@@ -103,10 +103,13 @@ export interface ContextOperation {
 }
 export interface PendingTransition { id: string; fromColumnId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; text?: string; /** Absent places the task at the start of the destination; `null` places it at the end; an id places it before that task. */ beforeTaskId?: string | null; worktreeRequest?: CreateWorktree; transitionOverride?: boolean; status: 'waiting' | 'sending' | 'failed'; error?: Problem; /** Absent means a user-confirmed transition; `auto` is a host automatic advance. */ origin?: 'auto' }
 /** Why auto mode is paused; only reasons that cannot be derived from the snapshot are recorded. */
-export type AutoModePauseReason = 'turn-error' | 'turn-blocked' | 'turn-aborted' | 'turn-max-tokens' | 'advance-failed' | 'transition-stale';
+export const AUTO_MODE_PAUSE_REASONS = ['turn-error', 'turn-blocked', 'turn-aborted', 'turn-max-tokens', 'advance-failed', 'transition-stale'] as const;
+export type AutoModePauseReason = (typeof AUTO_MODE_PAUSE_REASONS)[number];
 export interface AutoModePause { reason: AutoModePauseReason; at: string; message?: string }
+/** A pause the agent requested: it suspends the automatic advance while auto mode stays enabled. */
+export interface AutoModeHold { reason: string; at: string }
 /** Per-task auto mode: arms the host advance on the next completed turn. */
-export interface AutoModeState { enabled: boolean; pause?: AutoModePause }
+export interface AutoModeState { enabled: boolean; pause?: AutoModePause; hold?: AutoModeHold }
 /** One transition recorded for a task's current stage, and the stage it was recorded for. */
 export interface RecordedTransition { fromColumnId: string; columnId: string; at: string }
 export interface Task {
@@ -371,6 +374,10 @@ export type Command =
   /** `beforeTaskId` absent places the task at the start of the destination; `null` places it at the end; an id places it before that task. */
   | { type: 'task.move'; hubId?: string; taskId: string; columnId: string; beforeTaskId?: string | null; overrideTransition?: boolean }
   | { type: 'task.autoMode'; hubId?: string; taskId: string; enabled: boolean }
+  /** Record the pause the agent requested; the task stays put and auto mode stays enabled. */
+  | { type: 'task.pause'; hubId?: string; taskId: string; reason: string }
+  /** Clear the agent pause and any diagnostic pause, leaving auto mode as it is. */
+  | { type: 'task.resume'; hubId?: string; taskId: string }
   /** An omitted `columnId` clears the recording. */
   | { type: 'task.recordTransition'; hubId?: string; taskId: string; columnId?: string }
   | { type: 'task.runInstruction'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction: string }

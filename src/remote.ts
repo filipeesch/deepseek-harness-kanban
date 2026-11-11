@@ -54,6 +54,8 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('task.edit'),hubId,taskId:id,title:z.string().optional(),description:z.string().optional(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('task.move'),hubId,taskId:id,columnId:id,beforeTaskId:id.nullable().optional(),overrideTransition:z.boolean().optional()}).strict(),
  z.object({type:z.literal('task.autoMode'),hubId,taskId:id,enabled:z.boolean()}).strict(),
+ z.object({type:z.literal('task.pause'),hubId,taskId:id,reason:z.string()}).strict(),
+ z.object({type:z.literal('task.resume'),hubId,taskId:id}).strict(),
  z.object({type:z.literal('task.runInstruction'),hubId,taskId:id,columnId:id,expectedEnteredAt:z.number().finite(),expectedInstruction:z.string()}).strict(),
  z.object({type:z.literal('task.prepareFirstExecution'),hubId,taskId:id,columnId:id,expectedEnteredAt:z.number().finite(),expectedInstruction:z.string().optional()}).strict(),
  z.object({type:z.literal('conversation.create'),hubId,taskId:id}).strict(),

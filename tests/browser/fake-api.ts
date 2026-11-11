@@ -18,7 +18,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean }
+export interface HarnessOptions { recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; agentPause?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -99,6 +99,12 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     failed.pendingTransition = { id: 'auto-failed', fromColumnId: 'explore', columnId: 'propose', mode: 'run', text: 'Plan this task.', sessionId: 's-long-2', status: 'failed', origin: 'auto', error: { code: 'SEND_FAILED', message: 'The instruction could not be sent.' } };
     shortTask.autoMode = { enabled: true };
     shortTask.pendingTransition = { id: 'auto-short', fromColumnId: 'propose', columnId: 'apply', mode: 'run', text: 'Plan this task.', sessionId: 's-short', status: 'waiting', origin: 'auto' };
+  }
+  // A pause the agent requested, alone and beside a diagnostic pause, so the card
+  // and the control present both records.
+  if (options.agentPause) {
+    tasks.find(value => value.id === 'long-0')!.autoMode = { enabled: true, hold: { reason: 'Review the diff', at: now } };
+    tasks.find(value => value.id === 'long-3')!.autoMode = { enabled: true, hold: { reason: 'Review the diff', at: now }, pause: { reason: 'turn-error', at: now } };
   }
   const hub: HubState = {
     id: 'hub', name: 'Harness Hub', revision: 1,
@@ -231,6 +237,14 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
       if (command.type === 'task.autoMode') {
         const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);
         if (task) { if (command.enabled) task.autoMode = { enabled: true }; else delete task.autoMode; }
+      }
+      if (command.type === 'task.pause') {
+        const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);
+        if (task?.autoMode?.enabled === true) task.autoMode.hold = { reason: command.reason, at: now };
+      }
+      if (command.type === 'task.resume') {
+        const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);
+        if (task?.autoMode !== undefined) delete task.autoMode.hold;
       }
       if (command.type === 'task.create') {
         const id = 't-created-' + commands.length;
