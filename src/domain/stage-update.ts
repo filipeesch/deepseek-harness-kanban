@@ -1,3 +1,4 @@
+import type { TaskHistoryEntry } from '../shared/task-history.js';
 import type { StagePatch, TransitionRule } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
 import { isDomainId } from './validation.js';
@@ -18,6 +19,8 @@ export interface StageReferencingTask {
   pendingTransition?: { fromColumnId: string; columnId: string };
   recordedTransition?: { fromColumnId: string; columnId: string };
   instructionPending?: { columnId: string };
+  /** The task's flow record; its stage references follow the rename like every other one. */
+  history?: TaskHistoryEntry[];
 }
 
 /**
@@ -36,7 +39,27 @@ export function renameTaskStage(task: StageReferencingTask, from: string, to: st
     if (task.recordedTransition.columnId === from) { task.recordedTransition.columnId = to; changed = true; }
   }
   if (task.instructionPending !== undefined && task.instructionPending.columnId === from) { task.instructionPending.columnId = to; changed = true; }
+  if (task.history !== undefined) {
+    let renamed = false;
+    const history = task.history.map(entry => {
+      const next = renameHistoryStage(entry, from, to);
+      if (next !== entry) renamed = true;
+      return next;
+    });
+    if (renamed) { task.history = history; changed = true; }
+  }
   return changed;
+}
+
+/** Carry a renamed stage identifier into one recorded entry, keeping its kind and moment. */
+function renameHistoryStage(entry: TaskHistoryEntry, from: string, to: string): TaskHistoryEntry {
+  if (entry.kind === 'created') return entry.columnId === from ? { ...entry, columnId: to } : entry;
+  if (entry.kind === 'stage' || entry.kind === 'intent') {
+    const fromColumnId = entry.fromColumnId === from ? to : entry.fromColumnId;
+    const columnId = entry.columnId === from ? to : entry.columnId;
+    return fromColumnId === entry.fromColumnId && columnId === entry.columnId ? entry : { ...entry, fromColumnId, columnId };
+  }
+  return entry;
 }
 
 /** What one stage edit changed, so the caller can migrate its own task data. */

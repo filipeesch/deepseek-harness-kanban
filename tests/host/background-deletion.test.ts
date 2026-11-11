@@ -45,6 +45,8 @@ describe('background destructive commands', () => {
     await f.app.command({ type: 'task.delete', taskId: task.id, confirmed: true, expectedWorktreePath: null });
     expect(f.store.requireTask(task.id).operation?.phase).toBe('queued');
     expect(f.sessions.archived).toEqual([]);
+    // A queued operation has not settled, so the record carries no worktree outcome yet.
+    expect((f.store.requireTask(task.id).history ?? []).filter(entry => entry.kind === 'worktree')).toEqual([]);
     lane.release();
     await f.app.worktrees.settle();
     expect(f.store.snapshot().tasks.some(value => value.id === task.id)).toBe(false);
@@ -351,6 +353,10 @@ describe('destructive admission and repository lanes', () => {
     expect(after.phase).toBe('failed');
     expect(after.error?.code).toBe('WORKTREE_CHANGED');
     expect(f.git.removed).toEqual([]);
+    // One failed outcome for the original deletion and one for the rejected retry.
+    const failures = (f.store.requireTask(task.id).history ?? []).filter(entry => entry.kind === 'worktree' && entry.action === 'failed');
+    expect(failures).toHaveLength(2);
+    expect(failures[1]).toMatchObject({ error: { code: 'WORKTREE_CHANGED' }, path: root });
   });
 
   it('refuses a new confirmation that would substitute the recorded target', async () => {

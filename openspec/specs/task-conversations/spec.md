@@ -8,7 +8,7 @@ Provide a task-centered drawer that contains continuous native DSH conversations
 
 ### Requirement: Task drawer sections
 
-Opening a task card SHALL display a task drawer with a header and Conversations, Info, Git, and Notes sections. The header SHALL present the task title on one line with an ellipsis when it does not fit, the task's project as a chip beside the title, the section navigation, the workflow stage control, and the task's remaining header actions. The title's full text SHALL remain available through its tooltip, and the project SHALL NOT be repeated on a second header line. Conversations SHALL contain the task's native DSH chats, Info SHALL expose the task's title and Markdown description, Git SHALL expose its simplified worktree controls, and Notes SHALL expose its shared task notes.
+Opening a task card SHALL display a task drawer with a header and Conversations, Info, Git, Notes, and History sections. The header SHALL present the task title on one line with an ellipsis when it does not fit, the task's project as a chip beside the title, the section navigation, the workflow stage control, and the task's remaining header actions. The title's full text SHALL remain available through its tooltip, and the project SHALL NOT be repeated on a second header line. Conversations SHALL contain the task's native DSH chats, Info SHALL expose the task's title and Markdown description, Git SHALL expose its simplified worktree controls, Notes SHALL expose its shared task notes, and History SHALL present the task's recorded flow as defined by the History table in the task drawer requirement in `task-history`.
 
 The section navigation SHALL be presented in the header as icon-only tabs. Each tab SHALL keep the section name in its accessible name and SHALL expose that name as a tooltip; the Conversations tab SHALL extend both with the activity facts defined by Drawer conversation activity indicator. The selected section SHALL be visibly distinguishable, and the tabs SHALL keep their keyboard navigation. The drawer SHALL keep the task title, the section navigation, and the conversation controls visible at every supported drawer width; when the available width cannot present them in one row, the header SHALL wrap into two rows instead of hiding a control.
 
@@ -20,7 +20,8 @@ The header SHALL also present the task's auto-mode control defined by Auto mode 
 - **WHEN** a user opens a card on the Kanban board
 - **THEN** the drawer header shows the task title, its project as a chip beside the title, and the section navigation
 - **AND** the workflow stage control is part of that header
-- **AND** the drawer provides Conversations, Info, Git, and Notes without replacing the card interaction with a separate main-chat navigation flow
+- **AND** the drawer provides Conversations, Info, Git, Notes, and History without replacing the card interaction with a separate main-chat navigation flow
+- **AND** History is presented after Notes
 - **AND** the project is not repeated on a second header line
 
 #### Scenario: Keep the header compact at a narrow width

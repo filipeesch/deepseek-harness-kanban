@@ -13,6 +13,7 @@ import { SessionArchiver, WaitingForIdle } from './session-archiver.js';
 import { TaskBindingIndex } from './task-binding-index.js';
 import { TaskTeardown, type TeardownOutcome } from './task-teardown.js';
 import { WorktreeSharingGuard } from './worktree-sharing.js';
+import { recordSettledOperation } from './worktree-history.js';
 
 export interface DestructiveStore {
   locate(taskId: string): { task: Task; project: Project; hub: HubState };
@@ -163,7 +164,11 @@ export class DestructiveExecution {
     const target = operation.targetPath;
     if (request.kind === 'remove') {
       if (request.force === true && checkoutRemoved && target !== undefined) await this.markAffectedBindings(taskId, target);
-      await this.update(taskId, operationId, draft => { draft.operation = null; });
+      const settledAt = this.now();
+      await this.update(taskId, operationId, (draft, current) => {
+        recordSettledOperation(draft, current, settledAt);
+        draft.operation = null;
+      });
       return 'done';
     }
 
@@ -240,10 +245,12 @@ export class DestructiveExecution {
   /** Record a teardown failure with the step that produced it, before propagating it. */
   private async recordFailure(taskId: string, operationId: string, phase: 'removing' | 'archiving', error: unknown): Promise<void> {
     const failure = problem(error);
+    const failedAt = this.now();
     try {
-      await this.update(taskId, operationId, (_task, current) => {
+      await this.update(taskId, operationId, (task, current) => {
         current.phase = 'failed';
         current.error = { ...failure, details: { ...failure.details, failedPhase: phase, gitAttempted: current.gitCompleted } };
+        recordSettledOperation(task, current, failedAt, failure);
       });
     } catch { /* the task or operation is gone */ }
   }

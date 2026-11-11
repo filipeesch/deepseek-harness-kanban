@@ -9,6 +9,7 @@ import { deriveChanges } from '../../domain/journal/derive.js';
 import { recoverBoard, type BoardLogFile } from '../../domain/journal/log.js';
 import { stageRenames } from '../../domain/journal/migrate.js';
 import { materializeIdentities } from '../../domain/journal/materialize.js';
+import { renameTaskStage } from '../../domain/stage-update.js';
 import * as operations from '../../domain/hub-operations.js';
 import type { HubRepository } from '../hub-repository.js';
 import { isAuthorizationCommand, type SharingAuthorizationPort } from './auth-coordinator.js';
@@ -408,7 +409,7 @@ export class HubSharingService {
       // The references move first: saving a workflow that no longer defines a task's
       // stage would be refused, and the rename is what makes them agree again.
       for (const rename of renames) {
-        for (const task of draft.tasks) if (task.boardId === board.id) renameTaskReferences(task, rename.from, rename.to);
+        for (const task of draft.tasks) if (task.boardId === board.id) renameTaskStage(task, rename.from, rename.to);
       }
       operations.saveBoardWorkflow(draft, board.id, recovered.text, this.deps());
       operations.setBoardProjectScope(draft, board.id, entry.projectKeys, this.deps());
@@ -437,7 +438,7 @@ export class HubSharingService {
         const hub = this.options.hubs.requireHub(hubId);
         const renames = stageRenames(snapshot.log.events.filter(event => event.seq > stored.seq));
         await this.options.hubs.hub(hubId).transact(draft => {
-          for (const rename of renames) for (const task of draft.tasks) if (task.boardId === boardId) renameTaskReferences(task, rename.from, rename.to);
+          for (const rename of renames) for (const task of draft.tasks) if (task.boardId === boardId) renameTaskStage(task, rename.from, rename.to);
           operations.saveBoardWorkflow(draft, boardId, head.text, this.deps());
         }, hub.revision);
         await this.save({ ...record, boards: { ...record.boards, [key]: { seq: head.cursor, head: snapshot.head, probe: snapshot.probe, behind: 0, published: workflowDigest(head.text), draft: false, conflict: null } }, reviewRequired: null });
@@ -738,20 +739,6 @@ export class HubSharingService {
     if (this.disposed) throw new KanbanError('PLUGIN_DISPOSED', 'The Kanban plugin is shutting down.');
     return this.lanes.run(hubId, operation);
   }
-}
-
-/** Carry one renamed stage identifier into a task's references. */
-function renameTaskReferences(task: { columnId: string; pendingTransition?: { fromColumnId: string; columnId: string }; recordedTransition?: { fromColumnId: string; columnId: string }; instructionPending?: { columnId: string } }, from: string, to: string): void {
-  if (task.columnId === from) task.columnId = to;
-  if (task.pendingTransition !== undefined) {
-    if (task.pendingTransition.fromColumnId === from) task.pendingTransition.fromColumnId = to;
-    if (task.pendingTransition.columnId === from) task.pendingTransition.columnId = to;
-  }
-  if (task.recordedTransition !== undefined) {
-    if (task.recordedTransition.fromColumnId === from) task.recordedTransition.fromColumnId = to;
-    if (task.recordedTransition.columnId === from) task.recordedTransition.columnId = to;
-  }
-  if (task.instructionPending !== undefined && task.instructionPending.columnId === from) task.instructionPending.columnId = to;
 }
 
 function lastSequence(log: BoardLogFile): number {

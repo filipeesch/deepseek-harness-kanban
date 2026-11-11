@@ -8,6 +8,7 @@ import { transitions } from '../support/transition-rules.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import { writeBoardModelField } from '../../src/domain/board-model-field.js';
 import { renameTaskStage, updateStage } from '../../src/domain/stage-update.js';
+import type { TaskHistoryEntry } from '../../src/shared/task-history.js';
 
 export interface HarnessApi {
   api: ClientApi;
@@ -19,7 +20,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { stageUpdateFailure?: boolean; recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; declared?: boolean; declaredFailed?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; agentPause?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string; reason: 'folder' | 'unresolved' }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean;
+export interface HarnessOptions { stageUpdateFailure?: boolean; history?: 'short' | 'long'; recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; declared?: boolean; declaredFailed?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; agentPause?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string; reason: 'folder' | 'unresolved' }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean;
   /** Names the board's default model and what its conversations report back when it cannot be applied. */
   boardModel?: { model: ModelSelection; fallback?: ConversationModelOutcome }; }
 
@@ -45,6 +46,24 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     failedDeleteReturn(),
     ...(options.prepare === undefined ? [] : [firstExecutionTask(), blockedBindingTask()]),
   ];
+  // One task with a recorded flow, so the History section can render every kind of row.
+  if (options.history !== undefined) {
+    const short: TaskHistoryEntry[] = [
+      { kind: 'created', at: '2026-11-11T09:00:00.000Z', columnId: 'explore' },
+      { kind: 'stage', at: '2026-11-11T09:20:00.000Z', fromColumnId: 'explore', columnId: 'propose' },
+      { kind: 'auto-mode', at: '2026-11-11T09:40:00.000Z', action: 'paused', reason: 'turn-error', message: 'Rate limited.' },
+      { kind: 'worktree', at: '2026-11-11T10:00:00.000Z', action: 'created', path: '/worktrees/harness', branch: 'task/harness' },
+    ];
+    // A long record proves the section scrolls and withholds nothing behind a control.
+    const base = Date.parse('2026-11-11T08:00:00.000Z');
+    const long: TaskHistoryEntry[] = Array.from({ length: 41 }, (_, index): TaskHistoryEntry => {
+      const at = new Date(base + index * 60_000).toISOString();
+      if (index === 0) return { kind: 'created', at, columnId: 'explore' };
+      if (index % 2 === 1) return { kind: 'stage', at, fromColumnId: index % 4 === 1 ? 'explore' : 'propose', columnId: index % 4 === 1 ? 'propose' : 'explore' };
+      return { kind: 'auto-mode', at, action: index % 4 === 0 ? 'paused' : 'resumed', ...(index % 4 === 0 ? { reason: 'turn-error' } : {}) };
+    });
+    tasks.find(value => value.id === 'long-0')!.history = options.history === 'long' ? long : short;
+  }
   const attention: KanbanSnapshot['attention'] = options.attention ? {
     'long-0': { running: true, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK },
     'long-1': { running: false, background: [{ kind: 'job', label: 'Run tests' }], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK },

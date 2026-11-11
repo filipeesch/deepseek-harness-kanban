@@ -1,5 +1,7 @@
-import type { BoardState, Command, Task } from '../../src/shared/types.js';
+import type { BoardState, Command, HubTask, Task } from '../../src/shared/types.js';
 import { entryInstruction } from '../../src/domain/stage-entry.js';
+import { placeTaskIn } from '../../src/domain/task-placement.js';
+import { placementFromAnchor } from '../../src/domain/placement.js';
 
 export type EnteredAtSource = () => number;
 
@@ -9,24 +11,19 @@ export function createEnteredAtSource(start = 1_000): EnteredAtSource {
   return () => next++;
 }
 
-const byPosition = (left: Task, right: Task): number => left.position - right.position || left.createdAt.localeCompare(right.createdAt);
-
-/** Apply the board half of a move: placement plus the instructed entry marker. */
+/**
+ * Apply the board half of a move through the domain placement production uses,
+ * so the fake board records the same entry and orders the card the same way
+ * instead of keeping a second implementation of the move.
+ */
 export function applyMove(state: BoardState, taskId: string, columnId: string, beforeTaskId: string | null | undefined, nextEnteredAt: EnteredAtSource): Task | undefined {
   const task = state.tasks.find(value => value.id === taskId);
   if (!task) return undefined;
-  const sourceColumnId = task.columnId;
-  const source = state.tasks.filter(value => value.columnId === sourceColumnId && value.id !== taskId).sort(byPosition);
-  const destination = state.tasks.filter(value => value.columnId === columnId && value.id !== taskId).sort(byPosition);
-  task.columnId = columnId;
-  if (sourceColumnId !== columnId) {
-    if (entryInstruction(state.workflow.columns.find(value => value.id === columnId)) !== undefined) task.instructionPending = { columnId, enteredAt: nextEnteredAt() };
-    else delete task.instructionPending;
-  }
-  const requested = beforeTaskId === undefined ? 0 : beforeTaskId === null ? destination.length : destination.findIndex(value => value.id === beforeTaskId);
-  destination.splice(requested >= 0 ? requested : destination.length, 0, task);
-  destination.forEach((value, index) => { value.position = index; });
-  if (sourceColumnId !== columnId) source.forEach((value, index) => { value.position = index; });
+  const enteredAt = nextEnteredAt();
+  placeTaskIn(
+    { workflow: state.workflow, tasks: state.tasks as HubTask[] },
+    task as HubTask, columnId, placementFromAnchor(beforeTaskId), enteredAt, { at: new Date(enteredAt).toISOString() },
+  );
   return task;
 }
 

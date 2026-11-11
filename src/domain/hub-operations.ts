@@ -1,5 +1,5 @@
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { AutoModePause, Board, BoardSettings, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ModelSelection, StagePatch, Workflow } from '../shared/types.js';
+import type { AutoModePause, AutoModeState, Board, BoardSettings, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ModelSelection, StagePatch, Workflow } from '../shared/types.js';
 import { assertId, isAbsolutePath } from './validation.js';
 import { assertSchedulable } from './cron.js';
 import { isPublishedProject, requireProjectPath } from '../shared/project.js';
@@ -16,8 +16,10 @@ import { assertProjectSave, buildProject } from './project-registration.js';
 import { assertKnownProjectKeys, assertProjectCreatable, boardsAllowingKey, normalizeProjectKeys } from './board-project-scope.js';
 import { requireProjectKey } from './project-key.js';
 import { applyNoteTags, validateNoteWrite, type NoteInput } from './note.js';
-import { placementIndex, type Placement } from './placement.js';
+import type { Placement } from './placement.js';
 import { compareTaskOrder } from './task-order.js';
+import { recordAutoModeChange, recordCreation, recordIntent, type AutoModeChange } from './task-history/record.js';
+import { placeTaskIn } from './task-placement.js';
 
 export type { NoteInput } from './note.js';
 export interface TaskTextPatch { title?: string; description?: string }
@@ -351,6 +353,7 @@ export function createTask(hub: HubState, input: { boardId: string; projectId: s
     ...(entryInstruction(initialColumn) !== undefined ? { instructionPending: { columnId: initialColumn!.id, enteredAt: nextEnteredAt(Date.parse(at)) } } : {}),
     createdAt: at, updatedAt: at,
   };
+  recordCreation(task, board.workflow.initialColumnId, at);
   hub.tasks.push(task);
   hub.updatedAt = at;
   return task;
@@ -365,19 +368,33 @@ export function dismissWorktree(hub: HubState, taskId: string, deps: OperationDe
   return task;
 }
 
+/**
+ * Apply one auto mode change and record it. The operations below describe which
+ * change happened; the setting and its record are written together here, so one
+ * cannot move without the other.
+ */
+function applyAutoModeChange(task: HubTask, next: AutoModeState | undefined, change: AutoModeChange, at: string): void {
+  if (next === undefined) delete task.autoMode; else task.autoMode = next;
+  recordAutoModeChange(task, change, at);
+}
+
 export function setAutoMode(hub: HubState, taskId: string, enabled: boolean, deps: OperationDeps): HubTask {
   invariant(typeof enabled === 'boolean', 'INVALID_INPUT', 'Auto mode requires a boolean value.');
   const task = requireTask(hub, taskId);
   if (enabled) {
     // Enabling a paused task is its resume, so clearing the records is the whole change.
     if (task.autoMode?.enabled === true && task.autoMode.pause === undefined && task.autoMode.hold === undefined) return task;
-    task.autoMode = { enabled: true };
-  } else {
-    if (task.autoMode === undefined) return task;
-    delete task.autoMode;
+    const at = timestamp(deps);
+    applyAutoModeChange(task, { enabled: true }, { action: 'enabled' }, at);
+    task.updatedAt = at;
+    hub.updatedAt = at;
+    return task;
   }
-  task.updatedAt = timestamp(deps);
-  hub.updatedAt = task.updatedAt;
+  if (task.autoMode === undefined) return task;
+  const at = timestamp(deps);
+  applyAutoModeChange(task, undefined, { action: 'disabled' }, at);
+  task.updatedAt = at;
+  hub.updatedAt = at;
   return task;
 }
 
@@ -385,9 +402,11 @@ export function pauseAutoMode(hub: HubState, taskId: string, pause: AutoModePaus
   const task = requireTask(hub, taskId);
   if (task.autoMode?.enabled !== true) return task;
   if (expectedColumnId !== undefined && task.columnId !== expectedColumnId) return task;
-  task.autoMode.pause = { ...pause };
-  task.updatedAt = timestamp(deps);
-  hub.updatedAt = task.updatedAt;
+  const at = timestamp(deps);
+  applyAutoModeChange(task, { ...task.autoMode, pause: { ...pause } },
+    { action: 'paused', reason: pause.reason, ...(pause.message === undefined ? {} : { message: pause.message }) }, at);
+  task.updatedAt = at;
+  hub.updatedAt = at;
   return task;
 }
 
@@ -402,10 +421,13 @@ export function pauseTask(hub: HubState, taskId: string, reason: unknown, deps: 
   const normalized = normalizePauseReason(reason);
   if (task.autoMode?.enabled !== true) return task;
   if (task.autoMode.hold?.reason === normalized) return task;
+  // The agent pause owns its state transition through the hold helper; the record
+  // still comes from the one writer every auto mode change uses.
   const at = timestamp(deps);
   applyHold(task, normalized, at);
+  recordAutoModeChange(task, { action: 'agent-paused', reason: normalized }, at);
   task.updatedAt = at;
-  hub.updatedAt = task.updatedAt;
+  hub.updatedAt = at;
   return task;
 }
 
@@ -417,8 +439,10 @@ export function pauseTask(hub: HubState, taskId: string, reason: unknown, deps: 
 export function resumeTask(hub: HubState, taskId: string, deps: OperationDeps): HubTask {
   const task = requireTask(hub, taskId);
   if (!clearAutoModeState(task)) return task;
-  task.updatedAt = timestamp(deps);
-  hub.updatedAt = task.updatedAt;
+  const at = timestamp(deps);
+  recordAutoModeChange(task, { action: 'resumed' }, at);
+  task.updatedAt = at;
+  hub.updatedAt = at;
   return task;
 }
 
@@ -443,7 +467,10 @@ export function recordTransition(hub: HubState, taskId: string, columnId: string
     invariant(columnId !== task.columnId, 'INVALID_TARGET', 'A recorded transition must target another stage.');
     invariant(transitionTargets(board.workflow, task.columnId).some(target => target.column.id === columnId),
       'TRANSITION_NOT_ALLOWED', 'The destination stage is not a configured transition of the current stage.');
-    task.recordedTransition = { fromColumnId: task.columnId, columnId, at: timestamp(deps), reason: normalizeTransitionReason(reason) };
+    const fromColumnId = task.columnId;
+    const at = timestamp(deps);
+    task.recordedTransition = { fromColumnId, columnId, at, reason: normalizeTransitionReason(reason) };
+    recordIntent(task, fromColumnId, columnId, at);
   }
   task.updatedAt = timestamp(deps);
   hub.updatedAt = task.updatedAt;
@@ -534,34 +561,13 @@ export function deleteNote(hub: HubState, taskId: string, noteId: string, deps: 
   return note;
 }
 
-export function placeTask(hub: HubState, taskId: string, columnId: string, placement: Placement, enteredAt: number, options: { retainAgentPause?: boolean } = {}): void {
+export function placeTask(hub: HubState, taskId: string, columnId: string, placement: Placement, enteredAt: number, options: { retainAgentPause?: boolean; at: string }): void {
   const task = requireTask(hub, taskId);
   const board = boardForTask(hub, task);
-  const sourceColumnId = task.columnId;
-  const destination = hub.tasks.filter(value => value.boardId === board.id && value.columnId === columnId && value.id !== taskId)
-    .sort(compareTaskOrder);
-  const index = placementIndex(placement, destination);
-  task.columnId = columnId;
-  // A placement resolves the diagnostic pause. The agent pause is a user-facing
-  // stop, so a user movement resumes the task while an automatic advance that
-  // was already admitted keeps it.
-  if (task.autoMode?.pause !== undefined) delete task.autoMode.pause;
-  if (options.retainAgentPause !== true && task.autoMode?.hold !== undefined) delete task.autoMode.hold;
-  // A recorded transition is an edge of one stage, so it stops applying the
-  // moment the task leaves that stage. A same-stage reorder keeps it.
-  if (sourceColumnId !== columnId && task.recordedTransition !== undefined) delete task.recordedTransition;
-  if (sourceColumnId !== columnId) {
-    const destinationColumn = board.workflow.columns.find(value => value.id === columnId);
-    if (entryInstruction(destinationColumn) !== undefined) task.instructionPending = { columnId, enteredAt };
-    else delete task.instructionPending;
-  }
-  destination.splice(index, 0, task);
-  destination.forEach((value, position) => { value.position = position; });
-  if (sourceColumnId !== columnId) {
-    hub.tasks.filter(value => value.boardId === board.id && value.columnId === sourceColumnId)
-      .sort(compareTaskOrder)
-      .forEach((value, position) => { value.position = position; });
-  }
+  placeTaskIn(
+    { workflow: board.workflow, tasks: hub.tasks.filter(value => value.boardId === board.id) },
+    task, columnId, placement, enteredAt, options,
+  );
 }
 
 export function deleteTask(hub: HubState, taskId: string): HubTask {

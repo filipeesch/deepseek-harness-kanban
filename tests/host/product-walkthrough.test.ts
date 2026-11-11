@@ -128,6 +128,12 @@ async function waitForReady(f: Awaited<ReturnType<typeof setup>>, taskId: string
   expect(f.app.store.requireTask(taskId).worktree?.status).toBe('ready');
 }
 
+/** A task payload without its flow record, which task tools never return. */
+function withoutHistory<T extends { history?: unknown }>(task: T): Omit<T, 'history'> {
+  const { history: _history, ...rest } = task;
+  return rest;
+}
+
 async function addSharedNote(f: Awaited<ReturnType<typeof setup>>, task: { id: string; a: string; b: string }) {
   await f.tool('create_note', { content: '# Shared product note\n\n**From A**' }, task.a);
   const note = f.app.store.snapshot().notes.find(value => value.taskId === task.id)!;
@@ -282,11 +288,11 @@ describe('bounded integrated product walkthrough', () => {
     expect(await f.tool('list_boards', {}, a.b)).toEqual(await f.tool('list_boards', {}));
     expect(await f.tool('get_board_summary', {})).toMatchObject({ id: boardId, hubId, columns: expect.arrayContaining([expect.objectContaining({ id: 'backlog', count: 2 })]) });
     expect(await f.tool('get_board_summary', {}, a.a)).toEqual(await f.tool('get_board_summary', {}));
-    expect(await f.tool('list_cards', { project_id: f.project.id, query: 'PRODUCT WALKTHROUGH', limit: 1 })).toEqual([{ ...f.app.store.requireTask(a.id), hubId }]);
-    expect(await f.tool('list_cards', { project_id: 'root-project', limit: 1 }, a.b)).toEqual([{ ...b, hubId }]);
+    expect(await f.tool('list_cards', { project_id: f.project.id, query: 'PRODUCT WALKTHROUGH', limit: 1 })).toEqual([{ ...withoutHistory(f.app.store.requireTask(a.id)), hubId }]);
+    expect(await f.tool('list_cards', { project_id: 'root-project', limit: 1 }, a.b)).toEqual([{ ...withoutHistory(b), hubId }]);
     expect(await f.tool('list_cards', { query: 'does not match', limit: 1 })).toEqual([]);
     expect(await f.tool('list_cards', {})).toHaveLength(2); expect(await f.tool('list_cards', { limit: 1 })).toHaveLength(1);
-    expect(await f.tool('get_card', { task_id: a.id })).toEqual(expect.objectContaining({ task: f.app.store.requireTask(a.id), project: f.app.store.requireProject(f.project.id), board: expect.objectContaining({ id: boardId, name: 'Kanban' }), hub: expect.objectContaining({ id: hubId, name: 'My Hub' }) }));
+    expect(await f.tool('get_card', { task_id: a.id })).toEqual(expect.objectContaining({ task: withoutHistory(f.app.store.requireTask(a.id)), project: f.app.store.requireProject(f.project.id), board: expect.objectContaining({ id: boardId, name: 'Kanban' }), hub: expect.objectContaining({ id: hubId, name: 'My Hub' }) }));
     expect(await f.tool('get_card', { task_id: a.id }, a.b)).toEqual(await f.tool('get_card', { task_id: a.id }));
     expect(await f.tool('list_notes', { task_id: a.id })).toEqual([note]);
     expect(await f.tool('list_notes', {}, b.sessionIds[0]!)).toEqual([]);

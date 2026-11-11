@@ -75,7 +75,7 @@ test('drawer activity dot stays on the Conversations tab across sections', async
   await expect.poll(() => conversations.locator('.kb-activity-dot').evaluate(element => element.getAnimations().length)).toBeGreaterThan(0);
   await expect(drawer.locator('.kb-drawer-header .kb-working')).toHaveCount(0);
   await expect(drawer.locator('.kb-drawer-header').getByText(/Background:/)).toHaveCount(0);
-  for (const tab of ['Info', 'Git', 'Notes']) {
+  for (const tab of ['Info', 'Git', 'Notes', 'History']) {
     await drawer.getByRole('tab', { name: tab }).click();
     await expect(drawer.getByRole('tab', { name: /^Conversations/ }).locator('.kb-activity-dot')).toBeVisible();
   }

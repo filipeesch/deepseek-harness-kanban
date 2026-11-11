@@ -170,4 +170,15 @@ describe('DrawerSectionNav', () => {
     render(<DrawerSectionNav id="sections" sections={['Conversations', 'Info', 'Notes']} selected="Conversations" onSelect={() => {}} activity={{ running: false, background: [] }} />);
     expect(screen.getByRole('tab', { name: 'Conversations' }).querySelector('.kb-activity-dot')).toBeNull();
   });
+
+  it('exposes the History section by name, after Notes', () => {
+    const onSelect = vi.fn();
+    const sections = ['Conversations', 'Info', 'Git', 'Notes', 'History'] as const;
+    render(<DrawerSectionNav id="sections" sections={sections} selected="History" onSelect={onSelect} activity={{ running: false, background: [] }} />);
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map(tab => tab.getAttribute('aria-label'))).toEqual([...sections]);
+    expect(screen.getByRole('tab', { name: 'History' }).querySelector('svg')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
+    expect(onSelect).toHaveBeenCalledWith('Notes');
+  });
 });
