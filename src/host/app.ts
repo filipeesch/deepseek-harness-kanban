@@ -12,10 +12,12 @@ import type { AutoAdvancePlan } from '../domain/auto-advance.js';
 import { admitAutoAdvance } from './auto-advance-admission.js';
 import { readPendingUserWork, withQuestionPending } from './pending-source.js';
 import type { ConversationFactsSource } from './native-facts.js';
-import type { AutoModePauseReason, Board, BoardSettings, Command, ConversationFacts, ConversationModelOutcome, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, RetainedCheckout, SharingCommand, SnapshotRequest, Task, WorktreeDefaults } from '../shared/types.js';
+import type { AutoModePauseReason, Board, BoardSettings, Command, ConversationFacts, ConversationModelOutcome, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, RetainedCheckout, RetainedCheckoutReason, SharingCommand, SnapshotRequest, Task, WorktreeDefaults } from '../shared/types.js';
+import type { TaskMessagePreparation } from '../shared/task-message.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionStore } from './question-storage.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
+import { entryExists } from './paths.js';
 import { WorktreeCoordinator } from './worktrees.js';
 import { OperationQueue } from './operation-queue.js';
 import { ProjectRelocationCoordinator } from './project-relocation.js';
@@ -32,6 +34,7 @@ import { isGitProject, requireGitProject, requireProjectPath } from '../shared/p
 import { containsPath } from './git.js';
 import { defaultWorktreeDestination, taskTitleSlug } from '../shared/worktree-name.js';
 import { prepareFirstExecution } from './first-execution.js';
+import { worktreeDecision } from '../domain/first-execution.js';
 import { firstOpenSessionId } from '../shared/conversations.js';
 import { admitStageInstruction, type StageInstructionDeps } from './stage-instruction.js';
 import { requiresWorktreeDecision, unresolvedWorktreeBinding } from '../shared/worktree-decision.js';
@@ -66,12 +69,13 @@ function boardSharingPort(sharing:HubSharingService):BoardSharingPort{
   isBound:(hubId,boardId)=>sharing.isBound(hubId,boardId),
   noteLocalChange:hubId=>sharing.noteLocalChange(hubId),
   removeBoard:(hubId,boardId,scope,name)=>sharing.removeBoard(hubId,boardId,scope,name),
-  publish:hubId=>sharing.publish(hubId),
+  publishBoard:(hubId,boardId)=>sharing.publishBoard(hubId,boardId),
+  publishManifest:hubId=>sharing.publishManifest(hubId),
  };
 }
 /** One created conversation and, when its board named a default model, how that model fared. */
 export interface CreatedConversation { sessionId: string; model?: ConversationModelOutcome }
-export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles }
+export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number }
 /** Coordinates Hub-scoped commands while the host continues to own sessions and execution. */
 export class KanbanApp {
  readonly questions=new QuestionIndex();
@@ -95,6 +99,12 @@ export class KanbanApp {
  private readonly saveTimers=new Map<string,ReturnType<typeof setTimeout>>();
  /** Transient, in-memory retention notices; the checkout itself lives on disk. */
  private readonly retainedCheckouts:RetainedCheckout[]=[];
+ private readonly retainedCheckoutExists:(path:string)=>Promise<boolean>;
+ private readonly retainedCheckoutPruneIntervalMs:number;
+ private retainedPruneAt=0;
+ private retainedPrune:Promise<void>|undefined;
+ private retainedPruneTimer:ReturnType<typeof setTimeout>|undefined;
+ private pruningRetained=false;
  private readonly autoAdvance:AutoAdvanceCoordinator;
  /** The one conversation-fact read every host consumer shares; the question projection is folded in here. */
  private readonly factsSource:ConversationFactsSource;
@@ -102,6 +112,8 @@ export class KanbanApp {
  private scheduleRuntime:ScheduleRuntimePort|undefined;
  constructor(readonly hubs:HubRepository,readonly sessions:SessionPort,readonly git:GitPort,private readonly options:AppOptions={},private readonly workspaces?:WorkspacePort){
   this.locator=new TaskLocator(hubs);
+  this.retainedCheckoutExists=options.retainedCheckoutExists??entryExists;
+  this.retainedCheckoutPruneIntervalMs=options.retainedCheckoutPruneIntervalMs??15000;
   if(options.teamFiles)this.teamFiles=options.teamFiles;
   this.boards=new BoardAdministration({hubs,...(options.sharing?{sharing:boardSharingPort(options.sharing)}:{}),...(options.report?{report:options.report}:{}),activity:{inFlight:(hubId,boardId)=>this.boardActivity(hubId,boardId)}});
   this.factsSource=withQuestionPending({read:id=>this.sessions.facts(id)},this.questions);
@@ -113,7 +125,7 @@ export class KanbanApp {
    },
    ...(options.report?{report:options.report}:{}),
   });
-  this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,queue:this.operationQueue,onTaskDeleted:async task=>{try{await this.workspaceCoordinator?.cleanup(task as HubTask);}catch(error){this.options.report?.(error);}},onCheckoutRetained:(task,project,retainedPath)=>this.retainCheckout(task,project,retainedPath)});
+  this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,queue:this.operationQueue,worktreeDefaults:{derive:async taskId=>this.worktreeDefaultsFor(this.locatedTask(taskId).task)},onTaskDeleted:async task=>{try{await this.workspaceCoordinator?.cleanup(task as HubTask);}catch(error){this.options.report?.(error);}},onCheckoutRetained:(task,project,retainedPath,reason)=>this.retainCheckout(task,project,retainedPath,reason)});
   this.relocations=new ProjectRelocationCoordinator(new RepositoryProjectRelocationStore(hubs),sessions,git,{queue:this.operationQueue,signal:options.signal,...(this.workspaceCoordinator?{workspaces:{bind:async(hubId,project)=>{await this.workspaceCoordinator!.rebindProject(hubId,project);}}}:{}),...(options.report?{report:options.report}:{})});
   this.pendingWork=new PendingWorkRunner({resumeWorktrees:async()=>{await this.worktrees.resumePending();},resumeRelocations:async()=>{await this.relocations.resumePending();},dispatchPending:async()=>{await this.dispatchPending();},report:error=>this.options.report?.(error)});
   this.attention=new AttentionCoordinator({source:this.factsSource,tasks:()=>this.attentionTasks(),runPendingWork:async()=>{await this.pendingWork.run();},onChange:()=>this.attentionChanged(),onFacts:()=>this.markChanged(),report:error=>this.options.report?.(error)});
@@ -167,14 +179,76 @@ export class KanbanApp {
  }
  private markChanged():void{if(this.disposed)return;this.sequence++;this.publisher.request();}
  /** Record a transient retention notice once, after the deletion that retained the checkout completed. */
- private retainCheckout(task:Task,project:Project,retainedPath:string):void{
+ private retainCheckout(task:Task,project:Project,retainedPath:string,reason:RetainedCheckoutReason):void{
   if(this.disposed)return;
-  if(this.retainedCheckouts.some(value=>value.path===retainedPath))return;
-  this.retainedCheckouts.push({path:retainedPath,projectId:project.id,taskTitle:task.title});
+  const index=this.retainedCheckouts.findIndex(value=>value.path===retainedPath);
+  // A repeat retention replaces the entry so an existence check already running
+  // cannot mistake the fresh notice for the record it captured.
+  if(index>=0)this.retainedCheckouts[index]={path:retainedPath,projectId:project.id,taskTitle:task.title,reason};
+  else this.retainedCheckouts.push({path:retainedPath,projectId:project.id,taskTitle:task.title,reason});
+  this.armRetainedPrune();
   if(this.retainedCheckouts.length>20){
    const dropped=this.retainedCheckouts.shift();
    if(dropped)this.options.report?.(new KanbanError('RETAINED_CHECKOUT_DROPPED','The retained-checkout notice limit dropped an older path.',{path:dropped.path}));
   }
+  this.markChanged();
+ }
+ /** Acknowledge retained checkouts the user dismissed; the directories themselves stay on disk. */
+ private dismissRetainedCheckouts(paths:readonly string[]):void{
+  if(this.disposed)return;
+  const dismissed=new Set(paths);
+  const kept=this.retainedCheckouts.filter(value=>!dismissed.has(value.path));
+  if(kept.length===this.retainedCheckouts.length)return;
+  this.retainedCheckouts.splice(0,this.retainedCheckouts.length,...kept);
+  if(this.retainedCheckouts.length===0&&this.retainedPruneTimer!==undefined){clearTimeout(this.retainedPruneTimer);this.retainedPruneTimer=undefined;}
+  this.markChanged();
+ }
+ /**
+  * Start a retained-checkout existence check when one is due, otherwise keep a
+  * periodic one armed. Either way the check runs off the awaited path, so a
+  * snapshot never waits for the filesystem and an idle board still prunes.
+  */
+ private scheduleRetainedPrune():void{
+  if(this.disposed||this.pruningRetained||this.retainedCheckoutPruneIntervalMs<0)return;
+  if(this.retainedCheckouts.length===0)return;
+  if(Date.now()-this.retainedPruneAt>=this.retainedCheckoutPruneIntervalMs){this.runRetainedPrune();return;}
+  this.armRetainedPrune();
+ }
+ /** Arm the next periodic check; at most one timer exists while notices are retained. */
+ private armRetainedPrune():void{
+  if(this.disposed||this.pruningRetained||this.retainedPruneTimer!==undefined)return;
+  if(this.retainedCheckouts.length===0)return;
+  this.retainedPruneTimer=setTimeout(()=>{
+   this.retainedPruneTimer=undefined;
+   this.runRetainedPrune();
+  },Math.max(this.retainedCheckoutPruneIntervalMs,0));
+  this.retainedPruneTimer.unref?.();
+ }
+ /** Run one single-flight existence check, then re-arm while notices remain. */
+ private runRetainedPrune():void{
+  if(this.disposed||this.pruningRetained||this.retainedCheckouts.length===0)return;
+  this.pruningRetained=true;
+  this.retainedPruneAt=Date.now();
+  // A microtask keeps the check off the snapshot's awaited path without a timer to clean up.
+  this.retainedPrune=Promise.resolve().then(()=>this.pruneRetainedCheckouts()).catch(error=>{this.options.report?.(error);}).finally(()=>{this.pruningRetained=false;this.retainedPrune=undefined;this.armRetainedPrune();});
+ }
+ /**
+  * Drop the retained notices whose directory is gone. The entries captured here
+  * survive the check only by object identity, so a path recorded while the check
+  * was running keeps its own notice.
+  */
+ private async pruneRetainedCheckouts():Promise<void>{
+  if(this.disposed)return;
+  const checked=new Set(this.retainedCheckouts);
+  const missing=new Set<string>();
+  for(const entry of checked){
+   try{if(!await this.retainedCheckoutExists(entry.path))missing.add(entry.path);}
+   catch{/* an unreadable path keeps its notice */}
+  }
+  if(this.disposed||missing.size===0)return;
+  const kept=this.retainedCheckouts.filter(entry=>!(missing.has(entry.path)&&checked.has(entry)));
+  if(kept.length===this.retainedCheckouts.length)return;
+  this.retainedCheckouts.splice(0,this.retainedCheckouts.length,...kept);
   this.markChanged();
  }
  private attentionChanged():void{if(this.disposed)return;this.sequence++;this.publisher.request();this.publisher.flush();}
@@ -196,8 +270,8 @@ export class KanbanApp {
   await this.dispatchPending();
   this.scheduleStartupReconciliation(summaries);
  }
- /** Resolves when the background startup reconciliation has finished; used by tests and shutdown. */
- whenSettled():Promise<void>{return this.startup.whenSettled();}
+ /** Resolves when the background startup reconciliation and any retained checkout check have finished. */
+ async whenSettled():Promise<void>{await this.startup.whenSettled();await this.retainedPrune;}
  private async repairInterruptedTransition(summary:TaskSummary):Promise<void>{
   const located=this.locator.byTask(summary.taskId);const task=located?.task;if(!located||!task)return;
   if(task.pendingTransition?.status==='sending')await this.hubStore(located.hubId).transact(d=>{const t=d.tasks.find(t=>t.id===task.id);if(t?.pendingTransition?.status==='sending'){t.pendingTransition.status='failed';t.pendingTransition.error={code:'DELIVERY_UNCERTAIN',message:'A prior prompt admission was interrupted. Retry explicitly; the same native request identity will be reused.'};}});
@@ -342,7 +416,8 @@ export class KanbanApp {
   else{sequence=this.sequence;conversations=this.attention.present(tasks);}
   const parts=await this.assembler.assemble(conversations,{refreshAuth:request.refreshAuth===true,allowAuthRefresh:mode==='full'});
   const scheduleRuntime=this.scheduleRuntime?.runtime()??{};
-  return {...parts,sequence,...(Object.keys(scheduleRuntime).length===0?{}:{scheduleRuntime}),...(this.retainedCheckouts.length===0?{}:{retainedCheckouts:[...this.retainedCheckouts]})};
+  this.scheduleRetainedPrune();
+  return {...parts,sequence,...(Object.keys(scheduleRuntime).length===0?{}:{scheduleRuntime}),...(this.retainedCheckouts.length===0?{}:{retainedCheckouts:this.retainedCheckouts.map(value=>({...value}))})};
  }
  /** Publish a new snapshot after publishing or authorization state changed outside a board command. */
  sharingChanged():void{this.assembler.invalidateAuth();this.assembler.invalidateSharing();this.markChanged();}
@@ -412,6 +487,32 @@ export class KanbanApp {
   const latest=this.locator.bySession(sessionId);
   invariant(latest&&latest.hubId===located.hubId&&latest.task.projectId===task.projectId&&latest.project.projectPath===project.projectPath&&latest.project.gitRootPath===project.gitRootPath&&latest.task.sessionIds.includes(sessionId)&&latest.task.effectiveCwd===expected,'CONTEXT_CHANGED','The task context changed while execution was being validated. Review its directory before retrying.');
  }
+ /**
+  * Prepare the conversation a cross-card message lands in: the first open
+  * conversation, or a first conversation created after the default worktree when
+  * the task has none. The whole preparation is serialized so a concurrent user
+  * action cannot create a second conversation.
+  */
+ prepareMessageConversation(taskId:string):Promise<TaskMessagePreparation>{return this.serial(()=>this.prepareMessageConversationNow(taskId));}
+ private async prepareMessageConversationNow(taskId:string):Promise<TaskMessagePreparation>{
+  const located=this.locatedTask(taskId);const existing=firstOpenSessionId(located.task);
+  if(existing!==undefined)return {sessionId:existing,createdConversation:false};
+  const decision=worktreeDecision(located.task,located.project);
+  invariant(decision!=='blocked','WORKTREE_BINDING_UNRESOLVED','Resolve the worktree binding in the Git section before messaging this task.');
+  let createdWorktree:{path:string;branch:string}|undefined;
+  if(decision==='create-default'){
+   const defaults=await this.worktreeDefaultsFor(located.task);
+   if(defaults.kind==='unavailable')throw new KanbanError(defaults.reason.code,defaults.reason.message,defaults.reason.details);
+   await this.worktrees.request(located.task.id,{kind:'create',mode:'new',path:defaults.path,branchName:defaults.branchName,...(defaults.sourceBranch===undefined?{}:{sourceBranch:defaults.sourceBranch})});
+   const current=this.locatedTask(taskId);
+   createdWorktree=current.task.worktree?{path:current.task.worktree.path,branch:current.task.worktree.branch}:{path:defaults.path,branch:defaults.branchName};
+  }
+  // A concurrent path may have created a conversation while the worktree was prepared.
+  const reopened=firstOpenSessionId(this.locatedTask(taskId).task);
+  if(reopened!==undefined)return {sessionId:reopened,createdConversation:false,...(createdWorktree===undefined?{}:{createdWorktree})};
+  const sessionId=(await this.createConversationNow(taskId,{ensureFirst:true})).sessionId;
+  return {sessionId,createdConversation:true,...(createdWorktree===undefined?{}:{createdWorktree})};
+ }
  /** The visible native workspace of one Hub project, provisioned on demand. */
  async ensureProjectWorkspace(hubId:string,projectId:string):Promise<string|undefined>{
   const project=this.hubStore(hubId).requireProject(projectId);
@@ -469,10 +570,13 @@ export class KanbanApp {
   }
  }
  private serial<T>(run:()=>Promise<T>):Promise<T>{const result=this.commandTail.then(run);this.commandTail=result.then(()=>undefined,()=>undefined);return result;}
- createConversation(taskId:string):Promise<string>{return this.serial(async()=>(await this.createConversationNow(taskId)).sessionId);}
- private async createConversationNow(taskId:string,options:{allowUndecided?:boolean}={}):Promise<CreatedConversation>{
+ createConversation(taskId:string,options:{ensureFirst?:boolean}={}):Promise<string>{return this.serial(async()=>(await this.createConversationNow(taskId,options)).sessionId);}
+ private async createConversationNow(taskId:string,options:{allowUndecided?:boolean;ensureFirst?:boolean}={}):Promise<CreatedConversation>{
   this.assertContext(taskId);const located=this.locatedTask(taskId);const store=this.hubs.hub(located.hubId);const before=located.task;const project=located.project;
   this.assertProjectRelocation(project,'creating a conversation');
+  // A first-start request queued behind a message preparation must reuse the
+  // conversation that preparation created; an explicit plus action never sets this.
+  if(options.ensureFirst===true){const existing=firstOpenSessionId(before);if(existing!==undefined)return {sessionId:existing};}
   invariant(!(options.allowUndecided===true&&before.sessionIds.length===0&&unresolvedWorktreeBinding(before,project)),'WORKTREE_BINDING_UNRESOLVED','Resolve the worktree binding in the Git section before starting the first conversation.');
   invariant(options.allowUndecided===true||!requiresWorktreeDecision(before,project),'WORKTREE_DECISION_REQUIRED','Choose whether to create a worktree or continue in the base project before starting the first conversation.');
   const projectDirectory=requireProjectPath(project);const workspaceId=await this.workspaceCoordinator?.ensureTaskWorkspace(located.hubId,before,project);const id=await this.sessions.create(projectDirectory,workspaceId);
@@ -533,9 +637,8 @@ export class KanbanApp {
   const expectedEnteredAt=request.expectedEnteredAt??marker.enteredAt;
   const prepared=await prepareFirstExecution({
    locate:value=>this.locatedTask(value),
-   worktreeDefaults:value=>this.worktreeDefaultsFor(value),
    createWorktree:async(value,draft)=>{await this.worktrees.request(value,{kind:'create',...draft});},
-   createConversation:async value=>await this.createConversationNow(value),
+   createConversation:value=>this.createConversationNow(value,{ensureFirst:true}),
   },{taskId,columnId,expectedEnteredAt,...(request.expectedInstruction===undefined?{}:{expectedInstruction:request.expectedInstruction})});
   if(!request.send)return {...prepared,sent:false};
   await admitStageInstruction(this.stageInstructionDeps(),{taskId,columnId,instruction,expectedEnteredAt,sessionId:prepared.sessionId});
@@ -583,7 +686,7 @@ export class KanbanApp {
    case 'task.create':{const value=await this.createTaskNow(command);commandReceipt={kind:'task',id:value.id};break;}
    case 'task.prepareFirstExecution':{const value=await this.startFirstExecutionNow(command.taskId,{send:false,columnId:command.columnId,expectedEnteredAt:command.expectedEnteredAt,...(command.expectedInstruction===undefined?{}:{expectedInstruction:command.expectedInstruction})});commandReceipt={kind:'conversation',id:value.sessionId,...(value.model===undefined?{}:{model:value.model})};break;}
    case 'task.edit':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).editTask(command.taskId,{...(command.title!==undefined?{title:command.title}:{}),...(command.description!==undefined?{description:command.description}:{})},command.expectedRevision);break;}
-   case 'conversation.create':{const created=await this.createConversationNow(command.taskId);commandReceipt={kind:'conversation',id:created.sessionId,...(created.model===undefined?{}:{model:created.model})};break;}
+   case 'conversation.create':{const created=await this.createConversationNow(command.taskId,{ensureFirst:command.ensureFirst===true});commandReceipt={kind:'conversation',id:created.sessionId,...(created.model===undefined?{}:{model:created.model})};break;}
    case 'conversation.close':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).closeSession(command.taskId,command.sessionId);break;}
    case 'conversation.reopen':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).reopenSession(command.taskId,command.sessionId);break;}
    case 'note.save':{const value=await this.saveNoteNow(command);commandReceipt={kind:'note',id:value.id};break;}
@@ -598,6 +701,7 @@ export class KanbanApp {
    }
    case 'operation.return':this.assertProjectRelocation(this.locatedTask(command.taskId).project,'returning to the base project');await this.clearPending(command.taskId);await this.worktrees.returnToBase(command.taskId);break;
    case 'operation.dismiss':await this.dismissFailedAdvance(command.taskId);break;
+   case 'retainedCheckout.dismiss':this.dismissRetainedCheckouts(command.paths);break;
    case 'task.move':await this.move(command);break;
    // Changing the setting forgets a turn that has not settled yet, so enabling — or
    // resuming a paused task — never advances a turn that ended before the change.
@@ -730,5 +834,9 @@ export class KanbanApp {
   // Let the background reconciliation finish (or abort) before flushing question
   // persistence, so no replay can schedule a write after the final flush.
   this.startup.dispose();await this.startup.whenSettled();
+  if(this.retainedPruneTimer!==undefined){clearTimeout(this.retainedPruneTimer);this.retainedPruneTimer=undefined;}
+  await this.retainedPrune;
+  // The settling prune re-arms while the host is still open; close clears that one too.
+  if(this.retainedPruneTimer!==undefined){clearTimeout(this.retainedPruneTimer);this.retainedPruneTimer=undefined;}
   await this.flushQuestions();this.publisher.flush();this.disposed=true;this.publisher.dispose();this.attention.dispose();this.autoAdvance.dispose();for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();this.relocations.dispose();this.operationQueue.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.relocations.settle();}
 }

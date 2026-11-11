@@ -5,10 +5,10 @@ import type { SessionTopologyPort } from '../shared/ports.js';
 import type { Task } from '../shared/types.js';
 import type { SharedWorktreeBlocker } from '../shared/worktree-blockers.js';
 import { canonicalPath, containsPath } from './git.js';
+import type { TaskBindingIndex } from './task-binding-index.js';
 
 export interface WorktreeOwnershipStore {
   locate(taskId: string): { task: Task };
-  allTasks(): Task[];
 }
 
 export interface WorktreeSharingOptions {
@@ -26,11 +26,15 @@ async function exists(value: string): Promise<boolean> {
  * own conversation lineage. A task owns its retained conversations and their
  * native subagent descendants; forks and unrelated sessions stay foreign.
  * Every blocker is collected so a force consent can show the whole blast radius.
+ * Task bindings come from the repository's projection; native session state is
+ * read fresh on every evaluation, because this refusal must reflect the host at
+ * the moment it runs.
  */
 export class WorktreeSharingGuard {
   constructor(
     private readonly store: WorktreeOwnershipStore,
     private readonly sessions: SessionTopologyPort,
+    private readonly index: TaskBindingIndex,
   ) {}
 
   async assertExclusive(taskId: string, target: string, options: WorktreeSharingOptions = {}): Promise<void> {
@@ -42,14 +46,7 @@ export class WorktreeSharingGuard {
     if (options.force === true) return;
 
     const task = this.store.locate(taskId).task;
-    const blockers: SharedWorktreeBlocker[] = [];
-    for (const other of this.store.allTasks()) {
-      if (other.id === taskId || !other.worktree) continue;
-      const otherPath = await canonicalPath(other.worktree.path, true);
-      if (containsPath(canonical, otherPath) || containsPath(otherPath, canonical)) {
-        blockers.push({ kind: 'task', taskId: other.id, title: other.title, path: otherPath });
-      }
-    }
+    const blockers: SharedWorktreeBlocker[] = await this.index.blockingTasks(taskId, canonical);
 
     const topology = await this.sessions.topology(canonical);
     const owned = ownedSessionIds(task.sessionIds, topology.lineage);

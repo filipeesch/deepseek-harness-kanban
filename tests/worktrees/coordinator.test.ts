@@ -9,7 +9,7 @@ import { board, cleanup, fixture, git, gitOk, LocalExecutor, MemoryStore, Sessio
 
 afterEach(cleanup);
 function wrapped(adapter: GitPort, overrides: Partial<GitPort>): GitPort {
-  return { branches: adapter.branches.bind(adapter), inspect: adapter.inspect.bind(adapter), create: adapter.create.bind(adapter), remove: adapter.remove.bind(adapter), repair: adapter.repair.bind(adapter), assertPolicy: adapter.assertPolicy.bind(adapter), projectDirectory: adapter.projectDirectory.bind(adapter), ...overrides };
+  return { resolve: adapter.resolve.bind(adapter), branches: adapter.branches.bind(adapter), inspect: adapter.inspect.bind(adapter), localChanges: adapter.localChanges.bind(adapter), assertRemovable: adapter.assertRemovable.bind(adapter), create: adapter.create.bind(adapter), remove: adapter.remove.bind(adapter), repair: adapter.repair.bind(adapter), assertPolicy: adapter.assertPolicy.bind(adapter), projectDirectory: adapter.projectDirectory.bind(adapter), ...overrides };
 }
 async function setup() {
   const f = await fixture(); const executor = new LocalExecutor(); const adapter = new GitAdapter(executor);
@@ -99,13 +99,52 @@ describe('WorktreeCoordinator', () => {
     expect((await git(f.project.gitRootPath, ['show-ref', '--verify', 'refs/heads/feature'])).exitCode).toBe(0);
   });
 
-  it('returns chats before deleting a tree, archives native chats, then removes task-owned data', async () => {
+  it('returns chats to base before archiving and removes the checkout, then removes task-owned data', async () => {
     const f = await setup(); await create(f);
-    f.sessions.beforeArchive = async id => { expect(await f.sessions.directory(id)).toBe(f.project.projectPath); await expect(stat(f.tree)).rejects.toMatchObject({ code: 'ENOENT' }); };
+    f.sessions.beforeArchive = async id => { expect(await f.sessions.directory(id)).toBe(f.project.projectPath); };
     await f.coordinator.request('task', { kind: 'delete', discardChanges: false });
     expect(f.store.snapshot().tasks).toEqual([]); expect(f.store.snapshot().notes).toEqual([]); expect(f.sessions.archiveCalls).toEqual(['a', 'b']);
     expect([...f.sessions.dirs.values()]).toEqual([f.project.projectPath, f.project.projectPath]);
     expect((await git(f.project.gitRootPath, ['show-ref', '--verify', 'refs/heads/feature'])).exitCode).toBe(0);
+    await expect(stat(f.tree)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('overlaps the checkout removal with the native archiving', async () => {
+    const f = await setup(); await create(f);
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    f.sessions.beforeArchive = async () => { await gate; };
+    const request = f.coordinator.request('task', { kind: 'delete', discardChanges: false });
+    // The removal finished while the archiving step is still blocked, and the task
+    // is not removed until both steps finish.
+    await vi.waitFor(() => { expect(f.store.snapshot().tasks[0]!.operation?.gitCompleted).toBe(true); }, { timeout: 5000 });
+    expect(f.sessions.archiveCalls).toEqual([]);
+    expect(f.store.snapshot().tasks).toHaveLength(1);
+    await expect(stat(f.tree)).rejects.toMatchObject({ code: 'ENOENT' });
+    release(); await request;
+    expect(f.store.snapshot().tasks).toEqual([]);
+  });
+
+  it('attributes a failed checkout removal to the removing step while archiving still ran', async () => {
+    const f = await setup(); await create(f);
+    const port = wrapped(f.adapter, { remove: async () => { throw new KanbanError('REMOVE_FAILED', 'Injected removal failure.'); } });
+    const coordinator = new WorktreeCoordinator(f.store, f.sessions, port);
+    await expect(coordinator.request('task', { kind: 'delete', discardChanges: false })).rejects.toMatchObject({ code: 'REMOVE_FAILED' });
+    const task = f.store.snapshot().tasks[0]!;
+    expect(task.operation!.phase).toBe('failed');
+    expect(task.operation!.error?.details).toMatchObject({ failedPhase: 'removing' });
+    expect(task.worktree).not.toBeNull();
+    expect(f.sessions.archiveCalls).toEqual(['a', 'b']);
+  });
+
+  it('records the archiving step when both teardown steps fail', async () => {
+    const f = await setup(); await create(f);
+    const port = wrapped(f.adapter, { remove: async () => { throw new KanbanError('REMOVE_FAILED', 'Injected removal failure.'); } });
+    f.sessions.beforeArchive = () => { throw new KanbanError('ARCHIVE_FAILED', 'Native archive failed.'); };
+    const coordinator = new WorktreeCoordinator(f.store, f.sessions, port);
+    await expect(coordinator.request('task', { kind: 'delete', discardChanges: false })).rejects.toMatchObject({ code: 'ARCHIVE_FAILED' });
+    const task = f.store.snapshot().tasks[0]!;
+    expect(task.operation!.phase).toBe('failed');
+    expect(task.operation!.error?.details).toMatchObject({ failedPhase: 'archiving' });
   });
 
   it('keeps the checkout and recovery record when returning a retained chat fails', async () => {

@@ -104,7 +104,9 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
     if (creationPending || creationError || selectionRequired || worktreeDecisionRequired || projectUnavailable || busy) return null;
     setCreationPending(true);
     try {
-      const result = await execute({ type: 'conversation.create', taskId: task.id }, 'create');
+      // The first start reuses a conversation created while this request was queued;
+      // the plus action on an existing task intentionally adds another one.
+      const result = await execute({ type: 'conversation.create', taskId: task.id, ...(task.sessionIds.length === 0 ? { ensureFirst: true } : {}) }, 'create');
       if (!result) return null;
       const sessionId = creationReceiptId(result, 'conversation');
       // What the host did with the board's model travels on the same receipt, so the

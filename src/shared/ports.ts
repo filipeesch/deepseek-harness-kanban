@@ -1,4 +1,5 @@
 import type { BoardState, ConversationFacts, CreateWorktree, GitProject, HubState, KanbanMeta, ProjectLocation } from './types.js';
+import type { TaskMessageDelivery } from './task-message.js';
 export interface StateStorage { load(): Promise<unknown | null>; save(state: BoardState): Promise<void> }
 /** Durable Hub-record storage. The adapter owns the DSH domain; the repository owns the write chain. */
 export interface HubStorage {
@@ -58,13 +59,40 @@ export interface SessionPort extends SessionTopologyPort {
   directories(within?: string): Promise<Array<{ sessionId: string; directory: string }>>;
 }
 export interface GitTree { path: string; branch: string; dirty: boolean; commonDirectory: string }
+/** One registered linked worktree of a repository, as Git currently reports it. */
+export interface RegisteredWorktree { path: string; locked: boolean }
+/**
+ * One operation's resolved repository facts: the Git root, the project path inside
+ * it, the common directory, and the registered worktrees. An operation reuses it
+ * instead of resolving the same facts inside every Git call.
+ */
+export interface GitRepository {
+  readonly project: GitProject;
+  readonly root: string;
+  readonly projectPath: string;
+  readonly commonDirectory: string;
+  /** Registered worktrees, resolved once per operation and refreshed after a mutation. */
+  registered(): Promise<readonly RegisteredWorktree[]>;
+  /** Drop the cached registration after a Git worktree mutation. */
+  invalidate(): void;
+}
 export interface GitPort {
-  branches(project: GitProject, sessionIds: string[]): Promise<string[]>;
-  inspect(project: GitProject, path: string, sessionIds: string[]): Promise<GitTree>;
-  create(project: GitProject, request: CreateWorktree, sessionIds: string[], signal?: AbortSignal): Promise<GitTree>;
-  remove(project: GitProject, path: string, discardChanges: boolean, sessionIds: string[], signal?: AbortSignal): Promise<void>;
+  /** Resolve one operation's repository facts. */
+  resolve(project: GitProject, sessionIds: string[], signal?: AbortSignal): Promise<GitRepository>;
+  branches(project: GitProject, sessionIds: string[], repository?: GitRepository): Promise<string[]>;
+  inspect(project: GitProject, path: string, sessionIds: string[], repository?: GitRepository): Promise<GitTree>;
+  /** Whether the checkout has tracked or untracked local changes. */
+  localChanges(project: GitProject, path: string, sessionIds: string[], repository?: GitRepository): Promise<boolean>;
+  /**
+   * Refuse a checkout that may not be removed: an unsafe target, an unregistered
+   * directory, or a locked worktree. It reads no working-tree state, so it is the
+   * refusal a destructive operation decides before it mutates anything else.
+   */
+  assertRemovable(project: GitProject, path: string, sessionIds: string[], repository?: GitRepository): Promise<void>;
+  create(project: GitProject, request: CreateWorktree, sessionIds: string[], signal?: AbortSignal, repository?: GitRepository): Promise<GitTree>;
+  remove(project: GitProject, path: string, discardChanges: boolean, sessionIds: string[], signal?: AbortSignal, repository?: GitRepository, options?: { verifiedClean?: boolean }): Promise<void>;
   /** Best-effort repair of moved linked worktrees; returns after the repository admin files were repaired. */
-  repair(project: GitProject, worktreePaths: string[], sessionIds: string[], signal?: AbortSignal): Promise<void>;
+  repair(project: GitProject, worktreePaths: string[], sessionIds: string[], signal?: AbortSignal, repository?: GitRepository): Promise<void>;
   assertPolicy(project: GitProject, paths: string[], sessionIds: string[], write: boolean): Promise<void>;
   projectDirectory(project: GitProject, worktreeRoot?: string): Promise<string>;
 }
@@ -76,4 +104,10 @@ export interface CommandResult { exitCode: number; stdout: string; stderr: strin
 export interface GitExecutor {
   run(project: GitProject, args: string[], sessionIds: string[], signal?: AbortSignal, write?: boolean): Promise<CommandResult>;
   assertPolicy(project: GitProject, paths: string[], sessionIds: string[], write: boolean): Promise<void>;
+}
+
+/** Cross-card message delivery into one resolved target conversation. */
+export interface TaskMessageDeliveryPort {
+  /** Deliver at most once per delivery identity; a repeated identity is skipped. */
+  deliver(sessionId: string, delivery: TaskMessageDelivery): Promise<void>;
 }

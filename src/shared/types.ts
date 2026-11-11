@@ -48,8 +48,24 @@ export interface StagePosition { x: number; y: number }
 export type TransitionRule = { to: string; when?: string }
 /** An authored minimum size for one stage, in diagram pixels. */
 export interface StageSize { width: number; height: number }
-export interface Column { id: string; name: string; onEnterPrompt?: string; allowedTransitions?: TransitionRule[]; /** Absent means the diagram places the stage automatically. */ position?: StagePosition; /** Absent means the stage renders at the accepted minimum size. */ size?: StageSize }
+export interface Column {
+  id: string; name: string; onEnterPrompt?: string; allowedTransitions?: TransitionRule[];
+  /**
+   * Stable stage identity, allocated when the stage first enters a published workflow and
+   * preserved across identifier renames. Absent on a board that was never published.
+   */
+  key?: string;
+  /** Absent means the diagram places the stage automatically. */ position?: StagePosition;
+  /** Absent means the stage renders at the accepted minimum size. */ size?: StageSize;
+}
 export interface ColumnGroup { id: string; name: string; columnIds: string[] }
+/** One destination's condition, edited without rewriting the stage's whole destination list. */
+export interface TransitionCondition {
+  /** The destination whose condition changes; it must be another stage of the board. */
+  readonly to: string;
+  /** The new condition; `null` removes it, and the destination then carries no condition. */
+  readonly when: string | null;
+}
 /** The stage fields one stage edit may change; an absent field is left as authored. */
 export interface StagePatch {
   /** New display name; absent leaves the name as authored. */
@@ -58,8 +74,13 @@ export interface StagePatch {
   onEnterPrompt?: string | null;
   /** `true` makes this stage the workflow's initial stage; absent leaves the initial stage as authored. */
   initial?: true;
-  /** Allowed transition targets; `null` allows any stage, absent leaves them as authored. */
+  /** Allowed transition targets; `null` allows any stage, an empty list permits none. */
   allowedTransitions?: TransitionRule[] | null;
+  /**
+   * One destination's condition. It never travels with `allowedTransitions`, because
+   * the two would describe the same list twice: the host rejects a patch carrying both.
+   */
+  transitionCondition?: TransitionCondition;
   /** New stage identifier; absent keeps the identifier. */
   id?: string;
 }
@@ -76,6 +97,12 @@ export interface ConnectionLayout { from: string; to: string; source?: Connectio
 export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[]; /** Absent means the board opens the column board. */ defaultView?: WorkflowView; /** The model every new conversation of the board starts on; absent keeps the deployment default. */ model?: ModelSelection; /** Authored connection layouts; an absent entry keeps the automatic route. */ connections?: ConnectionLayout[] }
 export interface Worktree { path: string; branch: string; owned: boolean; status: 'preparing' | 'ready' | 'error'; error?: Problem }
 export interface CreateWorktree { mode: 'new' | 'existing'; path: string; branchName: string; sourceBranch?: string }
+/**
+ * A creation request as a caller may state it. New-branch creation may omit the
+ * branch and destination, in which case the host derives the collision-free title
+ * defaults at creation time. Existing-branch creation always states both.
+ */
+export interface CreateWorktreeInput { mode: 'new' | 'existing'; path?: string; branchName?: string; sourceBranch?: string }
 /**
  * The host-derived default for a new worktree. `unavailable` is a real derivation
  * failure (an invalid path or exhausted names), never an unconfigured base path.
@@ -95,8 +122,10 @@ export interface ContextOperation {
   id: string; request: OperationRequest;
   phase: 'queued' | 'waiting' | 'preflight' | 'git' | 'switching' | 'removing' | 'archiving' | 'failed';
   targetPath?: string; targetDirectory?: string;
-  /** A checkout retained because a deletion could not resolve its project context. */
+  /** A checkout retained because a deletion kept it, with the reason it was kept. */
   retainedCheckoutPath?: string;
+  /** Persisted beside `retainedCheckoutPath` so a resumed deletion reports the same reason. */
+  retainedCheckoutReason?: RetainedCheckoutReason;
   previousDirectories: Record<string, string>; switchedSessionIds: string[];
   archivedSessionIds: string[]; gitCompleted: boolean; error?: Problem; createdAt: string;
   createAttempt?: { operationId: string; path: string; gitRootPath: string; branchName: string; mode: 'new' | 'existing'; absentBefore: true };
@@ -250,6 +279,8 @@ export interface SharingBoardView {
   boardId: string; key?: string; name: string; state: SharingBoardState; bound: boolean;
   /** The decision still requires review. */
   pending: boolean;
+  /** Published events this installation has not applied yet. */
+  updates?: number;
   /** Both versions, present for a board that needs a choice. */
   detail?: {
     local: string; team: string; localName: string; teamName: string;
@@ -294,6 +325,8 @@ export type SharingCommand =
   | { type: 'sharing.publishInitial'; hubId: string; confirmed: boolean }
   | { type: 'sharing.check'; hubId: string }
   | { type: 'sharing.getUpdates'; hubId: string }
+  | { type: 'sharing.updateBoard'; hubId: string; boardId: string }
+  | { type: 'sharing.publishBoard'; hubId: string; boardId: string }
   | { type: 'sharing.resolve'; hubId: string; boardId: string; choice: 'local' | 'team' }
   | { type: 'sharing.publish'; hubId: string }
   | { type: 'sharing.setInterval'; hubId: string; intervalMinutes: number }
@@ -354,8 +387,10 @@ export type LocalDriveRequest = { action: 'roots'; refresh?: boolean } | { actio
 export type LocalDriveResult =
   | { action: 'roots'; discovery: DriveDiscoveryView }
   | { action: 'list'; page: DriveBrowseView };
-/** A checkout left on disk because a deletion could not resolve its Git context. */
-export interface RetainedCheckout { path: string; projectId: string; taskTitle: string }
+/** Why a deletion kept a checkout on disk. */
+export type RetainedCheckoutReason = 'folder' | 'unresolved';
+/** A checkout left on disk because a deletion kept it. */
+export interface RetainedCheckout { path: string; projectId: string; taskTitle: string; reason: RetainedCheckoutReason }
 /**
  * Host snapshot: durable state plus per-conversation attention facts and per-Hub publishing.
  * `state` is present on baselines and command responses and omitted from an update frame that
@@ -407,15 +442,16 @@ export type Command =
   | { type: 'task.recordTransition'; hubId?: string; taskId: string; columnId?: string }
   | { type: 'task.runInstruction'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction: string }
   | { type: 'task.prepareFirstExecution'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction?: string }
-  | { type: 'conversation.create'; hubId?: string; taskId: string }
+  | { type: 'conversation.create'; hubId?: string; taskId: string; /** A first-start request reuses a conversation created while it was queued. */ ensureFirst?: boolean }
   | { type: 'conversation.close' | 'conversation.reopen'; hubId?: string; taskId: string; sessionId: string }
   | { type: 'task.delete'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; force?: boolean }
-  | ({ type: 'worktree.create'; hubId?: string; taskId: string } & CreateWorktree)
+  | ({ type: 'worktree.create'; hubId?: string; taskId: string } & CreateWorktreeInput)
   | { type: 'worktree.attach'; hubId?: string; taskId: string; path: string }
   | { type: 'worktree.dismiss'; hubId?: string; taskId: string }
   | { type: 'worktree.remove'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; force?: boolean }
   | { type: 'operation.retry' | 'operation.return'; hubId?: string; taskId: string }
   | { type: 'operation.dismiss'; hubId?: string; taskId: string }
+  | { type: 'retainedCheckout.dismiss'; paths: string[] }
   | { type: 'note.save'; hubId?: string; taskId: string; noteId?: string; content?: string; tags?: string[] }
   | { type: 'note.delete'; hubId?: string; taskId: string; noteId: string }
   | { type: 'schedule.save'; hubId: string; scheduleId?: string; title: string; prompt: string; cron: string; timeZone: string; projectId: string; model?: ModelSelection; newConversation: boolean; archiveWhenIdle: boolean; expectedRevision?: number }

@@ -82,11 +82,27 @@ export const baseStyles = String.raw`
 .dsh-kanban .kb-batch-list{max-height:220px;overflow:auto;margin:0;padding-left:20px;font-size:13px}
 .dsh-kanban .kb-batch-list li{margin:3px 0;overflow-wrap:anywhere}
 .dsh-kanban .kb-destructive-notice{display:flex;flex-direction:column;gap:8px;margin:8px 0;padding:10px 14px;border:1px solid var(--kb-line);border-radius:8px;background:var(--kb-soft);font-size:13px}
-.dsh-kanban .kb-destructive-row{display:flex;flex-direction:column;gap:6px;padding:6px 0;border-top:1px solid var(--kb-line)}
-.dsh-kanban .kb-destructive-row:first-child{border-top:0;padding-top:0}
-.dsh-kanban .kb-destructive-row-failed{border-left:3px solid var(--color-destructive,#c53030);padding-left:10px}
-.dsh-kanban .kb-destructive-row .kb-batch-list{max-height:120px}
-.dsh-kanban .kb-destructive-row .kb-actions{flex-wrap:wrap;gap:6px}
+.dsh-kanban .kb-notice-group{display:flex;flex-direction:column;gap:6px}
+.dsh-kanban .kb-notice-group + .kb-notice-group{margin-top:8px;padding-top:8px;border-top:1px solid var(--kb-line)}
+.dsh-kanban .kb-notice-group-header{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.dsh-kanban .kb-notice-group-header strong{font-size:13px}
+.dsh-kanban .kb-notice-group-hint{margin:2px 0 0}
+.dsh-kanban .kb-notice-row-dismissible{padding:5px 6px;margin:0 -6px;border-radius:6px}
+.dsh-kanban .kb-notice-row-dismissible:hover{background:color-mix(in srgb,currentColor 6%,transparent)}
+.dsh-kanban .kb-notice-row-dismissible:has(.kb-dismiss-button:focus-visible){background:color-mix(in srgb,currentColor 6%,transparent)}
+.dsh-kanban .kb-notice-row{display:flex;align-items:flex-start;gap:10px}
+.dsh-kanban .kb-notice-row-failure{border-left:3px solid var(--color-destructive,#c53030);padding-left:10px}
+.dsh-kanban .kb-notice-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}
+.dsh-kanban .kb-notice-title{font-size:13px;font-weight:650;overflow-wrap:anywhere}
+.dsh-kanban .kb-notice-message{margin:0;line-height:1.45;overflow-wrap:anywhere}
+.dsh-kanban .kb-notice-message code{overflow-wrap:anywhere}
+.dsh-kanban .kb-notice-row .kb-actions{flex-wrap:wrap;gap:6px}
+.dsh-kanban .kb-notice-row .kb-batch-list{max-height:120px}
+.dsh-kanban .kb-notice-failures{display:flex;flex-direction:column;gap:8px;margin:8px 0}
+.dsh-kanban .kb-dismiss-button{flex:none;width:28px;height:28px;min-width:28px;padding:0;display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:7px;background:transparent;color:inherit;cursor:pointer;opacity:.7}
+.dsh-kanban .kb-dismiss-button:hover{opacity:1;background:color-mix(in srgb,currentColor 10%,transparent)}
+.dsh-kanban .kb-dismiss-button:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:2px;opacity:1}
+.dsh-kanban .kb-page-body:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:-2px}
 .dsh-kanban .kb-link-button{padding:0;border:0;background:none;color:inherit;font:inherit;text-decoration:underline;cursor:pointer}
 .dsh-kanban .kb-link-button:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:2px}
 .dsh-kanban .kb-stage-option-restricted{color:var(--dsw-alias-label-secondary,CanvasText)}

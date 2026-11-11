@@ -1,62 +1,46 @@
 import React from 'react';
-import type { Task } from '../shared/types.js';
-import { describeOperation } from './operation-description.js';
-import { OperationRecoveryActions } from './operation-actions.js';
+import { NoticeRow } from './notices/notice-row.js';
+import { focusAfterDismissal } from './notices/focus.js';
+import type { BoardNotice } from './notices/model.js';
 
-function destructiveOperation(task: Task) {
-  const operation = task.operation;
-  return operation && (operation.request.kind === 'delete' || operation.request.kind === 'remove') ? operation : null;
+export interface DestructiveOperationsSectionProps {
+  /** Running, queued, and failed operations; never dismissible. */
+  operations: readonly BoardNotice[];
+  /** Checkouts left on disk; each entry is dismissible on its own. */
+  retained: readonly BoardNotice[];
+  onDismiss: (notice: BoardNotice, control: HTMLButtonElement) => void;
+  dismissAllRetained?: () => void;
+  onFocusBoard?: () => void;
 }
-
-function stateLabel(task: Task): string {
-  const operation = destructiveOperation(task)!;
-  if (operation.phase === 'queued') return 'Queued';
-  if (operation.phase === 'waiting') return 'Waiting for idle';
-  if (operation.phase === 'preflight') return 'Checking…';
-  if (operation.request.kind === 'delete') return 'Deleting…';
-  return 'Removing worktree…';
-}
-
-/** One checkout left on disk after a deletion; the reason drives the wording. */
-export interface RetainedCheckoutNotice { path: string; reason: 'plain' | 'unavailable' }
 
 /**
- * One board-level strip for destructive operations: queued/running work,
- * failures with their recovery actions, and retained checkouts. Per-task
- * detail stays in the card and the drawer.
+ * One board section with two groups: the operations the user must resolve and the
+ * checkouts a deletion left on disk, which the user may dismiss and forget.
  */
-export function DestructiveOperationsNotice({ tasks, retained, onDismissRetained, onOpen, onRetry, onForce, onReturn }: {
-  tasks: readonly Task[];
-  retained: readonly RetainedCheckoutNotice[];
-  onDismissRetained: (path: string) => void;
-  onOpen: (taskId: string) => void;
-  onRetry: (taskId: string) => void;
-  onForce: (taskId: string) => void;
-  onReturn: (taskId: string) => void;
-}) {
-  const entries = tasks.filter(task => destructiveOperation(task) !== null);
-  const active = entries.filter(task => task.operation!.phase !== 'failed');
-  const failed = entries.filter(task => task.operation!.phase === 'failed');
-  if (active.length === 0 && failed.length === 0 && retained.length === 0) return null;
+export function DestructiveOperationsSection({ operations, retained, onDismiss, dismissAllRetained, onFocusBoard }: DestructiveOperationsSectionProps) {
+  if (operations.length === 0 && retained.length === 0) return null;
   return <section className="kb-destructive-notice" aria-label="Destructive operations" role="region">
-    {active.length > 0 && <div className="kb-destructive-row">
-      <strong>{active.length === 1 ? '1 destructive operation' : active.length + ' destructive operations'}</strong>
-      <ul className="kb-batch-list">{active.map(task => <li key={task.id}><button type="button" className="kb-link-button" onClick={() => onOpen(task.id)}>{task.title}</button> — {stateLabel(task)}</li>)}</ul>
+    {operations.length > 0 && <div className="kb-notice-group">
+      {operations.map(notice => <NoticeRow key={notice.id} notice={notice} role={notice.tone === 'failure' ? 'alert' : undefined} />)}
     </div>}
-    {failed.map(task => {
-      const operation = task.operation!;
-      const description = describeOperation(task, operation);
-      return <div className="kb-destructive-row kb-destructive-row-failed" key={task.id}>
-        <div><strong>{description.title}: {task.title}</strong><p className="kb-hint">{operation.error?.message ?? description.detail}</p></div>
-        <OperationRecoveryActions description={description} context={task.title} onRetry={() => onRetry(task.id)} onForce={() => onForce(task.id)} onReturn={() => onReturn(task.id)} />
-        <button type="button" className="kb-button" onClick={() => onOpen(task.id)}>Open task</button>
-      </div>;
-    })}
-    {retained.map(entry => <div className="kb-destructive-row" key={entry.path}>
-      <p className="kb-hint">{entry.reason === 'unavailable'
-        ? <>Task deleted. The checkout at <code>{entry.path}</code> was not removed because its project path or Git root could not be resolved, so it was left on disk.</>
-        : <>Task deleted. The checkout at <code>{entry.path}</code> was left on disk.</>}</p>
-      <button type="button" className="kb-button" onClick={() => onDismissRetained(entry.path)}>Dismiss</button>
-    </div>)}
+    {retained.length > 0 && <div className="kb-notice-group">
+      <div className="kb-notice-group-header">
+        <div>
+          <strong>Checkouts left on disk</strong>
+          <p className="kb-hint kb-notice-group-hint">Dismissing a notice does not delete the directory.</p>
+        </div>
+        {retained.length > 1 && dismissAllRetained !== undefined && <button
+          type="button"
+          className="kb-button"
+          onClick={event => {
+            // Every retained control is about to unmount; none of them may take focus.
+            const removing = Array.from(event.currentTarget.closest('.kb-notice-group')?.querySelectorAll<HTMLButtonElement>('[data-kb-dismiss]') ?? []);
+            dismissAllRetained();
+            focusAfterDismissal(removing, onFocusBoard);
+          }}
+        >Dismiss all</button>}
+      </div>
+      {retained.map(notice => <NoticeRow key={notice.id} notice={notice} onDismiss={onDismiss} />)}
+    </div>}
   </section>;
 }

@@ -44,8 +44,9 @@ describe('plugin-owned page bookmarks', () => {
   it('creates independent preference objects with no native resources', () => {
     const first = createBoardPageState(); const second = createBoardPageState();
     expect(first).not.toBe(second); expect(first.drawers).not.toBe(second.drawers);
-    expect(first).toEqual({ search: '', projectFilter: '', selectedTaskId: null, drawers: {}, view: 'board' });
+    expect(first).toEqual({ search: '', projectFilter: '', selectedTaskId: null, drawers: {}, view: 'board', dismissedTeamBanner: {} });
     expect(Object.getPrototypeOf(first.drawers)).toBeNull();
+    expect(Object.getPrototypeOf(first.dismissedTeamBanner)).toBeNull();
   });
 
   it('restores filters, selected task and selected conversation after page unmount without retaining hidden native views', async () => {

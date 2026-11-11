@@ -83,6 +83,18 @@ export function transitionDestinations(workflow: Workflow, from: string): Transi
   return workflow.columns.map(column => ({ column, access: transitionAccess(workflow, from, column.id) }));
 }
 
+/**
+ * The stage a task card offers as its advance destination. A stage that authors no
+ * destination permits none, so a card there offers no advance action even though a
+ * later stage exists in workflow order.
+ */
+export function advanceDestination(workflow: Workflow, from: string): TransitionDestination | undefined {
+  const index = workflow.columns.findIndex(column => column.id === from);
+  if (index < 0) return undefined;
+  if (workflow.columns[index]!.allowedTransitions?.length === 0) return undefined;
+  return nextStage(workflow, from);
+}
+
 /** The stage after `from` in workflow order, or undefined when `from` is the last stage or unknown. */
 export function nextStage(workflow: Workflow, from: string): TransitionDestination | undefined {
   const index = workflow.columns.findIndex(column => column.id === from);

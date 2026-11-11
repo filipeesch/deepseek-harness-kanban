@@ -8,7 +8,8 @@ import { SharingProviderRegistry, type ProviderDescription, type SharingBinding,
 import { createGitProviderDescriptor } from '../../src/host/sharing/git-store.js';
 import { createGoogleDriveProviderDescriptor } from '../../src/host/sharing/google-drive-store.js';
 import { createLocalFolderProviderDescriptor } from '../../src/host/sharing/local-folder-store.js';
-import type { SharedConfigStore, SharedDocumentSnapshot } from '../../src/host/sharing/store.js';
+import { MemoryLayoutStore } from '../support/memory-layout-store.js';
+import type { SharedHubManifest } from '../../src/domain/sharing/manifest.js';
 import type { HubSharingRecord, HubSharingStore } from '../../src/host/sharing/state.js';
 import { TeamFiles } from '../../src/host/team-files/service.js';
 import { DirectoryTeamFileStore, TeamFileDirectory } from '../../src/host/sharing/team-file-directory.js';
@@ -38,12 +39,8 @@ function memorySharingStore(): HubSharingStore {
   };
 }
 
-class MemoryDocumentStore implements SharedConfigStore {
-  document: SharedDocumentSnapshot | null = null;
-  async ensure(): Promise<void> {}
-  async read(): Promise<SharedDocumentSnapshot | null> { return this.document; }
-  async write(): Promise<{ token: string }> { return { token: 'token' }; }
-  async destroy(): Promise<void> {}
+function memoryLayout(): MemoryLayoutStore {
+  return new MemoryLayoutStore();
 }
 
 function descriptionOf(binding: SharingBinding, supportsFiles: boolean): ProviderDescription {
@@ -51,7 +48,7 @@ function descriptionOf(binding: SharingBinding, supportsFiles: boolean): Provide
     id: binding.provider,
     label: binding.provider === 'google-drive' ? 'Google Drive' : 'Local folder',
     address: binding.settings.path ?? binding.settings.folderId ?? '',
-    syncMode: 'continuous',
+    syncMode: 'explicit',
     defaultIntervalMinutes: 1,
     requiresAuthorization: false,
     supportsFiles,
@@ -61,7 +58,7 @@ function descriptionOf(binding: SharingBinding, supportsFiles: boolean): Provide
 /** A narrow resolver: it binds a location but offers no file store. */
 function resolverWithoutFiles(): SharingProviderResolver {
   return {
-    create: () => new MemoryDocumentStore(),
+    createLayoutStore: () => memoryLayout(),
     describe: binding => descriptionOf(binding, false),
     prepare: async (_hubId, binding) => binding,
     normalize: (_provider: SharingProviderId, settings) => settings,
@@ -118,7 +115,7 @@ describe('team files on a bound Hub', () => {
     expect(await readFile(path.join(bound, 'kanban-hub.yaml'), 'utf8').catch(() => null)).toBe(before);
     // A team file write never touches the document, its token, or the publishing record.
     expect(JSON.stringify(sharingStore.load(repository.hubId))).toBe(recordBefore);
-    expect((await readdir(bound)).sort()).toEqual(['kanban-hub.yaml', 'team-files', 'unrelated.txt']);
+    expect((await readdir(bound)).sort()).toEqual(['kanban-boards', 'kanban-hub.yaml', 'team-files', 'unrelated.txt']);
   });
 
   it('keeps populated team files when the Hub is disconnected', async () => {
@@ -181,17 +178,12 @@ describe('team files on a bound Hub', () => {
     const gate = new Promise<void>(resolve => { release = resolve; });
     const log: string[] = [];
 
-    class RecordingDocumentStore implements SharedConfigStore {
-      snapshot: SharedDocumentSnapshot | null = null;
-      async ensure(): Promise<void> {}
-      async read(): Promise<SharedDocumentSnapshot | null> { return this.snapshot; }
-      async write(document: Parameters<SharedConfigStore['write']>[0], options: Parameters<SharedConfigStore['write']>[1]): Promise<{ token: string }> {
+    class RecordingLayout extends MemoryLayoutStore {
+      constructor() { super(); }
+      override async writeManifest(manifest: SharedHubManifest, options: { expectedToken: string | null; message: string }): Promise<{ token: string }> {
         log.push('publish');
-        const { sharedDocumentToken } = await import('../../src/domain/sharing/document.js');
-        this.snapshot = { token: sharedDocumentToken(document), document };
-        return { token: this.snapshot.token };
+        return super.writeManifest(manifest, options);
       }
-      async destroy(): Promise<void> {}
     }
 
     class BlockingFileStore implements TeamFileStore {
@@ -204,10 +196,10 @@ describe('team files on a bound Hub', () => {
       async move(from: string, to: string, options: TeamFileWriteOptions): Promise<{ path: string }> { return this.inner.move(from, to, options); }
     }
 
-    const document = new RecordingDocumentStore();
+    const document = new RecordingLayout();
     const fileStore = new BlockingFileStore(new DirectoryTeamFileStore(new TeamFileDirectory(path.join(bound, 'team-files'))));
     const providers: SharingProviderResolver = {
-      create: () => document,
+      createLayoutStore: () => document,
       createFileStore: () => fileStore,
       describe: binding => descriptionOf(binding, true),
       prepare: async (_hubId, binding) => binding,
@@ -225,7 +217,7 @@ describe('team files on a bound Hub', () => {
 
     const write = files.create(repository.hubId, { path: 'docs/order.md', content: 'x' });
     await new Promise(resolve => setTimeout(resolve, 20));
-    const publish = service.publish(repository.hubId);
+    const publish = service.publishManifest(repository.hubId);
     await new Promise(resolve => setTimeout(resolve, 20));
     expect(log).toEqual([]);
     release();

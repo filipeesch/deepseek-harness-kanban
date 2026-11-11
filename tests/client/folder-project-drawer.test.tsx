@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { BoardView } from '../../src/client/board.js';
 import { fakeApi, fixture, task } from './helpers.js';
@@ -58,11 +58,17 @@ describe('Git affordances for folder projects', () => {
     expect(dialog.textContent).toContain('is no longer Git-managed and will remain on disk');
   });
 
-  it('reports the retained checkout path after the task is deleted', async () => {
-    const { user } = await open('Beta task');
+  it('reports the retained checkout path the host projects after the task is deleted', async () => {
+    const { mock, user } = await open('Beta task');
     await user.click(screen.getByRole('button', { name: 'Delete task' }));
     const dialog = screen.getByRole('dialog', { name: 'Delete task' });
     await user.click(within(dialog).getByRole('button', { name: 'Delete task' }));
+    const completed = folderFixture();
+    completed.sequence = mock.get().sequence + 1;
+    completed.state.tasks = completed.state.tasks.filter(task => task.id !== 't2');
+    completed.retainedCheckouts = [{ path: '/trees/beta', projectId: 'p2', taskTitle: 'Beta task', reason: 'folder' }];
+    act(() => { mock.publish(completed); });
     await screen.findByText(/was left on disk/);
+    expect(screen.getByText(/not Git-managed/)).toBeTruthy();
   });
 });

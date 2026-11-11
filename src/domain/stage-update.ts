@@ -2,7 +2,8 @@ import type { StagePatch, TransitionRule } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
 import { isDomainId } from './validation.js';
 import { parseWorkflow } from './workflow.js';
-import { authoredScalar, replaceListScalars, writeRootField, writeSequenceItemField } from './yaml-map-fields.js';
+import { authoredScalar, replaceListScalars, textField, writeRootField, writeSequenceItemField } from './yaml-map-fields.js';
+import { renderTransitionList, writeTransitionCondition } from './transition-write.js';
 
 /** One stage edit: the authored workflow text, the stage it targets, and the fields it changes. */
 export interface StageUpdateInput {
@@ -51,29 +52,13 @@ function invalid(message: string): never {
   throw new KanbanError('INVALID_WORKFLOW', message);
 }
 
-/** Render one authored text field, using a block scalar when the value spans lines. */
-function textField(key: string, value: string, indent: string, flow: boolean): string {
-  // A flow mapping cannot hold a block scalar, so a multiline value is quoted there.
-  if (flow) return key + ': ' + authoredScalar(value);
-  if (!value.includes('\n')) return key + ': ' + authoredScalar(value);
-  const lines = value.split('\n');
-  const trailingNewline = value.endsWith('\n');
-  const body = trailingNewline ? lines.slice(0, -1) : lines;
-  const blockSafe = body.every(line => !line.startsWith(' ') && !line.endsWith(' ') && !line.includes(String.fromCharCode(9)) && !/[\u0000-\u0008\u000b-\u001f]/.test(line));
-  if (!blockSafe) return key + ': ' + JSON.stringify(value);
-  return key + ': ' + (trailingNewline ? '|' : '|-') + '\n' + body.map(line => indent + '  ' + line).join('\n');
-}
-
-function transitionsField(rules: readonly TransitionRule[], existing: unknown, indent: string, parentFlow: boolean): string | null {
-  if (rules.length === 0) return null;
+function transitionsField(rules: readonly TransitionRule[], existing: unknown, indent: string, parentFlow: boolean): string {
+  // An empty list is authored state, not absence: it is the stage that permits no
+  // destination. Removing the field would turn that stage back into one that
+  // permits any other stage, so the empty sequence is written out.
   // A flow mapping can only hold a flow sequence, and a stored flow list stays flow.
   const flow = parentFlow || (existing as { flow?: boolean } | null)?.flow === true;
-  if (flow) {
-    const items = rules.map(rule => rule.when === undefined ? '{to: ' + authoredScalar(rule.to) + '}' : '{to: ' + authoredScalar(rule.to) + ', when: ' + authoredScalar(rule.when) + '}');
-    return 'allowed_transitions: [' + items.join(', ') + ']';
-  }
-  const lines = rules.map(rule => indent + '  - to: ' + authoredScalar(rule.to) + (rule.when === undefined ? '' : '\n' + indent + '    when: ' + authoredScalar(rule.when)));
-  return 'allowed_transitions:\n' + lines.join('\n');
+  return renderTransitionList(rules, indent, flow);
 }
 
 function normalizedRules(rules: readonly TransitionRule[]): TransitionRule[] {
@@ -112,7 +97,6 @@ export function updateStage({ text, stageId, patch }: StageUpdateInput): StageUp
   if (patch.allowedTransitions !== undefined) {
     rules = patch.allowedTransitions === null ? null : normalizedRules(patch.allowedTransitions);
     if (rules !== null) {
-      if (rules.length === 0) invalid('A restricted stage must allow at least one destination.');
       for (const rule of rules) {
         if (!isDomainId(rule.to)) invalid('A transition target must be a safe identifier.');
         if (rule.to === newId) invalid('A stage cannot be its own transition target.');
@@ -121,7 +105,17 @@ export function updateStage({ text, stageId, patch }: StageUpdateInput): StageUp
     }
   }
 
-  let next = text;
+  if (patch.allowedTransitions !== undefined && patch.transitionCondition !== undefined) {
+    invalid('A stage edit cannot change its destination list and one destination condition at the same time.');
+  }
+  const condition = patch.transitionCondition;
+  if (condition !== undefined) {
+    if (!isDomainId(condition.to)) invalid('A transition target must be a safe identifier.');
+    if (condition.to === newId) invalid('A stage cannot be its own transition target.');
+    if (!others.has(condition.to)) invalid('Transition target ' + condition.to + ' is not a stage of this workflow.');
+  }
+
+  let next = condition === undefined ? text : writeTransitionCondition({ text, stageId, to: condition.to, when: condition.when });
   let rewrittenReferences = 0;
   const writeColumn = (id: string, fieldKeys: readonly string[], render: Parameters<typeof writeSequenceItemField>[0]['render']) => {
     next = writeSequenceItemField({ text: next, sequenceKey: 'columns', idKey: 'id', id, fieldKeys, render, invalid });
@@ -134,7 +128,7 @@ export function updateStage({ text, stageId, patch }: StageUpdateInput): StageUp
     writeColumn(stageId, ['on_enter_prompt'], (_existing, indent, key, flow) => instruction === null || instruction.trim().length === 0 ? null : textField(key, instruction, indent, flow));
   }
 
-  if (rules !== undefined) writeColumn(stageId, ['allowed_transitions'], (existing, indent, _key, flow) => transitionsField(rules ?? [], existing, indent, flow));
+  if (rules !== undefined) writeColumn(stageId, ['allowed_transitions'], (existing, indent, _key, flow) => rules === null ? null : transitionsField(rules, existing, indent, flow));
 
   if (renamed) {
     // Renaming carries the identifier into every authored reference by replacing
@@ -143,9 +137,14 @@ export function updateStage({ text, stageId, patch }: StageUpdateInput): StageUp
     for (const column of workflow.columns) {
       if (column.id === stageId) continue;
       if (!(column.allowedTransitions ?? []).some(rule => rule.to === stageId)) continue;
-      const result = replaceListScalars({ text: next, sequenceKey: 'columns', entry: { idKey: 'id', id: column.id }, fieldKey: 'allowed_transitions', innerKeys: ['to'], from: stageId, to: rendered, invalid });
-      next = result.text;
-      rewrittenReferences += result.replaced;
+      // A transition may be authored as a map or as a bare target identifier, so the
+      // rename rewrites both forms: the mapped pass matches `to`, and the bare pass
+      // matches the scalar entry itself.
+      const mapped = replaceListScalars({ text: next, sequenceKey: 'columns', entry: { idKey: 'id', id: column.id }, fieldKey: 'allowed_transitions', innerKeys: ['to'], from: stageId, to: rendered, invalid });
+      next = mapped.text;
+      const bare = replaceListScalars({ text: next, sequenceKey: 'columns', entry: { idKey: 'id', id: column.id }, fieldKey: 'allowed_transitions', innerKeys: [], from: stageId, to: rendered, invalid });
+      next = bare.text;
+      rewrittenReferences += mapped.replaced + bare.replaced;
     }
     writeColumn(stageId, ['id'], (_existing, _indent, key) => key + ': ' + rendered);
     if (workflow.initialColumnId === stageId) {

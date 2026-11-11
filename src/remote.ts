@@ -16,6 +16,8 @@ const hubId=id.optional();
 const boardId=id.optional();
 const projectLocation=z.discriminatedUnion('kind',[z.object({kind:z.literal('git'),projectPath:z.string(),gitRootPath:z.string(),defaultBranch:z.string().optional()}).strict(),z.object({kind:z.literal('folder'),projectPath:z.string()}).strict()]);
 const tree={mode:z.enum(['new','existing']),path:z.string().min(1),branchName:z.string().min(1),sourceBranch:z.string().optional()};
+// New-branch creation may omit the branch and destination; the host derives them.
+const createTree={mode:z.enum(['new','existing']),path:z.string().min(1).optional(),branchName:z.string().min(1).optional(),sourceBranch:z.string().optional()};
 const boardSettings=z.object({worktreeBasePath:z.string().optional()}).strict();
 const modelSelection=z.object({provider:z.string().min(1),model:z.string().min(1),reasoningEffort:z.string().min(1).optional()}).strict();
 const scheduleRunProblem=z.object({code:z.string().min(1),message:z.string(),details:z.record(z.string(),z.union([z.string(),z.number(),z.boolean()])).optional()}).strict();
@@ -32,8 +34,11 @@ const stagePatchSchema=z.object({
  onEnterPrompt:z.string().nullable().optional(),
  initial:z.literal(true).optional(),
  allowedTransitions:z.array(z.object({to:id,when:z.string().optional()}).strict()).nullable().optional(),
+ transitionCondition:z.object({to:id,when:z.string().nullable()}).strict().optional(),
  id:id.optional(),
-}).strict();
+}).strict().refine(patch => !(patch.allowedTransitions !== undefined && patch.transitionCondition !== undefined), {
+ message: 'A stage edit cannot change its destination list and one destination condition at the same time.',
+});
 export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('hub.create'),name:z.string().min(1)}).strict(),
  z.object({type:z.literal('hub.rename'),hubId:id,name:z.string().min(1),expectedRevision:revision}).strict(),
@@ -58,15 +63,16 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('task.resume'),hubId,taskId:id}).strict(),
  z.object({type:z.literal('task.runInstruction'),hubId,taskId:id,columnId:id,expectedEnteredAt:z.number().finite(),expectedInstruction:z.string()}).strict(),
  z.object({type:z.literal('task.prepareFirstExecution'),hubId,taskId:id,columnId:id,expectedEnteredAt:z.number().finite(),expectedInstruction:z.string().optional()}).strict(),
- z.object({type:z.literal('conversation.create'),hubId,taskId:id}).strict(),
+ z.object({type:z.literal('conversation.create'),hubId,taskId:id,ensureFirst:z.boolean().optional()}).strict(),
  z.object({type:z.enum(['conversation.close','conversation.reopen']),hubId,taskId:id,sessionId:id}).strict(),
  z.object({type:z.literal('task.delete'),hubId,taskId:id,confirmed:z.boolean(),expectedWorktreePath:z.string().nullable(),discardChanges:z.boolean().optional(),force:z.boolean().optional()}).strict(),
- z.object({type:z.literal('worktree.create'),hubId,taskId:id,...tree}).strict(),
+ z.object({type:z.literal('worktree.create'),hubId,taskId:id,...createTree}).strict(),
  z.object({type:z.literal('worktree.attach'),hubId,taskId:id,path:z.string().min(1)}).strict(),
  z.object({type:z.literal('worktree.dismiss'),hubId,taskId:id}).strict(),
  z.object({type:z.literal('worktree.remove'),hubId,taskId:id,confirmed:z.boolean(),expectedWorktreePath:z.string().nullable(),discardChanges:z.boolean().optional(),force:z.boolean().optional()}).strict(),
  z.object({type:z.enum(['operation.retry','operation.return']),hubId,taskId:id}).strict(),
  z.object({type:z.literal('operation.dismiss'),hubId,taskId:id}).strict(),
+ z.object({type:z.literal('retainedCheckout.dismiss'),paths:z.array(z.string().min(1)).min(1).refine(paths=>new Set(paths).size===paths.length,'Paths must be unique.')}).strict(),
  z.object({type:z.literal('note.save'),hubId,taskId:id,noteId:id.optional(),content:z.string().optional(),tags:z.array(z.string()).optional()}).strict(),
   z.object({type:z.literal('note.delete'),hubId,taskId:id,noteId:id}).strict(),
   z.object({type:z.literal('schedule.save'),hubId:id,scheduleId:id.optional(),title:z.string().min(1),prompt:z.string().min(1),cron:z.string().min(1),timeZone:z.string().min(1),projectId:id,model:modelSelection.optional(),newConversation:z.boolean(),archiveWhenIdle:z.boolean(),expectedRevision:revision}).strict(),
@@ -117,13 +123,15 @@ export const LocalDriveResultSchema:z.ZodType<LocalDriveResult>=z.discriminatedU
  z.object({action:z.literal('list'),page:DriveBrowseViewSchema}).strict(),
 ]);
 export const SnapshotRequestSchema:z.ZodType<SnapshotRequest>=z.object({refreshSessionIds:z.array(id).optional(),priorityTaskIds:z.array(id).optional(),refreshAuth:z.boolean().optional()}).strict();
-export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note','schedule']),id,model:z.object({requested:modelSelection,applied:z.boolean(),reason:z.enum(['unavailable','unsupported','failed']).optional(),inUse:modelSelection.optional()}).strict().optional()}).strict().optional(),state:KanbanStateSchema.optional(),stateRevision:z.number().int().nonnegative(),conversations:z.record(z.string(),ConversationFactsSchema),sharing:z.record(z.string(),HubSharingViewSchema),sharingAuth:SharingAuthViewSchema.optional(),scheduleRuntime:z.record(z.string(),z.record(z.string(),scheduleRuntimeView)).optional(),retainedCheckouts:z.array(z.object({path:z.string(),projectId:id,taskTitle:z.string()}).strict()).optional(),sequence:z.number().int().nonnegative()}).strict();
+export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note','schedule']),id,model:z.object({requested:modelSelection,applied:z.boolean(),reason:z.enum(['unavailable','unsupported','failed']).optional(),inUse:modelSelection.optional()}).strict().optional()}).strict().optional(),state:KanbanStateSchema.optional(),stateRevision:z.number().int().nonnegative(),conversations:z.record(z.string(),ConversationFactsSchema),sharing:z.record(z.string(),HubSharingViewSchema),sharingAuth:SharingAuthViewSchema.optional(),scheduleRuntime:z.record(z.string(),z.record(z.string(),scheduleRuntimeView)).optional(),retainedCheckouts:z.array(z.object({path:z.string(),projectId:id,taskTitle:z.string(),reason:z.enum(['folder','unresolved'])}).strict()).optional(),sequence:z.number().int().nonnegative()}).strict();
 export const SharingCommandSchema:z.ZodType<SharingCommand>=z.discriminatedUnion('type',[
  z.object({type:z.literal('sharing.connect'),hubId:id,provider:sharingStorage.optional(),settings:z.record(z.string(),z.string()).optional(),repository:z.string().min(1).max(2048).optional(),intervalMinutes:z.number().int().min(0).max(1440).optional()}).strict(),
  z.object({type:z.literal('sharing.receive'),hubId:id}).strict(),
  z.object({type:z.literal('sharing.publishInitial'),hubId:id,confirmed:z.boolean()}).strict(),
  z.object({type:z.literal('sharing.check'),hubId:id}).strict(),
  z.object({type:z.literal('sharing.getUpdates'),hubId:id}).strict(),
+ z.object({type:z.literal('sharing.updateBoard'),hubId:id,boardId:id}).strict(),
+ z.object({type:z.literal('sharing.publishBoard'),hubId:id,boardId:id}).strict(),
  z.object({type:z.literal('sharing.resolve'),hubId:id,boardId:id,choice:z.enum(['local','team'])}).strict(),
  z.object({type:z.literal('sharing.publish'),hubId:id}).strict(),
  z.object({type:z.literal('sharing.setInterval'),hubId:id,intervalMinutes:z.number().int().min(0).max(1440)}).strict(),

@@ -1,16 +1,23 @@
 import type { Attention, Column, StagePatch, Task, TransitionRule } from '../../shared/types.js';
 import { isDomainId } from '../../domain/validation.js';
+import { sameTransitionRules } from '../../domain/transition-rule.js';
 import { conversationStageActivity, describeStageActivity, persistedStageActivity } from '../../shared/stage-activity.js';
 
 /** One chosen transition target and the condition the user is editing for it. */
 export interface StageTransitionDraft { readonly to: string; readonly when: string }
 
+/**
+ * How the stage treats its destinations: it permits any other stage, it permits a
+ * chosen set, or it permits none at all. The last one is authored as an empty
+ * transition list, which is a stage that never advances on its own.
+ */
+export type StageTransitionMode = 'any' | 'restricted' | 'none';
+
 /** Everything the stage editor is editing, before any of it is stored. */
 export interface StageEditorDraft {
   readonly name: string;
   readonly onEnterPrompt: string;
-  /** `any` authors no allowed transitions; `restricted` authors the chosen ones. */
-  readonly mode: 'any' | 'restricted';
+  readonly mode: StageTransitionMode;
   readonly transitions: readonly StageTransitionDraft[];
   readonly initial: boolean;
   readonly id: string;
@@ -19,15 +26,21 @@ export interface StageEditorDraft {
 /** A problem the editor shows next to the field that caused it. */
 export interface StageEditorProblem { readonly field: 'name' | 'id' | 'transitions'; readonly message: string }
 
+/** The mode a stored stage's transition list describes. */
+export function transitionMode(transitions: TransitionRule[] | undefined): StageTransitionMode {
+  if (transitions === undefined) return 'any';
+  return transitions.length === 0 ? 'none' : 'restricted';
+}
+
 /** The draft a stage opens with. */
 export function stageDraft(column: Column): StageEditorDraft {
-  // An authored list means restricted, even when it is empty: the parser treats an
-  // empty list as "permits nothing" and an absent one as "permits anything".
+  // An authored list means restricted or terminal, even when it is empty: the parser
+  // treats an empty list as "permits nothing" and an absent one as "permits anything".
   const transitions = column.allowedTransitions;
   return {
     name: column.name,
     onEnterPrompt: column.onEnterPrompt ?? '',
-    mode: transitions === undefined ? 'any' : 'restricted',
+    mode: transitionMode(transitions),
     transitions: (transitions ?? []).map(rule => ({ to: rule.to, when: rule.when ?? '' })),
     initial: false,
     id: column.id,
@@ -55,7 +68,9 @@ export function draftProblems(draft: StageEditorDraft, otherStageIds: ReadonlySe
   else if (!isDomainId(draft.id)) problems.push({ field: 'id', message: 'A stage id must be a nonempty safe identifier, with no spaces.' });
   else if (otherStageIds.has(draft.id)) problems.push({ field: 'id', message: 'Another stage already uses this id.' });
   if (draft.mode === 'restricted') {
-    if (draft.transitions.length === 0) problems.push({ field: 'transitions', message: 'Choose at least one destination, or allow any stage.' });
+    // A stage that permits no destination is a real state with its own mode, so the
+    // editor points there instead of quietly storing a list that permits nothing.
+    if (draft.transitions.length === 0) problems.push({ field: 'transitions', message: 'Choose at least one destination, or choose "No destinations".' });
     const seen = new Set<string>();
     for (const transition of draft.transitions) {
       if (seen.has(transition.to)) problems.push({ field: 'transitions', message: 'A destination can be chosen once.' });
@@ -75,6 +90,13 @@ export function duplicateNameWarning(draft: StageEditorDraft, columns: readonly 
   return match === undefined ? null : 'The stage "' + match.name + '" already uses this name.';
 }
 
+/** The destinations the draft would author: null permits any stage, empty permits none. */
+export function draftDestinations(draft: StageEditorDraft): TransitionRule[] | null {
+  if (draft.mode === 'any') return null;
+  if (draft.mode === 'none') return [];
+  return draft.transitions.map(transition => transition.when.trim().length === 0 ? { to: transition.to } : { to: transition.to, when: transition.when.trim() });
+}
+
 /** The patch for the fields the user actually changed. */
 export function stagePatch(draft: StageEditorDraft, column: Column): StagePatch {
   const patch: StagePatch = {};
@@ -84,12 +106,8 @@ export function stagePatch(draft: StageEditorDraft, column: Column): StagePatch 
   if (instruction !== storedInstruction) patch.onEnterPrompt = instruction.trim().length === 0 ? null : instruction;
   if (draft.id !== column.id) patch.id = draft.id;
   if (draft.initial) patch.initial = true;
-  const stored = column.allowedTransitions;
-  const wanted: TransitionRule[] = draft.transitions.map(transition => transition.when.trim().length === 0 ? { to: transition.to } : { to: transition.to, when: transition.when.trim() });
-  const sameRules = stored === undefined
-    ? draft.mode === 'any'
-    : draft.mode === 'restricted' && stored.length === wanted.length && stored.every((rule, index) => rule.to === wanted[index]?.to && (rule.when ?? '') === (wanted[index]?.when ?? ''));
-  if (!sameRules) patch.allowedTransitions = draft.mode === 'restricted' ? wanted : null;
+  const wanted = draftDestinations(draft);
+  if (!sameTransitionRules(column.allowedTransitions, wanted)) patch.allowedTransitions = wanted;
   return patch;
 }
 

@@ -12,10 +12,12 @@ import type { BoardState, ClientApi, Command, HubSharingView, QuestionRound, Rou
 import { createHarnessApi, workflowYaml, type TestSnapshot } from './fake-api.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import { themeFixture } from './theme-fixture.js';
+import { TaskMessageNodeView, TASK_MESSAGE_NODE_KIND } from '../../src/client/task-message-node.js';
+import type { NativeSlotSource } from '../../src/client/native-slot-host.js';
 
 const scenario = new URLSearchParams(window.location.search).get('scenario') ?? 'board';
 const sharingCase = new URLSearchParams(window.location.search).get('sharing');
-const flowScenario = scenario === 'flow' || scenario === 'flow-anchored' || scenario === 'flow-orphan' || scenario === 'flow-offgrid' || scenario === 'flow-restricted' || scenario === 'flow-restricted-next' || scenario === 'flow-presence';
+const flowScenario = scenario === 'flow' || scenario === 'flow-anchored' || scenario === 'flow-orphan' || scenario === 'flow-offgrid' || scenario === 'flow-restricted' || scenario === 'flow-restricted-next' || scenario === 'flow-presence' || scenario === 'flow-refused';
 const query = new URLSearchParams(window.location.search);
 const themed = query.get('theme') === 'host';
 const refuse = query.get('refuse');
@@ -41,7 +43,7 @@ const boardModel = scenario === 'board-model'
     }
     : undefined;
 const harness = createHarnessApi({ idle: scenario === 'stage-idle', ...(boardModel === undefined ? {} : { boardModel }), ...(scenario === 'schedules' ? { schedules: scheduleFixtures, scheduleRuntime: scheduleRuntimeFixture } : {}), recorded: scenario === 'routed', staleRoute: scenario === 'stale-route', attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs' || scenario === 'project-relocation' || scenario === 'flow-presence' || scenario === 'presence',
-  presence: scenario === 'presence', hubs: scenario === 'hubs' ? 2 : 1, initialInstruction: scenario === 'create', restricted: scenario === 'move' || scenario === 'prepare-restricted' || scenario === 'flow-restricted', ...(scenario === 'restricted-next' || scenario === 'flow-restricted-next' ? { restrictedNext: true } : {}), persist: scenario === 'board' || scenario === 'relocation-board', pending: scenario === 'appearance', auto: scenario === 'auto' || scenario === 'agent-pause', ...(scenario === 'agent-pause' ? { agentPause: true } : {}), detect: scenario === 'project-editor' || scenario === 'project-relocation' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, ...(driveCase === null ? {} : { drive: driveCase }), shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', folderRefusal: refuse === 'folder', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}), ...(scenario === 'retained' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo' }] } : {}), ...(scenario === 'relocation-list' ? { relocation: ['waiting', 'failed', 'waiting'] as Array<'waiting' | 'failed' | null> } : scenario === 'relocation-board' ? { relocation: ['waiting', 'failed'] as Array<'waiting' | 'failed' | null> } : {}), ...(scenario === 'relocation-list' ? { extraProject: true } : {}) });
+  presence: scenario === 'presence', hubs: scenario === 'hubs' ? 2 : 1, initialInstruction: scenario === 'create', restricted: scenario === 'move' || scenario === 'prepare-restricted' || scenario === 'flow-restricted', ...(scenario === 'restricted-next' || scenario === 'flow-restricted-next' ? { restrictedNext: true } : {}), persist: scenario === 'board' || scenario === 'relocation-board', pending: scenario === 'appearance', auto: scenario === 'auto' || scenario === 'agent-pause', ...(scenario === 'agent-pause' ? { agentPause: true } : {}), detect: scenario === 'project-editor' || scenario === 'project-relocation' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, ...(driveCase === null ? {} : { drive: driveCase }), shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', folderRefusal: refuse === 'folder', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}), ...(scenario === 'retained' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo', reason: 'unresolved' as const }] } : scenario === 'retained-many' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo', reason: 'unresolved' as const }, { path: '/worktrees/plain', projectId: 'p', taskTitle: 'Plain task', reason: 'folder' as const }] } : {}), ...(scenario === 'relocation-list' ? { relocation: ['waiting', 'failed', 'waiting'] as Array<'waiting' | 'failed' | null> } : scenario === 'relocation-board' ? { relocation: ['waiting', 'failed'] as Array<'waiting' | 'failed' | null> } : {}), ...(scenario === 'relocation-list' ? { extraProject: true } : {}), ...(scenario === 'flow-refused' ? { stageUpdateFailure: true } : {}) });
 
 function harnessSharing(kind: string): HubSharingView {
   const view: HubSharingView = {
@@ -217,6 +219,34 @@ function ProjectEditorScenario() {
   return <DirectoryPickerProvider picker={{ pick: async () => '/repo/apps/web' }}><ProjectEditorDialog api={harness.api} run={run} onClose={() => {}} onSaved={() => {}} /></DirectoryPickerProvider>;
 }
 
+function TaskMessageScenario() {
+  const messageText = 'Message from task "Prepare release" (task-1) in Hub "Product Hub" on board "Delivery".\nTo reply, use send_task_message with task_id "task-1", and only when this message asks for a reply or the user asks you to.\n\nPlease reply with the deployment window.';
+  const node = {
+    key: 'task-message', kind: TASK_MESSAGE_NODE_KIND, id: 'message-1', target: 'chat', anchorSeq: 1,
+    location: { kind: 'unresolved' }, visibility: 'visible', groupTree: 'turn',
+    data: {
+      seq: 1, time: 1, content: [{ type: 'text', text: messageText }],
+      source: { kind: 'task-message', form: 'notice', summary: 'Task message from Prepare release' },
+      producer: { role: 'inject', label: 'task-message' }, form: 'notice',
+    },
+  } as never;
+  // A minimal stand-in for the host's native context row, so the screenshot shows
+  // the delegated disclosure chrome rather than only the inline fallback.
+  function NativeRow(props: Record<string, unknown>) {
+    const data = (props.node as { data: { content: readonly { type: string; text?: string }[]; source: { summary?: string } } }).data;
+    const text = data.content.flatMap(block => block.type === 'text' && block.text !== undefined ? [block.text] : []).join(String.fromCharCode(10));
+    return <details className="kb-native-context"><summary>{data.source.summary}</summary><pre style={{ margin: 0, padding: '0 10px 10px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: 'inherit' }}>{text}</pre></details>;
+  }
+  const fallback = query.get('fallback') === '1';
+  const slots = {
+    entriesOfSlot: () => fallback ? [] : [{ component: NativeRow, options: { key: 'context' } }],
+    subscribe: () => () => {},
+  } as unknown as NativeSlotSource;
+  return <div className="dsh-kanban" style={{ padding: 24, maxWidth: 760 }}>
+    <TaskMessageNodeView node={node} t={((key: string) => key) as never} slots={slots} />
+  </div>;
+}
+
 const questionCase = new URLSearchParams(window.location.search).get('case') ?? 'default';
 const round: QuestionRound = {
   id: 'round-1', sessionId: 'session-1', turnId: '1', complete: true, answered: false,
@@ -230,6 +260,18 @@ function QuestionScenario() {
     <QuestionForm round={value} hidden={hidden} onSubmit={() => { if (questionCase === 'submit') setHidden(true); }} onDismiss={() => {}} />
     {questionCase === 'new-page' && <button type="button" onClick={() => setValue(previous => ({ ...previous, pages: [...previous.pages, secondPage] }))}>Add page</button>}
   </div>;
+}
+
+/**
+ * Mounts the board with a control that hides and shows it, so a spec can prove a
+ * dismissal survives the panel switch that used to undo it.
+ */
+function RetainedScenario() {
+  const [shown, setShown] = useState(true);
+  return <>
+    <button type="button" onClick={() => setShown(previous => !previous)}>{shown ? 'Hide board' : 'Show board'}</button>
+    {shown && <BoardView api={harness.api} renderConversation={id => <div data-native={id} />} />}
+  </>;
 }
 
 function ThemeSync() {
@@ -265,9 +307,10 @@ function App() {
   if (scenario === 'publishing' && themed) return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><PublishingScenario auth={sharingAuth} /></div></>;
   if (scenario === 'publishing') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><PublishingScenario auth={sharingAuth} /></div></>;
   if (scenario === 'relocation-board') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;
-  if (scenario === 'retained') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;
+  if (scenario === 'retained' || scenario === 'retained-many') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><RetainedScenario /></div></>;
   if (scenario === 'sharing') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;
   if (scenario === 'question') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban"><QuestionScenario /></div></>;
+  if (scenario === 'task-message') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><TaskMessageScenario /></div></>;
   return <BoardView api={harness.api} renderConversation={id => <div data-native={id} />} />;
 }
 

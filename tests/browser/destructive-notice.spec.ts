@@ -60,8 +60,41 @@ test('reports a checkout retained because its Git context could not be resolved'
   const notice = page.getByRole('region', { name: 'Destructive operations' });
   await expect(notice).toBeVisible();
   await expect(notice).toContainText('/worktrees/gone');
-  await expect(notice).toContainText('was not removed because its project path or Git root could not be resolved');
+  await expect(notice).toContainText('was left on disk because its project path or Git root could not be resolved');
   await notice.screenshot({ path: '.verification/destructive-notice-retained-unverifiable.png' });
-  await notice.getByRole('button', { name: 'Dismiss' }).click();
+  await expect(notice.getByText('Checkouts left on disk')).toBeVisible();
+  await expect(notice).toContainText('because its project path or Git root could not be resolved');
+  await notice.getByRole('button', { name: 'Dismiss the retained checkout at /worktrees/gone' }).click();
   await expect(notice).not.toContainText('/worktrees/gone');
 });
+for (const scheme of ['light', 'dark'] as const) {
+  test(`retained checkout group keeps host contrast in ${scheme}`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto(HARNESS + '?scenario=retained');
+    if (scheme === 'dark') await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('');
+    const notice = page.getByRole('region', { name: 'Destructive operations' });
+    await expect(notice).toBeVisible();
+    const appearance = await page.evaluate(() => {
+      const channels = (value: string): [number, number, number] => {
+        const srgb = /color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\)/.exec(value);
+        if (srgb !== null) return [Number(srgb[1]) * 255, Number(srgb[2]) * 255, Number(srgb[3]) * 255];
+        const match = /rgba?\(([^)]+)\)/.exec(value);
+        if (match === null) return [0, 0, 0];
+        const parts = match[1]!.split(',').map(part => Number(part.trim()));
+        return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
+      };
+      const luminance = (value: string) => {
+        const [red, green, blue] = channels(value).map(channel => { const c = channel / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+        return 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!;
+      };
+      const contrast = (left: string, right: string) => { const a = luminance(left); const b = luminance(right); return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05); };
+      const control = document.querySelector('.kb-dismiss-button') as HTMLElement;
+      const group = control.closest('.kb-destructive-notice') as HTMLElement;
+      return { dark: document.body.hasAttribute('data-ds-dark-theme'), color: getComputedStyle(control).color, background: getComputedStyle(group).backgroundColor, contrast: contrast(getComputedStyle(control).color, getComputedStyle(group).backgroundColor) };
+    });
+    expect(appearance.dark).toBe(scheme === 'dark');
+    expect(appearance.background).not.toBe('');
+    expect(appearance.contrast).toBeGreaterThanOrEqual(3);
+    await notice.screenshot({ path: `.verification/notice-retained-${scheme}.png` });
+  });
+}

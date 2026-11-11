@@ -41,6 +41,13 @@ export interface StageCallbacks {
   onCreateTask?(): void;
   /** Opens the board's stage editor; the board owns that dialog. */
   onEditStage?(stageId: string): void;
+  /**
+   * Starts drawing a new connection from this stage. Present while the layout is
+   * unlocked; the port it starts from is a pointer affordance and stays out of the
+   * keyboard order, because adding a destination by keyboard happens in the stage
+   * editor.
+   */
+  onBeginConnect?(event: React.PointerEvent<HTMLElement>, stageId: string): void;
 }
 
 /** Shared by every stage node so node data stays serializable and stable. */
@@ -78,9 +85,9 @@ export function StageHeader({ id, label, cardCount, locked, creatable, onCreateT
   />;
 }
 
-/** The stage under the card drag; a separate context so dragging never re-syncs nodes. */
-export interface StageDragState { readonly stageId: string | null; readonly indicatorY: number | null }
-export const StageDragContext = createContext<StageDragState>({ stageId: null, indicatorY: null });
+/** The stage under the card drag and the stage a connection gesture would land on. */
+export interface StageDragState { readonly stageId: string | null; readonly indicatorY: number | null; readonly candidateStageId: string | null }
+export const StageDragContext = createContext<StageDragState>({ stageId: null, indicatorY: null, candidateStageId: null });
 
 export function StageNodeView({ id, data }: { id: string; data: StageNodeModel }) {
   const callbacks = useContext(StageCallbacksContext);
@@ -88,6 +95,7 @@ export function StageNodeView({ id, data }: { id: string; data: StageNodeModel }
   const drag = useContext(StageDragContext);
   const zoom = useStore(state => state.transform[2]);
   const drop = drag.stageId === id;
+  const candidate = drag.candidateStageId === id;
   const root = useRef<HTMLDivElement>(null);
   const resizing = useRef<GestureHandle | null>(null);
 
@@ -134,6 +142,7 @@ export function StageNodeView({ id, data }: { id: string; data: StageNodeModel }
     aria-label={data.label + ' stage'}
     data-column-id={id}
     data-drop={drop ? 'true' : undefined}
+    data-connect-candidate={candidate ? 'true' : undefined}
   >
     <StageHeader
       id={id}
@@ -150,6 +159,12 @@ export function StageNodeView({ id, data }: { id: string; data: StageNodeModel }
       {data.cardIds.length === 0 && <p className="kb-empty-column">{EMPTY_STAGE_COPY}</p>}
       {drop && drag.indicatorY !== null && <div className="kb-drop-indicator" style={{ top: drag.indicatorY / (zoom === 0 ? 1 : zoom) }} aria-hidden="true" />}
     </div>
+    {!data.locked && callbacks?.onBeginConnect !== undefined && <div
+      className="kb-flow-port nodrag nopan"
+      aria-hidden="true"
+      title="Draw a connection"
+      onPointerDown={event => callbacks?.onBeginConnect?.(event, id)}
+    />}
     {/* Position anchors for the drawn connections; they are not interactive. */}
     <Handle type="target" position={Position.Left} isConnectable={false} />
     <Handle type="source" position={Position.Right} isConnectable={false} />

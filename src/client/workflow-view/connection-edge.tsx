@@ -8,6 +8,10 @@ import { useConnectionHandlers } from './connection-interaction.js';
 const CONTACT_RADIUS = 3.5;
 const CONTACT_HIT_RADIUS = 10;
 const SEGMENT_GRIP = 8;
+/** The hollow mark that identifies a connection authoring no condition. */
+const CONDITION_MARK_RADIUS = 4;
+/** How wide the invisible path is that catches a press on the line. */
+const LINE_HIT_WIDTH = 18;
 
 export interface ConnectionEdgeData {
   readonly path: string;
@@ -18,12 +22,40 @@ export interface ConnectionEdgeData {
   readonly returning: boolean;
   /** The adjustable segments of the drawn path, in path order. */
   readonly lines: readonly RouteLine[];
+  /** True when this transition authors a condition. */
+  readonly hasCondition: boolean;
+}
+
+/** The middle of a drawn path, where its mark and its editor sit. */
+export function pathMidpoint(points: readonly DiagramPoint[]): DiagramPoint | undefined {
+  if (points.length === 0) return undefined;
+  let total = 0;
+  const lengths: number[] = [];
+  for (let index = 1; index < points.length; index += 1) {
+    const from = points[index - 1]!;
+    const to = points[index]!;
+    const length = Math.hypot(to.x - from.x, to.y - from.y);
+    lengths.push(length);
+    total += length;
+  }
+  let walked = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const length = lengths[index - 1]!;
+    if (walked + length >= total / 2) {
+      const from = points[index - 1]!;
+      const to = points[index]!;
+      const ratio = length === 0 ? 0 : (total / 2 - walked) / length;
+      return { x: from.x + (to.x - from.x) * ratio, y: from.y + (to.y - from.y) * ratio };
+    }
+    walked += length;
+  }
+  return points[points.length - 1];
 }
 
 /**
- * Draws one connection, its arrowhead, and the handles that appear while the
- * connection is pointed at: one at each end to move the touch point, and one on
- * each adjustable segment to move that segment.
+ * Draws one connection, its arrowhead, the mark of a connection without a condition,
+ * and the handles that appear while the connection is pointed at: one at each end to
+ * move the touch point, and one on each adjustable segment to move that segment.
  */
 export function ConnectionEdgeView({ id, data }: EdgeProps) {
   const edge = data as unknown as ConnectionEdgeData;
@@ -32,10 +64,26 @@ export function ConnectionEdgeView({ id, data }: EdgeProps) {
   const scale = Number.isFinite(zoom) && zoom > 0 ? 1 / zoom : 1;
   const start = edge.points[0];
   const tip = edge.points[edge.points.length - 1];
+  const middle = pathMidpoint(edge.points);
   const angle = Number.isFinite(edge.tipAngle) ? edge.tipAngle : 0;
   const canAdjust = handlers !== null && !handlers.locked;
-  return <g className="kb-flow-edge-group">
-    <BaseEdge id={id} path={edge.path} interactionWidth={18} className={'kb-flow-edge ' + (edge.kind === 'implicit' ? 'is-implicit' : 'is-explicit') + (edge.returning ? ' is-returning' : '')} />
+  const selected = handlers?.selectedId === id;
+  // The group owns the press and the double press: the interaction path React Flow
+  // already draws gives a comfortable target, and the handles keep their own gestures.
+  return <g
+    className={'kb-flow-edge-group' + (selected ? ' is-selected' : '')}
+    data-connection-id={id}
+    onClick={event => { if (!handlers?.locked) handlers?.onSelect(id); event.stopPropagation(); }}
+    onDoubleClick={event => { handlers?.onEditCondition(id); event.stopPropagation(); }}
+  >
+    <BaseEdge id={id} path={edge.path} interactionWidth={LINE_HIT_WIDTH} className={'kb-flow-edge ' + (edge.kind === 'implicit' ? 'is-implicit' : 'is-explicit') + (edge.returning ? ' is-returning' : '')} />
+    {middle !== undefined && !edge.hasCondition && edge.kind === 'explicit' && <circle
+      className="kb-flow-condition-mark"
+      cx={middle.x}
+      cy={middle.y}
+      r={CONDITION_MARK_RADIUS * scale}
+      aria-hidden="true"
+    />}
     {edge.lines.map(line => <rect
       key={'segment-' + line.index}
       className="kb-flow-segment"

@@ -1,5 +1,6 @@
 import type { HubState, Project, Task } from '../shared/types.js';
-import type { HubRepository, LocatedTask, TaskSummary } from './hub-repository.js';
+
+import type { HubRepository, LocatedTask, TaskSummary, WorktreeBinding } from './hub-repository.js';
 import type { WorktreeStore } from './worktrees.js';
 
 export interface LocatedProject { hubId: string; hub: HubState; project: Project }
@@ -38,6 +39,6 @@ export class RepositoryWorktreeStore implements WorktreeStore {
     return this.hubs.transact(located.hubId, change);
   }
 
-  allTasks(): Task[] { return this.hubs.allTasks().map(located => located.task); }
+  worktreeBindings(): readonly WorktreeBinding[] { return this.hubs.worktreeBindings(); }
   hasOperations(): boolean { return this.hubs.taskSummaries().some(summary => summary.hasOperation); }
 }

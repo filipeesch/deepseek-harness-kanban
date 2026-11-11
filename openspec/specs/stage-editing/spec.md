@@ -126,11 +126,11 @@ The editor SHALL edit the stage's entry instruction as multiline text. An instru
 
 ### Requirement: Allowed transitions editing
 
-The editor SHALL edit the stage's allowed transition targets in one of two modes: unrestricted, meaning any other stage may be a destination, or restricted to a chosen set of the board's other stages. Unrestricted SHALL be the mode of a stage that authors no allowed transitions, and choosing it SHALL remove the stage's allowed transitions. In restricted mode the editor SHALL present the board's other stages as a checklist, so a destination can only be chosen from the stages that exist, and SHALL keep the stage itself out of the list.
+The editor SHALL edit the stage's allowed transition targets in one of three modes: unrestricted, meaning any other stage may be a destination; restricted to a chosen set of the board's other stages; or no destinations, meaning the stage is terminal and permits no other stage. Unrestricted SHALL be the mode of a stage that authors no allowed transitions, and choosing it SHALL remove the stage's allowed transitions. The no-destinations mode SHALL be the mode of a stage that authors an empty allowed transitions list, and choosing it SHALL store an empty list. A stage that authors an empty list SHALL be presented in the no-destinations mode. In restricted mode the editor SHALL present the board's other stages as a checklist, so a destination can only be chosen from the stages that exist, and SHALL keep the stage itself out of the list.
 
-Each chosen target SHALL carry an optional free-text condition describing when that transition applies. A condition field SHALL present a compact single-line input and an expand action that opens a second, nested editor for long text; the nested editor SHALL present the full condition, and confirming it SHALL return the text to the transition it belongs to without saving the stage. An empty or whitespace-only condition SHALL be stored as no condition.
+Each chosen target SHALL carry an optional free-text condition describing when that transition applies. A condition field SHALL present that condition as editable multiline text whose field the user can enlarge, and SHALL NOT open a second editor for it; the text SHALL be stored with the transition it belongs to when the stage is saved. An empty or whitespace-only condition SHALL be stored as no condition.
 
-The editor SHALL reject a restricted set that is empty, and SHALL reject a target that names the edited stage or a stage that no longer exists.
+The editor SHALL reject a restricted draft that chooses no destination, and SHALL present that problem as a direction to the no-destinations mode, so a stage that permits no destination is reached only through that mode. The editor SHALL reject a target that names the edited stage, a stage that no longer exists, and the same destination chosen twice.
 
 #### Scenario: Present the other stages as choices
 
@@ -146,10 +146,10 @@ The editor SHALL reject a restricted set that is empty, and SHALL reject a targe
 
 #### Scenario: Expand a condition
 
-- **WHEN** the user activates the expand action of a condition field and edits the long text and confirms
-- **THEN** the nested editor closes
-- **AND** the condition field shows the edited text
-- **AND** no command is sent until the stage is saved
+- **WHEN** the user enlarges a condition field to read or edit a long condition
+- **THEN** the field grows and shows the whole text
+- **AND** no second editor is opened for it
+- **AND** nothing is stored until the stage is saved
 
 #### Scenario: Allow any stage
 
@@ -157,9 +157,43 @@ The editor SHALL reject a restricted set that is empty, and SHALL reject a targe
 - **THEN** the stage authors no allowed transitions
 - **AND** any other stage may be a destination
 
+#### Scenario: Choose no destinations
+
+- **WHEN** the user chooses the no-destinations mode and saves
+- **THEN** the stage authors an empty allowed transitions list
+- **AND** no other stage is a destination
+
+#### Scenario: Present a stage that authors no destination
+
+- **WHEN** the user opens the editor for a stage that authors an empty allowed transitions list
+- **THEN** the editor presents the no-destinations mode as the chosen mode
+- **AND** it presents no destination as chosen
+
+#### Scenario: Restore a stage that allows any other stage
+
+- **WHEN** the user changes a stage that authors no destination to the unrestricted mode and saves
+- **THEN** the stage authors no allowed transitions
+- **AND** any other stage may be a destination
+
 #### Scenario: Reject an empty restricted set
 
-- **WHEN** the user chooses restricted mode, chooses no target, and activates save
+- **WHEN** the user chooses the restricted mode, chooses no destination, and activates save
+- **THEN** the editor presents an inline problem that names the no-destinations mode
+- **AND** no command is sent
+
+#### Scenario: Edit a condition as multiline text
+
+- **WHEN** the user enters several lines in a condition field and saves
+- **THEN** the whole text is stored with that destination
+
+#### Scenario: Accept an empty condition
+
+- **WHEN** the user clears a condition and saves
+- **THEN** the transition stores no condition
+
+#### Scenario: Reject the stage as its own destination
+
+- **WHEN** a stored or chosen destination names the edited stage
 - **THEN** the editor presents an inline problem
 - **AND** no command is sent
 
@@ -188,9 +222,9 @@ The editor SHALL present an action that makes the edited stage the workflow's in
 
 The editor SHALL present the stage identifier as read-only until the board reports no in-flight work, and SHALL present, when it is unavailable, why the identifier cannot be edited. The board SHALL count as having in-flight work when any task of the board has a running conversation, a pending transition, an armed automatic advance, an unresolved stage instruction, an operation in progress, or a worktree that is being prepared or is in error. The identifier field SHALL otherwise be editable, SHALL be validated as a safe identifier, and SHALL be rejected with an inline problem when it is empty or when another stage of the board already uses it.
 
-Changing the identifier SHALL keep the board valid and SHALL keep every stage reference pointing at the same stage: the initial stage, group membership, other stages' allowed transition targets, and connection layouts SHALL be rewritten to the new identifier. Tasks that are idle in the edited stage SHALL be migrated to the new identifier by the same save, so no task is left in a stage the workflow does not define. The save SHALL be all-or-nothing: when any reference or task cannot be migrated, nothing SHALL be stored.
+Changing the identifier SHALL keep the board valid and SHALL keep every stage reference pointing at the same stage: the initial stage, group membership, other stages' allowed transition targets, and connection layouts SHALL be rewritten to the new identifier. Tasks that are idle in the edited stage SHALL be migrated to the new identifier by the same save, so no task is left in a stage the workflow does not define. The save SHALL be all-or-nothing: when any reference or task cannot be migrated, nothing SHALL be stored. Changing the identifier SHALL NOT change the stage's stable identity: the stage SHALL remain the same stage to everything that addresses it by identity, and the authored identity SHALL be preserved exactly as it was.
 
-The identifier edit SHALL NOT require a confirmation step. On a board that is published to a team, the identifier SHALL remain editable and the change SHALL be left to the team review of the published workflow.
+The identifier edit SHALL NOT require a confirmation step. On a board that is published to a team, the identifier SHALL remain editable, and the rename SHALL reach other members as a change to that stage's identifier rather than as a removal and a creation, so that each member migrates its own tasks in the same save that stores the resulting workflow. The rename SHALL NOT require a team review and SHALL NOT be blocked by another member's tasks.
 
 #### Scenario: Keep the identifier read-only during in-flight work
 
@@ -204,6 +238,13 @@ The identifier edit SHALL NOT require a confirmation step. On a board that is pu
 - **THEN** both tasks are assigned to the new identifier
 - **AND** every transition and group that named the old identifier names the new one
 - **AND** the stage keeps its name, instruction, targets, size, and position
+
+#### Scenario: Keep the stage identity across a rename
+
+- **WHEN** the user changes a stage identifier and saves
+- **THEN** the stage keeps its stable identity
+- **AND** the authored identity is unchanged
+- **AND** every reference the editor does not present is preserved
 
 #### Scenario: Reject a duplicate identifier
 
@@ -222,6 +263,8 @@ The identifier edit SHALL NOT require a confirmation step. On a board that is pu
 - **WHEN** the board is published to a team and the board has no in-flight work
 - **THEN** the identifier remains editable
 - **AND** the change is stored and published like any other workflow change
+- **AND** other members apply it as a change to that stage's identifier, so their own tasks in that stage move with it
+- **AND** no team review is required for the rename
 
 ### Requirement: Authored workflow text preservation
 

@@ -24,9 +24,12 @@ function gitTrap(): { port: GitPort; calls: string[] } {
   const port: GitPort = {
     async branches() { return order('branches'); },
     async inspect(): Promise<GitTree> { return order('inspect'); },
+    async localChanges(): Promise<boolean> { return order('localChanges'); },
+    async assertRemovable(): Promise<never> { return order('assertRemovable'); },
     async create(): Promise<GitTree> { return order('create'); },
     async remove(): Promise<void> { return order('remove'); },
     async repair(): Promise<void> { return order('repair'); },
+    async resolve(): Promise<never> { return order('resolve'); },
     async assertPolicy(): Promise<void> { return order('assertPolicy'); },
     async projectDirectory(): Promise<string> { return order('projectDirectory'); },
   };

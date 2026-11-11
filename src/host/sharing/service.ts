@@ -1,36 +1,38 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { KanbanError, invariant } from '../../shared/errors.js';
-import type { HubSharingView, SharingCommand } from '../../shared/types.js';
-import { applySharingPlan, type ApplySharingResult } from '../../domain/sharing/apply.js';
-import { SHARED_DOCUMENT_VERSION, sharedDocumentToken, type SharedBoardEntry, type SharedHubDocument } from '../../domain/sharing/document.js';
-import { normalizeBoardName } from '../../domain/sharing/identity.js';
-import { buildPublishDocument, buildUpdatePlan, publishIsDirty, type SharingBlocker, type SharingPlan } from '../../domain/sharing/plan.js';
-import { projectSharingBoards } from '../../domain/sharing/projection.js';
+import type { HubSharingView, HubState, SharingCommand } from '../../shared/types.js';
+import { boardKeyFromName, normalizeBoardName } from '../../domain/sharing/identity.js';
+import type { SharedBoardEntry, SharedHubManifest } from '../../domain/sharing/manifest.js';
+import { projectSharingBoards, type LocalSharedBoard } from '../../domain/sharing/projection.js';
+import { evaluateBoard, publishedWorkflow, workflowDigest } from '../../domain/sharing/board-plan.js';
+import { deriveChanges } from '../../domain/journal/derive.js';
+import { recoverBoard, type BoardLogFile } from '../../domain/journal/log.js';
+import { stageRenames } from '../../domain/journal/migrate.js';
+import { materializeIdentities } from '../../domain/journal/materialize.js';
+import * as operations from '../../domain/hub-operations.js';
 import type { HubRepository } from '../hub-repository.js';
 import { isAuthorizationCommand, type SharingAuthorizationPort } from './auth-coordinator.js';
 import type { BindingCandidate, ProviderState, SharingBinding, SharingProviderId, SharingProviderResolver } from './provider.js';
-import type { SharedConfigStore, SharedDocumentSnapshot } from './store.js';
-import type { HubSharingRecord, HubSharingStore } from './state.js';
+import type { SharedLayoutStore } from './ports.js';
+import { LaneRegistry } from './lanes.js';
+import { emptyBoard, type HubSharingRecord, type HubSharingStore, type StoredBoard } from './state.js';
 import type { TeamFileStore, TeamFileStoreResolution } from './team-file-store.js';
-import { buildSharingView, publishedDocument, sharingComparison } from './view.js';
+import { buildSharingView, publishedManifest } from './view.js';
 
 export const DEFAULT_SHARING_INTERVAL_MINUTES = 5;
 const MAX_INTERVAL_MINUTES = 1440;
-const EMPTY_DOCUMENT: SharedHubDocument = { version: SHARED_DOCUMENT_VERSION, boards: [] };
-const COMMIT_MESSAGE = 'Update published Kanban configuration';
+const EMPTY_MANIFEST: SharedHubManifest = { version: 3, boards: [] };
 
 export interface HubSharingOptions {
   hubs: HubRepository;
   store: HubSharingStore;
   providers: SharingProviderResolver;
-  /** Device-level authorization, when the host supports a storage that needs it. */
   auth?: SharingAuthorizationPort;
   now?: () => string;
   id?: () => string;
   notify?: () => void;
   report?: (error: unknown) => void;
-  /** Local changes wait this long before an automatic Drive synchronization. */
+  /** Kept for callers that configured the removed automatic synchronization. */
   debounceMs?: number;
 }
 
@@ -42,51 +44,23 @@ export function normalizeSharingInterval(value: number | undefined, fallback = D
 }
 
 /**
- * One apply entry for a board the team owns. The scope travels with the workflow, so a
- * conflict resolution or a restore never silently reopens a restricted board.
- */
-function applyEntry(entry: SharedBoardEntry, boardId?: string): SharingPlan['apply'][number] {
-  return {
-    ...(boardId === undefined ? {} : { boardId }),
-    key: entry.key,
-    name: entry.name,
-    workflow: entry.workflow,
-    ...(entry.projectKeys === undefined ? {} : { projectKeys: [...entry.projectKeys] }),
-  };
-}
-
-function withEntry(base: SharedHubDocument, entry: SharedBoardEntry): SharedHubDocument {
-  const boards = base.boards.map(value => value.key === entry.key ? { ...entry } : value);
-  if (!boards.some(value => value.key === entry.key)) boards.push({ ...entry });
-  return { version: SHARED_DOCUMENT_VERSION, boards };
-}
-
-function stored(document: SharedHubDocument): { token: string; document: SharedHubDocument } {
-  return { token: sharedDocumentToken(document), document };
-}
-
-/**
- * Owns the publishing lifecycle for every Hub. All operations for one Hub run
- * in a single serialized lane; a public operation invoked from inside a lane
- * operation is rejected rather than deadlocking.
+ * Owns the publishing lifecycle for every Hub.
+ *
+ * The published unit is the board: reading, applying, and publishing all happen per
+ * board, and the hub manifest is the only thing that is written whole. Every
+ * operation for one Hub runs in a serialized lane.
  */
 export class HubSharingService {
-  private readonly tails = new Map<string, Promise<unknown>>();
-  private readonly inflight = new Set<string>();
-  /** The Hub whose publishing lane the current async context already holds. */
-  private readonly active = new AsyncLocalStorage<string>();
-  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly lanes = new Map<string, number>();
+  private readonly lanes: LaneRegistry;
   private connectTail: Promise<unknown> = Promise.resolve();
   private readonly now: () => string;
   private readonly id: () => string;
-  private readonly debounceMs: number;
   private disposed = false;
 
   constructor(private readonly options: HubSharingOptions) {
     this.now = options.now ?? (() => new Date().toISOString());
     this.id = options.id ?? randomUUID;
-    this.debounceMs = options.debounceMs ?? 2_000;
+    this.lanes = new LaneRegistry({ onChange: () => this.options.notify?.() });
   }
 
   views(): Record<string, HubSharingView> {
@@ -105,37 +79,13 @@ export class HubSharingService {
     return record && hub ? this.viewOf(record, hub) : undefined;
   }
 
-  private viewOf(record: HubSharingRecord, hub: Parameters<typeof buildSharingView>[1]): HubSharingView {
+  private viewOf(record: HubSharingRecord, hub: HubState): HubSharingView {
     const provider = this.options.providers.describe(record.binding);
     return buildSharingView(record, hub, {
       provider,
       ...(provider.requiresAuthorization ? { authorization: this.options.auth?.status() ?? 'not-connected' } : {}),
-      syncing: this.inflight.has(record.hubId),
+      syncing: this.lanes.busy(record.hubId),
     });
-  }
-
-  /**
-   * Ask a fresh store whether the storage now requires a review. An automatic
-   * operation that gets `true` must not touch the Hub or the storage: the
-   * review is recorded and the user decides.
-   */
-  private async storageBlocksAutomatic(record: HubSharingRecord): Promise<boolean> {
-    const provider = this.storeFor(record.hubId, record.binding, record.providerState);
-    await provider.ensure();
-    const review = this.storageReviewOf(provider);
-    if (review === null) return false;
-    await this.save({ ...record, storageReview: review, providerState: provider.state?.() ?? record.providerState });
-    return true;
-  }
-
-  /** The review the storage itself requires, when it reports one. */
-  private storageReviewOf(provider: SharedConfigStore): HubSharingRecord['storageReview'] {
-    return provider.review?.() ?? null;
-  }
-
-  /** Every stored binding, so a provider can refuse an address another Hub owns. */
-  private candidates(): BindingCandidate[] {
-    return this.options.store.list().map(record => ({ hubId: record.hubId, provider: record.binding.provider, settings: record.binding.settings }));
   }
 
   publishedHubs(): Array<{ hubId: string; intervalMinutes: number }> {
@@ -148,7 +98,7 @@ export class HubSharingService {
     return this.options.store.load(hubId)?.bindings[boardId] !== undefined;
   }
 
-  busy(hubId: string): boolean { return this.inflight.has(hubId); }
+  busy(hubId: string): boolean { return this.lanes.busy(hubId); }
 
   command(command: SharingCommand): Promise<void> {
     if (isAuthorizationCommand(command)) throw new KanbanError('SHARING_UNAVAILABLE', 'Authorization is handled outside the publishing service.');
@@ -163,29 +113,21 @@ export class HubSharingService {
     if (command.type === 'sharing.receive') return this.receive(command.hubId);
     if (command.type === 'sharing.check') return this.check(command.hubId, true);
     if (command.type === 'sharing.getUpdates') return this.getUpdates(command.hubId);
-    return this.publish(command.hubId);
+    if (command.type === 'sharing.updateBoard') return this.updateBoard(command.hubId, command.boardId);
+    if (command.type === 'sharing.publishBoard') return this.publishBoard(command.hubId, command.boardId);
+    return this.publishManifest(command.hubId);
   }
 
   connect(command: Extract<SharingCommand, { type: 'sharing.connect' }>): Promise<void> {
-    return this.serializeLocation(() => this.run(command.hubId, async () => this.connectNow(command)));
+    return this.serializeLocation(() => this.run(command.hubId, async () => this.openLocation(command, false)));
   }
 
-  /**
-   * Connecting and re-pointing a storage share one global lane: both validate a
-   * folder against every stored binding and then persist it, so they must not
-   * interleave or two Hubs could claim one folder.
-   */
   private serializeLocation<T>(operation: () => Promise<T>): Promise<T> {
     const execution = this.connectTail.then(operation);
     this.connectTail = execution.then(() => undefined, () => undefined);
     return execution;
   }
 
-  private connectNow(command: Extract<SharingCommand, { type: 'sharing.connect' }>): Promise<void> {
-    return this.openLocation(command, false);
-  }
-
-  /** Re-point a Google Drive Local Hub at another folder, keeping every local board and task. */
   private changeLocation(command: Extract<SharingCommand, { type: 'sharing.changeLocation' }>): Promise<void> {
     return this.serializeLocation(() => this.run(command.hubId, async () => {
       invariant(command.confirmed, 'CONFIRMATION_REQUIRED', 'Confirm changing the folder for this Hub.');
@@ -195,11 +137,6 @@ export class HubSharingService {
     }));
   }
 
-  /**
-   * Validate a location, read its document, and either publish the local
-   * configuration or store a first-connection preview. Connecting and changing
-   * a folder share every rule; only the stored record they replace differs.
-   */
   private async openLocation(
     command: { hubId: string; settings?: Record<string, string>; repository?: string; provider?: SharingProviderId; intervalMinutes?: number },
     replace: boolean,
@@ -213,7 +150,6 @@ export class HubSharingService {
     const rawSettings = command.settings ?? (command.repository ? { repository: command.repository } : {});
     const candidate: SharingBinding = {
       provider: providerId,
-      // Re-pointing keeps the Hub's configured cadence; the provider default only applies on first connection.
       intervalMinutes: normalizeSharingInterval(command.intervalMinutes, existing?.binding.intervalMinutes ?? this.options.providers.defaultInterval(providerId)),
       settings: this.options.providers.normalize(providerId, rawSettings),
     };
@@ -223,33 +159,45 @@ export class HubSharingService {
       await auth.ensureConnected();
     }
     const binding = await this.options.providers.prepare(command.hubId, candidate, this.candidates());
-    const provider = this.storeFor(command.hubId, binding, {});
-    await provider.ensure();
-    const remote = await provider.read();
-    const providerState = provider.state?.() ?? {};
-    const storageReview = this.storageReviewOf(provider);
+    const snapshot = await this.layout(command.hubId, binding, {}).readManifest();
     const at = this.now();
-    if (remote === null) {
-      const publish = buildPublishDocument({ base: null, local: projectSharingBoards(hub, {}), bindings: {}, orphans: {}, pendingRemovals: [] });
-      const written = await provider.write(publish.document, { expectedToken: null, message: COMMIT_MESSAGE });
-      await this.save({
-        version: 2, hubId: command.hubId, binding, providerState: provider.state?.() ?? providerState, storageReview, syncedRevision: hub.revision,
-        base: stored({ ...publish.document, boards: publish.document.boards.map(entry => ({ ...entry })) }),
-        seen: stored({ ...publish.document, boards: publish.document.boards.map(entry => ({ ...entry })) }),
-        bindings: publish.bindings, orphans: {}, removed: {}, pendingRemovals: [], preview: null,
-        lastCheck: { at, token: written.token }, lastSyncedAt: at, lastError: null,
-      });
+    if (snapshot === null) {
+      await this.save(this.emptyRecord(command.hubId, binding, at));
+      await this.publishManifestNow(command.hubId, []);
       return;
     }
+    const record = this.emptyRecord(command.hubId, binding, at);
     await this.save({
-      version: 2, hubId: command.hubId, binding, providerState, storageReview, syncedRevision: null,
-      base: null, seen: { token: remote.token, document: remote.document }, bindings: {}, orphans: {}, removed: {}, pendingRemovals: [],
-      preview: { token: remote.token, document: remote.document }, lastCheck: { at, token: remote.token }, lastError: null,
+      ...record,
+      preview: { token: snapshot.token, manifest: snapshot.manifest },
+      lastCheck: { at, token: snapshot.token },
+      lastSyncedAt: null,
     });
   }
 
   receive(hubId: string): Promise<void> {
-    return this.run(hubId, async () => this.receiveNow(hubId));
+    return this.run(hubId, async () => {
+      const record = this.requireRecord(hubId);
+      const preview = record.preview;
+      invariant(preview, 'SHARING_NO_PREVIEW', 'This Hub has no pending connection preview.');
+      const hub = this.options.hubs.requireHub(hubId);
+      const bindings = { ...record.bindings };
+      for (const board of hub.boards) {
+        if (bindings[board.id] !== undefined) continue;
+        const entry = preview.manifest.boards.find(candidate => normalizeBoardName(candidate.name) === normalizeBoardName(board.name));
+        if (entry !== undefined) bindings[board.id] = entry.key;
+      }
+      await this.save({
+        ...record,
+        preview: null,
+        seen: preview,
+        base: preview,
+        bindings,
+        lastSyncedAt: this.now(),
+        reviewRequired: null,
+        lastError: null,
+      });
+    });
   }
 
   publishInitial(hubId: string, confirmed: boolean): Promise<void> {
@@ -258,31 +206,7 @@ export class HubSharingService {
       const record = this.requireRecord(hubId);
       const preview = record.preview;
       invariant(preview, 'SHARING_NO_PREVIEW', 'This Hub has no pending connection preview.');
-      const hub = this.options.hubs.requireHub(hubId);
-      const publish = buildPublishDocument({
-        base: null,
-        local: projectSharingBoards(hub, record.bindings),
-        bindings: record.bindings,
-        orphans: record.orphans,
-        pendingRemovals: record.pendingRemovals,
-      });
-      const provider = this.storeFor(hubId, record.binding, record.providerState);
-      const written = await provider.write(publish.document, { expectedToken: preview.token, message: COMMIT_MESSAGE });
-      await this.save({
-        ...record,
-        providerState: provider.state?.() ?? record.providerState,
-        storageReview: this.storageReviewOf(provider),
-        base: { token: written.token, document: publish.document },
-        seen: { token: written.token, document: publish.document },
-        bindings: publish.bindings,
-        preview: null,
-        pendingRemovals: [],
-        syncedRevision: hub.revision,
-        lastCheck: { at: this.now(), token: written.token },
-        lastSyncedAt: this.now(),
-        reviewRequired: null,
-        lastError: null,
-      });
+      await this.publishManifestNow(hubId, [], preview.token);
     });
   }
 
@@ -290,102 +214,247 @@ export class HubSharingService {
     return this.run(hubId, async () => this.checkNow(hubId, manual));
   }
 
+  /** Read the manifest and one probe per board. It never applies a team change. */
   private async checkNow(hubId: string, manual: boolean): Promise<void> {
     const record = this.requireRecord(hubId);
-    const provider = this.storeFor(hubId, record.binding, record.providerState);
-    const remote = await this.readRemote(record, provider);
-    const storageReview = this.storageReviewOf(provider);
+    const layout = this.layout(record.hubId, record.binding, record.providerState);
     const at = this.now();
-    const published = remote ?? { token: sharedDocumentToken(EMPTY_DOCUMENT), document: EMPTY_DOCUMENT };
-    const reviewLatch = !manual && (record.reviewRequired != null);
-    const fresh: HubSharingRecord = {
-      ...record,
-      providerState: provider.state?.() ?? record.providerState,
-      storageReview,
-      seen: remote,
-      preview: record.preview === null ? null : remote,
-      lastCheck: { at, token: published.token },
-      reviewRequired: manual ? null : record.reviewRequired ?? null,
-      lastError: manual ? null : reviewLatch ? record.lastError ?? record.reviewRequired ?? null : null,
-    };
-    await this.save(fresh);
-    if (!reviewLatch && fresh.storageReview == null && fresh.preview === null && this.options.providers.describe(record.binding).syncMode === 'continuous') await this.autoSyncNow(hubId);
+    try {
+      const snapshot = await layout.readManifest();
+      const manifest = snapshot?.manifest ?? EMPTY_MANIFEST;
+      const boards = await this.observeBoards(record, manifest);
+      await this.save({
+        ...record,
+        providerState: layout.state?.() ?? record.providerState,
+        storageReview: layout.review?.() ?? null,
+        seen: snapshot === null ? null : { token: snapshot.token, manifest },
+        preview: record.preview === null ? null : (snapshot === null ? null : { token: snapshot.token, manifest }),
+        boards,
+        lastCheck: { at, token: snapshot?.token ?? 'none' },
+        lastSyncedAt: record.lastSyncedAt ?? null,
+        reviewRequired: manual ? null : record.reviewRequired ?? null,
+        // A check that read the configuration successfully ends any earlier failure.
+        lastError: null,
+      });
+    } catch (error) {
+      await this.persistFailure(record, error);
+      throw error;
+    }
+  }
+
+  /** Observe every published board without applying anything. */
+  private async observeBoards(record: HubSharingRecord, manifest: SharedHubManifest): Promise<Record<string, StoredBoard>> {
+    const hub = this.options.hubs.requireHub(record.hubId);
+    const local = projectSharingBoards(hub, record.bindings);
+    const byKey = new Map(local.filter(board => board.key !== undefined).map(board => [board.key!, board]));
+    const layout = this.layout(record.hubId, record.binding, record.providerState);
+    const boards: Record<string, StoredBoard> = { ...record.boards };
+    for (const entry of manifest.boards) {
+      const board = byKey.get(entry.key);
+      if (board === undefined) continue;
+      const stored = boards[entry.key] ?? emptyBoard();
+      // A probe that did not change means the log did not change, so the check never
+      // reads a board the team did not touch.
+      const probe = await layout.probe(entry.key);
+      if (probe !== null && probe === stored.probe && stored.head !== null) continue;
+      const snapshot = await layout.readLog(entry.key);
+      if (snapshot === null) { boards[entry.key] = { ...stored, behind: 0 }; continue; }
+      const evaluation = evaluateBoard({ entry, local: board, log: snapshot.log, cursor: stored.seq });
+      boards[entry.key] = {
+        ...stored,
+        head: snapshot.head,
+        probe: snapshot.probe,
+        published: publishedWorkflow(snapshot.log) === null ? stored.published : workflowDigest(publishedWorkflow(snapshot.log)!),
+        behind: evaluation.apply.kind === 'applies' ? evaluation.apply.events : 0,
+        draft: evaluation.draft,
+        publishedText: evaluation.apply.kind === 'conflict' ? (publishedWorkflow(snapshot.log) ?? null) : null,
+        conflict: evaluation.apply.kind === 'conflict' ? evaluation.apply.conflict : null,
+      };
+    }
+    return boards;
   }
 
   getUpdates(hubId: string): Promise<void> {
     return this.run(hubId, async () => {
-      const record = this.requireRecord(hubId);
-      const provider = this.storeFor(hubId, record.binding, record.providerState);
-      const remote = await this.readRemote(record, provider);
-      const published = remote ?? { token: sharedDocumentToken(EMPTY_DOCUMENT), document: EMPTY_DOCUMENT };
-      const fresh: HubSharingRecord = { ...record, providerState: provider.state?.() ?? record.providerState, storageReview: this.storageReviewOf(provider), seen: remote, lastCheck: { at: this.now(), token: published.token }, reviewRequired: null, lastError: null };
-      await this.save(fresh);
-      await this.applyUpdatesNow(fresh);
+      // Read the team configuration first: the stored manifest may be stale, and the
+      // reconciliation below must see what the team publishes now.
+      const beforeCheck = publishedManifest(this.requireRecord(hubId));
+      await this.checkNow(hubId, false);
+      let record = this.requireRecord(hubId);
+      const manifest = publishedManifest(record);
+      record = await this.reconcileRemovals(hubId, record, beforeCheck, manifest);
+      record = await this.reconnectOrphans(record, manifest);
+      const failures: KanbanError[] = [];
+      for (const entry of manifest.boards) {
+        try { await this.applyEntry(hubId, entry); }
+        catch (error) {
+          // One board failing must not stop the others: that isolation is the point.
+          failures.push(error instanceof KanbanError ? error : new KanbanError('SHARING_FAILED', error instanceof Error ? error.message : String(error)));
+        }
+      }
+      await this.refreshObservations(hubId);
+      if (failures.length > 0) {
+        const first = failures[0]!;
+        const suffix = failures.length === 1 ? '' : ' ' + (failures.length - 1) + ' other board(s) need attention too.';
+        throw new KanbanError(first.code, first.message + suffix, { ...first.details, pendingBoards: failures.length });
+      }
     });
   }
 
-  /** Debounce a local board or workflow save into an automatic synchronization. */
-  noteLocalChange(hubId: string): void {
-    const record = this.options.store.load(hubId);
-    if (!record || this.options.providers.describe(record.binding).syncMode !== 'continuous' || this.disposed) return;
-    const existing = this.timers.get(hubId);
-    if (existing !== undefined) clearTimeout(existing);
-    const timer = setTimeout(() => {
-      this.timers.delete(hubId);
-      // This timer is scheduled inside a lane; leave its async context so the
-      // check is not rejected as reentrant, and keep the rejection reported.
-      this.active.exit(() => { void this.check(hubId).catch(error => this.options.report?.(error)); });
-    }, this.debounceMs);
-    timer.unref?.();
-    this.timers.set(hubId, timer);
+  /**
+   * Apply the team's removals. A board that still holds work is kept as an orphan so
+   * its tasks survive; an empty one is removed locally.
+   */
+  private async reconcileRemovals(hubId: string, record: HubSharingRecord, previous: SharedHubManifest, manifest: SharedHubManifest): Promise<HubSharingRecord> {
+    const named = new Set(manifest.boards.map(entry => entry.key));
+    const hub = this.options.hubs.requireHub(hubId);
+    let next = record;
+    for (const [boardId, key] of Object.entries(record.bindings)) {
+      if (named.has(key)) continue;
+      const board = hub.boards.find(candidate => candidate.id === boardId);
+      const hasTasks = hub.tasks.some(task => task.boardId === boardId);
+      const dirty = next.boards[key]?.draft === true || (next.boards[key]?.behind ?? 0) > 0;
+      if (board !== undefined && (hasTasks || dirty)) {
+        const last = previous.boards.find(entry => entry.key === key);
+        const orphans = { ...next.orphans, [boardId]: { lastKey: key, lastPublishedName: last?.name ?? board.name } };
+        const bindings = { ...next.bindings };
+        delete bindings[boardId];
+        const boards = { ...next.boards };
+        delete boards[key];
+        next = { ...next, bindings, orphans, boards };
+        await this.save(next);
+        continue;
+      }
+      if (board !== undefined) {
+        await this.options.hubs.hub(hubId).transact(draft => { operations.deleteBoard(draft, boardId, this.deps()); return draft; }, hub.revision);
+      }
+      const bindings = { ...next.bindings };
+      delete bindings[boardId];
+      const boards = { ...next.boards };
+      delete boards[key];
+      next = { ...next, bindings, boards };
+      await this.save(next);
+    }
+    return next;
   }
 
-  private async autoSyncNow(hubId: string): Promise<void> {
-    let record = this.requireRecord(hubId);
-    if (record.preview !== null) return;
-    if (record.reviewRequired != null) return;
-    if (record.storageReview != null) return;
-    if (this.options.providers.describe(record.binding).syncMode !== 'continuous') return;
-    let hub = this.options.hubs.requireHub(hubId);
-    let comparison = sharingComparison(record, hub);
-    if (comparison.blockers.length > 0 || comparison.conflicts > 0) return;
-    if (comparison.updates > 0) {
-      await this.applyUpdatesNow(record, true);
-      record = this.requireRecord(hubId);
-      hub = this.options.hubs.requireHub(hubId);
-      comparison = sharingComparison(record, hub);
+  /** Rebind an orphan the team names again, by its last key and then by its last name. */
+  private async reconnectOrphans(record: HubSharingRecord, manifest: SharedHubManifest): Promise<HubSharingRecord> {
+    let next = record;
+    const bound = new Set(Object.values(next.bindings));
+    for (const [boardId, orphan] of Object.entries(record.orphans)) {
+      const entry = manifest.boards.find(candidate => candidate.key === orphan.lastKey && !bound.has(candidate.key))
+        ?? manifest.boards.find(candidate => normalizeBoardName(candidate.name) === normalizeBoardName(orphan.lastPublishedName) && !bound.has(candidate.key));
+      if (entry === undefined) continue;
+      const orphans = { ...next.orphans };
+      delete orphans[boardId];
+      next = { ...next, orphans, bindings: { ...next.bindings, [boardId]: entry.key } };
+      bound.add(entry.key);
+      await this.save(next);
     }
-    if (comparison.drafts === 0 && record.pendingRemovals.length === 0) return;
-    if (comparison.updates > 0 || comparison.conflicts > 0 || comparison.blockers.length > 0) return;
-    await this.publishNow(hubId, [], true);
+    return next;
+  }
+
+  updateBoard(hubId: string, boardId: string): Promise<void> {
+    return this.run(hubId, async () => {
+      const record = this.requireRecord(hubId);
+      const key = record.bindings[boardId];
+      invariant(key !== undefined, 'SHARING_NOT_PUBLISHED', 'This board is not published to the team.');
+      const entry = publishedManifest(record).boards.find(candidate => candidate.key === key);
+      invariant(entry, 'SHARING_NOT_PUBLISHED', 'The team no longer publishes this board.');
+      await this.applyEntry(hubId, entry);
+      await this.refreshObservations(hubId);
+    });
+  }
+
+  /** Re-read the boards this Hub holds so the view reflects what applying did. */
+  private async refreshObservations(hubId: string): Promise<void> {
+    const record = this.requireRecord(hubId);
+    const boards = await this.observeBoards(record, publishedManifest(record));
+    await this.save({ ...record, boards, lastSyncedAt: this.now(), reviewRequired: null, lastError: null });
+  }
+
+  /** Apply one published board, creating it locally when this installation does not hold it. */
+  private async applyEntry(hubId: string, entry: SharedBoardEntry): Promise<void> {
+    const record = this.requireRecord(hubId);
+    const layout = this.layout(hubId, record.binding, record.providerState);
+    const snapshot = await layout.readLog(entry.key);
+    if (snapshot === null) {
+      throw new KanbanError('SHARING_DOCUMENT_MISSING', 'The team names board "' + entry.name + '" but its published log is missing.', { key: entry.key, board: entry.name });
+    }
+    const hub = this.options.hubs.requireHub(hubId);
+    const boardId = Object.entries(record.bindings).find(([, key]) => key === entry.key)?.[0];
+    const board = boardId === undefined ? undefined : hub.boards.find(candidate => candidate.id === boardId);
+    if (board === undefined) {
+      const recovered = recoverBoard(snapshot.log, null);
+      if (!recovered.ok) throw this.conflictError(entry.key, recovered.conflict);
+      const created = await this.options.hubs.hub(hubId).transact(draft => {
+        const added = operations.addBoard(draft, entry.name, this.deps());
+        operations.saveBoardWorkflow(draft, added.id, recovered.text, this.deps());
+        operations.setBoardProjectScope(draft, added.id, entry.projectKeys, this.deps());
+        return added.id;
+      }, hub.revision);
+      await this.save({ ...record, bindings: { ...record.bindings, [created]: entry.key }, boards: { ...record.boards, [entry.key]: { seq: recovered.cursor, head: snapshot.head, probe: snapshot.probe, behind: 0, published: workflowDigest(recovered.text), draft: false, conflict: null } } });
+      return;
+    }
+    const stored = record.boards[entry.key] ?? emptyBoard();
+    const recovered = recoverBoard(snapshot.log, { text: board.workflowYaml, cursor: stored.seq });
+    if (!recovered.ok) {
+      await this.save({ ...record, boards: { ...record.boards, [entry.key]: { ...stored, head: snapshot.head, probe: snapshot.probe, conflict: recovered.conflict.kind, behind: stored.behind } } });
+      throw this.conflictError(entry.key, recovered.conflict);
+    }
+    const renames = stageRenames(snapshot.log.events.filter(event => event.seq > stored.seq));
+    await this.options.hubs.hub(hubId).transact(draft => {
+      // The references move first: saving a workflow that no longer defines a task's
+      // stage would be refused, and the rename is what makes them agree again.
+      for (const rename of renames) {
+        for (const task of draft.tasks) if (task.boardId === board.id) renameTaskReferences(task, rename.from, rename.to);
+      }
+      operations.saveBoardWorkflow(draft, board.id, recovered.text, this.deps());
+      operations.setBoardProjectScope(draft, board.id, entry.projectKeys, this.deps());
+    }, hub.revision);
+    await this.save({
+      ...record,
+      boards: { ...record.boards, [entry.key]: { seq: recovered.cursor, head: snapshot.head, probe: snapshot.probe, behind: 0, published: workflowDigest(recovered.text), draft: false, conflict: null } },
+      lastSyncedAt: this.now(),
+      reviewRequired: null,
+      lastError: null,
+    });
   }
 
   resolve(hubId: string, boardId: string, choice: 'local' | 'team'): Promise<void> {
     return this.run(hubId, async () => {
       const record = this.requireRecord(hubId);
-      const hub = this.options.hubs.requireHub(hubId);
-      const comparison = sharingComparison(record, hub);
-      const conflict = comparison.boards.find(board => board.decision === 'needs-review' && board.boardId === boardId);
-      invariant(conflict, 'SHARING_NOT_CONFLICT', 'The board does not have a team conflict to resolve.');
-      invariant(conflict.key !== undefined, 'SHARING_NOT_CONFLICT', 'The conflicting board has no published key.');
-      const entry = publishedDocument(record).boards.find(candidate => candidate.key === conflict.key);
-      invariant(entry, 'SHARING_NOT_CONFLICT', 'The team board for this conflict is no longer available.');
+      const key = record.bindings[boardId];
+      invariant(key !== undefined, 'SHARING_NOT_CONFLICT', 'The board is not published.');
+      const layout = this.layout(hubId, record.binding, record.providerState);
+      const snapshot = await layout.readLog(key);
+      invariant(snapshot !== null, 'SHARING_NOT_CONFLICT', 'The team board has no published state.');
+      const head = recoverBoard(snapshot.log, null);
+      invariant(head.ok, 'SHARING_INVALID_DOCUMENT', 'The team board cannot be read.');
+      const stored = record.boards[key] ?? emptyBoard();
       if (choice === 'team') {
-        const plan: SharingPlan = {
-          comparison,
-          apply: [applyEntry(entry, boardId)],
-          removals: [], orphans: [], reconnections: [], conflicts: [],
-          nextBase: withEntry(record.base?.document ?? publishedDocument(record), entry),
-        };
-        await this.options.hubs.hub(hubId).transact(draft => applySharingPlan(draft, plan, { id: this.id, now: this.now }), hub.revision);
+        const hub = this.options.hubs.requireHub(hubId);
+        const renames = stageRenames(snapshot.log.events.filter(event => event.seq > stored.seq));
+        await this.options.hubs.hub(hubId).transact(draft => {
+          for (const rename of renames) for (const task of draft.tasks) if (task.boardId === boardId) renameTaskReferences(task, rename.from, rename.to);
+          operations.saveBoardWorkflow(draft, boardId, head.text, this.deps());
+        }, hub.revision);
+        await this.save({ ...record, boards: { ...record.boards, [key]: { seq: head.cursor, head: snapshot.head, probe: snapshot.probe, behind: 0, published: workflowDigest(head.text), draft: false, conflict: null } }, reviewRequired: null });
+        return;
       }
-      const base = withEntry(record.base?.document ?? publishedDocument(record), entry);
-      await this.save({ ...record, base: stored(base), reviewRequired: null });
+      // Keeping the local version accepts the divergence: the cursor moves to the head
+      // so the board stops asking, and the board stays a draft to publish.
+      await this.save({ ...record, boards: { ...record.boards, [key]: { ...stored, seq: head.cursor, head: snapshot.head, probe: snapshot.probe, behind: 0, draft: true, conflict: null } }, reviewRequired: null });
     });
   }
 
-  publish(hubId: string): Promise<void> {
-    return this.run(hubId, async () => { await this.publishNow(hubId); });
+  publishManifest(hubId: string): Promise<void> {
+    return this.run(hubId, async () => { await this.publishManifestNow(hubId, []); });
+  }
+
+  publishBoard(hubId: string, boardId: string): Promise<void> {
+    return this.run(hubId, async () => { await this.publishBoardNow(hubId, boardId); });
   }
 
   setInterval(hubId: string, intervalMinutes: number): Promise<void> {
@@ -400,7 +469,6 @@ export class HubSharingService {
     return this.run(hubId, async () => this.removeBinding(hubId));
   }
 
-  /** Called after the Hub is deleted; removes local publishing state and the managed workspace. */
   removeHub(hubId: string): Promise<void> {
     if (this.options.store.load(hubId) === undefined) return Promise.resolve();
     return this.run(hubId, async () => this.removeBinding(hubId));
@@ -422,11 +490,12 @@ export class HubSharingService {
       delete bindings[boardId];
       const orphans = { ...record.orphans };
       delete orphans[boardId];
-      const next: HubSharingRecord = { ...record, bindings, orphans };
+      const boards = { ...record.boards };
+      delete boards[key];
+      const next: HubSharingRecord = { ...record, bindings, orphans, boards };
       if (scope === 'local') next.removed = { ...record.removed, [key]: { boardId, name } };
       else if (!record.pendingRemovals.includes(key)) next.pendingRemovals = [...record.pendingRemovals, key];
       await this.save(next);
-      if (scope === 'team') this.noteLocalChange(hubId);
     });
   }
 
@@ -436,33 +505,15 @@ export class HubSharingService {
       const removed = Object.entries(record.removed).find(([, value]) => value.boardId === boardId);
       invariant(removed, 'SHARING_NOT_REMOVED', 'The board is not removed only from this installation.');
       const [key] = removed;
-      const hub = this.options.hubs.requireHub(hubId);
-      const entry = publishedDocument(record).boards.find(candidate => candidate.key === key);
-      if (!entry) {
-        const next = { ...record, removed: { ...record.removed } };
-        delete next.removed[key];
-        await this.save(next);
+      const entry = publishedManifest(record).boards.find(candidate => candidate.key === key);
+      const nextRemoved = { ...record.removed };
+      delete nextRemoved[key];
+      if (entry === undefined) {
+        await this.save({ ...record, removed: nextRemoved });
         throw new KanbanError('SHARING_REMOVED_GONE', 'The team board no longer exists, so it cannot be restored.');
       }
-      invariant(!hub.boards.some(board => normalizeBoardName(board.name) === normalizeBoardName(entry.name)), 'SHARING_NAME_CONFLICT', 'A local board already uses the name "' + entry.name + '".');
-      const comparison = sharingComparison(record, hub);
-      const plan: SharingPlan = {
-        comparison,
-        apply: [applyEntry(entry)],
-        removals: [], orphans: [], reconnections: [], conflicts: [],
-        nextBase: withEntry(record.base?.document ?? publishedDocument(record), entry),
-      };
-      const result: ApplySharingResult = await this.options.hubs.hub(hubId).transact(draft => applySharingPlan(draft, plan, { id: this.id, now: this.now }), hub.revision);
-      const created = result.created[0];
-      invariant(created, 'SHARING_RESTORE_FAILED', 'The restored board could not be created.');
-      const removedList = { ...record.removed };
-      delete removedList[key];
-      await this.save({
-        ...record,
-        base: stored(plan.nextBase),
-        bindings: { ...record.bindings, [created.boardId]: key },
-        removed: removedList,
-      });
+      await this.save({ ...record, removed: nextRemoved, bindings: { ...record.bindings, [boardId]: key } });
+      await this.applyEntry(hubId, entry);
     });
   }
 
@@ -471,43 +522,21 @@ export class HubSharingService {
       const record = this.requireRecord(hubId);
       const orphan = record.orphans[boardId];
       invariant(orphan !== undefined, 'SHARING_NOT_ORPHAN', 'The board is not an orphan.');
-      const hub = this.options.hubs.requireHub(hubId);
-      const comparison = sharingComparison(record, hub);
-      if (comparison.updates > 0 || comparison.conflicts > 0) {
-        throw new KanbanError('SHARING_PUBLISH_BLOCKED', 'Get the team updates before publishing this board.');
-      }
       const orphans = { ...record.orphans };
       delete orphans[boardId];
       await this.save({ ...record, orphans });
-      try { await this.publishNow(hubId, [orphan.lastKey]); }
-      catch (error) {
-        const current = this.options.store.load(hubId);
-        if (current) await this.save({ ...current, orphans: { ...current.orphans, [boardId]: orphan } }).catch(() => undefined);
-        throw error;
-      }
+      // The board is unbound now, so the manifest publish allocates it a new key.
+      await this.publishManifestNow(hubId, [orphan.lastKey]);
     });
   }
 
   async close(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
-    for (const timer of this.timers.values()) clearTimeout(timer);
-    this.timers.clear();
     await this.options.auth?.cancel();
-    await Promise.allSettled([...this.tails.values()]);
-    this.tails.clear();
+    await this.lanes.close();
   }
 
-  private storeFor(hubId: string, binding: SharingBinding, state: ProviderState): SharedConfigStore {
-    return this.options.providers.create(hubId, binding, state);
-  }
-
-  /**
-   * The team file surface of a bound Hub. An unbound Hub and a storage that
-   * cannot serve files are refused with distinct typed errors, and every
-   * mutation runs inside the Hub's publishing lane, so a file write and a
-   * document publish never hold the same clone at once.
-   */
   fileStoreFor(hubId: string): TeamFileStoreResolution {
     const record = this.options.store.load(hubId);
     invariant(record, 'TEAM_FILES_UNAVAILABLE', 'This Hub is not connected to a team storage. Connect one in Team Settings to use team files.');
@@ -519,18 +548,145 @@ export class HubSharingService {
     return { store: this.lockedFileStore(hubId, store), provider: described.id, label: described.label, address: described.address };
   }
 
-  /**
-   * Run one operation inside the Hub's publishing lane, FIFO with its document
-   * work. Re-entrant for the same Hub, so a caller can hold the lane for a whole
-   * read-modify-write while the store it uses takes the same lane again.
-   */
   exclusive<T>(hubId: string, operation: () => Promise<T>): Promise<T> {
-    if (this.disposed) throw new KanbanError('PLUGIN_DISPOSED', 'The Kanban plugin is shutting down.');
-    if (this.active.getStore() === hubId) return operation();
-    return this.run(hubId, operation);
+    return this.lanes.exclusive(hubId, operation);
   }
 
-  /** Reads stay outside the lane; mutations queue behind whatever already holds the binding. */
+  /** A local change is a draft; publishing it is always the user's decision. */
+  noteLocalChange(hubId: string): void {
+    if (this.options.store.load(hubId) === undefined) return;
+    this.options.notify?.();
+  }
+
+  /** Publish the hub manifest: board names, order, project scopes, and removals. */
+  private async publishManifestNow(hubId: string, reserved: Iterable<string>, expectedToken?: string | null): Promise<void> {
+    const record = this.requireRecord(hubId);
+    const hub = this.options.hubs.requireHub(hubId);
+    const layout = this.layout(hubId, record.binding, record.providerState);
+    const local = projectSharingBoards(hub, record.bindings);
+    const composed = composeManifest({
+      current: publishedManifest(record),
+      local,
+      pendingRemovals: record.pendingRemovals,
+      reserved,
+      allocate: (name, taken) => boardKeyFromName(name, taken),
+    });
+    // The logs come first: on every storage but Git the manifest and the logs are
+    // separate writes, and a manifest that names a board with no log is unreadable.
+    const boards = { ...record.boards };
+    for (const entry of composed.manifest.boards) {
+      // The composed bindings carry the key a board just received, which the stored
+      // record does not have yet.
+      const board = local.find(candidate => composed.bindings[candidate.boardId] === entry.key || record.bindings[candidate.boardId] === entry.key);
+      if (board === undefined) continue;
+      const existing = await layout.readLog(entry.key);
+      if (existing !== null) { boards[entry.key] = boards[entry.key] ?? { ...emptyBoard(), head: existing.head, probe: existing.probe }; continue; }
+      const seeded = await this.applyIdentities(hubId, board.boardId, board.workflow);
+      const created = await layout.createLog(entry.key, seeded);
+      boards[entry.key] = { seq: 0, head: created.head, probe: created.probe, behind: 0, published: workflowDigest(seeded), draft: false, conflict: null };
+    }
+    const written = await layout.writeManifest(composed.manifest, { expectedToken: expectedToken === undefined ? record.seen?.token ?? null : expectedToken, message: 'Update published Kanban configuration' });
+    const stored = { token: written.token, manifest: composed.manifest };
+    await this.save({
+      ...record,
+      providerState: layout.state?.() ?? record.providerState,
+      storageReview: layout.review?.() ?? null,
+      base: stored,
+      seen: stored,
+      preview: null,
+      bindings: composed.bindings,
+      boards,
+      pendingRemovals: [],
+      syncedRevision: hub.revision,
+      lastCheck: { at: this.now(), token: written.token },
+      lastSyncedAt: this.now(),
+      reviewRequired: null,
+      lastError: null,
+    });
+  }
+
+  /**
+   * Write the stable identity of every stage into the local board before it is
+   * published, so the published snapshot and the local workflow name the same stages.
+   * The identity is what a later rename event addresses, so it has to exist first.
+   */
+  private async applyIdentities(hubId: string, boardId: string, workflow: string): Promise<string> {
+    const seeded = materializeIdentities(workflow);
+    if (seeded === workflow) return workflow;
+    const hub = this.options.hubs.requireHub(hubId);
+    await this.options.hubs.hub(hubId).transact(draft => { operations.saveBoardWorkflow(draft, boardId, seeded, this.deps()); return draft; }, hub.revision);
+    return seeded;
+  }
+
+  /** Publish one board's local changes as events appended to its log. */
+  private async publishBoardNow(hubId: string, boardId: string): Promise<void> {
+    let record = this.requireRecord(hubId);
+    const hub = this.options.hubs.requireHub(hubId);
+    const board = hub.boards.find(candidate => candidate.id === boardId);
+    invariant(board, 'BOARD_NOT_FOUND', 'Board does not exist.');
+    // Name every stage before deriving, so an identity allocated for a new stage is
+    // written into the local text instead of existing only in the events.
+    const localWorkflow = await this.applyIdentities(hubId, boardId, board.workflowYaml);
+    let key = record.bindings[boardId];
+    if (key === undefined) {
+      // A board entering the team is named by the manifest first, so its log has a key.
+      await this.publishManifestNow(hubId, []);
+      record = this.requireRecord(hubId);
+      key = record.bindings[boardId];
+      invariant(key !== undefined, 'SHARING_PUBLISH_BLOCKED', 'The board could not be added to the team configuration.');
+    }
+    const layout = this.layout(hubId, record.binding, record.providerState);
+    const stored = record.boards[key] ?? emptyBoard();
+    const snapshot = await layout.readLog(key);
+    if (snapshot === null) {
+      const seeded = await this.applyIdentities(hubId, boardId, board.workflowYaml);
+      const created = await layout.createLog(key, seeded);
+      await this.save({ ...record, boards: { ...record.boards, [key]: { seq: 0, head: created.head, probe: created.probe, behind: 0, published: workflowDigest(seeded), draft: false, conflict: null } }, lastSyncedAt: this.now() });
+      return;
+    }
+    const head = lastSequence(snapshot.log);
+    if (stored.seq < head) {
+      throw new KanbanError('SHARING_PUBLISH_BLOCKED', 'This board has team changes that have not been applied. Get this board updates before publishing it.', { key, boardId, pending: head - stored.seq });
+    }
+    const published = publishedWorkflow(snapshot.log);
+    invariant(published !== null, 'SHARING_INVALID_DOCUMENT', 'The team board cannot be read.');
+    const changes = deriveChanges({ text: published }, { text: localWorkflow }, { allocate: () => this.id() });
+    if (changes.length === 0) {
+      await this.save({ ...record, boards: { ...record.boards, [key]: { ...stored, seq: head, head: snapshot.head, probe: snapshot.probe, behind: 0, published: workflowDigest(published), draft: false } } });
+      return;
+    }
+    const appended = await layout.appendChanges(key, changes, { expectedHead: snapshot.head, message: 'Update published Kanban board', at: this.now() });
+    await this.save({
+      ...record,
+      providerState: layout.state?.() ?? record.providerState,
+      boards: { ...record.boards, [key]: { seq: lastSequence(appended.log), head: appended.head, probe: appended.probe, behind: 0, published: workflowDigest(localWorkflow), draft: false, conflict: null } },
+      syncedRevision: hub.revision,
+      lastSyncedAt: this.now(),
+      reviewRequired: null,
+      lastError: null,
+    });
+  }
+
+  private layout(hubId: string, binding: SharingBinding, state: ProviderState): SharedLayoutStore {
+    const create = this.options.providers.createLayoutStore;
+    if (create === undefined) throw new KanbanError('SHARING_UNSUPPORTED_STORAGE', 'This host cannot read the published team configuration.', { provider: binding.provider });
+    void hubId;
+    return create.call(this.options.providers, hubId, binding, state);
+  }
+
+  private emptyRecord(hubId: string, binding: SharingBinding, at: string): HubSharingRecord {
+    return {
+      version: 3, hubId, binding, providerState: {}, syncedRevision: null,
+      base: null, seen: null, preview: null,
+      bindings: {}, orphans: {}, removed: {}, pendingRemovals: [], boards: {},
+      lastCheck: { at, token: 'none' }, lastSyncedAt: null, lastError: null,
+    };
+  }
+
+  private deps() {
+    return this.options.hubs.operationDeps();
+  }
+
   private lockedFileStore(hubId: string, store: TeamFileStore): TeamFileStore {
     const locked: TeamFileStore = {
       ensure: () => store.ensure(),
@@ -551,132 +707,19 @@ export class HubSharingService {
     return record;
   }
 
+  private candidates(): BindingCandidate[] {
+    return this.options.store.list().map(record => ({ hubId: record.hubId, provider: record.binding.provider, settings: record.binding.settings }));
+  }
+
+  private conflictError(key: string, conflict: { kind: 'identity' | 'lifecycle'; message: string }): KanbanError {
+    return new KanbanError('SHARING_REVIEW_REQUIRED', 'The team changed a stage of board "' + key + '" in a way this installation cannot apply on its own. Review the board.', { key, kind: conflict.kind, reason: conflict.message });
+  }
+
   private async save(record: HubSharingRecord): Promise<void> {
     await this.options.store.save(record);
     this.options.notify?.();
   }
 
-  private async receiveNow(hubId: string): Promise<void> {
-    const record = this.requireRecord(hubId);
-    const preview = record.preview;
-    invariant(preview, 'SHARING_NO_PREVIEW', 'This Hub has no pending connection preview.');
-    await this.applyUpdatesNow({ ...record, seen: preview, preview: null });
-  }
-
-  /** Apply the non-conflicting team changes in one Hub transaction, then record the merged base. */
-  private async applyUpdatesNow(record: HubSharingRecord, automatic = false): Promise<void> {
-    if (automatic && await this.storageBlocksAutomatic(record)) return;
-    const hub = this.options.hubs.requireHub(record.hubId);
-    const plan = buildUpdatePlan({
-      base: record.base?.document ?? null,
-      published: publishedDocument(record),
-      local: projectSharingBoards(hub, record.bindings),
-      bindings: record.bindings,
-      orphans: record.orphans,
-      removed: record.removed,
-      pendingRemovals: record.pendingRemovals,
-    });
-    if (plan.comparison.blockers.length > 0) throw this.refused(plan.comparison.blockers);
-    let result: ApplySharingResult = { created: [] };
-    if (plan.apply.length > 0 || plan.removals.length > 0 || plan.order !== undefined) {
-      result = await this.options.hubs.hub(record.hubId).transact(draft => applySharingPlan(draft, plan, { id: this.id, now: this.now }), hub.revision);
-    }
-    const bindings = { ...record.bindings };
-    for (const entry of plan.apply) if (entry.boardId !== undefined) bindings[entry.boardId] = entry.key;
-    for (const created of result.created) bindings[created.boardId] = created.key;
-    const orphans = { ...record.orphans };
-    for (const orphan of plan.orphans) { delete bindings[orphan.boardId]; orphans[orphan.boardId] = { lastKey: orphan.lastKey, lastPublishedName: orphan.lastPublishedName }; }
-    for (const reconnection of plan.reconnections) delete orphans[reconnection.boardId];
-    for (const removal of plan.removals) delete bindings[removal];
-    await this.save({
-      ...record,
-      bindings,
-      orphans,
-      base: stored(plan.nextBase),
-      preview: null,
-      lastSyncedAt: this.now(),
-      reviewRequired: null,
-      lastError: null,
-    });
-  }
-
-  private async publishNow(hubId: string, reserved: Iterable<string> = [], automatic = false): Promise<void> {
-    const record = this.requireRecord(hubId);
-    const hub = this.options.hubs.requireHub(hubId);
-    const comparison = sharingComparison(record, hub);
-    if (comparison.blockers.length > 0) throw this.refused(comparison.blockers);
-    if (comparison.updates > 0 || comparison.conflicts > 0) throw new KanbanError('SHARING_PUBLISH_BLOCKED', 'Get the team updates and resolve every review before publishing.');
-    const publish = buildPublishDocument({
-      base: record.base?.document ?? null,
-      local: projectSharingBoards(hub, record.bindings),
-      bindings: record.bindings,
-      orphans: record.orphans,
-      pendingRemovals: record.pendingRemovals,
-      reserved,
-    });
-    if (!publishIsDirty(publish.document, record.base?.document ?? null) && record.pendingRemovals.length === 0) return;
-    const provider = this.storeFor(hubId, record.binding, record.providerState);
-    if (automatic) {
-      // Inspect the review on the very instance that will write: a copy detected by
-      // its own ensure() must stop the automatic write instead of being ignored.
-      await provider.ensure();
-      const review = this.storageReviewOf(provider);
-      if (review !== null) {
-        await this.save({ ...record, storageReview: review, providerState: provider.state?.() ?? record.providerState });
-        return;
-      }
-    }
-    try {
-      const written = await provider.write(publish.document, { expectedToken: record.seen?.token ?? null, message: COMMIT_MESSAGE });
-      await this.save({
-        ...record,
-        providerState: provider.state?.() ?? record.providerState,
-        storageReview: this.storageReviewOf(provider),
-        base: { token: written.token, document: publish.document },
-        seen: { token: written.token, document: publish.document },
-        bindings: publish.bindings,
-        pendingRemovals: [],
-        syncedRevision: hub.revision,
-        lastCheck: { at: this.now(), token: written.token },
-        lastSyncedAt: this.now(),
-        reviewRequired: null,
-        lastError: null,
-      });
-    } catch (error) {
-      if (error instanceof KanbanError && error.code === 'SHARING_STALE_TOKEN') {
-        let remote: Awaited<ReturnType<SharedConfigStore['read']>> | undefined;
-        try { remote = await provider.read(undefined, record.seen); }
-        catch { remote = undefined; }
-        if (remote !== undefined && remote !== null) {
-          await this.save({ ...record, providerState: provider.state?.() ?? record.providerState, seen: remote, lastCheck: { at: this.now(), token: remote.token }, lastError: null });
-        }
-      } else {
-        await this.persistFailure(record, error);
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * Read the stored document and record availability and integrity failures on
-   * the record, so every caller reports the same facts.
-   */
-  private async readRemote(record: HubSharingRecord, provider: SharedConfigStore): Promise<SharedDocumentSnapshot | null> {
-    let remote: SharedDocumentSnapshot | null;
-    try { remote = await provider.read(undefined, record.seen); }
-    catch (error) {
-      await this.persistFailure(record, error);
-      throw error;
-    }
-    if (remote === null && record.seen !== null) {
-      const failure = new KanbanError('SHARING_DOCUMENT_MISSING', 'The team configuration document is missing from the team storage. It was not removed by this installation.', { address: this.options.providers.describe(record.binding).address });
-      await this.save({ ...record, providerState: provider.state?.() ?? record.providerState, lastError: { code: failure.code, message: failure.message } });
-      throw failure;
-    }
-    return remote;
-  }
-
-  /** Any read or write failure is an availability/integrity fact the interface must show. */
   private async persistFailure(record: HubSharingRecord, error: unknown): Promise<void> {
     const code = error instanceof KanbanError ? error.code : 'SHARING_FAILED';
     const message = error instanceof Error ? error.message : String(error);
@@ -685,33 +728,73 @@ export class HubSharingService {
 
   private async removeBinding(hubId: string): Promise<void> {
     const record = this.requireRecord(hubId);
-    try { await this.storeFor(hubId, record.binding, record.providerState).destroy(); }
+    try { await this.layout(hubId, record.binding, record.providerState).destroy(); }
     catch (error) { this.options.report?.(error); }
     await this.options.store.delete(hubId);
     this.options.notify?.();
   }
 
-  private refused(blockers: SharingBlocker[]): KanbanError {
-    return new KanbanError('SHARING_REFUSED', 'The team configuration cannot be applied until these boards are resolved.', { blockers });
-  }
-
   private run<T>(hubId: string, operation: () => Promise<T>): Promise<T> {
     if (this.disposed) throw new KanbanError('PLUGIN_DISPOSED', 'The Kanban plugin is shutting down.');
-    // A nested publishing operation stays refused. The public `exclusive` seam is
-    // the only way to reuse the lane, because a nested `run` would queue behind
-    // the operation that is waiting for it.
-    if (this.active.getStore() !== undefined) throw new KanbanError('SHARING_REENTRANT', 'A publishing operation cannot start inside another publishing operation.');
-    const active = (this.lanes.get(hubId) ?? 0) + 1;
-    this.lanes.set(hubId, active);
-    this.inflight.add(hubId);
-    if (active === 1) this.options.notify?.();
-    const prior = this.tails.get(hubId) ?? Promise.resolve();
-    const execution = prior.then(() => this.active.run(hubId, operation));
-    this.tails.set(hubId, execution.then(() => undefined, () => undefined));
-    return execution.finally(() => {
-      const remaining = (this.lanes.get(hubId) ?? 1) - 1;
-      if (remaining <= 0) { this.lanes.delete(hubId); this.inflight.delete(hubId); this.options.notify?.(); }
-      else this.lanes.set(hubId, remaining);
-    });
+    return this.lanes.run(hubId, operation);
   }
+}
+
+/** Carry one renamed stage identifier into a task's references. */
+function renameTaskReferences(task: { columnId: string; pendingTransition?: { fromColumnId: string; columnId: string }; recordedTransition?: { fromColumnId: string; columnId: string }; instructionPending?: { columnId: string } }, from: string, to: string): void {
+  if (task.columnId === from) task.columnId = to;
+  if (task.pendingTransition !== undefined) {
+    if (task.pendingTransition.fromColumnId === from) task.pendingTransition.fromColumnId = to;
+    if (task.pendingTransition.columnId === from) task.pendingTransition.columnId = to;
+  }
+  if (task.recordedTransition !== undefined) {
+    if (task.recordedTransition.fromColumnId === from) task.recordedTransition.fromColumnId = to;
+    if (task.recordedTransition.columnId === from) task.recordedTransition.columnId = to;
+  }
+  if (task.instructionPending !== undefined && task.instructionPending.columnId === from) task.instructionPending.columnId = to;
+}
+
+function lastSequence(log: BoardLogFile): number {
+  return log.events.length === 0 ? log.snapshot.seq : log.events[log.events.length - 1]!.seq;
+}
+
+/**
+ * Compose the manifest this installation would publish: the published order kept,
+ * every held board's current name and scope applied, the boards that entered the
+ * team appended, and the removals dropped.
+ */
+export function composeManifest(input: {
+  readonly current: SharedHubManifest;
+  readonly local: readonly LocalSharedBoard[];
+  readonly pendingRemovals: readonly string[];
+  readonly reserved: Iterable<string>;
+  readonly allocate: (name: string, taken: Set<string>) => string;
+}): { manifest: SharedHubManifest; bindings: Record<string, string> } {
+  const pending = new Set(input.pendingRemovals);
+  const bindings: Record<string, string> = {};
+  for (const board of input.local) if (board.key !== undefined) bindings[board.boardId] = board.key;
+  const held = new Map(input.local.filter(board => board.key !== undefined).map(board => [board.key!, board]));
+  const taken = new Set<string>([...input.reserved, ...input.current.boards.map(entry => entry.key)]);
+  const entries: SharedBoardEntry[] = [];
+  for (const entry of input.current.boards) {
+    if (pending.has(entry.key)) continue;
+    const board = held.get(entry.key);
+    if (board === undefined) { entries.push({ ...entry }); continue; }
+    entries.push(manifestEntry(entry.key, board));
+    held.delete(entry.key);
+  }
+  for (const board of input.local) {
+    if (board.key !== undefined || held.has(board.key ?? '')) continue;
+    if ([...held.values()].includes(board)) continue;
+    if (entries.some(entry => normalizeBoardName(entry.name) === normalizeBoardName(board.name))) continue;
+    const key = input.allocate(board.name, taken);
+    taken.add(key);
+    bindings[board.boardId] = key;
+    entries.push(manifestEntry(key, board));
+  }
+  return { manifest: { version: 3, boards: entries }, bindings };
+}
+
+function manifestEntry(key: string, board: LocalSharedBoard): SharedBoardEntry {
+  return { key, name: board.name, ...(board.projectKeys === undefined ? {} : { projectKeys: [...board.projectKeys] }) };
 }

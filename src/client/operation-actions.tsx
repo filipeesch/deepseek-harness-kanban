@@ -1,5 +1,6 @@
 import React from 'react';
 import type { OperationDescription } from './operation-description.js';
+import { recoveryActionDescriptors, type RecoveryActionId } from './operation-recovery-actions.js';
 
 /**
  * Shared recovery controls for a described context operation. The confirmation,
@@ -15,10 +16,14 @@ export function OperationRecoveryActions({ description, pending = false, context
   onForce?: () => void;
 }) {
   const suffix = context ? ' — ' + context : '';
-  if (!description.retry && !description.return && !description.force) return null;
-  return <div className="kb-actions">
-    {description.force && onForce && <button type="button" className="kb-button kb-danger" disabled={pending} onClick={onForce}>Force remove checkout…{suffix}</button>}
-    {description.retry && onRetry && <button type="button" className="kb-button" disabled={pending} onClick={onRetry}>{pending ? 'Working…' : description.retryLabel + suffix}</button>}
-    {description.return && onReturn && <button type="button" className="kb-button" disabled={pending} onClick={onReturn}>{pending ? 'Working…' : description.returnLabel + suffix}</button>}
-  </div>;
+  const handlers: Record<RecoveryActionId, (() => void) | undefined> = { force: onForce, retry: onRetry, return: onReturn };
+  const actions = recoveryActionDescriptors(description, suffix).filter(action => handlers[action.id] !== undefined);
+  if (actions.length === 0) return null;
+  return <div className="kb-actions">{actions.map(action => <button
+    key={action.id}
+    type="button"
+    className={'kb-button' + (action.tone === 'danger' ? ' kb-danger' : '')}
+    disabled={pending}
+    onClick={handlers[action.id]}
+  >{action.id !== 'force' && pending ? 'Working…' : action.label}</button>)}</div>;
 }

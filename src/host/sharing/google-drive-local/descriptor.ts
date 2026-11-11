@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { DriveDiscoveryView, DriveLocationView } from '../../../shared/types.js';
 import { TEAM_FILES_DIRECTORY } from '../../../shared/types.js';
 import { KanbanError, invariant } from '../../../shared/errors.js';
-import { DirectorySharedConfigStore, normalizeDirectoryState, type DirectoryStoreOptions } from '../directory-store.js';
+import { GoogleDriveLocalLayoutStore, normalizeDirectoryLayoutState } from './layout-store.js';
 import { GuardedTeamFileStore } from '../guarded-team-file-store.js';
 import { DirectoryTeamFileStore, TeamFileDirectory } from '../team-file-directory.js';
 import {
@@ -25,55 +25,25 @@ export interface DriveLocationResolver {
   refresh(): Promise<DriveDiscoveryView>;
 }
 
-export interface GoogleDriveLocalStoreOptions extends DirectoryStoreOptions {
-  /** The discovered location root the folder was selected in. */
-  mountRoot: string;
-  discovery: DriveLocationResolver;
-  platform: NodeJS.Platform;
+export interface GoogleDriveLocalProviderOptions {
+  readonly discovery: DriveLocationResolver;
+  /** Home directory that owns the default team folder suggestion. */
+  readonly home?: string;
+  /** Directory used to resolve a relative selection. */
+  readonly cwd?: string;
+  /** The plugin's managed publishing root, which a binding may never point inside. */
+  readonly managedRoot?: string;
+  readonly platform?: NodeJS.Platform;
 }
 
-/**
- * A directory store that also proves its folder still belongs to the stored
- * Google Drive location. It re-resolves both paths before every operation, so a
- * folder replaced by an outward symlink can never be read or written, and it
- * refuses a location that discovery no longer reports.
- */
-export class GoogleDriveLocalSharedConfigStore extends DirectorySharedConfigStore {
-  private readonly assertMount: () => Promise<void>;
-
-  constructor(driveOptions: GoogleDriveLocalStoreOptions) {
-    super(driveOptions);
-    this.assertMount = createDriveMountGuard(guardOptions(driveOptions));
-  }
-
-  override async ensure(): Promise<void> {
-    await this.assertMount();
-    return super.ensure();
-  }
-
-  override async read(signal?: AbortSignal, cached?: Parameters<DirectorySharedConfigStore['read']>[1]): ReturnType<DirectorySharedConfigStore['read']> {
-    await this.assertMount();
-    return super.read(signal, cached);
-  }
-
-  override async write(document: Parameters<DirectorySharedConfigStore['write']>[0], options: Parameters<DirectorySharedConfigStore['write']>[1], signal?: AbortSignal): ReturnType<DirectorySharedConfigStore['write']> {
-    await this.assertMount();
-    return super.write(document, options, signal);
-  }
+/** A stored setting that must be a nonempty string. */
+function text(value: string | undefined): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
 }
 
-/** The guard options for one bound folder, shared by the document and file stores. */
 function guardOptions(options: { directory: string; mountRoot: string; discovery: DriveLocationResolver; platform: NodeJS.Platform }): DriveMountGuardOptions {
   return { directory: options.directory, mountRoot: options.mountRoot, discovery: options.discovery, platform: options.platform };
 }
-
-export interface GoogleDriveLocalProviderOptions extends FolderPathOptions {
-  discovery: DriveLocationResolver;
-  /** A directory the plugin owns and never accepts as a team storage. */
-  managedRoot?: string;
-}
-
-function text(value: unknown): string | undefined { return typeof value === 'string' && value.length > 0 ? value : undefined; }
 
 function drivePermissionFromInspection(error: unknown): KanbanError | undefined {
   if (!(error instanceof KanbanError) || error.code !== 'SHARING_FOLDER_MISSING') return undefined;
@@ -83,7 +53,12 @@ function drivePermissionFromInspection(error: unknown): KanbanError | undefined 
   return undefined;
 }
 
-/** The Google Drive Local descriptor: continuous synchronization over a folder inside a Drive mount. */
+/**
+ * A directory store that also proves its folder still belongs to the stored
+ * Google Drive location. It re-resolves both paths before every operation, so a
+ * folder replaced by an outward symlink can never be read or written, and it
+ * refuses a location that discovery no longer reports.
+ */
 export function createGoogleDriveLocalProviderDescriptor(options: GoogleDriveLocalProviderOptions): SharingProviderDescriptor {
   const platform = options.platform ?? process.platform;
   const pathOptions: FolderPathOptions = {
@@ -95,7 +70,7 @@ export function createGoogleDriveLocalProviderDescriptor(options: GoogleDriveLoc
   return {
     id: 'google-drive-local',
     label: 'Google Drive Local',
-    syncMode: 'continuous',
+    syncMode: 'explicit',
     defaultIntervalMinutes: 1,
     requiresAuthorization: false,
     normalizeSettings(settings) {
@@ -144,13 +119,14 @@ export function createGoogleDriveLocalProviderDescriptor(options: GoogleDriveLoc
         folderName: path.basename(inspected.path),
       };
     },
-    createStore(_hubId, binding, state) {
+    createLayoutStore(_hubId, binding) {
       if (binding.provider !== 'google-drive-local') throw new KanbanError('SHARING_UNSUPPORTED_STORAGE', 'The configured team storage is not Google Drive Local.', { provider: binding.provider });
       const directory = text(binding.settings.path);
       const mountRoot = text(binding.settings.mountId);
       if (directory === undefined) throw new KanbanError('INVALID_INPUT', 'A Google Drive folder is required.');
       if (mountRoot === undefined) throw new KanbanError('INVALID_INPUT', 'The Google Drive location for this folder is missing.');
-      return new GoogleDriveLocalSharedConfigStore({ directory, mountRoot, discovery: options.discovery, state, platform });
+      const guard = createDriveMountGuard(guardOptions({ directory, mountRoot, discovery: options.discovery, platform }));
+      return new GoogleDriveLocalLayoutStore({ directory }, guard);
     },
     createFileStore(_hubId, binding) {
       if (binding.provider !== 'google-drive-local') throw new KanbanError('SHARING_UNSUPPORTED_STORAGE', 'The configured team storage is not Google Drive Local.', { provider: binding.provider });
@@ -163,7 +139,7 @@ export function createGoogleDriveLocalProviderDescriptor(options: GoogleDriveLoc
       const guard = createDriveMountGuard(guardOptions({ directory, mountRoot, discovery: options.discovery, platform }));
       return new GuardedTeamFileStore(guard, new DirectoryTeamFileStore(new TeamFileDirectory(path.join(directory, TEAM_FILES_DIRECTORY))));
     },
-    normalizeState(state: ProviderState): ProviderState { return normalizeDirectoryState(state); },
+    normalizeState(state: ProviderState): ProviderState { return normalizeDirectoryLayoutState(state); },
   };
 }
 

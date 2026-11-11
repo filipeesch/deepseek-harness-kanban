@@ -43,7 +43,9 @@ export function TeamSettings({ hub, sharing, auth, api }: { hub: HubState; shari
     {bound && (sharing.supportsFiles
       ? <p className="kb-hint">Team files are the documents the agent tools search, read, create, edit, and delete. They live in <code>team-files/</code> in this storage, and a deleted file moves to <code>team-files/.trash/</code>.</p>
       : <p className="kb-hint">Team files are unavailable with {sharing.providerLabel}. Connect a Git repository, a local folder, or a Google Drive Local folder to use them.</p>)}
-    {sharing?.error?.code === 'SHARING_DOCUMENT_VERSION_UNSUPPORTED' && <p className="kb-error" role="alert"><strong>Update the plugin</strong><span>This Hub's team configuration was written by a newer plugin version. Reading and publishing stay blocked until the plugin is updated.</span></p>}
+    {/* The remedy belongs to the panel: it is shown for the stored failure and for
+        the failure the action just reported. */}
+    {(sharing?.error?.code === 'SHARING_DOCUMENT_VERSION_UNSUPPORTED' || error?.code === 'SHARING_DOCUMENT_VERSION_UNSUPPORTED') && <p className="kb-error" role="alert"><strong>Update the plugin</strong><span>This Hub's team configuration was written by a newer plugin version. Reading and publishing stay blocked until the plugin is updated.</span></p>}
     <Panel hub={hub} sharing={sharing} auth={auth} act={act} pending={pending} api={api} />
     {errorBlockers.length > 0 && <Blockers blockers={errorBlockers} />}
     <ErrorBlock error={error} />

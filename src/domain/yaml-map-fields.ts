@@ -23,6 +23,19 @@ export function authoredScalar(value: string): string {
   return "'" + value.replace(/'/g, "''") + "'";
 }
 
+/** Render one authored text field, using a block scalar when the value spans lines. */
+export function textField(key: string, value: string, indent: string, flow: boolean): string {
+  // A flow mapping cannot hold a block scalar, so a multiline value is quoted there.
+  if (flow) return key + ': ' + authoredScalar(value);
+  if (!value.includes('\n')) return key + ': ' + authoredScalar(value);
+  const lines = value.split('\n');
+  const trailingNewline = value.endsWith('\n');
+  const body = trailingNewline ? lines.slice(0, -1) : lines;
+  const blockSafe = body.every(line => !line.startsWith(' ') && !line.endsWith(' ') && !line.includes(String.fromCharCode(9)) && !/[\u0000-\u0008\u000b-\u001f]/.test(line));
+  if (!blockSafe) return key + ': ' + JSON.stringify(value);
+  return key + ': ' + (trailingNewline ? '|' : '|-') + '\n' + body.map(line => indent + '  ' + line).join('\n');
+}
+
 /**
  * Render one authored field, or `null` to remove it. `existing` is the field's
  * current value node, which lets a renderer keep the authored collection style;

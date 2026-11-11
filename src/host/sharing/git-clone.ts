@@ -138,6 +138,12 @@ export class GitClone {
     throw gitFailure('show', result);
   }
 
+  /** Whether one path exists at one commit, without reading its content. */
+  async hasFile(commit: string, relativePath: string): Promise<boolean> {
+    const result = await this.run(['cat-file', '-e', commit + ':' + relativePath]);
+    return result.exitCode === 0;
+  }
+
   async resetHard(commit: string): Promise<void> { await this.require(['reset', '--hard', '--quiet', commit]); }
 
   /** Whether no tracked file is modified, so a hard reset cannot discard local work. */
@@ -149,6 +155,14 @@ export class GitClone {
   /** Stage the given paths and commit them; false when Git found nothing to commit. */
   async commitPaths(paths: readonly string[], message: string, options: { all?: boolean } = {}): Promise<boolean> {
     if (paths.length > 0) await this.require(options.all === true ? ['add', '-A', '--', ...paths] : ['add', '--', ...paths]);
+    const committed = await this.run([...COMMIT_IDENTITY, 'commit', '--quiet', '-m', message]);
+    if (committed.exitCode === 0) return true;
+    if (/nothing to commit|no changes added/i.test(committed.stdout + committed.stderr)) return false;
+    throw gitFailure('commit', committed);
+  }
+
+  /** Commit what is already staged, which is how a removal records itself. */
+  async commitStaged(message: string): Promise<boolean> {
     const committed = await this.run([...COMMIT_IDENTITY, 'commit', '--quiet', '-m', message]);
     if (committed.exitCode === 0) return true;
     if (/nothing to commit|no changes added/i.test(committed.stdout + committed.stderr)) return false;
