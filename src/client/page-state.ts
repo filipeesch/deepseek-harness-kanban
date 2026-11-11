@@ -13,10 +13,12 @@ export interface BoardPageState {
   drawers: Record<string, TaskPageState>;
   /** The presentation in use; the board resets it to the active board's default. */
   view: WorkflowView;
+  /** The team-state signature the user dismissed, per Hub; this page session only. */
+  dismissedTeamBanner: Record<string, string>;
 }
 
 export function createBoardPageState(): BoardPageState {
-  return { search: '', projectFilter: '', selectedTaskId: null, drawers: Object.create(null) as Record<string, TaskPageState>, view: 'board' };
+  return { search: '', projectFilter: '', selectedTaskId: null, drawers: Object.create(null) as Record<string, TaskPageState>, view: 'board', dismissedTeamBanner: Object.create(null) as Record<string, string> };
 }
 
 export function createTaskPageState(): TaskPageState { return { section: 'Conversations', conversationId: null }; }

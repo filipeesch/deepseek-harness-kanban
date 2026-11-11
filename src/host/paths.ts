@@ -1,4 +1,11 @@
+import { lstat } from 'node:fs/promises';
 import path from 'node:path';
+
+/** Whether a filesystem entry exists; a missing path answers false instead of throwing. */
+export async function entryExists(value: string): Promise<boolean> {
+  try { await lstat(value); return true; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+}
 
 /**
  * Directory identity used to detect that two bindings address one folder and to

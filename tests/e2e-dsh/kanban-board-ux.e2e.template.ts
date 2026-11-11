@@ -231,7 +231,7 @@ it('refuses a team configuration written by a newer plugin version', async () =>
   await expect(page.getByRole('button', { name: 'Sync now' })).toBeVisible();
 
   // A teammate on a newer plugin publishes a document this version cannot read.
-  await writeFile(documentPath, ['version: 3', 'boards: []', 'newFormatField: true', ''].join('\n'), 'utf8');
+  await writeFile(documentPath, ['version: 4', 'boards: []', 'newFormatField: true', ''].join('\n'), 'utf8');
   await page.getByRole('button', { name: 'Sync now' }).click();
   // The panel states the remedy; the failed command also reports the raw message.
   await expect(page.getByText('Update the plugin', { exact: true })).toBeVisible();

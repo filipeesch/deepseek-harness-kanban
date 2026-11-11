@@ -135,7 +135,7 @@ A task without an associated worktree SHALL NEVER cause deletion of its base pro
 - **THEN** neither /repos/platform/services/api nor /repos/platform is removed as task cleanup
 
 ### Requirement: Background deletion admission and progress
-A confirmed task deletion or worktree-only removal SHALL be durably recorded before any slow work begins. The host SHALL decide admission from persisted state only: the task exists, its recorded worktree binding still matches the confirmed target, no other context operation holds the task, and no pending transition is mid-delivery. Admission SHALL NOT inspect Git, native conversations, or the filesystem, and SHALL NOT keep the interactive command lane busy for such work. After admission the operation SHALL be marked queued and SHALL execute in the background through one host-owned queue with one lane per repository: at most one destructive operation SHALL run in a lane, and operations on tasks in different repositories MAY run concurrently. Every lane SHALL begin with the authoritative preflight, covering conversation idleness, canonical target stability, checkout sharing, and local-change detection. A busy conversation SHALL move the operation to waiting, which resumes once every conversation is idle. Any other preflight failure SHALL be recorded as a failed operation naming its failing phase instead of rejecting the command. The command response SHALL return before the worktree removal, conversation directory returns, native archiving, or final record removal complete. The board and its commands SHALL remain usable while an operation is admitted, queued, or executing. A queued or in-progress operation SHALL resume after a plugin restart, ordered by its recorded creation time within its lane, and shutting down the plugin SHALL NOT discard its journal.
+A confirmed task deletion or worktree-only removal SHALL be durably recorded before any slow work begins. The host SHALL decide admission from persisted state only: the task exists, its recorded worktree binding still matches the confirmed target, no other context operation holds the task, and no pending transition is mid-delivery. Admission SHALL NOT inspect Git, native conversations, or the filesystem, and SHALL NOT keep the interactive command lane busy for such work. After admission the operation SHALL be marked queued and SHALL execute in the background through one host-owned queue with one lane per repository: at most one destructive operation SHALL run in a lane, and operations on tasks in different repositories MAY run concurrently. Every lane SHALL begin with the authoritative preflight, covering conversation idleness, canonical target stability, checkout sharing, and local-change detection. A busy conversation SHALL move the operation to waiting, which resumes once every conversation is idle. Any other preflight failure SHALL be recorded as a failed operation naming its failing phase instead of rejecting the command. The command response SHALL return before the worktree removal, conversation directory returns, native archiving, or final record removal complete. The board and its commands SHALL remain usable while an operation is admitted, queued, or executing. A queued or in-progress operation SHALL resume after a plugin restart, ordered by its recorded creation time within its lane, and shutting down the plugin SHALL NOT discard its journal. Once every conversation has returned to the base project and the operation still has a checkout to remove, the checkout removal and the native conversation archiving SHALL proceed concurrently, and the deletion SHALL complete only after both have finished. Each of those two steps SHALL record its own failing phase, and the progress of each SHALL remain visible while they overlap. When both steps fail, the recorded failing phase SHALL be the archiving step, because archived native conversations cannot be restored.
 
 #### Scenario: Admission returns before cleanup
 - **WHEN** a confirmed deletion is admitted from persisted state
@@ -191,6 +191,29 @@ A confirmed task deletion or worktree-only removal SHALL be durably recorded bef
 - **WHEN** the plugin starts and a task has a queued or in-progress deletion
 - **THEN** the host resumes that deletion in its repository lane
 - **AND** an already-started queue order is not executed twice for the same journal
+
+#### Scenario: Checkout removal and archiving overlap
+- **WHEN** every task conversation has returned to the base project and the deletion still has a checkout to remove and conversations to archive
+- **THEN** the checkout removal and the native archiving run concurrently
+- **AND** the operation stays in progress until both finish
+- **AND** the card and the drawer keep presenting the deletion as in progress while they overlap
+
+#### Scenario: Archiving fails after the checkout was removed
+- **WHEN** the checkout removal succeeded and the native archiving then failed
+- **THEN** the recorded failure names the archiving phase
+- **AND** the operation records the checkout as removed
+- **AND** the task, its notes, and its remaining conversations stay available for recovery
+
+#### Scenario: Both steps fail
+- **WHEN** the checkout removal and the native archiving both fail during the same deletion
+- **THEN** the recorded failing phase names the archiving step
+- **AND** the presented recovery actions are the ones for that failure
+- **AND** the operation does not claim deletion success
+
+#### Scenario: Discard consent is not requested twice
+- **WHEN** the confirmed deletion already carries explicit consent to discard local worktree changes
+- **THEN** the preflight does not ask for that consent again
+- **AND** the removal proceeds without reporting local changes as a new failure
 
 ### Requirement: Force deletion of a shared checkout
 When a task deletion fails the sharing preflight with `SHARED_WORKTREE`, the plugin SHALL offer a force deletion action. The force confirmation SHALL list every blocking task and every blocking native conversation, SHALL state that the shared checkout directory will be removed, and SHALL require explicit opt-in before the destructive action is enabled. Force SHALL bypass only the sharing guard and SHALL NOT bypass host filesystem policy, the separate local-change discard consent, or task idleness requirements. The host SHALL refuse the force deletion while another task has an active context operation on the same checkout, and SHALL present that refusal as a recoverable problem. A successful forced deletion SHALL return the task's own conversations to the base project, remove the shared checkout, archive the task's conversations, remove the card and notes, and preserve the Git branch. For every other task bound to the removed checkout, the plugin SHALL persist an error on that binding that identifies the forced deletion and SHALL NOT silently rewrite that task's effective directory.

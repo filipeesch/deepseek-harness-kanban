@@ -5,6 +5,7 @@
 Let the host find the folders that Google Drive for desktop exposes on this computer and let the user browse them, so a team storage can be chosen without a typed path, an account authorization, or the Google Drive API.
 
 ## Requirements
+
 ### Requirement: Discovery without authorization
 
 The plugin SHALL discover the Google Drive for desktop locations on this computer by reading local evidence only. On macOS it SHALL consider the File Provider mounts under `~/Library/CloudStorage`, the per-account mount points stored in the `com.google.drivefs.settings` preferences, and the legacy mounts under `/Volumes`; on Windows it SHALL consider the settings and mount points under `HKCU\Software\Google\DriveFS` together with the volumes the operating system reports. The plugin SHALL NOT require an OAuth authorization, SHALL NOT call the Google Drive API, and SHALL NOT create, modify, or delete any Google Drive content during discovery. No single source SHALL be required: when one source is unavailable the plugin SHALL use the others, and it SHALL NOT assume a fixed path, a fixed volume name, or a fixed drive letter.
@@ -80,13 +81,13 @@ Each discovered location SHALL be identified by its root path, with the account 
 
 ### Requirement: Folder browsing
 
-The plugin SHALL list one folder level at a time inside the discovered locations and SHALL return the folders of the requested location together with whether the published document `kanban-hub.yaml` is present in it. The plugin SHALL list only directories, SHALL NOT read the content of any file, and SHALL NOT create, modify, rename, or delete anything while browsing. At a location root the plugin SHALL omit the Drive application's own bookkeeping entries and SHALL NOT omit any other folder. A requested location outside every discovered root SHALL be refused, including through `..` segments or symbolic links that resolve outside a root. When a location cannot be read, the response SHALL name the typed reason instead of returning an empty list, and a location with more entries than the supported maximum SHALL be reported as truncated with the number of entries shown.
+The plugin SHALL list one folder level at a time inside the discovered locations and SHALL return the folders of the requested location together with whether the published configuration is present in it, which is the case when the `kanban-hub.yaml` manifest or a `kanban-boards` directory is present. The plugin SHALL list only directories, SHALL NOT read the content of any file, and SHALL NOT create, modify, rename, or delete anything while browsing. At a location root the plugin SHALL omit the Drive application's own bookkeeping entries and SHALL NOT omit any other folder. A requested location outside every discovered root SHALL be refused, including through `..` segments or symbolic links that resolve outside a root. When a location cannot be read, the response SHALL name the typed reason instead of returning an empty list, and a location with more entries than the supported maximum SHALL be reported as truncated with the number of entries shown.
 
 #### Scenario: List a discovered root
 
 - **WHEN** the user opens a discovered location
 - **THEN** the plugin returns the directories directly inside it
-- **AND** it reports whether `kanban-hub.yaml` is present there
+- **AND** it reports whether the published configuration is present there
 
 #### Scenario: Navigate into a subfolder
 

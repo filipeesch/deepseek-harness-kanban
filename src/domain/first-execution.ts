@@ -46,6 +46,22 @@ function unresolvedEntry(input: FirstExecutionInput): FirstExecutionEntry | null
 }
 
 /**
+ * The worktree decision for a task that is about to receive its first execution
+ * context: a blocked binding, a default creation, a recorded base project, or no
+ * choice at all. The message preparation and the automatic first execution share
+ * this rule instead of duplicating it.
+ */
+export function worktreeDecision(
+  task: Pick<Task, 'sessionIds' | 'worktree' | 'worktreeDismissed'>,
+  project: Project | undefined,
+): Exclude<FirstExecutionWorktree, 'ask'> {
+  if (unresolvedWorktreeBinding(task, project)) return 'blocked';
+  if (requiresWorktreeDecision(task, project)) return 'create-default';
+  if (task.worktreeDismissed === true) return 'base';
+  return 'none';
+}
+
+/**
  * Decide one first execution. Interactive reproduces the execution-preparation
  * gate: ask for the worktree only while the choice is genuinely unresolved, block
  * on a binding that is not ready, and otherwise present whatever remains. Automatic
@@ -62,13 +78,7 @@ export function planFirstExecution(input: FirstExecutionInput): FirstExecutionPl
     return { start: false, worktree, model: input.modelSeatAvailable, entry: null };
   }
   const entry = unresolvedEntry(input);
-  const worktree: FirstExecutionWorktree = unresolvedWorktreeBinding(task, project)
-    ? 'blocked'
-    : requiresWorktreeDecision(task, project)
-      ? 'create-default'
-      : task.worktreeDismissed === true
-        ? 'base'
-        : 'none';
+  const worktree: FirstExecutionWorktree = worktreeDecision(task, project);
   const start = input.startRequested === true && entry !== null && task.sessionIds.length === 0;
   return { start, worktree: start ? worktree : 'none', model: false, entry };
 }

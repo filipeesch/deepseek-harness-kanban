@@ -168,20 +168,25 @@ describe('background destructive UX', () => {
     await waitFor(() => expect(command).toHaveBeenLastCalledWith({ type: 'worktree.remove', taskId: 't2', confirmed: true, expectedWorktreePath: '/trees/beta' }));
   });
 
-  it('reports a retained plain checkout only after the task is gone', async () => {
-    const { user, command, publish } = mount(plainCheckoutFixture());
+  it('presents a retained checkout only from the host projection and dismisses it on the host', async () => {
+    const { user, command, publish, get } = mount(plainCheckoutFixture());
     await user.click(await screen.findByRole('button', { name: 'Open task Alpha task' }));
     await user.click(screen.getByRole('button', { name: 'Delete task' }));
     const dialog = screen.getByRole('dialog', { name: 'Delete task' });
     command.mockResolvedValueOnce(queuedPlainDeletion(plainCheckoutFixture()));
     await user.click(within(dialog).getByRole('button', { name: 'Delete task' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete task' })).toBeNull());
+    // The client no longer infers retention from its own successful deletion.
     expect(screen.queryByText(/was left on disk/)).toBeNull();
     const completed = queuedPlainDeletion(plainCheckoutFixture());
+    completed.sequence = get().sequence + 1;
     completed.state.tasks = completed.state.tasks.filter(task => task.id !== 't1');
+    completed.retainedCheckouts = [{ path: '/plain', projectId: 'p1', taskTitle: 'Alpha task', reason: 'folder' }];
     act(() => { publish(completed); });
     expect(await screen.findByText(/was left on disk/)).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.getByText(/not Git-managed/)).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Dismiss the retained checkout at /plain' }));
+    await waitFor(() => expect(command).toHaveBeenLastCalledWith({ type: 'retainedCheckout.dismiss', paths: ['/plain'] }));
     expect(screen.queryByText(/was left on disk/)).toBeNull();
   });
 

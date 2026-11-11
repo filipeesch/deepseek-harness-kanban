@@ -26,18 +26,11 @@ Each board SHALL start with a default workflow containing Backlog, Plan, In Prog
 
 ### Requirement: YAML workflow configuration
 
-Each board SHALL support its own workflow configuration in YAML, including the initial stage,
-grouped columns, allowed transitions with an optional condition for each target, optional stage
-entry instructions, each stage's stored placement, each stage's stored size, the board's default
-presentation, and the board's default model. A transition entry SHALL be authored either as a
-bare target identifier or as a mapping that carries the target identifier and an optional
-condition. Both forms SHALL be accepted, neither form SHALL be deprecated, both forms SHALL
-describe the same transition, and a single list MAY mix them. The condition SHALL describe when
-that transition is followed; it SHALL NOT change which transitions the workflow permits. The
-active board's workflow SHALL be used for rendering, transitions, and task creation. The product
-SHALL honor configured transition restrictions by requiring explicit confirmation before a
-restricted transition can proceed, and it SHALL honor column grouping. This version SHALL NOT
-implement WIP limits and SHALL NOT introduce reusable workflow templates.
+Each board SHALL support its own workflow configuration in YAML, including the initial stage, grouped columns, allowed transitions with an optional condition for each target, optional stage entry instructions, each stage's stored placement, each stage's stored size, the board's default presentation, and an optional stable stage identity for each stage. A transition entry SHALL be authored either as a bare target identifier or as a mapping that carries the target identifier and an optional condition. Both forms SHALL be accepted, neither form SHALL be deprecated, both forms SHALL describe the same transition, and a single list MAY mix them. The condition SHALL describe when that transition is followed; it SHALL NOT change which transitions the workflow permits. The active board's workflow SHALL be used for rendering, transitions, and task creation. The product SHALL honor configured transition restrictions by requiring explicit confirmation before a restricted transition can proceed, and it SHALL honor column grouping.
+
+A stage's stable identity SHALL be a value distinct from the stage identifier, SHALL be unique within the board, SHALL be preserved when the identifier or any other stage field is edited, and SHALL be preserved by every edit that does not present it. A workflow whose stages carry no stable identity SHALL be accepted: the configuration is valid without one, and an identity SHALL be assigned before the stage is published to a team. An authored field the editor does not present SHALL survive an edit unchanged.
+
+This version SHALL NOT implement WIP limits and SHALL NOT introduce reusable workflow templates.
 
 #### Scenario: Render a configured column group
 
@@ -110,6 +103,24 @@ implement WIP limits and SHALL NOT introduce reusable workflow templates.
 
 - **WHEN** a stage configures the same targets with and without conditions
 - **THEN** the same requests are permitted and the same requests require confirmation
+
+#### Scenario: Keep a stage identity across an identifier rename
+
+- **WHEN** a workflow configuration carries a stable identity for a stage and that stage's identifier is edited
+- **THEN** the stage keeps its stable identity
+- **AND** the resulting workflow is accepted
+
+#### Scenario: Accept a workflow without stage identities
+
+- **WHEN** a board whose stages carry no stable identity is opened
+- **THEN** the configuration is accepted and the board renders normally
+- **AND** no identity is fabricated while the board stays unpublished
+
+#### Scenario: Preserve an authored identity the editor does not present
+
+- **WHEN** the user edits one stage of a workflow whose stages carry stable identities
+- **THEN** every stage keeps its authored identity
+- **AND** no identity is moved to another stage
 
 ### Requirement: Top-level task creation
 The active board SHALL provide the New task action in each of its presentations: at the top of its workflow's configured initial column in the column board, and in the header of that stage in the workflow diagram as defined by `workflow-view` Task creation in the initial stage. The two presentations SHALL open one shared creation experience, and neither SHALL build creation inputs, enablement, or receipt handling of its own. It SHALL collect a title, description, and project, an Auto mode option that is off by default, and, only when the initial stage has an entry instruction, a Start execution now option that is on by default. The project input SHALL offer only the projects of the active Hub that the active board allows, as defined by Board project scope configuration; a project that the board does not allow SHALL NOT be offered and SHALL NOT be accepted. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. A board that allows no project SHALL present no selectable project and SHALL explain that the board accepts no new task, and saving SHALL be unavailable. Saving a new task SHALL place it in the active board's configured initial stage whichever presentation opened it, and SHALL record the selected auto-mode value. The board SHALL NOT offer any other stage as a creation target. When the initial stage has an entry instruction and the Start execution now option remains enabled, saving SHALL start the automatic first execution defined by Automatic first execution on task creation. Otherwise, saving SHALL NOT create a native DSH conversation, a workspace, or an agent execution. The board header SHALL NOT provide a separate New task action.
@@ -710,6 +721,7 @@ A pause requested by the agent SHALL present the reason the agent recorded, and 
 - **WHEN** the operation, confirmed transition, or automatic-advance state resolves
 - **THEN** the corresponding status is no longer presented in the status region
 - **AND** reading a conversation does not clear an automatic-advance pause by itself
+
 ### Requirement: Host-themed board controls
 The board SHALL follow the host application's light and dark appearance for its primary actions, focus indicators, and selection accents. Enabled primary actions SHALL use host theme colors for their fill, foreground, and hover state in both appearances. Primary-action text SHALL maintain at least 4.5:1 contrast against its fill at rest and on hover. The board SHALL NOT use the browser's selection highlight color as a product fill or accent.
 
@@ -1038,7 +1050,8 @@ The product SHALL provide multiple boards inside each Hub. A board SHALL have a 
 - **THEN** the workflows and tasks of every other board are unchanged
 
 ### Requirement: Board creation and lifecycle
-Creating a board SHALL require a name and SHALL initialize it with the default workflow. Renaming a board SHALL NOT change its tasks, workflow, conversations, or worktrees. A board SHALL be deletable only when it contains no tasks. Deleting a board that is bound to the team's shared configuration SHALL require choosing whether the removal applies only to this installation or to the team. A local-only removal SHALL remove the board locally and SHALL keep it out of later team updates. A team-wide removal SHALL remove the board locally and SHALL be included in the team's shared configuration on the next synchronization: the next explicit publish for Git, or the next automatic synchronization for Google Drive or a local folder. Deleting the last board SHALL leave the Hub with no boards and SHALL present the Hub's create-board empty state. Deleting a board SHALL NOT delete its projects, project directories, worktrees, branches, native conversations, or native workspaces.
+
+Creating a board SHALL require a name and SHALL initialize it with the default workflow. Renaming a board SHALL NOT change its tasks, workflow, conversations, or worktrees. A board SHALL be deletable only when it contains no tasks. Deleting a board that is bound to the team's published configuration SHALL require choosing whether the removal applies only to this installation or to the team. A local-only removal SHALL remove the board locally and SHALL keep it out of later team updates. A team-wide removal SHALL remove the board locally and SHALL be included in the team's published configuration when the user next publishes the Hub manifest; a team-wide removal SHALL NOT be sent by any automatic action. Deleting the last board SHALL leave the Hub with no boards and SHALL present the Hub's create-board empty state. Deleting a board SHALL NOT delete its projects, project directories, worktrees, branches, native conversations, or native workspaces.
 
 #### Scenario: Create a board with the default workflow
 - **WHEN** the user creates a board with a valid name
@@ -1055,30 +1068,32 @@ Creating a board SHALL require a name and SHALL initialize it with the default w
 - **THEN** the board is not deleted and the plugin reports how many tasks block it
 
 #### Scenario: Choose the scope of a board removal
-- **WHEN** the user deletes a board that is bound to the team's shared configuration and the board has no tasks
+- **WHEN** the user deletes a board that is bound to the team's published configuration and the board has no tasks
 - **THEN** the confirmation offers removing it only from this installation or for the team
 - **AND** no deletion happens before one of those choices
 
 #### Scenario: Remove a board only from this installation
 - **WHEN** the user confirms removing a published board only from this installation
 - **THEN** the board disappears from this installation
-- **AND** the shared document is unchanged
+- **AND** the published configuration is unchanged
 - **AND** later team updates do not recreate the board here
 
 #### Scenario: Remove a board for the team
-- **WHEN** the user confirms removing a published board for the team on a Git binding
+- **WHEN** the user confirms removing a published board for the team
 - **THEN** the board disappears from this installation
-- **AND** the removal is included in the next publish of that Hub
+- **AND** the removal is included in the next publish of the Hub manifest
 
 #### Scenario: Remove a board for the team on Google Drive
 - **WHEN** the user confirms removing a published board for the team on a Google Drive binding
 - **THEN** the board disappears from this installation
-- **AND** the removal is included in the team's shared configuration on the next automatic synchronization
+- **AND** the removal is included in the team's published configuration when the Hub manifest is published
+- **AND** nothing is sent by an automatic check
 
 #### Scenario: Remove a board for the team on a local folder
 - **WHEN** the user confirms removing a published board for the team on a local folder binding
 - **THEN** the board disappears from this installation
-- **AND** the removal is written into `kanban-hub.yaml` on the next automatic synchronization
+- **AND** the removal is written into the `kanban-hub.yaml` manifest when the user publishes the manifest
+- **AND** nothing is sent by an automatic check
 
 #### Scenario: Delete the last board
 - **WHEN** the user confirms deletion of the only board in a Hub and that board has no tasks
@@ -1349,32 +1364,112 @@ The active board SHALL keep its frame stable while a command is in flight. Comma
 - **THEN** a board-level notice states the failure
 - **AND** no global saving indicator or live save announcement is added for that command
 
+### Requirement: Board notice dismissal
+
+The active board SHALL present one dismiss control on each notice it allows the user to dismiss: a retained-checkout entry, the board command-failure notice, and the team-changes banner. The control SHALL be a compact icon-only button at the notice's trailing edge, SHALL carry an accessible name that identifies the notice it dismisses, SHALL have a visible tooltip, SHALL be reachable and operable with the keyboard, and SHALL NOT displace the notice's message, facts, or actions.
+
+The board SHALL NOT offer a dismiss control on a notice that reports work still to resolve: the board load failure, a failed destructive operation, and a project relocation that is waiting or failed. Those notices clear only from host state or from their own recovery action.
+
+Dismissing one notice SHALL remove only that notice. When the dismissed notice was the last dismissible notice on the board, focus SHALL move to the board body; otherwise focus SHALL move to the dismiss control of the next dismissible notice. A dismissal SHALL NOT change task, project, workflow, or publishing state.
+
+A dismissed board command-failure notice SHALL remain dismissed for the current page session, SHALL be replaced by the next failure, and SHALL NOT be stored on the host. Dismissing a retained-checkout entry SHALL be recorded by the host, as defined by the board destructive-operation notice requirement in this capability. Dismissing the team-changes banner SHALL follow the dismissible team-changes banner requirement in `hub-sharing`.
+
+#### Scenario: Dismiss a board command failure
+
+- **WHEN** the board presents a notice that the last command failed and the user activates its dismiss control
+- **THEN** the notice is removed from the board
+- **AND** the card, drawer, and operation surfaces keep whatever status they already present
+
+#### Scenario: The dismiss control is keyboard operable
+
+- **WHEN** keyboard focus reaches a dismissible notice's dismiss control
+- **THEN** the control exposes an accessible name for the notice it dismisses
+- **AND** activating it with the keyboard dismisses that notice
+
+#### Scenario: Focus moves after a dismissal
+
+- **WHEN** the user dismisses a notice and another dismissible notice remains
+- **THEN** focus moves to that notice's dismiss control
+- **WHEN** no dismissible notice remains
+- **THEN** focus moves to the board body
+
+#### Scenario: A notice that still needs resolution has no dismiss control
+
+- **WHEN** the board reports a load failure, a failed destructive operation, or an unresolved project relocation
+- **THEN** the notice presents no dismiss control
+- **AND** its recovery action or its owning surface stays available
+
+#### Scenario: A reload does not restore a dismissed command failure
+
+- **WHEN** the user dismisses a board command-failure notice and reloads the page
+- **THEN** the board presents no failure notice until another command fails
+
 ### Requirement: Board destructive-operation notice
-The active board SHALL present one persistent notice above the board body while a destructive operation is queued or running, while a destructive operation needs attention, or while a deletion retained a checkout path on disk. The notice SHALL summarize in-progress and queued deletions and worktree removals with the affected task titles. For a failed operation, the notice SHALL identify the task and offer recovery actions appropriate to the recorded operation, including retry, return when permitted, and force when the failure is `SHARED_WORKTREE`. The notice SHALL update from host state without a reload, SHALL not claim success for an unresolved or failed operation, and SHALL NOT replace the drawer operation status or the card status. A completed deletion that retained a checkout path — because the checkout is not Git-managed or because the project path or Git root could not be resolved — SHALL be reported with that path and SHALL be dismissible.
+
+The active board SHALL present one persistent notice above the board body while a destructive operation is queued or running, while a destructive operation needs attention, or while a deletion retained a checkout path on disk. The notice SHALL present running, queued, and failed operations in an operation group and retained checkouts in a retained group; the operation group SHALL NOT be dismissible, and the retained group SHALL be dismissible.
+
+The operation group SHALL summarize in-progress and queued deletions and worktree removals with the affected task titles. For a failed operation, the operation group SHALL identify the task and offer recovery actions appropriate to the recorded operation, including retry, return when permitted, and force when the failure is `SHARED_WORKTREE`.
+
+The retained group SHALL have its own heading, separate from the operation group, and SHALL report each retained path with the reason its checkout was kept: the checkout is not Git-managed, or the project path or Git root could not be resolved. Each retained entry SHALL be dismissible on its own, and the retained group SHALL offer one action that dismisses every entry it reports, present whenever it reports more than one. Dismissing a retained entry SHALL record the dismissal on the host, SHALL leave the directory on disk untouched, SHALL NOT affect any task, and SHALL NOT be undone by a reload, a panel switch, or another client. A retained record whose directory no longer exists SHALL be removed without a user action.
+
+The notice SHALL update from host state without a reload, SHALL not claim success for an unresolved or failed operation, and SHALL NOT replace the drawer operation status or the card status.
 
 #### Scenario: Show queued and in-progress deletions
+
 - **WHEN** one or more accepted deletions are queued or executing
 - **THEN** the board notice identifies the affected tasks and their aggregate state
 - **AND** the rest of the board remains usable
+- **AND** the operation group presents no dismiss control
 
 #### Scenario: Show a failed destructive operation with recovery
+
 - **WHEN** an accepted deletion or worktree removal fails
 - **THEN** the board notice presents the failure and the recovery actions
 - **AND** it offers force only when the failure is `SHARED_WORKTREE`
 - **AND** it offers return only when returning the task's conversations is permitted
+- **AND** the operation group presents no dismiss control
 
 #### Scenario: Report a retained plain checkout
-- **WHEN** a deletion completes and leaves a plain checkout on disk
-- **THEN** the board notice reports the retained path
-- **AND** the user can dismiss the report
+
+- **WHEN** a deletion completes and leaves a plain checkout on disk because its project is not Git-managed
+- **THEN** the retained group reports the retained path
+- **AND** the retained group reports that the checkout is not Git-managed
+- **AND** the retained group offers a dismiss control for that entry
 
 #### Scenario: Report a retained unverifiable checkout
+
 - **WHEN** a deletion completes after leaving a checkout on disk because the project path or Git root could not be resolved
-- **THEN** the board notice reports the retained checkout path
+- **THEN** the retained group reports the retained checkout path
+- **AND** the retained group reports that the project path or Git root could not be resolved
 - **AND** it does not report that checkout as removed
-- **AND** the user can dismiss the report
+- **AND** the retained group offers a dismiss control for that entry
+
+#### Scenario: Dismiss one retained checkout
+
+- **WHEN** the user dismisses one entry of the retained group
+- **THEN** that entry is removed from the board
+- **AND** every other entry of the retained group stays presented
+- **AND** the retained checkout directory remains on disk
+
+#### Scenario: Dismiss every retained checkout
+
+- **WHEN** the retained group reports more than one entry and the user activates its dismiss-all action
+- **THEN** every reported entry is removed from the board
+- **AND** the retained group is no longer presented when no retained checkout remains
+
+#### Scenario: A dismissed retained checkout stays dismissed
+
+- **WHEN** the user dismisses a retained entry and then switches the Kanban panel, or reloads, or connects another client
+- **THEN** that entry is not presented again
+
+#### Scenario: Prune a retained checkout whose directory is gone
+
+- **WHEN** the directory of a retained checkout no longer exists
+- **THEN** the entry is removed from the board without a user action
+- **AND** no other retained entry is removed for that reason
 
 #### Scenario: Notice clears when the operation resolves
+
 - **WHEN** every tracked queued or failed destructive operation resolves or is cleared
 - **THEN** the notice no longer presents that operation
 - **AND** the card and drawer status remain the authoritative per-task surfaces
@@ -1520,6 +1615,7 @@ The paused state SHALL also present a pause requested by the agent as defined by
 - **WHEN** an enabled task has a recorded transition that no longer resolves and carries no recorded pause
 - **THEN** the control presents itself as pressed
 - **AND** activating it disables auto mode instead of resuming
+
 ### Requirement: Automatic advance after a completed turn
 When a conversation of a task with auto mode enabled ends a turn whose reason is `completed`, and no open conversation of the task is running a turn, and the task has no pending user work as defined by Pending user work, and the task does not carry the pause requested by the agent, the host SHALL admit exactly one automatic advance. The host SHALL perform the advance without requiring the board to be mounted, without a confirmation, without a conversation picker, and without arming the timed stage instruction. An admitted advance SHALL be durable: reloading the board SHALL NOT cancel it, and a host restart SHALL dispatch it when it had not been dispatched.
 
@@ -1610,6 +1706,7 @@ The host SHALL NOT replay a turn that ended while it was not observing the task'
 - **WHEN** the host starts and a task's last turn ended while the host was not observing it
 - **THEN** no advance is admitted for that turn
 - **AND** the task remains in its stage until its next completed turn
+
 ### Requirement: Automatic advance destination and dispatch
 
 The automatic advance destination SHALL be the stage of the task's recorded transition for its current stage while that transition resolves. Otherwise it SHALL be the first entry of the current stage's configured transitions, or the stage that follows the current stage in workflow order when the stage does not configure transitions. There SHALL be no default destination when the configured list is empty or the resolved stage is the current stage.
@@ -1745,6 +1842,7 @@ The pause described here SHALL be a diagnostic record, distinct from the pause r
 - **WHEN** the paused task is resumed after a diagnostic pause was also recorded
 - **THEN** both records are cleared
 - **AND** the next completed turn attempts an advance
+
 ### Requirement: Agent-requested task pause
 
 A task SHALL support a pause requested by the agent that suspends its automatic advance while leaving auto mode enabled. The pause SHALL be persisted with the task, SHALL carry a reason written by the agent, and SHALL survive reloads, restarts, and reading a conversation.
@@ -1834,6 +1932,7 @@ The pause SHALL be requested only while the task's auto mode is enabled. A reque
 - **WHEN** the agent pauses a task that has a recorded transition
 - **THEN** the recorded transition and its target stage are unchanged
 - **AND** clearing the recorded transition does not pause the task
+
 ### Requirement: Bulk deletion fan-out
 The board SHALL provide an explicit selection mode that presents a selection control on each card and disables card dragging while active. The user SHALL be able to select multiple tasks across visible stages. A bulk deletion SHALL require one confirmation and SHALL apply the individual task deletion semantics to each selected task. On accept, the board SHALL close the confirmation, SHALL leave selection mode, and SHALL NOT present a result summary. A selected task whose persisted state permits admission SHALL be accepted for background deletion rather than reported as already deleted. A selected task that cannot be admitted SHALL remain on the board and SHALL be reported as a board error naming that task. The board SHALL NOT stop a conversation, resolve an operation, or discard local changes to force a bulk deletion, and SHALL present a later failure of an accepted task through the card status and the destructive-operation notice instead of as a bulk result. Leaving selection mode SHALL clear the selection.
 

@@ -209,8 +209,10 @@ describe('host command orchestration',()=>{
   expect(CommandSchema.parse(retry)).toEqual(retry);
   const cancel={type:'project.relocationCancel' as const,projectId:'project-1'};
   expect(CommandSchema.parse(cancel)).toEqual(cancel);
-  const snapshot=SnapshotSchema.parse({stateRevision:1,conversations:{},sharing:{},retainedCheckouts:[{path:'/trees/x',projectId:'project-1',taskTitle:'Task'}],sequence:1});
+  const snapshot=SnapshotSchema.parse({stateRevision:1,conversations:{},sharing:{},retainedCheckouts:[{path:'/trees/x',projectId:'project-1',taskTitle:'Task',reason:'unresolved'}],sequence:1});
   expect(snapshot.retainedCheckouts).toHaveLength(1);
+  expect(snapshot.retainedCheckouts![0]!.reason).toBe('unresolved');
+  expect(()=>SnapshotSchema.parse({stateRevision:1,conversations:{},sharing:{},retainedCheckouts:[{path:'/trees/x',projectId:'project-1',taskTitle:'Task'}],sequence:1})).toThrow();
  });
  it('accepts the new move and run wire commands and rejects legacy fields',()=>{
   const move={type:'task.move' as const,taskId:'task-1',columnId:'plan'};

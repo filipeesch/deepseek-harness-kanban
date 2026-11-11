@@ -1,4 +1,4 @@
-import { realpath } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { KanbanError } from '../shared/errors.js';
 
@@ -19,4 +19,10 @@ export async function resolveCanonicalPath(value: string, allowMissing = false):
     }
     throw new KanbanError('PATH_UNAVAILABLE', 'The directory cannot be resolved.', { path: candidate, cause: (error as NodeJS.ErrnoException).code });
   }
+}
+/** Resolve one existing directory, rejecting a missing or non-directory path with the shared problem. */
+export async function requireDirectory(value: string): Promise<string> {
+  const canonical = await resolveCanonicalPath(value);
+  if (!(await stat(canonical)).isDirectory()) throw new KanbanError('INVALID_DIRECTORY', 'The selected path is not a directory.', { path: canonical });
+  return canonical;
 }

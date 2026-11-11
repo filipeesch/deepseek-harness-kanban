@@ -12,7 +12,10 @@ export interface BoardSharingPort {
   isBound(hubId: string, boardId: string): boolean;
   noteLocalChange(hubId: string): void;
   removeBoard(hubId: string, boardId: string, scope: 'local' | 'team', name: string): Promise<void>;
-  publish(hubId: string): Promise<void>;
+  /** Publish one board; a board write never publishes another board's draft. */
+  publishBoard(hubId: string, boardId: string): Promise<void>;
+  /** Publish the hub manifest: board names, order, project scopes, and removals. */
+  publishManifest(hubId: string): Promise<void>;
 }
 
 /** The command path keeps the UI publishing flow; the tool path publishes automatically. */
@@ -245,10 +248,20 @@ export class BoardAdministration {
     }
     if (view.conflicts > 0) return { status: 'blocked', reason: 'The Hub has unresolved workflow conflicts.' };
     if (view.blockers.length > 0) return { status: 'blocked', reason: view.blockers[0]!.message };
-    if (view.syncMode === 'continuous') return { status: 'scheduled' };
-    if (view.updates > 0) return { status: 'blocked', reason: 'The Hub has team updates that have not been applied.' };
+    if (boardId === undefined) {
+      try {
+        await sharing.publishManifest(hubId);
+        return { status: 'published' };
+      } catch (error) {
+        const value = problem(error);
+        return value.code === 'SHARING_PUBLISH_BLOCKED' || value.code === 'SHARING_NOT_PUBLISHED' ? { status: 'blocked', reason: value.message, error: value } : { status: 'failed', error: value };
+      }
+    }
+    if (view.boards.find(entry => entry.boardId === boardId)?.state === 'updates-available') {
+      return { status: 'blocked', reason: 'This board has team updates that have not been applied.' };
+    }
     try {
-      await sharing.publish(hubId);
+      await sharing.publishBoard(hubId, boardId);
       return { status: 'published' };
     } catch (error) {
       const value = problem(error);
