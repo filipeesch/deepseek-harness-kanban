@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { AutoModePause, Board, BoardSettings, HubSchedule, HubState, HubTask, KanbanMeta, KanbanState, NewTask, Note, Project, ProjectInput, Workflow } from '../shared/types.js';
+import type { AutoModePause, Board, BoardSettings, ContextOperation, HubSchedule, HubState, HubTask, KanbanMeta, KanbanState, NewTask, Note, OperationRequest, Project, ProjectInput, Workflow } from '../shared/types.js';
+import { repositoryLane } from './repository-lane.js';
 import type { HubStorage } from '../shared/ports.js';
 import { HubStateSchema, initialHubState, defaultHubState } from '../domain/hub-schema.js';
 import type { NoteInput, OperationDeps, TaskTextPatch } from '../domain/hub-operations.js';
@@ -33,6 +34,36 @@ export interface TaskSummary {
   readonly unclaimedWorktreePaths: readonly string[];
   readonly operationAttemptPath: string | null;
   readonly pendingWorktreePath: string | null;
+}
+
+/** The recorded context operation as binding decisions need it, without the journal payload. */
+export interface WorktreeOperationRecord {
+  readonly id: string;
+  readonly kind: OperationRequest['kind'];
+  readonly phase: ContextOperation['phase'];
+  readonly targetPath: string | null;
+  readonly requestPath: string | null;
+  readonly createdAt: string;
+}
+/**
+ * One task's checkout binding, without cloning the Hub that owns it. Destructive
+ * decisions, name occupancy, and resume all read this projection. The arrays
+ * belong to the stored snapshot and MUST be treated as read-only.
+ */
+export interface WorktreeBinding {
+  readonly hubId: string;
+  readonly taskId: string;
+  readonly title: string;
+  readonly projectId: string;
+  /** The repository lane this task's project serializes on. */
+  readonly lane: string;
+  readonly sessionIds: readonly string[];
+  readonly worktreePath: string | null;
+  readonly worktreeBranch: string | null;
+  readonly unclaimedWorktreePaths: readonly string[];
+  readonly operationAttemptPath: string | null;
+  readonly pendingWorktreePath: string | null;
+  readonly operation: WorktreeOperationRecord | null;
 }
 
 function storageFailure(operation: 'load' | 'save' | 'delete', error: unknown): KanbanError {
@@ -67,6 +98,7 @@ function parseHub(value: unknown, message: string): HubState {
 export class HubRepository {
   private readonly hubs = new Map<string, HubState>();
   private summaries: readonly TaskSummary[] | undefined;
+  private bindings: readonly WorktreeBinding[] | undefined;
   private projectSummaryCache: readonly ProjectSummary[] | undefined;
   private meta: KanbanMeta;
   private readonly listeners = new Set<() => void>();
@@ -197,6 +229,7 @@ export class HubRepository {
 
   private changed(): void {
     this.summaries = undefined;
+    this.bindings = undefined;
     this.projectSummaryCache = undefined;
     for (const listener of [...this.listeners]) {
       try { listener(); } catch { /* An observer cannot roll back or poison a durable commit. */ }
@@ -361,6 +394,49 @@ export class HubRepository {
     }
     this.summaries = summaries;
     return summaries;
+  }
+
+  /**
+   * The lightweight checkout-binding read: one record per task with its binding,
+   * its reserved paths, and its recorded operation. Rebuilt once per repository
+   * change instead of cloning the owning Hub per task. Consumers MUST NOT mutate
+   * the returned values.
+   */
+  worktreeBindings(): readonly WorktreeBinding[] {
+    if (this.bindings !== undefined) return this.bindings;
+    const bindings: WorktreeBinding[] = [];
+    for (const hub of this.hubs.values()) {
+      for (const task of hub.tasks) {
+        const project = hub.projects.find(value => value.id === task.projectId);
+        if (!project) continue;
+        const operation = task.operation;
+        bindings.push({
+          hubId: hub.id,
+          taskId: task.id,
+          title: task.title,
+          projectId: task.projectId,
+          lane: repositoryLane(project),
+          sessionIds: task.sessionIds,
+          worktreePath: task.worktree?.path ?? null,
+          worktreeBranch: task.worktree?.branch ?? null,
+          unclaimedWorktreePaths: (task.unclaimedWorktrees ?? []).map(entry => entry.path),
+          operationAttemptPath: operation?.createAttempt?.path ?? null,
+          pendingWorktreePath: task.pendingTransition?.worktreeRequest?.path ?? null,
+          operation: operation === null
+            ? null
+            : {
+              id: operation.id,
+              kind: operation.request.kind,
+              phase: operation.phase,
+              targetPath: operation.targetPath ?? null,
+              requestPath: operation.request.kind === 'create' || operation.request.kind === 'attach' ? operation.request.path : null,
+              createdAt: operation.createdAt,
+            },
+        });
+      }
+    }
+    this.bindings = bindings;
+    return bindings;
   }
 
   async createHub(name: string): Promise<HubState> {

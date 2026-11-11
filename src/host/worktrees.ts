@@ -2,26 +2,34 @@ import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import { KanbanError, problem } from '../shared/errors.js';
 import type { GitPort, GitTree, SessionPort } from '../shared/ports.js';
-import type { ContextOperation, GitProject, HubState, OperationRequest, Project, RetainedCheckoutReason, Task } from '../shared/types.js';
+import type { ContextOperation, CreateWorktreeInput, GitProject, HubState, OperationRequest, Project, RetainedCheckoutReason, Task, WorktreeDefaults } from '../shared/types.js';
 import { canonicalPath } from './git.js';
 import { isGitProject, requireGitProject } from '../shared/project.js';
 import { WorktreeSharingGuard } from './worktree-sharing.js';
 import { DestructiveExecution, type DestructiveOperationHost } from './destructive-operation.js';
 import { DestructiveAdmission } from './destructive-admission.js';
 import { OperationQueue } from './operation-queue.js';
-import { OperationJournal, requireTask } from './operation-journal.js';
+import { OperationJournal, ProgressJournal, requireTask } from './operation-journal.js';
 import { entryExists } from './paths.js';
-import { repositoryLane } from './repository-lane.js';
+import { ConversationProbe } from './conversation-probe.js';
+import { TaskBindingIndex } from './task-binding-index.js';
+import type { OperationPass } from './destructive-operation.js';
+import type { WorktreeBinding } from './hub-repository.js';
 import { replaceableByDeletion } from '../shared/context-operation.js';
 
 export interface WorktreeStore {
   locate(taskId: string): { hubId: string; hub: HubState; task: Task; project: Project };
   transactTask<T>(taskId: string, change: (draft: HubState) => T): Promise<T>;
-  allTasks(): Task[];
+  /** The lightweight binding projection every destructive decision reads. */
+  worktreeBindings(): readonly WorktreeBinding[];
   /** Whether any task holds a context operation; the resume path avoids cloning Hubs when it is false. */
   hasOperations?(): boolean;
 }
-export interface WorktreeCoordinatorOptions { signal?: AbortSignal; id?: () => string; now?: () => string; onTaskDeleted?: (task: Task, project: Project) => Promise<void>; onCheckoutRetained?: (task: Task, project: Project, path: string, reason: RetainedCheckoutReason) => void; sharing?: WorktreeSharingGuard; /** Shared with project relocation so both serialize on one per-repository lane. */ queue?: OperationQueue }
+/** A creation request as a caller may state it; the coordinator derives any omitted default. */
+export type WorktreeRequest = OperationRequest | ({ kind: 'create' } & CreateWorktreeInput);
+/** Derives the collision-free title defaults creation uses when the request omits them. */
+export interface WorktreeDefaultsPort { derive(taskId: string): Promise<WorktreeDefaults> }
+export interface WorktreeCoordinatorOptions { signal?: AbortSignal; id?: () => string; now?: () => string; index?: TaskBindingIndex; worktreeDefaults?: WorktreeDefaultsPort; onTaskDeleted?: (task: Task, project: Project) => Promise<void>; onCheckoutRetained?: (task: Task, project: Project, path: string, reason: RetainedCheckoutReason) => void; sharing?: WorktreeSharingGuard; /** Shared with project relocation so both serialize on one per-repository lane. */ queue?: OperationQueue }
 type CreateAttempt = NonNullable<ContextOperation['createAttempt']>;
 
 function requireProject(state: HubState, id: string): Project {
@@ -49,6 +57,9 @@ export class WorktreeCoordinator {
   private readonly onTaskDeleted?: (task: Task, project: Project) => Promise<void>;
   private readonly sharing: WorktreeSharingGuard;
   private readonly journal: OperationJournal;
+  private readonly progress: ProgressJournal;
+  private readonly worktreeDefaults: WorktreeDefaultsPort | undefined;
+  private readonly index: TaskBindingIndex;
   private readonly admission: DestructiveAdmission;
   private readonly destructive: DestructiveExecution;
   private readonly queue: OperationQueue;
@@ -65,10 +76,13 @@ export class WorktreeCoordinator {
     this.id = options.id ?? randomUUID;
     this.now = options.now ?? (() => new Date().toISOString());
     this.onTaskDeleted = options.onTaskDeleted;
-    this.sharing = options.sharing ?? new WorktreeSharingGuard(store, sessions);
+    this.index = options.index ?? new TaskBindingIndex(store);
+    this.worktreeDefaults = options.worktreeDefaults;
+    this.sharing = options.sharing ?? new WorktreeSharingGuard(store, sessions, this.index);
     this.journal = new OperationJournal(store, this.now);
+    this.progress = new ProgressJournal(this.journal);
     this.admission = new DestructiveAdmission({ locate: taskId => this.read(taskId) }, this.journal);
-    this.destructive = new DestructiveExecution(store, sessions, git, this.destructiveHost(), this.journal, { now: this.now, sharing: this.sharing, ...(options.onTaskDeleted ? { onTaskDeleted: options.onTaskDeleted } : {}), ...(options.onCheckoutRetained ? { onCheckoutRetained: options.onCheckoutRetained } : {}) });
+    this.destructive = new DestructiveExecution(store, sessions, git, this.destructiveHost(), this.journal, { now: this.now, sharing: this.sharing, index: this.index, ...(options.onTaskDeleted ? { onTaskDeleted: options.onTaskDeleted } : {}), ...(options.onCheckoutRetained ? { onCheckoutRetained: options.onCheckoutRetained } : {}) });
   }
 
   private destructiveHost(): DestructiveOperationHost {
@@ -76,8 +90,6 @@ export class WorktreeCoordinator {
       read: taskId => this.read(taskId),
       assertOpen: () => this.assertOpen(),
       signal: this.signal,
-      idle: (taskId, operationId) => this.idle(taskId, operationId),
-      switchDirectories: (taskId, operationId, target, write, project) => this.switchDirectories(taskId, operationId, target, write, project),
       sourceUnchanged: (taskId, expected) => this.sourceUnchanged(taskId, expected),
     };
   }
@@ -125,15 +137,18 @@ export class WorktreeCoordinator {
     return true;
   }
 
-  async request(taskId: string, request: OperationRequest, options: { background?: boolean } = {}): Promise<HubState> {
-    if (request.kind === 'return') return this.returnToBase(taskId);
+  async request(taskId: string, input: WorktreeRequest, options: { background?: boolean } = {}): Promise<HubState> {
+    if (input.kind === 'return') return this.returnToBase(taskId);
     const current = this.read(taskId);
-    if (!isGitProject(current.project) && request.kind !== 'delete') {
+    if (!isGitProject(current.project) && input.kind !== 'delete') {
       throw new KanbanError('PROJECT_NOT_GIT', 'This project is not a Git repository; Git and worktree actions are unavailable.', { projectId: current.project.id });
     }
     const before = current.hub;
     return this.serial(taskId, async () => {
       this.assertOpen();
+      // Creation may state only what the user chose; everything else is derived once,
+      // at the moment it runs, against the repository as it is now.
+      const request: OperationRequest = input.kind === 'create' ? await this.createRequest(taskId, input) : input;
       if (!['create', 'attach', 'remove', 'delete'].includes(request.kind)) throw new KanbanError('INVALID_OPERATION', 'Unsupported worktree operation.');
       if ((request.kind === 'remove' || request.kind === 'delete') && typeof request.discardChanges !== 'boolean') throw new KanbanError('INVALID_OPERATION', 'Explicit discard consent must be a boolean.');
       const normalized = structuredClone(request);
@@ -163,6 +178,21 @@ export class WorktreeCoordinator {
       }
       return this.hubAfter(taskId, before);
     });
+  }
+
+  /** Normalize one creation request, deriving the collision-free title defaults it omits. */
+  private async createRequest(taskId: string, request: { kind: 'create' } & CreateWorktreeInput): Promise<Extract<OperationRequest, { kind: 'create' }>> {
+    const sourceBranch = request.sourceBranch;
+    if (request.path !== undefined && request.branchName !== undefined) {
+      return { kind: 'create', mode: request.mode, path: request.path, branchName: request.branchName, ...(sourceBranch === undefined ? {} : { sourceBranch }) };
+    }
+    if (request.mode !== 'new') throw new KanbanError('INVALID_INPUT', 'Existing-branch creation requires a branch name and a destination.');
+    const defaults = this.worktreeDefaults;
+    if (!defaults) throw new KanbanError('INVALID_INPUT', 'A branch name and a destination are required to create this worktree.');
+    const derived = await defaults.derive(taskId);
+    if (derived.kind === 'unavailable') throw new KanbanError(derived.reason.code, derived.reason.message, derived.reason.details);
+    const source = sourceBranch ?? derived.sourceBranch;
+    return { kind: 'create', mode: 'new', path: request.path ?? derived.path, branchName: request.branchName ?? derived.branchName, ...(source === undefined ? {} : { sourceBranch: source }) };
   }
 
   private hubAfter(taskId: string, fallback: HubState): HubState { try { return this.store.locate(taskId).hub; } catch { return fallback; } }
@@ -291,12 +321,12 @@ export class WorktreeCoordinator {
     this.resumed = (async () => {
       do {
         this.resumeAgain = false;
-        const tasks = this.store.allTasks().filter(task => task.operation && task.operation.phase !== 'failed');
+        const pending = this.store.worktreeBindings().filter(binding => binding.operation && binding.operation.phase !== 'failed');
         // Each failure remains on its own task; one failing task must not starve others.
-        const destructive = tasks.filter(task => task.operation!.request.kind === 'delete' || task.operation!.request.kind === 'remove').sort((left, right) => left.operation!.createdAt.localeCompare(right.operation!.createdAt));
-        const rest = tasks.filter(task => !destructive.includes(task));
-        for (const task of destructive) this.enqueueDestructive(task.id);
-        await Promise.all(rest.map(task => this.serial(task.id, () => this.drive(task.id)).catch(() => {})));
+        const destructive = pending.filter(binding => binding.operation!.kind === 'delete' || binding.operation!.kind === 'remove').sort((left, right) => left.operation!.createdAt.localeCompare(right.operation!.createdAt));
+        const rest = pending.filter(binding => !destructive.includes(binding));
+        for (const binding of destructive) this.enqueue(binding.lane, binding.taskId, binding.operation!.id);
+        await Promise.all(rest.map(binding => this.serial(binding.taskId, () => this.drive(binding.taskId).catch(() => {}))));
       } while (this.resumeAgain && !this.disposed && !this.signal.aborted);
     })().finally(() => {
       this.resumed = undefined;
@@ -333,15 +363,27 @@ export class WorktreeCoordinator {
     });
   }
 
-  private async idle(taskId: string, operationId: string): Promise<boolean> {
+  /** The pass-scoped idleness gate; records waiting so a busy conversation defers the work. */
+  private async passIdle(taskId: string, operationId: string, pass: OperationPass): Promise<boolean> {
     this.assertOpen();
     const { task } = this.read(taskId);
-    const idle = (await Promise.all(task.sessionIds.map(id => this.sessions.isIdle(id)))).every(Boolean);
-    if (!idle) await this.update(taskId, operationId, (_task, operation) => {
+    const idle = await pass.probe.allIdle(task.sessionIds);
+    if (!idle) await this.wait(taskId, operationId);
+    return idle;
+  }
+
+  /** Keep the progress already accumulated, then record the wait. */
+  private async deferToWaiting(taskId: string, operationId: string): Promise<false> {
+    await this.progress.flush(taskId, operationId);
+    await this.wait(taskId, operationId);
+    return false;
+  }
+
+  private async wait(taskId: string, operationId: string): Promise<void> {
+    await this.update(taskId, operationId, (_task, operation) => {
       if (operation.phase === 'git' && !operation.gitCompleted) operation.error = { code: 'RECOVERY_PENDING', message: 'Waiting to inspect the previously started Git operation.', details: { failedPhase: 'git', gitAttempted: !!operation.createAttempt } };
       operation.phase = 'waiting';
     });
-    return idle;
   }
 
   private async createProof(operation: ContextOperation, project: GitProject): Promise<CreateAttempt | undefined> {
@@ -361,23 +403,30 @@ export class WorktreeCoordinator {
     if (project.id !== expected.id || project.projectPath !== expected.projectPath || project.gitRootPath !== expected.gitRootPath) throw new KanbanError('PROJECT_CONTEXT_CHANGED', 'The project paths changed during the operation.');
   }
 
-  private async switchDirectories(taskId: string, operationId: string, target: string, write: boolean, project: GitProject): Promise<boolean> {
+  private async switchDirectories(taskId: string, operationId: string, target: string, write: boolean, project: GitProject, probe: ConversationProbe): Promise<boolean> {
     const { task } = this.read(taskId);
     await this.git.assertPolicy(project, [target], task.sessionIds, write);
     await this.update(taskId, operationId, (_task, operation) => { operation.phase = 'switching'; operation.targetDirectory = target; });
+    // Every participant must be idle before the first conversation moves; the create
+    // that ran earlier in this pass is not a verdict this step may reuse.
+    if (!await probe.allIdle(task.sessionIds)) return this.deferToWaiting(taskId, operationId);
+    let moved = false;
     for (const id of task.sessionIds) {
-      if (!await this.idle(taskId, operationId)) return false;
       const current = await this.sessions.directory(id);
-      await this.update(taskId, operationId, (_task, operation) => { operation.previousDirectories[id] ??= current; });
+      this.progress.accumulate(taskId, operationId, (_task, operation) => { operation.previousDirectories[id] ??= current; });
       if (await canonicalPath(current, true) !== target) {
         await this.git.assertPolicy(project, [target], [id], write);
-        if (!await this.idle(taskId, operationId)) return false;
+        // The gate above covers the first move. After a conversation has moved, only
+        // this one is re-asked, so a later wake still stops before it moves.
+        if (moved && !await probe.allIdle([id])) return this.deferToWaiting(taskId, operationId);
         this.assertOpen();
         this.sourceUnchanged(taskId, project);
         await this.sessions.setDirectory(id, target, this.signal);
+        moved = true;
       }
-      await this.update(taskId, operationId, (_task, operation) => { if (!operation.switchedSessionIds.includes(id)) operation.switchedSessionIds.push(id); });
+      this.progress.accumulate(taskId, operationId, (_task, operation) => { if (!operation.switchedSessionIds.includes(id)) operation.switchedSessionIds.push(id); });
     }
+    await this.progress.flush(taskId, operationId);
     const participants = this.read(taskId).task.sessionIds;
     if (participants.length !== task.sessionIds.length || participants.some(id => !task.sessionIds.includes(id))) throw new KanbanError('CONTEXT_DIVERGED', 'Task conversations changed during migration.');
     for (const id of task.sessionIds) {
@@ -392,11 +441,14 @@ export class WorktreeCoordinator {
     return true;
   }
 
-  private enqueueDestructive(taskId: string): void {
-    const { task, project } = this.read(taskId);
-    const operation = task.operation;
-    if (!operation || (operation.request.kind !== 'delete' && operation.request.kind !== 'remove')) return;
-    this.enqueue(repositoryLane(project), taskId, operation.id);
+  /** One execution pass over the task: its probe, its directory switch, its repository facts. */
+  private pass(): OperationPass {
+    const probe = new ConversationProbe(this.sessions);
+    return {
+      probe,
+      switchDirectories: (taskId, operationId, target, write, project) => this.switchDirectories(taskId, operationId, target, write, project, probe),
+      repository: (project, sessionIds) => this.git.resolve(project, sessionIds, this.signal),
+    };
   }
 
   private async drive(taskId: string): Promise<'waiting' | 'done'> {
@@ -405,9 +457,10 @@ export class WorktreeCoordinator {
     if (!op) return 'done';
     const operationId = op.id;
     let createInvoked = false;
+    const pass = this.pass();
     try {
-      if (op.request.kind === 'delete' || op.request.kind === 'remove') return await this.destructive.drive(taskId, operationId);
-      if (!await this.idle(taskId, operationId)) return 'waiting';
+      if (op.request.kind === 'delete' || op.request.kind === 'remove') return await this.destructive.drive(taskId, operationId, pass);
+      if (!await this.passIdle(taskId, operationId, pass)) return 'waiting';
       await this.update(taskId, operationId, (_task, operation) => { operation.phase = 'preflight'; delete operation.error; });
       let { task, project } = this.read(taskId);
       const expectedProject = project;
@@ -422,13 +475,16 @@ export class WorktreeCoordinator {
           const proof = await this.createProof(op, gitRepo);
           if (proof || op.gitCompleted) {
             if (!proof) throw new KanbanError('CREATE_RECOVERY_UNVERIFIED', 'This create has no persisted absent-target precondition; use explicit attach instead.');
-            tree = await this.git.inspect(gitRepo, request.path, task.sessionIds);
+            tree = await this.git.inspect(gitRepo, request.path, task.sessionIds, await this.git.resolve(gitRepo, task.sessionIds, this.signal));
             this.assertRecoveredBranch(request, tree);
           } else {
             if (await entryExists(request.path)) throw new KanbanError('WORKTREE_TARGET_EXISTS', 'Create requires an absent destination. Use explicit attach for an existing checkout.', { path: request.path });
             if (await canonicalPath(request.path, true) !== request.path || op.targetPath !== request.path) throw new KanbanError('OPERATION_TARGET_CHANGED', 'The canonical create destination changed before the attempt.');
+            // One repository context for the rest of the creation: branch occupancy,
+            // the Git write, and the created checkout's verification reuse it.
+            const repository = await this.git.resolve(gitRepo, task.sessionIds, this.signal);
             // Validate the source repository and read policy before arming a create intent.
-            await this.git.branches(gitRepo, task.sessionIds);
+            await this.git.branches(gitRepo, task.sessionIds, repository);
             const gitRootPath = await canonicalPath(gitRepo.gitRootPath);
             this.assertOpen();
             this.sourceUnchanged(taskId, expectedProject);
@@ -441,10 +497,10 @@ export class WorktreeCoordinator {
             this.assertOpen();
             this.sourceUnchanged(taskId, expectedProject);
             createInvoked = true;
-            tree = await this.git.create(gitRepo, request, task.sessionIds, this.signal);
+            tree = await this.git.create(gitRepo, request, task.sessionIds, this.signal, repository);
             this.assertRecoveredBranch(request, tree);
           }
-        } else tree = await this.git.inspect(gitRepo, request.path, task.sessionIds);
+        } else tree = await this.git.inspect(gitRepo, request.path, task.sessionIds, await this.git.resolve(gitRepo, task.sessionIds, this.signal));
         await this.update(taskId, operationId, (draft, operation) => {
           draft.worktree = { path: tree.path, branch: tree.branch, owned: request.kind === 'create' || (draft.worktree?.path === tree.path && draft.worktree.owned), status: 'preparing' };
           operation.targetPath = tree.path;
@@ -455,7 +511,7 @@ export class WorktreeCoordinator {
         target = await this.git.projectDirectory(gitProject);
       }
       this.sourceUnchanged(taskId, expectedProject);
-      if (gitProject !== undefined && !await this.switchDirectories(taskId, operationId, target, request.kind === 'create' || request.kind === 'attach', gitProject)) return 'waiting';
+      if (gitProject !== undefined && !await this.switchDirectories(taskId, operationId, target, request.kind === 'create' || request.kind === 'attach', gitProject, pass.probe)) return 'waiting';
       ({ task, project } = this.read(taskId));
       await this.update(taskId, operationId, draft => {
         this.sourceUnchanged(taskId, expectedProject);
@@ -474,8 +530,10 @@ export class WorktreeCoordinator {
         catch { /* the task may already be gone */ }
         throw error;
       }
+      await this.progress.flush(taskId, operationId).catch(() => undefined);
       const current = this.store.locate(taskId).task;
-      if (current?.operation?.id === operationId) {
+      // A step that already recorded its own failure keeps that attribution.
+      if (current?.operation?.id === operationId && current.operation.phase !== 'failed') {
         const failure = problem(error);
         const recorded = current.operation.createAttempt;
         const possibleCreate = !!recorded && !beforeCreateFailure(error) && (current.operation.gitCompleted || (!!op.createAttempt || createInvoked) && await entryExists(recorded.path));

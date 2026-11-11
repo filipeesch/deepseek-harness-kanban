@@ -122,7 +122,7 @@ export class KanbanApp {
    },
    ...(options.report?{report:options.report}:{}),
   });
-  this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,queue:this.operationQueue,onTaskDeleted:async task=>{try{await this.workspaceCoordinator?.cleanup(task as HubTask);}catch(error){this.options.report?.(error);}},onCheckoutRetained:(task,project,retainedPath,reason)=>this.retainCheckout(task,project,retainedPath,reason)});
+  this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,queue:this.operationQueue,worktreeDefaults:{derive:async taskId=>this.worktreeDefaultsFor(this.locatedTask(taskId).task)},onTaskDeleted:async task=>{try{await this.workspaceCoordinator?.cleanup(task as HubTask);}catch(error){this.options.report?.(error);}},onCheckoutRetained:(task,project,retainedPath,reason)=>this.retainCheckout(task,project,retainedPath,reason)});
   this.relocations=new ProjectRelocationCoordinator(new RepositoryProjectRelocationStore(hubs),sessions,git,{queue:this.operationQueue,signal:options.signal,...(this.workspaceCoordinator?{workspaces:{bind:async(hubId,project)=>{await this.workspaceCoordinator!.rebindProject(hubId,project);}}}:{}),...(options.report?{report:options.report}:{})});
   this.pendingWork=new PendingWorkRunner({resumeWorktrees:async()=>{await this.worktrees.resumePending();},resumeRelocations:async()=>{await this.relocations.resumePending();},dispatchPending:async()=>{await this.dispatchPending();},report:error=>this.options.report?.(error)});
   this.attention=new AttentionCoordinator({source:this.factsSource,tasks:()=>this.attentionTasks(),runPendingWork:async()=>{await this.pendingWork.run();},onChange:()=>this.attentionChanged(),onFacts:()=>this.markChanged(),report:error=>this.options.report?.(error)});
@@ -183,7 +183,6 @@ export class KanbanApp {
   // cannot mistake the fresh notice for the record it captured.
   if(index>=0)this.retainedCheckouts[index]={path:retainedPath,projectId:project.id,taskTitle:task.title,reason};
   else this.retainedCheckouts.push({path:retainedPath,projectId:project.id,taskTitle:task.title,reason});
-  this.armRetainedPrune();
   this.armRetainedPrune();
   if(this.retainedCheckouts.length>20){
    const dropped=this.retainedCheckouts.shift();
@@ -606,7 +605,6 @@ export class KanbanApp {
   const expectedEnteredAt=request.expectedEnteredAt??marker.enteredAt;
   const prepared=await prepareFirstExecution({
    locate:value=>this.locatedTask(value),
-   worktreeDefaults:value=>this.worktreeDefaultsFor(value),
    createWorktree:async(value,draft)=>{await this.worktrees.request(value,{kind:'create',...draft});},
    createConversation:async value=>await this.createConversationNow(value),
   },{taskId,columnId,expectedEnteredAt,...(request.expectedInstruction===undefined?{}:{expectedInstruction:request.expectedInstruction})});
