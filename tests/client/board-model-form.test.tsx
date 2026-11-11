@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { parse } from 'yaml';
 import type { Board, BoardState, Command, HubState, KanbanSnapshot, ModelCatalog, ModelSelection, Workflow } from '../../src/shared/types.js';
@@ -53,10 +53,21 @@ function mount(options: Parameters<typeof harness>[0] & { workflowEditing?: bool
   const rendered = render(<BoardModelForm hub={h.hub} board={h.value} run={h.run} api={h.api} yaml={options.yaml ?? AUTHORED} baseRevision={7} {...(options.workflowEditing === undefined ? {} : { workflowEditing: options.workflowEditing })} />);
   return { ...h, user, rerender: rendered.rerender };
 }
-/** The route select stays closed until the catalog has been read. */
-async function chooseRoute(user: ReturnType<typeof userEvent.setup>, key: string): Promise<void> {
-  await waitFor(() => expect((screen.getByLabelText('Model') as HTMLSelectElement).disabled).toBe(false));
-  await user.selectOptions(screen.getByLabelText('Model'), key);
+/** The closed control that names the route the form currently holds. */
+function modelTrigger(): HTMLElement {
+  return screen.getByRole('button', { name: /^Model:/ });
+}
+/** Open the searchable picker and choose one row; the wait covers the catalog read. */
+async function chooseRoute(user: ReturnType<typeof userEvent.setup>, name: RegExp): Promise<void> {
+  await user.click(modelTrigger());
+  const dialog = screen.getByRole('dialog', { name: 'Choose the model' });
+  await user.click(await within(dialog).findByRole('option', { name }));
+}
+/** Reloading lives inside the picker, beside the routes it refreshes. */
+async function reloadModels(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(modelTrigger());
+  const dialog = screen.getByRole('dialog', { name: 'Choose the model' });
+  await user.click(within(dialog).getByRole('button', { name: 'Reload models' }));
 }
 function saveButton(): HTMLButtonElement {
   return screen.getByRole('button', { name: 'Save model' }) as HTMLButtonElement;
@@ -74,7 +85,7 @@ function savedModel(command: Command): unknown {
 describe('the board default model form', () => {
   it('writes the chosen route into the workflow document through the ordinary board save', async () => {
     const { user, run } = mount();
-    await chooseRoute(user, 'deepseek::reason');
+    await chooseRoute(user, /Reason/);
     await chooseEffort(user, 'high');
     await user.click(saveButton());
     await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
@@ -88,7 +99,7 @@ describe('the board default model form', () => {
 
   it('removes the mapping when the host default is chosen, leaving the rest of the document alone', async () => {
     const { user, run } = mount({ stored: route });
-    await chooseRoute(user, 'default');
+    await chooseRoute(user, /Host default model/);
     await user.click(saveButton());
     await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     const command = run.mock.calls[0]![0] as Extract<Command, { type: 'board.workflow.save' }>;
@@ -134,18 +145,18 @@ describe('the board default model form', () => {
 
   it('refuses to write a document the parser rejects and keeps the choice on screen', async () => {
     const { user, run } = mount({ yaml: 'name: Broken\n' });
-    await chooseRoute(user, 'deepseek::reason');
+    await chooseRoute(user, /Reason/);
     await user.click(saveButton());
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
     expect(run).not.toHaveBeenCalled();
-    expect((screen.getByLabelText('Model') as HTMLSelectElement).value).toBe('deepseek::reason');
+    expect(modelTrigger().getAttribute('aria-label')).toBe('Model: DeepSeek · Reason');
   });
 
   it('says a stored model the host does not offer without removing or rewriting it', async () => {
     const stored: ModelSelection = { provider: 'anthropic', model: 'claude' };
     const { user, run } = mount({ stored });
-    expect(await screen.findByText(/anthropic · claude/)).toBeTruthy();
-    expect((screen.getByLabelText('Model') as HTMLSelectElement).value).toBe('anthropic::claude');
+    expect(await screen.findByText(/is not offered by this host/)).toBeTruthy();
+    expect(modelTrigger().getAttribute('aria-label')).toBe('Model: anthropic · claude (not in the catalog)');
     expect(saveButton().disabled).toBe(true);
     await user.click(saveButton());
     expect(run).not.toHaveBeenCalled();
@@ -155,17 +166,17 @@ describe('the board default model form', () => {
     const { user } = mount({ stored: route });
     expect(saveButton().disabled).toBe(true);
     expect(screen.getByText('No changes to save.')).toBeTruthy();
-    await chooseRoute(user, 'deepseek::chat');
+    await chooseRoute(user, /Chat/);
     expect(saveButton().disabled).toBe(false);
     expect(screen.queryByText('No changes to save.')).toBeNull();
-    await chooseRoute(user, 'deepseek::reason');
+    await chooseRoute(user, /Reason/);
     await chooseEffort(user, 'high');
     expect(saveButton().disabled).toBe(true);
   });
 
   it('stands down while the workflow editor holds edits, and says why', async () => {
     const { user, run } = mount({ workflowEditing: true });
-    await chooseRoute(user, 'deepseek::reason');
+    await chooseRoute(user, /Reason/);
     expect(saveButton().disabled).toBe(true);
     expect(await screen.findByText(/Save or discard the workflow edits/)).toBeTruthy();
     await user.click(saveButton());
@@ -178,7 +189,7 @@ describe('the board default model form', () => {
     render(<BoardModelForm hub={h.hub} board={h.value} run={h.run} api={h.api} yaml={AUTHORED} baseRevision={7} />);
     expect(await screen.findByText(/The model catalog is unavailable/)).toBeTruthy();
     h.modelCatalog.mockImplementation(async () => catalog);
-    await user.click(screen.getByRole('button', { name: 'Reload models' }));
+    await reloadModels(user);
     await waitFor(() => expect(screen.queryByText(/The model catalog is unavailable/)).toBeNull());
     expect(h.modelCatalog).toHaveBeenCalledTimes(2);
   });
@@ -187,12 +198,13 @@ describe('the board default model form', () => {
     const h = harness();
     const user = userEvent.setup();
     render(<BoardModelForm hub={h.hub} board={board(route)} run={h.run} api={h.api} yaml={writeBoardModelField(AUTHORED, route)} baseRevision={7} />);
-    await waitFor(() => expect((screen.getByLabelText('Model') as HTMLSelectElement).disabled).toBe(false));
+    await chooseRoute(user, /Reason/);
     h.modelCatalog.mockImplementation(async () => { throw new Error('The host is unreachable.'); });
-    await user.click(screen.getByRole('button', { name: 'Reload models' }));
+    await reloadModels(user);
     expect(await screen.findByText(/The model catalog is unavailable/)).toBeTruthy();
-    // The stored route is a fact about the board, not about this read: it stays shown.
-    expect((screen.getByLabelText('Model') as HTMLSelectElement).value).toBe('deepseek::reason');
+    // The stored route is a fact about the board, not about this read: it stays shown,
+    // under the bare ids, because the catalog that carried the display names is gone.
+    expect(modelTrigger().getAttribute('aria-label')).toBe('Model: deepseek · reason');
     expect(screen.queryByText(/is not offered by this host/)).toBeNull();
   });
 });
@@ -208,7 +220,7 @@ describe('the board default model form beside the other board forms', () => {
     />);
     const run = h.run;
     await user.type(screen.getByLabelText('Board name'), ' X');
-    await chooseRoute(user, 'deepseek::reason');
+    await chooseRoute(user, /Reason/);
     await chooseEffort(user, 'high');
     await user.click(saveButton());
     await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
@@ -227,7 +239,7 @@ describe('the board default model form beside the other board forms', () => {
       workflowDraft={{ yaml: DRAFTED, revision: 7 }} setWorkflowDraft={setWorkflowDraft}
     />);
     const run = h.run;
-    await chooseRoute(user, 'deepseek::reason');
+    await chooseRoute(user, /Reason/);
     expect(await screen.findByText(/Save or discard the workflow edits/)).toBeTruthy();
     expect(saveButton().disabled).toBe(true);
     await user.click(saveButton());

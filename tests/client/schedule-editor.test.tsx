@@ -1,12 +1,19 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import type { ClientApi, KanbanSnapshot, ModelCatalog } from '../../src/shared/types.js';
 import { ScheduleEditorDialog } from '../../src/client/settings/schedules/schedule-editor-dialog.js';
 
 afterEach(cleanup);
+
+/** The shared picker names the current route and opens a searchable list. */
+async function chooseModel(user: ReturnType<typeof userEvent.setup>, name: RegExp): Promise<void> {
+  await user.click(screen.getByRole('button', { name: /^Model:/ }));
+  const dialog = screen.getByRole('dialog', { name: 'Choose the model' });
+  await user.click(await within(dialog).findByRole('option', { name }));
+}
 
 const projects = [{ id: 'p1', projectKey: 'web', name: 'Web', projectPath: '/web' }];
 const catalog: ModelCatalog = { default: { provider: 'deepseek', model: 'chat' }, providers: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'chat', name: 'Chat' }, { id: 'reason', name: 'Reason', reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'low' } }] }], failures: [] };
@@ -102,9 +109,10 @@ describe('ScheduleEditorDialog', () => {
       model: { provider: 'deepseek', model: 'reason' }, newConversation: true, archiveWhenIdle: true, enabled: true,
       createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
     });
-    await waitFor(() => expect((screen.getByLabelText('Model') as HTMLSelectElement).disabled).toBe(false));
-    expect((screen.getByLabelText('Model') as HTMLSelectElement).value).toBe('deepseek::reason');
-    await user.selectOptions(screen.getByLabelText('Model'), 'deepseek::chat');
+    // The stored route is named as soon as the catalog arrives, which is what the old
+    // select only did by being disabled until then.
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Model:/ }).getAttribute('aria-label')).toBe('Model: DeepSeek · Reason'));
+    await chooseModel(user, /Chat/);
     await user.click(screen.getByRole('button', { name: 'Save schedule' }));
     await waitFor(() => expect(harnessed.run).toHaveBeenCalledWith(expect.objectContaining({ model: { provider: 'deepseek', model: 'chat' }, scheduleId: 'schedule' })));
   });
@@ -133,8 +141,7 @@ describe('ScheduleEditorDialog', () => {
     cleanup();
     const second = harness();
     mount(second, storedSchedule({ model: { provider: 'deepseek', model: 'reason', reasoningEffort: 'high' } }));
-    await waitFor(() => expect((screen.getByLabelText('Model') as HTMLSelectElement).disabled).toBe(false));
-    await user.selectOptions(screen.getByLabelText('Model'), 'deepseek::chat');
+    await chooseModel(user, /Chat/);
     expect(screen.queryByLabelText('Reasoning effort')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Save schedule' }));
     await waitFor(() => expect(second.run).toHaveBeenCalledWith(expect.objectContaining({ model: { provider: 'deepseek', model: 'chat' } })));
