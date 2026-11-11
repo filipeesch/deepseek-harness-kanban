@@ -46,6 +46,27 @@ export const workflowViewStyles = String.raw`
 .dsh-kanban .kb-flow-segment{fill:var(--kb-surface);stroke:var(--kb-line);stroke-width:1.2;opacity:0;transition:opacity 110ms ease;pointer-events:all;cursor:move}
 .dsh-kanban .react-flow__edge:hover .kb-flow-segment,.dsh-kanban .react-flow__edge:focus-within .kb-flow-segment{opacity:1}
 .dsh-kanban .kb-flow-canvas[data-locked=true] .kb-flow-contact,.dsh-kanban .kb-flow-canvas[data-locked=true] .kb-flow-segment{cursor:default}
+/* A connection is pressed to select it and double-pressed to edit its condition, so
+   the line itself carries a cursor that says so. */
+.dsh-kanban .react-flow__edge{cursor:pointer}
+.dsh-kanban .kb-flow-edge-group.is-selected .kb-flow-edge{stroke:var(--dsw-alias-state-business-primary,CanvasText);stroke-width:2.4}
+.dsh-kanban .kb-flow-edge-group.is-selected .kb-flow-arrow{opacity:.85}
+/* A dashed hollow ring reads as "nothing set here", which is what it marks. */
+.dsh-kanban .kb-flow-condition-mark{fill:var(--kb-surface);stroke:color-mix(in srgb,currentColor 55%,var(--kb-line));stroke-width:1.6;stroke-dasharray:2 1.8;pointer-events:none}
+/* The port a connection is drawn from: a pointer affordance on the stage boundary,
+   revealed while the stage is pointed at and never part of the keyboard order. */
+.dsh-kanban .kb-flow-port{position:absolute;right:-8px;top:50%;width:15px;height:15px;margin-top:-7.5px;border-radius:50%;border:1.5px solid var(--kb-line);background:var(--kb-surface);opacity:0;transition:opacity 110ms ease;cursor:crosshair;pointer-events:all;z-index:5}
+.dsh-kanban .kb-flow-stage:hover .kb-flow-port{opacity:1}
+.dsh-kanban .kb-flow-port:hover{border-color:var(--dsw-alias-state-business-primary,CanvasText)}
+.dsh-kanban .kb-flow-stage[data-connect-candidate=true]{border-color:var(--dsw-alias-state-business-primary,CanvasText);box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-state-business-primary,CanvasText) 35%,transparent)}
+.dsh-kanban .kb-flow-creation{pointer-events:none}
+.dsh-kanban .kb-flow-creation line{stroke:var(--dsw-alias-state-business-primary,CanvasText);stroke-width:1.8;stroke-dasharray:5 4;fill:none}
+.dsh-kanban .kb-flow-creation circle{fill:var(--dsw-alias-state-business-primary,CanvasText)}
+.dsh-kanban .kb-condition-popover{position:fixed;z-index:70;display:flex;flex-direction:column;gap:8px;max-height:calc(100vh - 16px);overflow:auto;padding:12px;border:1px solid var(--kb-line);border-radius:10px;background:var(--kb-surface);box-shadow:0 14px 34px #00000026;font:inherit;color:inherit}
+.dsh-kanban .kb-condition-popover .kb-condition-field{max-height:40vh}
+.dsh-kanban .kb-flow-shell:focus{outline:none}
+.dsh-kanban .kb-flow-shell:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:-2px}
+.dsh-kanban .kb-condition-popover-head{font-size:12px;line-height:1.35;overflow-wrap:anywhere}
 .dsh-kanban .kb-flow-travel{position:absolute;pointer-events:none;z-index:8;width:190px}
 .dsh-kanban .kb-flow-travel-card{display:flex;flex-direction:column;gap:2px;padding:7px 8px;border-radius:8px;border:1px solid var(--kb-line);background:var(--kb-surface);box-shadow:0 8px 20px #00000024;font-size:12px;line-height:1.35;overflow-wrap:anywhere}
 .dsh-kanban .kb-flow-canvas .react-flow__attribution{background:transparent;color:inherit;opacity:.55}

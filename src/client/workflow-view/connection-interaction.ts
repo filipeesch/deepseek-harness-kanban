@@ -11,6 +11,12 @@ export type ConnectionEnd = 'source' | 'target';
 export interface ConnectionHandlers {
   /** True while the layout lock is on: the handles are drawn but cannot act. */
   readonly locked: boolean;
+  /** The connection the diagram presents as selected. */
+  readonly selectedId: string | null;
+  /** Select one connection, or clear the selection. */
+  onSelect(connectionId: string): void;
+  /** Open the editor for one connection's condition, anchored at that connection. */
+  onEditCondition(connectionId: string): void;
   onAnchorPointerDown(event: React.PointerEvent<SVGElement>, connectionId: string, end: ConnectionEnd): void;
   onSegmentPointerDown(event: React.PointerEvent<SVGElement>, connectionId: string, lineIndex: number): void;
   onAnchorKeyDown(event: React.KeyboardEvent<SVGElement>, connectionId: string, end: ConnectionEnd): void;

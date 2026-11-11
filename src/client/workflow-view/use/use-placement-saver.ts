@@ -3,11 +3,6 @@ import type { ConnectionLayout, StagePosition, StageSize, Workflow } from '../..
 import { readStagePositions, setStagePositions, type StagePositions } from '../../../domain/workflow-positions.js';
 import { readStageSizes, setStageSizes, type StageSizes } from '../../../domain/workflow-sizes.js';
 import { readConnections, setConnections, type ConnectionLayouts } from '../../../domain/workflow-connections.js';
-import { sameStageSize } from '../../../domain/stage-size.js';
-import { samePosition } from '../../../domain/stage-position.js';
-import { sameConnectionLayout } from '../../../domain/connection-anchor.js';
-import type { RunCommand } from '../../ui.js';
-import { hubRevisionOf } from '../../workflow-save.js';
 
 /** How long a layout edit waits before it stores the workflow; one edit, one save. */
 export const PLACEMENT_SAVE_DELAY_MS = 400;
@@ -22,15 +17,15 @@ export interface PlacementSaver {
   intendPositions(positions: StagePositions): void;
   intendSizes(sizes: StageSizes): void;
   intendConnections(connections: ConnectionLayouts): void;
+  /** Adopt the values a transaction already stored, so they are not sent again. */
+  acceptConnections(connections: ConnectionLayouts): void;
   queueSave(): void;
   saveNow(): void;
+  /** Store every pending layout edit and resolve once the newest text is stored. */
+  flush(): Promise<void>;
+  /** Apply the intended layout to the given authored text. */
+  writeInto(text: string): string;
   cancelTimer(): void;
-}
-
-/** One authored layout field: how two values are compared and how the intended record is normalized. */
-interface LayoutField<V> {
-  readonly same: (left: V | undefined, right: V | undefined) => boolean;
-  readonly record: (values: Record<string, V | undefined>) => Record<string, V>;
 }
 
 function positionRecord(positions: StagePositions): Record<string, StagePosition> {
@@ -51,17 +46,6 @@ function connectionRecord(connections: ConnectionLayouts): Record<string, Connec
   return next;
 }
 
-const positions: LayoutField<StagePosition> = { same: samePosition, record: positionRecord };
-const sizes: LayoutField<StageSize> = { same: sameStageSize, record: sizeRecord };
-const connections: LayoutField<ConnectionLayout> = { same: sameConnectionLayout, record: connectionRecord };
-
-/** One layout as the view intends it: every field at once. */
-interface LayoutValues {
-  readonly positions: Record<string, StagePosition>;
-  readonly sizes: Record<string, StageSize>;
-  readonly connections: Record<string, ConnectionLayout>;
-}
-
 function readLayout(workflow: Workflow): LayoutValues {
   return { positions: readStagePositions(workflow), sizes: readStageSizes(workflow), connections: readConnections(workflow) };
 }
@@ -70,27 +54,21 @@ function writeLayout(text: string, values: LayoutValues): string {
   return setConnections(setStageSizes(setStagePositions(text, values.positions), values.sizes), values.connections);
 }
 
-/**
- * Rebase one field: start from the newly acknowledged values and carry over only
- * the entries this view changed, so a concurrent edit survives a pending save.
- */
-function rebaseField<V>(field: LayoutField<V>, fresh: Readonly<Record<string, V>>, adopted: Readonly<Record<string, V>>, desired: Readonly<Record<string, V>>): Record<string, V> {
-  const next: Record<string, V> = { ...fresh };
-  for (const id of new Set([...Object.keys(adopted), ...Object.keys(desired)])) {
-    if (field.same(desired[id], adopted[id])) continue;
-    const wanted = desired[id];
-    if (wanted === undefined) delete next[id];
-    else next[id] = wanted;
-  }
-  return next;
+/** One layout as the view intends it: every field at once. */
+interface LayoutValues {
+  readonly positions: Record<string, StagePosition>;
+  readonly sizes: Record<string, StageSize>;
+  readonly connections: Record<string, ConnectionLayout>;
 }
 
 export interface PlacementSaverInput {
-  readonly hubId: string;
   readonly boardId: string;
-  readonly run: RunCommand;
-  /** The latest Hub revision used as the save precondition. */
-  readonly revision: number;
+  /**
+   * Store a layout edit. The writer composes inside its own slot, against the document
+   * the previous write acknowledged, so a document captured here could never carry
+   * transitions a stage patch already replaced.
+   */
+  readonly saveLayout: (compose: (acknowledged: string | null) => string | null) => Promise<unknown>;
   readonly workflow: Workflow;
   readonly workflowYaml: string;
   readonly onError: (error: unknown) => void;
@@ -101,140 +79,143 @@ export interface PlacementSaverInput {
 /**
  * The coalesced workflow save for layout edits.
  *
- * Edits compose against the text this view intends to persist, never against
- * the last acknowledged snapshot: an Undo that follows an already dispatched
- * save must queue a compensating save instead of becoming a no-op. A save in
- * flight coalesces the next one, a rejected save returns everything to the
+ * The intended *values* are the source of truth, not a captured document: the document
+ * is composed inside the writer's slot against the newest acknowledged workflow, so a
+ * pending stage patch can never be reverted by a layout save that was queued before it.
+ * A save in flight coalesces the next one, a rejected save returns everything to the
  * acknowledged workflow, and a completed edit is flushed before unmount.
  */
 export function usePlacementSaver(input: PlacementSaverInput): PlacementSaver {
-  const revisionRef = useRef(input.revision); revisionRef.current = input.revision;
+  const inputRef = useRef(input); inputRef.current = input;
+  /**
+   * The board and the writer a pending edit belongs to. A layout edit must be stored on
+   * the board that authored it, with the document that board acknowledged, even if the
+   * presentation is handed another board before the save runs.
+   */
+  const owner = useRef({ boardId: input.boardId, saveLayout: input.saveLayout, workflowYaml: input.workflowYaml });
   const acknowledgedRef = useRef({ workflow: input.workflow, workflowYaml: input.workflowYaml });
-  acknowledgedRef.current = { workflow: input.workflow, workflowYaml: input.workflowYaml };
   const errorRef = useRef(input.onError); errorRef.current = input.onError;
   const rejectedRef = useRef(input.onRejected); rejectedRef.current = input.onRejected;
 
-  const desiredYaml = useRef<string | null>(null);
   const desiredPositions = useRef<Record<string, StagePosition>>(Object.create(null) as Record<string, StagePosition>);
   const desiredSizes = useRef<Record<string, StageSize>>(Object.create(null) as Record<string, StageSize>);
   const desiredConnections = useRef<Record<string, ConnectionLayout>>(Object.create(null) as Record<string, ConnectionLayout>);
-  const adoptedPositions = useRef<Record<string, StagePosition>>(Object.create(null) as Record<string, StagePosition>);
-  const adoptedSizes = useRef<Record<string, StageSize>>(Object.create(null) as Record<string, StageSize>);
-  const adoptedConnections = useRef<Record<string, ConnectionLayout>>(Object.create(null) as Record<string, ConnectionLayout>);
   const boardRef = useRef(input.boardId);
-  const sentYaml = useRef<string | null>(null);
-  const saving = useRef(false);
-  const queued = useRef(false);
+  /** True while the intended values differ from the acknowledged workflow. */
+  const dirty = useRef(false);
+  /** How many edits the intended values carry, so a save that lands mid-edit keeps it dirty. */
+  const edits = useRef(0);
+  /** The last document this saver stored, used while the board snapshot still lags behind it. */
+  const lastStored = useRef<string | null>(null);
+  /** The document the in-flight composition resolved to, so a success records it. */
+  const desiredText = useRef<string | null>(null);
+  /** The tail of the save chain: the next save waits for the one before it. */
+  const chain = useRef<Promise<void>>(Promise.resolve());
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const adopt = useCallback((values: LayoutValues) => {
     desiredPositions.current = values.positions;
     desiredSizes.current = values.sizes;
     desiredConnections.current = values.connections;
-    adoptedPositions.current = { ...values.positions };
-    adoptedSizes.current = { ...values.sizes };
-    adoptedConnections.current = { ...values.connections };
+    dirty.current = false;
   }, []);
 
   useEffect(() => {
-    const fresh = readLayout(input.workflow);
-    const unsaved = desiredYaml.current !== null && desiredYaml.current !== sentYaml.current;
-    // A pending layout edit belongs to its board. The board presentation
-    // remounts this view on a board switch, so the pending timer flushes that
-    // edit; a different board's workflow must not be adopted into it.
-    if (unsaved && boardRef.current !== input.boardId) return;
+    // A pending layout edit belongs to its board, so another board's acknowledged
+    // workflow must not become the document it composes against.
+    if (dirty.current && boardRef.current !== input.boardId) return;
     boardRef.current = input.boardId;
-    if (!unsaved) {
-      desiredYaml.current = input.workflowYaml;
-      sentYaml.current = input.workflowYaml;
-      adopt(fresh);
-      return;
-    }
-    // A new acknowledged workflow arrived while a layout edit is still unsaved.
-    // Rebase only the entries this view changed onto the new text, so a concurrent
-    // edit (a rename, new instructions, another stage's placement) survives the
-    // pending save instead of being overwritten by the older text.
-    const rebased: LayoutValues = {
-      positions: rebaseField(positions, fresh.positions, adoptedPositions.current, desiredPositions.current),
-      sizes: rebaseField(sizes, fresh.sizes, adoptedSizes.current, desiredSizes.current),
-      connections: rebaseField(connections, fresh.connections, adoptedConnections.current, desiredConnections.current),
-    };
-    desiredPositions.current = rebased.positions;
-    desiredSizes.current = rebased.sizes;
-    desiredConnections.current = rebased.connections;
-    desiredYaml.current = writeLayout(input.workflowYaml, rebased);
-    sentYaml.current = input.workflowYaml;
-    adoptedPositions.current = fresh.positions;
-    adoptedSizes.current = fresh.sizes;
-    adoptedConnections.current = fresh.connections;
-  }, [input.workflowYaml, input.workflow, adopt]);
+    acknowledgedRef.current = { workflow: input.workflow, workflowYaml: input.workflowYaml };
+    // The intended values are composed against the newest acknowledged workflow at save
+    // time, so an arrival while an edit is pending needs no rebase: it only replaces the
+    // acknowledged snapshot, which a clean session adopts as its own.
+    if (!dirty.current) adopt(readLayout(input.workflow));
+  }, [input.workflowYaml, input.workflow, input.boardId, adopt]);
 
   const cancelTimer = useCallback(() => {
     if (saveTimer.current !== null) clearTimeout(saveTimer.current);
     saveTimer.current = null;
   }, []);
 
-  const runSave = useCallback(async (): Promise<void> => {
-    if (saving.current) { queued.current = true; return; }
-    const text = desiredYaml.current;
-    if (text === null || text === sentYaml.current) return;
-    saving.current = true;
-    try {
-      const result = await input.run({ type: 'board.workflow.save', hubId: input.hubId, boardId: input.boardId, yaml: text, expectedRevision: revisionRef.current });
-      sentYaml.current = text;
-      const hubRevision = hubRevisionOf(result, input.hubId);
-      if (typeof hubRevision === 'number') revisionRef.current = hubRevision;
-    } catch (error) {
-      // The layout is not persisted: return to the acknowledged workflow and
-      // drop the pending text that belonged to it.
-      const acknowledged = acknowledgedRef.current;
-      desiredYaml.current = acknowledged.workflowYaml;
-      sentYaml.current = acknowledged.workflowYaml;
-      adopt(readLayout(acknowledged.workflow));
-      rejectedRef.current?.();
-      errorRef.current(error);
-    } finally {
-      saving.current = false;
+  /** Mark the intended values as changed by an edit that belongs to the current board and writer. */
+  const markDirty = useCallback(() => {
+    if (!dirty.current) {
+      const current = inputRef.current;
+      owner.current = { boardId: current.boardId, saveLayout: current.saveLayout, workflowYaml: current.workflowYaml };
     }
-    if (queued.current) { queued.current = false; void runSave(); return; }
-    if (desiredYaml.current !== null && desiredYaml.current !== sentYaml.current) void runSave();
-  }, [adopt, input.hubId, input.boardId, input.run]);
+    dirty.current = true;
+    edits.current += 1;
+  }, []);
+
+  const values = useCallback((): LayoutValues => ({
+    positions: desiredPositions.current,
+    sizes: desiredSizes.current,
+    connections: desiredConnections.current,
+  }), []);
+
+  /**
+   * Store the newest intended values, one save at a time and in the order asked for.
+   * The chain always continues: a rejected save resets the intended layout and the next
+   * one still runs.
+   */
+  const runSave = useCallback((): Promise<void> => {
+    const next = chain.current.then(async () => {
+      if (!dirty.current) return;
+      const intended = values();
+      const target = owner.current;
+      const version = edits.current;
+      try {
+        await target.saveLayout(() => {
+          // Compose onto the document this board presents. While the board snapshot still
+          // lags behind a save already in flight, the document that save stored is the
+          // newer one, so an undo lands on top of it instead of duplicating it.
+          const snapshot = target.boardId === inputRef.current.boardId ? inputRef.current.workflowYaml : target.workflowYaml;
+          const stored = lastStored.current;
+          const base = stored !== null && stored !== snapshot ? stored : snapshot;
+          const text = writeLayout(base, intended);
+          desiredText.current = text === base ? null : text;
+          return desiredText.current;
+        });
+        if (desiredText.current !== null) lastStored.current = desiredText.current;
+        // An edit that arrived while this save was in flight is still unsaved.
+        dirty.current = edits.current !== version;
+      } catch (error) {
+        // The layout is not persisted: return to the acknowledged workflow.
+        adopt(readLayout(acknowledgedRef.current.workflow));
+        rejectedRef.current?.();
+        errorRef.current(error);
+        // The caller decides what a failed save means: a history replay must not go on to
+        // restore transitions onto a layout that was not stored.
+        throw error;
+      }
+    });
+    chain.current = next.then(() => undefined, () => undefined);
+    return next;
+  }, [adopt, values]);
 
   const queueSave = useCallback(() => {
     cancelTimer();
     saveTimer.current = setTimeout(() => {
       saveTimer.current = null;
-      void runSave();
+      void runSave().catch(() => undefined);
     }, PLACEMENT_SAVE_DELAY_MS);
   }, [cancelTimer, runSave]);
 
   // A completed edit is already a user decision: send it before the view goes away.
-  useEffect(() => () => { cancelTimer(); void runSave(); }, [cancelTimer, runSave]);
+  useEffect(() => () => { cancelTimer(); void runSave().catch(() => undefined); }, [cancelTimer, runSave]);
 
-  const compose = useCallback(() => {
-    desiredYaml.current = writeLayout(desiredYaml.current ?? acknowledgedRef.current.workflowYaml, {
-      positions: desiredPositions.current,
-      sizes: desiredSizes.current,
-      connections: desiredConnections.current,
-    });
-  }, []);
+  const intendPositions = useCallback((next: StagePositions) => { desiredPositions.current = positionRecord(next); markDirty(); }, [markDirty]);
+  const intendSizes = useCallback((next: StageSizes) => { desiredSizes.current = sizeRecord(next); markDirty(); }, [markDirty]);
+  const intendConnections = useCallback((next: ConnectionLayouts) => { desiredConnections.current = connectionRecord(next); markDirty(); }, [markDirty]);
+  const acceptConnections = useCallback((next: ConnectionLayouts) => { desiredConnections.current = connectionRecord(next); dirty.current = false; }, []);
 
-  const intendPositions = useCallback((next: StagePositions) => {
-    desiredPositions.current = positionRecord(next);
-    compose();
-  }, [compose]);
+  const saveNow = useCallback(() => { void runSave().catch(() => undefined); }, [runSave]);
+  const flush = useCallback(async (): Promise<void> => { cancelTimer(); await runSave(); }, [cancelTimer, runSave]);
+  const writeInto = useCallback((text: string) => writeLayout(text, values()), [values]);
 
-  const intendSizes = useCallback((next: StageSizes) => {
-    desiredSizes.current = sizeRecord(next);
-    compose();
-  }, [compose]);
-
-  const intendConnections = useCallback((next: ConnectionLayouts) => {
-    desiredConnections.current = connectionRecord(next);
-    compose();
-  }, [compose]);
-
-  const saveNow = useCallback(() => { void runSave(); }, [runSave]);
-
-  return { desiredPositions, desiredSizes, desiredConnections, intendPositions, intendSizes, intendConnections, queueSave, saveNow, cancelTimer };
+  return {
+    desiredPositions, desiredSizes, desiredConnections,
+    intendPositions, intendSizes, intendConnections, acceptConnections,
+    queueSave, saveNow, flush, writeInto, cancelTimer,
+  };
 }

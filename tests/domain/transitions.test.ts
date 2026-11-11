@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Workflow } from '../../src/shared/types.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
-import { authoredTransitions, canTransition, defaultDestination, nextStage, transitionAccess, transitionDestinations, transitionTargets } from '../../src/domain/transitions.js';
+import { advanceDestination, authoredTransitions, canTransition, defaultDestination, nextStage, transitionAccess, transitionDestinations, transitionTargets } from '../../src/domain/transitions.js';
+import { sameTransitionRules, transitionRule } from '../../src/domain/transition-rule.js';
 import { transitions } from '../support/transition-rules.js';
 
 const workflow: Workflow = {
@@ -55,6 +56,27 @@ describe('transition access policy', () => {
     expect(nextStage(workflow, 'done')).toEqual({ column: workflow.columns[3], access: 'allowed' });
     expect(nextStage(workflow, 'archive')).toBeUndefined();
     expect(nextStage(workflow, 'missing')).toBeUndefined();
+  });
+
+  it('offers no advance destination for a stage that permits no destination', () => {
+    // A later stage exists in workflow order, but the card must not offer it.
+    expect(nextStage(workflow, 'plan')).toBeDefined();
+    expect(advanceDestination(workflow, 'plan')).toEqual(nextStage(workflow, 'plan'));
+    expect(advanceDestination(workflow, 'archive')).toBeUndefined();
+    expect(advanceDestination(workflow, 'missing')).toBeUndefined();
+  });
+
+  it('compares stored destination sets with normalized conditions', () => {
+    expect(sameTransitionRules(undefined, null)).toBe(true);
+    expect(sameTransitionRules(undefined, [])).toBe(false);
+    expect(sameTransitionRules([], null)).toBe(false);
+    expect(sameTransitionRules([], [])).toBe(true);
+    expect(sameTransitionRules([{ to: 'plan' }], [{ to: 'plan', when: '   ' }])).toBe(true);
+    expect(sameTransitionRules([{ to: 'plan', when: 'a' }], [{ to: 'plan', when: ' a ' }])).toBe(true);
+    expect(sameTransitionRules([{ to: 'plan' }], [{ to: 'done' }])).toBe(false);
+    expect(sameTransitionRules([{ to: 'plan' }, { to: 'done' }], [{ to: 'plan' }])).toBe(false);
+    expect(transitionRule('plan', '  when ')).toEqual({ to: 'plan', when: 'when' });
+    expect(transitionRule('plan', '  ')).toEqual({ to: 'plan' });
   });
 
   it('keeps a restricted next stage restricted', () => {
