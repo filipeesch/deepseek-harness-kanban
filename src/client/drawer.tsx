@@ -51,6 +51,18 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
   const openKey = JSON.stringify(openSessionIds(task));
   const [movingTo, setMovingTo] = useState<string | null>(null); const alive = useRef(true);
   const [stageNotice, setStageNotice] = useState<string | null>(null);
+  // Whether a model-fallback notice was read is this open drawer's own view state, held
+  // here rather than in the Conversations section so that visiting Info, Git, or Notes
+  // and coming back does not resurrect a notice the person already dismissed. Closing
+  // the conversation forgets it, and closing the drawer forgets all of them.
+  const [modelNoticeDismissed, setModelNoticeDismissed] = useState<string[]>([]);
+  useEffect(() => {
+    setModelNoticeDismissed(previous => {
+      const open = openSessionIds(task);
+      const kept = previous.filter(sessionId => open.includes(sessionId));
+      return kept.length === previous.length ? previous : kept;
+    });
+  }, [openKey]);
   useEffect(() => {
     close.current?.focus();
     alive.current = true;
@@ -116,7 +128,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
     {stageNotice !== null && <div className="kb-status-stack"><div className="kb-error" role="alert"><strong>The recorded transition is no longer valid</strong><span>{stageNotice}</span></div></div>}
     {autoRun && <DrawerAutoRunNotice task={task} controller={autoRun} columns={state.workflow.columns} sessionTitles={sessionTitles} />}
     <section className={'kb-drawer-panel ' + (section === 'Conversations' ? 'kb-chat-panel' : '')} role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>
-      {section === 'Conversations' && <>{!gitBacked && task.worktree && <p className="kb-hint" role="note" aria-label="Plain checkout">This checkout is no longer Git-managed. Git actions are unavailable and the directory is kept when the task is deleted.</p>}{gitBacked && !task.worktree && !task.worktreeDismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} />}<DrawerConversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} worktreeDecisionRequired={worktreeDecisionRequired} projectUnavailable={project === undefined} conversationAttention={conversationAttention} /></>}
+      {section === 'Conversations' && <>{!gitBacked && task.worktree && <p className="kb-hint" role="note" aria-label="Plain checkout">This checkout is no longer Git-managed. Git actions are unavailable and the directory is kept when the task is deleted.</p>}{gitBacked && !task.worktree && !task.worktreeDismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} />}<DrawerConversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} worktreeDecisionRequired={worktreeDecisionRequired} projectUnavailable={project === undefined} conversationAttention={conversationAttention} modelNoticeDismissed={modelNoticeDismissed} onDismissModelNotice={sessionId => setModelNoticeDismissed(current => current.includes(sessionId) ? current : [...current, sessionId])} /></>}
       {section === 'Info' && <InfoPanel task={task} state={state} run={run} viewState={preferences} />}
       {section === 'Git' && gitBacked && <GitPanel task={task} project={project} api={api} run={run} worktreeBasePath={state.settings?.worktreeBasePath} draft={worktreeDraft} />}
       {section === 'Notes' && <NotesPanel task={task} state={state} run={run} viewState={preferences} />}

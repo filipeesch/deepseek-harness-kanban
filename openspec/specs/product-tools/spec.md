@@ -10,12 +10,12 @@ Reference note: Railyin's [card tool definitions](<https://github.com/filipeesch
 
 ### Requirement: Restricted board tool surface
 
-The plugin SHALL expose tools for discovering Hubs, boards, and projects; reading board and task information; creating tasks; editing task titles and descriptions; creating, listing, and tag-aware updating of shared task notes; reading the transitions available from a task's current stage and recording the transition that task will follow next through `list_allowed_transitions` and `set_next_transition`; and administering the boards of a Hub through `create_board`, `update_board`, `edit_board_yaml`, and `delete_board`, together with an extended `get_board_summary`; and searching, reading, creating, editing, and deleting the Hub's team files through `search_team_files`, `read_team_file`, `create_team_file`, `edit_team_file`, and `delete_team_file`. Its product tool surface SHALL NOT include moving tasks, deleting tasks, deleting notes, sending messages to other cards, Hub creation, rename, or deletion, decision-ledger tools, or a plugin-owned TODO checklist. Recording a transition SHALL NOT be treated as moving a task.
+The plugin SHALL expose tools for discovering Hubs, boards, and projects; reading board and task information; creating tasks; editing task titles and descriptions; creating, listing, and tag-aware updating of shared task notes; reading the transitions available from a task's current stage and recording the transition that task will follow next through `list_allowed_transitions` and `set_next_transition`; pausing and resuming a task's automatic advance through `pause_task` and `resume_task`; and administering the boards of a Hub through `create_board`, `update_board`, `edit_board_yaml`, and `delete_board`, together with an extended `get_board_summary`; and searching, reading, creating, editing, and deleting the Hub's team files through `search_team_files`, `read_team_file`, `create_team_file`, `edit_team_file`, and `delete_team_file`. Its product tool surface SHALL NOT include moving tasks, deleting tasks, deleting notes, sending messages to other cards, Hub creation, rename, or deletion, decision-ledger tools, or a plugin-owned TODO checklist. Recording a transition or pausing a task SHALL NOT be treated as moving a task.
 
 #### Scenario: Discover available product operations
 
 - **WHEN** an agent receives the plugin's board and note tools
-- **THEN** Hub, board, and project discovery, board and task reading, task creation, task text editing, shared note creation, listing, and tag-aware updating, transition discovery and recording, board creation, board rename, board workflow reading and writing, empty-board deletion, and team file search, reading, creation, editing, and deletion are available operations
+- **THEN** Hub, board, and project discovery, board and task reading, task creation, task text editing, shared note creation, listing, and tag-aware updating, transition discovery and recording, task pause and resume, board creation, board rename, board workflow reading and writing, empty-board deletion, and team file search, reading, creation, editing, and deletion are available operations
 - **AND** board movement, task deletion, note deletion, inter-card messaging, Hub administration, decision-ledger operations, and a plugin-owned TODO checklist are not exposed as part of that tool surface
 
 #### Scenario: Inspect the board administration tool names
@@ -24,18 +24,29 @@ The plugin SHALL expose tools for discovering Hubs, boards, and projects; readin
 - **THEN** the surface contains `create_board`, `update_board`, `edit_board_yaml`, and `delete_board`
 - **AND** no tool creates, renames, or deletes a Hub
 
+#### Scenario: Inspect the task pause tool names
+
+- **WHEN** an agent receives the plugin's task control tools
+- **THEN** the surface contains `pause_task` and `resume_task`
+- **AND** no tool turns a task's auto mode on or off
+
 #### Scenario: Do not move a task by recording a transition
 
 - **WHEN** an agent records the transition a task will follow next
 - **THEN** the task remains in its current stage and position
 - **AND** the recorded transition only decides the destination of a later advance
 
+#### Scenario: Do not move a task by pausing it
+
+- **WHEN** an agent pauses or resumes a task
+- **THEN** the task remains in its current stage and position
+- **AND** no message is sent and no agent execution starts
+
 #### Scenario: Expose team file operations
 
 - **WHEN** an agent receives the plugin's product tools for a Hub bound to a storage that supports team files
 - **THEN** searching, reading, creating, editing, and deleting the Hub's team files are available operations
 - **AND** moving a team file to another path, restoring a deleted team file, and browsing the storage outside the team files directory are not exposed
-
 ### Requirement: Note tools support tags
 The plugin's note tools SHALL operate on the same shared task note collection as the Notes section and SHALL support tags with the same normalization rules. `create_note` and `update_note` SHALL accept an optional tag collection, and every returned note SHALL include its tags. `list_notes` SHALL accept an optional tag collection and SHALL return the notes that have any of those tags, comparing both stored and requested values after normalization. An empty tag collection SHALL apply no filter. `update_note` SHALL allow changing only tags, changing only content, or changing both, and SHALL require at least one of content or an explicit tag collection. An omitted tag collection SHALL preserve existing tags, and an explicitly empty collection SHALL clear them. The note tool surface SHALL NOT add a tool that deletes a note.
 
@@ -242,7 +253,12 @@ The plugin SHALL expose `list_hubs` so an agent can discover Hubs, and `list_boa
 
 ### Requirement: Board workflow read payload
 
-The plugin SHALL expose `get_board_summary` with an optional `include_workflow` flag. When the flag is true, the result SHALL include the exact stored workflow YAML, the parsed workflow's initial stage, its columns with their entry prompts and allowed transitions, its groups, the Hub revision, and the board's publishing state. When the flag is false or omitted, the result SHALL retain the board summary with the board name, Hub, workflow columns, task counts, and the Hub revision.
+The plugin SHALL expose `get_board_summary` with an optional `include_workflow` flag. When the
+flag is true, the result SHALL include the exact stored workflow YAML, the parsed workflow's
+initial stage, its columns with their entry prompts and allowed transitions, its groups, the
+board's default model when the workflow names one, the Hub revision, and the board's publishing
+state. When the flag is false or omitted, the result SHALL retain the board summary with the board
+name, Hub, workflow columns, task counts, and the Hub revision.
 
 #### Scenario: Read a complete board workflow
 
@@ -250,6 +266,17 @@ The plugin SHALL expose `get_board_summary` with an optional `include_workflow` 
 - **THEN** the result contains the exact authored workflow YAML
 - **AND** it contains the initial stage, every column with its entry prompt and allowed transitions, and every group
 - **AND** it contains the Hub revision and the board's publishing state
+
+#### Scenario: Read the board's default model
+
+- **WHEN** an agent calls `get_board_summary` with `include_workflow` true for a board whose workflow names a default model
+- **THEN** the result reports that provider, model, and reasoning effort
+- **AND** the exact authored YAML carries the same mapping
+
+#### Scenario: Report no default model
+
+- **WHEN** an agent calls `get_board_summary` with `include_workflow` true for a board whose workflow names no default model
+- **THEN** the result reports no default model for that board
 
 #### Scenario: Read a board summary without the workflow payload
 
@@ -265,13 +292,32 @@ The plugin SHALL expose `get_board_summary` with an optional `include_workflow` 
 
 ### Requirement: Whole-document board workflow replacement
 
-`update_board` SHALL accept a complete workflow YAML and replace the board's workflow with it. `create_board` SHALL accept an optional complete workflow YAML and SHALL use the default workflow when it is omitted. A workflow SHALL be validated with the same accepted workflow semantics as the board UI, including unsupported fields, unknown stage references, and existing task columns that the workflow would no longer define. An invalid workflow SHALL NOT change the stored workflow.
+`update_board` SHALL accept a complete workflow YAML and replace the board's workflow with it.
+`create_board` SHALL accept an optional complete workflow YAML and SHALL use the default workflow
+when it is omitted. A workflow SHALL be validated with the same accepted workflow semantics as the
+board UI, including unsupported fields, unknown stage references, existing task columns that the
+workflow would no longer define, and a malformed or unsupported board default model. An invalid
+workflow SHALL NOT change the stored workflow. A workflow that carries a root model mapping SHALL
+become the board's default model, and a workflow that omits it SHALL leave the board with no
+default model of its own.
 
 #### Scenario: Replace a board workflow
 
 - **WHEN** an agent calls `update_board` with a complete valid workflow YAML
 - **THEN** the board's stored workflow becomes that document
 - **AND** the returned result includes the saved workflow YAML and the parsed workflow
+
+#### Scenario: Set a board default model through the tool
+
+- **WHEN** an agent calls `update_board` with a complete valid workflow YAML that carries a root model mapping
+- **THEN** the board's default model becomes that mapping
+- **AND** a conversation created for a task of that board afterwards starts on it
+
+#### Scenario: Clear a board default model through the tool
+
+- **WHEN** an agent calls `update_board` with a complete valid workflow YAML that omits the root model mapping
+- **THEN** the board has no default model
+- **AND** a conversation created for a task of that board afterwards starts on the deployment default
 
 #### Scenario: Create a board with a custom workflow
 
@@ -282,12 +328,19 @@ The plugin SHALL expose `get_board_summary` with an optional `include_workflow` 
 
 - **WHEN** an agent calls `create_board` with a name and no workflow YAML
 - **THEN** the new board starts with the default workflow
+- **AND** the new board has no default model
 
 #### Scenario: Reject an invalid workflow
 
 - **WHEN** an agent calls `update_board` or `create_board` with YAML that the workflow parser rejects
 - **THEN** the tool reports the validation problem
 - **AND** the board's stored workflow is unchanged
+
+#### Scenario: Reject an invalid board default model
+
+- **WHEN** an agent calls `update_board` with YAML whose root model mapping is malformed or names an unsupported field
+- **THEN** the tool reports the validation problem
+- **AND** the board's stored workflow and default model are unchanged
 
 #### Scenario: Reject a workflow that orphans task stages
 
@@ -520,3 +573,79 @@ The plugin SHALL expose `list_allowed_transitions` and `set_next_transition`. `l
 
 - **WHEN** an agent calls either tool in an ordinary DSH chat without a task identifier
 - **THEN** the tool rejects the request with an actionable error
+### Requirement: Task pause tools
+
+The plugin SHALL expose `pause_task` and `resume_task`. Both SHALL resolve the task from the calling task conversation or from an explicit task identifier, so a conversation may pause or resume a task other than its own. Both SHALL report the task, its current stage, whether auto mode is enabled, and the pause in effect with its reason after the call.
+
+`pause_task` SHALL require a reason. A blank reason SHALL be rejected, and a reason longer than the accepted length SHALL be rejected rather than truncated. The pause SHALL suspend the task's automatic advance and SHALL NOT move the task, change its position, clear or replace the recorded transition, send a message, start an execution, or disable auto mode. A task whose auto mode is disabled SHALL NOT be paused: the call SHALL succeed with a result stating that auto mode is disabled and that the task does not advance, and SHALL record nothing.
+
+`resume_task` SHALL clear the pause and SHALL leave auto mode enabled. It SHALL NOT move the task, change its position, send a message, or start an execution, and it SHALL NOT advance the task for a turn that already ended. Resuming a task that carries no pause SHALL succeed with a result stating that the task is not paused and SHALL change nothing.
+
+Neither tool SHALL change the task's recorded transition, and clearing a recorded transition SHALL NOT pause the task. Both tools SHALL be available in a task conversation and in an ordinary DSH chat when the task identifier is provided.
+
+#### Scenario: Pause a task
+
+- **WHEN** an agent calls `pause_task` for a task whose auto mode is enabled with a nonempty reason
+- **THEN** the task records the pause and its reason
+- **AND** auto mode remains enabled
+- **AND** the result reports the pause in effect
+
+#### Scenario: Resolve the pause target from the conversation
+
+- **WHEN** an agent calls either tool inside a task conversation without a task identifier
+- **THEN** the plugin resolves the task that owns the conversation
+
+#### Scenario: Resolve another task by identifier
+
+- **WHEN** an agent calls `resume_task` with the identifier of a different task in the same Hub
+- **THEN** the plugin resumes that task
+- **AND** the calling task is unchanged
+
+#### Scenario: Require a task scope outside a task conversation
+
+- **WHEN** an agent calls either tool in an ordinary DSH chat without a task identifier
+- **THEN** the tool rejects the request with an actionable error
+
+#### Scenario: Reject a blank reason
+
+- **WHEN** an agent calls `pause_task` with a blank reason
+- **THEN** the tool reports the rejection
+- **AND** the task is unchanged
+
+#### Scenario: Reject an oversized reason
+
+- **WHEN** an agent calls `pause_task` with a reason longer than the accepted length
+- **THEN** the tool reports the rejection
+- **AND** the task is unchanged
+
+#### Scenario: Report a task that does not advance
+
+- **WHEN** an agent calls `pause_task` for a task whose auto mode is disabled
+- **THEN** the call succeeds and reports that the task does not advance because auto mode is disabled
+- **AND** no pause is recorded
+
+#### Scenario: Resume a paused task
+
+- **WHEN** an agent calls `resume_task` for a task that carries a pause
+- **THEN** the pause is cleared and auto mode remains enabled
+- **AND** the task's stage and position are unchanged
+- **AND** the result reports that no pause is in effect
+
+#### Scenario: Resume a task that is not paused
+
+- **WHEN** an agent calls `resume_task` for a task that carries no pause
+- **THEN** the call succeeds and reports that the task is not paused
+- **AND** the task is unchanged
+
+#### Scenario: Pausing does not clear the routing
+
+- **WHEN** an agent pauses a task that has a recorded transition
+- **THEN** the recorded transition is unchanged
+- **AND** clearing the recorded transition later does not pause the task
+
+#### Scenario: Pausing does not move the task
+
+- **WHEN** an agent pauses or resumes a task
+- **THEN** the task's stage and position are unchanged
+- **AND** no message is sent and no agent execution starts
+- **AND** no pending automatic advance is retracted

@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
-import type { KanbanSnapshot, Command, Problem } from '../shared/types.js';
+import type { KanbanSnapshot, Command, ConversationModelOutcome, Problem } from '../shared/types.js';
 import { asProblem } from './problem.js';
 
 export { asProblem };
@@ -11,6 +11,12 @@ export type RunCommand = (command: Command) => Promise<KanbanSnapshot>;
 export function creationReceiptId(snapshot: KanbanSnapshot, kind: NonNullable<KanbanSnapshot['commandReceipt']>['kind']): string | undefined {
   const receipt = snapshot.commandReceipt;
   return receipt?.kind === kind && typeof receipt.id === 'string' && receipt.id.trim() ? receipt.id : undefined;
+}
+
+/** The model outcome the creation receipt reported, when the board named a model at all. */
+export function creationModelOutcome(snapshot: KanbanSnapshot): ConversationModelOutcome | undefined {
+  const receipt = snapshot.commandReceipt;
+  return receipt?.kind === 'conversation' && typeof receipt.id === 'string' ? receipt.model : undefined;
 }
 
 export function ErrorNotice({ problem }: { problem: Problem | null }) {

@@ -7,11 +7,20 @@ import type { LocatedTask } from '../hub-repository.js';
 
 export interface ToolArgs { board_id?: string; hub_id?: string; task_id?: string }
 
+/**
+ * The task lookup a scope-resolving tool needs. Naming it lets a tool module
+ * depend on the lookup and the one operation it uses instead of the whole app.
+ */
+export interface TaskScopeSource {
+  readonly locator: { bySession(sessionId: string): LocatedTask | undefined };
+  readonly hubs: { findTask(taskId: string): LocatedTask | undefined };
+}
+
 export function taskContext(app:KanbanApp,exec:ToolRunContext):LocatedTask|undefined{return exec.agent?app.locator.bySession(exec.agent.id):undefined;}
 
-export function requireTask(app:KanbanApp,args:ToolArgs,exec:ToolRunContext):LocatedTask{
- if(args.task_id){const located=app.hubs.findTask(args.task_id);invariant(located,'TASK_NOT_FOUND','Task does not exist.');return located;}
- const located=taskContext(app,exec);invariant(located,'MISSING_TASK_CONTEXT','Specify task_id or use a conversation belonging to a task.');return located;
+export function requireTask(source:TaskScopeSource,args:ToolArgs,exec:ToolRunContext):LocatedTask{
+ if(args.task_id){const located=source.hubs.findTask(args.task_id);invariant(located,'TASK_NOT_FOUND','Task does not exist.');return located;}
+ const located=exec.agent?source.locator.bySession(exec.agent.id):undefined;invariant(located,'MISSING_TASK_CONTEXT','Specify task_id or use a conversation belonging to a task.');return located;
 }
 
 export function resolveHub(app:KanbanApp,args:ToolArgs,exec:ToolRunContext):{hubId:string;hub:HubState}{

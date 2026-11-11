@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { Board, HubSchedule, HubState, HubTask, KanbanMeta, KanbanSettings } from '../shared/types.js';
 import { DEFAULT_WORKFLOW_YAML, parseWorkflow } from './workflow.js';
-import { absolutePath, baseTask, canonicalWorkflow, createTaskInvariantChecker, id, nonempty, note, project, projectKey, revision, storedProject, timestamp, workflow } from './schema-parts.js';
+import { absolutePath, baseTask, canonicalWorkflow, createTaskInvariantChecker, id, modelSelection, nonempty, note, project, projectKey, revision, storedProject, timestamp, workflow } from './schema-parts.js';
 import { isTimeZone, parseCron } from './cron.js';
 
 export { canonicalWorkflow } from './schema-parts.js';
@@ -13,11 +13,11 @@ const board = z.strictObject({
   createdAt: timestamp, updatedAt: timestamp,
 });
 const task = baseTask.extend({ boardId: id });
-const scheduleModel = z.strictObject({ provider: nonempty, model: nonempty, reasoningEffort: nonempty.optional() });
+
 /** One Hub-scoped session schedule; the operations layer owns the field limits. */
 export const scheduleSchema: z.ZodType<HubSchedule> = z.strictObject({
   id, title: nonempty, prompt: nonempty, cron: nonempty, timeZone: nonempty, projectId: id,
-  model: scheduleModel.optional(), newConversation: z.boolean(), archiveWhenIdle: z.boolean(), enabled: z.boolean(),
+  model: modelSelection.optional(), newConversation: z.boolean(), archiveWhenIdle: z.boolean(), enabled: z.boolean(),
   createdAt: timestamp, updatedAt: timestamp,
 });
 

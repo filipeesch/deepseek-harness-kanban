@@ -1,10 +1,10 @@
 import { formatOccurrence } from '../domain/cron.js';
 import { requireProject, requireSchedule } from '../domain/hub-operations.js';
-import { invariant } from '../shared/errors.js';
+import { KanbanError, invariant } from '../shared/errors.js';
 import { requireProjectPath } from '../shared/project.js';
-import type { HubSchedule, HubState, Project, ScheduleRunView } from '../shared/types.js';
+import type { HubSchedule, HubState, ModelSelection, Project, ScheduleRunView } from '../shared/types.js';
 import type { ScheduleArchiveWatcher } from './schedule-archive.js';
-import type { ScheduleModelPort } from './schedule-model.js';
+import type { SessionModelPort } from './session-model.js';
 import { scheduleRunProblem } from './schedule-run-storage.js';
 import type { ScheduleRunRegistry } from './schedule-runs.js';
 
@@ -29,7 +29,7 @@ export interface ScheduleRunnerPorts {
   validateDirectory(sessionId: string, expected: string): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
   send(sessionId: string, prompt: string, requestId: string): Promise<void>;
-  models: ScheduleModelPort;
+  models: SessionModelPort;
   runs: ScheduleRunRegistry;
   watcher: ScheduleArchiveWatcher;
   report?: (error: unknown) => void;
@@ -77,7 +77,7 @@ export class ScheduleRunner {
         else if (archiveWhenIdle) this.ports.watcher.register(sessionId, scheduleId);
       }
       this.checkLifetime();
-      if (schedule.model !== undefined) await this.ports.models.apply(sessionId, schedule.model);
+      if (schedule.model !== undefined) await this.applyScheduleModel(sessionId, schedule.model);
       try {
         await this.ports.renameSession(sessionId, schedule.title + ' · ' + formatOccurrence(new Date(occurrence.occurrenceAt), schedule.timeZone));
       } catch (error) {
@@ -102,6 +102,20 @@ export class ScheduleRunner {
         if (sessionId !== undefined && created && perRun) this.watch(sessionId, scheduleId);
       }
     }
+  }
+
+  /**
+   * A schedule's own model is part of its contract, so an unhonoured route fails
+   * the occurrence before the prompt is sent. The port only reports the refusal;
+   * failing closed is this caller's policy.
+   */
+  private async applyScheduleModel(sessionId: string, selection: ModelSelection): Promise<void> {
+    const outcome = await this.ports.models.apply(sessionId, selection);
+    if (outcome.applied) return;
+    const code = outcome.reason === 'unavailable' ? 'SESSION_MODEL_UNAVAILABLE'
+      : outcome.reason === 'failed' ? 'SESSION_MODEL_FAILED'
+      : 'SESSION_MODEL_SELECTION_UNSUPPORTED';
+    throw new KanbanError(code, outcome.message);
   }
 
   private checkLifetime(): void {

@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BoardView } from '../../src/client/board.js';
 import { styles } from '../../src/client/styles/index.js';
 import { Configuration } from '../../src/client/settings/configuration.js';
 import { ProjectEditorDialog } from '../../src/client/projects/project-editor-dialog.js';
 import { DirectoryPickerProvider } from '../../src/client/services.js';
+import { AgentPresetProvider } from '../../src/client/agent-preset-context.js';
+import type { AgentPresetPortSource } from '../../src/client/agent-preset-port.js';
 import { QuestionForm } from '../../src/questions/QuestionForm.js';
 import type { BoardState, ClientApi, Command, HubSharingView, QuestionRound, RoundPage } from '../../src/shared/types.js';
 import { createHarnessApi, workflowYaml, type TestSnapshot } from './fake-api.js';
@@ -28,8 +30,19 @@ const scheduleRuntimeFixture = {
   schedule: { running: false, lastRun: { status: 'sent' as const, at: '2026-10-21T09:00:00Z', manual: false, sessionId: 's-schedule' } },
   'schedule-2': { running: false },
 };
-const harness = createHarnessApi({ idle: scenario === 'stage-idle', ...(scenario === 'schedules' ? { schedules: scheduleFixtures, scheduleRuntime: scheduleRuntimeFixture } : {}), recorded: scenario === 'routed', staleRoute: scenario === 'stale-route', attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs' || scenario === 'project-relocation' || scenario === 'flow-presence' || scenario === 'presence',
-  presence: scenario === 'presence', hubs: scenario === 'hubs' ? 2 : 1, initialInstruction: scenario === 'create', restricted: scenario === 'move' || scenario === 'prepare-restricted' || scenario === 'flow-restricted', ...(scenario === 'restricted-next' || scenario === 'flow-restricted-next' ? { restrictedNext: true } : {}), persist: scenario === 'board' || scenario === 'relocation-board', pending: scenario === 'appearance', auto: scenario === 'auto', detect: scenario === 'project-editor' || scenario === 'project-relocation' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, ...(driveCase === null ? {} : { drive: driveCase }), shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', folderRefusal: refuse === 'folder', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}), ...(scenario === 'retained' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo', reason: 'unresolved' as const }] } : scenario === 'retained-many' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo', reason: 'unresolved' as const }, { path: '/worktrees/plain', projectId: 'p', taskTitle: 'Plain task', reason: 'folder' as const }] } : {}), ...(scenario === 'relocation-list' ? { relocation: ['waiting', 'failed', 'waiting'] as Array<'waiting' | 'failed' | null> } : scenario === 'relocation-board' ? { relocation: ['waiting', 'failed'] as Array<'waiting' | 'failed' | null> } : {}), ...(scenario === 'relocation-list' ? { extraProject: true } : {}) });
+const boardModel = scenario === 'board-model'
+  ? { model: query.get('route') === 'stale'
+    ? { provider: 'deepseek', model: 'retired', reasoningEffort: 'high' }
+    : { provider: 'deepseek', model: 'reason', reasoningEffort: 'high' } }
+  : scenario === 'board-model-notice'
+    ? {
+      model: { provider: 'deepseek', model: 'reason', reasoningEffort: 'high' },
+      fallback: { requested: { provider: 'deepseek', model: 'reason', reasoningEffort: 'high' }, applied: false as const, reason: 'unavailable' as const, inUse: { provider: 'deepseek', model: 'chat' } },
+    }
+    : undefined;
+const harness = createHarnessApi({ idle: scenario === 'stage-idle', ...(boardModel === undefined ? {} : { boardModel }), ...(scenario === 'schedules' ? { schedules: scheduleFixtures, scheduleRuntime: scheduleRuntimeFixture } : {}), recorded: scenario === 'routed', staleRoute: scenario === 'stale-route', attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs' || scenario === 'project-relocation' || scenario === 'flow-presence' || scenario === 'presence',
+  presence: scenario === 'presence', hubs: scenario === 'hubs' ? 2 : 1, initialInstruction: scenario === 'create', restricted: scenario === 'move' || scenario === 'prepare-restricted' || scenario === 'flow-restricted', ...(scenario === 'restricted-next' || scenario === 'flow-restricted-next' ? { restrictedNext: true } : {}), persist: scenario === 'board' || scenario === 'relocation-board', pending: scenario === 'appearance', auto: scenario === 'auto' || scenario === 'agent-pause', ...(scenario === 'agent-pause' ? { agentPause: true } : {}), detect: scenario === 'project-editor' || scenario === 'project-relocation' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, ...(driveCase === null ? {} : { drive: driveCase }), shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', folderRefusal: refuse === 'folder', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}), ...(scenario === 'retained' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo', reason: 'unresolved' as const }] } : scenario === 'retained-many' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo', reason: 'unresolved' as const }, { path: '/worktrees/plain', projectId: 'p', taskTitle: 'Plain task', reason: 'folder' as const }] } : {}), ...(scenario === 'relocation-list' ? { relocation: ['waiting', 'failed', 'waiting'] as Array<'waiting' | 'failed' | null> } : scenario === 'relocation-board' ? { relocation: ['waiting', 'failed'] as Array<'waiting' | 'failed' | null> } : {}), ...(scenario === 'relocation-list' ? { extraProject: true } : {}) });
+
 
 function harnessSharing(kind: string): HubSharingView {
   const view: HubSharingView = {
@@ -93,6 +106,15 @@ if (flowScenario) {
     board.workflowYaml = 'default_view: workflow' + String.fromCharCode(10) + positioned + anchored;
     board.workflow = parseWorkflow(board.workflowYaml);
   });
+}
+
+/** The drawer creates a conversation from a preset card, so the notice scenario supplies a host roster. */
+const harnessPresetPort = { list: async () => [{ id: 'standard', name: 'Standard', description: 'Balanced coding agent', isDefault: true }], select: async () => ({ ok: true }) };
+
+function BoardModelNoticeScenario() {
+  // One stored snapshot: a fresh object per read would spin React's store.
+  const source = useMemo<AgentPresetPortSource>(() => ({ getSnapshot: () => harnessPresetPort, subscribe: () => () => {} }), []);
+  return <AgentPresetProvider source={source}><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></AgentPresetProvider>;
 }
 
 function WorkflowScenario() {
@@ -240,7 +262,7 @@ function App() {
   if (scenario === 'move') return <><style>{themeFixture}</style><ThemeSync /><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></>;
   if (scenario === 'prepare' || scenario === 'prepare-restricted') return <><style>{themeFixture}</style><ThemeSync /><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></>;
   if (scenario === 'stage-idle') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;
-  if (scenario === 'auto') return <><style>{themeFixture}</style><ThemeSync /><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></>;
+  if (scenario === 'auto' || scenario === 'agent-pause') return <><style>{themeFixture}</style><ThemeSync /><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></>;
   if (scenario === 'routed') return <><style>{themeFixture}</style><ThemeSync /><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></>;
   if (scenario === 'stale-route') return <><style>{themeFixture}</style><ThemeSync /><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></>;
   if (scenario === 'project-relocation') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><RelocationEditorScenario /></div></>;
@@ -248,6 +270,8 @@ function App() {
   if (scenario === 'schedules') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><SchedulesScenario /></>;
   if (scenario === 'project-editor') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><ProjectEditorScenario /></div></>;
   if (scenario === 'workflow') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario /></div></>;
+  if (scenario === 'board-model') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario /></div></>;
+  if (scenario === 'board-model-notice') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><BoardModelNoticeScenario /></>;
   if (flowScenario) return themed
     ? <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} onMarkAllRead={() => {}} /></div></>
     : <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;

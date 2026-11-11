@@ -2,11 +2,24 @@ import { afterEach, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { KanbanError } from '../../src/shared/errors.js';
+import type { ModelSelection } from '../../src/shared/types.js';
+import type { SessionModelPort } from '../../src/host/session-model.js';
 import { fixture } from './helpers.js';
 
 let active: Array<Awaited<ReturnType<typeof fixture>>> = [];
 afterEach(async () => { for (const value of active.splice(0)) await value.close(); });
 async function setup() { const value = await fixture(); active.push(value); return value; }
+async function setupWith(models?: SessionModelPort) { const value = await fixture({ ...(models === undefined ? {} : { models }) }); active.push(value); return value; }
+/** The port records what the preparation asked the host to install on the conversation it made. */
+function recordingPort() {
+  const applied: Array<{ sessionId: string; selection: ModelSelection }> = [];
+  const port: SessionModelPort = {
+    catalog: async () => ({ default: { provider: 'deepseek', model: 'chat' }, providers: [], failures: [] }),
+    apply: async (sessionId, selection) => { applied.push({ sessionId, selection: { ...selection } }); return { applied: true }; },
+  };
+  return { port, applied };
+}
+const BOARD_MODEL = { provider: 'anthropic', model: 'claude' };
 
 const INSTRUCTED_WORKFLOW = ['name: Flow', 'initial_column: backlog', 'columns:', '  - id: backlog', '    label: Backlog', '    on_enter_prompt: |', '      Start the task.', '  - id: done', '    label: Done', ''].join(String.fromCharCode(10));
 
@@ -189,6 +202,35 @@ describe('prepareFirstExecution', () => {
     expect(second.sessionId).toBe(first.sessionId);
     expect(f.git.created).toBe(1);
     expect(f.sessions.dirs.size).toBe(1);
+  });
+
+  it('announces the board model it installed on the conversation it created', async () => {
+    const h = recordingPort();
+    const f = await setupWith(h.port);
+    await f.store.saveBoardWorkflow(f.board.id, INSTRUCTED_WORKFLOW + 'model:\n  provider: anthropic\n  model: claude\n');
+    const instruction = f.store.snapshot().workflow.columns.find(column => column.id === 'backlog')!.onEnterPrompt!;
+    const task = await created(f);
+    const marker = f.store.requireTask(task.id).instructionPending!;
+    const snapshot = await f.app.command({ type: 'task.prepareFirstExecution', taskId: task.id, columnId: 'backlog', expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
+    const conversation = f.store.requireTask(task.id).sessionIds[0]!;
+    expect(h.applied).toEqual([{ sessionId: conversation, selection: BOARD_MODEL }]);
+    // Without this the preparation dialog would show a model choice it never applied.
+    expect(snapshot.commandReceipt).toEqual({ kind: 'conversation', id: conversation, model: { requested: BOARD_MODEL, applied: true } });
+  });
+
+  it('announces no model for a conversation the preparation did not create', async () => {
+    const h = recordingPort();
+    const f = await setupWith(h.port);
+    await f.store.saveBoardWorkflow(f.board.id, INSTRUCTED_WORKFLOW + 'model:\n  provider: anthropic\n  model: claude\n');
+    const instruction = f.store.snapshot().workflow.columns.find(column => column.id === 'backlog')!.onEnterPrompt!;
+    const task = await created(f);
+    await f.app.command({ type: 'worktree.dismiss', taskId: task.id });
+    const existing = await f.app.createConversation(task.id);
+    const marker = f.store.requireTask(task.id).instructionPending!;
+    const snapshot = await f.app.command({ type: 'task.prepareFirstExecution', taskId: task.id, columnId: 'backlog', expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
+    expect(snapshot.commandReceipt).toEqual({ kind: 'conversation', id: existing });
+    // The board model was installed once, by the conversation that was made for it.
+    expect(h.applied.map(entry => entry.sessionId)).toEqual([existing]);
   });
 
   it('runs through the task.prepareFirstExecution command with its receipt', async () => {

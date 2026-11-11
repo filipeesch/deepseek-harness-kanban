@@ -7,6 +7,8 @@ import { fixture, taskWithConversation } from './helpers.js';
 
 const CUSTOM_FLOW = 'name: Custom\ninitial_column: todo\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
 const COMMENTED_FLOW = '# Keep this comment\nname: Commented\ninitial_column: todo\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
+const MODEL_FLOW = 'name: Modelled\ninitial_column: todo\nmodel:\n  provider: deepseek\n  model: chat\n  reasoning_effort: high\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
+const MALFORMED_MODEL_FLOW = 'name: Broken\ninitial_column: todo\nmodel:\n  provider: deepseek\n  temperature: 0.2\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
 const GROUPED_FLOW = 'name: Grouped\ninitial_column: todo\ncolumns:\n  - id: todo\n    label: Todo\n    on_enter_prompt: Do it.\n    allowed_transitions: [done]\n  - id: done\n    label: Done\ngroups:\n  - id: flow\n    label: Flow\n    columns: [todo, done]\n';
 
 class FakeSharing {
@@ -452,5 +454,57 @@ describe('board tool publishing', () => {
     const value = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Preview' });
     expect(value.sharing).toEqual({ status: 'preview' });
     expect(sharing.published).toEqual([]);
+  });
+});
+
+describe('the board default model', () => {
+  it('states the model a board names and the absence of one', async () => {
+    const f = await setup();
+    const named = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Modelled', workflow_yaml: MODEL_FLOW });
+    const withModel = await run(f, 'get_board_summary', { board_id: named.id, include_workflow: true });
+    expect(withModel.defaultModel).toEqual({ provider: 'deepseek', model: 'chat', reasoningEffort: 'high' });
+    expect(withModel.workflow.model).toEqual({ provider: 'deepseek', model: 'chat', reasoningEffort: 'high' });
+    const withoutModel = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
+    expect(withoutModel.defaultModel).toBeNull();
+    expect(withoutModel.workflow.model).toBeUndefined();
+  });
+
+  it('sets the model through a replacement workflow', async () => {
+    const f = await setup();
+    await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MODEL_FLOW });
+    const value = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
+    expect(value.defaultModel).toEqual({ provider: 'deepseek', model: 'chat', reasoningEffort: 'high' });
+    expect(value.workflowYaml).toBe(MODEL_FLOW);
+  });
+
+  it('clears the model when the replacement workflow omits it', async () => {
+    const f = await setup();
+    await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MODEL_FLOW });
+    await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: CUSTOM_FLOW });
+    const value = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
+    expect(value.defaultModel).toBeNull();
+    expect(value.workflow.model).toBeUndefined();
+  });
+
+  it('rejects a malformed model mapping and leaves the board unchanged', async () => {
+    const f = await setup();
+    await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MODEL_FLOW });
+    const before = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
+    await expect(run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MALFORMED_MODEL_FLOW })).rejects.toMatchObject({ code: 'INVALID_WORKFLOW' });
+    const after = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
+    expect(after).toEqual(before);
+    expect(after.workflowYaml).toBe(MODEL_FLOW);
+  });
+
+  it('guides the agent to the model mapping before it writes a workflow', async () => {
+    const f = await setup();
+    const create = named(f.tools, 'create_board');
+    const update = named(f.tools, 'update_board');
+    const summary = named(f.tools, 'get_board_summary');
+    const described = (tool: ToolDefinition, parameter: string): string =>
+      String((tool.parameters as { properties?: Record<string, { description?: string }> }).properties?.[parameter]?.description ?? '');
+    expect(described(create, 'workflow_yaml')).toContain('board default model');
+    expect(described(update, 'workflow_yaml')).toContain('defaultModel');
+    expect(summary.description).toContain("board's default model");
   });
 });

@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { canTransition, transitionAccess } from '../domain/transitions.js';
+import { resolveTaskConversationModel } from '../domain/model-preference.js';
+import type { SessionModelPort } from './session-model.js';
 import { conversationStageActivity, persistedStageActivity } from '../shared/stage-activity.js';
 import { entryInstruction, nextEnteredAt } from '../domain/stage-entry.js';
 import { placementFromAnchor } from '../domain/placement.js';
@@ -10,7 +12,7 @@ import type { AutoAdvancePlan } from '../domain/auto-advance.js';
 import { admitAutoAdvance } from './auto-advance-admission.js';
 import { readPendingUserWork, withQuestionPending } from './pending-source.js';
 import type { ConversationFactsSource } from './native-facts.js';
-import type { AutoModePauseReason, BoardSettings, Command, ConversationFacts, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, RetainedCheckout, RetainedCheckoutReason, SharingCommand, SnapshotRequest, Task, WorktreeDefaults } from '../shared/types.js';
+import type { AutoModePauseReason, Board, BoardSettings, Command, ConversationFacts, ConversationModelOutcome, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, RetainedCheckout, RetainedCheckoutReason, SharingCommand, SnapshotRequest, Task, WorktreeDefaults } from '../shared/types.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionStore } from './question-storage.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
@@ -48,7 +50,7 @@ import { isAuthorizationCommand, type GoogleDriveAuthCoordinator } from './shari
 import { WorkspaceCoordinator } from './workspace-coordinator.js';
 import { resolveCanonicalPath } from './path-resolution.js';
 import type { ScheduleRuntimePort } from './schedule-port.js';
-import type { ScheduleModelCatalog } from '../shared/types.js';
+import type { ModelCatalog } from '../shared/types.js';
 
 async function pathExists(value:string):Promise<boolean>{try{await lstat(value);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}}
 function isEvent(value:unknown):value is {type:string;seq:number;data:unknown}{return Boolean(value&&typeof value==='object'&&'type'in value&&typeof value.type==='string'&&'seq'in value&&typeof value.seq==='number'&&Number.isSafeInteger(value.seq)&&'data'in value);}
@@ -68,7 +70,9 @@ function boardSharingPort(sharing:HubSharingService):BoardSharingPort{
   publish:hubId=>sharing.publish(hubId),
  };
 }
-export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore; probe?:ProjectProbe; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number }
+/** One created conversation and, when its board named a default model, how that model fared. */
+export interface CreatedConversation { sessionId: string; model?: ConversationModelOutcome }
+export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number }
 /** Coordinates Hub-scoped commands while the host continues to own sessions and execution. */
 export class KanbanApp {
  readonly questions=new QuestionIndex();
@@ -126,7 +130,7 @@ export class KanbanApp {
    locateBySession:sessionId=>{const located=this.locator.bySession(sessionId);return located?{task:located.task,board:located.board}:undefined;},
    locate:taskId=>{const located=this.locator.byTask(taskId);return located?{task:located.task,board:located.board}:undefined;},
    facts:sessionId=>this.factsSource.read(sessionId),
-   admit:(taskId,plan)=>this.admitAutoAdvance(taskId,plan),
+   admit:(taskId,plan,isCurrent)=>this.admitAutoAdvance(taskId,plan,isCurrent),
    pause:(taskId,reason,message,expectedColumnId)=>this.pauseAutoMode(taskId,reason,message,expectedColumnId),
    schedule:callback=>setTimeout(callback,AUTO_ADVANCE_SETTLE_MS),
    cancel:handle=>clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -143,7 +147,17 @@ export class KanbanApp {
   invariant(this.scheduleRuntime,'SCHEDULES_UNAVAILABLE','Session schedules are unavailable in this host.');
   return this.scheduleRuntime;
  }
- async modelCatalog(refresh=false):Promise<ScheduleModelCatalog>{return this.requireScheduleRuntime().modelCatalog(refresh);}
+ /**
+  * The host model catalog for the settings editors. It is asked of the session model
+  * port, which is what a board needs it for; the schedule runtime answers only when
+  * this host wired no port, so reading the catalog to choose a board's default model
+  * never depends on whether schedules are available.
+  */
+ async modelCatalog(refresh=false):Promise<ModelCatalog>{
+  const models=this.options.models;
+  if(models!==undefined)return models.catalog(refresh);
+  return this.requireScheduleRuntime().modelCatalog(refresh);
+ }
  /** The first/default Hub facade retained for single-Hub callers and tests. */
  get store():HubStore{return this.hubs.defaultHub();}
  private hubStore(hubId?:string):HubStore{return this.hubs.hub(this.hubs.resolveHubId(hubId));}
@@ -506,15 +520,40 @@ export class KanbanApp {
  private assertContext(taskId:string):void{const task=this.locatedTask(taskId).task;invariant(!task.operation,'CONTEXT_OPERATION_PENDING','Resolve the task context operation before admitting another conversation or execution.');}
  /** A recorded project relocation owns every directory-changing action in its project. */
  private assertProjectRelocation(project:Project,action:string):void{invariant(!project.operation,'PROJECT_RELOCATING','Resolve the project relocation before '+action+'.');}
+ /**
+  * Put a new conversation on the model its board chose. A board default is a
+  * convenience and never a gate: whatever the host answers, the conversation
+  * someone asked for is still created, and the outcome rides on the receipt so
+  * the client can say which model it actually starts on.
+  */
+ private async applyBoardDefaultModel(board:Board,sessionId:string):Promise<ConversationModelOutcome|undefined>{
+  const models=this.options.models;
+  const requested=resolveTaskConversationModel({boardModel:board.workflow.model});
+  if(models===undefined||requested===undefined)return undefined;
+  try{
+   const outcome=await models.apply(sessionId,requested);
+   return {requested,applied:outcome.applied,...(outcome.applied?{}:{reason:outcome.reason,...(outcome.inUse===undefined?{}:{inUse:outcome.inUse})})};
+  }catch(error){
+   // The port reports every refusal as an outcome, so this is a defect guard and
+   // not a policy branch. Whatever it is, the conversation someone asked for is
+   // still created and the fallback is still reported.
+   this.options.report?.(error);
+   return {requested,applied:false,reason:'failed'};
+  }
+ }
  private serial<T>(run:()=>Promise<T>):Promise<T>{const result=this.commandTail.then(run);this.commandTail=result.then(()=>undefined,()=>undefined);return result;}
- createConversation(taskId:string):Promise<string>{return this.serial(()=>this.createConversationNow(taskId));}
- private async createConversationNow(taskId:string,options:{allowUndecided?:boolean}={}):Promise<string>{
+ createConversation(taskId:string):Promise<string>{return this.serial(async()=>(await this.createConversationNow(taskId)).sessionId);}
+ private async createConversationNow(taskId:string,options:{allowUndecided?:boolean}={}):Promise<CreatedConversation>{
   this.assertContext(taskId);const located=this.locatedTask(taskId);const store=this.hubs.hub(located.hubId);const before=located.task;const project=located.project;
   this.assertProjectRelocation(project,'creating a conversation');
   invariant(!(options.allowUndecided===true&&before.sessionIds.length===0&&unresolvedWorktreeBinding(before,project)),'WORKTREE_BINDING_UNRESOLVED','Resolve the worktree binding in the Git section before starting the first conversation.');
   invariant(options.allowUndecided===true||!requiresWorktreeDecision(before,project),'WORKTREE_DECISION_REQUIRED','Choose whether to create a worktree or continue in the base project before starting the first conversation.');
   const projectDirectory=requireProjectPath(project);const workspaceId=await this.workspaceCoordinator?.ensureTaskWorkspace(located.hubId,before,project);const id=await this.sessions.create(projectDirectory,workspaceId);
-  try{if(before.effectiveCwd!==projectDirectory)await this.sessions.setDirectory(id,before.effectiveCwd);this.assertContext(taskId);const current=store.requireTask(taskId);invariant(current.effectiveCwd===before.effectiveCwd,'CONTEXT_CHANGED','Task directory changed while the conversation was being created.');await store.addSession(taskId,id);return id;}
+  try{
+   if(before.effectiveCwd!==projectDirectory)await this.sessions.setDirectory(id,before.effectiveCwd);
+   const model=await this.applyBoardDefaultModel(located.board,id);
+   this.assertContext(taskId);const current=store.requireTask(taskId);invariant(current.effectiveCwd===before.effectiveCwd,'CONTEXT_CHANGED','Task directory changed while the conversation was being created.');await store.addSession(taskId,id);
+   return {...(model===undefined?{}:{model}),sessionId:id};}
   catch(error){try{await this.sessions.archive(id);}catch(archiveError){this.options.report?.(archiveError);}throw error;}
  }
  createTask(input:NewTask){return this.serial(()=>this.createTaskNow(input));}
@@ -558,7 +597,7 @@ export class KanbanApp {
   * creates the default worktree and the first conversation; `send` then dispatches
   * the stage instruction through the same admission as a user run action.
   */
- private async startFirstExecutionNow(taskId:string,request:{send:boolean;columnId:string;expectedEnteredAt?:number;expectedInstruction?:string}):Promise<{sessionId:string;sent:boolean}>{
+ private async startFirstExecutionNow(taskId:string,request:{send:boolean;columnId:string;expectedEnteredAt?:number;expectedInstruction?:string}):Promise<{sessionId:string;sent:boolean;model?:ConversationModelOutcome}>{
   const located=this.locatedTask(taskId);const marker=located.task.instructionPending;
   invariant(located.task.columnId===request.columnId,'TASK_MOVED','The task moved to another stage. Review the current stage before starting its first execution.');
   invariant(marker!==undefined&&marker.columnId===request.columnId,'INSTRUCTION_ALREADY_RESOLVED','The stage entry is no longer unresolved.');
@@ -569,7 +608,7 @@ export class KanbanApp {
    locate:value=>this.locatedTask(value),
    worktreeDefaults:value=>this.worktreeDefaultsFor(value),
    createWorktree:async(value,draft)=>{await this.worktrees.request(value,{kind:'create',...draft});},
-   createConversation:value=>this.createConversationNow(value),
+   createConversation:async value=>await this.createConversationNow(value),
   },{taskId,columnId,expectedEnteredAt,...(request.expectedInstruction===undefined?{}:{expectedInstruction:request.expectedInstruction})});
   if(!request.send)return {...prepared,sent:false};
   await admitStageInstruction(this.stageInstructionDeps(),{taskId,columnId,instruction,expectedEnteredAt,sessionId:prepared.sessionId});
@@ -579,6 +618,9 @@ export class KanbanApp {
  private async saveNoteNow(input:Extract<Command,{type:'note.save'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).saveNote(input.taskId,{id:input.noteId,content:input.content,tags:input.tags});}
  private async deleteNoteNow(input:Extract<Command,{type:'note.delete'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).deleteNote(input.taskId,input.noteId);}
  command(command:Command):Promise<FullHostSnapshot>{return this.serial(()=>this.execute(command));}
+ /** The pause tools' port: run the command, then re-read the task it changed. */
+ pauseTask(taskId:string,reason:string):Promise<LocatedTask>{return this.command({type:'task.pause',taskId,reason}).then(()=>this.locatedTask(taskId));}
+ resumeTask(taskId:string):Promise<LocatedTask>{return this.command({type:'task.resume',taskId}).then(()=>this.locatedTask(taskId));}
  private async execute(command:Command):Promise<FullHostSnapshot>{
   invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');
   let commandReceipt:HostSnapshot['commandReceipt'];
@@ -612,9 +654,9 @@ export class KanbanApp {
    case 'project.delete':{const store=this.hubStore(command.hubId);invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the project registration.');const project=store.requireProject(command.projectId);invariant(!project.operation,'PROJECT_BUSY','Resolve the project relocation before deleting the project.');await store.deleteProject(command.projectId,command.expectedRevision);break;}
    case 'settings.save':await this.settings(command.settings,command.expectedRevision);break;
    case 'task.create':{const value=await this.createTaskNow(command);commandReceipt={kind:'task',id:value.id};break;}
-   case 'task.prepareFirstExecution':{const value=await this.startFirstExecutionNow(command.taskId,{send:false,columnId:command.columnId,expectedEnteredAt:command.expectedEnteredAt,...(command.expectedInstruction===undefined?{}:{expectedInstruction:command.expectedInstruction})});commandReceipt={kind:'conversation',id:value.sessionId};break;}
+   case 'task.prepareFirstExecution':{const value=await this.startFirstExecutionNow(command.taskId,{send:false,columnId:command.columnId,expectedEnteredAt:command.expectedEnteredAt,...(command.expectedInstruction===undefined?{}:{expectedInstruction:command.expectedInstruction})});commandReceipt={kind:'conversation',id:value.sessionId,...(value.model===undefined?{}:{model:value.model})};break;}
    case 'task.edit':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).editTask(command.taskId,{...(command.title!==undefined?{title:command.title}:{}),...(command.description!==undefined?{description:command.description}:{})},command.expectedRevision);break;}
-   case 'conversation.create':{const id=await this.createConversationNow(command.taskId);commandReceipt={kind:'conversation',id};break;}
+   case 'conversation.create':{const created=await this.createConversationNow(command.taskId);commandReceipt={kind:'conversation',id:created.sessionId,...(created.model===undefined?{}:{model:created.model})};break;}
    case 'conversation.close':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).closeSession(command.taskId,command.sessionId);break;}
    case 'conversation.reopen':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).reopenSession(command.taskId,command.sessionId);break;}
    case 'note.save':{const value=await this.saveNoteNow(command);commandReceipt={kind:'note',id:value.id};break;}
@@ -631,8 +673,12 @@ export class KanbanApp {
    case 'operation.dismiss':await this.dismissFailedAdvance(command.taskId);break;
    case 'retainedCheckout.dismiss':this.dismissRetainedCheckouts(command.paths);break;
    case 'task.move':await this.move(command);break;
-   case 'task.autoMode':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).setAutoMode(command.taskId,command.enabled);if(!command.enabled)this.autoAdvance.forget(command.taskId);break;}
+   // Changing the setting forgets a turn that has not settled yet, so enabling — or
+   // resuming a paused task — never advances a turn that ended before the change.
+   case 'task.autoMode':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).setAutoMode(command.taskId,command.enabled);this.autoAdvance.forget(command.taskId);break;}
    case 'task.recordTransition':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).recordTransition(command.taskId,command.columnId);break;}
+   case 'task.pause':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).pauseTask(command.taskId,command.reason);this.autoAdvance.forget(command.taskId);break;}
+   case 'task.resume':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).resumeTask(command.taskId);this.autoAdvance.forget(command.taskId);break;}
    case 'task.runInstruction':await this.runInstruction(command);break;
    case 'schedule.save':{
     const store=this.hubStore(command.hubId);
@@ -675,7 +721,7 @@ export class KanbanApp {
   return {
    locate:taskId=>{const located=this.locatedTask(taskId);return {hubId:located.hubId,task:located.task,board:located.board};},
    transact:(hubId,change)=>this.hubs.hub(hubId).transact(change),
-   resolveSession:async task=>firstOpenSessionId(task)??await this.createConversationNow(task.id,{allowUndecided:true}),
+   resolveSession:async task=>firstOpenSessionId(task)??(await this.createConversationNow(task.id,{allowUndecided:true})).sessionId,
    assertExecutionContext:sessionId=>this.assertExecutionContext(sessionId),
    deliver:(sessionId,delivery)=>this.sessions.deliverStageInstruction(sessionId,delivery),
   };
@@ -703,15 +749,17 @@ export class KanbanApp {
    taskId:command.taskId,columnId:command.columnId,instruction:command.expectedInstruction,reviewedInstruction:command.expectedInstruction,expectedEnteredAt:command.expectedEnteredAt,
   });
  }
- private admitAutoAdvance(taskId:string,plan:AutoAdvancePlan):Promise<void>{
-  return this.serial(()=>this.admitAutoAdvanceNow(taskId,plan));
+ private admitAutoAdvance(taskId:string,plan:AutoAdvancePlan,isCurrent:()=>boolean):Promise<void>{
+  // The drain shares the command lane, so a pause or resume queued ahead of this
+  // admission must still win: the settle's own generation decides.
+  return this.serial(()=>isCurrent()?this.admitAutoAdvanceNow(taskId,plan):Promise.resolve());
  }
  /** The serialized adapter around the one automatic-advance admission path. */
  private admitAutoAdvanceNow(taskId:string,plan:AutoAdvancePlan):Promise<void>{
   return admitAutoAdvance({
    locate:taskId=>this.locatedTask(taskId),
    transact:(hubId,change)=>this.hubs.hub(hubId).transact(change),
-   resolveSession:async task=>firstOpenSessionId(task)??await this.createConversationNow(task.id,{allowUndecided:true}),
+   resolveSession:async task=>firstOpenSessionId(task)??(await this.createConversationNow(task.id,{allowUndecided:true})).sessionId,
    pending:task=>readPendingUserWork(this.factsSource,task.sessionIds),
    dispatch:()=>this.dispatchPending(),
    report:error=>this.options.report?.(error),
@@ -742,7 +790,7 @@ export class KanbanApp {
   if(this.disposed)return;if(this.driving){this.driveAgain=true;return;}this.driving=true;
   try{do{this.driveAgain=false;this.pendingTransitions.refresh(this.locator.summaries());for(const taskId of [...this.pendingTransitions.list()]){const located=this.locator.byTask(taskId);const task=located?.task;const pending=task?.pendingTransition;if(!located||!task||!pending||pending.status!=='waiting'||task.operation||(pending.worktreeRequest&&task.worktree?.status!=='ready'))continue;const store=this.hubs.hub(located.hubId);
    try{
-    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');operations.placeTask(d,t.id,pending.columnId,placementFromAnchor(pending.beforeTaskId),nextEnteredAt());if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});
+    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');operations.placeTask(d,t.id,pending.columnId,placementFromAnchor(pending.beforeTaskId),nextEnteredAt(),{retainAgentPause:pending.origin==='auto'});if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});if(pending.origin!=='auto')this.autoAdvance.forget(task.id);
     if(pending.mode==='run'){
      invariant(pending.sessionId&&pending.text,'INVALID_TARGET','Confirmed execution is missing its target or instruction.');
      await admitStageInstruction(this.stageInstructionDeps(),{taskId:task.id,columnId:pending.columnId,instruction:pending.text,sessionId:pending.sessionId,requestId:pending.id});

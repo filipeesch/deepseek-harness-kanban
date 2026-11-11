@@ -1,4 +1,4 @@
-import type { Command, HubSchedule, Project, ScheduleModelCatalog, ScheduleModelProvider, ScheduleModelSelection } from '../../../shared/types.js';
+import type { Command, HubSchedule, Project, ModelCatalog, ModelProvider, ModelSelection } from '../../../shared/types.js';
 import { assertSchedulable, describeCron, formatOccurrence, isTimeZone, nextOccurrences } from '../../../domain/cron.js';
 export { formatOccurrence };
 
@@ -62,7 +62,7 @@ export function editScheduleDraft(draft: ScheduleDraft, field: keyof ScheduleDra
 }
 
 /** The stored model selection, or undefined for the host default. */
-export function draftModel(draft: ScheduleDraft): ScheduleModelSelection | undefined {
+export function draftModel(draft: ScheduleDraft): ModelSelection | undefined {
   if (draft.modelMode !== 'custom') return undefined;
   const provider = draft.modelProvider.trim();
   const model = draft.modelName.trim();
@@ -71,14 +71,25 @@ export function draftModel(draft: ScheduleDraft): ScheduleModelSelection | undef
   return { provider, model, ...(reasoningEffort === '' ? {} : { reasoningEffort }) };
 }
 
+/** Move the draft onto one route, or back to the deployment default; the route key stays in the domain. */
+export function editScheduleDraftModel(draft: ScheduleDraft, selection: ModelSelection | undefined): ScheduleDraft {
+  return {
+    ...draft,
+    modelMode: selection === undefined ? 'default' : 'custom',
+    modelProvider: selection?.provider ?? '',
+    modelName: selection?.model ?? '',
+    reasoningEffort: selection?.reasoningEffort ?? '',
+  };
+}
+
 /** The catalog entry for the draft's current route, when the catalog advertises it. */
-export function draftCatalogModel(draft: ScheduleDraft, catalog: ScheduleModelCatalog | null): ScheduleModelProvider['models'][number] | undefined {
+export function draftCatalogModel(draft: ScheduleDraft, catalog: ModelCatalog | null): ModelProvider['models'][number] | undefined {
   if (draft.modelMode !== 'custom' || catalog === null) return undefined;
   return catalog.providers.find(provider => provider.id === draft.modelProvider)?.models.find(model => model.id === draft.modelName);
 }
 
 /** The first reason the draft cannot be saved, or null when it can. */
-export function scheduleDraftError(draft: ScheduleDraft, projects: readonly Project[], catalog: ScheduleModelCatalog | null = null): string | null {
+export function scheduleDraftError(draft: ScheduleDraft, projects: readonly Project[], catalog: ModelCatalog | null = null): string | null {
   const title = draft.title.trim();
   if (!title) return 'A schedule title is required.';
   if (title.length > MAX_SCHEDULE_TITLE) return 'A schedule title must be at most ' + MAX_SCHEDULE_TITLE + ' characters.';

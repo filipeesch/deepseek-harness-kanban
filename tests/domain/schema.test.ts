@@ -43,6 +43,28 @@ describe('persisted board schema', () => {
     expect(parsed.success && parsed.data.workflow.columns[0]!.allowedTransitions).toEqual([{ to: 'done' }]);
   });
 
+  it('accepts a pause requested by the agent beside the diagnostic pause', () => {
+    const state = populatedState();
+    state.tasks[0]!.autoMode = {
+      enabled: true,
+      hold: { reason: 'Review the diff', at: '2026-10-21T10:00:00.000Z' },
+      pause: { reason: 'turn-error', at: '2026-10-21T10:00:00.000Z' },
+    };
+    const parsed = BoardStateSchema.safeParse(state);
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.tasks[0]!.autoMode?.hold?.reason).toBe('Review the diff');
+    expect(parsed.success && parsed.data.tasks[0]!.autoMode?.pause?.reason).toBe('turn-error');
+  });
+
+  it('rejects an unknown pause reason and a hold without enabled auto mode', () => {
+    const unknown = populatedState();
+    unknown.tasks[0]!.autoMode = { enabled: true, pause: { reason: 'agent-requested' as never, at: '2026-10-21T10:00:00.000Z' } };
+    expect(BoardStateSchema.safeParse(unknown).success).toBe(false);
+    const disabled = populatedState();
+    disabled.tasks[0]!.autoMode = { enabled: false, hold: { reason: 'Review', at: '2026-10-21T10:00:00.000Z' } };
+    expect(BoardStateSchema.safeParse(disabled).success).toBe(false);
+  });
+
   it('accepts a recorded transition and the transition-stale pause reason', () => {
     const state = populatedState();
     state.tasks[0]!.recordedTransition = { fromColumnId: 'backlog', columnId: 'done', at: '2026-10-21T10:00:00.000Z' };

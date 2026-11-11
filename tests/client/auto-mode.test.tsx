@@ -190,10 +190,15 @@ describe('auto-mode controls', () => {
   });
 
   it('carries the pause reason and the advance failure in the header control name and tooltip', () => {
+    const onToggle = vi.fn();
     const paused = autoModeView(task({ autoMode: { enabled: true, pause: { reason: 'turn-error', at: now } } }), workflow);
-    const first = render(<AutoModeControl variant="header" view={paused} onToggle={() => {}} />);
-    const toggle = screen.getByRole('button', { name: 'Auto mode paused: the turn failed. Turn off auto mode' });
+    const first = render(<AutoModeControl variant="header" view={paused} onToggle={onToggle} />);
+    const toggle = screen.getByRole('button', { name: 'Auto mode paused: the turn failed. Resume auto mode' });
     expect(toggle.getAttribute('title')).toBe('Auto mode paused: the turn failed');
+    // A recorded pause presents as not pressed, so activating it resumes rather than disables.
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(toggle);
+    expect(onToggle).toHaveBeenCalledWith(true);
     first.unmount();
 
     const failed = autoModeView(task({
@@ -222,6 +227,77 @@ describe('auto-mode controls', () => {
     expect(toggle.getAttribute('data-auto-state')).toBe('held');
     expect(toggle.className).toContain('is-held');
     expect(document.querySelector('.kb-drawer-automode')).toBeNull();
+  });
+
+  it('presents the pause the agent requested with its reason and a resume activation', () => {
+    const onToggle = vi.fn();
+    const view = autoModeView(task({ autoMode: { enabled: true, hold: { reason: 'Review the diff', at: now } } }), workflow);
+    expect(view).toMatchObject({
+      enabled: true,
+      pressed: false,
+      state: 'paused-by-agent',
+      toggleLabel: 'Resume auto mode',
+      status: { tone: 'pending', label: 'Auto mode paused by the agent: Review the diff' },
+      title: 'Auto mode paused by the agent: Review the diff',
+    });
+    render(<AutoModeControl view={view} onToggle={onToggle} />);
+    const chip = screen.getByRole('button', { name: 'Auto mode paused by the agent: Review the diff. Resume auto mode' });
+    expect(chip.getAttribute('aria-pressed')).toBe('false');
+    expect(chip.getAttribute('data-auto-state')).toBe('paused-by-agent');
+    expect(chip.className).toContain('is-paused');
+    fireEvent.click(chip);
+    expect(onToggle).toHaveBeenCalledWith(true);
+  });
+
+  it('presents the agent pause and a failed turn together', () => {
+    const view = autoModeView(task({
+      autoMode: { enabled: true, hold: { reason: 'Review the diff', at: now }, pause: { reason: 'turn-error', at: now } },
+    }), workflow);
+    expect(view.state).toBe('paused-by-agent');
+    expect(view.status).toEqual({ tone: 'pending', label: 'Auto mode paused by the agent: Review the diff' });
+    expect(view.secondaryStatuses).toEqual([{ tone: 'danger', label: 'Auto mode paused: the turn failed' }]);
+    expect(view.stateLabel).toBe('Auto mode paused by the agent: Review the diff. Auto mode paused: the turn failed');
+    expect(view.title).toBe('Auto mode paused by the agent: Review the diff Auto mode paused: the turn failed');
+  });
+
+  it('keeps the agent reason beside an advance in flight or its failure', () => {
+    const advancing = autoModeView(task({
+      autoMode: { enabled: true, hold: { reason: 'Review the diff', at: now } },
+      pendingTransition: { id: 'p', fromColumnId: 'backlog', columnId: 'plan', mode: 'run', status: 'sending', origin: 'auto' },
+    }), workflow);
+    expect(advancing.state).toBe('advancing');
+    expect(advancing.status).toEqual({ tone: 'pending', label: 'Advancing to Plan…' });
+    expect(advancing.secondaryStatuses).toEqual([{ tone: 'pending', label: 'Auto mode paused by the agent: Review the diff' }]);
+    expect(advancing.stateLabel).toBe('Advancing to Plan… Auto mode paused by the agent: Review the diff');
+    expect(advancing.pressed).toBe(false);
+
+    const failed = autoModeView(task({
+      autoMode: { enabled: true, hold: { reason: 'Review the diff', at: now } },
+      pendingTransition: { id: 'p', fromColumnId: 'backlog', columnId: 'plan', mode: 'run', status: 'failed', origin: 'auto', error: { code: 'SEND_FAILED', message: 'No.' } },
+    }), workflow);
+    expect(failed.state).toBe('failed');
+    expect(failed.status).toMatchObject({ tone: 'danger', alert: true });
+    expect(failed.secondaryStatuses).toEqual([{ tone: 'pending', label: 'Auto mode paused by the agent: Review the diff' }]);
+    expect(failed.title).toContain('Auto mode paused by the agent: Review the diff');
+  });
+
+  it('carries both recorded pauses in the drawer control name', () => {
+    const view = autoModeView(task({
+      autoMode: { enabled: true, hold: { reason: 'Review the diff', at: now }, pause: { reason: 'turn-error', at: now } },
+    }), workflow);
+    render(<AutoModeControl variant="header" view={view} />);
+    const toggle = screen.getByRole('button', { name: 'Auto mode paused by the agent: Review the diff. Auto mode paused: the turn failed. Resume auto mode' });
+    expect(toggle.getAttribute('title')).toBe('Auto mode paused by the agent: Review the diff Auto mode paused: the turn failed');
+  });
+
+  it('keeps the setting toggle for a derived stale recording that records no pause', () => {
+    const view = autoModeView(task({
+      autoMode: { enabled: true },
+      recordedTransition: { fromColumnId: 'backlog', columnId: 'gone', at: now },
+    }), workflow);
+    expect(view.state).toBe('paused');
+    expect(view.pressed).toBe(true);
+    expect(view.toggleLabel).toBe('Turn off auto mode');
   });
 
   it('presents an automatic advance failure with only the automatic retry action', () => {

@@ -15,7 +15,7 @@ export function boardTools(app:KanbanApp,boards:BoardAdministration):ToolDefinit
   normal('create_board',intent+'Create a board in a Hub with the default workflow or a supplied complete workflow YAML. Use list_hubs to discover the Hub. A bound Hub publishes the change automatically.',{
    hub_id:text('Hub ID. Optional when exactly one Hub exists.'),
    name:text('Board name.',true),
-   workflow_yaml:text('Complete workflow YAML. Omit for the default workflow.'),
+   workflow_yaml:text('Complete workflow YAML. Omit for the default workflow. A root model mapping with provider, model, and optional reasoning_effort names the board default model every new conversation of this board starts on; omit it to keep the DSH default.'),
   },async(args,exec)=>{
    await assertBoardWriteAllowed(app,exec);
    const value=await boards.create({...(args.hub_id===undefined?{}:{hubId:args.hub_id}),name:args.name,...(args.workflow_yaml===undefined?{}:{workflowYaml:args.workflow_yaml})},'when-bound');
@@ -25,7 +25,7 @@ export function boardTools(app:KanbanApp,boards:BoardAdministration):ToolDefinit
    board_id:text('Board ID.',true),
    hub_id:text('Hub ID. Optional when the board identifier is enough.'),
    name:text('Replacement board name.'),
-   workflow_yaml:text('Complete replacement workflow YAML.'),
+   workflow_yaml:text('Complete replacement workflow YAML. Keep, add, or drop the root model mapping (provider, model, and optional reasoning_effort) to set or clear the board default model; read the current one with get_board_summary include_workflow defaultModel.'),
    expected_revision:{type:'integer',description:'Hub revision from a prior read; stale values are rejected.'},
   },async(args,exec)=>{
    await assertBoardWriteAllowed(app,exec);
