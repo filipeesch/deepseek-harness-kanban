@@ -19,7 +19,6 @@ export interface DestructiveState {
 export interface DestructiveOptions {
   run: (command: Command, allowDiscard?: boolean) => Promise<KanbanSnapshot>;
   tasks: () => readonly Task[];
-  retained?: (path: string) => void;
   closed?: (taskId: string) => void;
 }
 
@@ -69,7 +68,6 @@ export function useDestructiveOperations(options: DestructiveOptions) {
   const [state, setState] = useState<DestructiveState>({ view: null, pending: false, error: null });
   const optionsRef = useRef(options); optionsRef.current = options;
   const pendingRef = useRef(false);
-  const pendingRetained = useRef(new Map<string, string>());
 
   const close = useCallback(() => {
     if (pendingRef.current) return;
@@ -79,10 +77,6 @@ export function useDestructiveOperations(options: DestructiveOptions) {
   const settle = useCallback((result: KanbanSnapshot, request: DestructiveRequest, command: Command) => {
     const outcome = acceptedTask(result, request.taskId, command);
     if (outcome.accepted) {
-      if (request.plainCheckout && request.path) {
-        if (outcome.task) pendingRetained.current.set(request.taskId, request.path);
-        else optionsRef.current.retained?.(request.path);
-      }
       if (request.command.type === 'task.delete') optionsRef.current.closed?.(request.taskId);
       setState({ view: null, pending: false, error: null });
       return;
@@ -137,15 +131,6 @@ export function useDestructiveOperations(options: DestructiveOptions) {
     void execute(view.request, { type: 'operation.return', taskId: view.request.taskId });
   }, [state.view, execute]);
 
-  /** Report a retained plain checkout only after the task actually disappears; drop it on failure. */
-  const reconcile = useCallback((tasks: readonly Task[]) => {
-    for (const [taskId, path] of [...pendingRetained.current]) {
-      const task = tasks.find(value => value.id === taskId);
-      if (!task) { pendingRetained.current.delete(taskId); optionsRef.current.retained?.(path); continue; }
-      if (!task.operation || task.operation.phase === 'failed') pendingRetained.current.delete(taskId);
-    }
-  }, []);
-
   const openForce = useCallback((taskId: string) => {
     const task = optionsRef.current.tasks().find(value => value.id === taskId);
     const request = task ? destructiveRequestFromOperation(task) : null;
@@ -182,7 +167,6 @@ export function useDestructiveOperations(options: DestructiveOptions) {
     returnToBase,
     openForce,
     confirmForce,
-    reconcile,
     retryTask,
     setError: (error: Problem | null) => setState(previous => ({ ...previous, error })),
   };

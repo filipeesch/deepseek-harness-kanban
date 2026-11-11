@@ -11,7 +11,11 @@ import type { ConversationLeaseEnvironment } from './conversation-leases.js';
 import { AutoRunController } from './auto-run.js';
 import { BoardCard } from './board-card.js';
 import { BoardHeader } from './board/board-header.js';
-import { BoardBody, BoardEmptyStates, BoardProblemNotices, ProjectsEmptyState, ShareBanner } from './board/board-notices.js';
+import { BoardBody, BoardEmptyStates, ProjectsEmptyState } from './board/board-frames.js';
+import { NoticeStack } from './board/notice-stack.js';
+import { TeamChangesBanner } from './notices/team-banner.js';
+import { useBoardNotices, type NoticeDismissalPort } from './notices/use-board-notices.js';
+import type { NoticeHandlers } from './notices/model.js';
 import { BoardColumnsView } from './board/board-columns-view.js';
 import { StageEditorDialog } from './stage/stage-editor-dialog.js';
 import { BoardCreationDialogs } from './board/board-dialogs.js';
@@ -64,6 +68,9 @@ export interface BoardViewProps {
   onMarkAllRead?: (sessionIds: readonly string[]) => void;
 }
 
+const EMPTY_TASKS: readonly Task[] = [];
+const EMPTY_PROJECTS: readonly Project[] = [];
+
 export function BoardView({ api, renderConversation, pageState, sessionTitles, conversationLeases, picker = null, autoRun: providedAutoRun, nativeSeat, onOpenSession, onMarkAllRead }: BoardViewProps) {
   const [localPageState] = useState(createBoardPageState); const preferences = pageState ?? localPageState;
   const [snapshot, setSnapshot] = useState<KanbanSnapshot | null>(null); const latest = useRef<KanbanSnapshot | null>(null); const live = useRef(false); const currentApi = useRef(api); currentApi.current = api;
@@ -80,8 +87,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   const [selectionMode, setSelectionMode] = useState(false); const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [autoModePending, setAutoModePending] = useState<ReadonlySet<string>>(() => new Set());
   const autoModeInFlight = useRef(new Set<string>());
-  const [retainedCheckout, setRetainedCheckout] = useState<string | null>(null);
-  const [dismissedRetained, setDismissedRetained] = useState<string[]>([]);
+  const [dismissedTeamBanner, setDismissedTeamBanner] = usePageField(preferences, 'dismissedTeamBanner');
   const [batchConfirm, setBatchConfirm] = useState(false); const [batchTasks, setBatchTasks] = useState<Task[]>([]);
   const [drawerEntering, setDrawerEntering] = useState(false);
   const [drawerClosing, setDrawerClosing] = useState(false);
@@ -192,12 +198,10 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   const destructive = useDestructiveOperations({
     run: (command, allowDiscard) => run(command, allowDiscard),
     tasks: () => latest.current ? allTasks(latest.current) : [],
-    retained: setRetainedCheckout,
     closed: taskId => { if (selectedId === taskId) setSelectedId(null); },
   });
   discardRequest.current = destructive.openDiscard;
   const batch = useBatchDeletion({ run: (command, allowDiscard) => run(command, allowDiscard), onRejected: rejections => setActionError(batchRejectionProblem(rejections)) });
-  useEffect(() => { destructive.reconcile(state?.tasks ?? []); }, [state?.tasks, destructive.reconcile]);
   useEffect(() => {
     const view = destructive.state.view;
     if (!view || destructive.state.pending) return;
@@ -221,6 +225,30 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     const entering = selectedIdRef.current === null && !prefersReducedMotion();
     setDrawerClosing(false); setDrawerEntering(entering); setSelectedId(taskId);
   }, [setDrawerClosing, setDrawerEntering, setSelectedId]);
+  // The notice port is the only place that knows the transport; the model stays data.
+  const noticeHandlers = useMemo<NoticeHandlers>(() => ({
+    openTask,
+    retryOperation: taskId => { void destructive.retryTask(taskId); },
+    forceOperation: destructive.openForce,
+    returnToProject: taskId => { void run({ type: 'operation.return', taskId }).catch(error => setActionError(asProblem(error))); },
+    retryRelocation: projectId => { void run({ type: 'project.relocationRetry', projectId }).catch(error => setActionError(asProblem(error))); },
+  }), [openTask, destructive.retryTask, destructive.openForce, run]);
+  const noticeDismissal = useMemo<NoticeDismissalPort>(() => ({
+    dismissRetained: async paths => { await run({ type: 'retainedCheckout.dismiss', paths: [...paths] }); },
+    dismissFailure: () => setActionError(null),
+  }), [run]);
+  const retainedCheckouts = useMemo(() => snapshot?.retainedCheckouts ?? [], [snapshot]);
+  const { notices, dismissAllRetained } = useBoardNotices({
+    retained: retainedCheckouts,
+    tasks: state?.tasks ?? EMPTY_TASKS,
+    projects: state?.projects ?? EMPTY_PROJECTS,
+    actionError,
+    handlers: noticeHandlers,
+    dismissal: noticeDismissal,
+    onDismissError: error => setActionError(asProblem(error)),
+  });
+  const sharingView = activeHub ? snapshot?.sharing?.[activeHub.id] : undefined;
+  const focusBoard = useCallback(() => boardBody.current?.focus(), []);
   // One creation instance serves both presentations: the column board renders the
   // button it returns and the diagram opens the same dialog through its port, so the
   // two New task actions cannot drift in label, enablement, or start handoff. The
@@ -303,12 +331,6 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     const used = new Set(state.tasks.map(task => task.projectId));
     return state.projects.filter(project => used.has(project.id));
   }, [state]);
-  // Local plain-checkout reports combine with the host's transient retention
-  // notices; dismissal is per path and lasts for this board session.
-  const retainedNotices = [
-    ...(retainedCheckout === null ? [] : [{ path: retainedCheckout, reason: 'plain' as const }]),
-    ...(snapshot?.retainedCheckouts ?? []).map(value => ({ path: value.path, reason: 'unavailable' as const })),
-  ].filter(value => !dismissedRetained.includes(value.path));
   // One projection feeds both the painted lists and the motion frame, so the order
   // the frame compares is exactly the order the board renders.
   const columnPlan = state === undefined ? [] : planColumns(state.workflow, visible, optimistic);
@@ -391,32 +413,28 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       onExitSelection={exitSelection}
       {...(state === undefined ? {} : { viewControl: <WorkflowViewControl view={view} onChange={chooseView} /> })}
     />
-    <ShareBanner
-      view={activeHub ? snapshot?.sharing?.[activeHub.id] : undefined}
+    <TeamChangesBanner
       boardId={activeBoard?.id}
       pending={sharingPending}
-      onReview={() => setConfiguration('Team Settings')}
       onUpdate={boardId => {
         setSharingPending(true);
         void api.sharing({ type: 'sharing.updateBoard', hubId: activeHub!.id, boardId })
           .catch(error => setActionError(asProblem(error)))
           .finally(() => setSharingPending(false));
       }}
+      view={sharingView}
+      {...(activeHub && dismissedTeamBanner[activeHub.id] !== undefined ? { dismissedSignature: dismissedTeamBanner[activeHub.id]! } : {})}
+      onReview={() => setConfiguration('Team Settings')}
+      onDismiss={signature => { if (activeHub) setDismissedTeamBanner(previous => ({ ...previous, [activeHub.id]: signature })); }}
+      onFocusBoard={focusBoard}
     />
     {configuration && <Configuration key={configuration} state={state ?? null} hub={activeHub ?? null} board={activeBoard ?? null} hubCount={snapshot?.state.hubs.length ?? 1} settings={snapshot?.state.settings} settingsRevision={snapshot?.state.settings?.revision ?? 0} run={run} api={api} sharing={activeHub ? snapshot?.sharing?.[activeHub.id] : undefined} sharingAuth={snapshot?.sharingAuth} conversationAttention={snapshot?.conversationAttention} scheduleRuntime={activeHub ? snapshot?.scheduleRuntime?.[activeHub.id] : undefined} {...(onOpenSession === undefined ? {} : { onOpenSession })} initial={configuration} onClose={() => setConfiguration(null)} onHubDeleted={() => { setConfiguration(null); setActiveHubIdState(null); writeStorage(ACTIVE_HUB_KEY, null); }} onBoardDeleted={() => { setConfiguration(null); }} onBoardCreated={id => { selectBoard(activeHub!.id, id); setConfiguration(null); }} />}
-    <BoardProblemNotices
+    <NoticeStack
       loadError={loadError}
-      actionError={actionError}
       onRetryLoad={() => setLoadAttempt(value => value + 1)}
-      state={state}
-      tasks={state?.tasks ?? []}
-      retained={retainedNotices}
-      onDismissRetained={path => { setDismissedRetained(previous => previous.includes(path) ? previous : [...previous, path]); setRetainedCheckout(current => current === path ? null : current); }}
-      onOpenTask={openTask}
-      onRetryOperation={taskId => void destructive.retryTask(taskId)}
-      onForce={destructive.openForce}
-      onReturn={taskId => { void run({ type: 'operation.return', taskId }).catch(error => setActionError(asProblem(error))); }}
-      onRelocationRetry={projectId => { void run({ type: 'project.relocationRetry', projectId }).catch(error => setActionError(asProblem(error))); }}
+      notices={notices}
+      {...(dismissAllRetained === undefined ? {} : { dismissAllRetained })}
+      onFocusBoard={focusBoard}
     />
     <BoardEmptyStates snapshot={snapshot} loadError={loadError} hub={activeHub} board={activeBoard} onCreateHub={containers.openHub} onCreateBoard={containers.openBoard} />
     {state && <>

@@ -34,7 +34,7 @@ describe('snapshot frame merge', () => {
   });
 
   it('carries the transient retained-checkout projection through a merge', () => {
-    const retained = [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo' }];
+    const retained = [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo', reason: 'unresolved' as const }];
     const first = mergeSnapshotFrame(undefined, frame({ retainedCheckouts: retained }), false);
     expect(first.retainedCheckouts).toEqual(retained);
     const merged = mergeSnapshotFrame(first, frame({ sequence: 2, retainedCheckouts: retained }), false);

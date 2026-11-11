@@ -40,7 +40,7 @@ describe('task deletion with an unresolvable project context', () => {
     expect(f.store.snapshot().tasks.some(value => value.id === task.id)).toBe(false);
     expect(f.sessions.archived).toEqual(task.sessionIds);
     expect(f.git.removed).toEqual([]);
-    expect((await f.app.snapshot()).retainedCheckouts).toEqual([{ path: root, projectId: f.project.id, taskTitle: 'Moved repo' }]);
+    expect((await f.app.snapshot()).retainedCheckouts).toEqual([{ path: root, projectId: f.project.id, taskTitle: 'Moved repo', reason: 'unresolved' }]);
   });
 
   it('leaves no retained checkout for a normal worktree deletion', async () => {

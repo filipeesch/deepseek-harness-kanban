@@ -37,7 +37,7 @@ export const operation = z.strictObject({
   id, request: operationRequest,
   phase: z.enum(['queued', 'waiting', 'preflight', 'git', 'switching', 'removing', 'archiving', 'failed']),
   targetPath: absolutePath.optional(), targetDirectory: absolutePath.optional(),
-  retainedCheckoutPath: absolutePath.optional(),
+  retainedCheckoutPath: absolutePath.optional(), retainedCheckoutReason: z.enum(['folder', 'unresolved']).optional(),
   previousDirectories: z.record(id, absolutePath), switchedSessionIds: z.array(id), archivedSessionIds: z.array(id),
   createAttempt: z.strictObject({ operationId: id, path: absolutePath, gitRootPath: absolutePath, branchName: nonempty, mode: z.enum(['new', 'existing']), absentBefore: z.literal(true) }).optional(),
   gitCompleted: z.boolean(), error: problem.optional(), createdAt: timestamp,

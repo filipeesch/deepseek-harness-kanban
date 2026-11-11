@@ -206,7 +206,8 @@ describe('bounded integrated product walkthrough', () => {
     unavailable.mockRestore();
     await f.app.command({ type: 'task.delete', taskId: t.id, confirmed: true, expectedWorktreePath: f.tree, discardChanges: true });
     await f.app.worktrees.settle();
-    expect(f.executor.removals).toEqual([{ directories: [[t.a, f.project.projectPath], [t.b, f.project.projectPath], [c, f.project.projectPath]], archived: [] }]);
+    // Archiving now overlaps the removal, so only the returned directories are fixed at that point.
+    expect(f.executor.removals.map(entry => entry.directories)).toEqual([[[t.a, f.project.projectPath], [t.b, f.project.projectPath], [c, f.project.projectPath]]]);
     expect(f.app.store.snapshot().tasks).toEqual([]); expect(f.app.store.snapshot().notes).toEqual([]);
     expect(f.sessions.archived).toEqual([t.a, t.b, c]);
     expect([...f.sessions.histories]).toEqual(preservedHistories);
@@ -232,7 +233,7 @@ describe('bounded integrated product walkthrough', () => {
     expect(f.executor.removals).toEqual([]); expect((await stat(f.tree)).isDirectory()).toBe(true);
     await f.app.command({ type: 'worktree.remove', taskId: t.id, confirmed: true, expectedWorktreePath: f.tree, discardChanges: true });
     await f.app.worktrees.settle();
-    expect(f.executor.removals).toEqual([{ directories: [[t.a, f.project.projectPath], [t.b, f.project.projectPath]], archived: [] }]);
+    expect(f.executor.removals.map(entry => entry.directories)).toEqual([[[t.a, f.project.projectPath], [t.b, f.project.projectPath]]]);
     expect(f.app.store.requireTask(t.id)).toMatchObject({ sessionIds: [t.a, t.b], worktree: null, operation: null, effectiveCwd: f.project.projectPath });
     expect(await f.tool('list_notes', {}, t.a)).toEqual([note]); expect(await f.tool('list_notes', {}, t.b)).toEqual([note]);
     expect(f.sessions.archived).toEqual([]); expect(f.sessions.sent).toEqual([]); expect([...f.sessions.histories]).toEqual(histories);
@@ -255,7 +256,7 @@ describe('bounded integrated product walkthrough', () => {
     expect(f.sessions.archived).toEqual([t.a, t.b]);
     expect(f.sessions.archived).not.toContain(child);
     expect(f.sessions.dirs.get(child)).toBe(target);
-    expect(f.executor.removals).toEqual([{ directories: [[t.a, f.project.projectPath], [t.b, f.project.projectPath]], archived: [] }]);
+    expect(f.executor.removals.map(entry => entry.directories)).toEqual([[[t.a, f.project.projectPath], [t.b, f.project.projectPath]]]);
     await expect(stat(f.tree)).rejects.toMatchObject({ code: 'ENOENT' });
     expect(await readFile(path.join(f.project.projectPath, 'app.txt'), 'utf8')).toBe('initial\n');
     expect((await gitOk(f.project.gitRootPath, ['show-ref', '--verify', 'refs/heads/task/product-lineage'])).trim()).toContain('refs/heads/task/product-lineage');
