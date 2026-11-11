@@ -10,10 +10,11 @@ import type { AutoAdvancePlan } from '../domain/auto-advance.js';
 import { admitAutoAdvance } from './auto-advance-admission.js';
 import { readPendingUserWork, withQuestionPending } from './pending-source.js';
 import type { ConversationFactsSource } from './native-facts.js';
-import type { AutoModePauseReason, BoardSettings, Command, ConversationFacts, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, RetainedCheckout, SharingCommand, SnapshotRequest, Task, WorktreeDefaults } from '../shared/types.js';
+import type { AutoModePauseReason, BoardSettings, Command, ConversationFacts, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, RetainedCheckout, RetainedCheckoutReason, SharingCommand, SnapshotRequest, Task, WorktreeDefaults } from '../shared/types.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionStore } from './question-storage.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
+import { entryExists } from './paths.js';
 import { WorktreeCoordinator } from './worktrees.js';
 import { OperationQueue } from './operation-queue.js';
 import { ProjectRelocationCoordinator } from './project-relocation.js';
@@ -67,7 +68,7 @@ function boardSharingPort(sharing:HubSharingService):BoardSharingPort{
   publish:hubId=>sharing.publish(hubId),
  };
 }
-export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore; probe?:ProjectProbe; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles }
+export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore; probe?:ProjectProbe; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number }
 /** Coordinates Hub-scoped commands while the host continues to own sessions and execution. */
 export class KanbanApp {
  readonly questions=new QuestionIndex();
@@ -91,6 +92,12 @@ export class KanbanApp {
  private readonly saveTimers=new Map<string,ReturnType<typeof setTimeout>>();
  /** Transient, in-memory retention notices; the checkout itself lives on disk. */
  private readonly retainedCheckouts:RetainedCheckout[]=[];
+ private readonly retainedCheckoutExists:(path:string)=>Promise<boolean>;
+ private readonly retainedCheckoutPruneIntervalMs:number;
+ private retainedPruneAt=0;
+ private retainedPrune:Promise<void>|undefined;
+ private retainedPruneTimer:ReturnType<typeof setTimeout>|undefined;
+ private pruningRetained=false;
  private readonly autoAdvance:AutoAdvanceCoordinator;
  /** The one conversation-fact read every host consumer shares; the question projection is folded in here. */
  private readonly factsSource:ConversationFactsSource;
@@ -98,6 +105,8 @@ export class KanbanApp {
  private scheduleRuntime:ScheduleRuntimePort|undefined;
  constructor(readonly hubs:HubRepository,readonly sessions:SessionPort,readonly git:GitPort,private readonly options:AppOptions={},private readonly workspaces?:WorkspacePort){
   this.locator=new TaskLocator(hubs);
+  this.retainedCheckoutExists=options.retainedCheckoutExists??entryExists;
+  this.retainedCheckoutPruneIntervalMs=options.retainedCheckoutPruneIntervalMs??15000;
   if(options.teamFiles)this.teamFiles=options.teamFiles;
   this.boards=new BoardAdministration({hubs,...(options.sharing?{sharing:boardSharingPort(options.sharing)}:{}),...(options.report?{report:options.report}:{}),activity:{inFlight:(hubId,boardId)=>this.boardActivity(hubId,boardId)}});
   this.factsSource=withQuestionPending({read:id=>this.sessions.facts(id)},this.questions);
@@ -109,7 +118,7 @@ export class KanbanApp {
    },
    ...(options.report?{report:options.report}:{}),
   });
-  this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,queue:this.operationQueue,onTaskDeleted:async task=>{try{await this.workspaceCoordinator?.cleanup(task as HubTask);}catch(error){this.options.report?.(error);}},onCheckoutRetained:(task,project,retainedPath)=>this.retainCheckout(task,project,retainedPath)});
+  this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,queue:this.operationQueue,onTaskDeleted:async task=>{try{await this.workspaceCoordinator?.cleanup(task as HubTask);}catch(error){this.options.report?.(error);}},onCheckoutRetained:(task,project,retainedPath,reason)=>this.retainCheckout(task,project,retainedPath,reason)});
   this.relocations=new ProjectRelocationCoordinator(new RepositoryProjectRelocationStore(hubs),sessions,git,{queue:this.operationQueue,signal:options.signal,...(this.workspaceCoordinator?{workspaces:{bind:async(hubId,project)=>{await this.workspaceCoordinator!.rebindProject(hubId,project);}}}:{}),...(options.report?{report:options.report}:{})});
   this.pendingWork=new PendingWorkRunner({resumeWorktrees:async()=>{await this.worktrees.resumePending();},resumeRelocations:async()=>{await this.relocations.resumePending();},dispatchPending:async()=>{await this.dispatchPending();},report:error=>this.options.report?.(error)});
   this.attention=new AttentionCoordinator({source:this.factsSource,tasks:()=>this.attentionTasks(),runPendingWork:async()=>{await this.pendingWork.run();},onChange:()=>this.attentionChanged(),onFacts:()=>this.markChanged(),report:error=>this.options.report?.(error)});
@@ -153,14 +162,77 @@ export class KanbanApp {
  }
  private markChanged():void{if(this.disposed)return;this.sequence++;this.publisher.request();}
  /** Record a transient retention notice once, after the deletion that retained the checkout completed. */
- private retainCheckout(task:Task,project:Project,retainedPath:string):void{
+ private retainCheckout(task:Task,project:Project,retainedPath:string,reason:RetainedCheckoutReason):void{
   if(this.disposed)return;
-  if(this.retainedCheckouts.some(value=>value.path===retainedPath))return;
-  this.retainedCheckouts.push({path:retainedPath,projectId:project.id,taskTitle:task.title});
+  const index=this.retainedCheckouts.findIndex(value=>value.path===retainedPath);
+  // A repeat retention replaces the entry so an existence check already running
+  // cannot mistake the fresh notice for the record it captured.
+  if(index>=0)this.retainedCheckouts[index]={path:retainedPath,projectId:project.id,taskTitle:task.title,reason};
+  else this.retainedCheckouts.push({path:retainedPath,projectId:project.id,taskTitle:task.title,reason});
+  this.armRetainedPrune();
+  this.armRetainedPrune();
   if(this.retainedCheckouts.length>20){
    const dropped=this.retainedCheckouts.shift();
    if(dropped)this.options.report?.(new KanbanError('RETAINED_CHECKOUT_DROPPED','The retained-checkout notice limit dropped an older path.',{path:dropped.path}));
   }
+  this.markChanged();
+ }
+ /** Acknowledge retained checkouts the user dismissed; the directories themselves stay on disk. */
+ private dismissRetainedCheckouts(paths:readonly string[]):void{
+  if(this.disposed)return;
+  const dismissed=new Set(paths);
+  const kept=this.retainedCheckouts.filter(value=>!dismissed.has(value.path));
+  if(kept.length===this.retainedCheckouts.length)return;
+  this.retainedCheckouts.splice(0,this.retainedCheckouts.length,...kept);
+  if(this.retainedCheckouts.length===0&&this.retainedPruneTimer!==undefined){clearTimeout(this.retainedPruneTimer);this.retainedPruneTimer=undefined;}
+  this.markChanged();
+ }
+ /**
+  * Start a retained-checkout existence check when one is due, otherwise keep a
+  * periodic one armed. Either way the check runs off the awaited path, so a
+  * snapshot never waits for the filesystem and an idle board still prunes.
+  */
+ private scheduleRetainedPrune():void{
+  if(this.disposed||this.pruningRetained||this.retainedCheckoutPruneIntervalMs<0)return;
+  if(this.retainedCheckouts.length===0)return;
+  if(Date.now()-this.retainedPruneAt>=this.retainedCheckoutPruneIntervalMs){this.runRetainedPrune();return;}
+  this.armRetainedPrune();
+ }
+ /** Arm the next periodic check; at most one timer exists while notices are retained. */
+ private armRetainedPrune():void{
+  if(this.disposed||this.pruningRetained||this.retainedPruneTimer!==undefined)return;
+  if(this.retainedCheckouts.length===0)return;
+  this.retainedPruneTimer=setTimeout(()=>{
+   this.retainedPruneTimer=undefined;
+   this.runRetainedPrune();
+  },Math.max(this.retainedCheckoutPruneIntervalMs,0));
+  this.retainedPruneTimer.unref?.();
+ }
+ /** Run one single-flight existence check, then re-arm while notices remain. */
+ private runRetainedPrune():void{
+  if(this.disposed||this.pruningRetained||this.retainedCheckouts.length===0)return;
+  this.pruningRetained=true;
+  this.retainedPruneAt=Date.now();
+  // A microtask keeps the check off the snapshot's awaited path without a timer to clean up.
+  this.retainedPrune=Promise.resolve().then(()=>this.pruneRetainedCheckouts()).catch(error=>{this.options.report?.(error);}).finally(()=>{this.pruningRetained=false;this.retainedPrune=undefined;this.armRetainedPrune();});
+ }
+ /**
+  * Drop the retained notices whose directory is gone. The entries captured here
+  * survive the check only by object identity, so a path recorded while the check
+  * was running keeps its own notice.
+  */
+ private async pruneRetainedCheckouts():Promise<void>{
+  if(this.disposed)return;
+  const checked=new Set(this.retainedCheckouts);
+  const missing=new Set<string>();
+  for(const entry of checked){
+   try{if(!await this.retainedCheckoutExists(entry.path))missing.add(entry.path);}
+   catch{/* an unreadable path keeps its notice */}
+  }
+  if(this.disposed||missing.size===0)return;
+  const kept=this.retainedCheckouts.filter(entry=>!(missing.has(entry.path)&&checked.has(entry)));
+  if(kept.length===this.retainedCheckouts.length)return;
+  this.retainedCheckouts.splice(0,this.retainedCheckouts.length,...kept);
   this.markChanged();
  }
  private attentionChanged():void{if(this.disposed)return;this.sequence++;this.publisher.request();this.publisher.flush();}
@@ -182,8 +254,8 @@ export class KanbanApp {
   await this.dispatchPending();
   this.scheduleStartupReconciliation(summaries);
  }
- /** Resolves when the background startup reconciliation has finished; used by tests and shutdown. */
- whenSettled():Promise<void>{return this.startup.whenSettled();}
+ /** Resolves when the background startup reconciliation and any retained checkout check have finished. */
+ async whenSettled():Promise<void>{await this.startup.whenSettled();await this.retainedPrune;}
  private async repairInterruptedTransition(summary:TaskSummary):Promise<void>{
   const located=this.locator.byTask(summary.taskId);const task=located?.task;if(!located||!task)return;
   if(task.pendingTransition?.status==='sending')await this.hubStore(located.hubId).transact(d=>{const t=d.tasks.find(t=>t.id===task.id);if(t?.pendingTransition?.status==='sending'){t.pendingTransition.status='failed';t.pendingTransition.error={code:'DELIVERY_UNCERTAIN',message:'A prior prompt admission was interrupted. Retry explicitly; the same native request identity will be reused.'};}});
@@ -328,7 +400,8 @@ export class KanbanApp {
   else{sequence=this.sequence;conversations=this.attention.present(tasks);}
   const parts=await this.assembler.assemble(conversations,{refreshAuth:request.refreshAuth===true,allowAuthRefresh:mode==='full'});
   const scheduleRuntime=this.scheduleRuntime?.runtime()??{};
-  return {...parts,sequence,...(Object.keys(scheduleRuntime).length===0?{}:{scheduleRuntime}),...(this.retainedCheckouts.length===0?{}:{retainedCheckouts:[...this.retainedCheckouts]})};
+  this.scheduleRetainedPrune();
+  return {...parts,sequence,...(Object.keys(scheduleRuntime).length===0?{}:{scheduleRuntime}),...(this.retainedCheckouts.length===0?{}:{retainedCheckouts:this.retainedCheckouts.map(value=>({...value}))})};
  }
  /** Publish a new snapshot after publishing or authorization state changed outside a board command. */
  sharingChanged():void{this.assembler.invalidateAuth();this.assembler.invalidateSharing();this.markChanged();}
@@ -556,6 +629,7 @@ export class KanbanApp {
    }
    case 'operation.return':this.assertProjectRelocation(this.locatedTask(command.taskId).project,'returning to the base project');await this.clearPending(command.taskId);await this.worktrees.returnToBase(command.taskId);break;
    case 'operation.dismiss':await this.dismissFailedAdvance(command.taskId);break;
+   case 'retainedCheckout.dismiss':this.dismissRetainedCheckouts(command.paths);break;
    case 'task.move':await this.move(command);break;
    case 'task.autoMode':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).setAutoMode(command.taskId,command.enabled);if(!command.enabled)this.autoAdvance.forget(command.taskId);break;}
    case 'task.recordTransition':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).recordTransition(command.taskId,command.columnId);break;}
@@ -682,5 +756,9 @@ export class KanbanApp {
   // Let the background reconciliation finish (or abort) before flushing question
   // persistence, so no replay can schedule a write after the final flush.
   this.startup.dispose();await this.startup.whenSettled();
+  if(this.retainedPruneTimer!==undefined){clearTimeout(this.retainedPruneTimer);this.retainedPruneTimer=undefined;}
+  await this.retainedPrune;
+  // The settling prune re-arms while the host is still open; close clears that one too.
+  if(this.retainedPruneTimer!==undefined){clearTimeout(this.retainedPruneTimer);this.retainedPruneTimer=undefined;}
   await this.flushQuestions();this.publisher.flush();this.disposed=true;this.publisher.dispose();this.attention.dispose();this.autoAdvance.dispose();for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();this.relocations.dispose();this.operationQueue.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.relocations.settle();}
 }

@@ -95,8 +95,10 @@ export interface ContextOperation {
   id: string; request: OperationRequest;
   phase: 'queued' | 'waiting' | 'preflight' | 'git' | 'switching' | 'removing' | 'archiving' | 'failed';
   targetPath?: string; targetDirectory?: string;
-  /** A checkout retained because a deletion could not resolve its project context. */
+  /** A checkout retained because a deletion kept it, with the reason it was kept. */
   retainedCheckoutPath?: string;
+  /** Persisted beside `retainedCheckoutPath` so a resumed deletion reports the same reason. */
+  retainedCheckoutReason?: RetainedCheckoutReason;
   previousDirectories: Record<string, string>; switchedSessionIds: string[];
   archivedSessionIds: string[]; gitCompleted: boolean; error?: Problem; createdAt: string;
   createAttempt?: { operationId: string; path: string; gitRootPath: string; branchName: string; mode: 'new' | 'existing'; absentBefore: true };
@@ -326,8 +328,10 @@ export type LocalDriveRequest = { action: 'roots'; refresh?: boolean } | { actio
 export type LocalDriveResult =
   | { action: 'roots'; discovery: DriveDiscoveryView }
   | { action: 'list'; page: DriveBrowseView };
-/** A checkout left on disk because a deletion could not resolve its Git context. */
-export interface RetainedCheckout { path: string; projectId: string; taskTitle: string }
+/** Why a deletion kept a checkout on disk. */
+export type RetainedCheckoutReason = 'folder' | 'unresolved';
+/** A checkout left on disk because a deletion kept it. */
+export interface RetainedCheckout { path: string; projectId: string; taskTitle: string; reason: RetainedCheckoutReason }
 /**
  * Host snapshot: durable state plus per-conversation attention facts and per-Hub publishing.
  * `state` is present on baselines and command responses and omitted from an update frame that
@@ -384,6 +388,7 @@ export type Command =
   | { type: 'worktree.remove'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; force?: boolean }
   | { type: 'operation.retry' | 'operation.return'; hubId?: string; taskId: string }
   | { type: 'operation.dismiss'; hubId?: string; taskId: string }
+  | { type: 'retainedCheckout.dismiss'; paths: string[] }
   | { type: 'note.save'; hubId?: string; taskId: string; noteId?: string; content?: string; tags?: string[] }
   | { type: 'note.delete'; hubId?: string; taskId: string; noteId: string }
   | { type: 'schedule.save'; hubId: string; scheduleId?: string; title: string; prompt: string; cron: string; timeZone: string; projectId: string; model?: ScheduleModelSelection; newConversation: boolean; archiveWhenIdle: boolean; expectedRevision?: number }

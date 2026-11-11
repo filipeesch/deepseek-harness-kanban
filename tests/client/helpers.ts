@@ -78,7 +78,7 @@ export function restrictedInstructedFixture(): TestSnapshot {
 
 function cloneSnapshot(value: KanbanSnapshot): KanbanSnapshot {
   const normalized = withLegacyView(value);
-  return structuredClone({ sequence: normalized.sequence, stateRevision: normalized.stateRevision, attention: normalized.attention, conversationAttention: normalized.conversationAttention, sharing: normalized.sharing ?? {}, state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } }, ...(normalized.clientEpoch !== undefined ? { clientEpoch: normalized.clientEpoch } : {}) });
+  return structuredClone({ sequence: normalized.sequence, stateRevision: normalized.stateRevision, attention: normalized.attention, conversationAttention: normalized.conversationAttention, sharing: normalized.sharing ?? {}, ...(normalized.retainedCheckouts === undefined ? {} : { retainedCheckouts: normalized.retainedCheckouts }), state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } }, ...(normalized.clientEpoch !== undefined ? { clientEpoch: normalized.clientEpoch } : {}) });
 }
 
 export function fakeApi(initial: TestSnapshot = fixture()) {
@@ -117,6 +117,7 @@ export function fakeApi(initial: TestSnapshot = fixture()) {
       case 'note.delete': value.state.notes = value.state.notes.filter(item => !(item.id === input.noteId && item.taskId === input.taskId)); receipt = { kind: 'note', id: input.noteId }; break;
       case 'project.save': { const hub = value.state.hubs.find(item => item.id === input.hubId) ?? value.state.hubs[0]!; const project = hub.projects.find(item => item.id === input.project.id); if (project) Object.assign(project, input.project); else { const id = 'p' + next++; hub.projects.push({ ...input.project, id, projectKey: input.project.projectKey ?? id }); receipt = { kind: 'project', id }; } break; }
       case 'project.delete': { const hub = value.state.hubs.find(item => item.id === input.hubId) ?? value.state.hubs[0]!; hub.projects = hub.projects.filter(project => project.id !== input.projectId); receipt = { kind: 'project', id: input.projectId }; break; }
+      case 'retainedCheckout.dismiss': value.retainedCheckouts = value.retainedCheckouts?.filter(entry => !input.paths.includes(entry.path)); break;
       case 'settings.save': value.state.settings = { revision: value.state.settings.revision + 1, ...(input.settings.worktreeBasePath ? { worktreeBasePath: input.settings.worktreeBasePath } : {}) }; break;
     }
     const snapshot = publish();

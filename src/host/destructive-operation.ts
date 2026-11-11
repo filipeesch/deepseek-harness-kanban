@@ -1,11 +1,11 @@
-import { lstat } from 'node:fs/promises';
 import { KanbanError } from '../shared/errors.js';
 import type { GitPort, SessionPort } from '../shared/ports.js';
 import { isGitProject } from '../shared/project.js';
-import type { ContextOperation, GitProject, HubState, Project, Task } from '../shared/types.js';
+import type { ContextOperation, GitProject, HubState, Project, RetainedCheckoutReason, Task } from '../shared/types.js';
 import { canonicalPath, containsPath } from './git.js';
 import { resolveDeletionTarget } from './deletion-target.js';
 import { requireTask, type OperationJournal } from './operation-journal.js';
+import { entryExists } from './paths.js';
 import { WorktreeSharingGuard } from './worktree-sharing.js';
 
 export interface DestructiveStore {
@@ -28,17 +28,12 @@ export interface DestructiveOperationOptions {
   now?: () => string;
   sharing?: WorktreeSharingGuard;
   onTaskDeleted?: (task: Task, project: Project) => Promise<void>;
-  /** Reports a checkout left on disk because the deletion could not resolve its project context. */
-  onCheckoutRetained?: (task: Task, project: Project, path: string) => void;
+  /** Reports a checkout left on disk and why the deletion kept it. */
+  onCheckoutRetained?: (task: Task, project: Project, path: string, reason: RetainedCheckoutReason) => void;
 }
 
 type DestructiveRequest = Extract<ContextOperation['request'], { kind: 'delete' | 'remove' }>;
 type DriveResult = 'waiting' | 'done';
-
-async function entryExists(value: string): Promise<boolean> {
-  try { await lstat(value); return true; }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
-}
 
 async function canonicalOrNull(value: string): Promise<string | null> {
   try { return await canonicalPath(value, true); }
@@ -54,7 +49,7 @@ export class DestructiveExecution {
   private readonly now: () => string;
   private readonly sharing: WorktreeSharingGuard;
   private readonly onTaskDeleted?: (task: Task, project: Project) => Promise<void>;
-  private readonly onCheckoutRetained?: (task: Task, project: Project, path: string) => void;
+  private readonly onCheckoutRetained?: (task: Task, project: Project, path: string, reason: RetainedCheckoutReason) => void;
   readonly signal: AbortSignal;
 
   constructor(
@@ -121,7 +116,10 @@ export class DestructiveExecution {
       if (!await this.idle(taskId, operationId)) return 'waiting';
       if (gitProject === undefined || disposition.checkout !== 'remove') {
         await this.update(taskId, operationId, (draft, current) => {
-          if (disposition.checkout === 'retain' && disposition.retainedPath !== undefined) current.retainedCheckoutPath = disposition.retainedPath;
+          if (disposition.checkout === 'retain' && disposition.retainedPath !== undefined) {
+            current.retainedCheckoutPath = disposition.retainedPath;
+            if (disposition.retainReason !== undefined) current.retainedCheckoutReason = disposition.retainReason;
+          }
           draft.worktree = null; current.gitCompleted = true;
         });
       } else if (task.worktree) {
@@ -174,7 +172,10 @@ export class DestructiveExecution {
     });
     try { await this.onTaskDeleted?.(deleted.task, deleted.project); } catch { /* cleanup is reported by the callback owner */ }
     if (retainedPath !== undefined) {
-      try { this.onCheckoutRetained?.(deleted.task, deleted.project, retainedPath); } catch { /* reporting is best effort */ }
+      // A resumed deletion resolves no checkout target, so the reason comes from the
+      // record the first attempt persisted rather than from this attempt's disposition.
+      const retainReason = disposition.retainReason ?? settled.retainedCheckoutReason ?? 'unresolved';
+      try { this.onCheckoutRetained?.(deleted.task, deleted.project, retainedPath, retainReason); } catch { /* reporting is best effort */ }
     }
     return 'done';
   }
