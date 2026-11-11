@@ -103,8 +103,8 @@ async function endPressPoint(page: Page, connectionId: string, end: 'source' | '
 async function drawConnection(page: Page, from: string, to: string): Promise<void> {
   const stage = page.locator('.kb-flow-stage[data-column-id="' + from + '"]');
   await stage.hover();
-  const port = await stage.locator('.kb-flow-port').boundingBox();
-  if (port === null) throw new Error('stage ' + from + ' presents no connection port');
+  const port = await stage.locator('.kb-flow-port[data-side="right"]').boundingBox();
+  if (port === null) throw new Error('stage ' + from + ' presents no right-hand connection port');
   await drag(page, { x: port.x + port.width / 2, y: port.y + port.height / 2 }, await stageCentre(page, to));
 }
 
@@ -134,8 +134,8 @@ test('draws nothing onto the same stage', async ({ page }) => {
   await unlock(page);
   const stage = page.locator('.kb-flow-stage[data-column-id="explore"]');
   await stage.hover();
-  const port = await stage.locator('.kb-flow-port').boundingBox();
-  if (port === null) throw new Error('no port');
+  const port = await stage.locator('.kb-flow-port[data-side="right"]').boundingBox();
+  if (port === null) throw new Error('no right-hand port');
   await drag(page, { x: port.x + port.width / 2, y: port.y + port.height / 2 }, { x: port.x + port.width / 2, y: port.y + port.height / 2 + 60 });
   expect(await commands(page)).toEqual([]);
 });
@@ -206,8 +206,8 @@ test('cancels a drawn connection with Escape', async ({ page }) => {
   await unlock(page);
   const stage = page.locator('.kb-flow-stage[data-column-id="explore"]');
   await stage.hover();
-  const port = await stage.locator('.kb-flow-port').boundingBox();
-  if (port === null) throw new Error('no port');
+  const port = await stage.locator('.kb-flow-port[data-side="right"]').boundingBox();
+  if (port === null) throw new Error('no right-hand port');
   const to = await stageCentre(page, 'apply');
   await page.mouse.move(port.x + port.width / 2, port.y + port.height / 2);
   await page.mouse.down();
@@ -292,10 +292,32 @@ test('refuses creation, selection, and deletion while the layout is locked', asy
   await shoot(page, 'connections-locked.png');
 });
 
-test('keeps the condition editor working while the layout is locked', async ({ page }) => {
+test('keeps a connection without a condition out of reach while the layout is locked', async ({ page }) => {
   await openFlow(page);
   await unlock(page);
   await drawConnection(page, 'explore', 'apply');
+  await page.getByRole('button', { name: 'Lock layout editing' }).click();
+  // Authoring a condition for a connection that has none changes the diagram's structure.
+  await expect(page.locator('[data-connection-id="explore->apply:0"] .kb-flow-condition-mark')).toHaveCount(0);
+  // The stage edit action is presented disabled, with the reason in its tooltip.
+  const header = page.locator('.kb-flow-stage[data-column-id="explore"] .kb-flow-stage-header');
+  await expect(header.getByRole('button', { name: 'Edit stage Explore' })).toBeDisabled();
+  await header.screenshot({ path: path.join(OUT, 'connections-locked-header.png') });
+  await doublePressEdge(page, 'explore->apply:0');
+  await expect(page.getByRole('dialog', { name: /^Condition from / })).toHaveCount(0);
+  const updates = (await commands(page)).filter(command => command.type === 'board.stage.update');
+  expect(updates).toHaveLength(1);
+});
+
+test('keeps an authored condition editable while the layout is locked', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  await drawConnection(page, 'explore', 'apply');
+  await doublePressEdge(page, 'explore->apply:0');
+  const first = page.getByRole('dialog', { name: /^Condition from / });
+  await first.getByRole('textbox', { name: 'Transition condition' }).fill('before locking');
+  await first.getByRole('button', { name: 'Save' }).click();
+  await expect(first).toBeHidden();
   await page.getByRole('button', { name: 'Lock layout editing' }).click();
   await doublePressEdge(page, 'explore->apply:0');
   const editor = page.getByRole('dialog', { name: /Condition from Explore to Apply/ });
@@ -307,4 +329,38 @@ test('keeps the condition editor working while the layout is locked', async ({ p
   await expect(editor).toBeHidden();
   const updates = (await commands(page)).filter(command => command.type === 'board.stage.update');
   expect(updates.at(-1)?.patch).toMatchObject({ transitionCondition: { to: 'apply', when: 'while locked' } });
+});
+
+test('presents a connection port on each of the four sides', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  // The shortest stage keeps all four ports inside one crop.
+  const stage = page.locator('.kb-flow-stage[data-column-id="propose"]');
+  // Zoom on the stage first, so the ports are legible in the evidence as well as present.
+  const box = await stage.boundingBox();
+  if (box !== null) {
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    for (let step = 0; step < 5; step += 1) { await page.mouse.wheel(0, -160); await page.waitForTimeout(80); }
+  }
+  await stage.hover();
+  for (const side of ['top', 'right', 'bottom', 'left']) {
+    await expect(stage.locator('.kb-flow-port[data-side="' + side + '"]')).toHaveCount(1);
+  }
+  await shoot(page, 'connections-four-ports.png');
+  await stage.screenshot({ path: path.join(OUT, 'connections-four-ports-closeup.png') });
+});
+
+test('draws a connection that leaves from the side it was drawn from', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  const source = page.locator('.kb-flow-stage[data-column-id="explore"]');
+  await source.hover();
+  const port = await source.locator('.kb-flow-port[data-side="bottom"]').boundingBox();
+  if (port === null) throw new Error('no bottom port');
+  await drag(page, { x: port.x + port.width / 2, y: port.y + port.height / 2 }, await stageCentre(page, 'apply'));
+  const saves = (await commands(page)).filter(command => command.type === 'board.workflow.save');
+  expect(saves).toHaveLength(1);
+  expect(saves[0]?.yaml).toContain('source: {side: bottom, at: 2}');
+  await expect(page.locator('[data-connection-id^="explore->apply"]')).toHaveCount(1);
+  await shoot(page, 'connections-bottom-port.png');
 });

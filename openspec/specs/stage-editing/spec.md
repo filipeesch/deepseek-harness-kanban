@@ -10,9 +10,15 @@ Lets a user edit one stage of a board's workflow from the stage header itself, w
 
 Every stage of the active board, in both the column board and the workflow diagram, SHALL present a stage edit action in its header. The action SHALL be an icon control placed at the header's top right, after the stage's card count, inside the same group of stage actions so that presenting it never moves the stage title. It SHALL carry an accessible name naming the stage it edits and a tooltip naming the same action, so a sighted and an assisted reading agree.
 
-The action SHALL be available at all times: while the diagram's layout lock is on, while card selection is active, and while a search or project filter hides every card of that stage. Activating it SHALL NOT be a layout edit and SHALL NOT start a stage move, a stage resize, or a connection adjustment, whether it is activated by pointer or by keyboard, and it SHALL NOT store a workflow change by itself.
+The action SHALL be available while card selection is active and while a search or project filter hides every card of that stage. It SHALL NOT be available in the workflow diagram while that diagram's layout lock is on: an edit changes the same transition policy the diagram's structural gestures do, so the diagram presents the action disabled, with a tooltip naming the unlock it needs, until the layout is unlocked. Activating it SHALL NOT be a layout edit and SHALL NOT start a stage move, a stage resize, or a connection adjustment, whether it is activated by pointer or by keyboard, and it SHALL NOT store a workflow change by itself.
 
 The action SHALL be focusable and SHALL activate from the keyboard as readily as from the pointer. Activating it opens the stage editor for that stage, which takes focus while it is open and returns focus to the action that opened it when it is dismissed without saving.
+
+#### Scenario: Refuse the action while the diagram is locked
+
+- **WHEN** the workflow diagram is locked and the user presents a stage header
+- **THEN** the stage edit action is unavailable and names the unlock it needs
+- **AND** activating it does not open the stage editor
 
 #### Scenario: Present the action on every stage
 

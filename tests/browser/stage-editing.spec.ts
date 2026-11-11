@@ -39,9 +39,10 @@ test('presents the stage edit action on every stage of both presentations', asyn
   await openBoard(page, 'flow');
   const diagramStages = await page.locator('.kb-flow-stage').count();
   await expect(page.locator('.kb-flow-stage-edit')).toHaveCount(diagramStages);
-  // The layout lock is on by default and does not gate the edit action.
+  // The layout lock is on by default and gates the diagram's edit action, because an edit
+  // changes the same transition policy the diagram's structural gestures do.
   await expect(page.getByRole('button', { name: 'Lock layout editing' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Edit stage Explore' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Edit stage Explore' })).toBeDisabled();
 
   // Card selection does not gate it either; opening the editor keeps the selection.
   await openBoard(page);
@@ -172,8 +173,11 @@ test('moves the creation action when another stage is made initial', async ({ pa
   expect(sent[0]?.patch).toMatchObject({ initial: true });
 });
 
-test('opens the editor from the locked diagram', async ({ page }) => {
+test('opens the editor from the diagram once the layout is unlocked', async ({ page }) => {
   await openBoard(page, 'flow');
+  await expect(page.getByRole('button', { name: 'Edit stage Explore' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Unlock layout editing', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Unlock layout editing' }).click();
   // Wheel zoom anchors on the pointer, so the header stays in view while it grows.
   const header = page.locator('.kb-flow-stage[data-column-id="explore"] .kb-flow-stage-header');
   const box = await header.boundingBox();
