@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SHARED_DOCUMENT_FILE, serializeSharedDocument, type SharedHubDocument } from '../../src/domain/sharing/document.js';
-import { createGoogleDriveLocalProviderDescriptor, GoogleDriveLocalSharedConfigStore, type DriveLocationResolver } from '../../src/host/sharing/google-drive-local/descriptor.js';
+import { serializeSharedManifest, SHARED_MANIFEST_FILE, type SharedHubManifest } from '../../src/domain/sharing/manifest.js';
+import { createGoogleDriveLocalProviderDescriptor, type DriveLocationResolver } from '../../src/host/sharing/google-drive-local/descriptor.js';
 import { createLocalFolderProviderDescriptor } from '../../src/host/sharing/local-folder-store.js';
 import { isWithinPath } from '../../src/host/sharing/local-folder-path.js';
 import type { DriveLocationView } from '../../src/shared/types.js';
@@ -17,7 +17,7 @@ async function tempRoot(): Promise<string> {
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 
 const flow = (name: string): string => ['name: Flow', 'initial_column: backlog', 'columns:', '  - id: backlog', '    label: ' + name, ''].join('\n');
-const documentOf = (name: string): SharedHubDocument => ({ version: 2, boards: [{ key: 'flow', name, workflow: flow(name) }] });
+const manifestOf = (name: string): SharedHubManifest => ({ version: 3, boards: [{ key: 'flow', name }] });
 
 function resolver(rootPath: string, status: DriveLocationView['status'] = 'available') {
   const refreshes: number[] = [];
@@ -125,54 +125,54 @@ describe('Google Drive Local descriptor', () => {
 
   it('declares continuous synchronization without authorization', async () => {
     const f = await fixture();
-    expect(f.descriptor).toMatchObject({ id: 'google-drive-local', syncMode: 'continuous', defaultIntervalMinutes: 1, requiresAuthorization: false });
+    expect(f.descriptor).toMatchObject({ id: 'google-drive-local', syncMode: 'explicit', defaultIntervalMinutes: 1, requiresAuthorization: false });
   });
 });
 
 describe('Google Drive Local store', () => {
   it('writes and reads the document through the shared directory engine', async () => {
     const f = await fixture();
-    const store = f.descriptor.createStore('hub', { provider: 'google-drive-local', intervalMinutes: 1, settings: f.binding }, {});
-    const written = await store.write(documentOf('Team'), { expectedToken: null, message: 'seed' });
-    expect((await readFile(path.join(f.project, SHARED_DOCUMENT_FILE), 'utf8')).length).toBeGreaterThan(0);
-    await expect(store.read()).resolves.toMatchObject({ token: written.token, document: { boards: [{ name: 'Team' }] } });
+    const store = f.descriptor.createLayoutStore('hub', { provider: 'google-drive-local', intervalMinutes: 1, settings: f.binding }, {});
+    const written = await store.writeManifest(manifestOf('Team'), { expectedToken: null, message: 'seed' });
+    expect((await readFile(path.join(f.project, SHARED_MANIFEST_FILE), 'utf8')).length).toBeGreaterThan(0);
+    await expect(store.readManifest()).resolves.toMatchObject({ token: written.token, manifest: { boards: [{ name: 'Team' }] } });
   });
 
   it('reports an unavailable mount when the location disappears, then resumes', async () => {
     const f = await fixture();
-    const store = f.descriptor.createStore('hub', { provider: 'google-drive-local', intervalMinutes: 1, settings: f.binding }, {}) as GoogleDriveLocalSharedConfigStore;
-    await store.write(documentOf('Team'), { expectedToken: null, message: 'seed' });
+    const store = f.descriptor.createLayoutStore('hub', { provider: 'google-drive-local', intervalMinutes: 1, settings: f.binding }, {});
+    await store.writeManifest(manifestOf('Team'), { expectedToken: null, message: 'seed' });
     await rm(f.driveRoot, { recursive: true, force: true });
-    await expect(store.read()).rejects.toMatchObject({ code: 'SHARING_DRIVE_MOUNT_UNAVAILABLE' });
+    await expect(store.readManifest()).rejects.toMatchObject({ code: 'SHARING_DRIVE_MOUNT_UNAVAILABLE' });
     expect(f.discovery.refreshes.length).toBeGreaterThan(0);
     await mkdir(f.project, { recursive: true });
-    await writeFile(path.join(f.project, SHARED_DOCUMENT_FILE), serializeSharedDocument(documentOf('Team')), 'utf8');
-    await expect(store.read()).resolves.toMatchObject({ document: { boards: [{ name: 'Team' }] } });
+    await writeFile(path.join(f.project, SHARED_MANIFEST_FILE), serializeSharedManifest(manifestOf('Team')), 'utf8');
+    await expect(store.readManifest()).resolves.toMatchObject({ manifest: { boards: [{ name: 'Team' }] } });
   });
 
   it('refuses a folder replaced by a symlink that points outside the location', async () => {
     const f = await fixture();
-    const store = f.descriptor.createStore('hub', { provider: 'google-drive-local', intervalMinutes: 1, settings: f.binding }, {});
-    await store.write(documentOf('Team'), { expectedToken: null, message: 'seed' });
+    const store = f.descriptor.createLayoutStore('hub', { provider: 'google-drive-local', intervalMinutes: 1, settings: f.binding }, {});
+    await store.writeManifest(manifestOf('Team'), { expectedToken: null, message: 'seed' });
     const outside = path.join(f.root, 'outside');
     await mkdir(outside);
     await rm(f.project, { recursive: true, force: true });
     await symlink(outside, f.project);
-    await expect(store.read()).rejects.toMatchObject({ code: 'SHARING_DRIVE_NOT_IN_MOUNT' });
+    await expect(store.readManifest()).rejects.toMatchObject({ code: 'SHARING_DRIVE_NOT_IN_MOUNT' });
   });
 
   it('refuses a location that discovery no longer reports while its directory remains', async () => {
     const f = await fixture();
-    const store = f.descriptor.createStore('hub', { provider: 'google-drive-local', intervalMinutes: 1, settings: f.binding }, {}) as GoogleDriveLocalSharedConfigStore;
-    await store.write(documentOf('Team'), { expectedToken: null, message: 'seed' });
+    const store = f.descriptor.createLayoutStore('hub', { provider: 'google-drive-local', intervalMinutes: 1, settings: f.binding }, {});
+    await store.writeManifest(manifestOf('Team'), { expectedToken: null, message: 'seed' });
     f.discovery.state.locations = [];
-    await expect(store.read()).rejects.toMatchObject({ code: 'SHARING_DRIVE_MOUNT_UNAVAILABLE' });
+    await expect(store.readManifest()).rejects.toMatchObject({ code: 'SHARING_DRIVE_MOUNT_UNAVAILABLE' });
   });
 
   it('reports a missing folder when the location is still mounted', async () => {
     const f = await fixture();
-    const store = f.descriptor.createStore('hub', { provider: 'google-drive-local', intervalMinutes: 1, settings: f.binding }, {});
+    const store = f.descriptor.createLayoutStore('hub', { provider: 'google-drive-local', intervalMinutes: 1, settings: f.binding }, {});
     await rm(f.project, { recursive: true, force: true });
-    await expect(store.read()).rejects.toMatchObject({ code: 'SHARING_FOLDER_MISSING' });
+    await expect(store.readManifest()).rejects.toMatchObject({ code: 'SHARING_FOLDER_MISSING' });
   });
 });

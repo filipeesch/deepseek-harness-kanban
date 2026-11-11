@@ -144,6 +144,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   // The board's own aggregated attention already answers whether anything on it is
   // unread or failed, so the header action reuses it instead of projecting again.
   const activeBoardActivity = activeBoard === undefined ? undefined : boardActivity.get(activeBoard.id);
+  const [sharingPending, setSharingPending] = useState(false);
   // Without the capability there is nothing to call, so the action is never offered.
   const canMarkAllRead = onMarkAllRead !== undefined && activeBoardActivity !== undefined && (activeBoardActivity.unread || activeBoardActivity.failed);
   const markAllRead = useCallback(() => {
@@ -413,6 +414,14 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       {...(state === undefined ? {} : { viewControl: <WorkflowViewControl view={view} onChange={chooseView} /> })}
     />
     <TeamChangesBanner
+      boardId={activeBoard?.id}
+      pending={sharingPending}
+      onUpdate={boardId => {
+        setSharingPending(true);
+        void api.sharing({ type: 'sharing.updateBoard', hubId: activeHub!.id, boardId })
+          .catch(error => setActionError(asProblem(error)))
+          .finally(() => setSharingPending(false));
+      }}
       view={sharingView}
       {...(activeHub && dismissedTeamBanner[activeHub.id] !== undefined ? { dismissedSignature: dismissedTeamBanner[activeHub.id]! } : {})}
       onReview={() => setConfiguration('Team Settings')}

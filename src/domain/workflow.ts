@@ -145,9 +145,10 @@ export function parseWorkflow(yaml: string): Workflow {
   if (!Array.isArray(input.columns) || input.columns.length === 0) invalidWorkflow('Workflow requires at least one column.');
   const columns: Column[] = input.columns.map((item, index) => {
     const value = record(item, 'Column ' + index);
-    keys(value, ['id', 'label', 'name', 'description', 'allowed_transitions', 'on_enter_prompt', 'position', 'size'], 'column', COLUMN_NOTE);
+    keys(value, ['id', 'key', 'label', 'name', 'description', 'allowed_transitions', 'on_enter_prompt', 'position', 'size'], 'column', COLUMN_NOTE);
     if (value.description !== undefined && typeof value.description !== 'string') invalidWorkflow('Column description must be text.');
     const column: Column = { id: id(value.id, 'Column ID'), name: label(value, 'Column') };
+    if (value.key !== undefined) column.key = id(value.key, 'Column ' + column.id + ' key');
     if (value.allowed_transitions !== undefined) column.allowedTransitions = rules(value.allowed_transitions, 'allowed_transitions');
     if (value.on_enter_prompt !== undefined && value.on_enter_prompt !== null) {
       if (typeof value.on_enter_prompt !== 'string') invalidWorkflow('on_enter_prompt must be text or null.');
@@ -159,6 +160,8 @@ export function parseWorkflow(yaml: string): Workflow {
   });
   const columnIds = new Set(columns.map(column => column.id));
   if (columnIds.size !== columns.length) invalidWorkflow('Column IDs must be unique.');
+  const columnKeys = columns.flatMap(column => (column.key === undefined ? [] : [column.key]));
+  if (new Set(columnKeys).size !== columnKeys.length) invalidWorkflow('Column keys must be unique.');
   for (const column of columns) {
     for (const entry of column.allowedTransitions ?? []) {
       if (!columnIds.has(entry.to)) invalidWorkflow('Column ' + column.id + ' references unknown transition target ' + entry.to + '.');

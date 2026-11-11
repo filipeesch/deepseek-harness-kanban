@@ -138,6 +138,12 @@ export class GitClone {
     throw gitFailure('show', result);
   }
 
+  /** Whether one path exists at one commit, without reading its content. */
+  async hasFile(commit: string, relativePath: string): Promise<boolean> {
+    const result = await this.run(['cat-file', '-e', commit + ':' + relativePath]);
+    return result.exitCode === 0;
+  }
+
   async resetHard(commit: string): Promise<void> { await this.require(['reset', '--hard', '--quiet', commit]); }
 
   /** Whether no tracked file is modified, so a hard reset cannot discard local work. */

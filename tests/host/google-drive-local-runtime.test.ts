@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Context } from '@deepseek-ai/cordis';
-import { SHARED_DOCUMENT_FILE } from '../../src/domain/sharing/document.js';
+import { SHARED_MANIFEST_FILE } from '../../src/domain/sharing/manifest.js';
 import { HubRepository } from '../../src/host/hub-repository.js';
 import { GoogleDriveLocalDiscovery } from '../../src/host/sharing/google-drive-local/discovery.js';
 import { nodeDiscoveryFs } from '../../src/host/sharing/google-drive-local/filesystem.js';
@@ -55,9 +55,9 @@ describe('Google Drive Local runtime wiring', () => {
     const f = await fixture();
     const hubId = f.hubs.defaultHubId();
     await f.runtime.service.connect({ type: 'sharing.connect', hubId, provider: 'google-drive-local', settings: { path: f.folder } });
-    const written = await readFile(path.join(f.folder, SHARED_DOCUMENT_FILE), 'utf8');
+    const written = await readFile(path.join(f.folder, SHARED_MANIFEST_FILE), 'utf8');
     expect(written).toContain('boards:');
-    expect(f.runtime.service.view(hubId)).toMatchObject({ provider: 'google-drive-local', providerLabel: 'Google Drive Local', syncMode: 'continuous', intervalMinutes: 1 });
+    expect(f.runtime.service.view(hubId)).toMatchObject({ provider: 'google-drive-local', providerLabel: 'Google Drive Local', syncMode: 'explicit', intervalMinutes: 1 });
     await f.runtime.close();
     expect(f.f.closings).toBe(1);
     await f.hubs.close();
@@ -75,7 +75,7 @@ describe('Google Drive Local runtime wiring', () => {
 
   it('adopts an existing document through the preview', async () => {
     const f = await fixture();
-    await writeFile(path.join(f.folder, SHARED_DOCUMENT_FILE), ['version: 1', 'boards:', '  - key: flow', '    name: Team', '    workflow: "name: Flow\\ninitial_column: backlog\\ncolumns:\\n  - id: backlog\\n    label: Backlog\\n"', ''].join('\n'), 'utf8');
+    await writeFile(path.join(f.folder, SHARED_MANIFEST_FILE), ['version: 1', 'boards:', '  - key: flow', '    name: Team', '    workflow: "name: Flow\\ninitial_column: backlog\\ncolumns:\\n  - id: backlog\\n    label: Backlog\\n"', ''].join('\n'), 'utf8');
     const hubId = f.hubs.defaultHubId();
     await f.runtime.service.connect({ type: 'sharing.connect', hubId, provider: 'google-drive-local', settings: { path: f.folder } });
     expect(f.runtime.service.view(hubId)?.status).toBe('preview');
@@ -83,26 +83,31 @@ describe('Google Drive Local runtime wiring', () => {
     await f.hubs.close();
   });
 
-  it('reports mount loss, keeps drafts, and resumes when the path returns', async () => {
+  it('reports mount loss, keeps the draft, and publishes it when the path returns', async () => {
     const f = await fixture();
     const hubId = f.hubs.defaultHubId();
     await f.runtime.service.connect({ type: 'sharing.connect', hubId, provider: 'google-drive-local', settings: { path: f.folder } });
     const board = f.hubs.requireHub(hubId).boards[0]!;
+    await f.runtime.service.check(hubId);
     await f.hubs.hub(hubId).saveBoardWorkflow(board.id, flow('Local'), f.hubs.requireHub(hubId).revision);
     expect(f.runtime.service.view(hubId)?.drafts).toBe(1);
-    const published = await readFile(path.join(f.folder, SHARED_DOCUMENT_FILE), 'utf8');
+    const published = await readFile(path.join(f.folder, SHARED_MANIFEST_FILE), 'utf8');
     await rm(f.driveRoot, { recursive: true, force: true });
     await expect(f.runtime.service.check(hubId)).rejects.toMatchObject({ code: 'SHARING_DRIVE_MOUNT_UNAVAILABLE' });
     const unavailable = f.runtime.service.view(hubId)!;
     expect(unavailable.status).toBe('unavailable');
     expect(unavailable.drafts).toBe(1);
     await mkdir(f.folder, { recursive: true });
-    await writeFile(path.join(f.folder, SHARED_DOCUMENT_FILE), published, 'utf8');
+    await writeFile(path.join(f.folder, SHARED_MANIFEST_FILE), published, 'utf8');
     await f.runtime.service.check(hubId);
     const recovered = f.runtime.service.view(hubId)!;
     expect(recovered.status).toBe('published');
-    expect(recovered.drafts).toBe(0);
-    expect(await readFile(path.join(f.folder, SHARED_DOCUMENT_FILE), 'utf8')).toContain('Local');
+    // Publishing is the user's decision now, so the draft survives the mount returning.
+    expect(recovered.drafts).toBe(1);
+    await f.runtime.service.publishBoard(hubId, board.id);
+    expect(f.runtime.service.view(hubId)?.drafts).toBe(0);
+    const publishedKey = f.runtime.service.view(hubId)!.boards[0]!.key!;
+    expect(await readFile(path.join(f.folder, 'kanban-boards', publishedKey + '.yaml'), 'utf8')).toContain('Local');
     await f.runtime.close();
     await f.hubs.close();
   });

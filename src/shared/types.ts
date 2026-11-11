@@ -48,7 +48,16 @@ export interface StagePosition { x: number; y: number }
 export type TransitionRule = { to: string; when?: string }
 /** An authored minimum size for one stage, in diagram pixels. */
 export interface StageSize { width: number; height: number }
-export interface Column { id: string; name: string; onEnterPrompt?: string; allowedTransitions?: TransitionRule[]; /** Absent means the diagram places the stage automatically. */ position?: StagePosition; /** Absent means the stage renders at the accepted minimum size. */ size?: StageSize }
+export interface Column {
+  id: string; name: string; onEnterPrompt?: string; allowedTransitions?: TransitionRule[];
+  /**
+   * Stable stage identity, allocated when the stage first enters a published workflow and
+   * preserved across identifier renames. Absent on a board that was never published.
+   */
+  key?: string;
+  /** Absent means the diagram places the stage automatically. */ position?: StagePosition;
+  /** Absent means the stage renders at the accepted minimum size. */ size?: StageSize;
+}
 export interface ColumnGroup { id: string; name: string; columnIds: string[] }
 /** The stage fields one stage edit may change; an absent field is left as authored. */
 export interface StagePatch {
@@ -258,6 +267,8 @@ export interface SharingBoardView {
   boardId: string; key?: string; name: string; state: SharingBoardState; bound: boolean;
   /** The decision still requires review. */
   pending: boolean;
+  /** Published events this installation has not applied yet. */
+  updates?: number;
   /** Both versions, present for a board that needs a choice. */
   detail?: {
     local: string; team: string; localName: string; teamName: string;
@@ -302,6 +313,8 @@ export type SharingCommand =
   | { type: 'sharing.publishInitial'; hubId: string; confirmed: boolean }
   | { type: 'sharing.check'; hubId: string }
   | { type: 'sharing.getUpdates'; hubId: string }
+  | { type: 'sharing.updateBoard'; hubId: string; boardId: string }
+  | { type: 'sharing.publishBoard'; hubId: string; boardId: string }
   | { type: 'sharing.resolve'; hubId: string; boardId: string; choice: 'local' | 'team' }
   | { type: 'sharing.publish'; hubId: string }
   | { type: 'sharing.setInterval'; hubId: string; intervalMinutes: number }

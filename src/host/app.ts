@@ -67,7 +67,8 @@ function boardSharingPort(sharing:HubSharingService):BoardSharingPort{
   isBound:(hubId,boardId)=>sharing.isBound(hubId,boardId),
   noteLocalChange:hubId=>sharing.noteLocalChange(hubId),
   removeBoard:(hubId,boardId,scope,name)=>sharing.removeBoard(hubId,boardId,scope,name),
-  publish:hubId=>sharing.publish(hubId),
+  publishBoard:(hubId,boardId)=>sharing.publishBoard(hubId,boardId),
+  publishManifest:hubId=>sharing.publishManifest(hubId),
  };
 }
 /** One created conversation and, when its board named a default model, how that model fared. */

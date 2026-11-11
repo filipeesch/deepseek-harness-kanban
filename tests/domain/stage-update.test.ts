@@ -104,6 +104,28 @@ describe('stage update', () => {
     expect(workflow.columns.find(value => value.id === 'planning')?.name).toBe('Plan');
   });
 
+  it('keeps an authored stage key across a field edit and an identifier rename', () => {
+    const keyed = [
+      'columns:',
+      '  - id: backlog',
+      '    key: stage-backlog',
+      '    label: Backlog',
+      '  - id: plan',
+      '    key: stage-plan',
+      '    label: Plan',
+      '    allowed_transitions: [backlog]',
+      '',
+    ].join(String.fromCharCode(10));
+    const renamed = updateStage({ text: keyed, stageId: 'backlog', patch: { id: 'inbox' } });
+    const afterRename = parseWorkflow(renamed.text);
+    expect(afterRename.columns.map(column => [column.id, column.key])).toEqual([['inbox', 'stage-backlog'], ['plan', 'stage-plan']]);
+    expect(afterRename.columns[1]?.allowedTransitions).toEqual([{ to: 'inbox' }]);
+    const named = updateStage({ text: keyed, stageId: 'plan', patch: { name: 'Planning' } });
+    const afterName = parseWorkflow(named.text);
+    expect(afterName.columns[1]?.key).toBe('stage-plan');
+    expect(afterName.columns[1]?.name).toBe('Planning');
+  });
+
   it('rejects a duplicate identifier and an unsafe identifier', () => {
     expect(() => updateStage({ text: AUTHORED, stageId: 'plan', patch: { id: 'done' } })).toThrow(/already uses the id/);
     expect(() => updateStage({ text: AUTHORED, stageId: 'plan', patch: { id: 'not a safe id' } })).toThrow(/safe identifier/);

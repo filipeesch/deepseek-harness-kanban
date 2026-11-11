@@ -15,6 +15,7 @@ class FakeSharing implements BoardSharingPort {
   localChanges: string[] = [];
   removed: Array<{ hubId: string; boardId: string; scope: 'local' | 'team'; name: string }> = [];
   published: string[] = [];
+  publishedManifest = 0;
   publishFailure: unknown;
   publishCheck: (() => void) | undefined;
   removeBoardFailure: unknown;
@@ -22,17 +23,22 @@ class FakeSharing implements BoardSharingPort {
   view(): HubSharingView | undefined { if (this.viewFailure) throw this.viewFailure; return this.viewValue; }
   isBound(_hubId: string, boardId: string): boolean { return this.bound.has(boardId); }
   noteLocalChange(hubId: string): void { this.localChanges.push(hubId); }
+  async publishBoard(_hubId: string, boardId: string): Promise<void> {
+    this.publishCheck?.();
+    this.published.push(boardId);
+    if (this.publishFailure) throw this.publishFailure;
+  }
+  async publishManifest(_hubId: string): Promise<void> {
+    this.publishCheck?.();
+    this.publishedManifest += 1;
+    if (this.publishFailure) throw this.publishFailure;
+  }
   async removeBoard(hubId: string, boardId: string, scope: 'local' | 'team', name: string): Promise<void> {
     this.removed.push({ hubId, boardId, scope, name });
     this.bound.delete(boardId);
     // Models HubSharingService.removeBoard, which notifies only for a team removal.
     if (scope === 'team') this.localChanges.push(hubId);
     if (this.removeBoardFailure) throw this.removeBoardFailure;
-  }
-  async publish(hubId: string): Promise<void> {
-    this.publishCheck?.();
-    this.published.push(hubId);
-    if (this.publishFailure) throw this.publishFailure;
   }
 }
 
@@ -278,7 +284,9 @@ describe('board administration removal', () => {
     const value = await service.remove({ boardId, confirmed: true, sharing: 'team' }, 'when-bound');
     expect(value.sharing).toEqual({ status: 'published' });
     expect(sharing.removed[0]?.scope).toBe('team');
-    expect(sharing.published).toEqual(['default']);
+    // A removal is a manifest change: no board log is appended for it.
+    expect(sharing.published).toEqual([]);
+    expect(sharing.publishedManifest).toBe(1);
     expect(sharing.localChanges).toEqual(['default']);
   });
 
@@ -292,21 +300,22 @@ describe('board administration removal', () => {
     expect(sharing.localChanges).toEqual([]);
   });
 
-  it('leaves a team removal to continuous synchronization', async () => {
+  it('publishes the manifest for a team removal on a Drive binding', async () => {
     const sharing = new FakeSharing();
     sharing.bound.add('board');
-    sharing.viewValue = sharingView({ syncMode: 'continuous', provider: 'google-drive', providerLabel: 'Google Drive' });
+    sharing.viewValue = sharingView({ provider: 'google-drive', providerLabel: 'Google Drive' });
     const { service, boardId } = await setup(sharing);
     const value = await service.remove({ boardId, confirmed: true, sharing: 'team' }, 'when-bound');
-    expect(value.sharing).toEqual({ status: 'scheduled' });
+    expect(value.sharing).toEqual({ status: 'published' });
     expect(sharing.published).toEqual([]);
+    expect(sharing.publishedManifest).toBe(1);
     expect(sharing.localChanges).toEqual(['default']);
   });
 
-  it('does not schedule a local-only removal on continuous storage', async () => {
+  it('never publishes a local-only removal', async () => {
     const sharing = new FakeSharing();
     sharing.bound.add('board');
-    sharing.viewValue = sharingView({ syncMode: 'continuous', provider: 'google-drive', providerLabel: 'Google Drive' });
+    sharing.viewValue = sharingView({ provider: 'google-drive', providerLabel: 'Google Drive' });
     const { service, boardId } = await setup(sharing);
     const value = await service.remove({ boardId, confirmed: true, sharing: 'local' }, 'when-bound');
     expect(value.sharing).toEqual({ status: 'local-only' });
@@ -314,16 +323,18 @@ describe('board administration removal', () => {
     expect(sharing.localChanges).toEqual([]);
   });
 
-  it('keeps a team removal local when publishing is blocked', async () => {
+  it('publishes the manifest even when a board has unapplied team events', async () => {
     const sharing = new FakeSharing();
     sharing.bound.add('board');
-    sharing.viewValue = sharingView({ updates: 1 });
+    sharing.viewValue = sharingView({ updates: 1, boards: [{ boardId: 'board', name: 'Kanban', state: 'updates-available', bound: true, pending: true }] });
     const { service, boardId } = await setup(sharing);
     const value = await service.remove({ boardId, confirmed: true, sharing: 'team' }, 'when-bound');
-    expect(value.sharing).toMatchObject({ status: 'blocked' });
+    // The removal is a manifest change and touches no board log, so a board that is
+    // behind does not block it.
+    expect(value.sharing).toEqual({ status: 'published' });
     expect(value.board.id).toBe(boardId);
     expect(sharing.removed[0]?.scope).toBe('team');
-    expect(sharing.published).toEqual([]);
+    expect(sharing.publishedManifest).toBe(1);
   });
 
   it('reports a sharing bookkeeping failure after the board was removed', async () => {
@@ -365,16 +376,6 @@ describe('board administration publishing policy', () => {
     expect(sharing.published).toEqual([]);
   });
 
-  it('leaves continuous storage to automatic synchronization', async () => {
-    const sharing = new FakeSharing();
-    sharing.viewValue = sharingView({ syncMode: 'continuous', provider: 'google-drive', providerLabel: 'Google Drive' });
-    const { service, hubId } = await setup(sharing);
-    const value = await service.create({ hubId, name: 'Continuous' }, 'when-bound');
-    expect(value.sharing).toEqual({ status: 'scheduled' });
-    expect(sharing.published).toEqual([]);
-    expect(sharing.localChanges).toEqual(['default']);
-  });
-
   it('saves the local board before publishing', async () => {
     const sharing = new FakeSharing();
     sharing.viewValue = sharingView();
@@ -392,24 +393,25 @@ describe('board administration publishing policy', () => {
     await service.create({ hubId, name: 'Second' }, 'when-bound');
     await service.update({ boardId, name: 'Renamed' }, 'when-bound');
     await service.editWorkflow({ boardId, edits: [{ old: '    label: Done', new: '    label: Complete' }] }, 'when-bound');
-    expect(sharing.published).toEqual(['default', 'default', 'default']);
+    // Each write publishes its own board: the created one, then the edited one twice.
+    expect(sharing.published).toEqual([expect.any(String), boardId, boardId]);
   });
 
-  it('reports a continuous Hub with unresolved review as blocked', async () => {
+  it('reports a Hub with unresolved review as blocked', async () => {
     const sharing = new FakeSharing();
     const { service, hubId, boardId } = await setup(sharing);
-    sharing.viewValue = sharingView({ syncMode: 'continuous', provider: 'google-drive', providerLabel: 'Google Drive', conflicts: 1 });
+    sharing.viewValue = sharingView({ provider: 'google-drive', providerLabel: 'Google Drive', conflicts: 1 });
     await expect(service.create({ hubId, name: 'Conflicted' }, 'when-bound')).resolves.toMatchObject({ sharing: { status: 'blocked' } });
     expect(sharing.published).toEqual([]);
-    sharing.viewValue = sharingView({ syncMode: 'continuous', provider: 'google-drive', providerLabel: 'Google Drive', boards: [{ boardId, name: 'Kanban', state: 'orphan', bound: false, pending: false }] });
+    sharing.viewValue = sharingView({ provider: 'google-drive', providerLabel: 'Google Drive', boards: [{ boardId, name: 'Kanban', state: 'orphan', bound: false, pending: false }] });
     await expect(service.update({ boardId, name: 'Renamed' }, 'when-bound')).resolves.toMatchObject({ sharing: { status: 'blocked' } });
     expect(sharing.published).toEqual([]);
   });
 
   it('reports a blocked publish without rolling back the local write', async () => {
     const sharing = new FakeSharing();
-    sharing.viewValue = sharingView({ updates: 2 });
     const { service, hubId, boardId } = await setup(sharing);
+    sharing.viewValue = sharingView({ updates: 2, boards: [{ boardId: 'board', name: 'Kanban', state: 'updates-available', bound: true, pending: true }] });
     const value = await service.update({ boardId, name: 'Renamed' }, 'when-bound');
     expect(value.board.name).toBe('Renamed');
     expect(value.sharing).toMatchObject({ status: 'blocked' });

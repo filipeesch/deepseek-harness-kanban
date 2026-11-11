@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { KanbanError } from '../../shared/errors.js';
-import { SHARED_DOCUMENT_FILE } from '../../domain/sharing/document.js';
+import { SHARED_MANIFEST_FILE } from '../../domain/sharing/manifest.js';
 
 export interface GoogleDriveFile {
   id: string;
@@ -116,9 +116,27 @@ export class GoogleDriveClient {
     return { content: await response.text(), file: { id: fileId } };
   }
 
+  /** One named file directly inside a folder, or null when the folder has none. */
+  async findFile(folderId: string, name: string, driveId?: string): Promise<GoogleDriveFile | null> {
+    const escaped = name.replace(/'/g, String.fromCharCode(92) + "'");
+    const query = "name = '" + escaped + "' and '" + folderId + "' in parents and trashed = false";
+    const response = await this.request('/files?' + new URLSearchParams({ q: query, fields: 'files(id,name,mimeType,headRevisionId,driveId,trashed)', pageSize: '10', ...(driveId === undefined ? {} : { driveId, corpora: 'drive', includeItemsFromAllDrives: 'true', supportsAllDrives: 'true' }) }).toString());
+    const files = (response.files ?? []) as GoogleDriveFile[];
+    return files[0] ?? null;
+  }
+
+  /** Create one file with text content inside a folder. */
+  async createFile(folderId: string, name: string, content: string): Promise<GoogleDriveFile> {
+    const metadata = { name, parents: [folderId], mimeType: 'text/yaml' };
+    const boundary = 'dsh-kanban-' + Math.random().toString(36).slice(2);
+    const body = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(metadata) + '\r\n--' + boundary + '\r\nContent-Type: text/yaml\r\n\r\n' + content + '\r\n--' + boundary + '--';
+    const response = await this.request('/files?uploadType=multipart&fields=id,name,mimeType,headRevisionId,driveId,trashed', { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + boundary }, body });
+    return response as unknown as GoogleDriveFile;
+  }
+
   async findDocument(folderId: string, driveId?: string): Promise<GoogleDriveFile | null> {
     const params = new URLSearchParams({
-      q: "name='" + SHARED_DOCUMENT_FILE + "' and '" + folderId.replace(/'/g, "\\'") + "' in parents and trashed=false",
+      q: "name='" + SHARED_MANIFEST_FILE + "' and '" + folderId.replace(/'/g, "\\'") + "' in parents and trashed=false",
       fields: 'files(id,name,mimeType,headRevisionId,modifiedTime,parents,driveId,trashed)', pageSize: '10', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true',
     });
     if (driveId) { params.set('corpora', 'drive'); params.set('driveId', driveId); }
@@ -147,7 +165,7 @@ export class GoogleDriveClient {
   }
 
   async createDocument(folderId: string, content: string): Promise<GoogleDriveFile> {
-    const metadata = { name: SHARED_DOCUMENT_FILE, mimeType: 'text/yaml', parents: [folderId] };
+    const metadata = { name: SHARED_MANIFEST_FILE, mimeType: 'text/yaml', parents: [folderId] };
     const params = new URLSearchParams({ uploadType: 'multipart', supportsAllDrives: 'true', fields: 'id,name,mimeType,headRevisionId,modifiedTime,parents,driveId,trashed' });
     const payload = this.multipart(metadata, content);
     return await this.request('/upload/drive/v3/files?' + params.toString(), { method: 'POST', body: payload.body, headers: { 'content-type': payload.contentType } }) as unknown as GoogleDriveFile;
