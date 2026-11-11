@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest';
 import * as operations from '../../src/domain/hub-operations.js';
 import { sampleHub, operationDeps } from './hub-helpers.js';
 import { transitions } from '../support/transition-rules.js';
+import { HubStateSchema } from '../../src/domain/hub-schema.js';
+import type { HubTask } from '../../src/shared/types.js';
+
+/**
+ * Place a task with the moment the record requires. These tests assert placement
+ * semantics, so the timestamp only has to be valid; monotonic entry ids become
+ * their epoch representation.
+ */
+function place(hub: Parameters<typeof operations.placeTask>[0], taskId: string, columnId: string, placement: Parameters<typeof operations.placeTask>[3], enteredAt: number, options: { retainAgentPause?: boolean } = {}): void {
+  operations.placeTask(hub, taskId, columnId, placement, enteredAt, { ...options, at: new Date(enteredAt).toISOString() });
+}
 
 describe('Hub operations', () => {
   it('creates and renames boards with case-insensitive uniqueness', () => {
@@ -41,7 +52,7 @@ describe('Hub operations', () => {
     expect(hub.tasks[0]!.autoMode?.pause).toBeUndefined();
     operations.pauseAutoMode(hub, task.id, pause, deps, 'backlog');
     expect(hub.tasks[0]!.autoMode?.pause).toEqual(pause);
-    operations.placeTask(hub, task.id, 'done', 'end', 1);
+    place(hub, task.id, 'done', 'end', 1);
     expect(hub.tasks[0]!.autoMode?.pause).toBeUndefined();
     expect(hub.tasks[0]!.autoMode?.enabled).toBe(true);
   });
@@ -102,10 +113,10 @@ describe('Hub operations', () => {
     operations.setAutoMode(hub, task.id, true, deps);
     operations.pauseTask(hub, task.id, 'Review the diff', deps);
 
-    operations.placeTask(hub, task.id, 'done', 'end', 1, { retainAgentPause: true });
+    place(hub, task.id, 'done', 'end', 1, { retainAgentPause: true });
     expect(task.autoMode?.hold?.reason).toBe('Review the diff');
 
-    operations.placeTask(hub, task.id, 'backlog', 'end', 2);
+    place(hub, task.id, 'backlog', 'end', 2);
     expect(task.autoMode?.hold).toBeUndefined();
     expect(task.autoMode?.enabled).toBe(true);
   });
@@ -141,9 +152,9 @@ describe('Hub operations', () => {
     hub.boards[0]!.workflow.columns[0]!.allowedTransitions = transitions('done');
     const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Route', description: '' }, deps);
     operations.recordTransition(hub, task.id, 'done', deps);
-    operations.placeTask(hub, task.id, 'backlog', 'end', 1);
+    place(hub, task.id, 'backlog', 'end', 1);
     expect(task.recordedTransition).toMatchObject({ columnId: 'done' });
-    operations.placeTask(hub, task.id, 'done', 'end', 2);
+    place(hub, task.id, 'done', 'end', 2);
     expect(task.recordedTransition).toBeUndefined();
   });
 
@@ -179,7 +190,7 @@ describe('Hub operations', () => {
     const hub = sampleHub(); const deps = operationDeps();
     operations.saveBoardWorkflow(hub, 'board', 'name: Flow\ninitial_column: backlog\ncolumns:\n  - id: backlog\n    label: Backlog\n  - id: done\n    label: Done\n', deps);
     const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Task', description: '' }, deps);
-    operations.placeTask(hub, task.id, 'done', 'end', Date.now());
+    place(hub, task.id, 'done', 'end', Date.now());
     expect(hub.tasks.find(value => value.id === task.id)).toMatchObject({ boardId: 'board', columnId: 'done' });
   });
 
@@ -190,17 +201,17 @@ describe('Hub operations', () => {
     const second = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Second', description: '' }, deps);
     const third = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Third', description: '' }, deps);
     const order = () => hub.tasks.filter(task => task.columnId === 'done').sort((left, right) => left.position - right.position).map(task => task.title);
-    operations.placeTask(hub, first.id, 'done', 'end', 1);
-    operations.placeTask(hub, second.id, 'done', 'end', 2);
-    operations.placeTask(hub, third.id, 'done', 'end', 3);
+    place(hub, first.id, 'done', 'end', 1);
+    place(hub, second.id, 'done', 'end', 2);
+    place(hub, third.id, 'done', 'end', 3);
     expect(order()).toEqual(['First', 'Second', 'Third']);
-    operations.placeTask(hub, third.id, 'done', 'start', 4);
+    place(hub, third.id, 'done', 'start', 4);
     expect(order()).toEqual(['Third', 'First', 'Second']);
-    operations.placeTask(hub, third.id, 'done', 'end', 5);
+    place(hub, third.id, 'done', 'end', 5);
     expect(order()).toEqual(['First', 'Second', 'Third']);
-    operations.placeTask(hub, third.id, 'done', { before: second.id }, 6);
+    place(hub, third.id, 'done', { before: second.id }, 6);
     expect(order()).toEqual(['First', 'Third', 'Second']);
-    operations.placeTask(hub, third.id, 'done', { before: 'missing-task' }, 7);
+    place(hub, third.id, 'done', { before: 'missing-task' }, 7);
     expect(order()).toEqual(['First', 'Second', 'Third']);
   });
 
@@ -231,5 +242,128 @@ describe('Hub operations', () => {
     expect(operations.deleteNote(hub, task.id, note.id, deps).id).toBe(note.id);
     expect(hub.notes.map(value => value.id)).toEqual([foreign.id]);
     expect(() => operations.deleteNote(hub, task.id, 'missing', deps)).toThrowError(/does not exist/);
+  });
+});
+
+describe('task flow facts', () => {
+  it('records the creation with the stage it was created in', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Created', description: '' }, deps);
+    expect(task.history).toEqual([{ kind: 'created', at: expect.any(String), columnId: 'backlog' }]);
+  });
+
+  it('records one entry per stage change and none for a placement inside the current stage', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    hub.boards[0]!.workflow.columns.push({ id: 'done', name: 'Done' });
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Moved', description: '' }, deps);
+    operations.placeTask(hub, task.id, 'done', 'end', 1, { at: '2026-02-01T10:00:00.000Z' });
+    operations.placeTask(hub, task.id, 'done', 'start', 2, { at: '2026-02-01T10:05:00.000Z' });
+    const stages = (task.history ?? []).filter(entry => entry.kind === 'stage');
+    expect(stages).toEqual([{ kind: 'stage', at: '2026-02-01T10:00:00.000Z', fromColumnId: 'backlog', columnId: 'done' }]);
+  });
+
+  it('records a recorded destination, its replacement, and nothing when it is cleared', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    hub.boards[0]!.workflow.columns.push({ id: 'review', name: 'Review' }, { id: 'done', name: 'Done' });
+    hub.boards[0]!.workflow.columns[0]!.allowedTransitions = transitions('review', 'done');
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Route', description: '' }, deps);
+    operations.recordTransition(hub, task.id, 'done', deps);
+    operations.recordTransition(hub, task.id, 'review', deps);
+    operations.recordTransition(hub, task.id, undefined, deps);
+    const intents = (task.history ?? []).filter(entry => entry.kind === 'intent');
+    expect(intents.map(entry => (entry as { columnId: string }).columnId)).toEqual(['done', 'review']);
+    expect(intents).toHaveLength(2);
+  });
+
+  it('records every auto mode change, including a repeated pause for the same reason', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Auto', description: '' }, deps);
+    operations.setAutoMode(hub, task.id, true, deps);
+    operations.pauseAutoMode(hub, task.id, { reason: 'turn-error', at: '2026-02-01T10:00:00.000Z', message: 'Rate limited.' }, deps);
+    operations.pauseAutoMode(hub, task.id, { reason: 'turn-error', at: '2026-02-01T10:01:00.000Z', message: 'Rate limited.' }, deps);
+    operations.resumeTask(hub, task.id, deps);
+    operations.pauseTask(hub, task.id, 'Review the diff', deps);
+    operations.setAutoMode(hub, task.id, false, deps);
+    const changes = (task.history ?? []).filter(entry => entry.kind === 'auto-mode').map(entry => {
+      const value = entry as { action: string; reason?: string; message?: string };
+      return { action: value.action, ...(value.reason === undefined ? {} : { reason: value.reason }), ...(value.message === undefined ? {} : { message: value.message }) };
+    });
+    expect(changes).toEqual([
+      { action: 'enabled' },
+      { action: 'paused', reason: 'turn-error', message: 'Rate limited.' },
+      { action: 'paused', reason: 'turn-error', message: 'Rate limited.' },
+      { action: 'resumed' },
+      { action: 'agent-paused', reason: 'Review the diff' },
+      { action: 'disabled' },
+    ]);
+  });
+
+
+  it('records the resume a placement causes, including a same-stage reorder', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    hub.boards[0]!.workflow.columns.push({ id: 'done', name: 'Done' });
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Moved', description: '' }, deps);
+    operations.setAutoMode(hub, task.id, true, deps);
+    operations.pauseTask(hub, task.id, 'Review the diff', deps);
+    operations.placeTask(hub, task.id, 'backlog', 'end', 1, { at: '2026-02-01T10:00:00.000Z' });
+    const kinds = () => (task.history ?? []).map(entry => (entry.kind === 'auto-mode' ? entry.action : entry.kind));
+    expect(kinds()).toEqual(['created', 'enabled', 'agent-paused', 'resumed']);
+    operations.pauseAutoMode(hub, task.id, { reason: 'turn-error', at: '2026-02-01T10:01:00.000Z' }, deps);
+    operations.placeTask(hub, task.id, 'done', 'end', 2, { at: '2026-02-01T10:02:00.000Z' });
+    expect(kinds()).toEqual(['created', 'enabled', 'agent-paused', 'resumed', 'paused', 'stage', 'resumed']);
+    expect(task.history?.[3]).toMatchObject({ kind: 'auto-mode', action: 'resumed', at: '2026-02-01T10:00:00.000Z' });
+  });
+
+  it('keeps one row for an agent pause repeated with the same reason', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Paused', description: '' }, deps);
+    operations.setAutoMode(hub, task.id, true, deps);
+    operations.pauseTask(hub, task.id, 'Review the diff', deps);
+    const afterFirst = (task.history ?? []).length;
+    operations.pauseTask(hub, task.id, 'Review the diff', deps);
+    expect((task.history ?? []).length).toBe(afterFirst);
+  });
+
+  it('renames a stage to an identifier a removed stage used and keeps the stored Hub valid', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    operations.saveBoardWorkflow(hub, 'board', 'name: Flow\ninitial_column: retired\ncolumns:\n  - id: retired\n    label: Retired\n  - id: plan\n    label: Plan\n', deps);
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Reuse', description: '' }, deps);
+    operations.placeTask(hub, task.id, 'plan', 'end', 1, { at: '2026-02-01T10:00:00.000Z' });
+    // The unused stage leaves, so its identifier is free for the rename below.
+    operations.saveBoardWorkflow(hub, 'board', 'name: Flow\ninitial_column: plan\ncolumns:\n  - id: plan\n    label: Plan\n', deps);
+    operations.updateBoardStage(hub, 'board', { stageId: 'plan', patch: { id: 'retired' } }, deps);
+    expect(task.columnId).toBe('retired');
+    expect((task.history ?? []).filter(entry => entry.kind === 'stage')).toEqual([
+      { kind: 'stage', at: '2026-02-01T10:00:00.000Z', fromColumnId: 'retired', columnId: 'retired' },
+    ]);
+    expect(HubStateSchema.safeParse(hub).success).toBe(true);
+  });
+
+
+  it('records the first fact of a task stored before the feature', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    hub.boards[0]!.workflow.columns.push({ id: 'done', name: 'Done' });
+    const legacy: HubTask = {
+      id: 'legacy', boardId: 'board', projectId: 'project', title: 'Legacy', description: '', columnId: 'backlog', position: 0,
+      sessionIds: [], closedSessionIds: [], effectiveCwd: '/repo/app', worktree: null, operation: null,
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    hub.tasks.push(legacy);
+    expect(legacy.history).toBeUndefined();
+    operations.placeTask(hub, legacy.id, 'done', 'end', 1, { at: '2026-02-01T10:00:00.000Z' });
+    expect(legacy.history).toEqual([{ kind: 'stage', at: '2026-02-01T10:00:00.000Z', fromColumnId: 'backlog', columnId: 'done' }]);
+  });
+
+  it('records nothing for conversation, note, and text activity', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Quiet', description: '' }, deps);
+    const before = (task.history ?? []).length;
+    operations.addSession(hub, task.id, 'session', deps);
+    operations.closeSession(hub, task.id, 'session', deps);
+    operations.reopenSession(hub, task.id, 'session', deps);
+    const note = operations.saveNote(hub, task.id, { content: 'Shared' }, deps);
+    operations.deleteNote(hub, task.id, note.id, deps);
+    operations.editTask(hub, task.id, { title: 'Renamed', description: 'New' }, deps);
+    expect((task.history ?? []).length).toBe(before);
   });
 });

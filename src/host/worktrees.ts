@@ -16,6 +16,7 @@ import { TaskBindingIndex } from './task-binding-index.js';
 import type { OperationPass } from './destructive-operation.js';
 import type { WorktreeBinding } from './hub-repository.js';
 import { replaceableByDeletion } from '../shared/context-operation.js';
+import { recordSettledOperation } from './worktree-history.js';
 
 export interface WorktreeStore {
   locate(taskId: string): { hubId: string; hub: HubState; task: Task; project: Project };
@@ -238,11 +239,15 @@ export class WorktreeCoordinator {
   }
 
   private async recordAdmissionFailure(taskId: string, operationId: string, error: unknown): Promise<void> {
+    // A rejected admission settles the operation as failed, so it leaves the same
+    // outcome the execution path leaves; only the phase that produced it differs.
+    const failedAt = this.now();
     try {
-      await this.update(taskId, operationId, (_task, operation) => {
+      await this.update(taskId, operationId, (task, operation) => {
         const failure = problem(error);
         operation.error = { ...failure, details: { ...failure.details, failedPhase: operation.phase } };
         operation.phase = 'failed';
+        recordSettledOperation(task, operation, failedAt, failure);
       });
     } catch { /* the operation was replaced or the task is gone */ }
   }
@@ -513,13 +518,15 @@ export class WorktreeCoordinator {
       this.sourceUnchanged(taskId, expectedProject);
       if (gitProject !== undefined && !await this.switchDirectories(taskId, operationId, target, request.kind === 'create' || request.kind === 'attach', gitProject, pass.probe)) return 'waiting';
       ({ task, project } = this.read(taskId));
-      await this.update(taskId, operationId, draft => {
+      const settledAt = this.now();
+      await this.update(taskId, operationId, (draft, operation) => {
         this.sourceUnchanged(taskId, expectedProject);
         if (draft.worktree && request.kind !== 'return') draft.worktree.status = 'ready';
         if (request.kind === 'attach' && draft.unclaimedWorktrees) {
           const remaining = draft.unclaimedWorktrees.filter(record => record.path !== draft.worktree?.path);
           if (remaining.length) draft.unclaimedWorktrees = remaining; else delete draft.unclaimedWorktrees;
         }
+        recordSettledOperation(draft, operation, settledAt);
         draft.operation = null;
       });
       return 'done';
@@ -538,11 +545,13 @@ export class WorktreeCoordinator {
         const recorded = current.operation.createAttempt;
         const possibleCreate = !!recorded && !beforeCreateFailure(error) && (current.operation.gitCompleted || (!!op.createAttempt || createInvoked) && await entryExists(recorded.path));
         const failedPhase = current.operation.request.kind === 'create' && !possibleCreate ? 'preflight' : current.operation.phase;
+        const failedAt = this.now();
         await this.update(taskId, operationId, (task, operation) => {
           if (!possibleCreate) delete operation.createAttempt;
           operation.phase = 'failed';
           operation.error = { ...failure, details: { ...failure.details, failedPhase, gitAttempted: possibleCreate } };
           if (task.worktree && (operation.request.kind === 'create' || operation.request.kind === 'attach')) task.worktree.status = 'error';
+          recordSettledOperation(task, operation, failedAt, failure);
         });
       }
       throw error;

@@ -31,6 +31,16 @@ describe('persisted board schema', () => {
     expect(parsed.success && parsed.data.tasks[0]!.pendingTransition?.origin).toBe('auto');
   });
 
+  it('accepts a task flow record and rejects an entry whose kind needs a field it lacks', () => {
+    const state = populatedState();
+    state.tasks[0]!.history = [{ kind: 'created', at: '2026-10-21T10:00:00.000Z', columnId: 'backlog' }];
+    expect(BoardStateSchema.safeParse(state).success).toBe(true);
+    state.tasks[0]!.history = [{ kind: 'auto-mode', at: '2026-10-21T10:00:00.000Z', action: 'paused' }];
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+    state.tasks[0]!.history = [{ kind: 'worktree', at: '2026-10-21T10:00:00.000Z', action: 'created', path: '/trees/one' }];
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+
   it('normalizes a stored workflow written with bare transition identifiers', () => {
     const yaml = 'name: Flow\ncolumns:\n  - id: backlog\n    label: Backlog\n    allowed_transitions: [done]\n  - id: done\n    label: Done\n';
     const state = populatedState();

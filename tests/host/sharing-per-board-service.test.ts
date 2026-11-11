@@ -97,7 +97,8 @@ describe('per-board publishing service', () => {
     await f.hubs.hub('hub').transact(draft => {
       draft.tasks.push({
         id: 'task', boardId, projectId: 'project', title: 'T', description: '',
-        columnId: 'backlog', position: 0, sessionIds: [], closedSessionIds: [], effectiveCwd: '/repo', worktree: null, operation: null, createdAt: NOW, updatedAt: NOW,
+        columnId: 'backlog', position: 0, sessionIds: [], closedSessionIds: [], effectiveCwd: '/repo', worktree: null, operation: null,
+        history: [{ kind: 'created', at: NOW, columnId: 'backlog' }, { kind: 'worktree', at: NOW, action: 'attached', path: '/trees/published-secret' }], createdAt: NOW, updatedAt: NOW,
       } as never);
       return draft;
     }, hub.revision);
@@ -110,6 +111,14 @@ describe('per-board publishing service', () => {
     await f.service.getUpdates('hub');
     const task = f.hubs.requireHub('hub').tasks.find(candidate => candidate.id === 'task')!;
     expect(task.columnId).toBe('inbox');
+    expect(task.history).toEqual([
+      { kind: 'created', at: NOW, columnId: 'inbox' },
+      { kind: 'worktree', at: NOW, action: 'attached', path: '/trees/published-secret' },
+    ]);
+    // A published board carries its workflow, never a task's recorded flow.
+    const publishedLog = (await f.layout.readLog(key))!.log;
+    const publishedText = publishedLog.snapshot.text + JSON.stringify(publishedLog.events);
+    expect(publishedText).not.toContain('published-secret');
     expect(f.hubs.requireHub('hub').boards[0]!.workflowYaml).toContain('id: inbox');
     await f.close();
   });

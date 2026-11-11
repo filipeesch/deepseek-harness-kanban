@@ -1,6 +1,7 @@
 import type { NewTask } from './task-creation.js';
+import type { TaskHistoryEntry } from './task-history.js';
 
-export type { NewTask };
+export type { NewTask, TaskHistoryEntry };
 
 export const DATA_VERSION = 2 as const;
 export interface Problem { code: string; message: string; details?: Record<string, unknown> }
@@ -153,6 +154,8 @@ export interface Task {
   autoMode?: AutoModeState;
   /** The transition the model recorded for the current stage; discarded when the stage changes. */
   recordedTransition?: RecordedTransition;
+  /** The ordered record of settled flow facts; absent means nothing has been recorded yet. */
+  history?: TaskHistoryEntry[];
   /** Diagnostic-only checkouts left on disk; never an execution or cleanup target. */
   unclaimedWorktrees?: Array<{ path: string; branch: string; error: Problem }>;
   worktreeWorkspaceId?: string; worktreeWorkspaceOwned?: boolean;
