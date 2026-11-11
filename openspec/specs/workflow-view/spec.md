@@ -533,7 +533,7 @@ The user SHALL be able to resize a stage by dragging a resize handle on the stag
 
 ### Requirement: Layout editing lock
 
-The diagram SHALL provide a layout lock that is on by default every time the diagram is presented. The lock SHALL gate every gesture that changes which connections the diagram draws or where they are drawn: stage move, stage resize, connection re-anchoring, connection creation, connection re-pointing, connection deletion, route segment adjustment, Organize, Undo, and Redo SHALL NOT be available while the lock is on and SHALL NOT change the workflow. While the lock is off, those actions SHALL be available subject to their own availability rules. The lock SHALL NOT gate card activation, card drag, selection, the run action, the advance action, the stage edit action, editing a connection's condition, pan, zoom, or the shared search and project filter. Unlocking and locking SHALL NOT change board data, and the lock SHALL NOT persist across a reload.
+The diagram SHALL provide a layout lock that is on by default every time the diagram is presented. The lock SHALL gate every gesture that changes which connections the diagram draws or where they are drawn: stage move, stage resize, connection re-anchoring, connection creation, connection re-pointing, connection deletion, route segment adjustment, the stage edit action, authoring a condition for a connection that authors none, Organize, Undo, and Redo SHALL NOT be available while the lock is on and SHALL NOT change the workflow. While the lock is off, those actions SHALL be available subject to their own availability rules. The lock SHALL NOT gate card activation, card drag, selection, the run action, the advance action, editing a condition a connection already authors, pan, zoom, or the shared search and project filter. Unlocking and locking SHALL NOT change board data, and the lock SHALL NOT persist across a reload.
 
 #### Scenario: Start locked
 
@@ -945,7 +945,7 @@ The action SHALL be focusable and SHALL activate from the keyboard as readily as
 
 The diagram's stage header SHALL present the stage edit action defined by `stage-editing` alongside the stage title, the card count, and, on the initial stage, the task creation action. The action SHALL sit at the header's top right after the card count and SHALL live in the same group of stage actions, so presenting it never moves the stage title.
 
-The action SHALL NOT be a layout edit. It SHALL stay available while the layout is locked, while card selection is active, and while the search or project filter hides every card of the stage; activating it SHALL NOT start a stage move, a stage resize, or a connection adjustment, SHALL NOT add a placement-history entry, and SHALL NOT store a workflow change by itself. The header is the stage's drag handle, so pressing the action SHALL NOT pick the stage up.
+The action SHALL NOT be a layout edit, but it SHALL be unavailable while the layout lock is on: the diagram presents it disabled with a tooltip naming the unlock it needs, because an edit changes the same transition policy the diagram's structural gestures do. It SHALL stay available while card selection is active and while the search or project filter hides every card of the stage; activating it SHALL NOT start a stage move, a stage resize, or a connection adjustment, SHALL NOT add a placement-history entry, and SHALL NOT store a workflow change by itself. The header is the stage's drag handle, so pressing the action SHALL NOT pick the stage up.
 
 #### Scenario: Present the action in the diagram
 
@@ -967,11 +967,22 @@ The action SHALL NOT be a layout edit. It SHALL stay available while the layout 
 
 ### Requirement: Authoring a connection from the diagram
 
-While the layout lock is off, pointing at a stage SHALL reveal a connection port on that stage's boundary, and pressing that port and dragging SHALL present the connection being drawn together with the stage under the pointer as its candidate destination. Releasing over another stage SHALL author a transition from the pointed stage to that stage. Releasing over no stage, over the pointed stage itself, or over a stage the pointed stage already permits SHALL change nothing and SHALL store nothing. Escape and a cancelled pointer SHALL leave the workflow as it was.
+While the layout lock is off, pointing at a stage SHALL reveal a connection port on each of the four sides of that stage's boundary, and pressing any of them and dragging SHALL present the connection being drawn, leaving from the side that port names, together with the stage under the pointer as its candidate destination. Releasing over another stage SHALL author a transition from the pointed stage to that stage; when the side it was drawn from is not the one the automatic route would use, that side SHALL be authored as the connection's departure, and otherwise the automatic route SHALL be kept. Releasing over no stage, over the pointed stage itself, or over a stage the pointed stage already permits SHALL change nothing and SHALL store nothing. Escape and a cancelled pointer SHALL leave the workflow as it was.
 
 The authored destination set SHALL depend on what the source stage authors before the gesture: a stage that authors no transitions, and a stage that authors an empty list, SHALL afterwards author exactly the drawn destination; a stage that authors a non-empty list SHALL afterwards author its existing destinations with their conditions plus the drawn destination, in authored order. Creating a connection SHALL NOT present a condition editor, SHALL NOT open a task, and SHALL NOT move, resize, or select a stage or a card.
 
 The port SHALL be operable by pointer only. The diagram's keyboard order SHALL remain unchanged, because adding a destination by keyboard and by assistive technology is provided by the stage editor's allowed transitions section.
+
+#### Scenario: Offer a port on each side
+
+- **WHEN** the layout is unlocked and the user points at a stage
+- **THEN** the stage presents one connection port on each of its four sides
+
+#### Scenario: Draw a connection from another side
+
+- **WHEN** the user drags the port on the bottom side of a stage onto another stage the automatic route would leave from the right edge
+- **THEN** the authored connection leaves the source from its bottom edge
+- **AND** the stored layout entry names that side
 
 #### Scenario: Create a connection between two stages
 
@@ -1025,7 +1036,7 @@ The port SHALL be operable by pointer only. The diagram's keyboard order SHALL r
 
 ### Requirement: Condition mark on a connection without a condition
 
-Every connection the workflow authors as a transition and that authors no condition SHALL present a mark on its path distinguishing it from a connection that authors a condition. The mark SHALL be absent from a connection that authors a condition and from the dashed connection a stage that authors no transitions receives, which the diagram already distinguishes as a default path. The mark SHALL be removed when a condition is stored for that connection. The mark SHALL keep a readable size while the diagram zooms and SHALL follow its connection while a stage is moved or resized. The mark SHALL NOT be a control, SHALL NOT enter the diagram's keyboard order, and SHALL NOT change board data when pressed.
+Every connection the workflow authors as a transition and that authors no condition SHALL present a mark on its path distinguishing it from a connection that authors a condition. The mark SHALL be absent from a connection that authors a condition and from the dashed connection a stage that authors no transitions receives, which the diagram already distinguishes as a default path. The mark SHALL be presented only while the layout lock is off, because authoring the condition it stands for is a structural edit. The mark SHALL be removed when a condition is stored for that connection. The mark SHALL keep a readable size while the diagram zooms and SHALL follow its connection while a stage is moved or resized. The mark SHALL NOT be a control, SHALL NOT enter the diagram's keyboard order, and SHALL NOT change board data when pressed.
 
 The accessible name of each connection end SHALL say whether that connection authors a condition, so the absence of a condition is available to assistive technology without the mark.
 

@@ -470,7 +470,7 @@ export function WorkflowView(props: WorkflowViewProps) {
       onConnectionEdit={editConnection}
       onSelectConnection={setSelectedConnectionId}
       onOpenCondition={openCondition}
-      onCreateConnection={(sourceId, to) => actions.create(sourceId, to)}
+      onCreateConnection={(sourceId, to, side) => actions.create(sourceId, to, side)}
       onRepointConnection={(sourceId, from, to) => actions.repoint(sourceId, from, to)}
       onReownConnection={(fromSource, to, toSource) => actions.reown(fromSource, to, toSource)}
     />

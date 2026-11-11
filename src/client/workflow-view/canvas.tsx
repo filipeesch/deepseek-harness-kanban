@@ -19,6 +19,7 @@ import { useConnectionGestures } from './use/use-connection-gestures.js';
 import { useStageDrag } from './use/use-stage-drag.js';
 import { stageSignature, toNode, type CanvasStage, type StageFlowNode } from './canvas-stage.js';
 import type { CanvasConnection, CanvasDropState, CanvasViewportActions, CanvasViewRequest, ConnectionEdit } from './canvas-types.js';
+import type { StageSide } from '../../shared/types.js';
 
 export type { CanvasStage, CanvasConnection, CanvasViewRequest, ConnectionEdit, CanvasViewportActions } from './canvas-types.js';
 
@@ -60,7 +61,7 @@ export interface WorkflowCanvasProps {
   /** Called when a connection's condition should be edited, with where to anchor the editor. */
   readonly onOpenCondition: (connectionId: string, anchor: ConditionAnchor) => void;
   /** Called once when a new connection is drawn onto another stage. */
-  readonly onCreateConnection: (sourceId: string, to: string) => void;
+  readonly onCreateConnection: (sourceId: string, to: string, side: StageSide) => void;
   /** Called once when an end is released over another stage, re-pointing the transition. */
   readonly onRepointConnection: (sourceId: string, from: string, to: string) => void;
   /** Called once when a source end is released over another stage, moving the transition. */
@@ -215,6 +216,7 @@ function CanvasInner(props: WorkflowCanvasProps) {
     onStageResizeEnd: props.onStageResizeEnd,
     onStageResizeCancel: props.onStageResizeCancel,
     ...(props.locked ? {} : { onBeginConnect: gestures.beginCreation }),
+    editDisabled: props.locked,
   }), [props.callbacks, stageDrag.start, props.snap, props.onStageResize, props.onStageResizeEnd, props.onStageResizeCancel, props.locked, gestures.beginCreation]);
 
   const dragState = useMemo(() => ({ stageId: props.drop.stageId, indicatorY: props.drop.indicatorY, candidateStageId: gestures.candidateStageId }), [props.drop.stageId, props.drop.indicatorY, gestures.candidateStageId]);

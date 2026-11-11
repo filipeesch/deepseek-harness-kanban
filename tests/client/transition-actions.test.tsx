@@ -105,6 +105,28 @@ describe('transition actions', () => {
     expect(h.pushes).toEqual([]);
   });
 
+
+  it('keeps the side a connection was drawn from when the automatic route differs', async () => {
+    const h = harness(workflowWith(undefined));
+    await act(async () => { h.view.result.current.create('a', 'c', 'bottom'); });
+    expect(h.sent).toEqual(['stage:a', 'save:COMPOSED']);
+    expect(h.applied).toEqual(['ACK']);
+    expect(h.accepted).toEqual([{ 'a->c': { from: 'a', to: 'c', source: { side: 'bottom', at: 2 } } }]);
+    expect(h.pushes[0]!.restores).toBe('both');
+  });
+
+  it('leaves the automatic route alone when the side matches it', async () => {
+    const forward = harness(workflowWith(undefined));
+    await act(async () => { forward.view.result.current.create('a', 'c', 'right'); });
+    expect(forward.sent).toEqual(['stage:a']);
+    expect(forward.applied).toEqual([]);
+    // A connection to an earlier stage leaves from the bottom edge automatically.
+    const returning = harness(workflowWith(undefined));
+    await act(async () => { returning.view.result.current.create('c', 'a', 'bottom'); });
+    expect(returning.sent).toEqual(['stage:c']);
+    expect(returning.applied).toEqual([]);
+  });
+
   it('re-points a destination and prunes the superseded layout inside one transaction', async () => {
     const h = harness(workflowWith([{ to: 'b' }]), { 'a->b': { from: 'a', to: 'b', source: { side: 'top', at: 1 } } });
     await act(async () => { h.view.result.current.repoint('a', 'b', 'c'); });
