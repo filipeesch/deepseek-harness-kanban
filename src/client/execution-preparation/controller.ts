@@ -1,8 +1,11 @@
-import type { CreateWorktree, Problem, Project, WorktreeDefaults } from '../../shared/types.js';
+import type { CreateWorktree, ModelCatalog, ModelSelection, Problem, Project, WorktreeDefaults } from '../../shared/types.js';
 import { asProblem } from '../problem.js';
 import { cleanWorktree, validWorktree } from '../worktree-draft.js';
 import type { PreparationRequest } from './contract.js';
-import { executionPreparationPlan, type PreparationWorktree } from './gate.js';
+import { executionPreparationPlan, type PreparationModel, type PreparationWorktree } from './gate.js';
+
+/** No board model to check: the preparation keeps the native model seat for the user. */
+const NO_BOARD_MODEL: PreparationModel = Object.freeze({ boardModel: undefined, catalog: null });
 
 /** Everything the controller needs from the host, the board, and the native seat. */
 export interface PreparationPorts {
@@ -15,6 +18,8 @@ export interface PreparationPorts {
   retainSession(sessionId: string): Promise<void>;
   releaseSession(sessionId: string): void;
   seatAvailable(): boolean;
+  /** The host model catalog, or null when it cannot be read; only asked for when a board names a model. */
+  modelCatalog(): Promise<ModelCatalog | null>;
 }
 
 export type PreparationPhase = 'closed' | 'worktree' | 'blocked' | 'provisioning' | 'model' | 'error';
@@ -30,6 +35,12 @@ export interface PreparationState {
   readonly stageName: string;
   readonly worktree: PreparationWorktree;
   readonly model: boolean;
+  /**
+   * The model this board names for new conversations, when it names one. The model
+   * step shows it so the person can see what they are accepting by pressing Start
+   * execution, rather than guessing which default they are leaving behind.
+   */
+  readonly boardModel: ModelSelection | null;
   readonly draft: CreateWorktree | null;
   readonly destinationMissing: boolean;
   readonly sessionId: string | null;
@@ -46,6 +57,7 @@ const CLOSED: PreparationState = Object.freeze({
   stageName: '',
   worktree: 'none' as const,
   model: false,
+  boardModel: null,
   draft: null,
   destinationMissing: true,
   sessionId: null,
@@ -99,11 +111,19 @@ export class ExecutionPreparationController {
    * @returns true when the caller may proceed, false when the user cancelled.
    */
   async open(request: PreparationRequest): Promise<boolean> {
-    const plan = executionPreparationPlan(request.task, request.project, this.ports?.seatAvailable() === true);
+    const ports = this.ports;
+    // The catalog is only asked for when its answer can change the plan: a seat the host
+    // composes, a task that has no conversation yet, and a board that names a route. A
+    // failed read leaves the model step open instead of silently skipping the choice.
+    const mayCheckModel = ports !== null && request.boardModel !== undefined
+      && ports.seatAvailable() && request.task.sessionIds.length === 0;
+    const model: PreparationModel = mayCheckModel
+      ? { boardModel: request.boardModel, catalog: await ports.modelCatalog() }
+      : NO_BOARD_MODEL;
+    const plan = executionPreparationPlan(request.task, request.project, ports?.seatAvailable() === true, model);
     if (plan === null) return true;
     // Only a second preparation is refused; requests that need none never reach this point.
     if (this.resolve !== null) return false;
-    const ports = this.ports;
     if (ports === null) return true;
     this.request = request;
     this.project = request.project;
@@ -121,6 +141,7 @@ export class ExecutionPreparationController {
       stageName: request.column.name,
       worktree: plan.worktree,
       model: plan.model,
+      boardModel: model.boardModel ?? null,
       phase: plan.worktree === 'blocked' ? 'blocked' : plan.worktree === 'ask' ? 'worktree' : 'provisioning',
     };
     this.publish();

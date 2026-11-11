@@ -10,6 +10,32 @@ const NEWLINE = String.fromCharCode(10);
 /** One authored field value: the numeric members a map field keeps (x/y, width/height). */
 export type MapFieldValues = Readonly<Record<string, number>>;
 
+const PLAIN_SCALAR = /^[A-Za-z0-9][A-Za-z0-9 ._/@-]*$/;
+const RESERVED_SCALAR = /^(true|false|null|yes|no|on|off|~)$/i;
+
+/**
+ * Render one authored scalar: plain when the value cannot be misread, JSON when
+ * it carries characters a single quote cannot survive, single-quoted otherwise.
+ */
+export function authoredScalar(value: string): string {
+  if (PLAIN_SCALAR.test(value) && !RESERVED_SCALAR.test(value) && !/^-?\d/.test(value)) return value;
+  if (/["\\\u0000-\u001f]/.test(value)) return JSON.stringify(value);
+  return "'" + value.replace(/'/g, "''") + "'";
+}
+
+/** Render one authored text field, using a block scalar when the value spans lines. */
+export function textField(key: string, value: string, indent: string, flow: boolean): string {
+  // A flow mapping cannot hold a block scalar, so a multiline value is quoted there.
+  if (flow) return key + ': ' + authoredScalar(value);
+  if (!value.includes('\n')) return key + ': ' + authoredScalar(value);
+  const lines = value.split('\n');
+  const trailingNewline = value.endsWith('\n');
+  const body = trailingNewline ? lines.slice(0, -1) : lines;
+  const blockSafe = body.every(line => !line.startsWith(' ') && !line.endsWith(' ') && !line.includes(String.fromCharCode(9)) && !/[\u0000-\u0008\u000b-\u001f]/.test(line));
+  if (!blockSafe) return key + ': ' + JSON.stringify(value);
+  return key + ': ' + (trailingNewline ? '|' : '|-') + '\n' + body.map(line => indent + '  ' + line).join('\n');
+}
+
 /**
  * Render one authored field, or `null` to remove it. `existing` is the field's
  * current value node, which lets a renderer keep the authored collection style;

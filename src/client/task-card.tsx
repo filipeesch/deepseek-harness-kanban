@@ -111,6 +111,6 @@ export function TaskCard({ task, column, projectName, attention, selectionMode, 
     </button>
     <CardContext taskId={task.id} title={task.title} projectName={projectName} attention={attention} selectionMode={selectionMode} selected={selected} onToggleSelect={onToggleSelect} onActivate={activate} />
     <CardActivity attention={attention} label={task.title} controls={controls} />
-    <CardStatus entries={cardStatusEntries(task, runFailure, autoMode.status)} />
+    <CardStatus entries={cardStatusEntries(task, runFailure, autoMode.status, autoMode.secondaryStatuses)} />
   </article>;
 }

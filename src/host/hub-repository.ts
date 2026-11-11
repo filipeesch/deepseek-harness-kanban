@@ -525,6 +525,14 @@ export class HubStore {
   async pauseAutoMode(taskId: string, pause: AutoModePause, expectedColumnId?: string): Promise<HubTask> {
     return this.transact(draft => operations.pauseAutoMode(draft, taskId, pause, this.deps(), expectedColumnId));
   }
+  /** Record the pause the agent requested, or report the task unchanged when auto mode is disabled. */
+  async pauseTask(taskId: string, reason: string): Promise<HubTask> {
+    return this.transact(draft => operations.pauseTask(draft, taskId, reason, this.deps()));
+  }
+  /** Resume a paused task: both pause records are cleared and auto mode keeps its setting. */
+  async resumeTask(taskId: string): Promise<HubTask> {
+    return this.transact(draft => operations.resumeTask(draft, taskId, this.deps()));
+  }
   /** Record or clear the transition the task follows on its next advance. */
   async recordTransition(taskId: string, columnId: string | undefined): Promise<HubTask> {
     return this.transact(draft => operations.recordTransition(draft, taskId, columnId, this.deps()));

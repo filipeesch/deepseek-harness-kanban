@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ClientApi, HubSchedule, Problem, Project, ScheduleModelCatalog } from '../../../shared/types.js';
+import type { ClientApi, HubSchedule, Problem, Project, ModelCatalog, ModelSelection } from '../../../shared/types.js';
 import { asProblem } from '../../problem.js';
 import type { RunCommand } from '../../ui.js';
 import {
-  createScheduleDraft, editScheduleDraft, scheduleDraftDescription, scheduleDraftError, scheduleDraftOccurrences,
+  createScheduleDraft, editScheduleDraft, editScheduleDraftModel, scheduleDraftDescription, scheduleDraftError, scheduleDraftOccurrences,
   toScheduleCommand, type ScheduleDraft,
 } from './schedule-draft.js';
 
@@ -11,11 +11,13 @@ export interface ScheduleEditorController {
   draft: ScheduleDraft;
   pending: boolean;
   error: Problem | null;
-  catalog: ScheduleModelCatalog | null;
+  catalog: ModelCatalog | null;
   catalogError: Problem | null;
   description: string | null;
   occurrences: string[];
   change(field: keyof ScheduleDraft, value: string | boolean): void;
+  /** Move the draft onto one model route, or back to the deployment default. */
+  applyModel(selection: ModelSelection | undefined): void;
   save(): Promise<void>;
   cancel(): void;
 }
@@ -33,7 +35,7 @@ export function useScheduleEditor({ api, hubId, schedule, expectedRevision, proj
   const [draft, setDraft] = useState<ScheduleDraft>(() => createScheduleDraft(schedule));
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<Problem | null>(null);
-  const [catalog, setCatalog] = useState<ScheduleModelCatalog | null>(null);
+  const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [catalogError, setCatalogError] = useState<Problem | null>(null);
   const alive = useRef(true);
   const saving = useRef(false);
@@ -54,6 +56,12 @@ export function useScheduleEditor({ api, hubId, schedule, expectedRevision, proj
     if (pending) return;
     setError(null);
     setDraft(previous => editScheduleDraft(previous, field, value));
+  }
+
+  function applyModel(selection: ModelSelection | undefined): void {
+    if (pending) return;
+    setError(null);
+    setDraft(previous => editScheduleDraftModel(previous, selection));
   }
 
   const description = scheduleDraftDescription(draft);
@@ -83,5 +91,5 @@ export function useScheduleEditor({ api, hubId, schedule, expectedRevision, proj
     onClose();
   }
 
-  return { draft, pending, error, catalog, catalogError, description, occurrences, change, save, cancel };
+  return { draft, pending, error, catalog, catalogError, description, occurrences, change, applyModel, save, cancel };
 }

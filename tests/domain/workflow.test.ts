@@ -227,3 +227,50 @@ describe('workflow connection layout', () => {
     expect(() => parseWorkflow(base + yaml)).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
   });
 });
+
+const withModelBase = 'columns:\n  - id: one\n    label: One\n';
+
+describe('the board default model mapping', () => {
+  it('reads the authored root mapping into the workflow', () => {
+    const result = parseWorkflow(withModelBase + 'model:\n  provider: anthropic\n  model: claude-sonnet-4-5\n  reasoning_effort: high\n');
+    expect(result.model).toEqual({ provider: 'anthropic', model: 'claude-sonnet-4-5', reasoningEffort: 'high' });
+  });
+
+  it('omits the mapping when the document authors none and the effort when it is unauthored', () => {
+    expect(parseWorkflow(withModelBase).model).toBeUndefined();
+    expect(parseWorkflow(withModelBase + 'model:\n  provider: anthropic\n  model: claude-sonnet-4-5\n').model).toEqual({ provider: 'anthropic', model: 'claude-sonnet-4-5' });
+  });
+
+  it('accepts an authored effort the adapter may not offer, leaving availability to the host', () => {
+    const result = parseWorkflow(withModelBase + 'model:\n  provider: anthropic\n  model: claude\n  reasoning_effort: ultra-thinks\n');
+    expect(result.model?.reasoningEffort).toBe('ultra-thinks');
+  });
+
+  it.each([
+    'model: anthropic',
+    'model: [anthropic]',
+    'model:\n  model: claude\n',
+    'model:\n  provider: anthropic\n',
+    'model:\n  provider: ""\n  model: claude\n',
+    'model:\n  provider: "   "\n  model: claude\n',
+    'model:\n  provider: anthropic\n  model: ""\n',
+    'model:\n  provider: anthropic\n  model: claude\n  reasoning_effort: ""\n',
+    'model:\n  provider: anthropic\n  model: claude\n  reasoningEffort: high\n',
+    'model:\n  provider: anthropic\n  model: claude\n  temperature: 1\n',
+    'model:\n  provider: 3\n  model: claude\n',
+  ])('rejects a malformed model mapping %#', suffix => {
+    expect(() => parseWorkflow(withModelBase + suffix)).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+  });
+
+  it('names the model mapping in every rejection', () => {
+    expect(() => parseWorkflow(withModelBase + 'model:\n  provider: anthropic\n')).toThrow(/model/);
+    expect(() => parseWorkflow(withModelBase + 'model:\n  provider: anthropic\n  model: claude\n  temperature: 1\n')).toThrow(/model/);
+  });
+
+  it('counts the model as flow meaning rather than diagram layout', () => {
+    const without = parseWorkflow(withModelBase);
+    const withModel = parseWorkflow(withModelBase + 'model:\n  provider: anthropic\n  model: claude\n');
+    expect(workflowMeaning(withModel)).not.toBe(workflowMeaning(without));
+    expect(canonicalWorkflow(withModel)).not.toBe(canonicalWorkflow(without));
+  });
+});

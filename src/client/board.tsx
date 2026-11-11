@@ -40,6 +40,7 @@ import { useDestructiveOperations } from './destructive-operations.js';
 import { batchRejectionProblem, useBatchDeletion } from './useBatchDeletion.js';
 import { useBoardMoves } from './board-moves.js';
 import { useExecutionPreparation } from './execution-preparation/use-execution-preparation.js';
+import { ModelFallbacksProvider, useModelFallbackRegistry } from './model-fallbacks.js';
 import type { PreparationSeat } from './execution-preparation/model-seat.js';
 import { createBoardPageState, taskPageState, usePageField, type BoardPageState } from './page-state.js';
 export { createBoardPageState } from './page-state.js';
@@ -167,11 +168,15 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   useEffect(() => { if (providedAutoRun) return; return () => fallbackAutoRun.dispose(); }, [providedAutoRun, fallbackAutoRun]);
   // Owned fallback only: a provided controller is reconciled by the client generation that owns it.
   useEffect(() => { if (providedAutoRun || !snapshot) return; fallbackAutoRun.reconcile(allTasks(snapshot)); }, [providedAutoRun, snapshot, fallbackAutoRun]);
+  // One memory of what became of each conversation's board model, for as long as
+  // this board is mounted: it feeds the notice, never the saved document.
+  const modelFallbacks = useModelFallbackRegistry();
   const preparation = useExecutionPreparation({
     api,
     run,
     ...(nativeSeat === undefined ? {} : { seat: nativeSeat }),
     ...(conversationLeases === undefined ? {} : { leases: conversationLeases }),
+    onConversationCreated: (sessionId, outcome) => modelFallbacks.record(sessionId, outcome),
   });
   const moves = useBoardMoves({
     state: state ?? null,
@@ -229,6 +234,9 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     autoRun,
     onOpenTask: openTask,
     latest: () => latest.current,
+    // The same memory serves both creation paths, so a task created straight into
+    // an instructed stage announces its model exactly like the preparation does.
+    onConversationCreated: (sessionId, outcome) => modelFallbacks.record(sessionId, outcome),
   });
   const containers = useCreationDialogs({
     activateHub: hubId => { setActiveHubIdState(hubId); writeStorage(ACTIVE_HUB_KEY, hubId); },
@@ -345,7 +353,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     requestCloseDrawer();
   }
 
-  return <DirectoryPickerProvider picker={picker}><section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style>
+  return <DirectoryPickerProvider picker={picker}><ModelFallbacksProvider registry={modelFallbacks}><section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style>
     <BoardHeader
       hubTabs={<HubTabRow
         hubs={snapshot?.state.hubs ?? []}
@@ -468,5 +476,5 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     <BoardCreationDialogs hub={activeHub} run={run} taskDialog={creation.dialog} containers={containers} />
     {moves.overrideDialog && <div hidden={preparation.dialog !== null}>{moves.overrideDialog}</div>}
     {preparation.dialog}
-  </section></DirectoryPickerProvider>;
+  </section></ModelFallbacksProvider></DirectoryPickerProvider>;
 }

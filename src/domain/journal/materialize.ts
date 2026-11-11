@@ -7,7 +7,7 @@ import { setStagePositions } from '../workflow-positions.js';
 import { setStageSizes } from '../workflow-sizes.js';
 import { setConnections } from '../workflow-connections.js';
 import { writeRootField, writeSequenceItemField } from '../yaml-map-fields.js';
-import { scalar, textField } from '../authored-scalar.js';
+import { authoredScalar as scalar, textField } from '../yaml-map-fields.js';
 import { seedStageIdentities } from '../stage-identity.js';
 import { appendSequenceItem, pruneEmptySequence, removeSequenceItem, replaceSequenceItem } from './authored-text.js';
 import type { BoardChange, StageDefinition } from './event.js';

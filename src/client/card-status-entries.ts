@@ -3,8 +3,13 @@ import type { AutoModeStatus } from './auto-mode.js';
 
 export interface CardStatusEntry { key: string; tone: 'danger' | 'pending'; label: string; alert?: boolean }
 
-/** The card's status lines, in a stable order: operation, transition, stage-instruction failure, auto mode. */
-export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: AutoModeStatus): CardStatusEntry[] {
+/**
+ * The card's status lines, in a stable order: operation, transition,
+ * stage-instruction failure, then auto mode. The diagnostic pause is a separate
+ * line so a turn that failed while the task was paused is never hidden by the
+ * pause the agent requested.
+ */
+export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: AutoModeStatus, pauseStatuses: readonly AutoModeStatus[] = []): CardStatusEntry[] {
   const entries: CardStatusEntry[] = [];
   if (task.operation) {
     const operation = task.operation;
@@ -30,5 +35,6 @@ export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: 
   }
   if (runFailure !== undefined) entries.push({ key: 'instruction', tone: 'danger', label: runFailure, alert: true });
   if (autoStatus !== undefined) entries.push({ key: 'auto', tone: autoStatus.tone, label: autoStatus.label, ...(autoStatus.alert === true ? { alert: true } : {}) });
+  for (const [index, value] of pauseStatuses.entries()) entries.push({ key: 'auto-pause-' + index, tone: value.tone, label: value.label, ...(value.alert === true ? { alert: true } : {}) });
   return entries;
 }

@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 import { fireEvent, screen } from '@testing-library/react';
-import type { BoardState, ClientApi, Command, HubState, HubTask, KanbanSnapshot, KanbanState } from '../../src/shared/types.js';
+import type { BoardState, ClientApi, Command, ConversationModelOutcome, HubState, HubTask, KanbanSnapshot, KanbanState } from '../../src/shared/types.js';
 import { defaultWorktreeDestination, taskTitleSlug } from '../../src/shared/worktree-name.js';
 import { applyInitialEntry, applyMove, applyRunInstruction, createEnteredAtSource } from '../support/in-memory-board.js';
 import { transitions } from '../support/transition-rules.js';
@@ -81,7 +81,13 @@ function cloneSnapshot(value: KanbanSnapshot): KanbanSnapshot {
   return structuredClone({ sequence: normalized.sequence, stateRevision: normalized.stateRevision, attention: normalized.attention, conversationAttention: normalized.conversationAttention, sharing: normalized.sharing ?? {}, state: { hubs: normalized.state.hubs, settings: normalized.state.settings ?? { revision: 0 } }, ...(normalized.clientEpoch !== undefined ? { clientEpoch: normalized.clientEpoch } : {}) });
 }
 
-export function fakeApi(initial: TestSnapshot = fixture()) {
+/** What the fake host reports on a conversation creation receipt. */
+export interface FakeApiOptions {
+  /** What became of the board's model on every conversation this fake creates. */
+  conversationModel?: ConversationModelOutcome;
+}
+
+export function fakeApi(initial: TestSnapshot = fixture(), options: FakeApiOptions = {}) {
   let value = withLegacyView(cloneSnapshot(initial));
   const nextEnteredAt = createEnteredAtSource();
   delete (value as { commandReceipt?: unknown }).commandReceipt;
@@ -103,8 +109,8 @@ export function fakeApi(initial: TestSnapshot = fixture()) {
       case 'task.move': if (current) { const hub = value.state.hubs.find(item => item.tasks.some(task => task.id === current.id)); const board = hub?.boards.find(item => item.id === current.boardId); if (hub && board) applyMove({ schemaVersion: 2, revision: hub.revision, workflowYaml: board.workflowYaml, workflow: board.workflow, projects: hub.projects, tasks: hub.tasks, notes: hub.notes }, input.taskId, input.columnId, input.beforeTaskId, nextEnteredAt); } break;
       case 'task.runInstruction': if (current) { const hub = value.state.hubs.find(item => item.tasks.some(task => task.id === current.id)); const board = hub?.boards.find(item => item.id === current.boardId); if (hub && board) { const result = applyRunInstruction({ schemaVersion: 2, revision: hub.revision, workflowYaml: board.workflowYaml, workflow: board.workflow, projects: hub.projects, tasks: hub.tasks, notes: hub.notes }, input); if (!result.ok) throw { code: result.code, message: result.message }; } } break;
       case 'task.autoMode': if (current) { if (input.enabled) current.autoMode = { enabled: true }; else delete current.autoMode; } break;
-      case 'task.prepareFirstExecution': if (current) { const hub = value.state.hubs.find(item => item.tasks.some(task => task.id === current.id)); const board = hub?.boards.find(item => item.id === current.boardId); if (hub && board) { const project = hub.projects.find(item => item.id === current.projectId); if (project?.gitRootPath && current.worktree === null && current.worktreeDismissed !== true) { current.worktree = { path: '/trees/' + current.id, branch: current.title, owned: true, status: 'ready' }; current.effectiveCwd = current.worktree.path + '/apps/api'; } if (current.sessionIds.length === 0) { const id = 's' + next++; current.sessionIds.push(id); receipt = { kind: 'conversation', id }; } } } break;
-      case 'conversation.create': if (current) { const id = 's' + next++; current.sessionIds.push(id); receipt = { kind: 'conversation', id }; } break;
+      case 'task.prepareFirstExecution': if (current) { const hub = value.state.hubs.find(item => item.tasks.some(task => task.id === current.id)); const board = hub?.boards.find(item => item.id === current.boardId); if (hub && board) { const project = hub.projects.find(item => item.id === current.projectId); if (project?.gitRootPath && current.worktree === null && current.worktreeDismissed !== true) { current.worktree = { path: '/trees/' + current.id, branch: current.title, owned: true, status: 'ready' }; current.effectiveCwd = current.worktree.path + '/apps/api'; } if (current.sessionIds.length === 0) { const id = 's' + next++; current.sessionIds.push(id); receipt = { kind: 'conversation', id, ...(options.conversationModel === undefined ? {} : { model: structuredClone(options.conversationModel) }) }; } } } break;
+      case 'conversation.create': if (current) { const id = 's' + next++; current.sessionIds.push(id); receipt = { kind: 'conversation', id, ...(options.conversationModel === undefined ? {} : { model: structuredClone(options.conversationModel) }) }; } break;
       case 'conversation.close': current?.closedSessionIds.push(input.sessionId); break;
       case 'conversation.reopen': if (current) current.closedSessionIds = current.closedSessionIds.filter(id => id !== input.sessionId); break;
       case 'task.delete': value.state.tasks = value.state.tasks.filter(item => item.id !== input.taskId); value.state.notes = value.state.notes.filter(note => note.taskId !== input.taskId); break;

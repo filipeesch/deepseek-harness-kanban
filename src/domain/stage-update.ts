@@ -2,8 +2,7 @@ import type { StagePatch, TransitionRule } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
 import { isDomainId } from './validation.js';
 import { parseWorkflow } from './workflow.js';
-import { replaceListScalars, writeRootField, writeSequenceItemField } from './yaml-map-fields.js';
-import { scalar, textField } from './authored-scalar.js';
+import { authoredScalar, replaceListScalars, textField, writeRootField, writeSequenceItemField } from './yaml-map-fields.js';
 
 /** One stage edit: the authored workflow text, the stage it targets, and the fields it changes. */
 export interface StageUpdateInput {
@@ -57,10 +56,10 @@ function transitionsField(rules: readonly TransitionRule[], existing: unknown, i
   // A flow mapping can only hold a flow sequence, and a stored flow list stays flow.
   const flow = parentFlow || (existing as { flow?: boolean } | null)?.flow === true;
   if (flow) {
-    const items = rules.map(rule => rule.when === undefined ? '{to: ' + scalar(rule.to) + '}' : '{to: ' + scalar(rule.to) + ', when: ' + scalar(rule.when) + '}');
+    const items = rules.map(rule => rule.when === undefined ? '{to: ' + authoredScalar(rule.to) + '}' : '{to: ' + authoredScalar(rule.to) + ', when: ' + authoredScalar(rule.when) + '}');
     return 'allowed_transitions: [' + items.join(', ') + ']';
   }
-  const lines = rules.map(rule => indent + '  - to: ' + scalar(rule.to) + (rule.when === undefined ? '' : '\n' + indent + '    when: ' + scalar(rule.when)));
+  const lines = rules.map(rule => indent + '  - to: ' + authoredScalar(rule.to) + (rule.when === undefined ? '' : '\n' + indent + '    when: ' + authoredScalar(rule.when)));
   return 'allowed_transitions:\n' + lines.join('\n');
 }
 
@@ -127,7 +126,7 @@ export function updateStage({ text, stageId, patch }: StageUpdateInput): StageUp
   if (renamed) {
     // Renaming carries the identifier into every authored reference by replacing
     // only the scalar that names it, so comments, quoting, and order stay authored.
-    const rendered = scalar(newId);
+    const rendered = authoredScalar(newId);
     for (const column of workflow.columns) {
       if (column.id === stageId) continue;
       if (!(column.allowedTransitions ?? []).some(rule => rule.to === stageId)) continue;
@@ -161,7 +160,7 @@ export function updateStage({ text, stageId, patch }: StageUpdateInput): StageUp
   }
 
   if (patch.initial === true && workflow.initialColumnId !== newId) {
-    next = writeRootField({ text: next, fieldKeys: ['initial_column'], render: (_existing, _indent, key) => key + ': ' + scalar(newId), invalid });
+    next = writeRootField({ text: next, fieldKeys: ['initial_column'], render: (_existing, _indent, key) => key + ': ' + authoredScalar(newId), invalid });
   }
 
   parseWorkflow(next);

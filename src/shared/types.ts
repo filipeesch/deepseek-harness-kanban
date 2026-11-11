@@ -82,7 +82,7 @@ export interface ConnectionAnchor { side: StageSide; at: number }
 export interface ConnectionSegmentOffset { axis: ConnectionAxis; offset: number }
 /** One authored connection layout, identified by its source and target stage. */
 export interface ConnectionLayout { from: string; to: string; source?: ConnectionAnchor; target?: ConnectionAnchor; segments?: ConnectionSegmentOffset[] }
-export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[]; /** Absent means the board opens the column board. */ defaultView?: WorkflowView; /** Authored connection layouts; an absent entry keeps the automatic route. */ connections?: ConnectionLayout[] }
+export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[]; /** Absent means the board opens the column board. */ defaultView?: WorkflowView; /** The model every new conversation of the board starts on; absent keeps the deployment default. */ model?: ModelSelection; /** Authored connection layouts; an absent entry keeps the automatic route. */ connections?: ConnectionLayout[] }
 export interface Worktree { path: string; branch: string; owned: boolean; status: 'preparing' | 'ready' | 'error'; error?: Problem }
 export interface CreateWorktree { mode: 'new' | 'existing'; path: string; branchName: string; sourceBranch?: string }
 /**
@@ -112,10 +112,13 @@ export interface ContextOperation {
 }
 export interface PendingTransition { id: string; fromColumnId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; text?: string; /** Absent places the task at the start of the destination; `null` places it at the end; an id places it before that task. */ beforeTaskId?: string | null; worktreeRequest?: CreateWorktree; transitionOverride?: boolean; status: 'waiting' | 'sending' | 'failed'; error?: Problem; /** Absent means a user-confirmed transition; `auto` is a host automatic advance. */ origin?: 'auto' }
 /** Why auto mode is paused; only reasons that cannot be derived from the snapshot are recorded. */
-export type AutoModePauseReason = 'turn-error' | 'turn-blocked' | 'turn-aborted' | 'turn-max-tokens' | 'advance-failed' | 'transition-stale';
+export const AUTO_MODE_PAUSE_REASONS = ['turn-error', 'turn-blocked', 'turn-aborted', 'turn-max-tokens', 'advance-failed', 'transition-stale'] as const;
+export type AutoModePauseReason = (typeof AUTO_MODE_PAUSE_REASONS)[number];
 export interface AutoModePause { reason: AutoModePauseReason; at: string; message?: string }
+/** A pause the agent requested: it suspends the automatic advance while auto mode stays enabled. */
+export interface AutoModeHold { reason: string; at: string }
 /** Per-task auto mode: arms the host advance on the next completed turn. */
-export interface AutoModeState { enabled: boolean; pause?: AutoModePause }
+export interface AutoModeState { enabled: boolean; pause?: AutoModePause; hold?: AutoModeHold }
 /** One transition recorded for a task's current stage, and the stage it was recorded for. */
 export interface RecordedTransition { fromColumnId: string; columnId: string; at: string }
 export interface Task {
@@ -152,12 +155,32 @@ export interface HubState {
   schedules?: HubSchedule[];
   createdAt: string; updatedAt: string;
 }
-/** One native model selection stored on a schedule. */
-export interface ScheduleModelSelection { provider: string; model: string; reasoningEffort?: string }
+/** One model route the host can name: a provider, a model, and optionally the effort to run it with. */
+export interface ModelSelection { provider: string; model: string; reasoningEffort?: string }
+/**
+ * Why the host declined to put one conversation on a requested model.
+ * `unavailable` means the route is not offered, `unsupported` means this host
+ * cannot scope a model to one conversation, and `failed` means the host could
+ * not be asked at all — a broken catalog read, an unreachable session, or a
+ * selection the host rejected. The three stay distinct so each caller can
+ * decide its own cost and the client can say something true about the cause.
+ */
+export type ModelApplyReason = 'unavailable' | 'unsupported' | 'failed';
+/** What became of a board's default model when one of its conversations was created. */
+export interface ConversationModelOutcome {
+  /** The route the board named for its conversations. */
+  requested: ModelSelection;
+  /** Whether the conversation starts on that route rather than on the deployment default. */
+  applied: boolean;
+  /** Why the route was left for the deployment default; absent when it applied. */
+  reason?: ModelApplyReason;
+  /** The deployment default the conversation runs on instead; absent when it applied or is unknown. */
+  inUse?: ModelSelection;
+}
 /** One Hub-scoped session schedule. Stored in the Hub aggregate, never published. */
 export interface HubSchedule {
   id: string; title: string; prompt: string; cron: string; timeZone: string; projectId: string;
-  model?: ScheduleModelSelection; newConversation: boolean; archiveWhenIdle: boolean; enabled: boolean;
+  model?: ModelSelection; newConversation: boolean; archiveWhenIdle: boolean; enabled: boolean;
   createdAt: string; updatedAt: string;
 }
 /** How the latest occurrence of one schedule ended. */
@@ -171,11 +194,11 @@ export interface ScheduleRuntimeView { running: boolean; lastRun?: ScheduleRunVi
 /** Every schedule's runtime state for one Hub, keyed by schedule identity. */
 export type HubScheduleRuntime = Record<string, ScheduleRuntimeView>
 /** One adapter-owned reasoning effort offered for an exact model route. */
-export interface ScheduleModelEffort { id: string; name: string }
+export interface ModelEffort { id: string; name: string }
 /** One provider group in the model catalog offered to the schedule editor. */
-export interface ScheduleModelProvider { id: string; name: string; models: Array<{ id: string; name: string; description?: string; reasoning?: { efforts: ScheduleModelEffort[]; defaultEffort?: string } }> }
+export interface ModelProvider { id: string; name: string; models: Array<{ id: string; name: string; description?: string; reasoning?: { efforts: ModelEffort[]; defaultEffort?: string } }> }
 /** The selectable models and the deployment default, projected for the editor. */
-export interface ScheduleModelCatalog { default: ScheduleModelSelection; providers: ScheduleModelProvider[]; failures: Array<{ id: string; name: string; message: string }> }
+export interface ModelCatalog { default: ModelSelection; providers: ModelProvider[]; failures: Array<{ id: string; name: string; message: string }> }
 export interface KanbanSettings { revision: number; worktreeBasePath?: string }
 /** Global metadata stored beside the Hub records. */
 export interface KanbanMeta { initializedAt?: string; settingsRevision: number; worktreeBasePath?: string }
@@ -204,7 +227,12 @@ export const EMPTY_CONVERSATION_FACTS: ConversationFacts = { running: false, bac
 /** One conversation's projected attention, including the client-owned read state. */
 export interface Attention { running: boolean; background: BackgroundActivity[]; unread: boolean; awaitingReply: boolean; failed: boolean; pending: PendingUserWork }
 /** Transient identity of the entity created by this exact command, never persisted. */
-export interface CommandReceipt { kind: 'hub' | 'board' | 'project' | 'task' | 'conversation' | 'note' | 'schedule'; id: string }
+export interface CommandReceipt {
+  kind: 'hub' | 'board' | 'project' | 'task' | 'conversation' | 'note' | 'schedule';
+  id: string;
+  /** How the board's default model fared while a conversation was created; absent when no board named one. */
+  model?: ConversationModelOutcome;
+}
 /** One board's publishing state, projected from the stored sharing record. */
 export type SharingBoardState = 'in-sync' | 'draft' | 'updates-available' | 'needs-review' | 'orphan';
 export type SharingHubStatus = 'not-published' | 'preview' | 'published' | 'updates-available' | 'needs-review' | 'unavailable';
@@ -380,6 +408,10 @@ export type Command =
   /** `beforeTaskId` absent places the task at the start of the destination; `null` places it at the end; an id places it before that task. */
   | { type: 'task.move'; hubId?: string; taskId: string; columnId: string; beforeTaskId?: string | null; overrideTransition?: boolean }
   | { type: 'task.autoMode'; hubId?: string; taskId: string; enabled: boolean }
+  /** Record the pause the agent requested; the task stays put and auto mode stays enabled. */
+  | { type: 'task.pause'; hubId?: string; taskId: string; reason: string }
+  /** Clear the agent pause and any diagnostic pause, leaving auto mode as it is. */
+  | { type: 'task.resume'; hubId?: string; taskId: string }
   /** An omitted `columnId` clears the recording. */
   | { type: 'task.recordTransition'; hubId?: string; taskId: string; columnId?: string }
   | { type: 'task.runInstruction'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction: string }
@@ -395,7 +427,7 @@ export type Command =
   | { type: 'operation.dismiss'; hubId?: string; taskId: string }
   | { type: 'note.save'; hubId?: string; taskId: string; noteId?: string; content?: string; tags?: string[] }
   | { type: 'note.delete'; hubId?: string; taskId: string; noteId: string }
-  | { type: 'schedule.save'; hubId: string; scheduleId?: string; title: string; prompt: string; cron: string; timeZone: string; projectId: string; model?: ScheduleModelSelection; newConversation: boolean; archiveWhenIdle: boolean; expectedRevision?: number }
+  | { type: 'schedule.save'; hubId: string; scheduleId?: string; title: string; prompt: string; cron: string; timeZone: string; projectId: string; model?: ModelSelection; newConversation: boolean; archiveWhenIdle: boolean; expectedRevision?: number }
   | { type: 'schedule.delete'; hubId: string; scheduleId: string; confirmed: boolean; expectedRevision?: number }
   | { type: 'schedule.setEnabled'; hubId: string; scheduleId: string; enabled: boolean; expectedRevision?: number }
   | { type: 'schedule.runNow'; hubId: string; scheduleId: string };
@@ -407,7 +439,7 @@ export interface ClientApi {
   localDrive(request: LocalDriveRequest): Promise<LocalDriveResult>;
   branches(taskId: string): Promise<string[]>;
   /** The host model catalog; `refresh` asks the host to rebuild it for a newly opened editor. */
-  modelCatalog(refresh?: boolean): Promise<ScheduleModelCatalog>;
+  modelCatalog(refresh?: boolean): Promise<ModelCatalog>;
   worktreeDefault(taskId: string): Promise<WorktreeDefaults>;
   detectProject(path: string): Promise<ProjectLocation>;
   subscribe(listener: (snapshot: KanbanSnapshot) => void): () => void;
