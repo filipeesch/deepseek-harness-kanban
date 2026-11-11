@@ -1,12 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ExecutionPreparationController, type PreparationPorts } from '../../src/client/execution-preparation/controller.js';
 import type { PreparationRequest } from '../../src/client/execution-preparation/contract.js';
-import type { CreateWorktree, Project, Task } from '../../src/shared/types.js';
+import type { CreateWorktree, ModelCatalog, Project, Task } from '../../src/shared/types.js';
 
 const now = '2026-10-21T12:00:00Z';
 const gitProject: Project = { id: 'p1', projectKey: 'p1', name: 'API', projectPath: '/repo/apps/api', gitRootPath: '/repo', defaultBranch: 'main' };
 const folderProject: Project = { id: 'p1', projectKey: 'p1', name: 'Folder', projectPath: '/repo/apps/api' };
 const column = { id: 'review', name: 'Review', onEnterPrompt: 'Review carefully.' };
+const catalog: ModelCatalog = {
+  default: { provider: 'deepseek', model: 'chat' },
+  providers: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'chat', name: 'Chat' }, { id: 'reason', name: 'Reason' }] }],
+  failures: [],
+};
 
 function task(overrides: Partial<Task> = {}): Task {
   return {
@@ -28,6 +33,7 @@ interface FakePorts extends PreparationPorts {
   createConversation: ReturnType<typeof vi.fn>;
   retainSession: ReturnType<typeof vi.fn>;
   releaseSession: ReturnType<typeof vi.fn>;
+  modelCatalog: ReturnType<typeof vi.fn>;
 }
 
 function ports(overrides: Partial<PreparationPorts> = {}): FakePorts {
@@ -41,6 +47,7 @@ function ports(overrides: Partial<PreparationPorts> = {}): FakePorts {
     retainSession: vi.fn(async () => { calls.push('retainSession'); }),
     releaseSession: vi.fn((sessionId: string) => { calls.push('release:' + sessionId); }),
     seatAvailable: () => false,
+    modelCatalog: vi.fn(async () => null),
   };
   return Object.assign(fakeDefs, overrides);
 }
@@ -188,6 +195,57 @@ describe('ExecutionPreparationController', () => {
     controller.cancel();
     await expect(pending).resolves.toBe(false);
     expect(fake.releaseSession).toHaveBeenCalledWith('session-new');
+  });
+
+  it('provisions and proceeds without a model stage when the board names a route the catalog offers', async () => {
+    const fake = ports({ seatAvailable: () => true, modelCatalog: vi.fn(async () => catalog) });
+    const controller = controllerWith(fake);
+    const pending = controller.open(request({ boardModel: { provider: 'deepseek', model: 'reason' } }));
+    await atPhase(controller, 'worktree');
+    controller.answerWorktree(false);
+    await expect(pending).resolves.toBe(true);
+    expect(fake.createConversation).toHaveBeenCalledWith('t1');
+    expect(fake.modelCatalog).toHaveBeenCalledTimes(1);
+    expect(fake.retainSession).not.toHaveBeenCalled();
+    expect(controller.getSnapshot().phase).toBe('closed');
+  });
+
+  it('keeps the model stage for a board route the catalog does not offer', async () => {
+    const fake = ports({ seatAvailable: () => true, modelCatalog: vi.fn(async () => catalog) });
+    const controller = controllerWith(fake);
+    const pending = controller.open(request({ task: task({ worktreeDismissed: true }), boardModel: { provider: 'anthropic', model: 'claude' } }));
+    await atPhase(controller, 'model');
+    controller.confirmModel();
+    await expect(pending).resolves.toBe(true);
+    expect(fake.modelCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the model stage when the catalog cannot be read', async () => {
+    const fake = ports({ seatAvailable: () => true, modelCatalog: vi.fn(async () => null) });
+    const controller = controllerWith(fake);
+    const pending = controller.open(request({ task: task({ worktreeDismissed: true }), boardModel: { provider: 'deepseek', model: 'reason' } }));
+    await atPhase(controller, 'model');
+    controller.confirmModel();
+    await expect(pending).resolves.toBe(true);
+  });
+
+  it('does not read the catalog while no board names a model', async () => {
+    const fake = ports({ seatAvailable: () => true });
+    const controller = controllerWith(fake);
+    const pending = controller.open(request({ task: task({ worktreeDismissed: true }) }));
+    await atPhase(controller, 'model');
+    controller.confirmModel();
+    await expect(pending).resolves.toBe(true);
+    expect(fake.modelCatalog).not.toHaveBeenCalled();
+  });
+
+  it('does not read the catalog for a task that already has a conversation', async () => {
+    const fake = ports({ seatAvailable: () => true, modelCatalog: vi.fn(async () => catalog) });
+    const controller = controllerWith(fake);
+    const pending = controller.open(request({ task: task({ sessionIds: ['session-old'] }), boardModel: { provider: 'deepseek', model: 'reason' } }));
+    await expect(pending).resolves.toBe(true);
+    expect(fake.modelCatalog).not.toHaveBeenCalled();
+    expect(fake.createConversation).not.toHaveBeenCalled();
   });
 
   it('proceeds without the model stage when the native seat cannot be retained', async () => {

@@ -14,7 +14,7 @@ if (args.includes('--only') && only === undefined) {
   process.exit(2);
 }
 if (!checkoutArg) {
-  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only background-delete|board|conversation|deletion|hubs|schedules|override|native-drawer|auto-run|auto-mode|create-start|prepare|project]');
+  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only background-delete|board|conversation|deletion|hubs|schedules|override|native-drawer|auto-run|auto-mode|create-start|prepare|board-model|project]');
   process.exit(2);
 }
 const checkout = resolve(checkoutArg);
@@ -64,11 +64,20 @@ const scenarioTemplates = new Map([
   ['auto-run', ['kanban-auto-run.e2e.template.ts', 'kanban-auto-run.e2e.ts']],
   ['auto-mode', ['kanban-auto-mode.e2e.template.ts', 'kanban-auto-mode.e2e.ts']],
   ['create-start', ['kanban-create-start.e2e.template.ts', 'kanban-create-start.e2e.ts']],
-  ['prepare', ['kanban-prepare.e2e.template.ts', 'kanban-prepare.e2e.ts']],
+  ['prepare', ['kanban-prepare.e2e.template.ts', 'kanban-prepare.e2e.ts', 'kanban-board-model.e2e.template.ts', 'kanban-board-model.e2e.ts']],
+  ['board-model', ['kanban-board-model.e2e.template.ts', 'kanban-board-model.e2e.ts']],
   ['project', ['kanban-project-management.e2e.template.ts', 'kanban-project-management.e2e.ts']],
 ]);
 if (only !== undefined && !scenarioTemplates.has(only)) fail('unknown --only value: ' + only);
-const scenarios = only === undefined ? [...scenarioTemplates.values()] : [scenarioTemplates.get(only)];
+// A group is one [template, target] pair or a list of them, so one selector can
+// cover several scenarios that belong to the same flow.
+const asPairs = (group) => (Array.isArray(group[0]) ? group : group.map((_, index) => index % 2 === 0 ? group.slice(index, index + 2) : null).filter(Boolean));
+const requested = (only === undefined ? [...scenarioTemplates.values()] : [scenarioTemplates.get(only)]).flatMap(asPairs);
+// A scenario can belong to a group and still have its own selector — `prepare` runs
+// the board-model flow, `--only board-model` runs it alone — and the default run
+// flattens every group. One destination is copied exactly once, or the second copy
+// trips the refusal to overwrite and the whole suite dies before it starts.
+const scenarios = [...new Map(requested.map(pair => [pair[1], pair])).values()];
 const setupTarget = join(checkout, 'apps/web/tests', 'kanban-e2e-setup.ts');
 const copied = [];
 const testFiles = [];

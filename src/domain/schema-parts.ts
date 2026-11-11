@@ -89,8 +89,11 @@ export const column = z.strictObject({
   id, name: nonempty, onEnterPrompt: z.string().optional(), allowedTransitions: z.array(transitionRule).optional(), position: stagePosition.optional(), size: stageSize.optional(),
 });
 export const group = z.strictObject({ id, name: nonempty, columnIds: z.array(id).min(1) });
+/** One model route: a provider, the provider-owned model, and an optional adapter-owned effort. */
+export const modelSelection = z.strictObject({ provider: nonempty, model: nonempty, reasoningEffort: nonempty.optional() });
 export const workflow = z.strictObject({
   name: nonempty, initialColumnId: id, defaultView: z.enum(['board', 'workflow']).optional(), columns: z.array(column).min(1), groups: z.array(group),
+  model: modelSelection.optional(),
   connections: z.array(connectionLayout).optional(),
 });
 export const note = z.strictObject({
@@ -189,6 +192,7 @@ function workflowShape(value: Workflow, includeLayout: boolean): string {
       ...(includeLayout ? { position: item.position, size: item.size } : {}),
     })),
     groups: value.groups.map(item => ({ id: item.id, name: item.name, columnIds: item.columnIds })),
+    model: value.model === undefined ? undefined : { provider: value.model.provider, model: value.model.model, reasoningEffort: value.model.reasoningEffort },
     ...(includeLayout ? { connections: sortedConnections(value.connections).map(shapeConnection) } : {}),
   });
 }

@@ -1,5 +1,5 @@
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { AutoModePause, Board, BoardSettings, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ScheduleModelSelection, StagePatch, Workflow } from '../shared/types.js';
+import type { AutoModePause, Board, BoardSettings, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ModelSelection, StagePatch, Workflow } from '../shared/types.js';
 import { assertId, isAbsolutePath } from './validation.js';
 import { assertSchedulable } from './cron.js';
 import { isPublishedProject, requireProjectPath } from '../shared/project.js';
@@ -33,7 +33,7 @@ export interface ScheduleInput {
   cron: string;
   timeZone: string;
   projectId: string;
-  model?: ScheduleModelSelection;
+  model?: ModelSelection;
   newConversation: boolean;
   archiveWhenIdle: boolean;
 }
@@ -95,7 +95,7 @@ export function requireSchedule(hub: HubState, scheduleId: string): HubSchedule 
   return schedule;
 }
 
-function normalizeScheduleModel(value: ScheduleModelSelection | undefined): ScheduleModelSelection | undefined {
+function normalizeScheduleModel(value: ModelSelection | undefined): ModelSelection | undefined {
   if (value === undefined) return undefined;
   invariant(value && typeof value === 'object' && !Array.isArray(value), 'INVALID_INPUT', 'Schedule model must be a mapping.');
   const provider = requiredText(value.provider, 'Model provider').trim();
