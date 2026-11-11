@@ -34,6 +34,25 @@ describe('board.stage.update', () => {
     expect(CommandSchema.safeParse({ ...valid, patch: { allowedTransitions: [{ to: 'done', extra: 1 }] } }).success).toBe(false);
   });
 
+  it('accepts one destination condition and refuses it beside the whole list', () => {
+    const one = { type: 'board.stage.update', hubId: 'hub', boardId: 'board', stageId: 'plan', patch: { transitionCondition: { to: 'done', when: 'when ready' } } };
+    expect(CommandSchema.parse(one)).toEqual(one);
+    expect(CommandSchema.safeParse({ ...one, patch: { transitionCondition: { to: 'done', when: null } } }).success).toBe(true);
+    expect(CommandSchema.safeParse({ ...one, patch: { transitionCondition: { to: 'done' } } }).success).toBe(false);
+    expect(CommandSchema.safeParse({ ...one, patch: { transitionCondition: { to: 'done', when: 'x' }, allowedTransitions: [{ to: 'done' }] } }).success).toBe(false);
+  });
+
+  it('writes one destination condition and keeps the rest of the document authored', async () => {
+    const f = await setup();
+    const boardId = f.store.snapshot().boards[0]!.id;
+    const stage = f.store.snapshot().workflow.columns[0]!;
+    await f.app.command({ type: 'board.stage.update', hubId: f.store.hubId, boardId, stageId: stage.id, patch: { allowedTransitions: [{ to: 'plan', when: 'first' }, { to: 'done' }] } });
+    await f.app.command({ type: 'board.stage.update', hubId: f.store.hubId, boardId, stageId: stage.id, patch: { transitionCondition: { to: 'done', when: 'shipped' } } });
+    const workflow = parseWorkflow(f.store.snapshot().boards[0]!.workflowYaml);
+    expect(workflow.columns[0]!.allowedTransitions).toEqual([{ to: 'plan', when: 'first' }, { to: 'done', when: 'shipped' }]);
+    expect(f.store.snapshot().boards[0]!.workflowYaml).toContain('when: first');
+  });
+
   it('edits one stage without sending anything', async () => {
     const f = await setup();
     const stage = f.store.snapshot().workflow.columns[0]!;

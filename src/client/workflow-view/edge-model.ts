@@ -26,6 +26,8 @@ export interface LiveConnectionDescriptor {
   readonly target?: ConnectionAnchor;
   /** The authored segment displacements, in path order per axis. */
   readonly segments?: readonly ConnectionSegmentOffset[];
+  /** The condition this transition authors; absent means it authors none. */
+  readonly condition?: string;
 }
 
 export interface LiveEdge extends ConnectionShape {
@@ -34,6 +36,8 @@ export interface LiveEdge extends ConnectionShape {
   readonly to: string;
   readonly kind: 'explicit' | 'implicit';
   readonly returning: boolean;
+  /** The condition this transition authors; absent means it authors none. */
+  readonly condition?: string;
   /** The adjustable segments of the drawn path, in path order. */
   readonly lines: readonly RouteLine[];
 }
@@ -61,7 +65,11 @@ export function withOffset(segments: readonly ConnectionSegmentOffset[], axis: '
 }
 
 /** What an adjustment may author on one connection: its ends and its segments. */
-export type ConnectionLayoutOverride = Pick<ConnectionLayout, 'source' | 'target' | 'segments'>;
+export interface ConnectionLayoutOverride {
+  readonly source?: ConnectionAnchor;
+  readonly target?: ConnectionAnchor;
+  readonly segments?: readonly ConnectionSegmentOffset[];
+}
 
 /** The layout a connection describes once a gesture's override is applied. */
 export function connectionLayoutOf(connection: LiveConnectionDescriptor, override: ConnectionLayoutOverride): ConnectionLayout {
@@ -115,7 +123,7 @@ export function edgeModel(stages: readonly LiveStageRect[], connections: readonl
   for (const connection of connections) {
     const route = connectionRouteFor(stages, connection, true);
     if (route === null) continue;
-    edges.push({ id: connection.id, from: connection.from, to: connection.to, kind: connection.kind, returning: connection.returning, path: route.shape.path, points: route.shape.points, tipAngle: route.shape.tipAngle, lines: route.lines });
+    edges.push({ id: connection.id, from: connection.from, to: connection.to, kind: connection.kind, returning: connection.returning, path: route.shape.path, points: route.shape.points, tipAngle: route.shape.tipAngle, lines: route.lines, ...(connection.condition === undefined ? {} : { condition: connection.condition }) });
   }
   return edges;
 }

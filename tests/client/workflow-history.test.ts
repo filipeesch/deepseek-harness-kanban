@@ -70,3 +70,42 @@ describe('connection layout history', () => {
     expect(redone.connections).toEqual({});
   });
 });
+
+describe('workflow history steps', () => {
+  const layoutPositions = { one: { x: 0, y: 0 } };
+  const layoutStep = { before: layoutPositions, after: { one: { x: 10, y: 10 } } };
+  const transitionStep = {
+    before: layoutPositions,
+    after: layoutPositions,
+    beforeTransitions: { one: [{ to: 'two' }] },
+    afterTransitions: { one: [{ to: 'three' }] },
+  };
+  const bothStep = {
+    ...transitionStep,
+    beforeConnections: { 'one->two': { from: 'one', to: 'two' } },
+    afterConnections: {},
+  };
+
+  it('restores the destinations a transition step carries', () => {
+    const history = pushStep(emptyHistory(), transitionStep);
+    const undone = undoStep(history)!;
+    expect(undone.transitions).toEqual({ one: [{ to: 'two' }] });
+    expect(redoStep(undone.history)!.transitions).toEqual({ one: [{ to: 'three' }] });
+  });
+
+  it('carries a pruned connection layout with the transition that pruned it', () => {
+    const history = pushStep(emptyHistory(), bothStep);
+    const undone = undoStep(history)!;
+    expect(undone.connections).toEqual({ 'one->two': { from: 'one', to: 'two' } });
+    expect(undone.transitions).toEqual({ one: [{ to: 'two' }] });
+    const redone = redoStep(undone.history)!;
+    expect(redone.connections).toEqual({});
+    expect(redone.transitions).toEqual({ one: [{ to: 'three' }] });
+  });
+
+  it('leaves a layout-only step without transitions', () => {
+    const history = pushStep(emptyHistory(), layoutStep);
+    expect(undoStep(history)!.transitions).toBeUndefined();
+  });
+});
+

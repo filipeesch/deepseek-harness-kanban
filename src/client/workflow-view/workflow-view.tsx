@@ -2,32 +2,32 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Attention, BoardState, Column, ConnectionLayout, StagePosition, StageSize, Task } from '../../shared/types.js';
 import { EMPTY_ATTENTION } from '../../shared/types.js';
 import { placementIndex } from '../../domain/placement.js';
+import { connectionKey } from '../../domain/connection-anchor.js';
 import { effectiveStageSize } from '../../domain/stage-size.js';
-import { readStagePositions, type StagePositions } from '../../domain/workflow-positions.js';
-import { readStageSizes, type StageSizes } from '../../domain/workflow-sizes.js';
+import type { StagePositions } from '../../domain/workflow-positions.js';
+import type { ConnectionLayouts } from '../../domain/workflow-connections.js';
 import type { AutoRunController, AutoRunInput } from '../auto-run.js';
 import { BoardCard } from '../board-card.js';
 import type { CardEnvironment } from './card-environment.js';
 import type { RunCommand } from '../ui.js';
 import type { CardDragState } from '../useCardDrag.js';
 import type { OptimisticMove } from '../useMoveRequest.js';
-import { WorkflowCanvas, type CanvasConnection, type CanvasStage, type CanvasViewRequest, type ConnectionEdit, type WorkflowCanvasComponent } from './canvas.js';
-import { connectionKey } from '../../domain/connection-anchor.js';
-import { readConnections, type ConnectionLayouts } from '../../domain/workflow-connections.js';
-import { mergeConnectionOverrides, useConnectionOverrides } from './use/use-connection-overrides.js';
+import { WorkflowCanvas, type CanvasConnection, type CanvasStage, type CanvasViewRequest, type ConditionAnchor, type ConnectionEdit, type WorkflowCanvasComponent } from './canvas.js';
+import { ConditionPopover } from './condition-popover.js';
+import { presentWorkflow, presentedRules } from './present-workflow.js';
+import { computeAutoLayout, graphKey } from './auto-layout.js';
+import { useTransitionOverrides } from './use/use-transition-overrides.js';
+import { useTransitionActions } from './use/use-transition-actions.js';
+import { useWorkflowLayout } from './use/use-workflow-layout.js';
+import { useWorkflowWrites } from '../workflow-write.js';
+import { connectionLayoutOf } from './edge-model.js';
 import { buildWorkflowScene } from './scene.js';
-import { computeAutoLayout, freezeAutoLayout, graphKey, type FrozenAutoLayout } from './auto-layout.js';
-import { mergePlacements } from './placement-merge.js';
-import { placementBounds, type StageLayout } from './layout.js';
 import { canRedo, canUndo, redoStep, undoStep } from './history.js';
 import { TravelLayer } from './travel-layer.js';
 import { ViewControls } from './controls/view-controls.js';
 import { useFlowLock } from './use/use-flow-lock.js';
 import { useGridSnap } from './use/use-grid-snap.js';
 import { useStageMeasurements } from './use/use-stage-measurements.js';
-import { usePlacementHistory } from './use/use-placement-history.js';
-import { usePlacementOverrides } from './use/use-placement-overrides.js';
-import { usePlacementSaver } from './use/use-placement-saver.js';
 import { useTravel } from './use/use-travel.js';
 import { readWorkflowViewport, writeWorkflowViewport } from '../workflow-preference.js';
 
@@ -72,8 +72,7 @@ export interface WorkflowViewProps {
   /**
    * Opens the board's New task experience for the configured initial stage, taken
    * from the board's single creation instance. Absent when no registered project
-   * can own a task, which leaves the action presented but unavailable. The diagram
-   * never owns creation state, the dialog, or the first-execution handoff.
+   * can own a task, which leaves the action presented but unavailable.
    */
   onCreateTask?: () => void;
   /**
@@ -110,80 +109,71 @@ function applyOptimistic(tasks: readonly Task[], move: OptimisticMove | null): r
 }
 
 /**
- * The workflow diagram presentation of the active board. It owns presentation
- * state only: the frozen automatic placement and the fit request. The manual
- * overrides, stage measurement, the save queue, the layout history, the card
- * travel, the snapping preference, and the lock live in their own hooks, the
- * stage drag lives in the canvas; every move still runs through the board's move
- * pipeline, and every layout change is a workflow save.
+ * The workflow diagram presentation of the active board.
+ *
+ * It owns composition only. The authored layout, the write queue, the optimistic
+ * transitions, the connection gestures, and the card travel live in their own
+ * modules; every move still runs through the board's move pipeline, and every
+ * workflow change is one queued write.
  */
 export function WorkflowView(props: WorkflowViewProps) {
-  const stateRef = useRef(props.state); stateRef.current = props.state;
   const Canvas = props.canvas ?? WorkflowCanvas;
   const lock = useFlowLock();
   const grid = useGridSnap();
   const measurements = useStageMeasurements(props.state.workflow.columns);
-  const measurementRef = measurements.measuredRef;
-
-  const [overrides, setOverrides] = useState<Record<string, StagePosition>>({});
-  const overridesRef = useRef(overrides); overridesRef.current = overrides;
-  const [sizeOverrides, setSizeOverrides] = useState<Record<string, StageSize>>({});
   const [viewRequest, setViewRequest] = useState<CanvasViewRequest>(() => {
     const stored = readWorkflowViewport(props.boardId);
     return stored === null ? { kind: 'fit' } : { kind: 'restore', viewport: stored };
   });
   const [viewToken, setViewToken] = useState(0);
-  const [layoutVersion, setLayoutVersion] = useState(0);
-  const frozen = useRef<FrozenAutoLayout | null>(null);
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
+  const [conditionEditor, setConditionEditor] = useState<{ connectionId: string; anchor: ConditionAnchor } | null>(null);
 
-  const workflowKey = useMemo(() => graphKey(props.state.workflow), [props.state.workflow]);
-  const workflowKeyRef = useRef(workflowKey); workflowKeyRef.current = workflowKey;
-  const stored = useMemo(() => readStagePositions(props.state.workflow), [props.state.workflow]);
-  const storedSizes = useMemo(() => readStageSizes(props.state.workflow), [props.state.workflow]);
-  const placement = usePlacementOverrides({ stored, storedSizes });
-  const storedConnections = useMemo(() => readConnections(props.state.workflow), [props.state.workflow]);
-  const connectionsPort = useConnectionOverrides(storedConnections);
-  const intendConnection = connectionsPort.intend;
-  const previewConnections = connectionsPort.preview;
-  const resetConnections = connectionsPort.reset;
-  const connectionOverrides = connectionsPort.overrides;
-  const presentedConnections = useMemo(() => mergeConnectionOverrides(storedConnections, connectionOverrides), [storedConnections, connectionOverrides]);
-
-  const history = usePlacementHistory();
-  const resetHistory = history.reset;
-  const resetPlacement = placement.reset;
-  const resetAfterRejected = useCallback(() => {
-    resetPlacement();
-    frozen.current = null;
-    setLayoutVersion(value => value + 1);
-    resetConnections();
-    resetHistory();
-  }, [resetConnections, resetHistory, resetPlacement]);
-  const saver = usePlacementSaver({
+  const writes = useWorkflowWrites({ hubId: props.hubId, boardId: props.boardId, run: props.run, revision: props.revision });
+  const resetRef = useRef<() => void>(() => {});
+  const layout = useWorkflowLayout({
     hubId: props.hubId,
     boardId: props.boardId,
-    run: props.run,
-    revision: props.revision,
     workflow: props.state.workflow,
     workflowYaml: props.state.workflowYaml,
+    saveLayout: writes.saveLayout,
+    measured: measurements.measured,
+    revealed: measurements.revealed,
     onError: props.onError,
-    onRejected: resetAfterRejected,
+    onRejected: () => resetRef.current(),
   });
+  resetRef.current = layout.reset;
 
+  const transitions = useTransitionOverrides(props.state.workflow);
+  const presented = useMemo(() => presentWorkflow(props.state.workflow, transitions.overrides), [props.state.workflow, transitions.overrides]);
+  const presentedRef = useRef(presented); presentedRef.current = presented;
+
+  const actions = useTransitionActions({
+    workflow: () => presentedRef.current,
+    writes,
+    overrides: transitions,
+    history: layout.history,
+    connections: layout.connections,
+    positions: layout.visualPositions,
+    sizes: () => ({ ...layout.saver.desiredSizes.current }),
+    onError: props.onError,
+  });
+  const actionsRef = useRef(actions); actionsRef.current = actions;
+
+  // A structural change resets the frozen automatic placement and hides the diagram
+  // until every stage is measured again.
+  const workflowKey = graphKey(props.state.workflow);
   const lastWorkflowKey = useRef<string | null>(null);
   useEffect(() => {
     if (lastWorkflowKey.current === workflowKey) return;
     const first = lastWorkflowKey.current === null;
     lastWorkflowKey.current = workflowKey;
-    frozen.current = null;
-    // A structural change normally resizes at least one stage, but a new stage at a
-    // default size must still be measured before the diagram is shown again.
+    layout.invalidate();
     if (!first) measurements.hide();
-  }, [workflowKey, measurements.hide]);
+  }, [workflowKey, measurements.hide, layout.invalidate]);
 
   // The first reveal of a board shows the position that board stored. Every later
-  // reveal follows a structural workflow change, which must frame the whole diagram
-  // because a stage may have been added or removed.
+  // reveal follows a structural workflow change, which must frame the whole diagram.
   const firstReveal = useRef(true);
   useEffect(() => {
     if (!measurements.revealed) return;
@@ -206,201 +196,186 @@ export function WorkflowView(props: WorkflowViewProps) {
   const requestFit = useCallback(() => { setViewRequest({ kind: 'fit' }); setViewToken(value => value + 1); }, []);
   const storeViewport = useCallback((viewport: { x: number; y: number; zoom: number }) => { writeWorkflowViewport(props.boardId, viewport); }, [props.boardId]);
 
-  const autoLayout = useMemo(() => {
-    const compute = () => computeAutoLayout(props.state.workflow, measurements.measured);
-    if (!measurements.revealed) return compute();
-    const frozenLayout = freezeAutoLayout(frozen.current, workflowKey, compute);
-    frozen.current = frozenLayout;
-    return frozenLayout.layout;
-  }, [props.state.workflow, workflowKey, measurements.measured, measurements.revealed, layoutVersion]);
-
-  const placements = useMemo(() => mergePlacements(Object.fromEntries(autoLayout.placements), stored, placement.positions), [autoLayout, stored, placement.positions]);
-  const placementsRef = useRef(placements); placementsRef.current = placements;
-
-  const visualPositions = useCallback((): Record<string, StagePosition> => {
-    const result: Record<string, StagePosition> = {};
-    for (const [id, position] of placementsRef.current) result[id] = { x: position.x, y: position.y };
-    return result;
-  }, []);
-
-  const layoutFrom = useCallback((positions: StagePositions): StageLayout => {
-    const map = new Map<string, StagePosition>();
-    for (const [id, position] of Object.entries(positions)) if (position !== undefined) map.set(id, position);
-    return { placements: map, bounds: placementBounds(map, measurementRef.current) };
-  }, [measurementRef]);
   const diagramTasks = useMemo(() => applyOptimistic(props.tasks, props.optimistic), [props.tasks, props.optimistic]);
   const scene = useMemo(() => buildWorkflowScene({
-    workflow: props.state.workflow, tasks: diagramTasks, placements, sizes: measurements.measured,
-    connections: presentedConnections,
-  }), [props.state.workflow, diagramTasks, placements, measurements.measured, presentedConnections]);
+    workflow: presented, tasks: diagramTasks, placements: layout.placements, sizes: measurements.measured,
+    connections: layout.connectionLayouts,
+  }), [presented, diagramTasks, layout.placements, measurements.measured, layout.connectionLayouts]);
 
   const reposition = useCallback((positions: StagePositions, options: { readonly layout?: StagePositions; readonly clearOverrides: boolean; readonly immediate: boolean }) => {
-    if (options.clearOverrides) placement.clearPositions();
-    if (options.layout !== undefined) {
-      frozen.current = { key: workflowKeyRef.current, layout: layoutFrom(options.layout) };
-      setLayoutVersion(value => value + 1);
-    }
+    const saver = layout.saver;
+    if (options.clearOverrides) layout.placement.clearPositions();
+    if (options.layout !== undefined) layout.freeze(layout.layoutFrom(options.layout));
     saver.intendPositions(positions);
     saver.cancelTimer();
     if (options.immediate) saver.saveNow(); else saver.queueSave();
-  }, [layoutFrom, placement, saver]);
+  }, [layout]);
 
   const moveStage = useCallback((stageId: string, position: { x: number; y: number }) => {
+    const saver = layout.saver;
     const rounded = { x: Math.round(position.x), y: Math.round(position.y) };
     const before: Record<string, StagePosition> = { ...saver.desiredPositions.current };
     const after: Record<string, StagePosition> = { ...before, [stageId]: rounded };
-    const beforeLayout = visualPositions();
+    const beforeLayout = layout.visualPositions();
     const afterLayout: Record<string, StagePosition> = { ...beforeLayout, [stageId]: rounded };
-    const sizes: StageSizes = { ...saver.desiredSizes.current };
-    placement.beginPosition(stageId);
-    placement.setPosition(stageId, rounded);
-    history.push({ before, after, beforeSizes: sizes, afterSizes: sizes, beforeLayout, afterLayout });
+    const sizes = { ...saver.desiredSizes.current };
+    layout.placement.beginPosition(stageId);
+    layout.placement.setPosition(stageId, rounded);
+    layout.history.push({ before, after, beforeSizes: sizes, afterSizes: sizes, beforeLayout, afterLayout });
     reposition(after, { clearOverrides: false, immediate: false });
-  }, [history, placement, reposition, saver, visualPositions]);
+  }, [layout, reposition]);
 
-  const resizeStage = useCallback((stageId: string, size: StageSize) => {
-    placement.setSize(stageId, size);
-  }, [placement]);
-
-  const cancelResize = useCallback((stageId: string) => {
-    placement.cancelSize(stageId);
-  }, [placement]);
+  const resizeStage = useCallback((stageId: string, size: StageSize) => { layout.placement.setSize(stageId, size); }, [layout]);
+  const cancelResize = useCallback((stageId: string) => { layout.placement.cancelSize(stageId); }, [layout]);
 
   const commitResize = useCallback((stageId: string, size: StageSize) => {
+    const saver = layout.saver;
     const committed = { width: Math.round(size.width), height: Math.round(size.height) };
     const authored = saver.desiredSizes.current[stageId];
     const unchanged = authored === undefined
       ? committed.width === effectiveStageSize(undefined).width && committed.height === effectiveStageSize(undefined).height
       : authored.width === committed.width && authored.height === committed.height;
-    // A press that never changed the size is not a layout edit.
-    if (unchanged) { cancelResize(stageId); return; }
-    // The override stays until the save lands, so a resized stage never snaps
-    // back while its workflow save is still queued.
-    placement.beginSize(stageId);
-    placement.setSize(stageId, committed);
+    if (unchanged) { layout.placement.cancelSize(stageId); return; }
+    layout.placement.beginSize(stageId);
+    layout.placement.setSize(stageId, committed);
     const beforeSizes: Record<string, StageSize> = { ...saver.desiredSizes.current };
     const afterSizes: Record<string, StageSize> = { ...beforeSizes, [stageId]: committed };
     const positions: Record<string, StagePosition> = { ...saver.desiredPositions.current };
-    const layout = visualPositions();
-    history.push({ before: positions, after: positions, beforeSizes, afterSizes, beforeLayout: layout, afterLayout: layout });
+    const snapshot = layout.visualPositions();
+    layout.history.push({ before: positions, after: positions, beforeSizes, afterSizes, beforeLayout: snapshot, afterLayout: snapshot });
     saver.intendSizes(afterSizes);
     saver.cancelTimer();
     saver.queueSave();
-  }, [cancelResize, history, placement, saver, visualPositions]);
+  }, [layout]);
 
-  /**
-   * One completed arrow adjustment: the connection layout changes, the layout
-   * history gains one step, and the coalesced save is queued. Only the edited
-   * connection's entry changes.
-   */
+  const connectionsRef = useRef<readonly CanvasConnection[]>([]);
+
+  /** One completed arrow adjustment: the connection layout changes and one step is recorded. */
   const editConnection = useCallback((edit: ConnectionEdit) => {
     if (lock.locked) return;
+    const saver = layout.saver;
     const connection = connectionsRef.current.find(value => value.id === edit.connectionId);
     if (connection === undefined) return;
     const key = connectionKey(connection.from, connection.to);
     const beforeConnections: ConnectionLayouts = { ...saver.desiredConnections.current };
-    const source = edit.source ?? connection.source;
-    const target = edit.target ?? connection.target;
-    const segments = edit.segments ?? connection.segments;
-    const after: ConnectionLayout = {
-      from: connection.from,
-      to: connection.to,
-      ...(source === undefined ? {} : { source }),
-      ...(target === undefined ? {} : { target }),
-      ...(segments === undefined || segments.length === 0 ? {} : { segments: [...segments] }),
-    };
-    intendConnection(key, after);
+    const after = connectionLayoutOf(connection, {
+      ...(edit.source === undefined ? {} : { source: edit.source }),
+      ...(edit.target === undefined ? {} : { target: edit.target }),
+      ...(edit.segments === undefined ? {} : { segments: edit.segments }),
+    });
+    layout.intendConnection(key, after);
     const afterConnections: ConnectionLayouts = { ...beforeConnections, [key]: after };
     const positions: Record<string, StagePosition> = { ...saver.desiredPositions.current };
     const sizes: Record<string, StageSize> = { ...saver.desiredSizes.current };
-    const layout = visualPositions();
-    history.push({ before: positions, after: positions, beforeSizes: sizes, afterSizes: sizes, beforeConnections, afterConnections, beforeLayout: layout, afterLayout: layout });
+    const snapshot = layout.visualPositions();
+    layout.history.push({ before: positions, after: positions, beforeSizes: sizes, afterSizes: sizes, beforeConnections, afterConnections, beforeLayout: snapshot, afterLayout: snapshot });
     saver.intendConnections(afterConnections);
     saver.cancelTimer();
     saver.queueSave();
-  }, [history, intendConnection, lock.locked, saver, visualPositions]);
+  }, [layout, lock.locked]);
 
   const organize = useCallback(() => {
     if (lock.locked) return;
-    const layout = computeAutoLayout(stateRef.current.workflow, measurementRef.current);
+    const computed = computeAutoLayout(props.state.workflow, measurements.measuredRef.current);
     const next: Record<string, StagePosition> = Object.create(null) as Record<string, StagePosition>;
-    for (const [id, position] of layout.placements) next[id] = { x: Math.round(position.x), y: Math.round(position.y) };
-    const before = { ...saver.desiredPositions.current };
-    const sizes: StageSizes = { ...saver.desiredSizes.current };
-    const beforeLayout = visualPositions();
-    frozen.current = { key: graphKey(stateRef.current.workflow), layout };
-    setLayoutVersion(value => value + 1);
-    history.push({ before, after: next, beforeSizes: sizes, afterSizes: sizes, beforeLayout, afterLayout: next });
+    for (const [id, position] of computed.placements) next[id] = { x: Math.round(position.x), y: Math.round(position.y) };
+    const before = { ...layout.saver.desiredPositions.current };
+    const sizes = { ...layout.saver.desiredSizes.current };
+    const beforeLayout = layout.visualPositions();
+    layout.freeze(computed);
+    layout.history.push({ before, after: next, beforeSizes: sizes, afterSizes: sizes, beforeLayout, afterLayout: next });
     reposition(next, { clearOverrides: true, immediate: true });
     requestFit();
-  }, [history, lock.locked, measurementRef, reposition, requestFit, saver, visualPositions]);
+  }, [layout, lock.locked, measurements.measuredRef, props.state.workflow, reposition, requestFit]);
 
   const undo = useCallback(() => {
     if (lock.locked) return;
-    const step = undoStep(history.historyRef.current);
+    const history = layout.history.historyRef.current;
+    const step = undoStep(history);
     if (step === null) return;
-    const entry = history.historyRef.current.entries[history.historyRef.current.cursor - 1];
-    history.replace(step.history);
-    if (step.sizes !== undefined) { placement.previewSizes(step.sizes, saver.desiredSizes.current); saver.intendSizes(step.sizes); }
-    if (step.connections !== undefined) { previewConnections(step.connections); saver.intendConnections(step.connections); }
-    reposition(step.positions, { ...(entry?.beforeLayout === undefined ? {} : { layout: entry.beforeLayout }), clearOverrides: true, immediate: true });
-  }, [history, lock.locked, placement, previewConnections, reposition, saver]);
+    const entry = history.entries[history.cursor - 1];
+    const restores = entry?.restores ?? 'layout';
+    layout.history.replace(step.history);
+    if (step.sizes !== undefined) { layout.placement.previewSizes(step.sizes, layout.saver.desiredSizes.current); layout.saver.intendSizes(step.sizes); }
+    if (step.connections !== undefined) { layout.previewConnections(step.connections); layout.saver.intendConnections(step.connections); }
+    // A transition-only step must not replay the shown snapshot as authored placement.
+    if (restores === 'layout') reposition(step.positions, { ...(entry?.beforeLayout === undefined ? {} : { layout: entry.beforeLayout }), clearOverrides: true, immediate: true });
+    else if (step.connections !== undefined) { layout.saver.cancelTimer(); layout.saver.saveNow(); }
+    // A restored connection keeps its stored route, so the layout save it just queued has
+    // to reach the queue before the transitions are restored.
+    const transitions = step.transitions;
+    // A layout that could not be restored stops the replay: the transitions a step carries
+    // belong on top of that layout, not over whatever the store kept.
+    if (transitions !== undefined) void layout.saver.flush().then(() => actions.restore(transitions), () => undefined);
+  }, [actions, layout, lock.locked, reposition]);
 
   const redo = useCallback(() => {
     if (lock.locked) return;
-    const step = redoStep(history.historyRef.current);
+    const history = layout.history.historyRef.current;
+    const step = redoStep(history);
     if (step === null) return;
-    const entry = history.historyRef.current.entries[history.historyRef.current.cursor];
-    history.replace(step.history);
-    if (step.sizes !== undefined) { placement.previewSizes(step.sizes, saver.desiredSizes.current); saver.intendSizes(step.sizes); }
-    if (step.connections !== undefined) { previewConnections(step.connections); saver.intendConnections(step.connections); }
-    reposition(step.positions, { ...(entry?.afterLayout === undefined ? {} : { layout: entry.afterLayout }), clearOverrides: true, immediate: true });
-  }, [history, lock.locked, placement, previewConnections, reposition, saver]);
+    const entry = history.entries[history.cursor];
+    const restores = entry?.restores ?? 'layout';
+    layout.history.replace(step.history);
+    if (step.sizes !== undefined) { layout.placement.previewSizes(step.sizes, layout.saver.desiredSizes.current); layout.saver.intendSizes(step.sizes); }
+    if (step.connections !== undefined) { layout.previewConnections(step.connections); layout.saver.intendConnections(step.connections); }
+    if (restores === 'layout') reposition(step.positions, { ...(entry?.afterLayout === undefined ? {} : { layout: entry.afterLayout }), clearOverrides: true, immediate: true });
+    else if (step.connections !== undefined) { layout.saver.cancelTimer(); layout.saver.saveNow(); }
+    const transitions = step.transitions;
+    if (transitions !== undefined) void layout.saver.flush().then(() => actions.restore(transitions), () => undefined);
+  }, [actions, layout, lock.locked, reposition]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!event.metaKey && !event.ctrlKey) return;
       const target = event.target;
-      if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"], .cm-editor, [role="dialog"]') !== null) return;
+      const editing = target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"], .cm-editor, [role="dialog"]') !== null;
+      if (!editing && (event.key === 'Delete' || event.key === 'Backspace') && selectedConnectionId !== null && !lock.locked) {
+        event.preventDefault();
+        const connection = connectionsRef.current.find(value => value.id === selectedConnectionId);
+        setSelectedConnectionId(null);
+        if (connection !== undefined) actionsRef.current.remove(connection.from, connection.to);
+        return;
+      }
+      if (!event.metaKey && !event.ctrlKey) return;
+      if (editing) return;
       if (event.key.toLowerCase() !== 'z') return;
       event.preventDefault();
       if (event.shiftKey) redo(); else undo();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [redo, undo]);
+  }, [lock.locked, redo, selectedConnectionId, undo]);
 
   const travel = useTravel({
-    workflow: props.state.workflow,
+    workflow: presented,
     stateTasks: props.state.tasks,
     tasks: props.tasks,
-    placements,
+    placements: layout.placements,
     measured: measurements.measured,
-    connections: presentedConnections,
+    connections: layout.connectionLayouts,
   });
 
-  const stageSizeOf = useCallback((stageId: string): StageSize => effectiveStageSize(placement.sizes[stageId] ?? storedSizes[stageId]), [placement.sizes, storedSizes]);
-  // The board creates in one stage: the workflow's configured initial stage. The
-  // diagram presents the action there and nowhere else, and never lets the stage the
-  // user is looking at decide where a task lands.
-  const initialColumnId = props.state.workflow.initialColumnId;
+  const initialColumnId = presented.initialColumnId;
   const stages: CanvasStage[] = scene.nodes.map(node => {
-    const size = stageSizeOf(node.id);
+    const size = layout.stageSizeOf(node.id);
     return { id: node.id, label: node.name, x: node.position.x, y: node.position.y, width: size.width, height: size.height, cardIds: node.tasks.map(task => task.id), creatable: node.id === initialColumnId };
   });
   const connections: CanvasConnection[] = scene.edges.map(edge => {
-    const layout = presentedConnections[connectionKey(edge.from, edge.to)];
+    const authored = presentedRules(presented, edge.from);
+    const rule = authored?.find(value => value.to === edge.to);
+    const connection = layout.connectionLayouts[connectionKey(edge.from, edge.to)];
     return {
       id: edge.id, from: edge.from, to: edge.to, kind: edge.kind, returning: edge.returning, fanOut: edge.fanOut, fanOutCount: edge.fanOutCount,
-      ...(layout?.source === undefined ? {} : { source: layout.source }),
-      ...(layout?.target === undefined ? {} : { target: layout.target }),
-      ...(layout?.segments === undefined ? {} : { segments: layout.segments }),
+      ...(rule?.when === undefined ? {} : { condition: rule.when }),
+      ...(connection?.source === undefined ? {} : { source: connection.source }),
+      ...(connection?.target === undefined ? {} : { target: connection.target }),
+      ...(connection?.segments === undefined ? {} : { segments: connection.segments }),
     };
   });
-  const connectionsRef = useRef(connections); connectionsRef.current = connections;
+  connectionsRef.current = connections;
 
   const tasksById = useMemo(() => new Map(props.state.tasks.map(task => [task.id, task])), [props.state.tasks]);
-  const columnsById = useMemo(() => new Map(props.state.workflow.columns.map(column => [column.id, column])), [props.state.workflow.columns]);
+  const columnsById = useMemo(() => new Map(presented.columns.map(column => [column.id, column])), [presented.columns]);
   const cardEnvironment = useMemo<CardEnvironment>(() => ({
     renderCard(taskId: string) {
       const task = tasksById.get(taskId);
@@ -412,7 +387,7 @@ export function WorkflowView(props: WorkflowViewProps) {
         column={column}
         projectName={props.card.projectNames.get(task.projectId) ?? task.projectId}
         attention={props.card.attention[task.id] ?? EMPTY_ATTENTION}
-        workflow={props.state.workflow}
+        workflow={presented}
         selectionMode={props.card.selectionMode}
         selected={props.card.selectedIds.has(task.id)}
         autoRun={props.card.autoRun}
@@ -427,9 +402,35 @@ export function WorkflowView(props: WorkflowViewProps) {
         onRun={props.card.onRun}
       />;
     },
-  }), [tasksById, columnsById, props.card, props.state.workflow, props.onOpenTask, props.beginDrag, props.shouldSuppressClick]);
+  }), [tasksById, columnsById, props.card, presented, props.onOpenTask, props.beginDrag, props.shouldSuppressClick]);
 
-  return <div className="kb-flow-shell" role="region" aria-label="Workflow diagram">
+  const openCondition = useCallback((connectionId: string, anchor: ConditionAnchor) => {
+    setSelectedConnectionId(connectionId);
+    setConditionEditor({ connectionId, anchor });
+  }, []);
+
+  const editorConnection = conditionEditor === null ? undefined : connections.find(value => value.id === conditionEditor.connectionId);
+
+  const saveCondition = useCallback(async (text: string) => {
+    const connection = conditionEditor === null ? undefined : connectionsRef.current.find(value => value.id === conditionEditor.connectionId);
+    if (connection === undefined) { setConditionEditor(null); return; }
+    try {
+      await actionsRef.current.setCondition(connection.from, connection.to, text);
+      setConditionEditor(null);
+    } catch {
+      // The editor stays open with its text and shows the problem the write reported.
+    }
+  }, [conditionEditor]);
+
+  const deleteConnection = useCallback(() => {
+    if (lock.locked) return;
+    const connection = conditionEditor === null ? undefined : connectionsRef.current.find(value => value.id === conditionEditor.connectionId);
+    setConditionEditor(null);
+    setSelectedConnectionId(null);
+    if (connection !== undefined) actionsRef.current.remove(connection.from, connection.to);
+  }, [conditionEditor, lock.locked]);
+
+  return <div className="kb-flow-shell" role="region" aria-label="Workflow diagram" tabIndex={-1}>
     <Canvas
       stages={stages}
       connections={connections}
@@ -441,23 +442,17 @@ export function WorkflowView(props: WorkflowViewProps) {
       snap={grid.snap}
       callbacks={{
         onMeasure: measurements.onMeasure,
-        // Passed straight through: the diagram never decides where a task is created
-        // and holds no creation state of its own. Absent when no registered project
-        // can own a task, which leaves the action presented but unavailable; creating
-        // is not a layout edit, so the lock never gates it.
         ...(props.onCreateTask === undefined ? {} : { onCreateTask: props.onCreateTask }),
-        // The stage edit action is not a layout edit either: it stays available while
-        // the lock is on, and the board's dialog owns every field it changes.
         ...(props.onEditStage === undefined ? {} : { onEditStage: props.onEditStage }),
       }}
       cardEnvironment={cardEnvironment}
-      dropStageId={props.drag?.overColumnId ?? null}
-      dropIndicatorY={props.drag?.overColumnId === undefined ? null : props.drag.indicatorY}
+      drop={{ stageId: props.drag?.overColumnId ?? null, indicatorY: props.drag?.overColumnId === undefined ? null : props.drag.indicatorY }}
+      selectedConnectionId={selectedConnectionId}
       {...(travel.travel.length === 0 ? {} : { overlay: <TravelLayer moves={travel.travel} onFinished={travel.finish} /> })}
       controls={viewport => <ViewControls
         locked={lock.locked}
-        canUndo={canUndo(history.history)}
-        canRedo={canRedo(history.history)}
+        canUndo={canUndo(layout.history.history)}
+        canRedo={canRedo(layout.history.history)}
         onZoomIn={viewport.zoomIn}
         onZoomOut={viewport.zoomOut}
         onFit={viewport.fit}
@@ -473,6 +468,22 @@ export function WorkflowView(props: WorkflowViewProps) {
       onStageResizeEnd={commitResize}
       onStageResizeCancel={cancelResize}
       onConnectionEdit={editConnection}
+      onSelectConnection={setSelectedConnectionId}
+      onOpenCondition={openCondition}
+      onCreateConnection={(sourceId, to) => actions.create(sourceId, to)}
+      onRepointConnection={(sourceId, from, to) => actions.repoint(sourceId, from, to)}
+      onReownConnection={(fromSource, to, toSource) => actions.reown(fromSource, to, toSource)}
     />
+    {conditionEditor !== null && editorConnection !== undefined && <ConditionPopover
+      anchor={conditionEditor.anchor}
+      title={'Condition from ' + (presented.columns.find(column => column.id === editorConnection.from)?.name ?? editorConnection.from) + ' to ' + (presented.columns.find(column => column.id === editorConnection.to)?.name ?? editorConnection.to)}
+      value={editorConnection.condition ?? ''}
+      pending={actions.pending}
+      locked={lock.locked}
+      problem={actions.error}
+      onSave={text => { void saveCondition(text); }}
+      onDelete={deleteConnection}
+      onClose={() => { actions.clearError(); setConditionEditor(null); }}
+    />}
   </div>;
 }

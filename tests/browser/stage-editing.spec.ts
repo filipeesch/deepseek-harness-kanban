@@ -104,40 +104,48 @@ test('keeps the identifier read-only while the board has work in flight', async 
   await shoot(page, 'stage-editor-readonly-id.png');
 });
 
-test('edits a transition list and expands one condition into its own editor', async ({ page }) => {
+test('edits a transition list and its conditions in one resizable field', async ({ page }) => {
   await openBoard(page);
   await page.getByRole('button', { name: 'Edit stage Explore' }).click();
   const dialog = page.getByRole('dialog', { name: 'Edit stage' });
-  const anyStage = dialog.getByLabel('Allow any stage');
-  if (await anyStage.isChecked()) await anyStage.uncheck();
+  await dialog.getByLabel('Choose destinations').check();
   await dialog.getByLabel('Allow transition to Propose').check();
-  await dialog.getByRole('textbox', { name: 'Condition for Propose', exact: true }).fill('when the brief is unclear');
-  await test.step('expand the condition', async () => {
-    await dialog.getByRole('button', { name: 'Expand the condition for Propose' }).click();
-    await expect(page.getByRole('dialog', { name: 'Condition for Propose' })).toBeVisible();
-  });
-  const nested = page.getByRole('dialog', { name: 'Condition for Propose' });
-  await test.step('focus the expanded editor', async () => {
-    await expect(nested.getByRole('textbox', { name: 'Transition condition' })).toBeFocused({ timeout: 3000 });
-  });
-  await nested.getByRole('textbox', { name: 'Transition condition' }).fill('when the brief is unclear');
+  const condition = dialog.getByRole('textbox', { name: 'Condition for Propose', exact: true });
+  await condition.fill('when the brief is unclear');
   await shoot(page, 'stage-editor-condition.png');
-  await nested.getByRole('button', { name: 'Use this condition' }).click();
-  await expect(nested).toBeHidden();
-  await expect(dialog).toBeVisible();
   expect(await commands(page)).toEqual([]);
-  await expect(dialog.getByRole('textbox', { name: 'Condition for Propose', exact: true })).toHaveValue('when the brief is unclear');
-
-  // Escape closes only the nested editor and hands focus back to the row that opened it.
-  await dialog.getByRole('button', { name: 'Expand the condition for Propose' }).click();
-  await expect(page.getByRole('dialog', { name: 'Condition for Propose' })).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('dialog', { name: 'Condition for Propose' })).toBeHidden();
-  await expect(dialog.getByRole('button', { name: 'Expand the condition for Propose' })).toBeFocused();
+  await expect(condition).toHaveValue('when the brief is unclear');
+  // The condition is one resizable field: no second editor is opened for it.
+  await expect(page.getByRole('dialog', { name: 'Condition for Propose' })).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Save stage' }).click();
   await expect(dialog).toBeHidden();
   const sent = await commands(page);
   expect(sent[0]?.patch).toMatchObject({ allowedTransitions: [{ to: 'propose', when: 'when the brief is unclear' }] });
+});
+
+test('chooses no destinations for a terminal stage', async ({ page }) => {
+  await openBoard(page);
+  await page.getByRole('button', { name: 'Edit stage Explore' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit stage' });
+  await dialog.getByLabel('No destinations').check();
+  await dialog.getByRole('button', { name: 'Save stage' }).click();
+  await expect(dialog).toBeHidden();
+  const sent = await commands(page);
+  expect(sent[0]?.patch).toMatchObject({ allowedTransitions: [] });
+});
+
+test('opens a terminal stage in the no-destinations mode', async ({ page }) => {
+  await openBoard(page);
+  await page.getByRole('button', { name: 'Edit stage Explore' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit stage' });
+  await dialog.getByLabel('No destinations').check();
+  await dialog.getByRole('button', { name: 'Save stage' }).click();
+  await expect(dialog).toBeHidden();
+  await page.getByRole('button', { name: 'Edit stage Explore' }).click();
+  const reopened = page.getByRole('dialog', { name: 'Edit stage' });
+  await expect(reopened.getByLabel('No destinations')).toBeChecked();
+  // Choosing the mode again is not a change, so the save action stays unavailable.
+  await expect(reopened.getByRole('button', { name: 'Save stage' })).toBeDisabled();
 });
 
 test('warns about a duplicate name without blocking the save', async ({ page }) => {

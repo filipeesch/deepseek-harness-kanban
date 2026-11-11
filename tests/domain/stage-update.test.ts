@@ -67,10 +67,45 @@ describe('stage update', () => {
     expect(stage(unrestricted.text, 'done').column.allowedTransitions).toBeUndefined();
   });
 
-  it('rejects an empty restricted set, a self target, and an unknown target', () => {
-    expect(() => updateStage({ text: AUTHORED, stageId: 'plan', patch: { allowedTransitions: [] } })).toThrow(/at least one/);
+  it('authors an empty transition list as the stage that permits no destination', () => {
+    const terminal = updateStage({ text: AUTHORED, stageId: 'plan', patch: { allowedTransitions: [] } });
+    expect(stage(terminal.text, 'plan').column.allowedTransitions).toEqual([]);
+    expect(terminal.text).toContain('allowed_transitions: []');
+    // The empty list is authored state, not absence: the next write must keep it.
+    const untouched = updateStage({ text: terminal.text, stageId: 'plan', patch: { name: 'Planning' } });
+    expect(stage(untouched.text, 'plan').column.allowedTransitions).toEqual([]);
+    // Restoring any-stage removes the field instead of writing an empty one.
+    const restored = updateStage({ text: terminal.text, stageId: 'plan', patch: { allowedTransitions: null } });
+    expect(stage(restored.text, 'plan').column.allowedTransitions).toBeUndefined();
+    expect(restored.text).not.toContain('allowed_transitions');
+  });
+
+  it('writes one destination condition without rewriting the other entries', () => {
+    const conditioned = updateStage({ text: AUTHORED, stageId: 'plan', patch: { transitionCondition: { to: 'backlog', when: 'the plan is parked' } } });
+    expect(stage(conditioned.text, 'plan').column.allowedTransitions).toEqual([{ to: 'backlog', when: 'the plan is parked' }]);
+    const cleared = updateStage({ text: conditioned.text, stageId: 'plan', patch: { transitionCondition: { to: 'backlog', when: null } } });
+    expect(stage(cleared.text, 'plan').column.allowedTransitions).toEqual([{ to: 'backlog' }]);
+    // The authored name and the comment above the stage survive the edit.
+    expect(cleared.text).toContain('# The delivery flow, authored by hand.');
+    expect(cleared.text).toContain('# This stage starts everything.');
+  });
+
+  it('refuses a patch that changes the list and one condition together', () => {
+    expect(() => updateStage({
+      text: AUTHORED, stageId: 'plan',
+      patch: { allowedTransitions: [{ to: 'backlog' }], transitionCondition: { to: 'backlog', when: 'x' } },
+    })).toThrow(/at the same time/);
+  });
+
+  it('refuses a condition for a destination the board does not hold', () => {
+    expect(() => updateStage({ text: AUTHORED, stageId: 'plan', patch: { transitionCondition: { to: 'ghost', when: 'x' } } })).toThrow(/not a stage/);
+    expect(() => updateStage({ text: AUTHORED, stageId: 'plan', patch: { transitionCondition: { to: 'plan', when: 'x' } } })).toThrow(/own transition target/);
+  });
+
+  it('rejects a self target and an unknown target', () => {
     expect(() => updateStage({ text: AUTHORED, stageId: 'plan', patch: { allowedTransitions: [{ to: 'plan' }] } })).toThrow(/own transition target/);
     expect(() => updateStage({ text: AUTHORED, stageId: 'plan', patch: { allowedTransitions: [{ to: 'ghost' }] } })).toThrow(/not a stage/);
+    expect(() => updateStage({ text: AUTHORED, stageId: 'plan', patch: { allowedTransitions: [{ to: 'backlog' }, { to: 'backlog' }] } })).toThrow(/listed once/);
   });
 
   it('renames the identifier and carries every reference with it', () => {

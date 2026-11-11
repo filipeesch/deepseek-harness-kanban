@@ -48,17 +48,24 @@ describe('stage editor draft', () => {
     expect(stagePatch({ ...base, transitions: [{ to: 'plan', when: 'needs review' }] }, columns[1]!)).toEqual({ allowedTransitions: [{ to: 'plan', when: 'needs review' }] });
   });
 
-  it('keeps an authored empty transition list as restricted', () => {
+  it('distinguishes the stage that permits nothing from the one that permits anything', () => {
     const terminal: Column = { id: 'done', name: 'Done', allowedTransitions: [] };
     const draft = stageDraft(terminal);
-    expect(draft.mode).toBe('restricted');
+    expect(draft.mode).toBe('none');
     expect(draft.transitions).toEqual([]);
     expect(draftChanged(draft, terminal)).toBe(false);
+    expect(stagePatch(draft, terminal)).toEqual({});
+    // Choosing no destinations authors the empty list, not an absence.
+    expect(stagePatch({ ...stageDraft({ id: 'todo', name: 'Todo' }), mode: 'none' }, { id: 'todo', name: 'Todo' })).toEqual({ allowedTransitions: [] });
     // Making it unrestricted is a real change the save must author as an absence.
     expect(stagePatch({ ...draft, mode: 'any' }, terminal)).toEqual({ allowedTransitions: null });
-    expect(stagePatch(draft, terminal)).toEqual({});
     // A stage with no authored list is the unrestricted one.
     expect(stageDraft({ id: 'todo', name: 'Todo' }).mode).toBe('any');
+  });
+
+  it('reports a restricted draft with no destination by naming the no-destinations mode', () => {
+    const empty = { ...stageDraft(columns[0]!), mode: 'restricted' as const, transitions: [] };
+    expect(draftProblems(empty, new Set(['done']))).toEqual([{ field: 'transitions', message: 'Choose at least one destination, or choose "No destinations".' }]);
   });
 
   it('offers every other stage as a destination', () => {

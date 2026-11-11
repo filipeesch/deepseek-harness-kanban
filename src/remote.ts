@@ -34,8 +34,11 @@ const stagePatchSchema=z.object({
  onEnterPrompt:z.string().nullable().optional(),
  initial:z.literal(true).optional(),
  allowedTransitions:z.array(z.object({to:id,when:z.string().optional()}).strict()).nullable().optional(),
+ transitionCondition:z.object({to:id,when:z.string().nullable()}).strict().optional(),
  id:id.optional(),
-}).strict();
+}).strict().refine(patch => !(patch.allowedTransitions !== undefined && patch.transitionCondition !== undefined), {
+ message: 'A stage edit cannot change its destination list and one destination condition at the same time.',
+});
 export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('hub.create'),name:z.string().min(1)}).strict(),
  z.object({type:z.literal('hub.rename'),hubId:id,name:z.string().min(1),expectedRevision:revision}).strict(),

@@ -59,6 +59,13 @@ export interface Column {
   /** Absent means the stage renders at the accepted minimum size. */ size?: StageSize;
 }
 export interface ColumnGroup { id: string; name: string; columnIds: string[] }
+/** One destination's condition, edited without rewriting the stage's whole destination list. */
+export interface TransitionCondition {
+  /** The destination whose condition changes; it must be another stage of the board. */
+  readonly to: string;
+  /** The new condition; `null` removes it, and the destination then carries no condition. */
+  readonly when: string | null;
+}
 /** The stage fields one stage edit may change; an absent field is left as authored. */
 export interface StagePatch {
   /** New display name; absent leaves the name as authored. */
@@ -67,8 +74,13 @@ export interface StagePatch {
   onEnterPrompt?: string | null;
   /** `true` makes this stage the workflow's initial stage; absent leaves the initial stage as authored. */
   initial?: true;
-  /** Allowed transition targets; `null` allows any stage, absent leaves them as authored. */
+  /** Allowed transition targets; `null` allows any stage, an empty list permits none. */
   allowedTransitions?: TransitionRule[] | null;
+  /**
+   * One destination's condition. It never travels with `allowedTransitions`, because
+   * the two would describe the same list twice: the host rejects a patch carrying both.
+   */
+  transitionCondition?: TransitionCondition;
   /** New stage identifier; absent keeps the identifier. */
   id?: string;
 }

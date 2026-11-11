@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
+import React from 'react';
 import type { Attention, Column, Task } from '../../shared/types.js';
 import { ErrorNotice, Modal, type RunCommand } from '../ui.js';
-import { ConditionEditor } from './condition-editor.js';
 import { IdentitySection } from './identity-section.js';
 import { InitialSection } from './initial-section.js';
 import { InstructionSection } from './instruction-section.js';
@@ -28,8 +27,6 @@ export interface StageEditorDialogProps {
 export function StageEditorDialog({ hubId, boardId, revision, initialStageId, column, columns, tasks, attention, run, onClose, onSaved }: StageEditorDialogProps) {
   const editor = useStageEditor({ hubId, boardId, revision, column, columns, tasks, attention, run, onSaved });
   const { draft } = editor;
-  // The long-text condition editor is a sibling of the form, never a form inside it.
-  const [expandedCondition, setExpandedCondition] = useState<string | null>(null);
   // Every problem a field has is shown, not only the first one the draft reports.
   const problem = (field: StageEditorProblem['field']) => {
     const messages = editor.problems.filter(value => value.field === field).map(value => value.message);
@@ -59,7 +56,6 @@ export function StageEditorDialog({ hubId, boardId, revision, initialStageId, co
         onMode={value => editor.change('mode', value)}
         onChoose={editor.chooseDestination}
         onCondition={editor.changeCondition}
-        onExpand={setExpandedCondition}
       />
       <InitialSection
         isInitial={column.id === initialStageId}
@@ -75,15 +71,5 @@ export function StageEditorDialog({ hubId, boardId, revision, initialStageId, co
         <button className="kb-button kb-primary" disabled={blocked}>{editor.pending ? 'Saving…' : 'Save stage'}</button>
       </div>
     </form>
-    {expandedCondition !== null && (() => {
-      const target = columns.find(column => column.id === expandedCondition);
-      if (target === undefined) return null;
-      return <ConditionEditor
-        title={'Condition for ' + target.name}
-        value={draft.transitions.find(transition => transition.to === expandedCondition)?.when ?? ''}
-        onConfirm={value => editor.changeCondition(expandedCondition, value)}
-        onClose={() => setExpandedCondition(null)}
-      />;
-    })()}
   </Modal>;
 }

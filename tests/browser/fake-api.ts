@@ -19,7 +19,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; agentPause?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string; reason: 'folder' | 'unresolved' }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean;
+export interface HarnessOptions { stageUpdateFailure?: boolean; recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; agentPause?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string; reason: 'folder' | 'unresolved' }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean;
   /** Names the board's default model and what its conversations report back when it cannot be applied. */
   boardModel?: { model: ModelSelection; fallback?: ConversationModelOutcome }; }
 
@@ -210,6 +210,7 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
       let receipt: KanbanSnapshot['commandReceipt'];
       if (command.type === 'board.workflow.save') { const hub = value.state.hubs.find(item => item.id === command.hubId); const board = hub?.boards.find(item => item.id === command.boardId); if (board) { board.workflowYaml = command.yaml; board.workflow = parseWorkflow(command.yaml); if (hub) hub.revision += 1; } }
       if (command.type === 'board.stage.update') {
+        if (options.stageUpdateFailure) throw { code: 'REVISION_CONFLICT', message: 'The Hub changed while the stage edit was open.' };
         const hub = value.state.hubs.find(item => item.id === command.hubId);
         const board = hub?.boards.find(item => item.id === command.boardId);
         if (hub && command.expectedRevision !== undefined && command.expectedRevision !== hub.revision) throw { code: 'REVISION_CONFLICT', message: 'Hub state has changed since this revision.' };

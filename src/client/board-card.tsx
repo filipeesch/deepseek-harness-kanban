@@ -2,7 +2,7 @@ import React, { memo } from 'react';
 import type { Attention, Column, Task, Workflow } from '../shared/types.js';
 import { TaskCard } from './task-card.js';
 import { autoModeView } from './auto-mode.js';
-import { nextStage } from '../domain/transitions.js';
+import { advanceDestination } from '../domain/transitions.js';
 import type { AutoRunController, AutoRunInput } from './auto-run.js';
 
 export interface BoardCardProps {
@@ -50,7 +50,7 @@ export const BoardCard = memo(function BoardCard({
     onToggleSelect={onToggleSelect}
     onBeginDrag={onBeginDrag}
     shouldSuppressClick={shouldSuppressClick}
-    next={nextStage(workflow, task.columnId)}
+    next={advanceDestination(workflow, task.columnId)}
     {...(onMoveTask === undefined ? {} : { onMove: (column: Column) => onMoveTask(task, column) })}
     advancePending={advancePending}
     {...(onRun === undefined ? {} : { onRun })}

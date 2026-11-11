@@ -1,12 +1,16 @@
 import type { ConnectionLayouts } from '../../domain/workflow-connections.js';
 import type { StagePositions } from '../../domain/workflow-positions.js';
 import type { StageSizes } from '../../domain/workflow-sizes.js';
+import type { TransitionRule } from '../../shared/types.js';
+
+/** The authored destinations a step changed, per stage; null permits any other stage. */
+export type TransitionValues = Readonly<Record<string, readonly TransitionRule[] | null>>;
 
 /**
- * One layout change: the authored positions before and after a drag, resize, or
- * an Organize, the sizes and connection layouts that applied at the same time,
- * and the visual placements of that moment. The visual snapshot is what restores
- * an automatic layout computed with sizes that no longer exist.
+ * One workflow step: the authored layout before and after a drag, a resize, an
+ * Organize, or a connection gesture, and the destinations a connection gesture
+ * authored, re-pointed, re-owned, or removed. A step carries whichever of the two it
+ * changed, so replaying it restores exactly what the user asked for.
  */
 export interface PlacementStep {
   readonly before: StagePositions;
@@ -17,6 +21,16 @@ export interface PlacementStep {
   /** Present when the step changed or preserved a connection layout. */
   readonly beforeConnections?: ConnectionLayouts;
   readonly afterConnections?: ConnectionLayouts;
+  /** Present when the step authored, re-pointed, re-owned, or removed destinations. */
+  readonly beforeTransitions?: TransitionValues;
+  readonly afterTransitions?: TransitionValues;
+  /**
+   * What replaying this step restores. A step that omits it is a layout step, which is
+   * every step a drag, a resize, an adjustment, or Organize produces. A transition-only
+   * step must not replay layout: its positions are the shown snapshot, not authored
+   * coordinates, and storing them would author a placement nobody asked for.
+   */
+  readonly restores?: 'layout' | 'transitions' | 'both';
   readonly beforeLayout?: StagePositions;
   readonly afterLayout?: StagePositions;
 }
@@ -49,6 +63,7 @@ export interface LayoutStepResult {
   readonly positions: StagePositions;
   readonly sizes?: StageSizes;
   readonly connections?: ConnectionLayouts;
+  readonly transitions?: TransitionValues;
 }
 
 export function undoStep(history: PlacementHistory): LayoutStepResult | null {
@@ -59,6 +74,7 @@ export function undoStep(history: PlacementHistory): LayoutStepResult | null {
     positions: step.before,
     ...(step.beforeSizes === undefined ? {} : { sizes: step.beforeSizes }),
     ...(step.beforeConnections === undefined ? {} : { connections: step.beforeConnections }),
+    ...(step.beforeTransitions === undefined ? {} : { transitions: step.beforeTransitions }),
   };
 }
 
@@ -70,5 +86,6 @@ export function redoStep(history: PlacementHistory): LayoutStepResult | null {
     positions: step.after,
     ...(step.afterSizes === undefined ? {} : { sizes: step.afterSizes }),
     ...(step.afterConnections === undefined ? {} : { connections: step.afterConnections }),
+    ...(step.afterTransitions === undefined ? {} : { transitions: step.afterTransitions }),
   };
 }
