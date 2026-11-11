@@ -1,4 +1,4 @@
-import type { BoardState, ClientApi, Command, DriveBrowseView, DriveDiscoveryView, HubSchedule, HubScheduleRuntime, HubSharingView, HubState, HubTask, KanbanSnapshot, KanbanState, LocalDriveRequest, LocalDriveResult, Note, SharingCommand } from '../../src/shared/types.js';
+import type { BoardState, ClientApi, Command, ConversationModelOutcome, ModelSelection, DriveBrowseView, DriveDiscoveryView, HubSchedule, HubScheduleRuntime, HubSharingView, HubState, HubTask, KanbanSnapshot, KanbanState, LocalDriveRequest, LocalDriveResult, Note, SharingCommand } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { requireProjectPath } from '../../src/shared/project.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
@@ -6,6 +6,7 @@ import { defaultWorktreeDestination, taskTitleSlug } from '../../src/shared/work
 import { applyInitialEntry, applyMove, applyRunInstruction, createEnteredAtSource } from '../support/in-memory-board.js';
 import { transitions } from '../support/transition-rules.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
+import { writeBoardModelField } from '../../src/domain/board-model-field.js';
 import { renameTaskStage, updateStage } from '../../src/domain/stage-update.js';
 
 export interface HarnessApi {
@@ -18,7 +19,9 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; agentPause?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean }
+export interface HarnessOptions { recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; agentPause?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean;
+  /** Names the board's default model and what its conversations report back when it cannot be applied. */
+  boardModel?: { model: ModelSelection; fallback?: ConversationModelOutcome }; }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -135,6 +138,12 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
     routed.recordedTransition = { fromColumnId: 'explore', columnId: 'done', at: now };
   }
   if (options.schedules !== undefined) hub.schedules = structuredClone(options.schedules);
+  if (options.boardModel !== undefined) {
+    // The board names a default model, exactly as the workflow control writes it.
+    const board = hub.boards[0]!;
+    board.workflowYaml = writeBoardModelField(board.workflowYaml, options.boardModel.model);
+    board.workflow = parseWorkflow(board.workflowYaml);
+  }
   if (options.extraProject) hub.projects.push({ id: 'p3', projectKey: 'p3', name: 'Relocation-only project', projectPath: '/repo/free', gitRootPath: '/repo', defaultBranch: 'main' });
   options.relocation?.forEach((state, index) => {
     const project = hub.projects[index];
@@ -266,7 +275,7 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
       if (command.type === 'worktree.dismiss') { const task = firstHub.tasks.find(item => item.id === command.taskId); if (task) task.worktreeDismissed = true; }
       if (command.type === 'conversation.create') {
         const task = value.state.hubs.flatMap(item => item.tasks).find(item => item.id === command.taskId);
-        if (task) { const id = 's-created-' + task.sessionIds.length + '-' + commands.length; task.sessionIds.push(id); receipt = { kind: 'conversation', id }; }
+        if (task) { const id = 's-created-' + task.sessionIds.length + '-' + commands.length; task.sessionIds.push(id); receipt = { kind: 'conversation', id, ...(options.boardModel?.fallback === undefined ? {} : { model: structuredClone(options.boardModel.fallback) }) }; }
       }
       if (command.type === 'note.save') {
         const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);

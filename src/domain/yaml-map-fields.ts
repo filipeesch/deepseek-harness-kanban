@@ -10,6 +10,19 @@ const NEWLINE = String.fromCharCode(10);
 /** One authored field value: the numeric members a map field keeps (x/y, width/height). */
 export type MapFieldValues = Readonly<Record<string, number>>;
 
+const PLAIN_SCALAR = /^[A-Za-z0-9][A-Za-z0-9 ._/@-]*$/;
+const RESERVED_SCALAR = /^(true|false|null|yes|no|on|off|~)$/i;
+
+/**
+ * Render one authored scalar: plain when the value cannot be misread, JSON when
+ * it carries characters a single quote cannot survive, single-quoted otherwise.
+ */
+export function authoredScalar(value: string): string {
+  if (PLAIN_SCALAR.test(value) && !RESERVED_SCALAR.test(value) && !/^-?\d/.test(value)) return value;
+  if (/["\\\u0000-\u001f]/.test(value)) return JSON.stringify(value);
+  return "'" + value.replace(/'/g, "''") + "'";
+}
+
 /**
  * Render one authored field, or `null` to remove it. `existing` is the field's
  * current value node, which lets a renderer keep the authored collection style;

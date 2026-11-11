@@ -1,12 +1,12 @@
 import React, { useCallback, useRef, useState, type ReactNode } from 'react';
-import type { BoardState, KanbanSnapshot, Project } from '../shared/types.js';
+import type { BoardState, ConversationModelOutcome, KanbanSnapshot, Project } from '../shared/types.js';
 import { isRegisteredProject } from '../shared/project.js';
 import { entryInstruction } from '../domain/stage-entry.js';
 import { NEW_TASK_LABEL } from './board-copy.js';
 import type { AutoRunController } from './auto-run.js';
 import { NewTaskDialog, type CreatedTaskOptions } from './forms.js';
 import { PlusIcon } from './icons.js';
-import type { RunCommand } from './ui.js';
+import { creationModelOutcome, creationReceiptId, type RunCommand } from './ui.js';
 
 /** What the board owns and task creation only drives. */
 export interface UseTaskCreationPort {
@@ -21,6 +21,13 @@ export interface UseTaskCreationPort {
   readonly onOpenTask: (taskId: string) => void;
   /** The newest snapshot, read when a created task's start is decided. */
   readonly latest: () => KanbanSnapshot | null;
+  /**
+   * Report what became of the board's model for the conversation an automatic
+   * first execution just created. A task created straight into an instructed stage
+   * never passes through the preparation dialog, so without this the person who
+   * started it would never learn it did not start on the board's model.
+   */
+  readonly onConversationCreated?: (sessionId: string, outcome: ConversationModelOutcome | undefined) => void;
 }
 
 export interface TaskCreation {
@@ -66,7 +73,12 @@ export function useTaskCreation(port: UseTaskCreationPort): TaskCreation {
     const marker = task.instructionPending;
     if (instruction === undefined || marker?.columnId !== task.columnId) return;
     void current.autoRun.prepare({ taskId, columnId: task.columnId, enteredAt: marker.enteredAt, instruction }, async () => {
-      await current.run({ type: 'task.prepareFirstExecution', taskId, columnId: task.columnId, expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
+      // The command receipt is the only place this automatic creation says which
+      // model the conversation started on, so reading it here is what lets the
+      // board announce a fallback the same way it does for a hand-started one.
+      const snapshot = await current.run({ type: 'task.prepareFirstExecution', taskId, columnId: task.columnId, expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
+      const sessionId = creationReceiptId(snapshot, 'conversation');
+      if (sessionId !== undefined) current.onConversationCreated?.(sessionId, creationModelOutcome(snapshot));
     });
   }, []);
   // Availability asks the Hub registry one question: is there a project that could own
