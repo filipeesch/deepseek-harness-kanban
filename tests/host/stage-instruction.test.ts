@@ -87,6 +87,46 @@ describe('stage instruction composition', () => {
     expect(f.delivered[0]!.delivery.text).toContain('Recorded transition: DONE.');
   });
 
+  it('delivers the declared reason between the instruction and the briefing', async () => {
+    const value = task({ columnId: 'rework', instructionPending: { columnId: 'rework', enteredAt: 1 } });
+    const f = fixture(value, flow(
+      column('review', { onEnterPrompt: 'Review it.' }),
+      column('rework', { onEnterPrompt: 'Rework it.', allowedTransitions: [{ to: 'done', when: 'Approved.' }, { to: 'review', when: 'Still wrong.' }] }),
+      column('done'),
+    ));
+    await admitStageInstruction(f.deps, {
+      taskId: 'task', columnId: 'rework', instruction: 'Rework it.', reviewedInstruction: 'Rework it.',
+      transition: { fromColumnId: 'review', reason: 'Changes are needed.' },
+    });
+    const text = f.delivered[0]!.delivery.text;
+    expect(text.startsWith('Rework it.\n\nTransition reason (from REVIEW):\nChanges are needed.')).toBe(true);
+    expect(text).toContain('Workflow transitions from REWORK:');
+    expect(text.indexOf('Transition reason')).toBeLessThan(text.indexOf('Workflow transitions from REWORK:'));
+  });
+
+  it('delivers no reason block without a declared transition', async () => {
+    const value = task({ columnId: 'rework', instructionPending: { columnId: 'rework', enteredAt: 1 } });
+    const f = fixture(value, flow(column('review'), column('rework', { onEnterPrompt: 'Rework it.' })));
+    await admitStageInstruction(f.deps, { taskId: 'task', columnId: 'rework', instruction: 'Rework it.', reviewedInstruction: 'Rework it.' });
+    expect(f.delivered[0]!.delivery.text).toBe('Rework it.');
+  });
+
+  it('names the source stage as the workflow carries it at delivery time', async () => {
+    const workflow = flow(column('review', { onEnterPrompt: 'Review it.' }), column('rework', { onEnterPrompt: 'Rework it.' }));
+    const value = task({ columnId: 'rework', instructionPending: { columnId: 'rework', enteredAt: 1 } });
+    const f = fixture(value, workflow);
+    const assertExecutionContext = f.deps.assertExecutionContext;
+    f.deps.assertExecutionContext = async sessionId => {
+      await assertExecutionContext(sessionId);
+      workflow.columns[0]!.name = 'CODE REVIEW';
+    };
+    await admitStageInstruction(f.deps, {
+      taskId: 'task', columnId: 'rework', instruction: 'Rework it.', reviewedInstruction: 'Rework it.',
+      transition: { fromColumnId: 'review', reason: 'Changes are needed.' },
+    });
+    expect(f.delivered[0]!.delivery.text).toContain('Transition reason (from CODE REVIEW):');
+  });
+
   it('keeps the captured instruction as the pending delivery text', async () => {
     const value = task();
     const f = fixture(value, twoTargets());

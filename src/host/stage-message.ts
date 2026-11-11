@@ -26,9 +26,18 @@ declare module '@deepseek-ai/dsh-llm' {
 /** The task fields the collapsed summary reads. */
 export type SummarizedTask = Pick<Task, 'columnId' | 'recordedTransition'>;
 
+/** The reason the agent declared for the transition that moved the task into this stage. */
+export interface DeclaredTransitionNote {
+  /** The stage the task left. */
+  readonly fromStageName: string;
+  readonly reason: string;
+}
+
 export interface StageInstructionInput {
   /** The entry instruction exactly as admitted. */
   readonly instruction: string;
+  /** The reason the declared transition carried, when this delivery follows one. */
+  readonly transition?: DeclaredTransitionNote;
   /** The host-generated transition briefing, when the stage configures two or more targets. */
   readonly briefing?: string;
   /** The name of the stage being entered. */
@@ -57,11 +66,25 @@ export function buildStageInstructionSummary(stageName: string, targetName?: str
   return boundContextSummary(targetName === undefined ? `Stage: ${stageName}` : `Stage: ${stageName} - next: ${targetName}`);
 }
 
-/** Compose the model-facing delivery: the instruction, then the briefing when one applies. */
+/**
+ * The reason block quoted after the instruction. It names the stage the task came
+ * from, because the destination instruction alone never says why the task is there.
+ */
+export function transitionNoteBlock(note: DeclaredTransitionNote): string {
+  return 'Transition reason (from ' + note.fromStageName + '):\n' + note.reason;
+}
+
+/**
+ * Compose the model-facing delivery: the instruction, then the declared reason
+ * when this delivery follows one, then the briefing when one applies.
+ */
 export function buildStageInstructionDelivery(input: StageInstructionInput): StageInstructionDelivery {
+  const blocks = [input.instruction];
+  if (input.transition !== undefined) blocks.push(transitionNoteBlock(input.transition));
+  if (input.briefing !== undefined) blocks.push(input.briefing);
   return {
     requestId: input.requestId,
-    text: input.briefing === undefined ? input.instruction : `${input.instruction}\n\n${input.briefing}`,
+    text: blocks.join('\n\n'),
     summary: buildStageInstructionSummary(input.stageName, stageInstructionTarget(input.workflow, input.task)),
   };
 }

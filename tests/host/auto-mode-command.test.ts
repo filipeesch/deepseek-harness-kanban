@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CommandSchema } from '../../src/remote.js';
-import { AUTO_ADVANCE_SETTLE_MS } from '../../src/host/auto-advance.js';
+import { TURN_ADVANCE_SETTLE_MS } from '../../src/host/turn-advance.js';
 import { HubRepository } from '../../src/host/hub-repository.js';
 import { fixture, taskWithConversation } from './helpers.js';
 
@@ -110,7 +110,7 @@ describe('task.pause and task.resume commands', () => {
     await f.store.setWorkflow(BRANCHED_FLOW);
     const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Pausable', description: '' });
     await f.app.command({ type: 'task.autoMode', taskId: task.id, enabled: true });
-    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'done' });
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'done', reason: 'The review approved the work.' });
     const before = { columnId: task.columnId, position: task.position, sessions: f.sessions.dirs.size, sent: f.sessions.sent.length };
 
     await f.app.command({ type: 'task.pause', taskId: task.id, reason: '  Review the diff  ' });
@@ -142,7 +142,7 @@ describe('task.pause and task.resume commands', () => {
       try {
         f.app.observe(task.sessionIds[0]!, turnEnd(1));
         await f.app.command({ ...resume, taskId: task.id });
-        await vi.advanceTimersByTimeAsync(AUTO_ADVANCE_SETTLE_MS + 25);
+        await vi.advanceTimersByTimeAsync(TURN_ADVANCE_SETTLE_MS + 25);
       } finally {
         vi.useRealTimers();
       }

@@ -1,0 +1,117 @@
+[
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "tool-call"
+      },
+      {
+        "type": "tool-call-delta",
+        "index": 0,
+        "id": "call-declared-1",
+        "name": "set_next_transition",
+        "argumentsDelta": "{\"column_id\":\"review\",\"reason\":\"The plan is ready for review.\"}"
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "tool-call",
+          "id": "call-declared-1",
+          "name": "set_next_transition",
+          "arguments": "{\"column_id\":\"review\",\"reason\":\"The plan is ready for review.\"}"
+        }
+      },
+      {
+        "type": "usage",
+        "usage": {
+          "inputTokens": 64,
+          "outputTokens": 18,
+          "totalTokens": 82
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "stop"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "text"
+      },
+      {
+        "type": "text-delta",
+        "index": 0,
+        "text": "Transition declared."
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "text",
+          "text": "Transition declared."
+        }
+      },
+      {
+        "type": "usage",
+        "usage": {
+          "inputTokens": 64,
+          "outputTokens": 6,
+          "totalTokens": 70
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "stop"
+        }
+      }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "text"
+      },
+      {
+        "type": "text-delta",
+        "index": 0,
+        "text": "Automatic instruction received."
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "text",
+          "text": "Automatic instruction received."
+        }
+      },
+      {
+        "type": "usage",
+        "usage": {
+          "inputTokens": 64,
+          "outputTokens": 6,
+          "totalTokens": 70
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "stop"
+        }
+      }
+    ]
+  }
+]

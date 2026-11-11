@@ -75,6 +75,22 @@ describe('persisted board schema', () => {
     expect(parsed.success && parsed.data.tasks[0]!.autoMode?.pause?.reason).toBe('transition-stale');
   });
 
+  it('keeps a recording stored without a reason readable', () => {
+    const legacy = populatedState();
+    legacy.tasks[0]!.recordedTransition = { fromColumnId: 'backlog', columnId: 'done', at: '2026-10-21T10:00:00.000Z' };
+    // A recording an earlier release stored has no reason; it must still load, and
+    // it simply never arms an advance by itself.
+    expect(BoardStateSchema.safeParse(legacy).success).toBe(true);
+  });
+
+  it('accepts a recording that carries the declared reason', () => {
+    const state = populatedState();
+    state.tasks[0]!.recordedTransition = { fromColumnId: 'backlog', columnId: 'done', at: '2026-10-21T10:00:00.000Z', reason: 'The work is complete.' };
+    const parsed = BoardStateSchema.safeParse(state);
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.tasks[0]!.recordedTransition?.reason).toBe('The work is complete.');
+  });
+
   it('accepts a recording whose target stage was removed from the workflow', () => {
     const state = populatedState();
     state.tasks[0]!.recordedTransition = { fromColumnId: 'backlog', columnId: 'missing', at: '2026-10-21T10:00:00.000Z' };

@@ -36,8 +36,20 @@ describe('transition briefing', () => {
     expect(briefing).toContain('- REWORK — The review requested changes.');
     expect(briefing).toContain('- DONE — The review approved the work.');
     expect(briefing).toContain('No transition recorded.');
-    expect(briefing).toContain('with none recorded the advance uses DONE.');
+    expect(briefing).toContain('with none declared the advance uses DONE.');
     expect(briefing).toContain('set_next_transition');
+  });
+
+  it('states the required reason and the end-of-turn timing', () => {
+    const briefing = buildTransitionBriefing(twoTargets(), { columnId: 'review' })!;
+    expect(briefing).toContain('pass column_id with the target listed above and reason with the reason for it');
+    expect(briefing).toContain('A declared transition requires a reason');
+    expect(briefing).toContain('the task follows it at the end of the turn');
+  });
+
+  it('states that nothing advances without a declaration when there is no default', () => {
+    const workflow = flow(column('review', { onEnterPrompt: 'Review it.', allowedTransitions: [] }), column('rework'), column('done'));
+    expect(buildTransitionBriefing(workflow, { columnId: 'review' })).toBeUndefined();
   });
 
   it('keeps a target without a condition free of trailing text', () => {

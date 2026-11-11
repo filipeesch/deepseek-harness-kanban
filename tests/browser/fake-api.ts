@@ -19,7 +19,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { stageUpdateFailure?: boolean; recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; agentPause?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string; reason: 'folder' | 'unresolved' }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean;
+export interface HarnessOptions { stageUpdateFailure?: boolean; recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; declared?: boolean; declaredFailed?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; agentPause?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string; reason: 'folder' | 'unresolved' }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean;
   /** Names the board's default model and what its conversations report back when it cannot be applied. */
   boardModel?: { model: ModelSelection; fallback?: ConversationModelOutcome }; }
 
@@ -102,6 +102,17 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     failed.pendingTransition = { id: 'auto-failed', fromColumnId: 'explore', columnId: 'propose', mode: 'run', text: 'Plan this task.', sessionId: 's-long-2', status: 'failed', origin: 'auto', error: { code: 'SEND_FAILED', message: 'The instruction could not be sent.' } };
     shortTask.autoMode = { enabled: true };
     shortTask.pendingTransition = { id: 'auto-short', fromColumnId: 'propose', columnId: 'apply', mode: 'run', text: 'Plan this task.', sessionId: 's-short', status: 'waiting', origin: 'auto' };
+  }
+  // A transition the agent declared: it is not a confirmed action and is named for
+  // what it is, on a card whose auto mode stays off.
+  if (options.declared || options.declaredFailed) {
+    shortTask.pendingTransition = {
+      id: 'declared-short', fromColumnId: 'propose', columnId: 'apply', mode: 'run', text: 'Plan this task.', sessionId: 's-short', origin: 'agent',
+      reason: 'The plan is ready for review.',
+      ...(options.declaredFailed
+        ? { status: 'failed' as const, error: { code: 'SEND_FAILED', message: 'The instruction could not be admitted.' } }
+        : { status: 'waiting' as const }),
+    };
   }
   // A pause the agent requested, alone and beside a diagnostic pause, so the card
   // and the control present both records.

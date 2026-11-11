@@ -392,3 +392,29 @@ describe('creation preparation presentation', () => {
     controller.dispose();
   });
 });
+
+  it('lets the card play action recover a failed declared advance', async () => {
+    const initial = fixture();
+    const task = initial.state.tasks[0]!;
+    task.columnId = 'review';
+    task.instructionPending = { columnId: 'review', enteredAt: 11 };
+    task.pendingTransition = { id: 'declared-failed', fromColumnId: 'intake', columnId: 'review', mode: 'run', text: 'Review **carefully**.', sessionId: task.sessionIds[0]!, status: 'failed', origin: 'agent', reason: 'The review needs the plan first.' };
+    const mock = await mount(initial);
+    const action = screen.getByRole('button', { name: 'Run Review instruction' }) as HTMLButtonElement;
+    // The host can recover this entry, so the card must be able to ask it to.
+    expect(action.disabled).toBe(false);
+    fireEvent.click(action);
+    await settle();
+    expect(runCalls(mock)).toEqual([{ type: 'task.runInstruction', taskId: 't1', columnId: 'review', expectedEnteredAt: 11, expectedInstruction: 'Review **carefully**.' }]);
+  });
+
+  it('keeps the card play action blocked while a host advance is still in flight', async () => {
+    const initial = fixture();
+    const task = initial.state.tasks[0]!;
+    task.columnId = 'review';
+    task.instructionPending = { columnId: 'review', enteredAt: 12 };
+    task.pendingTransition = { id: 'declared-waiting', fromColumnId: 'intake', columnId: 'review', mode: 'run', status: 'waiting', origin: 'agent', reason: 'The review needs the plan first.' };
+    await mount(initial);
+    expect((screen.getByRole('button', { name: 'Run Review instruction' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+

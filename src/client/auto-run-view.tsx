@@ -40,7 +40,12 @@ export function CardInstructionAction({ task, column, controller, onRun }: { tas
   const playable = instruction !== undefined;
   const showButton = preparing || counting || sending || playable;
   if (!showButton) return null;
-  const blocked = Boolean(task.operation || (task.pendingTransition && !(task.pendingTransition.origin === 'auto' && task.pendingTransition.status === 'failed')));
+  // A failed host advance — automatic or declared — is recovered by running the
+  // entry it left unresolved, so it never disables the play action; anything else
+  // pending still does.
+  const pendingTransition = task.pendingTransition;
+  const recovering = pendingTransition !== undefined && pendingTransition.origin !== undefined && pendingTransition.status === 'failed';
+  const blocked = Boolean(task.operation || (pendingTransition !== undefined && !recovering));
   const mode = preparing ? 'preparing' : counting ? 'counting' : sending ? 'sending' : 'play';
   const label = preparing ? 'Preparing ' + column.name + ' instruction' : counting ? 'Cancel automatic ' + column.name + ' instruction' : sending ? 'Sending ' + column.name + ' instruction' : 'Run ' + column.name + ' instruction';
   const marker = task.instructionPending!;

@@ -30,8 +30,12 @@ export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: 
     entries.push({ key: 'operation', tone: failed ? 'danger' : 'pending', label });
   }
   if (task.pendingTransition && task.pendingTransition.origin !== 'auto') {
-    const failed = task.pendingTransition.status === 'failed';
-    entries.push({ key: 'transition', tone: failed ? 'danger' : 'pending', label: failed ? 'Confirmed action failed' : 'Confirmed action: ' + task.pendingTransition.status });
+    const pending = task.pendingTransition;
+    const failed = pending.status === 'failed';
+    // A transition the agent declared is named as such: it is not a confirmed
+    // action the user approved, and the earlier wording would claim they did.
+    const noun = pending.origin === 'agent' ? 'Agent-declared transition' : 'Confirmed action';
+    entries.push({ key: 'transition', tone: failed ? 'danger' : 'pending', label: failed ? noun + ' failed' : noun + ': ' + pending.status });
   }
   if (runFailure !== undefined) entries.push({ key: 'instruction', tone: 'danger', label: runFailure, alert: true });
   if (autoStatus !== undefined) entries.push({ key: 'auto', tone: autoStatus.tone, label: autoStatus.label, ...(autoStatus.alert === true ? { alert: true } : {}) });

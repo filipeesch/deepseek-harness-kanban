@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { AutoAdvanceCoordinator, pauseReasonFor, turnEndKey, turnEndReason, type AutoAdvancePorts, type AutoAdvanceTaskView } from '../../src/host/auto-advance.js';
+import { TurnAdvanceCoordinator, pauseReasonFor, turnEndKey, turnEndReason, type TurnAdvancePorts, type TurnAdvanceTaskView } from '../../src/host/turn-advance.js';
 import type { AutoAdvancePlan } from '../../src/domain/auto-advance.js';
-import type { AutoModePauseReason, Board, Column, ConversationFacts, HubTask } from '../../src/shared/types.js';
+import type { AdvanceOrigin, AutoModePauseReason, Board, Column, ConversationFacts, HubTask } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import { KanbanError } from '../../src/shared/errors.js';
@@ -40,25 +40,25 @@ class ManualSchedule {
   }
 }
 
-function harness(overrides: Partial<AutoAdvancePorts> = {}) {
+function harness(overrides: Partial<TurnAdvancePorts> = {}) {
   const scheduler = new ManualSchedule();
-  const admitted: Array<{ taskId: string; plan: AutoAdvancePlan }> = [];
+  const admitted: Array<{ taskId: string; plan: AutoAdvancePlan; origin: AdvanceOrigin }> = [];
   const pauses: Array<{ taskId: string; reason: AutoModePauseReason; message?: string }> = [];
-  const tasks = new Map<string, AutoAdvanceTaskView>();
+  const tasks = new Map<string, TurnAdvanceTaskView>();
   const facts = new Map<string, ConversationFacts>();
   const reports: unknown[] = [];
-  const ports: AutoAdvancePorts = {
+  const ports: TurnAdvancePorts = {
     locateBySession: sessionId => [...tasks.values()].find(value => value.task.sessionIds.includes(sessionId)),
     locate: taskId => tasks.get(taskId),
     facts: async sessionId => facts.get(sessionId) ?? idle,
-    admit: async (taskId, plan) => { admitted.push({ taskId, plan }); },
+    admit: async (taskId, plan, origin) => { admitted.push({ taskId, plan, origin }); },
     pause: async (taskId, reason, message) => { pauses.push({ taskId, reason, ...(message === undefined ? {} : { message }) }); },
     schedule: scheduler.schedule,
     cancel: scheduler.cancel,
     report: error => { reports.push(error); },
     ...overrides,
   };
-  const coordinator = new AutoAdvanceCoordinator(ports);
+  const coordinator = new TurnAdvanceCoordinator(ports);
   const seed = (value: HubTask, workflow: Board) => {
     tasks.set(value.id, { task: value, board: workflow });
     for (const sessionId of value.sessionIds) facts.set(sessionId, idle);
@@ -156,6 +156,54 @@ describe('auto-advance coordinator', () => {
     }
   });
 
+  it('advances a declared transition with auto mode disabled and reports its origin', async () => {
+    const f = harness();
+    const declared = { fromColumnId: 'backlog', columnId: 'plan', at: now, reason: 'The work needs a plan.' };
+    f.seed(task({ autoMode: undefined, recordedTransition: declared }), board(column('backlog', { allowedTransitions: transitions('plan') }), column('plan', { onEnterPrompt: 'Plan it.' })));
+    f.coordinator.observe('s1', turnEnd(1));
+    await f.scheduler.flush();
+    expect(f.admitted).toHaveLength(1);
+    expect(f.admitted[0]!.origin).toBe('agent');
+    expect(f.admitted[0]!.plan.destination?.id).toBe('plan');
+  });
+
+  it('records the auto origin for an armed task and follows its declared route', async () => {
+    const f = harness();
+    const declared = { fromColumnId: 'backlog', columnId: 'plan', at: now, reason: 'The work needs a plan.' };
+    f.seed(task({ recordedTransition: declared }), board(column('backlog', { allowedTransitions: transitions('done', 'plan') }), column('plan', { onEnterPrompt: 'Plan it.' }), column('done')));
+    f.coordinator.observe('s1', turnEnd(1));
+    await f.scheduler.flush();
+    expect(f.admitted).toHaveLength(1);
+    expect(f.admitted[0]!.origin).toBe('auto');
+    expect(f.admitted[0]!.plan.destination?.id).toBe('plan');
+  });
+
+  it('records no pause for a declared turn that does not complete and keeps the declaration', async () => {
+    const f = harness();
+    const declared = { fromColumnId: 'backlog', columnId: 'plan', at: now, reason: 'The work needs a plan.' };
+    f.seed(task({ autoMode: undefined, recordedTransition: declared }), board(column('backlog', { allowedTransitions: transitions('plan') }), column('plan', { onEnterPrompt: 'Plan it.' })));
+    // One identity per ending: a repeated sequence number is the same turn boundary
+    // and would be deduplicated, hiding three of the four endings.
+    const endings = ['error', 'blocked', 'aborted', 'max-tokens'] as const;
+    for (const [index, kind] of endings.entries()) {
+      f.coordinator.observe('s1', turnEnd(index + 1, kind));
+    }
+    await f.scheduler.flush();
+    expect(f.admitted).toHaveLength(0);
+    expect(f.pauses).toHaveLength(0);
+    expect(f.tasks.get('task')!.task.recordedTransition).toEqual(declared);
+  });
+
+  it('records no pause for a declared transition that no longer resolves without auto mode', async () => {
+    const f = harness();
+    const declared = { fromColumnId: 'backlog', columnId: 'gone', at: now, reason: 'The work needs a plan.' };
+    f.seed(task({ autoMode: undefined, recordedTransition: declared }), board(column('backlog', { allowedTransitions: transitions('plan') }), column('plan', { onEnterPrompt: 'Plan it.' })));
+    f.coordinator.observe('s1', turnEnd(1));
+    await f.scheduler.flush();
+    expect(f.admitted).toHaveLength(0);
+    expect(f.pauses).toHaveLength(0);
+  });
+
   it('ignores a task without auto mode and a closed conversation', async () => {
     const disabled = harness();
     disabled.seed(task({ autoMode: { enabled: false } }), board(column('backlog'), column('plan')));
@@ -186,12 +234,12 @@ describe('auto-advance coordinator', () => {
     const f = harness();
     f.seed(task(), board(column('backlog'), column('plan', { onEnterPrompt: 'Plan it.' })));
     const live: boolean[] = [];
-    f.ports.admit = async (taskId, plan, isCurrent) => {
+    f.ports.admit = async (taskId, plan, origin, isCurrent) => {
       // A pause or resume queued ahead of the admission runs first; the settle is
       // then stale and the admission must see it.
       f.coordinator.forget(taskId);
       live.push(isCurrent());
-      f.admitted.push({ taskId, plan });
+      f.admitted.push({ taskId, plan, origin });
     };
     f.coordinator.observe('s1', turnEnd(1));
     await f.scheduler.flush();

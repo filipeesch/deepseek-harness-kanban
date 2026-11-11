@@ -134,6 +134,20 @@ describe('task card status strip', () => {
     expect(line.className).toContain('is-pending');
   });
 
+  it('names a declared transition instead of a confirmed action', () => {
+    const { card } = setup({ task: { ...baseTask, pendingTransition: { id: 'p', fromColumnId: 'intake', columnId: 'doing', mode: 'run', status: 'waiting', origin: 'agent', reason: 'Ready for review.' } } });
+    const line = card.querySelector('.kb-card-status-line')!;
+    expect(line.textContent).toBe('Agent-declared transition: waiting');
+    expect(line.className).toContain('is-pending');
+  });
+
+  it('names a failed declared transition', () => {
+    const { card } = setup({ task: { ...baseTask, pendingTransition: { id: 'p', fromColumnId: 'intake', columnId: 'doing', mode: 'run', status: 'failed', origin: 'agent', reason: 'Ready for review.' } } });
+    const line = card.querySelector('.kb-card-status-line')!;
+    expect(line.textContent).toBe('Agent-declared transition failed');
+    expect(line.className).toContain('is-danger');
+  });
+
   it('presents both statuses together', () => {
     const { card } = setup({ task: { ...baseTask, operation: failedOperation, pendingTransition: { id: 'p', fromColumnId: 'intake', columnId: 'doing', mode: 'move', status: 'sending' } } });
     expect(card.querySelectorAll('.kb-card-status-line')).toHaveLength(2);

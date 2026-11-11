@@ -33,6 +33,8 @@ export interface StageInstructionRequest {
   requestId?: string;
   /** An already resolved target; omitted resolves the first open conversation. */
   sessionId?: string;
+  /** The declared transition this delivery follows, when the advance consumed one. */
+  transition?: { fromColumnId: string; reason: string };
 }
 
 /**
@@ -69,8 +71,15 @@ export async function admitStageInstruction(deps: StageInstructionDeps, request:
   invariant(live.task.columnId === request.columnId, 'TASK_MOVED', 'The task moved to another stage before its instruction was delivered.');
   const briefing = buildTransitionBriefing(live.board.workflow, { columnId: request.columnId, recordedTransition: live.task.recordedTransition });
   const stage = live.board.workflow.columns.find(value => value.id === request.columnId);
+  // The source stage is resolved at send time, so a stage renamed between the tool
+  // call and the delivery is described with the name the workflow carries now.
+  const transition = request.transition === undefined ? undefined : {
+    fromStageName: live.board.workflow.columns.find(value => value.id === request.transition!.fromColumnId)?.name ?? request.transition.fromColumnId,
+    reason: request.transition.reason,
+  };
   await deps.deliver(sessionId, buildStageInstructionDelivery({
     instruction,
+    ...(transition === undefined ? {} : { transition }),
     ...(briefing === undefined ? {} : { briefing }),
     stageName: stage?.name ?? request.columnId,
     task: live.task,
@@ -83,9 +92,10 @@ export async function admitStageInstruction(deps: StageInstructionDeps, request:
     if (!current || !marker || marker.columnId !== request.columnId) return;
     if (request.expectedEnteredAt !== undefined && marker.enteredAt !== request.expectedEnteredAt) return;
     delete current.instructionPending;
-    // A successful manual instruction for this stage also resolves a failed
-    // automatic advance, so the task is not left blocked by its failed record.
-    if (current.pendingTransition?.origin === 'auto' && current.pendingTransition.status === 'failed' && current.pendingTransition.columnId === request.columnId) delete current.pendingTransition;
+    // A successful manual instruction for this stage also resolves a failed host
+    // advance — automatic or declared — so the task is not left blocked by it.
+    const failed = current.pendingTransition;
+    if (failed !== undefined && failed.origin !== undefined && failed.status === 'failed' && failed.columnId === request.columnId) delete current.pendingTransition;
   });
   return sessionId;
 }

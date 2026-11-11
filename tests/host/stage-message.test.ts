@@ -31,6 +31,30 @@ describe('stage instruction message', () => {
     expect(delivery.text).toBe('Review it.');
   });
 
+  it('places the declared reason between the instruction and the briefing', () => {
+    const delivery = buildStageInstructionDelivery({
+      instruction: 'Rework it.', transition: { fromStageName: 'REVIEW', reason: 'Changes are needed.' }, briefing: 'Workflow transitions from REWORK:',
+      stageName: 'REWORK', task: { columnId: 'rework' }, workflow: branched(), requestId: 'r1',
+    });
+    expect(delivery.text).toBe('Rework it.\n\nTransition reason (from REVIEW):\nChanges are needed.\n\nWorkflow transitions from REWORK:');
+  });
+
+  it('carries the declared reason without a briefing', () => {
+    const delivery = buildStageInstructionDelivery({
+      instruction: 'Rework it.', transition: { fromStageName: 'REVIEW', reason: 'Changes are needed.' },
+      stageName: 'REWORK', task: { columnId: 'rework' }, workflow: branched(), requestId: 'r1',
+    });
+    expect(delivery.text).toBe('Rework it.\n\nTransition reason (from REVIEW):\nChanges are needed.');
+  });
+
+  it('keeps the reason out of the collapsed summary', () => {
+    const delivery = buildStageInstructionDelivery({
+      instruction: 'Rework it.', transition: { fromStageName: 'REVIEW', reason: 'Changes are needed.' },
+      stageName: 'REWORK', task: { columnId: 'rework' }, workflow: branched(), requestId: 'r1',
+    });
+    expect(delivery.summary).not.toContain('Changes are needed.');
+  });
+
   it('carries the delivery identity', () => {
     const delivery = buildStageInstructionDelivery({
       instruction: 'Review it.', stageName: 'REVIEW', task: { columnId: 'review' }, workflow: branched(), requestId: 'request-1',

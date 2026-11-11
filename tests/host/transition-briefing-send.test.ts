@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AUTO_ADVANCE_SETTLE_MS } from '../../src/host/auto-advance.js';
+import { TURN_ADVANCE_SETTLE_MS } from '../../src/host/turn-advance.js';
 import { fixture, taskWithConversation } from './helpers.js';
 
 const BRANCHED = [
@@ -76,7 +76,7 @@ describe('transition briefing on every send path', () => {
     vi.useFakeTimers();
     try {
       f.app.observe(task.sessionIds[0]!, { type: 'turn/end', seq: 1, data: { turn: 1, reason: { kind: 'completed' } } });
-      await vi.advanceTimersByTimeAsync(AUTO_ADVANCE_SETTLE_MS + 25);
+      await vi.advanceTimersByTimeAsync(TURN_ADVANCE_SETTLE_MS + 25);
     } finally { vi.useRealTimers(); }
     await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('plan');
     await expect.poll(() => f.sessions.sent.length).toBe(1);

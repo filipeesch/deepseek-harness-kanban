@@ -609,9 +609,9 @@ export class HubStore {
   async resumeTask(taskId: string): Promise<HubTask> {
     return this.transact(draft => operations.resumeTask(draft, taskId, this.deps()));
   }
-  /** Record or clear the transition the task follows on its next advance. */
-  async recordTransition(taskId: string, columnId: string | undefined): Promise<HubTask> {
-    return this.transact(draft => operations.recordTransition(draft, taskId, columnId, this.deps()));
+  /** Record or clear the transition the task follows at the end of its next completed turn. */
+  async recordTransition(taskId: string, columnId: string | undefined, reason: unknown): Promise<HubTask> {
+    return this.transact(draft => operations.recordTransition(draft, taskId, columnId, reason, this.deps()));
   }
   async addSession(taskId: string, sessionId: string, expectedEffectiveCwd?: string): Promise<HubTask> {
     return this.transact(draft => operations.addSession(draft, taskId, sessionId, this.deps(), expectedEffectiveCwd));

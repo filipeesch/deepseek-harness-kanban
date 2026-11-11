@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { KanbanApp } from '../../src/host/app.js';
-import { AUTO_ADVANCE_SETTLE_MS } from '../../src/host/auto-advance.js';
+import { TURN_ADVANCE_SETTLE_MS } from '../../src/host/turn-advance.js';
 import type { ConversationFacts } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { call, human, result } from '../questions/fixtures.js';
@@ -96,7 +96,7 @@ async function endTurn(app: KanbanApp, sessionId: string, seq: number, kind = 'c
   vi.useFakeTimers();
   try {
     app.observe(sessionId, turnEnd(seq, kind));
-    await vi.advanceTimersByTimeAsync(AUTO_ADVANCE_SETTLE_MS + 25);
+    await vi.advanceTimersByTimeAsync(TURN_ADVANCE_SETTLE_MS + 25);
   } finally {
     vi.useRealTimers();
   }
@@ -155,7 +155,7 @@ describe('automatic advance', () => {
     f.app.observe(task.sessionIds[0]!, turnEnd(1));
     await f.app.command({ type: 'task.move', taskId: task.id, columnId: task.columnId });
     await expect.poll(() => f.store.requireTask(task.id).autoMode?.hold).toBeUndefined();
-    await delay(AUTO_ADVANCE_SETTLE_MS + 200);
+    await delay(TURN_ADVANCE_SETTLE_MS + 200);
 
     const current = f.store.requireTask(task.id);
     expect(current.columnId).toBe('backlog');
@@ -233,7 +233,7 @@ describe('automatic advance', () => {
     await f.store.setWorkflow(BRANCHED_FLOW);
     const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Routed', description: '' });
     await arm(f.app, task.id);
-    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'done' });
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'done', reason: 'The review approved the work.' });
     await endTurn(f.app, task.sessionIds[0]!, 1);
     await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('done');
     expect(f.store.requireTask(task.id).recordedTransition).toBeUndefined();
@@ -245,7 +245,7 @@ describe('automatic advance', () => {
     await f.store.setWorkflow(BRANCHED_FLOW);
     const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Stale', description: '' });
     await arm(f.app, task.id);
-    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'done' });
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'done', reason: 'The review approved the work.' });
     await f.store.setWorkflow('name: Narrowed\ninitial_column: backlog\ncolumns:\n  - id: backlog\n    label: Backlog\n    allowed_transitions: [plan]\n  - id: plan\n    label: Plan\n  - id: done\n    label: Done\n');
     await endTurn(f.app, task.sessionIds[0]!, 1);
     await expect.poll(() => f.store.requireTask(task.id).autoMode?.pause?.reason).toBe('transition-stale');
@@ -258,7 +258,7 @@ describe('automatic advance', () => {
     await f.store.setWorkflow(BRANCHED_FLOW);
     const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Removed destination', description: '' });
     await arm(f.app, task.id);
-    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'done' });
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'done', reason: 'The review approved the work.' });
     // The save itself must succeed; the dangling recording is the stale state.
     await f.store.setWorkflow(REMOVED_DESTINATION_FLOW);
     await endTurn(f.app, task.sessionIds[0]!, 1);
@@ -299,7 +299,7 @@ describe('automatic advance', () => {
     try {
       f.app.observe(original, turnEnd(1));
       await f.app.command({ type: 'conversation.close', taskId: task.id, sessionId: original });
-      await vi.advanceTimersByTimeAsync(AUTO_ADVANCE_SETTLE_MS + 25);
+      await vi.advanceTimersByTimeAsync(TURN_ADVANCE_SETTLE_MS + 25);
     } finally { vi.useRealTimers(); }
     await expect.poll(() => f.sessions.sent.length, { timeout: 3_000 }).toBe(1);
     await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('plan');
@@ -319,7 +319,7 @@ describe('automatic advance', () => {
     try {
       f.app.observe(sessionId, turnEnd(9));
       f.app.observe(sessionId, turnEnd(9));
-      await vi.advanceTimersByTimeAsync(AUTO_ADVANCE_SETTLE_MS + 25);
+      await vi.advanceTimersByTimeAsync(TURN_ADVANCE_SETTLE_MS + 25);
     } finally { vi.useRealTimers(); }
     await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('plan');
     await delay(50);
@@ -580,7 +580,7 @@ describe('automatic advance gates', () => {
     vi.useFakeTimers();
     try {
       f.app.observe(sessionId, turnEnd(1));
-      await vi.advanceTimersByTimeAsync(AUTO_ADVANCE_SETTLE_MS + 25);
+      await vi.advanceTimersByTimeAsync(TURN_ADVANCE_SETTLE_MS + 25);
       await f.store.transact(draft => { draft.tasks.find(value => value.id === task.id)!.columnId = 'done'; });
       release({ running: false, background: [], pending: NO_PENDING_USER_WORK, settledTurn: null });
       for (let microtask = 0; microtask < 20; microtask += 1) await Promise.resolve();
@@ -602,7 +602,7 @@ describe('automatic advance gates', () => {
     vi.useFakeTimers();
     try {
       f.app.observe(sessionId, turnEnd(1));
-      await vi.advanceTimersByTimeAsync(AUTO_ADVANCE_SETTLE_MS + 25);
+      await vi.advanceTimersByTimeAsync(TURN_ADVANCE_SETTLE_MS + 25);
       await f.store.setWorkflow(SILENT_FLOW);
       release({ running: false, background: [], pending: NO_PENDING_USER_WORK, settledTurn: null });
       for (let microtask = 0; microtask < 20; microtask += 1) await Promise.resolve();
@@ -760,7 +760,7 @@ describe('automatic advance gates', () => {
       f.app.observe(sessionId, turnEnd(1));
       await f.app.command({ type: 'task.autoMode', taskId: task.id, enabled: false });
       await f.app.command({ type: 'task.autoMode', taskId: task.id, enabled: true });
-      await vi.advanceTimersByTimeAsync(AUTO_ADVANCE_SETTLE_MS + 25);
+      await vi.advanceTimersByTimeAsync(TURN_ADVANCE_SETTLE_MS + 25);
     } finally { vi.useRealTimers(); }
     await delay(100);
     expect(f.store.requireTask(task.id).columnId).toBe('backlog');
@@ -781,3 +781,163 @@ describe('automatic advance disposal', () => {
     expect(f.sessions.sent).toEqual([]);
   });
 });
+
+describe('declared transition advance', () => {
+  const DECLARED_FLOW = [
+    'name: Declared flow',
+    'initial_column: backlog',
+    'columns:',
+    '  - id: backlog',
+    '    label: Backlog',
+    '    allowed_transitions:',
+    '      - to: plan',
+    '        when: The task needs a plan.',
+    '      - to: done',
+    '        when: The task needs no further work.',
+    '  - id: plan',
+    '    label: Plan',
+    '    on_enter_prompt: Plan it.',
+    '  - id: done',
+    '    label: Done',
+    '',
+  ].join('\n');
+
+  it('advances without auto mode and delivers the declared reason after the instruction', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(DECLARED_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Declared', description: '' });
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'plan', reason: 'The bug needs a plan before code.' });
+    await endTurn(f.app, task.sessionIds[0]!, 1);
+    await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('plan');
+    await expect.poll(() => f.sessions.sent.length).toBe(1);
+    const current = f.store.requireTask(task.id);
+    expect(current.autoMode).toBeUndefined();
+    expect(current.recordedTransition).toBeUndefined();
+    expect(f.sessions.sent[0]!.text).toBe('Plan it.\n\nTransition reason (from Backlog):\nThe bug needs a plan before code.');
+  });
+
+  it('records no pause and keeps the declaration when the turn does not complete', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(DECLARED_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Declared failed', description: '' });
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'plan', reason: 'The bug needs a plan before code.' });
+    await endTurn(f.app, task.sessionIds[0]!, 1, 'error');
+    await delay(100);
+    const current = f.store.requireTask(task.id);
+    expect(current.columnId).toBe('backlog');
+    expect(current.autoMode).toBeUndefined();
+    expect(current.recordedTransition).toMatchObject({ columnId: 'plan', reason: 'The bug needs a plan before code.' });
+    expect(f.sessions.sent).toEqual([]);
+    // The preserved declaration is what the next completed turn acts on.
+    await endTurn(f.app, task.sessionIds[0]!, 2);
+    await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('plan');
+    await expect.poll(() => f.sessions.sent.length).toBe(1);
+  });
+
+  it('does not advance on a declaration that stopped resolving and records no pause', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(DECLARED_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Declared stale', description: '' });
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'done', reason: 'The task is finished.' });
+    await f.store.setWorkflow([
+      'name: Narrowed', 'initial_column: backlog', 'columns:',
+      '  - id: backlog', '    label: Backlog', '    allowed_transitions: [plan]',
+      '  - id: plan', '    label: Plan', '    on_enter_prompt: Plan it.',
+      '  - id: done', '    label: Done', '',
+    ].join('\n'));
+    await endTurn(f.app, task.sessionIds[0]!, 1);
+    await delay(100);
+    const current = f.store.requireTask(task.id);
+    expect(current.columnId).toBe('backlog');
+    expect(current.autoMode).toBeUndefined();
+    expect(f.sessions.sent).toEqual([]);
+  });
+
+  it('holds a declared advance while the task owes the user input', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(DECLARED_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Declared held', description: '' });
+    const sessionId = task.sessionIds[0]!;
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'plan', reason: 'The bug needs a plan before code.' });
+    f.sessions.queued.add(sessionId);
+    await endTurn(f.app, sessionId, 1);
+    await delay(100);
+    expect(f.store.requireTask(task.id).columnId).toBe('backlog');
+    expect(f.store.requireTask(task.id).pendingTransition).toBeUndefined();
+    expect(f.sessions.sent).toEqual([]);
+  });
+
+  it('does not advance when the declaration is cleared before the turn ends', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(DECLARED_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Declared cleared', description: '' });
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'plan', reason: 'The bug needs a plan before code.' });
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id });
+    await endTurn(f.app, task.sessionIds[0]!, 1);
+    await delay(100);
+    expect(f.store.requireTask(task.id).columnId).toBe('backlog');
+    expect(f.store.requireTask(task.id).recordedTransition).toBeUndefined();
+    expect(f.sessions.sent).toEqual([]);
+  });
+
+  it('keeps the declared reason on a failed advance and recovers it through the play action', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(DECLARED_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Declared failed send', description: '' });
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'plan', reason: 'The bug needs a plan before code.' });
+    f.sessions.failSend = true;
+    await endTurn(f.app, task.sessionIds[0]!, 1);
+    await expect.poll(() => f.store.requireTask(task.id).pendingTransition?.status).toBe('failed');
+    const failed = f.store.requireTask(task.id);
+    expect(failed.columnId).toBe('plan');
+    expect(failed.pendingTransition).toMatchObject({ origin: 'agent', reason: 'The bug needs a plan before code.' });
+    const failedId = failed.pendingTransition!.id;
+    f.sessions.failSend = false;
+    const marker = failed.instructionPending!;
+    await f.app.command({ type: 'task.runInstruction', taskId: task.id, columnId: 'plan', expectedInstruction: 'Plan it.', expectedEnteredAt: marker.enteredAt });
+    await expect.poll(() => f.store.requireTask(task.id).pendingTransition).toBeUndefined();
+    const sent = f.sessions.sent.at(-1)!;
+    // The manual retry delivers the same justification and replays the identity the
+    // failed admission owned, so a delivery that did land is never sent twice.
+    expect(sent.text).toBe('Plan it.\n\nTransition reason (from Backlog):\nThe bug needs a plan before code.');
+    expect(sent.requestId).toBe(failedId);
+  });
+
+  it('replays the failed identity without sending the instruction twice', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(DECLARED_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Declared landed', description: '' });
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'plan', reason: 'The bug needs a plan before code.' });
+    f.sessions.failSend = true;
+    await endTurn(f.app, task.sessionIds[0]!, 1);
+    await expect.poll(() => f.store.requireTask(task.id).pendingTransition?.status).toBe('failed');
+    const failed = f.store.requireTask(task.id).pendingTransition!;
+    f.sessions.failSend = false;
+    // The admission landed but its post-delivery write did not; the replay must
+    // recognise the identity instead of delivering the instruction again.
+    await f.sessions.deliverStageInstruction(task.sessionIds[0]!, {
+      requestId: failed.id, text: 'Plan it.', summary: 'Stage: Plan',
+    });
+    const marker = f.store.requireTask(task.id).instructionPending!;
+    await f.app.command({ type: 'task.runInstruction', taskId: task.id, columnId: 'plan', expectedInstruction: 'Plan it.', expectedEnteredAt: marker.enteredAt });
+    await expect.poll(() => f.store.requireTask(task.id).pendingTransition).toBeUndefined();
+    expect(f.sessions.sent.filter(message => message.requestId === failed.id)).toHaveLength(1);
+  });
+
+  it('dismisses a failed declared advance without moving the task again', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(DECLARED_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Declared failed dismiss', description: '' });
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'plan', reason: 'The bug needs a plan before code.' });
+    f.sessions.failSend = true;
+    await endTurn(f.app, task.sessionIds[0]!, 1);
+    await expect.poll(() => f.store.requireTask(task.id).pendingTransition?.status).toBe('failed');
+    await f.app.command({ type: 'operation.dismiss', taskId: task.id });
+    const current = f.store.requireTask(task.id);
+    expect(current.pendingTransition).toBeUndefined();
+    expect(current.columnId).toBe('plan');
+    expect(current.instructionPending?.columnId).toBe('plan');
+    f.sessions.failSend = false;
+  });
+});
+

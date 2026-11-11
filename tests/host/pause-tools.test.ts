@@ -98,7 +98,7 @@ describe('task pause tools', () => {
 
   it('never moves the task, sends a message, or clears the routing', async () => {
     const f = await setup();
-    await f.app.command({ type: 'task.recordTransition', taskId: f.task.id, columnId: 'done' });
+    await f.app.command({ type: 'task.recordTransition', taskId: f.task.id, columnId: 'done', reason: 'The review approved the work.' });
     const before = { columnId: f.task.columnId, position: f.task.position, sent: f.sessions.sent.length, sessions: f.sessions.dirs.size };
 
     await f.named('pause_task').execute({ reason: 'Review the diff' }, f.exec());
