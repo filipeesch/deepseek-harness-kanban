@@ -277,7 +277,7 @@ The task drawer SHALL be resizable within defined minimum and maximum bounds and
 
 ### Requirement: Nested native conversation tabs
 
-A task SHALL begin with no native DSH conversation in its Conversations section. The section SHALL provide an explicit start action, presented as the agent-preset cards, that creates the first distinct native DSH conversation as a tab within the same task, and a plus action that opens the same preset choice to create another distinct native DSH conversation. The first conversation SHALL be created only by that explicit choice, by the execution preparation that precedes a task's first execution, including the automatic first-execution preparation on task creation, or by a stage instruction that needs a conversation and finds none open, including a stage instruction dispatched from a card, a confirmed transition, or an automatic advance. When an execution preparation creates the first conversation, it SHALL do so after the worktree is ready and before the move or run action is applied, and the conversation SHALL use that directory. For a Git-backed task without a worktree, the explicit start action SHALL remain unavailable until the worktree choice is resolved as defined by `worktree-management`. The first conversation SHALL use the task's current effective directory at creation time. A conversation created from a card SHALL receive the card's preset; conversations created by the execution preparation, including the automatic creation preparation, or a stage instruction use the host default.
+A task SHALL begin with no native DSH conversation in its Conversations section. The section SHALL provide an explicit start action, presented as the agent-preset cards, that creates the first distinct native DSH conversation as a tab within the same task, and a plus action that opens the same preset choice to create another distinct native DSH conversation. The first conversation SHALL be created only by that explicit choice, by the execution preparation that precedes a task's first execution, including the automatic first-execution preparation on task creation, by a stage instruction that needs a conversation and finds none open, including a stage instruction dispatched from a card, a confirmed transition, or an automatic advance, or by a cross-card message delivery that needs a conversation and finds none open. When an execution preparation creates the first conversation, it SHALL do so after the worktree is ready and before the move or run action is applied, and the conversation SHALL use that directory. For a Git-backed task without a worktree, the explicit start action SHALL remain unavailable until the worktree choice is resolved as defined by `worktree-management`. The first conversation SHALL use the task's current effective directory at creation time. A conversation created from a card SHALL receive the card's preset; conversations created by the execution preparation, including the automatic creation preparation, by a stage instruction, or by a cross-card message delivery use the board's default model when the board names one and the deployment default otherwise.
 
 #### Scenario: Open a newly created task
 
@@ -330,6 +330,13 @@ A task SHALL begin with no native DSH conversation in its Conversations section.
 - **THEN** one native DSH conversation is created
 - **AND** the destination instruction is sent to it
 
+#### Scenario: A cross-card message creates the first conversation
+
+- **WHEN** a cross-card message delivery needs a conversation and the target task has no open conversation
+- **THEN** the first native DSH conversation is created after the task's worktree or base-project preparation completes
+- **AND** the cross-card message is delivered to that conversation
+- **AND** the conversation uses the board's default model when the board names one and the deployment default otherwise, rather than a card preset
+
 #### Scenario: Withhold the explicit start until the worktree choice
 
 - **WHEN** the user requests the explicit first start for a Git-backed task with no worktree, no recorded base-project choice, and no conversation
@@ -355,9 +362,12 @@ native model selector is not available, the preparation SHALL omit the model ste
 conversation SHALL use the deployment default unless the board names an available default model.
 The automatic first-execution preparation on task creation SHALL NOT present the native model
 selector and SHALL NOT submit a selection; its first conversation SHALL use the board's default
-model when the board names one and the deployment default otherwise. The selection SHALL NOT be
-persisted on the task, SHALL NOT be presented for later conversations, and SHALL NOT be presented
-when the task already has a conversation.
+model when the board names one and the deployment default otherwise. The cross-card message
+delivery that creates a task's first conversation SHALL NOT present the native model selector and
+SHALL NOT submit a selection; its first conversation SHALL use the board's default model when the
+board names one and the deployment default otherwise. The selection SHALL NOT be persisted on the
+task, SHALL NOT be presented for later conversations, and SHALL NOT be presented when the task
+already has a conversation.
 
 #### Scenario: Show the default without submitting
 
@@ -382,6 +392,13 @@ when the task already has a conversation.
 #### Scenario: No model step for the creation preparation
 
 - **WHEN** the automatic first execution on task creation creates the first conversation
+- **THEN** the native model selector is not presented
+- **AND** no model selection is submitted
+- **AND** the conversation uses the board's default model when the board names one and the deployment default otherwise
+
+#### Scenario: No model step for a cross-card message
+
+- **WHEN** a cross-card message delivery creates the target task's first conversation
 - **THEN** the native model selector is not presented
 - **AND** no model selection is submitted
 - **AND** the conversation uses the board's default model when the board names one and the deployment default otherwise

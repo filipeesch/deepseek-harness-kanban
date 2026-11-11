@@ -28,6 +28,7 @@ import type { NativeLocaleSource, NativeSlotSource } from './client/native-slot-
 import type { PreparationSeat } from './client/execution-preparation/model-seat.js';
 import { TASK_CONTEXT_NODE_KIND, TaskContextNodeView, taskContextDefinition } from './client/task-context-node.js';
 import { STAGE_CONTEXT_NODE_KIND, StageInstructionNodeView, stageInstructionDefinition } from './client/stage-instruction-node.js';
+import { TASK_MESSAGE_NODE_KIND, TaskMessageNodeView, taskMessageDefinition } from './client/task-message-node.js';
 import type { ClientApi } from './shared/types.js';
 
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
@@ -147,6 +148,13 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       t={props.t}
     />;
   }
+  function TaskMessageChatNode(props: ChatNodeViewProps<'kanban-task-message'>) {
+    return <TaskMessageNodeView
+      node={props.node}
+      slots={ctx.slots as unknown as NativeSlotSource}
+      t={props.t}
+    />;
+  }
   function workspaceNavigation(): ((sessionId: string) => void) | undefined {
     let workspace: Parameters<typeof createWorkspaceNavigation>[0];
     try { workspace = ctx.get('uiWorkspace') as unknown as Parameters<typeof createWorkspaceNavigation>[0]; } catch { workspace = undefined; }
@@ -238,10 +246,12 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
 
   const offTaskContext = ctx.uiConversation.events.register(taskContextDefinition);
   const offStageInstruction = ctx.uiConversation.events.register(stageInstructionDefinition);
+  const offTaskMessage = ctx.uiConversation.events.register(taskMessageDefinition);
   ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'kanban', children: { 'kanban.conversation': { kind: 'single', scope: 'session' } } }, Main));
   ctx.slots.inject('kanban.conversation', () => ctx.slots.register({ name: 'kanban.conversation' }, ConversationWindowSeat));
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: TASK_CONTEXT_NODE_KIND, locale: 'chat', inject: () => ({}) }, TaskContextChatNode));
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: STAGE_CONTEXT_NODE_KIND, locale: 'chat', inject: () => ({}) }, StageInstructionChatNode));
+  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: TASK_MESSAGE_NODE_KIND, locale: 'chat', inject: () => ({}) }, TaskMessageChatNode));
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: 'kanban', order: 80, label: 'Kanban' }, BoardIcon));
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'kanban-decision-questions', order: 20 }, Dock));
   ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: 'decision_request' }, HiddenDecisionRow));
@@ -250,7 +260,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   bridge.start();
   return async () => {
     lifetime.abort(); autoRun.dispose(); unsubscribeAutoRun();
-    offTaskContext(); offStageInstruction();
+    offTaskContext(); offStageInstruction(); offTaskMessage();
     try { await presetInjection?.dispose(); } catch { /* the optional namespace fiber is best effort */ }
     await bridge.dispose();
   };

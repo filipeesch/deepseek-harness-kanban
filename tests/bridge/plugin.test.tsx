@@ -164,13 +164,14 @@ async function installed(rounds?: QuestionRound[]) {
 }
 
 describe('public SDK plugin binding contracts', () => {
-  it('registers and disposes both plugin Chat Definitions with the client conversation service', async () => {
+  it('registers and disposes every plugin Chat Definition with the client conversation service', async () => {
     const f = fixture(); const dispose = await apply(f.ctx);
-    expect(f.uiConversation.events.register).toHaveBeenCalledTimes(2);
+    expect(f.uiConversation.events.register).toHaveBeenCalledTimes(3);
     expect(f.taskContextRegistrations[0]).toMatchObject({ kind: 'kanban-task-context', target: 'chat' });
     expect(f.taskContextRegistrations[1]).toMatchObject({ kind: 'kanban-stage-context', target: 'chat' });
+    expect(f.taskContextRegistrations[2]).toMatchObject({ kind: 'kanban-task-message', target: 'chat' });
     await dispose();
-    expect(f.taskContextDisposer).toHaveBeenCalledTimes(2);
+    expect(f.taskContextDisposer).toHaveBeenCalledTimes(3);
   });
 
   it('renders the conversation window seat inside the retained provider', async () => {
@@ -190,9 +191,9 @@ describe('public SDK plugin binding contracts', () => {
     expect(f.mount).toHaveBeenCalledWith(TYPERT_REMOTE); expect(f.entries.size).toBe(0);
     f.openMount(); const dispose = await pending; disposers.push(dispose);
     expect(inject).toContain('remote'); expect(inject).toContain('uiConversation'); expect(inject).not.toContain('remote.kanban');
-    expect([...f.entries.keys()]).toEqual(['main:kanban', 'kanban.conversation:', 'conversation.chat.node:kanban-task-context', 'conversation.chat.node:kanban-stage-context', 'sidebar.panellist:kanban', 'conversation.input.dock:kanban-decision-questions', 'tool.call.toolview:decision_request']);
+    expect([...f.entries.keys()]).toEqual(['main:kanban', 'kanban.conversation:', 'conversation.chat.node:kanban-task-context', 'conversation.chat.node:kanban-stage-context', 'conversation.chat.node:kanban-task-message', 'sidebar.panellist:kanban', 'conversation.input.dock:kanban-decision-questions', 'tool.call.toolview:decision_request']);
     expect(f.entries.get('main:kanban')?.options.children).toEqual({ 'kanban.conversation': { kind: 'single', scope: 'session' } });
-    expect(f.uiConversation.events.register).toHaveBeenCalledTimes(2);
+    expect(f.uiConversation.events.register).toHaveBeenCalledTimes(3);
     expect(f.entries.get('sidebar.panellist:kanban')?.options).toMatchObject({ label: 'Kanban', order: 80 });
     expect(f.nativeSelect).not.toHaveBeenCalled(); await dispose(); expect(f.unmount).toHaveBeenCalledOnce();
   });

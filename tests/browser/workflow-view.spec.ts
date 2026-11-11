@@ -579,20 +579,31 @@ async function connectionEnd(page: Page, index: number, end: 'source' | 'target'
 
 /** Points at a place the edge's interaction path owns, revealing its handles. */
 async function revealEdge(page: Page, index: number): Promise<void> {
-  const point = await page.evaluate(index => {
-    const paths = [...document.querySelectorAll('.react-flow__edge-interaction')];
-    const path = paths[index] as SVGPathElement | undefined;
-    if (path === undefined) return null;
-    const box = path.getBoundingClientRect();
-    for (let x = Math.ceil(box.left); x <= Math.floor(box.right); x += 4) {
-      for (let y = Math.ceil(box.top); y <= Math.floor(box.bottom); y += 4) {
-        if (document.elementFromPoint(x, y) === path) return { x, y };
+  // The edge is measured after the first paint, and the hit target may be the
+  // visible path under the interaction path. Sample the actual stroke instead of
+  // a bounding-box grid, accept any element inside the edge group, and retry
+  // while the canvas settles. This is deterministic across font metrics.
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const point = await page.evaluate(index => {
+      const paths = [...document.querySelectorAll('.react-flow__edge-interaction')];
+      const path = paths[index] as SVGPathElement | undefined;
+      if (path === undefined) return null;
+      const group = path.closest('.react-flow__edge');
+      const matrix = path.getScreenCTM();
+      if (matrix === null) return null;
+      const total = path.getTotalLength();
+      for (let step = 0; step <= 24; step += 1) {
+        const local = path.getPointAtLength((total * step) / 24);
+        const screen = new DOMPoint(local.x, local.y).matrixTransform(matrix);
+        const element = document.elementFromPoint(screen.x, screen.y);
+        if (element === path || (group !== null && element !== null && group.contains(element))) return { x: screen.x, y: screen.y };
       }
-    }
-    return null;
-  }, index);
-  if (point === null) throw new Error('the edge has no reachable point');
-  await page.mouse.move(point.x, point.y);
+      return null;
+    }, index);
+    if (point !== null) { await page.mouse.move(point.x, point.y); return; }
+    await page.waitForTimeout(50);
+  }
+  throw new Error('the edge has no reachable point');
 }
 
 /** The screen point of a stage edge, a few pixels outside the stage box. */

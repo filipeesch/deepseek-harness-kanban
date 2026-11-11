@@ -26,6 +26,8 @@ import { nodeDiscoveryFs, type DiscoveryFs } from './host/sharing/google-drive-l
 import { credentialStoreFromContext, type CredentialStore } from './host/sharing/credentials.js';
 import { SharingProviderRegistry } from './host/sharing/provider.js';
 import { createNativePorts } from './host/native.js';
+import { InterCardMessaging } from './host/inter-card-messaging.js';
+import { createNativeTaskMessageDelivery } from './host/task-message-native.js';
 import { registerConversationFacts } from './host/conversation-facts.js';
 import { GitAdapter } from './host/git.js';
 import { KanbanApp } from './host/app.js';
@@ -193,6 +195,7 @@ export async function apply(ctx:Context):Promise<void>{
  const teamFiles=new TeamFiles({store:hubId=>sharing.service.fileStoreFor(hubId),exclusive:(hubId,operation)=>sharing.service.exclusive(hubId,operation)});
  const sessionModels=createSessionModelPort(ctx);
  const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,models:sessionModels,report,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
+ const taskMessages=new InterCardMessaging({locateBySession:id=>app.locator.bySession(id),locate:id=>app.locator.byTask(id),prepare:id=>app.prepareMessageConversation(id),delivery:createNativeTaskMessageDelivery(ctx,history)});
  sharing.setNotify(()=>app.sharingChanged());
  const scheduleRuns=new ScheduleRunRegistry({storage:schedules.storage,now:()=>new Date().toISOString(),onChange:()=>app.activityChanged(),report});
  const scheduleWatcher=new ScheduleArchiveWatcher({
@@ -253,7 +256,7 @@ export async function apply(ctx:Context):Promise<void>{
  });
  offWire=ctx.typert.register(TYPERT_HOST);
  ctx.plugin(KanbanController,app);
- offTools=registerProductTools(ctx,app);
+ offTools=registerProductTools(ctx,app,taskMessages);
  ctx.on('session/event',(session,event)=>{app.observe(session.id,event);if(event.type==='turn/end')scheduleWatcher.observe(String(session.id));});
  offScheduleStatus=ctx.on('agent/status',({agent})=>scheduleWatcher.observe(String(agent.id)));
  offSignals=registerAttentionSignals(ctx,app);

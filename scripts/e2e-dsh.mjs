@@ -14,7 +14,7 @@ if (args.includes('--only') && only === undefined) {
   process.exit(2);
 }
 if (!checkoutArg) {
-  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only background-delete|board|conversation|deletion|hubs|schedules|override|native-drawer|auto-run|auto-mode|create-start|prepare|board-model|project]');
+  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only background-delete|board|conversation|deletion|hubs|schedules|override|native-drawer|auto-run|auto-mode|create-start|prepare|board-model|project|messages]');
   process.exit(2);
 }
 const checkout = resolve(checkoutArg);
@@ -67,6 +67,7 @@ const scenarioTemplates = new Map([
   ['prepare', ['kanban-prepare.e2e.template.ts', 'kanban-prepare.e2e.ts', 'kanban-board-model.e2e.template.ts', 'kanban-board-model.e2e.ts']],
   ['board-model', ['kanban-board-model.e2e.template.ts', 'kanban-board-model.e2e.ts']],
   ['project', ['kanban-project-management.e2e.template.ts', 'kanban-project-management.e2e.ts']],
+  ['messages', ['kanban-messages.e2e.template.ts', 'kanban-messages.e2e.ts']],
 ]);
 if (only !== undefined && !scenarioTemplates.has(only)) fail('unknown --only value: ' + only);
 // A group is one [template, target] pair or a list of them, so one selector can

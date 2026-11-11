@@ -1,6 +1,5 @@
 import type { ChatNodeDataMap, ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client';
-import { ContextRowView, createContextRowDefinition, type ContextRowData } from './context-row.js';
-import type { NativeSlotSource } from './native-slot-host.js';
+import { createPluginContextRow, type ContextRowData } from './context-row.js';
 
 export const STAGE_CONTEXT_NODE_KIND = 'kanban-stage-context';
 export const STAGE_CONTEXT_SOURCE_KIND = 'stage-instruction';
@@ -19,17 +18,15 @@ declare module '@deepseek-ai/dsh-client-ui-chat/client' {
  * visible in every task conversation surface, not only where the host keeps the
  * projection that presents a claimed message on its own.
  */
-export const stageInstructionDefinition = createContextRowDefinition(STAGE_CONTEXT_NODE_KIND, STAGE_CONTEXT_SOURCE_KIND);
+const row = createPluginContextRow({
+  nodeKind: STAGE_CONTEXT_NODE_KIND,
+  sourceKind: STAGE_CONTEXT_SOURCE_KIND,
+  title: 'Stage instruction',
+  fallbackClassName: 'kb-stage-context-fallback',
+});
 
-export interface StageInstructionNodeViewProps {
-  node: ChatNodeViewProps<'kanban-stage-context'>['node'];
-  t?: ChatNodeViewProps<'context'>['t'];
-  slots: NativeSlotSource;
-}
-
+export const stageInstructionDefinition = row.definition;
 /** Delegate to the host's native context-row renderer, with an inline fallback. */
-export function StageInstructionNodeView({ node, t, slots }: StageInstructionNodeViewProps) {
-  return <ContextRowView node={node} t={t} slots={slots} title="Stage instruction" fallbackClassName="kb-stage-context-fallback" />;
-}
+export const StageInstructionNodeView = row.View;
 
 export type StageInstructionViewProps = ChatNodeViewProps<'kanban-stage-context'>;

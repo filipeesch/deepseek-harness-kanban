@@ -430,7 +430,7 @@ export type Command =
   | { type: 'task.recordTransition'; hubId?: string; taskId: string; columnId?: string }
   | { type: 'task.runInstruction'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction: string }
   | { type: 'task.prepareFirstExecution'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction?: string }
-  | { type: 'conversation.create'; hubId?: string; taskId: string }
+  | { type: 'conversation.create'; hubId?: string; taskId: string; /** A first-start request reuses a conversation created while it was queued. */ ensureFirst?: boolean }
   | { type: 'conversation.close' | 'conversation.reopen'; hubId?: string; taskId: string; sessionId: string }
   | { type: 'task.delete'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; force?: boolean }
   | ({ type: 'worktree.create'; hubId?: string; taskId: string } & CreateWorktreeInput)
