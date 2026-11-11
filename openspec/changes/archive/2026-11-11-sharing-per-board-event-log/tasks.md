@@ -26,7 +26,7 @@
 
 - [x] 4.1 Extract the lane registry (serialized lanes, in-flight tracking, reentrancy guard) and verify the existing lane tests pass unchanged
 - [x] 4.2 Extract binding lifecycle — connect, receive, initial publish, change location, resolve, restore, orphan publish, and board removal — and verify the existing lifecycle tests pass unchanged
-- [x] 4.3 Add the per-board sync unit owning a board's cursor, its apply, its publish, and its status, and verify with a unit test that two boards advance independently
+- [x] 4.3 Give the service a per-board unit of work owning a board's cursor, its apply, its publish, and its status, and verify with tests that two boards advance independently and that a publish refuses while one has unapplied events
 - [x] 4.4 Add the remote checker that reads the manifest and only the board logs that changed, and verify with a test that an unchanged board is never read
 
 ## 5. Applying and publishing per board

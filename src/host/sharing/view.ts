@@ -23,8 +23,10 @@ export interface SharingViewContext {
   syncing?: boolean;
 }
 
-function boardState(local: LocalSharedBoard, entry: { name: string; projectKeys?: readonly string[] } | undefined, stored: StoredBoard | undefined): SharingBoardState {
-  if (entry === undefined) return 'orphan';
+function boardState(local: LocalSharedBoard, entry: { name: string; projectKeys?: readonly string[] } | undefined, stored: StoredBoard | undefined, orphaned: boolean): SharingBoardState {
+  // An orphan is a board whose published key the team dropped; a board the team never
+  // named has no key and is simply a draft to send.
+  if (entry === undefined) return orphaned || local.key !== undefined ? 'orphan' : 'draft';
   if (stored?.conflict != null) return 'needs-review';
   if ((stored?.behind ?? 0) > 0) return 'updates-available';
   const scopeMatches = (local.projectKeys === undefined && entry.projectKeys === undefined)
@@ -50,7 +52,7 @@ export function buildSharingView(record: HubSharingRecord, hub: HubState, contex
   const boards: SharingBoardView[] = local.map(board => {
     const entry = board.key === undefined ? undefined : entries.get(board.key);
     const stored = board.key === undefined ? undefined : record.boards[board.key];
-    const state = boardState(board, entry, stored);
+    const state = boardState(board, entry, stored, record.orphans[board.boardId] !== undefined);
     const sameContent = entry !== undefined && boardContentKey({ name: board.name, projectKeys: board.projectKeys }) === boardContentKey({ name: entry.name, projectKeys: entry.projectKeys });
     return {
       boardId: board.boardId,
@@ -60,8 +62,8 @@ export function buildSharingView(record: HubSharingRecord, hub: HubState, contex
       bound: record.bindings[board.boardId] !== undefined,
       pending: state === 'updates-available' || state === 'draft',
       ...((stored?.behind ?? 0) === 0 ? {} : { updates: stored!.behind }),
-      ...(state === 'needs-review' || (!sameContent && entry !== undefined)
-        ? { detail: { local: board.workflow, team: board.workflow, localName: board.name, teamName: entry!.name } }
+      ...(state === 'needs-review' && stored?.publishedText != null
+        ? { detail: { local: board.workflow, team: stored.publishedText, localName: board.name, teamName: entry!.name } }
         : {}),
     };
   });
@@ -71,9 +73,6 @@ export function buildSharingView(record: HubSharingRecord, hub: HubState, contex
   const removed = Object.entries(record.removed)
     .filter(([key]) => entries.has(key))
     .map(([key, value]) => ({ key, boardId: value.boardId, name: value.name }));
-  const removing = manifest.boards
-    .filter(entry => !boundKeys.has(entry.key) && !incoming.some(candidate => candidate.key === entry.key))
-    .map(entry => ({ boardId: entry.key, name: entry.name }));
   const updated = boards.filter(board => board.state === 'updates-available').length + incoming.length;
   const conflicts = boards.filter(board => board.state === 'needs-review').length;
   const drafts = boards.filter(board => board.state === 'draft').length + (orderDiffers(local, manifest) ? 1 : 0) + record.pendingRemovals.length;
@@ -116,6 +115,7 @@ export function buildSharingView(record: HubSharingRecord, hub: HubState, contex
     removed,
     blockers: blocks,
     ...(record.preview === null ? {} : { preview: { publishedBoards: record.preview.manifest.boards.length, localBoards: local.length } }),
+    // A removal is applied by the update action, never reported as a pending state.
     removing: [],
   };
 }

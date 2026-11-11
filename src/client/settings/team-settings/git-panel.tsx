@@ -34,9 +34,9 @@ export function GitStoragePanel({ hub, sharing, act, pending }: { hub: HubState;
     actions={<>
       <button type="button" className="kb-button" disabled={pending !== null} onClick={() => void act('refresh', { type: 'sharing.check', hubId: hub.id })}>{pending === 'refresh' ? 'Checking…' : 'Refresh'}</button>
       <button type="button" className={'kb-button ' + (sharing.updates > 0 ? 'kb-primary' : '')} disabled={pending !== null || sharing.updates === 0} onClick={() => void act('updates', { type: 'sharing.getUpdates', hubId: hub.id })}>{pending === 'updates' ? 'Getting…' : 'Get updates for every board' + (sharing.updates > 0 ? ' (' + sharing.updates + ')' : '')}</button>
-      <button type="button" className={'kb-button ' + (sharing.drafts > 0 && sharing.updates === 0 && sharing.conflicts === 0 ? 'kb-primary' : '')} disabled={pending !== null || sharing.drafts === 0 || sharing.updates > 0 || sharing.conflicts > 0} onClick={() => void act('publish', { type: 'sharing.publish', hubId: hub.id })}>{pending === 'publish' ? 'Publishing…' : 'Publish the board list' + (sharing.drafts > 0 ? ' (' + sharing.drafts + ')' : '')}</button>
+      <button type="button" className={'kb-button ' + (sharing.drafts > 0 && sharing.updates === 0 && sharing.conflicts === 0 ? 'kb-primary' : '')} disabled={pending !== null || sharing.drafts === 0 || sharing.conflicts > 0} onClick={() => void act('publish', { type: 'sharing.publish', hubId: hub.id })}>{pending === 'publish' ? 'Publishing…' : 'Publish the board list'}</button>
     </>}
-    guidance={sharing.updates > 0 ? <p className="kb-hint">Get the team updates before publishing. Publishing is unavailable while the team has changes you have not reviewed.</p> : null}
+    guidance={sharing.updates > 0 ? <p className="kb-hint">A board with team changes has to be updated before it can be published. Updating one board does not touch another, and publishing the board list sends names, order, and project scopes only.</p> : null}
     disconnectNote={DISCONNECT_NOTE}
   />;
 }

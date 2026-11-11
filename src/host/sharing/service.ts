@@ -8,6 +8,7 @@ import { evaluateBoard, publishedWorkflow, workflowDigest } from '../../domain/s
 import { deriveChanges } from '../../domain/journal/derive.js';
 import { recoverBoard, type BoardLogFile } from '../../domain/journal/log.js';
 import { stageRenames } from '../../domain/journal/migrate.js';
+import { materializeIdentities } from '../../domain/journal/materialize.js';
 import * as operations from '../../domain/hub-operations.js';
 import type { HubRepository } from '../hub-repository.js';
 import { isAuthorizationCommand, type SharingAuthorizationPort } from './auth-coordinator.js';
@@ -266,6 +267,7 @@ export class HubSharingService {
         published: publishedWorkflow(snapshot.log) === null ? stored.published : workflowDigest(publishedWorkflow(snapshot.log)!),
         behind: evaluation.apply.kind === 'applies' ? evaluation.apply.events : 0,
         draft: evaluation.draft,
+        publishedText: evaluation.apply.kind === 'conflict' ? (publishedWorkflow(snapshot.log) ?? null) : null,
         conflict: evaluation.apply.kind === 'conflict' ? evaluation.apply.conflict : null,
       };
     }
@@ -274,11 +276,83 @@ export class HubSharingService {
 
   getUpdates(hubId: string): Promise<void> {
     return this.run(hubId, async () => {
-      const record = this.requireRecord(hubId);
+      // Read the team configuration first: the stored manifest may be stale, and the
+      // reconciliation below must see what the team publishes now.
+      const beforeCheck = publishedManifest(this.requireRecord(hubId));
+      await this.checkNow(hubId, false);
+      let record = this.requireRecord(hubId);
       const manifest = publishedManifest(record);
-      for (const entry of manifest.boards) await this.applyEntry(record.hubId, entry);
+      record = await this.reconcileRemovals(hubId, record, beforeCheck, manifest);
+      record = await this.reconnectOrphans(record, manifest);
+      const failures: KanbanError[] = [];
+      for (const entry of manifest.boards) {
+        try { await this.applyEntry(hubId, entry); }
+        catch (error) {
+          // One board failing must not stop the others: that isolation is the point.
+          failures.push(error instanceof KanbanError ? error : new KanbanError('SHARING_FAILED', error instanceof Error ? error.message : String(error)));
+        }
+      }
       await this.refreshObservations(hubId);
+      if (failures.length > 0) {
+        const first = failures[0]!;
+        const suffix = failures.length === 1 ? '' : ' ' + (failures.length - 1) + ' other board(s) need attention too.';
+        throw new KanbanError(first.code, first.message + suffix, { ...first.details, pendingBoards: failures.length });
+      }
     });
+  }
+
+  /**
+   * Apply the team's removals. A board that still holds work is kept as an orphan so
+   * its tasks survive; an empty one is removed locally.
+   */
+  private async reconcileRemovals(hubId: string, record: HubSharingRecord, previous: SharedHubManifest, manifest: SharedHubManifest): Promise<HubSharingRecord> {
+    const named = new Set(manifest.boards.map(entry => entry.key));
+    const hub = this.options.hubs.requireHub(hubId);
+    let next = record;
+    for (const [boardId, key] of Object.entries(record.bindings)) {
+      if (named.has(key)) continue;
+      const board = hub.boards.find(candidate => candidate.id === boardId);
+      const hasTasks = hub.tasks.some(task => task.boardId === boardId);
+      const dirty = next.boards[key]?.draft === true || (next.boards[key]?.behind ?? 0) > 0;
+      if (board !== undefined && (hasTasks || dirty)) {
+        const last = previous.boards.find(entry => entry.key === key);
+        const orphans = { ...next.orphans, [boardId]: { lastKey: key, lastPublishedName: last?.name ?? board.name } };
+        const bindings = { ...next.bindings };
+        delete bindings[boardId];
+        const boards = { ...next.boards };
+        delete boards[key];
+        next = { ...next, bindings, orphans, boards };
+        await this.save(next);
+        continue;
+      }
+      if (board !== undefined) {
+        await this.options.hubs.hub(hubId).transact(draft => { operations.deleteBoard(draft, boardId, this.deps()); return draft; }, hub.revision);
+      }
+      const bindings = { ...next.bindings };
+      delete bindings[boardId];
+      const boards = { ...next.boards };
+      delete boards[key];
+      next = { ...next, bindings, boards };
+      await this.save(next);
+    }
+    return next;
+  }
+
+  /** Rebind an orphan the team names again, by its last key and then by its last name. */
+  private async reconnectOrphans(record: HubSharingRecord, manifest: SharedHubManifest): Promise<HubSharingRecord> {
+    let next = record;
+    const bound = new Set(Object.values(next.bindings));
+    for (const [boardId, orphan] of Object.entries(record.orphans)) {
+      const entry = manifest.boards.find(candidate => candidate.key === orphan.lastKey && !bound.has(candidate.key))
+        ?? manifest.boards.find(candidate => normalizeBoardName(candidate.name) === normalizeBoardName(orphan.lastPublishedName) && !bound.has(candidate.key));
+      if (entry === undefined) continue;
+      const orphans = { ...next.orphans };
+      delete orphans[boardId];
+      next = { ...next, orphans, bindings: { ...next.bindings, [boardId]: entry.key } };
+      bound.add(entry.key);
+      await this.save(next);
+    }
+    return next;
   }
 
   updateBoard(hubId: string, boardId: string): Promise<void> {
@@ -305,7 +379,9 @@ export class HubSharingService {
     const record = this.requireRecord(hubId);
     const layout = this.layout(hubId, record.binding, record.providerState);
     const snapshot = await layout.readLog(entry.key);
-    if (snapshot === null) return;
+    if (snapshot === null) {
+      throw new KanbanError('SHARING_DOCUMENT_MISSING', 'The team names board "' + entry.name + '" but its published log is missing.', { key: entry.key, board: entry.name });
+    }
     const hub = this.options.hubs.requireHub(hubId);
     const boardId = Object.entries(record.bindings).find(([, key]) => key === entry.key)?.[0];
     const board = boardId === undefined ? undefined : hub.boards.find(candidate => candidate.id === boardId);
@@ -444,11 +520,13 @@ export class HubSharingService {
   publishOrphan(hubId: string, boardId: string): Promise<void> {
     return this.run(hubId, async () => {
       const record = this.requireRecord(hubId);
-      invariant(record.orphans[boardId] !== undefined, 'SHARING_NOT_ORPHAN', 'The board is not an orphan.');
+      const orphan = record.orphans[boardId];
+      invariant(orphan !== undefined, 'SHARING_NOT_ORPHAN', 'The board is not an orphan.');
       const orphans = { ...record.orphans };
       delete orphans[boardId];
       await this.save({ ...record, orphans });
-      await this.publishManifestNow(hubId, [record.orphans[boardId]?.lastKey ?? '']);
+      // The board is unbound now, so the manifest publish allocates it a new key.
+      await this.publishManifestNow(hubId, [orphan.lastKey]);
     });
   }
 
@@ -493,8 +571,8 @@ export class HubSharingService {
       reserved,
       allocate: (name, taken) => boardKeyFromName(name, taken),
     });
-    const written = await layout.writeManifest(composed.manifest, { expectedToken: expectedToken === undefined ? record.seen?.token ?? null : expectedToken, message: 'Update published Kanban configuration' });
-    // Every published board needs its log; a board entering the team gets its snapshot.
+    // The logs come first: on every storage but Git the manifest and the logs are
+    // separate writes, and a manifest that names a board with no log is unreadable.
     const boards = { ...record.boards };
     for (const entry of composed.manifest.boards) {
       // The composed bindings carry the key a board just received, which the stored
@@ -503,9 +581,11 @@ export class HubSharingService {
       if (board === undefined) continue;
       const existing = await layout.readLog(entry.key);
       if (existing !== null) { boards[entry.key] = boards[entry.key] ?? { ...emptyBoard(), head: existing.head, probe: existing.probe }; continue; }
-      const created = await layout.createLog(entry.key, board.workflow);
-      boards[entry.key] = { seq: 0, head: created.head, probe: created.probe, behind: 0, published: workflowDigest(board.workflow), draft: false, conflict: null };
+      const seeded = await this.applyIdentities(hubId, board.boardId, board.workflow);
+      const created = await layout.createLog(entry.key, seeded);
+      boards[entry.key] = { seq: 0, head: created.head, probe: created.probe, behind: 0, published: workflowDigest(seeded), draft: false, conflict: null };
     }
+    const written = await layout.writeManifest(composed.manifest, { expectedToken: expectedToken === undefined ? record.seen?.token ?? null : expectedToken, message: 'Update published Kanban configuration' });
     const stored = { token: written.token, manifest: composed.manifest };
     await this.save({
       ...record,
@@ -525,12 +605,28 @@ export class HubSharingService {
     });
   }
 
+  /**
+   * Write the stable identity of every stage into the local board before it is
+   * published, so the published snapshot and the local workflow name the same stages.
+   * The identity is what a later rename event addresses, so it has to exist first.
+   */
+  private async applyIdentities(hubId: string, boardId: string, workflow: string): Promise<string> {
+    const seeded = materializeIdentities(workflow);
+    if (seeded === workflow) return workflow;
+    const hub = this.options.hubs.requireHub(hubId);
+    await this.options.hubs.hub(hubId).transact(draft => { operations.saveBoardWorkflow(draft, boardId, seeded, this.deps()); return draft; }, hub.revision);
+    return seeded;
+  }
+
   /** Publish one board's local changes as events appended to its log. */
   private async publishBoardNow(hubId: string, boardId: string): Promise<void> {
     let record = this.requireRecord(hubId);
     const hub = this.options.hubs.requireHub(hubId);
     const board = hub.boards.find(candidate => candidate.id === boardId);
     invariant(board, 'BOARD_NOT_FOUND', 'Board does not exist.');
+    // Name every stage before deriving, so an identity allocated for a new stage is
+    // written into the local text instead of existing only in the events.
+    const localWorkflow = await this.applyIdentities(hubId, boardId, board.workflowYaml);
     let key = record.bindings[boardId];
     if (key === undefined) {
       // A board entering the team is named by the manifest first, so its log has a key.
@@ -543,22 +639,27 @@ export class HubSharingService {
     const stored = record.boards[key] ?? emptyBoard();
     const snapshot = await layout.readLog(key);
     if (snapshot === null) {
-      const created = await layout.createLog(key, board.workflowYaml);
-      await this.save({ ...record, boards: { ...record.boards, [key]: { seq: 0, head: created.head, probe: created.probe, behind: 0, published: workflowDigest(board.workflowYaml), draft: false, conflict: null } }, lastSyncedAt: this.now() });
+      const seeded = await this.applyIdentities(hubId, boardId, board.workflowYaml);
+      const created = await layout.createLog(key, seeded);
+      await this.save({ ...record, boards: { ...record.boards, [key]: { seq: 0, head: created.head, probe: created.probe, behind: 0, published: workflowDigest(seeded), draft: false, conflict: null } }, lastSyncedAt: this.now() });
       return;
+    }
+    const head = lastSequence(snapshot.log);
+    if (stored.seq < head) {
+      throw new KanbanError('SHARING_PUBLISH_BLOCKED', 'This board has team changes that have not been applied. Get this board updates before publishing it.', { key, boardId, pending: head - stored.seq });
     }
     const published = publishedWorkflow(snapshot.log);
     invariant(published !== null, 'SHARING_INVALID_DOCUMENT', 'The team board cannot be read.');
-    const changes = deriveChanges({ text: published }, { text: board.workflowYaml }, { allocate: () => this.id() });
+    const changes = deriveChanges({ text: published }, { text: localWorkflow }, { allocate: () => this.id() });
     if (changes.length === 0) {
-      await this.save({ ...record, boards: { ...record.boards, [key]: { ...stored, head: snapshot.head, probe: snapshot.probe, behind: 0, published: workflowDigest(published), draft: false } } });
+      await this.save({ ...record, boards: { ...record.boards, [key]: { ...stored, seq: head, head: snapshot.head, probe: snapshot.probe, behind: 0, published: workflowDigest(published), draft: false } } });
       return;
     }
     const appended = await layout.appendChanges(key, changes, { expectedHead: snapshot.head, message: 'Update published Kanban board', at: this.now() });
     await this.save({
       ...record,
       providerState: layout.state?.() ?? record.providerState,
-      boards: { ...record.boards, [key]: { seq: lastSequence(appended.log), head: appended.head, probe: appended.probe, behind: 0, published: workflowDigest(board.workflowYaml), draft: false, conflict: null } },
+      boards: { ...record.boards, [key]: { seq: lastSequence(appended.log), head: appended.head, probe: appended.probe, behind: 0, published: workflowDigest(localWorkflow), draft: false, conflict: null } },
       syncedRevision: hub.revision,
       lastSyncedAt: this.now(),
       reviewRequired: null,

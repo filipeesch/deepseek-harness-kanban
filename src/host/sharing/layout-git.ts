@@ -127,7 +127,8 @@ export class GitLayoutStore implements SharedLayoutStore {
     const branch = await this.clone.branchName();
     if (await this.clone.isClean()) await this.clone.resetHard(commit);
     await this.clone.require(['rm', '--quiet', '--', relative]);
-    const committed = await this.clone.commitPaths([], 'Remove Kanban board');
+    // `git rm` staged exactly this deletion, so the commit takes the index as it is.
+    const committed = await this.clone.commitStaged('Remove Kanban board');
     if (committed) await this.clone.push(branch);
   }
 
