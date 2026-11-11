@@ -1,7 +1,7 @@
 import { KanbanError, problem } from '../shared/errors.js';
 import { isGitProject } from '../shared/project.js';
 import type { GitPort, GitRepository, SessionPort } from '../shared/ports.js';
-import type { ContextOperation, GitProject, HubState, Project, Task } from '../shared/types.js';
+import type { ContextOperation, GitProject, HubState, Project, RetainedCheckoutReason, Task } from '../shared/types.js';
 import { canonicalPath, containsPath } from './git.js';
 import { CheckoutPreflight, type DestructiveRequest } from './checkout-preflight.js';
 import { CheckoutRemoval } from './checkout-removal.js';
@@ -41,7 +41,7 @@ export interface DestructiveOperationOptions {
   index?: TaskBindingIndex;
   onTaskDeleted?: (task: Task, project: Project) => Promise<void>;
   /** Reports a checkout left on disk because the deletion could not resolve its project context. */
-  onCheckoutRetained?: (task: Task, project: Project, path: string) => void;
+  onCheckoutRetained?: (task: Task, project: Project, path: string, reason: RetainedCheckoutReason) => void;
 }
 
 async function canonicalOrNull(value: string): Promise<string | null> {
@@ -60,7 +60,7 @@ export class DestructiveExecution {
   private readonly sharing: WorktreeSharingGuard;
   private readonly index: TaskBindingIndex;
   private readonly onTaskDeleted?: (task: Task, project: Project) => Promise<void>;
-  private readonly onCheckoutRetained?: (task: Task, project: Project, path: string) => void;
+  private readonly onCheckoutRetained?: (task: Task, project: Project, path: string, reason: RetainedCheckoutReason) => void;
   readonly signal: AbortSignal;
 
   constructor(
@@ -140,7 +140,10 @@ export class DestructiveExecution {
     if (!operation.gitCompleted && !removable) {
       // A deletion tolerates a context it cannot verify; the checkout stays on disk.
       await this.update(taskId, operationId, (draft, current) => {
-        if (plan.checkout === 'retain' && plan.retainedPath !== undefined) current.retainedCheckoutPath = plan.retainedPath;
+        if (plan.checkout === 'retain' && plan.retainedPath !== undefined) {
+          current.retainedCheckoutPath = plan.retainedPath;
+          if (plan.retainReason !== undefined) current.retainedCheckoutReason = plan.retainReason;
+        }
         draft.worktree = null; current.gitCompleted = true;
       });
     } else if (removable) {
@@ -185,7 +188,10 @@ export class DestructiveExecution {
     });
     try { await this.onTaskDeleted?.(deleted.task, deleted.project); } catch { /* cleanup is reported by the callback owner */ }
     if (retainedPath !== undefined) {
-      try { this.onCheckoutRetained?.(deleted.task, deleted.project, retainedPath); } catch { /* reporting is best effort */ }
+      // A resumed deletion resolves no checkout target of its own, so the reason comes
+      // from the record the first attempt persisted rather than from this attempt's plan.
+      const retainReason = plan.retainReason ?? settled.retainedCheckoutReason ?? 'unresolved';
+      try { this.onCheckoutRetained?.(deleted.task, deleted.project, retainedPath, retainReason); } catch { /* reporting is best effort */ }
     }
     return 'done';
   }

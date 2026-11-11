@@ -280,10 +280,21 @@ it('deletes a task after its project directory moved and retains the unverifiabl
   await dialog.getByRole('button', { name: 'Delete task', exact: true }).click();
   await expect.poll(() => page.getByRole('button', { name: 'Open task ' + title }).count(), { timeout: 30_000 }).toBe(0);
   await expect.poll(async () => existsSync(worktreePath), { timeout: 20_000 }).toBe(true);
+  // The retained entry reports the canonical directory, which may differ from the temp root spelling.
+  const retainedPath = await realpath(worktreePath);
   const retainedNotice = page.getByRole('region', { name: 'Destructive operations' });
   await retainedNotice.waitFor({ state: 'visible' });
-  await expect(retainedNotice).toContainText(worktreePath);
-  await expect(retainedNotice).toContainText('was not removed because its project path or Git root could not be resolved');
+  await expect(retainedNotice).toContainText(retainedPath);
+  await expect(retainedNotice).toContainText('was left on disk because its project path or Git root could not be resolved');
+  await expect(retainedNotice.getByText('Checkouts left on disk')).toBeVisible();
+  await retainedNotice.getByRole('button', { name: 'Dismiss the retained checkout at ' + retainedPath }).click();
+  await expect.poll(() => retainedNotice.getByText('Checkouts left on disk').count(), { timeout: 20_000 }).toBe(0);
+  // Dismissing the report acknowledges the notice; the checkout itself stays on disk.
+  expect(existsSync(worktreePath)).toBe(true);
+  await page.reload({ waitUntil: 'load' });
+  await page.getByRole('button', { name: 'Kanban', exact: true }).click();
+  await page.getByRole('region', { name: 'Harness board column' }).or(page.locator('.kb-page-body')).first().waitFor({ state: 'visible', timeout: 30_000 });
+  await expect.poll(() => page.getByText('Checkouts left on disk').count(), { timeout: 20_000 }).toBe(0);
   expect(scaffold.ctx.workspaceRegistry.archivedSessionIds).toContain(parentId);
   expect((await exec('git', ['show-ref', '--verify', 'refs/heads/' + branch], { cwd: movedRepository })).stdout).toContain('refs/heads/' + branch);
 }, 120_000);

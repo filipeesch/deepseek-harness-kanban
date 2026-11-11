@@ -1,7 +1,7 @@
 import { KanbanError } from '../shared/errors.js';
 import { isGitProject } from '../shared/project.js';
 import type { GitPort } from '../shared/ports.js';
-import type { Project, Task } from '../shared/types.js';
+import type { Project, RetainedCheckoutReason, Task } from '../shared/types.js';
 
 /** What a deletion does with the task's checkout binding. */
 export type CheckoutDisposition = 'remove' | 'retain' | 'none';
@@ -16,6 +16,8 @@ export interface DeletionTarget {
   checkout: CheckoutDisposition;
   /** The checkout path left on disk when the disposition is `retain`. */
   retainedPath?: string;
+  /** Why the checkout is kept on disk; present exactly when the disposition is `retain`. */
+  retainReason?: RetainedCheckoutReason;
 }
 
 export interface DeletionTargetInput {
@@ -32,13 +34,13 @@ export interface DeletionTargetInput {
 export async function resolveDeletionTarget(input: DeletionTargetInput): Promise<DeletionTarget> {
   const { task, project, git } = input;
   if (!task.worktree) return { checkout: 'none' };
-  // A folder project keeps its plain checkout through the existing retained-checkout path.
-  if (!isGitProject(project)) return { checkout: 'none' };
+  // A folder project keeps its plain checkout, and the deletion reports it as retained.
+  if (!isGitProject(project)) return { checkout: 'retain', retainedPath: task.worktree.path, retainReason: 'folder' };
   try {
     return { directoryTarget: await git.projectDirectory(project), checkout: 'remove' };
   } catch (error) {
     if (error instanceof KanbanError && (error.code === 'PATH_UNAVAILABLE' || error.code === 'INVALID_PATH')) {
-      return { checkout: 'retain', retainedPath: task.worktree.path };
+      return { checkout: 'retain', retainedPath: task.worktree.path, retainReason: 'unresolved' };
     }
     throw error;
   }

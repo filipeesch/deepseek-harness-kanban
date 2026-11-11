@@ -38,9 +38,9 @@ describe('deletion target resolution', () => {
     expect(fake.calls()).toBe(0);
   });
 
-  it('lets a folder project keep its plain checkout through the existing path', async () => {
+  it('retains a folder project plain checkout with its own reason', async () => {
     const fake = git('/plain/notes');
-    await expect(resolveDeletionTarget({ task: task({ worktree: binding }), project: folderProject, git: fake.port })).resolves.toEqual({ checkout: 'none' });
+    await expect(resolveDeletionTarget({ task: task({ worktree: binding }), project: folderProject, git: fake.port })).resolves.toEqual({ checkout: 'retain', retainedPath: '/trees/task', retainReason: 'folder' });
     expect(fake.calls()).toBe(0);
   });
 
@@ -51,7 +51,7 @@ describe('deletion target resolution', () => {
 
   it('retains a checkout when the project directory is unavailable', async () => {
     const fake = git(unavailable);
-    await expect(resolveDeletionTarget({ task: task({ worktree: binding }), project: gitProject, git: fake.port })).resolves.toEqual({ checkout: 'retain', retainedPath: '/trees/task' });
+    await expect(resolveDeletionTarget({ task: task({ worktree: binding }), project: gitProject, git: fake.port })).resolves.toEqual({ checkout: 'retain', retainedPath: '/trees/task', retainReason: 'unresolved' });
   });
 
   it('propagates an unexpected Git failure instead of retaining silently', async () => {

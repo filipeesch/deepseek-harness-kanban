@@ -527,6 +527,40 @@ Configuration SHALL include a **Team Settings** section for the active Hub. That
 - **WHEN** Team Settings, the banner, or the indicators describe state and actions
 - **THEN** they use storage or synchronization vocabulary rather than commit, branch, remote, fetch, or push wording
 
+### Requirement: Dismissible team-changes banner
+
+The board banner that reports available team changes or a required review SHALL be dismissible for the active Hub. Dismissing it SHALL NOT apply, receive, publish, or discard any change, SHALL NOT clear a Hub tab or board tab state indicator, SHALL NOT change the Hub's publishing state, and SHALL leave **Review team changes** available from the Hub tab indicators and Team Settings.
+
+The dismissal SHALL belong to the current page session for that Hub. It SHALL NOT be stored on the host, SHALL NOT be sent to the team, and SHALL NOT be published. The banner SHALL be presented again when the Hub's pending team state changes — the available updates, the conflicts, or the blocking boards — and SHALL NOT be presented while that state is unchanged. A reload SHALL present the banner again while the state that caused it remains.
+
+#### Scenario: Dismiss the team-changes banner
+
+- **WHEN** the board presents the team-changes banner and the user activates its dismiss control
+- **THEN** the banner is removed from the board
+- **AND** the Hub tab and board tab state indicators are unchanged
+- **AND** Team Settings still presents the team changes and the action that applies them
+
+#### Scenario: Dismissal resolves nothing
+
+- **WHEN** the user dismisses the team-changes banner
+- **THEN** no change is applied, published, received, or discarded
+- **AND** the Hub's pending state remains available on its own surfaces
+
+#### Scenario: A new team change restores the banner
+
+- **WHEN** the user dismissed the banner and the Hub's available updates, conflicts, or blocking boards then change
+- **THEN** the board presents the banner again
+
+#### Scenario: An unchanged state does not restore the banner
+
+- **WHEN** the user dismissed the banner and the Hub's pending team state does not change
+- **THEN** the board does not present the banner again during that page session
+
+#### Scenario: A reload restores the banner
+
+- **WHEN** the user dismissed the banner and reloads the page while the Hub's pending team state is unchanged
+- **THEN** the board presents the banner again
+
 ### Requirement: First connection
 
 Connecting a storage that already contains a published document while the Hub has no received document SHALL present the differences and SHALL require choosing either to receive the published configuration or to publish the local one. Connecting a storage with no published document SHALL publish the local configuration without requiring that choice. A Git repository with no commits or no published document, a Google Drive folder with no `kanban-hub.yaml`, and a local folder with no `kanban-hub.yaml` SHALL all count as having no published document. A Google Drive document SHALL be adopted by its file ID when the selected folder already contains `kanban-hub.yaml`; a local folder document SHALL be adopted in place when the selected directory already contains it.

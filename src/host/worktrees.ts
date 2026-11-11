@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { KanbanError, problem } from '../shared/errors.js';
 import type { GitPort, GitTree, SessionPort } from '../shared/ports.js';
-import type { ContextOperation, CreateWorktreeInput, GitProject, HubState, OperationRequest, Project, Task, WorktreeDefaults } from '../shared/types.js';
+import type { ContextOperation, CreateWorktreeInput, GitProject, HubState, OperationRequest, Project, RetainedCheckoutReason, Task, WorktreeDefaults } from '../shared/types.js';
 import { canonicalPath } from './git.js';
 import { isGitProject, requireGitProject } from '../shared/project.js';
 import { WorktreeSharingGuard } from './worktree-sharing.js';
@@ -10,6 +10,7 @@ import { DestructiveExecution, type DestructiveOperationHost } from './destructi
 import { DestructiveAdmission } from './destructive-admission.js';
 import { OperationQueue } from './operation-queue.js';
 import { OperationJournal, ProgressJournal, requireTask } from './operation-journal.js';
+import { entryExists } from './paths.js';
 import { ConversationProbe } from './conversation-probe.js';
 import { TaskBindingIndex } from './task-binding-index.js';
 import type { OperationPass } from './destructive-operation.js';
@@ -28,17 +29,13 @@ export interface WorktreeStore {
 export type WorktreeRequest = OperationRequest | ({ kind: 'create' } & CreateWorktreeInput);
 /** Derives the collision-free title defaults creation uses when the request omits them. */
 export interface WorktreeDefaultsPort { derive(taskId: string): Promise<WorktreeDefaults> }
-export interface WorktreeCoordinatorOptions { signal?: AbortSignal; id?: () => string; now?: () => string; index?: TaskBindingIndex; worktreeDefaults?: WorktreeDefaultsPort; onTaskDeleted?: (task: Task, project: Project) => Promise<void>; onCheckoutRetained?: (task: Task, project: Project, path: string) => void; sharing?: WorktreeSharingGuard; /** Shared with project relocation so both serialize on one per-repository lane. */ queue?: OperationQueue }
+export interface WorktreeCoordinatorOptions { signal?: AbortSignal; id?: () => string; now?: () => string; index?: TaskBindingIndex; worktreeDefaults?: WorktreeDefaultsPort; onTaskDeleted?: (task: Task, project: Project) => Promise<void>; onCheckoutRetained?: (task: Task, project: Project, path: string, reason: RetainedCheckoutReason) => void; sharing?: WorktreeSharingGuard; /** Shared with project relocation so both serialize on one per-repository lane. */ queue?: OperationQueue }
 type CreateAttempt = NonNullable<ContextOperation['createAttempt']>;
 
 function requireProject(state: HubState, id: string): Project {
   const project = state.projects.find(item => item.id === id);
   if (!project) throw new KanbanError('PROJECT_NOT_FOUND', 'The task project does not exist.', { projectId: id });
   return project;
-}
-async function entryExists(value: string): Promise<boolean> {
-  try { await lstat(value); return true; }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
 }
 function beforeCreateFailure(error: unknown): boolean {
   if (!(error instanceof KanbanError)) return false;
