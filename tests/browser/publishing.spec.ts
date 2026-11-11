@@ -63,7 +63,8 @@ test('applies a pending team removal and enables Get updates for a pending orpha
   await page.goto(HARNESS + '?scenario=publishing&sharing=pending-orphan');
   await expect(page.getByRole('button', { name: 'Get updates for every board (1)' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Publish as a new board' })).toHaveCount(0);
-  await expect(page.getByText(/Get the team updates to keep it as an orphan/)).toBeVisible();
+  // The pending orphan is applied by the update action, which the panel offers.
+  await expect(page.getByText('Removed by the team', { exact: true })).toBeVisible();
 });
 
 test('restores a board removed only here and explains an unavailable repository', async ({ page }) => {

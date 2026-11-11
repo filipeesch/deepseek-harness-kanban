@@ -134,6 +134,7 @@ export function BoardReview({ hubId, sharing, act, pending }: { hubId: string; s
         <div className="kb-share-actions">
           {board.state === 'updates-available' && <button type="button" className="kb-button" disabled={pending !== null} onClick={() => void act('update-board', { type: 'sharing.updateBoard', hubId, boardId: board.boardId })}>{pending === 'update-board' ? 'Updating…' : 'Update board'}</button>}
           {board.state === 'draft' && <button type="button" className="kb-button" disabled={pending !== null} onClick={() => void act('publish-board', { type: 'sharing.publishBoard', hubId, boardId: board.boardId })}>{pending === 'publish-board' ? 'Publishing…' : 'Publish board'}</button>}
+          {board.state === 'updates-available' && <button type="button" className="kb-button" disabled={pending !== null} onClick={() => void act('update-board', { type: 'sharing.updateBoard', hubId, boardId: board.boardId })}>{pending === 'update-board' ? 'Updating…' : 'Update board'}</button>}
           {board.state === 'needs-review' && board.key !== undefined && <>
             <button type="button" className="kb-button" disabled={pending !== null} onClick={() => void act('resolve-team', { type: 'sharing.resolve', hubId, boardId: board.boardId, choice: 'team' })}>Use the team version</button>
             <button type="button" className="kb-button" disabled={pending !== null} onClick={() => void act('resolve-local', { type: 'sharing.resolve', hubId, boardId: board.boardId, choice: 'local' })}>Keep the local version</button>
@@ -146,7 +147,6 @@ export function BoardReview({ hubId, sharing, act, pending }: { hubId: string; s
     {sharing.incoming.length > 0 && <p className="kb-hint" role="status">New from the team: {sharing.incoming.map(board => board.name).join(', ')}.</p>}
     {sharing.orderChanged && <p className="kb-hint" role="status">The team changed the board order.</p>}
     {sharing.removing.length > 0 && <p className="kb-hint" role="status">Removed by the team with no local work: {sharing.removing.map(board => board.name).join(', ')}.</p>}
-    {sharing.boards.some(board => board.state === 'orphan' && board.pending) && <p className="kb-hint" role="status">The team removed a board that still has local work. 'Get the team updates to keep it as an orphan.'</p>}
   </>;
 }
 

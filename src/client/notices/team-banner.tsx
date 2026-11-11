@@ -39,10 +39,13 @@ export function TeamChangesBanner({ view, boardId, pending, dismissedSignature, 
   if (dismissedSignature === signature) return null;
   const boardReview = board?.state === 'needs-review';
   const boardUpdates = board?.state === 'updates-available';
+  // Naming the board matters as soon as more than one is published, because the
+  // banner speaks for the active tab.
+  const named = view.boards.filter(entry => entry.bound).length > 1 && board !== undefined ? ' “' + board.name + '”' : '';
   const message = boardReview || view.conflicts > 0
-    ? 'Your team changed this board in a way that needs a choice.'
+    ? 'Your team changed this board' + named + ' in a way that needs a choice.'
     : boardUpdates
-      ? 'Your team published changes to this board.'
+      ? 'Your team published changes to this board' + named + '.'
       : view.updates > 0
         ? 'Your team published changes to this Hub.'
         : view.blockers[0]?.message ?? 'Team changes cannot be applied until the blocking boards are resolved.';

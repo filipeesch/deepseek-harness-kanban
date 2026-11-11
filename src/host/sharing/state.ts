@@ -24,6 +24,11 @@ export interface StoredBoard {
   behind: number;
   /** The digest of the board's published workflow, so a local edit is visible as a draft. */
   published: string | null;
+  /**
+   * The published workflow text, kept only while the board needs a choice, so the
+   * review panel can show both versions without reading the storage.
+   */
+  publishedText?: string | null;
   /** The local board differs from the published board, so a publish is due. */
   draft: boolean;
   /** Applying this board requires a choice before it can proceed. */
@@ -61,7 +66,8 @@ export interface HubSharingRecord {
 
 const storedBoard = z.strictObject({
   seq: z.number().int().min(0),
-  published: z.string().min(1).nullable(),
+  published: z.string().min(1).nullable().optional(),
+  publishedText: z.string().nullable().optional(),
   head: z.string().min(1).nullable(),
   probe: z.string().min(1).nullable(),
   behind: z.number().int().min(0),
@@ -132,7 +138,13 @@ function manifestOf(document: z.infer<typeof legacyDocument>): StoredManifest {
 /** Read the current record shape, or migrate one written before per-board publishing. */
 export function migrateSharingRecord(raw: unknown): HubSharingRecord | undefined {
   const current = v3Record.safeParse(raw);
-  if (current.success) return current.data as HubSharingRecord;
+  if (current.success) {
+    const record = current.data as HubSharingRecord;
+    for (const [key, board] of Object.entries(record.boards)) {
+      record.boards[key] = { ...board, published: board.published ?? null, publishedText: board.publishedText ?? null };
+    }
+    return record;
+  }
   const legacy = legacyRecord.safeParse(raw);
   if (!legacy.success) return undefined;
   const provider = legacy.data.binding.provider;
@@ -170,7 +182,7 @@ export interface HubSharingStore {
 
 /** A board cursor with no observation yet, which is what a fresh binding starts from. */
 export function emptyBoard(): StoredBoard {
-  return { seq: 0, head: null, probe: null, behind: 0, published: null, draft: false, conflict: null };
+  return { seq: 0, head: null, probe: null, behind: 0, published: null, publishedText: null, draft: false, conflict: null };
 }
 
 /**

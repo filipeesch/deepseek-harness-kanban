@@ -161,6 +161,14 @@ export class GitClone {
     throw gitFailure('commit', committed);
   }
 
+  /** Commit what is already staged, which is how a removal records itself. */
+  async commitStaged(message: string): Promise<boolean> {
+    const committed = await this.run([...COMMIT_IDENTITY, 'commit', '--quiet', '-m', message]);
+    if (committed.exitCode === 0) return true;
+    if (/nothing to commit|no changes added/i.test(committed.stdout + committed.stderr)) return false;
+    throw gitFailure('commit', committed);
+  }
+
   async push(branch: string): Promise<void> {
     const pushed = await this.run(['push', '--quiet', 'origin', 'HEAD:refs/heads/' + branch], PUSH_TIMEOUT_MS);
     if (pushed.exitCode === 0) return;
