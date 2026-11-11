@@ -117,7 +117,7 @@ export class KanbanApp {
    locateBySession:sessionId=>{const located=this.locator.bySession(sessionId);return located?{task:located.task,board:located.board}:undefined;},
    locate:taskId=>{const located=this.locator.byTask(taskId);return located?{task:located.task,board:located.board}:undefined;},
    facts:sessionId=>this.factsSource.read(sessionId),
-   admit:(taskId,plan)=>this.admitAutoAdvance(taskId,plan),
+   admit:(taskId,plan,isCurrent)=>this.admitAutoAdvance(taskId,plan,isCurrent),
    pause:(taskId,reason,message,expectedColumnId)=>this.pauseAutoMode(taskId,reason,message,expectedColumnId),
    schedule:callback=>setTimeout(callback,AUTO_ADVANCE_SETTLE_MS),
    cancel:handle=>clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -506,6 +506,9 @@ export class KanbanApp {
  private async saveNoteNow(input:Extract<Command,{type:'note.save'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).saveNote(input.taskId,{id:input.noteId,content:input.content,tags:input.tags});}
  private async deleteNoteNow(input:Extract<Command,{type:'note.delete'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).deleteNote(input.taskId,input.noteId);}
  command(command:Command):Promise<FullHostSnapshot>{return this.serial(()=>this.execute(command));}
+ /** The pause tools' port: run the command, then re-read the task it changed. */
+ pauseTask(taskId:string,reason:string):Promise<LocatedTask>{return this.command({type:'task.pause',taskId,reason}).then(()=>this.locatedTask(taskId));}
+ resumeTask(taskId:string):Promise<LocatedTask>{return this.command({type:'task.resume',taskId}).then(()=>this.locatedTask(taskId));}
  private async execute(command:Command):Promise<FullHostSnapshot>{
   invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');
   let commandReceipt:HostSnapshot['commandReceipt'];
@@ -557,8 +560,12 @@ export class KanbanApp {
    case 'operation.return':this.assertProjectRelocation(this.locatedTask(command.taskId).project,'returning to the base project');await this.clearPending(command.taskId);await this.worktrees.returnToBase(command.taskId);break;
    case 'operation.dismiss':await this.dismissFailedAdvance(command.taskId);break;
    case 'task.move':await this.move(command);break;
-   case 'task.autoMode':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).setAutoMode(command.taskId,command.enabled);if(!command.enabled)this.autoAdvance.forget(command.taskId);break;}
+   // Changing the setting forgets a turn that has not settled yet, so enabling — or
+   // resuming a paused task — never advances a turn that ended before the change.
+   case 'task.autoMode':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).setAutoMode(command.taskId,command.enabled);this.autoAdvance.forget(command.taskId);break;}
    case 'task.recordTransition':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).recordTransition(command.taskId,command.columnId);break;}
+   case 'task.pause':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).pauseTask(command.taskId,command.reason);this.autoAdvance.forget(command.taskId);break;}
+   case 'task.resume':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).resumeTask(command.taskId);this.autoAdvance.forget(command.taskId);break;}
    case 'task.runInstruction':await this.runInstruction(command);break;
    case 'schedule.save':{
     const store=this.hubStore(command.hubId);
@@ -629,8 +636,10 @@ export class KanbanApp {
    taskId:command.taskId,columnId:command.columnId,instruction:command.expectedInstruction,reviewedInstruction:command.expectedInstruction,expectedEnteredAt:command.expectedEnteredAt,
   });
  }
- private admitAutoAdvance(taskId:string,plan:AutoAdvancePlan):Promise<void>{
-  return this.serial(()=>this.admitAutoAdvanceNow(taskId,plan));
+ private admitAutoAdvance(taskId:string,plan:AutoAdvancePlan,isCurrent:()=>boolean):Promise<void>{
+  // The drain shares the command lane, so a pause or resume queued ahead of this
+  // admission must still win: the settle's own generation decides.
+  return this.serial(()=>isCurrent()?this.admitAutoAdvanceNow(taskId,plan):Promise.resolve());
  }
  /** The serialized adapter around the one automatic-advance admission path. */
  private admitAutoAdvanceNow(taskId:string,plan:AutoAdvancePlan):Promise<void>{
@@ -668,7 +677,7 @@ export class KanbanApp {
   if(this.disposed)return;if(this.driving){this.driveAgain=true;return;}this.driving=true;
   try{do{this.driveAgain=false;this.pendingTransitions.refresh(this.locator.summaries());for(const taskId of [...this.pendingTransitions.list()]){const located=this.locator.byTask(taskId);const task=located?.task;const pending=task?.pendingTransition;if(!located||!task||!pending||pending.status!=='waiting'||task.operation||(pending.worktreeRequest&&task.worktree?.status!=='ready'))continue;const store=this.hubs.hub(located.hubId);
    try{
-    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');operations.placeTask(d,t.id,pending.columnId,placementFromAnchor(pending.beforeTaskId),nextEnteredAt());if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});
+    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');operations.placeTask(d,t.id,pending.columnId,placementFromAnchor(pending.beforeTaskId),nextEnteredAt(),{retainAgentPause:pending.origin==='auto'});if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});if(pending.origin!=='auto')this.autoAdvance.forget(task.id);
     if(pending.mode==='run'){
      invariant(pending.sessionId&&pending.text,'INVALID_TARGET','Confirmed execution is missing its target or instruction.');
      await admitStageInstruction(this.stageInstructionDeps(),{taskId:task.id,columnId:pending.columnId,instruction:pending.text,sessionId:pending.sessionId,requestId:pending.id});

@@ -1,7 +1,8 @@
 import type { Column, ConversationFacts, PendingUserWork, Task, Workflow } from '../shared/types.js';
 import { NO_PENDING_USER_WORK } from '../shared/types.js';
 import { openSessionIds } from '../shared/conversations.js';
-import { entryInstruction, hasUnresolvedEntry } from './stage-entry.js';
+import { entryInstruction } from './stage-entry.js';
+import { blocksAdvance } from './auto-mode-hold.js';
 import { hasPendingUserWork, mergePendingUserWork } from './pending-user-work.js';
 import { defaultDestination } from './transitions.js';
 
@@ -22,7 +23,7 @@ export interface AdvanceResolutionOptions {
 
 /** Why a completed turn does not advance the task, or that it does. */
 export type AdvanceDecision =
-  /** The task itself is busy with a context operation, a confirmed transition, or an unresolved entry. */
+  /** The task itself is busy with a context operation, a confirmed transition, or an unresolved entry, or the agent paused it. */
   | { readonly kind: 'busy' }
   /** An open conversation is still executing; the ending conversation is retried after the settle delay. */
   | { readonly kind: 'running'; readonly sessions: readonly string[] }
@@ -32,11 +33,12 @@ export type AdvanceDecision =
 
 /**
  * Decide what a completed turn means for one task. The precedence is deliberate:
- * a busy task is skipped silently, an executing open conversation waits for the
- * settle delay, and pending user work is a hold that never records a pause.
+ * a task the host must not advance is skipped silently, an executing open
+ * conversation waits for the settle delay, and pending user work is a hold that
+ * never records a pause.
  */
 export function resolveAdvanceDecision(task: Task, facts: ReadonlyMap<string, ConversationFacts>): AdvanceDecision {
-  if (task.operation || task.pendingTransition || hasUnresolvedEntry(task)) return { kind: 'busy' };
+  if (blocksAdvance(task)) return { kind: 'busy' };
   const open = new Set(openSessionIds(task));
   const running: string[] = [];
   for (const sessionId of task.sessionIds) {

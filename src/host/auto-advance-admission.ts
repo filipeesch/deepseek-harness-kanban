@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { AutoAdvancePlan } from '../domain/auto-advance.js';
 import { hasPendingUserWork } from '../domain/pending-user-work.js';
-import { entryInstruction, hasUnresolvedEntry } from '../domain/stage-entry.js';
+import { blocksAdvance } from '../domain/auto-mode-hold.js';
+import { entryInstruction } from '../domain/stage-entry.js';
 import { resolveAdvanceRoute } from '../domain/transition-route.js';
 import { firstOpenSessionId } from '../shared/conversations.js';
 import { KanbanError, invariant } from '../shared/errors.js';
@@ -20,9 +21,9 @@ export interface AutoAdvanceAdmissionDeps {
   report(error: unknown): void;
 }
 
-/** A task that cannot advance right now: disabled, busy, or with an unresolved stage entry. */
+/** A task that cannot advance right now: disabled, or blocked by the one shared rule. */
 function blocked(task: Task): boolean {
-  return task.autoMode?.enabled !== true || task.operation !== null || task.pendingTransition !== undefined || hasUnresolvedEntry(task);
+  return task.autoMode?.enabled !== true || blocksAdvance(task);
 }
 
 /**
@@ -80,6 +81,7 @@ export async function admitAutoAdvance(deps: AutoAdvanceAdmissionDeps, taskId: s
     invariant(value.autoMode?.enabled === true, 'AUTO_MODE_DISABLED', 'Auto mode is no longer enabled.');
     invariant(!value.operation && !value.pendingTransition, 'REVISION_CONFLICT', 'Task changed before the automatic advance could be admitted.');
     invariant(value.columnId === plan.fromColumnId, 'REVISION_CONFLICT', 'Task moved before the automatic advance could be admitted.');
+    invariant(value.autoMode?.hold === undefined, 'REVISION_CONFLICT', 'Task was paused before the automatic advance could be admitted.');
     const board = draft.boards.find(candidate => candidate.id === value.boardId);
     invariant(board !== undefined, 'INVALID_TARGET', 'The automatic advance destination changed.');
     requireRoute(destination, board.workflow, value);

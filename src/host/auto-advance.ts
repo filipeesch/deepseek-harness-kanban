@@ -45,8 +45,13 @@ export interface AutoAdvancePorts {
   locateBySession(sessionId: string): AutoAdvanceTaskView | undefined;
   locate(taskId: string): AutoAdvanceTaskView | undefined;
   facts(sessionId: string): Promise<ConversationFacts>;
-  /** Persist one durable advance and dispatch it; throws when nothing was admitted. */
-  admit(taskId: string, plan: AutoAdvancePlan): Promise<void>;
+  /**
+   * Persist one durable advance and dispatch it; throws when nothing was admitted.
+   * `isCurrent` reports whether the settle that produced the plan is still the
+   * latest for the task, so an admission queued behind a pause or resume drops the
+   * turn it no longer owns.
+   */
+  admit(taskId: string, plan: AutoAdvancePlan, isCurrent: () => boolean): Promise<void>;
   pause(taskId: string, reason: AutoModePauseReason, message: string | undefined, expectedColumnId: string): Promise<void>;
   schedule(callback: () => void): unknown;
   cancel(handle: unknown): void;
@@ -155,7 +160,7 @@ export class AutoAdvanceCoordinator {
           }
           continue;
         }
-        await this.advance(located.task, located.board);
+        await this.advance(located.task, located.board, entry.generation);
       } catch (error) {
         this.ports.report(error);
       }
@@ -174,7 +179,7 @@ export class AutoAdvanceCoordinator {
     }
   }
 
-  private async advance(task: HubTask, board: Board): Promise<void> {
+  private async advance(task: HubTask, board: Board, generation: number): Promise<void> {
     if (this.disposed) return;
     const route = resolveAdvanceRoute(board.workflow, task);
     if (route.kind === 'none') return;
@@ -186,7 +191,9 @@ export class AutoAdvanceCoordinator {
       return;
     }
     try {
-      await this.ports.admit(task.id, route.plan);
+      // The admission runs behind the command lane, so it re-reads this predicate
+      // right before it decides; a forget after the settle still wins.
+      await this.ports.admit(task.id, route.plan, () => (this.generations.get(task.id) ?? 0) === generation);
     } catch (error) {
       this.ports.report(error);
       const message = error instanceof Error ? error.message : String(error);

@@ -4,6 +4,7 @@ import { STAGE_MIN_SIZE, STAGE_SIZE_LIMIT } from './stage-size.js';
 import { PROJECT_KEY_PATTERN } from './project-key.js';
 import { transitionRule as normalizeTransitionRule } from './transition-rule.js';
 import { isAbsolutePath, isDomainId } from './validation.js';
+import { AUTO_MODE_PAUSE_REASONS } from '../shared/types.js';
 import { ANCHOR_POINTS_PER_SIDE, CONNECTION_OFFSET_LIMIT } from './connection-anchor.js';
 
 /**
@@ -47,11 +48,15 @@ export const pendingTransition = z.strictObject({
   origin: z.literal('auto').optional(),
 });
 export const autoModePause = z.strictObject({
-  reason: z.enum(['turn-error', 'turn-blocked', 'turn-aborted', 'turn-max-tokens', 'advance-failed', 'transition-stale']),
+  reason: z.enum(AUTO_MODE_PAUSE_REASONS),
   at: timestamp,
   message: z.string().optional(),
 });
-export const autoMode = z.strictObject({ enabled: z.boolean(), pause: autoModePause.optional() });
+/** The pause the agent requested; it exists only while auto mode stays enabled. */
+export const autoModeHold = z.strictObject({ reason: nonempty, at: timestamp });
+export const autoMode = z.strictObject({ enabled: z.boolean(), pause: autoModePause.optional(), hold: autoModeHold.optional() }).superRefine((value, context) => {
+  if (value.hold !== undefined && !value.enabled) context.addIssue({ code: 'custom', path: ['hold'], message: 'A pause requires auto mode to be enabled.' });
+});
 /** An authored stage position; the workflow parser owns the accepted range. */
 export const stagePosition = z.strictObject({ x: z.number().finite(), y: z.number().finite() });
 /** One authored transition entry; the bare identifier form is normalized on read. */

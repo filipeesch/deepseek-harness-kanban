@@ -171,6 +171,34 @@ describe('auto-advance coordinator', () => {
     expect(closed.admitted).toHaveLength(0);
   });
 
+  it('skips a task the agent paused without recording a pause or retrying', async () => {
+    const f = harness();
+    f.seed(task({ autoMode: { enabled: true, hold: { reason: 'Review the diff', at: now } } }), board(column('backlog'), column('plan', { onEnterPrompt: 'Plan it.' })));
+    f.coordinator.observe('s1', turnEnd(1));
+    await f.scheduler.flush();
+    expect(f.admitted).toHaveLength(0);
+    expect(f.pauses).toHaveLength(0);
+    expect(f.reports).toHaveLength(0);
+    expect(f.scheduler.size).toBe(0);
+  });
+
+  it('hands the admission a predicate that turns false when the settle is forgotten', async () => {
+    const f = harness();
+    f.seed(task(), board(column('backlog'), column('plan', { onEnterPrompt: 'Plan it.' })));
+    const live: boolean[] = [];
+    f.ports.admit = async (taskId, plan, isCurrent) => {
+      // A pause or resume queued ahead of the admission runs first; the settle is
+      // then stale and the admission must see it.
+      f.coordinator.forget(taskId);
+      live.push(isCurrent());
+      f.admitted.push({ taskId, plan });
+    };
+    f.coordinator.observe('s1', turnEnd(1));
+    await f.scheduler.flush();
+    expect(f.admitted).toHaveLength(1);
+    expect(live).toEqual([false]);
+  });
+
   it('ignores a duplicated turn end', async () => {
     const f = harness();
     f.seed(task(), board(column('backlog'), column('plan')));
