@@ -41,7 +41,7 @@ import { ScheduleRunRegistry } from './host/schedule-runs.js';
 import { ScheduleArchiveWatcher } from './host/schedule-archive.js';
 import { ScheduleRunner } from './host/schedule-runner.js';
 import { ScheduleCoordinator, type ScheduledEntry } from './host/schedule-coordinator.js';
-import { createScheduleModelPort } from './host/schedule-model.js';
+import { createSessionModelPort } from './host/session-model.js';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { abortableSleep, ForkAdopter } from './host/conversation-adoption.js';
 import type { TaskLocator } from './host/task-locator.js';
@@ -193,10 +193,10 @@ export async function apply(ctx:Context):Promise<void>{
  let sharing:HubSharingRuntime;
  try{sharing=await openHubSharing(ctx,hubs,{report});}catch(error){await schedules.close();await hubs.close();await questions.close();await storage.close();throw error;}
  const teamFiles=new TeamFiles({store:hubId=>sharing.service.fileStoreFor(hubId),exclusive:(hubId,operation)=>sharing.service.exclusive(hubId,operation)});
- const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,report,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
+ const sessionModels=createSessionModelPort(ctx);
+ const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,models:sessionModels,report,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
  const taskMessages=new InterCardMessaging({locateBySession:id=>app.locator.bySession(id),locate:id=>app.locator.byTask(id),prepare:id=>app.prepareMessageConversation(id),delivery:createNativeTaskMessageDelivery(ctx,history)});
  sharing.setNotify(()=>app.sharingChanged());
- const scheduleModels=createScheduleModelPort(ctx);
  const scheduleRuns=new ScheduleRunRegistry({storage:schedules.storage,now:()=>new Date().toISOString(),onChange:()=>app.activityChanged(),report});
  const scheduleWatcher=new ScheduleArchiveWatcher({
   facts:id=>app.conversationFacts(id),
@@ -215,7 +215,7 @@ export async function apply(ctx:Context):Promise<void>{
   validateDirectory:(id,expected)=>native.sessions.validateDirectory(id,expected),
   renameSession:async(id,title)=>{await ctx.sessionController.rename({sessionId:SessionId(id),title});},
   send:(id,text,requestId)=>native.sessions.send(id,text,requestId),
-  models:scheduleModels,runs:scheduleRuns,watcher:scheduleWatcher,report,
+  models:sessionModels,runs:scheduleRuns,watcher:scheduleWatcher,report,
  });
  const scheduleCoordinator=new ScheduleCoordinator({
   clock:()=>Date.now(),
@@ -230,7 +230,7 @@ export async function apply(ctx:Context):Promise<void>{
   runNow:async(hubId,scheduleId)=>{scheduleCoordinator.runNow(hubId,scheduleId);},
   scheduleDeleted:async scheduleId=>{await scheduleRuns.remove(scheduleId);},
   runtime:()=>scheduleRuns.runtimeByHub(),
-  modelCatalog:refresh=>scheduleModels.catalog(refresh),
+  modelCatalog:refresh=>sessionModels.catalog(refresh),
  });
  let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offSignals:(()=>void)|undefined;let offAdoption:(()=>void)|undefined;let offScheduleStatus:(()=>void)|undefined;
  ctx.effect(()=>async()=>{

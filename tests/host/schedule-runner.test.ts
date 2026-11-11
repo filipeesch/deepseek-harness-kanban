@@ -2,7 +2,7 @@ import { mkdir, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ScheduleArchiveWatcher } from '../../src/host/schedule-archive.js';
-import type { ScheduleModelPort } from '../../src/host/schedule-model.js';
+import type { SessionModelPort } from '../../src/host/session-model.js';
 import { ScheduleRunner } from '../../src/host/schedule-runner.js';
 import { ScheduleRunRegistry } from '../../src/host/schedule-runs.js';
 import { KanbanError } from '../../src/shared/errors.js';
@@ -25,12 +25,13 @@ async function harness(options: HarnessOptions = {}) {
   });
   const applied: string[] = [];
   const titles: Array<{ sessionId: string; title: string }> = [];
-  const models: ScheduleModelPort = {
+  const models: SessionModelPort = {
     catalog: async () => ({ default: { provider: 'deepseek', model: 'chat' }, providers: [], failures: [] }),
     apply: async (sessionId, selection) => {
-      if (options.modelFailure) throw new KanbanError('SESSION_MODEL_UNAVAILABLE', 'The stored model is unavailable.');
+      if (options.modelFailure) return { applied: false, reason: 'unavailable', message: 'The stored model is unavailable.' };
       applied.push(sessionId + ':' + selection.provider + '/' + selection.model);
       options.afterModel?.(sessionId);
+      return { applied: true };
     },
   };
   const runner = new ScheduleRunner({
@@ -254,6 +255,20 @@ describe('ScheduleRunner', () => {
     harnessed.watcher.observe(lastRun!.sessionId!);
     await flush();
     expect(harnessed.sessions.archived).toEqual([lastRun!.sessionId]);
+    await harnessed.closeAll();
+  });
+
+  it('applies a schedule model of its own and never the model a board names', async () => {
+    const harnessed = await harness();
+    // A schedule targets a project, never a board, so the board default model has
+    // no route into an occurrence: only the schedule's own model is applied.
+    await harnessed.store.setWorkflow(harnessed.store.snapshot().workflowYaml + 'model:\n  provider: anthropic\n  model: claude\n');
+    const own = await harnessed.createSchedule({ model: { provider: 'deepseek', model: 'reason' } });
+    await harnessed.runner.run({ ...harnessed.occurrence(), scheduleId: own.id });
+    expect(harnessed.applied).toEqual([expect.stringMatching(/:deepseek\/reason$/)]);
+    const plain = await harnessed.createSchedule({ title: 'Plain' });
+    await harnessed.runner.run({ ...harnessed.occurrence('2026-01-02T09:00:00.000Z'), scheduleId: plain.id });
+    expect(harnessed.applied).toHaveLength(1);
     await harnessed.closeAll();
   });
 

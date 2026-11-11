@@ -785,6 +785,32 @@ describe('auto mode on the board', () => {
     await waitFor(() => expect((within(alpha).getByRole('button', { name: 'Turn on auto mode' }) as HTMLButtonElement).disabled).toBe(false));
   });
 
+  it('presents the pause the agent requested on the card and in the drawer', async () => {
+    const paused = fixture();
+    paused.state.hubs[0]!.tasks[0]!.autoMode = { enabled: true, hold: { reason: 'Review the diff', at: '2026-10-21T12:00:00Z' } };
+    mount(paused);
+    const user = userEvent.setup();
+    await loaded();
+    const card = document.querySelector('[data-task-id="t1"]') as HTMLElement;
+    expect(card.querySelector('.kb-card-status-line')?.textContent).toBe('Auto mode paused by the agent: Review the diff');
+    const chip = within(card).getByRole('button', { name: 'Auto mode paused by the agent: Review the diff. Resume auto mode' });
+    expect(chip.getAttribute('aria-pressed')).toBe('false');
+    expect(chip.getAttribute('data-auto-state')).toBe('paused-by-agent');
+
+    await user.click(screen.getByRole('button', { name: 'Open task Alpha task' }));
+    const drawer = document.querySelector('.kb-drawer') as HTMLElement;
+    expect(within(drawer).getByRole('button', { name: 'Auto mode paused by the agent: Review the diff. Resume auto mode' })).toBeTruthy();
+  });
+
+  it('presents the agent pause and a failed turn together on the card', async () => {
+    const paused = fixture();
+    paused.state.hubs[0]!.tasks[0]!.autoMode = { enabled: true, hold: { reason: 'Review the diff', at: '2026-10-21T12:00:00Z' }, pause: { reason: 'turn-error', at: '2026-10-21T12:00:00Z' } };
+    mount(paused);
+    await loaded();
+    const lines = [...(document.querySelector('[data-task-id="t1"]') as HTMLElement).querySelectorAll('.kb-card-status-line')].map(line => line.textContent);
+    expect(lines).toEqual(['Auto mode paused by the agent: Review the diff', 'Auto mode paused: the turn failed']);
+  });
+
   it('presents a paused automatic advance in the drawer', async () => {
     const paused = fixture();
     paused.state.hubs[0]!.tasks[0]!.autoMode = { enabled: true, pause: { reason: 'turn-error', at: '2026-10-21T12:00:00Z' } };
@@ -793,8 +819,8 @@ describe('auto mode on the board', () => {
     await loaded();
     await user.click(screen.getByRole('button', { name: 'Open task Alpha task' }));
     const drawer = document.querySelector('.kb-drawer') as HTMLElement;
-    const chip = within(drawer).getByRole('button', { name: 'Auto mode paused: the turn failed. Turn off auto mode' });
-    expect(chip.getAttribute('aria-pressed')).toBe('true');
+    const chip = within(drawer).getByRole('button', { name: 'Auto mode paused: the turn failed. Resume auto mode' });
+    expect(chip.getAttribute('aria-pressed')).toBe('false');
     expect(chip.getAttribute('title')).toBe('Auto mode paused: the turn failed');
     expect(drawer.querySelector('.kb-drawer-automode')).toBeNull();
     expect(mock.command).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'task.autoMode' }));

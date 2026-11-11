@@ -7,6 +7,8 @@ import { fixture, taskWithConversation } from './helpers.js';
 
 const CUSTOM_FLOW = 'name: Custom\ninitial_column: todo\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
 const COMMENTED_FLOW = '# Keep this comment\nname: Commented\ninitial_column: todo\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
+const MODEL_FLOW = 'name: Modelled\ninitial_column: todo\nmodel:\n  provider: deepseek\n  model: chat\n  reasoning_effort: high\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
+const MALFORMED_MODEL_FLOW = 'name: Broken\ninitial_column: todo\nmodel:\n  provider: deepseek\n  temperature: 0.2\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
 const GROUPED_FLOW = 'name: Grouped\ninitial_column: todo\ncolumns:\n  - id: todo\n    label: Todo\n    on_enter_prompt: Do it.\n    allowed_transitions: [done]\n  - id: done\n    label: Done\ngroups:\n  - id: flow\n    label: Flow\n    columns: [todo, done]\n';
 
 class FakeSharing {
@@ -16,15 +18,27 @@ class FakeSharing {
   localChanges: string[] = [];
   removed: Array<{ hubId: string; boardId: string; scope: 'local' | 'team'; name: string }> = [];
   published: string[] = [];
+  publishedManifest = 0;
+  publishCheck: (() => void) | undefined;
+  publishFailure: unknown;
   views(): Record<string, HubSharingView> { return this.viewValue === undefined ? {} : { [this.hubId]: this.viewValue }; }
   view(): HubSharingView | undefined { return this.viewValue; }
   isBound(_hubId: string, boardId: string): boolean { return this.bound.has(boardId); }
   noteLocalChange(hubId: string): void { this.localChanges.push(hubId); }
+  async publishBoard(_hubId: string, boardId: string): Promise<void> {
+    this.publishCheck?.();
+    this.published.push(boardId);
+    if (this.publishFailure) throw this.publishFailure;
+  }
+  async publishManifest(_hubId: string): Promise<void> {
+    this.publishCheck?.();
+    this.publishedManifest += 1;
+    if (this.publishFailure) throw this.publishFailure;
+  }
   async removeBoard(hubId: string, boardId: string, scope: 'local' | 'team', name: string): Promise<void> {
     this.removed.push({ hubId, boardId, scope, name });
     this.bound.delete(boardId);
   }
-  async publish(hubId: string): Promise<void> { this.published.push(hubId); }
 }
 
 function sharingView(overrides: Partial<HubSharingView> = {}): HubSharingView {
@@ -337,7 +351,9 @@ describe('board deletion tools', () => {
     const f = await setup({ sharing });
     const value = await run(f, 'delete_board', { board_id: f.board.id, confirmed: true, sharing: 'team' });
     expect(value.sharing).toEqual({ status: 'published' });
-    expect(sharing.published).toEqual(['default']);
+    // A removal is a manifest change, so it publishes the manifest and no board log.
+    expect(sharing.published).toEqual([]);
+    expect(sharing.publishedManifest).toBe(1);
   });
 
   it('keeps an unbound board removal local on a published Hub', async () => {
@@ -413,31 +429,24 @@ describe('board tool publishing', () => {
     await run(f, 'create_board', { hub_id: f.hub.id, name: 'Second' });
     await run(f, 'update_board', { board_id: f.board.id, name: 'Renamed' });
     await run(f, 'edit_board_yaml', { board_id: f.board.id, edits: [{ old: '    label: Done', new: '    label: Complete' }] });
-    expect(sharing.published).toEqual(['default', 'default', 'default']);
+    expect(sharing.published).toEqual([expect.any(String), f.board.id, f.board.id]);
   });
 
-  it('leaves continuous storage to automatic synchronization', async () => {
+  it('publishes a new board even when another board is behind', async () => {
     const sharing = new FakeSharing();
-    sharing.viewValue = sharingView({ syncMode: 'continuous', provider: 'google-drive', providerLabel: 'Google Drive' });
+    sharing.viewValue = sharingView({ updates: 1, boards: [{ boardId: 'board', name: 'Kanban', state: 'updates-available', bound: true, pending: true }] });
     const f = await setup({ sharing });
-    const value = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Scheduled' });
-    expect(value.sharing).toEqual({ status: 'scheduled' });
-    expect(sharing.published).toEqual([]);
-  });
-
-  it('keeps the local change when publishing is blocked', async () => {
-    const sharing = new FakeSharing();
-    sharing.viewValue = sharingView({ updates: 1 });
-    const f = await setup({ sharing });
-    const value = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Blocked' });
-    expect(value.sharing).toMatchObject({ status: 'blocked' });
-    expect(boards(f).some(board => board.name === 'Blocked')).toBe(true);
-    expect(sharing.published).toEqual([]);
+    const value = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Fresh' });
+    // A new board writes only its own log, so another board's pending events do not
+    // block it; that board's own writes stay blocked.
+    expect(value.sharing).toMatchObject({ status: 'published' });
+    expect(boards(f).some(board => board.name === 'Fresh')).toBe(true);
+    expect(sharing.published).toHaveLength(1);
   });
 
   it('keeps a blocked edit local and reports the blocker', async () => {
     const sharing = new FakeSharing();
-    sharing.viewValue = sharingView({ updates: 1 });
+    sharing.viewValue = sharingView({ updates: 1, boards: [{ boardId: 'board', name: 'Kanban', state: 'updates-available', bound: true, pending: true }] });
     const f = await setup({ sharing });
     const value = await run(f, 'edit_board_yaml', { board_id: f.board.id, edits: [{ old: '    label: Done', new: '    label: Complete' }] });
     expect(value.sharing).toMatchObject({ status: 'blocked' });
@@ -452,5 +461,57 @@ describe('board tool publishing', () => {
     const value = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Preview' });
     expect(value.sharing).toEqual({ status: 'preview' });
     expect(sharing.published).toEqual([]);
+  });
+});
+
+describe('the board default model', () => {
+  it('states the model a board names and the absence of one', async () => {
+    const f = await setup();
+    const named = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Modelled', workflow_yaml: MODEL_FLOW });
+    const withModel = await run(f, 'get_board_summary', { board_id: named.id, include_workflow: true });
+    expect(withModel.defaultModel).toEqual({ provider: 'deepseek', model: 'chat', reasoningEffort: 'high' });
+    expect(withModel.workflow.model).toEqual({ provider: 'deepseek', model: 'chat', reasoningEffort: 'high' });
+    const withoutModel = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
+    expect(withoutModel.defaultModel).toBeNull();
+    expect(withoutModel.workflow.model).toBeUndefined();
+  });
+
+  it('sets the model through a replacement workflow', async () => {
+    const f = await setup();
+    await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MODEL_FLOW });
+    const value = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
+    expect(value.defaultModel).toEqual({ provider: 'deepseek', model: 'chat', reasoningEffort: 'high' });
+    expect(value.workflowYaml).toBe(MODEL_FLOW);
+  });
+
+  it('clears the model when the replacement workflow omits it', async () => {
+    const f = await setup();
+    await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MODEL_FLOW });
+    await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: CUSTOM_FLOW });
+    const value = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
+    expect(value.defaultModel).toBeNull();
+    expect(value.workflow.model).toBeUndefined();
+  });
+
+  it('rejects a malformed model mapping and leaves the board unchanged', async () => {
+    const f = await setup();
+    await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MODEL_FLOW });
+    const before = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
+    await expect(run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MALFORMED_MODEL_FLOW })).rejects.toMatchObject({ code: 'INVALID_WORKFLOW' });
+    const after = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
+    expect(after).toEqual(before);
+    expect(after.workflowYaml).toBe(MODEL_FLOW);
+  });
+
+  it('guides the agent to the model mapping before it writes a workflow', async () => {
+    const f = await setup();
+    const create = named(f.tools, 'create_board');
+    const update = named(f.tools, 'update_board');
+    const summary = named(f.tools, 'get_board_summary');
+    const described = (tool: ToolDefinition, parameter: string): string =>
+      String((tool.parameters as { properties?: Record<string, { description?: string }> }).properties?.[parameter]?.description ?? '');
+    expect(described(create, 'workflow_yaml')).toContain('board default model');
+    expect(described(update, 'workflow_yaml')).toContain('defaultModel');
+    expect(summary.description).toContain("board's default model");
   });
 });

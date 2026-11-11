@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { KanbanError, invariant } from '../../shared/errors.js';
 import { TEAM_FILES_DIRECTORY } from '../../shared/types.js';
-import { DirectorySharedConfigStore, normalizeDirectoryState } from './directory-store.js';
+import { DirectoryLayoutStore, normalizeDirectoryLayoutState } from './layout-directory.js';
 import { DirectoryTeamFileStore, TeamFileDirectory } from './team-file-directory.js';
 import {
   abbreviateHome,
@@ -17,12 +17,8 @@ import {
 } from './local-folder-path.js';
 import type { BindingCandidate, ProviderState, SharingProviderDescriptor } from './provider.js';
 
-/**
- * The shared directory store, exported under its storage-specific name for
- * callers that speak in terms of the local-folder storage.
- */
-export { DirectorySharedConfigStore as LocalFolderSharedConfigStore } from './directory-store.js';
-export type { DirectoryStoreOptions as LocalFolderStoreOptions } from './directory-store.js';
+/** The published layout of a local folder, exported under its storage-specific name. */
+export { DirectoryLayoutStore as LocalFolderLayoutStore } from './layout-directory.js';
 
 function text(value: unknown): string | undefined { return typeof value === 'string' && value.length > 0 ? value : undefined; }
 
@@ -41,7 +37,7 @@ export function createLocalFolderProviderDescriptor(options: LocalFolderProvider
   return {
     id: 'local-folder',
     label: 'Local folder',
-    syncMode: 'continuous',
+    syncMode: 'explicit',
     defaultIntervalMinutes: 1,
     requiresAuthorization: false,
     normalizeSettings(settings) {
@@ -70,9 +66,9 @@ export function createLocalFolderProviderDescriptor(options: LocalFolderProvider
       invariant(!occupied, 'SHARING_ADDRESS_IN_USE', 'The selected folder is already bound to another Hub.');
       return { path: inspected.path };
     },
-    createStore(hubId, binding, state) {
+    createLayoutStore(_hubId, binding) {
       if (binding.provider !== 'local-folder') throw new KanbanError('SHARING_UNSUPPORTED_STORAGE', 'The configured team storage is not a local folder.', { provider: binding.provider });
-      return new DirectorySharedConfigStore({ directory: requireDirectory(binding), state });
+      return new DirectoryLayoutStore({ directory: requireDirectory(binding) });
     },
     createFileStore(_hubId, binding) {
       if (binding.provider !== 'local-folder') throw new KanbanError('SHARING_UNSUPPORTED_STORAGE', 'The configured team storage is not a local folder.', { provider: binding.provider });
@@ -83,7 +79,7 @@ export function createLocalFolderProviderDescriptor(options: LocalFolderProvider
 }
 
 function normalizeState(state: ProviderState): ProviderState {
-  return normalizeDirectoryState(state);
+  return normalizeDirectoryLayoutState(state);
 }
 
 /** The bound folder, or a refusal naming the missing setting. */

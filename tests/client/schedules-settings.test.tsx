@@ -3,7 +3,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import type { Command, HubSchedule, HubState, KanbanSnapshot, ScheduleModelCatalog } from '../../src/shared/types.js';
+import type { Command, HubSchedule, HubState, KanbanSnapshot, ModelCatalog } from '../../src/shared/types.js';
 import { SchedulesSettings } from '../../src/client/settings/schedules/schedules-settings.js';
 
 afterEach(cleanup);
@@ -22,7 +22,7 @@ function hubState(schedules: HubSchedule[] = [schedule()]): HubState {
     boards: [], tasks: [], notes: [], schedules, createdAt: now, updatedAt: now,
   };
 }
-const catalog: ScheduleModelCatalog = { default: { provider: 'deepseek', model: 'chat' }, providers: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'chat', name: 'Chat' }] }], failures: [] };
+const catalog: ModelCatalog = { default: { provider: 'deepseek', model: 'chat' }, providers: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'chat', name: 'Chat' }] }], failures: [] };
 function harness(schedules: HubSchedule[] = [schedule()]) {
   const run = vi.fn(async (_command: Command) => ({}) as KanbanSnapshot);
   const api = { modelCatalog: vi.fn(async () => catalog) } as never;

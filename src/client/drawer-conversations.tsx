@@ -3,12 +3,13 @@ import type { Attention, Command, Problem, Task } from '../shared/types.js';
 import { EMPTY_ATTENTION } from '../shared/types.js';
 import { closedSessionIds, openSessionIds } from '../shared/conversations.js';
 import { AttentionDots, AttentionStatusText } from './attention-dots.js';
-import { creationReceiptId, useAction, type RunCommand } from './ui.js';
+import { creationModelOutcome, creationReceiptId, useAction, type RunCommand } from './ui.js';
 import { resolveActiveConversation, usePageField, type TaskPageState } from './page-state.js';
 import { conversationLabel, type SessionTitles } from './conversation-label.js';
 import { ClosedConversationsMenu } from './closed-conversations.js';
 import { ConversationActionsProvider, ConversationCloseAction, type ConversationActions } from './conversation-actions.js';
-import { ConversationNotices } from './conversation-notices.js';
+import { ConversationModelNotice, ConversationNotices } from './conversation-notices.js';
+import { useOptionalModelFallbacks } from './model-fallbacks.js';
 import { useOptionalConversationLeases } from './conversation-lease-context.js';
 import { AgentPresetCards } from './agent-preset-cards.js';
 import { useAgentPresetPort } from './agent-preset-context.js';
@@ -24,11 +25,21 @@ export interface DrawerConversationsProps {
   worktreeDecisionRequired?: boolean;
   /** The client snapshot cannot resolve the task's project. */
   projectUnavailable?: boolean;
+  /**
+   * The conversations whose model-fallback notice was dismissed in this drawer. The
+   * drawer that outlives every section switch owns it, because a dismissal that
+   * lived here would be forgotten each time this section unmounted.
+   */
+  modelNoticeDismissed?: readonly string[];
+  /** Record that the person read the notice of one conversation. */
+  onDismissModelNotice?: (sessionId: string) => void;
 }
 
 type CommandScope = 'create' | 'close' | 'reopen';
 
-export function DrawerConversations({ task, run, renderConversation, viewState, sessionTitles, conversationAttention = {}, worktreeDecisionRequired = false, projectUnavailable = false }: DrawerConversationsProps) {
+const NO_DISMISSED_NOTICES: readonly string[] = [];
+
+export function DrawerConversations({ task, run, renderConversation, viewState, sessionTitles, conversationAttention = {}, worktreeDecisionRequired = false, projectUnavailable = false, modelNoticeDismissed = NO_DISMISSED_NOTICES, onDismissModelNotice }: DrawerConversationsProps) {
   const open = openSessionIds(task);
   const closed = closedSessionIds(task);
   const noConversations = task.sessionIds.length === 0;
@@ -38,6 +49,7 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
   const [selectionRequired, setSelectionRequired] = usePageField(viewState, 'conversationSelectionRequired');
   const action = useAction(run);
   const leases = useOptionalConversationLeases();
+  const modelFallbacks = useOptionalModelFallbacks();
   const { port: presetPort, translate: presetTranslate } = useAgentPresetPort();
   const id = useId();
   const [commandScope, setCommandScope] = useState<CommandScope | null>(null);
@@ -97,6 +109,9 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
       const result = await execute({ type: 'conversation.create', taskId: task.id, ...(task.sessionIds.length === 0 ? { ensureFirst: true } : {}) }, 'create');
       if (!result) return null;
       const sessionId = creationReceiptId(result, 'conversation');
+      // What the host did with the board's model travels on the same receipt, so the
+      // notice needs no extra read and can be shown when this conversation is opened.
+      if (sessionId !== undefined) modelFallbacks?.record(sessionId, creationModelOutcome(result));
       const createdTask = result.state.hubs.flatMap(hub => hub.tasks).find(value => value.id === task.id);
       if (!sessionId || !createdTask?.sessionIds.includes(sessionId) || createdTask.closedSessionIds.includes(sessionId)) {
         setSelectionRequired(true);
@@ -197,6 +212,12 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
   }, [focusTarget, openKey, id]);
 
   const viewed = active;
+  // Whether a fallback notice was read is the open drawer's view state, never a saved
+  // fact, and it is held by the drawer above so that leaving and returning to this
+  // section keeps it: closing the conversation forgets the dismissal, so a reopened
+  // conversation announces the same fallback again.
+  const fallbackSession = viewed !== undefined && modelFallbacks !== null && !modelNoticeDismissed.includes(viewed) ? viewed : null;
+  const viewedFallback = fallbackSession === null ? null : modelFallbacks?.of(fallbackSession) ?? null;
   const cancelPreset = presetBusy || creationPending || (noOpenConversations && pendingConversation === null)
     ? undefined
     : cancelPresetChoice;
@@ -225,6 +246,9 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
     creating={creationPending} createBlocked={createBlocked} blockedReason={startHint} busy={busy}
     actionPending={action.pending} conversationAttention={conversationAttention} closedMenu={closedMenu} />
     <ConversationNotices notices={notices} />
+    {viewedFallback === null || fallbackSession === null ? null : <ConversationModelNotice
+      outcome={viewedFallback}
+      onDismiss={() => { onDismissModelNotice?.(fallbackSession); }} />}
     {selectionRequired && creationError === null && viewed !== undefined && <p className="kb-hint" role="status">Select a conversation tab explicitly before creating another conversation.</p>}
     {choosingPreset || noOpenConversations || pendingConversation !== null
       ? <AgentPresetCards

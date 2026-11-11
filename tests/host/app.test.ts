@@ -4,6 +4,8 @@ import { mkdir, rm } from 'node:fs/promises';
 import { CommandSchema, SnapshotSchema } from '../../src/remote.js';
 import { fixture, taskWithConversation } from './helpers.js';
 import { KanbanApp } from '../../src/host/app.js';
+import type { SessionModelPort } from '../../src/host/session-model.js';
+import type { ModelSelection } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { call, result } from '../questions/fixtures.js';
 let active:Array<Awaited<ReturnType<typeof fixture>>>=[];
@@ -207,8 +209,10 @@ describe('host command orchestration',()=>{
   expect(CommandSchema.parse(retry)).toEqual(retry);
   const cancel={type:'project.relocationCancel' as const,projectId:'project-1'};
   expect(CommandSchema.parse(cancel)).toEqual(cancel);
-  const snapshot=SnapshotSchema.parse({stateRevision:1,conversations:{},sharing:{},retainedCheckouts:[{path:'/trees/x',projectId:'project-1',taskTitle:'Task'}],sequence:1});
+  const snapshot=SnapshotSchema.parse({stateRevision:1,conversations:{},sharing:{},retainedCheckouts:[{path:'/trees/x',projectId:'project-1',taskTitle:'Task',reason:'unresolved'}],sequence:1});
   expect(snapshot.retainedCheckouts).toHaveLength(1);
+  expect(snapshot.retainedCheckouts![0]!.reason).toBe('unresolved');
+  expect(()=>SnapshotSchema.parse({stateRevision:1,conversations:{},sharing:{},retainedCheckouts:[{path:'/trees/x',projectId:'project-1',taskTitle:'Task'}],sequence:1})).toThrow();
  });
  it('accepts the new move and run wire commands and rejects legacy fields',()=>{
   const move={type:'task.move' as const,taskId:'task-1',columnId:'plan'};
@@ -427,4 +431,111 @@ describe('conversation fact priority', () => {
   expect(order).toContain(first.sessionIds[0]!);
   await app.close();
  });
+});
+
+describe('the board default model on a new conversation', () => {
+  /** The route a conversation is left on when the board's model cannot be installed. */
+  const DEPLOYMENT = { provider: 'deepseek', model: 'chat' };
+  function modelHarness(known: Array<[string, string]> = [['anthropic', 'claude']], options: { unsupported?: boolean; throwing?: boolean } = {}) {
+    const applied: Array<{ sessionId: string; selection: ModelSelection }> = [];
+    const port: SessionModelPort = {
+      catalog: async () => ({ default: DEPLOYMENT, providers: [], failures: [] }),
+      apply: async (sessionId, selection) => {
+        if (options.throwing) throw new Error('The host is unreachable.');
+        // A real port names the route it left the conversation on whenever it can
+        // read the catalog, so the receipt the client sees carries it.
+        if (!known.some(([provider, model]) => provider === selection.provider && model === selection.model)) {
+          return { applied: false, reason: 'unavailable' as const, message: 'The stored model is no longer available in the host catalog.', inUse: DEPLOYMENT };
+        }
+        if (options.unsupported) return { applied: false, reason: 'unsupported' as const, message: 'This host cannot apply a model to one conversation.', inUse: DEPLOYMENT };
+        applied.push({ sessionId, selection: { ...selection } });
+        return { applied: true };
+      },
+    };
+    return { port, applied };
+  }
+  async function setupWith(models?: SessionModelPort) { const f = await fixture({ ...(models === undefined ? {} : { models }) }); active.push(f); return f; }
+  async function authorBoardModel(f: Awaited<ReturnType<typeof setup>>, selection?: ModelSelection) {
+    const base = f.store.snapshot().workflowYaml.replace(/^model:\n(?:[ \t]+[^\n]*\n)*/m, '');
+    await f.store.setWorkflow(selection === undefined ? base
+      : base + 'model:\n  provider: ' + selection.provider + '\n  model: ' + selection.model + '\n' + (selection.reasoningEffort === undefined ? '' : '  reasoning_effort: ' + selection.reasoningEffort + '\n'));
+  }
+  async function taskAwaitingFirstConversation(f: Awaited<ReturnType<typeof setup>>) {
+    const created = await f.app.createTask({ projectId: f.project.id, title: 'Board model', description: '' });
+    await f.app.command({ type: 'worktree.dismiss', taskId: created.id });
+    return created;
+  }
+
+  it('starts the conversation on the model the board named and receipts the applied route', async () => {
+    const h = modelHarness(); const f = await setupWith(h.port);
+    const selection = { provider: 'anthropic', model: 'claude', reasoningEffort: 'high' };
+    await authorBoardModel(f, selection);
+    const t = await taskAwaitingFirstConversation(f);
+    const result = await f.app.command({ type: 'conversation.create', taskId: t.id });
+    const created = f.store.requireTask(t.id).sessionIds[0]!;
+    expect(h.applied).toEqual([{ sessionId: created, selection }]);
+    expect(result.commandReceipt).toEqual({ kind: 'conversation', id: created, model: { requested: selection, applied: true } });
+    expect(SnapshotSchema.safeParse(result).success).toBe(true);
+  });
+
+  it('leaves a board without a model on the deployment default and receipts no model at all', async () => {
+    const h = modelHarness(); const f = await setupWith(h.port);
+    const t = await taskAwaitingFirstConversation(f);
+    const result = await f.app.command({ type: 'conversation.create', taskId: t.id });
+    const created = f.store.requireTask(t.id).sessionIds[0]!;
+    expect(h.applied).toEqual([]);
+    expect(result.commandReceipt).toEqual({ kind: 'conversation', id: created });
+    expect(SnapshotSchema.safeParse(result).success).toBe(true);
+  });
+
+  it('creates the conversation on the deployment default when the catalog no longer offers the board model', async () => {
+    const h = modelHarness([]); const f = await setupWith(h.port);
+    const selection = { provider: 'anthropic', model: 'claude' };
+    await authorBoardModel(f, selection);
+    const t = await taskAwaitingFirstConversation(f);
+    const result = await f.app.command({ type: 'conversation.create', taskId: t.id });
+    const created = f.store.requireTask(t.id).sessionIds[0]!;
+    expect(f.sessions.dirs.size).toBe(1);
+    expect(result.commandReceipt).toEqual({ kind: 'conversation', id: created, model: { requested: selection, applied: false, reason: 'unavailable', inUse: DEPLOYMENT } });
+    // What the client renders is the decoded receipt, so the route it is told the
+    // conversation is on has to survive the wire codec.
+    expect(SnapshotSchema.parse(result).commandReceipt?.model).toEqual({ requested: selection, applied: false, reason: 'unavailable', inUse: DEPLOYMENT });
+  });
+
+  it('creates the conversation on the deployment default when the host cannot apply a model to one conversation', async () => {
+    const h = modelHarness([['anthropic', 'claude']], { unsupported: true }); const f = await setupWith(h.port);
+    const selection = { provider: 'anthropic', model: 'claude' };
+    await authorBoardModel(f, selection);
+    const t = await taskAwaitingFirstConversation(f);
+    const result = await f.app.command({ type: 'conversation.create', taskId: t.id });
+    expect(result.commandReceipt?.model).toEqual({ requested: selection, applied: false, reason: 'unsupported', inUse: DEPLOYMENT });
+  });
+
+  it('never lets a host that cannot be reached block the conversation someone asked for', async () => {
+    const h = modelHarness([['anthropic', 'claude']], { throwing: true }); const f = await setupWith(h.port);
+    await authorBoardModel(f, { provider: 'anthropic', model: 'claude' });
+    const t = await taskAwaitingFirstConversation(f);
+    const id = await f.app.createConversation(t.id);
+    expect(f.store.requireTask(t.id).sessionIds).toEqual([id]);
+    expect(typeof id).toBe('string');
+    expect(h.applied).toEqual([]);
+  });
+
+  it('applies the board model to every new conversation of the board, including a later tab', async () => {
+    const h = modelHarness(); const f = await setupWith(h.port);
+    await authorBoardModel(f, { provider: 'anthropic', model: 'claude' });
+    const t = await taskAwaitingFirstConversation(f);
+    const first = await f.app.createConversation(t.id);
+    const second = await f.app.createConversation(t.id);
+    expect(h.applied.map(entry => entry.sessionId)).toEqual([first, second]);
+  });
+
+  it('applies no model when the plugin runs on a host without the model port', async () => {
+    const f = await setupWith(undefined);
+    await authorBoardModel(f, { provider: 'anthropic', model: 'claude' });
+    const t = await taskAwaitingFirstConversation(f);
+    const result = await f.app.command({ type: 'conversation.create', taskId: t.id });
+    expect(result.commandReceipt?.model).toBeUndefined();
+    expect(f.store.requireTask(t.id).sessionIds).toHaveLength(1);
+  });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_WORKFLOW_YAML, parseWorkflow } from '../../src/domain/workflow.js';
 import { canTransition } from '../../src/domain/transitions.js';
+import { canonicalWorkflow, workflowMeaning } from '../../src/domain/schema-parts.js';
 
 const minimal = 'columns:\n  - id: todo\n    label: To do\n  - id: done\n    label: Done\n';
 
@@ -146,6 +147,47 @@ describe('workflow configuration', () => {
   });
 });
 
+describe('workflow stage identity', () => {
+  const keyed = 'columns:' + String.fromCharCode(10)
+    + '  - id: todo' + String.fromCharCode(10)
+    + '    key: stage-1' + String.fromCharCode(10)
+    + '    label: To do' + String.fromCharCode(10)
+    + '  - id: done' + String.fromCharCode(10)
+    + '    label: Done' + String.fromCharCode(10);
+
+  it('accepts an authored stage key and leaves an absent one undefined', () => {
+    const result = parseWorkflow(keyed);
+    expect(result.columns[0]?.key).toBe('stage-1');
+    expect(result.columns[1]?.key).toBeUndefined();
+  });
+
+  it('keeps the stage key out of behaviour when it is absent', () => {
+    expect(parseWorkflow(minimal).columns.map(column => column.key)).toEqual([undefined, undefined]);
+  });
+
+  it.each([
+    'columns: [{id: one, key: stage, label: One}, {id: two, key: stage, label: Two}]',
+    'columns: [{id: one, key: "../escape", label: One}]',
+    'columns: [{id: one, key: constructor, label: One}]',
+    'columns: [{id: one, key: 3, label: One}]',
+  ])('rejects a malformed or duplicate stage key %#', yaml => {
+    expect(() => parseWorkflow(yaml)).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+  });
+
+  it('keeps the stage key in the persisted identity and in the workflow meaning', () => {
+    const keyedWorkflow = parseWorkflow(keyed);
+    const rekeyed = parseWorkflow(keyed.replace('key: stage-1', 'key: stage-2'));
+    const renamed = parseWorkflow(keyed.replace('id: todo', 'id: planning'));
+    expect(canonicalWorkflow(keyedWorkflow)).toBe(canonicalWorkflow(parseWorkflow(keyed)));
+    expect(canonicalWorkflow(keyedWorkflow)).not.toBe(canonicalWorkflow(rekeyed));
+    // The identity is persisted but is not part of what the workflow means, so the
+    // legacy merge can still compare a board that gained identities to one without.
+    expect(workflowMeaning(keyedWorkflow)).toBe(workflowMeaning(rekeyed));
+    expect(workflowMeaning(keyedWorkflow)).toBe(workflowMeaning(parseWorkflow(keyed)));
+    expect(workflowMeaning(keyedWorkflow)).not.toBe(workflowMeaning(renamed));
+  });
+});
+
 describe('workflow connection layout', () => {
   const base = 'columns:' + String.fromCharCode(10) + '  - id: one' + String.fromCharCode(10) + '    label: One' + String.fromCharCode(10) + '  - id: two' + String.fromCharCode(10) + '    label: Two' + String.fromCharCode(10);
 
@@ -183,5 +225,52 @@ describe('workflow connection layout', () => {
     'connections: [{from: one, to: two}, {from: one, to: two}]',
   ])('rejects a malformed connection layout %#', yaml => {
     expect(() => parseWorkflow(base + yaml)).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+  });
+});
+
+const withModelBase = 'columns:\n  - id: one\n    label: One\n';
+
+describe('the board default model mapping', () => {
+  it('reads the authored root mapping into the workflow', () => {
+    const result = parseWorkflow(withModelBase + 'model:\n  provider: anthropic\n  model: claude-sonnet-4-5\n  reasoning_effort: high\n');
+    expect(result.model).toEqual({ provider: 'anthropic', model: 'claude-sonnet-4-5', reasoningEffort: 'high' });
+  });
+
+  it('omits the mapping when the document authors none and the effort when it is unauthored', () => {
+    expect(parseWorkflow(withModelBase).model).toBeUndefined();
+    expect(parseWorkflow(withModelBase + 'model:\n  provider: anthropic\n  model: claude-sonnet-4-5\n').model).toEqual({ provider: 'anthropic', model: 'claude-sonnet-4-5' });
+  });
+
+  it('accepts an authored effort the adapter may not offer, leaving availability to the host', () => {
+    const result = parseWorkflow(withModelBase + 'model:\n  provider: anthropic\n  model: claude\n  reasoning_effort: ultra-thinks\n');
+    expect(result.model?.reasoningEffort).toBe('ultra-thinks');
+  });
+
+  it.each([
+    'model: anthropic',
+    'model: [anthropic]',
+    'model:\n  model: claude\n',
+    'model:\n  provider: anthropic\n',
+    'model:\n  provider: ""\n  model: claude\n',
+    'model:\n  provider: "   "\n  model: claude\n',
+    'model:\n  provider: anthropic\n  model: ""\n',
+    'model:\n  provider: anthropic\n  model: claude\n  reasoning_effort: ""\n',
+    'model:\n  provider: anthropic\n  model: claude\n  reasoningEffort: high\n',
+    'model:\n  provider: anthropic\n  model: claude\n  temperature: 1\n',
+    'model:\n  provider: 3\n  model: claude\n',
+  ])('rejects a malformed model mapping %#', suffix => {
+    expect(() => parseWorkflow(withModelBase + suffix)).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+  });
+
+  it('names the model mapping in every rejection', () => {
+    expect(() => parseWorkflow(withModelBase + 'model:\n  provider: anthropic\n')).toThrow(/model/);
+    expect(() => parseWorkflow(withModelBase + 'model:\n  provider: anthropic\n  model: claude\n  temperature: 1\n')).toThrow(/model/);
+  });
+
+  it('counts the model as flow meaning rather than diagram layout', () => {
+    const without = parseWorkflow(withModelBase);
+    const withModel = parseWorkflow(withModelBase + 'model:\n  provider: anthropic\n  model: claude\n');
+    expect(workflowMeaning(withModel)).not.toBe(workflowMeaning(without));
+    expect(canonicalWorkflow(withModel)).not.toBe(canonicalWorkflow(without));
   });
 });

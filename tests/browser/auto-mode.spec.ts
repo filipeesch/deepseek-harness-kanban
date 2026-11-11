@@ -151,15 +151,77 @@ test('presents the held state on the chip and in the drawer without a status ent
   await expect(drawer.locator('.kb-drawer-automode')).toHaveCount(0);
 });
 
-test('toggles auto mode from the card and updates the indicator', async ({ page }) => {
+test('disables auto mode from an armed card and updates the indicator', async ({ page }) => {
   await openBoard(page);
-  const chip = page.locator('[data-task-id="long-1"] .kb-auto-chip');
+  const chip = page.locator('[data-task-id="long-0"] .kb-auto-chip');
   await chip.click();
   await expect.poll(async () => (await commands(page)).filter(command => command.type === 'task.autoMode').length).toBe(1);
-  expect((await commands(page)).find(command => command.type === 'task.autoMode')).toMatchObject({ type: 'task.autoMode', taskId: 'long-1', enabled: false });
+  expect((await commands(page)).find(command => command.type === 'task.autoMode')).toMatchObject({ type: 'task.autoMode', taskId: 'long-0', enabled: false });
+  await expect(chip).toHaveAttribute('data-auto-state', 'off');
   await expect(chip).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('.kb-drawer')).toHaveCount(0);
+});
+
+test('resumes a paused card from the chip instead of turning auto mode off', async ({ page }) => {
+  await openBoard(page);
+  const chip = page.locator('[data-task-id="long-1"] .kb-auto-chip');
+  await expect(chip).toHaveAttribute('data-auto-state', 'paused');
+  await expect(chip).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('[data-task-id="long-1"] .kb-card-status-line')).toContainText('Auto mode paused: the turn failed');
+  await chip.click();
+  await expect.poll(async () => (await commands(page)).filter(command => command.type === 'task.autoMode').length).toBe(1);
+  expect((await commands(page)).find(command => command.type === 'task.autoMode')).toMatchObject({ type: 'task.autoMode', taskId: 'long-1', enabled: true });
+  await expect(chip).toHaveAttribute('data-auto-state', 'armed');
+  await expect(chip).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('[data-task-id="long-1"] .kb-card-status-line')).toHaveCount(0);
   await expect(page.locator('.kb-drawer')).toHaveCount(0);
+});
+
+test('presents the pause the agent requested on the card and in the drawer', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=agent-pause');
+  await page.waitForSelector('.kb-column');
+  const card = page.locator('[data-task-id="long-0"]');
+  await expect(card.locator('.kb-auto-chip')).toHaveAttribute('data-auto-state', 'paused-by-agent');
+  await expect(card.locator('.kb-auto-chip')).toHaveAttribute('aria-pressed', 'false');
+  await expect(card.locator('.kb-auto-chip')).toHaveAttribute('aria-label', 'Auto mode paused by the agent: Review the diff. Resume auto mode');
+  await expect(card.locator('.kb-card-status-line')).toHaveText('Auto mode paused by the agent: Review the diff');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.screenshot({ path: path.join(OUT, 'auto-mode-agent-pause-light.png') });
+
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('');
+  await page.screenshot({ path: path.join(OUT, 'auto-mode-agent-pause-dark.png') });
+
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.getByRole('button', { name: 'Open task Long column task 0', exact: true }).click();
+  const drawer = page.locator('.kb-drawer');
+  await expect(drawer.locator('.kb-drawer-header .kb-auto-chip')).toHaveAttribute('data-auto-state', 'paused-by-agent');
+  await expect(drawer.locator('.kb-drawer-header .kb-auto-chip')).toHaveAttribute('title', 'Auto mode paused by the agent: Review the diff');
+  await expect(drawer.locator('.kb-drawer-automode')).toHaveCount(0);
+  await drawer.screenshot({ path: path.join(OUT, 'auto-mode-agent-pause-drawer.png') });
+});
+
+test('resumes the agent pause from the chip and clears the status', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=agent-pause');
+  await page.waitForSelector('.kb-column');
+  const card = page.locator('[data-task-id="long-0"]');
+  await card.locator('.kb-auto-chip').click();
+  await expect.poll(async () => (await commands(page)).filter(command => command.type === 'task.autoMode').length).toBe(1);
+  expect((await commands(page)).find(command => command.type === 'task.autoMode')).toMatchObject({ taskId: 'long-0', enabled: true });
+  await expect(card.locator('.kb-auto-chip')).toHaveAttribute('data-auto-state', 'armed');
+  await expect(card.locator('.kb-auto-chip')).toHaveAttribute('aria-pressed', 'true');
+  await expect(card.locator('.kb-card-status-line')).toHaveCount(0);
+});
+
+test('presents the agent pause and a failed turn together', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=agent-pause');
+  await page.waitForSelector('.kb-column');
+  const lines = page.locator('[data-task-id="long-3"] .kb-card-status-line');
+  await expect(lines).toHaveCount(2);
+  await expect(lines.nth(0)).toHaveText('Auto mode paused by the agent: Review the diff');
+  await expect(lines.nth(1)).toHaveText('Auto mode paused: the turn failed');
+  await expect(page.locator('[data-task-id="long-3"] .kb-auto-chip')).toHaveAttribute('data-auto-state', 'paused-by-agent');
+  await page.locator('[data-task-id="long-3"]').screenshot({ path: path.join(OUT, 'auto-mode-agent-pause-with-failure.png') });
 });
 
 test('mirrors the toggle in the drawer without changing sections', async ({ page }) => {

@@ -26,7 +26,11 @@ Each board SHALL start with a default workflow containing Backlog, Plan, In Prog
 
 ### Requirement: YAML workflow configuration
 
-Each board SHALL support its own workflow configuration in YAML, including the initial stage, grouped columns, allowed transitions with an optional condition for each target, optional stage entry instructions, each stage's stored placement, each stage's stored size, and the board's default presentation. A transition entry SHALL be authored either as a bare target identifier or as a mapping that carries the target identifier and an optional condition. Both forms SHALL be accepted, neither form SHALL be deprecated, both forms SHALL describe the same transition, and a single list MAY mix them. The condition SHALL describe when that transition is followed; it SHALL NOT change which transitions the workflow permits. The active board's workflow SHALL be used for rendering, transitions, and task creation. The product SHALL honor configured transition restrictions by requiring explicit confirmation before a restricted transition can proceed, and it SHALL honor column grouping. This version SHALL NOT implement WIP limits and SHALL NOT introduce reusable workflow templates.
+Each board SHALL support its own workflow configuration in YAML, including the initial stage, grouped columns, allowed transitions with an optional condition for each target, optional stage entry instructions, each stage's stored placement, each stage's stored size, the board's default presentation, and an optional stable stage identity for each stage. A transition entry SHALL be authored either as a bare target identifier or as a mapping that carries the target identifier and an optional condition. Both forms SHALL be accepted, neither form SHALL be deprecated, both forms SHALL describe the same transition, and a single list MAY mix them. The condition SHALL describe when that transition is followed; it SHALL NOT change which transitions the workflow permits. The active board's workflow SHALL be used for rendering, transitions, and task creation. The product SHALL honor configured transition restrictions by requiring explicit confirmation before a restricted transition can proceed, and it SHALL honor column grouping.
+
+A stage's stable identity SHALL be a value distinct from the stage identifier, SHALL be unique within the board, SHALL be preserved when the identifier or any other stage field is edited, and SHALL be preserved by every edit that does not present it. A workflow whose stages carry no stable identity SHALL be accepted: the configuration is valid without one, and an identity SHALL be assigned before the stage is published to a team. An authored field the editor does not present SHALL survive an edit unchanged.
+
+This version SHALL NOT implement WIP limits and SHALL NOT introduce reusable workflow templates.
 
 #### Scenario: Render a configured column group
 
@@ -99,6 +103,24 @@ Each board SHALL support its own workflow configuration in YAML, including the i
 
 - **WHEN** a stage configures the same targets with and without conditions
 - **THEN** the same requests are permitted and the same requests require confirmation
+
+#### Scenario: Keep a stage identity across an identifier rename
+
+- **WHEN** a workflow configuration carries a stable identity for a stage and that stage's identifier is edited
+- **THEN** the stage keeps its stable identity
+- **AND** the resulting workflow is accepted
+
+#### Scenario: Accept a workflow without stage identities
+
+- **WHEN** a board whose stages carry no stable identity is opened
+- **THEN** the configuration is accepted and the board renders normally
+- **AND** no identity is fabricated while the board stays unpublished
+
+#### Scenario: Preserve an authored identity the editor does not present
+
+- **WHEN** the user edits one stage of a workflow whose stages carry stable identities
+- **THEN** every stage keeps its authored identity
+- **AND** no identity is moved to another stage
 
 ### Requirement: Top-level task creation
 The active board SHALL provide the New task action in each of its presentations: at the top of its workflow's configured initial column in the column board, and in the header of that stage in the workflow diagram as defined by `workflow-view` Task creation in the initial stage. The two presentations SHALL open one shared creation experience, and neither SHALL build creation inputs, enablement, or receipt handling of its own. It SHALL collect a title, description, and project, an Auto mode option that is off by default, and, only when the initial stage has an entry instruction, a Start execution now option that is on by default. The project input SHALL offer only the projects of the active Hub that the active board allows, as defined by Board project scope configuration; a project that the board does not allow SHALL NOT be offered and SHALL NOT be accepted. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. A board that allows no project SHALL present no selectable project and SHALL explain that the board accepts no new task, and saving SHALL be unavailable. Saving a new task SHALL place it in the active board's configured initial stage whichever presentation opened it, and SHALL record the selected auto-mode value. The board SHALL NOT offer any other stage as a creation target. When the initial stage has an entry instruction and the Start execution now option remains enabled, saving SHALL start the automatic first execution defined by Automatic first execution on task creation. Otherwise, saving SHALL NOT create a native DSH conversation, a workspace, or an agent execution. The board header SHALL NOT provide a separate New task action.
@@ -259,7 +281,22 @@ Activating a task card SHALL open its task drawer, giving access to that task's 
 - **THEN** the task drawer opens for the selected task
 
 ### Requirement: Execution preparation before a task's first execution
-When a user move into an instructed stage or a card run action would start a task's first execution — the task has no native conversation — the system SHALL present one execution preparation before applying the move or admitting the instruction. The preparation SHALL contain the worktree choice defined by the Worktree choice before a card's first execution requirement in `worktree-management` when that choice applies, and the model selection defined by Model selection for the first conversation in `task-conversations` when DSH's native model selector is available. When the task already has a conversation, or when neither part applies, the system SHALL NOT present the preparation and SHALL follow the current move and run behavior. A restricted-transition confirmation SHALL be presented before the preparation; canceling that confirmation SHALL present nothing else. The preparation SHALL NOT start an agent execution and SHALL NOT change the task's stage or position. Completing the preparation SHALL leave the move or run action to proceed as defined by its own requirement. Canceling the preparation after it created a worktree or the first conversation SHALL keep those resources and SHALL leave the task's stage and position unchanged. The preparation SHALL NOT be presented for a same-stage reorder or by an automatic advance.
+
+When a user move into an instructed stage or a card run action would start a task's first
+execution — the task has no native conversation — the system SHALL present one execution
+preparation before applying the move or admitting the instruction. The preparation SHALL contain
+the worktree choice defined by the Worktree choice before a card's first execution requirement in
+`worktree-management` when that choice applies, and the model selection defined by Model selection
+for the first conversation in `task-conversations` when DSH's native model selector is available
+and the board's default model rules in `kanban-board` make that step apply. When the task already
+has a conversation, or when neither part applies, the system SHALL NOT present the preparation and
+SHALL follow the current move and run behavior. A restricted-transition confirmation SHALL be
+presented before the preparation; canceling that confirmation SHALL present nothing else. The
+preparation SHALL NOT start an agent execution and SHALL NOT change the task's stage or position.
+Completing the preparation SHALL leave the move or run action to proceed as defined by its own
+requirement. Canceling the preparation after it created a worktree or the first conversation SHALL
+keep those resources and SHALL leave the task's stage and position unchanged. The preparation SHALL
+NOT be presented for a same-stage reorder or by an automatic advance.
 
 #### Scenario: Prepare the first instructed drop
 - **WHEN** the user drops a task that has no conversation on a permitted stage with an entry instruction
@@ -284,9 +321,14 @@ When a user move into an instructed stage or a card run action would start a tas
 - **AND** the move or run behavior follows its own requirement
 
 #### Scenario: Skip the preparation when nothing applies
-- **WHEN** the task has no conversation but neither a worktree choice nor a model selection applies
+- **WHEN** the task has no conversation but neither a worktree choice nor a model selection applies, including because the board's default model is available
 - **THEN** no execution preparation is presented
 - **AND** the move or run behavior follows its own requirement
+
+#### Scenario: Prepare the worktree choice without a model step
+- **WHEN** the task has no conversation and no worktree, and the board's default model is available
+- **THEN** the preparation presents the worktree choice only
+- **AND** the first conversation is created on the board's default model
 
 #### Scenario: Cancel before any resource exists
 - **WHEN** the user cancels the preparation before a worktree or the first conversation has been created
@@ -598,7 +640,10 @@ The card's activity region SHALL keep its content on one line. It SHALL present 
 - **AND** it is presented in the same control style and height as the auto-mode control
 
 ### Requirement: Task card status strip
-The board SHALL present a card's unresolved context operation, confirmed transition, and automatic-advance state in one status region below the activity region. Each status SHALL carry a tone that distinguishes a failure from a pending state and SHALL present a short label that names the state. A destructive operation's label SHALL use task-deletion or worktree-removal language and SHALL distinguish checking, queued, in progress, and failed states rather than exposing a raw phase token. A status SHALL remain visible while its operation or transition is unresolved. The automatic-advance status SHALL name the destination stage while an advance is admitted, name a failure when an admitted advance failed, and name the pause reason when auto mode is paused. The status region SHALL NOT report the held state defined by Auto mode on a task card, which the auto-mode control presents instead. A run-action admission failure SHALL be reported in the same status region. A failure of the automatic first-execution preparation on task creation SHALL be reported in the same status region. When a card has more than one such fact, the status region SHALL present them together without replacing one with another.
+
+The board SHALL present a card's unresolved context operation, confirmed transition, and automatic-advance state in one status region below the activity region. Each status SHALL carry a tone that distinguishes a failure from a pending state and SHALL present a short label that names the state. A destructive operation's label SHALL use task-deletion or worktree-removal language and SHALL distinguish checking, queued, in progress, and failed states rather than exposing a raw phase token. A status SHALL remain visible while its operation or transition is unresolved. The automatic-advance status SHALL name the destination stage while an advance is admitted, name a failure when an admitted advance failed, and name the pause reason when auto mode is paused, distinguishing a pause requested by the agent from a diagnostic pause. The status region SHALL NOT report the held state defined by Auto mode on a task card, which the auto-mode control presents instead. A run-action admission failure SHALL be reported in the same status region. A failure of the automatic first-execution preparation on task creation SHALL be reported in the same status region. When a card has more than one such fact, the status region SHALL present them together without replacing one with another.
+
+A pause requested by the agent SHALL present the reason the agent recorded, and a diagnostic pause recorded for the same task SHALL remain presented beside it, so a turn that failed while the task was paused is not hidden by the pause.
 
 #### Scenario: Report a failed operation
 - **WHEN** a card's task has a context operation in a failed phase
@@ -636,6 +681,21 @@ The board SHALL present a card's unresolved context operation, confirmed transit
 - **WHEN** auto mode is paused
 - **THEN** the status region presents a short label naming the pause reason
 - **AND** the label distinguishes a turn that did not complete from an advance that could not be admitted
+
+#### Scenario: Report a pause requested by the agent
+- **WHEN** a task carries the agent-requested pause
+- **THEN** the status region presents a pending-toned status whose label contains the reason the agent recorded
+- **AND** the label identifies the pause as requested rather than as a failure
+
+#### Scenario: Present an agent pause beside an advance in flight
+- **WHEN** an automatic advance is admitted or has failed while the task carries the agent-requested pause
+- **THEN** the status region presents the advance state and the agent's reason together
+- **AND** the auto-mode control's tooltip and accessible name carry both
+
+#### Scenario: Present an agent pause and a failed turn together
+- **WHEN** a task carries the agent-requested pause while a diagnostic pause is also recorded
+- **THEN** the status region presents both statuses
+- **AND** neither replaces the other
 
 #### Scenario: Do not report the held state
 - **WHEN** an armed task has pending user work
@@ -990,7 +1050,8 @@ The product SHALL provide multiple boards inside each Hub. A board SHALL have a 
 - **THEN** the workflows and tasks of every other board are unchanged
 
 ### Requirement: Board creation and lifecycle
-Creating a board SHALL require a name and SHALL initialize it with the default workflow. Renaming a board SHALL NOT change its tasks, workflow, conversations, or worktrees. A board SHALL be deletable only when it contains no tasks. Deleting a board that is bound to the team's shared configuration SHALL require choosing whether the removal applies only to this installation or to the team. A local-only removal SHALL remove the board locally and SHALL keep it out of later team updates. A team-wide removal SHALL remove the board locally and SHALL be included in the team's shared configuration on the next synchronization: the next explicit publish for Git, or the next automatic synchronization for Google Drive or a local folder. Deleting the last board SHALL leave the Hub with no boards and SHALL present the Hub's create-board empty state. Deleting a board SHALL NOT delete its projects, project directories, worktrees, branches, native conversations, or native workspaces.
+
+Creating a board SHALL require a name and SHALL initialize it with the default workflow. Renaming a board SHALL NOT change its tasks, workflow, conversations, or worktrees. A board SHALL be deletable only when it contains no tasks. Deleting a board that is bound to the team's published configuration SHALL require choosing whether the removal applies only to this installation or to the team. A local-only removal SHALL remove the board locally and SHALL keep it out of later team updates. A team-wide removal SHALL remove the board locally and SHALL be included in the team's published configuration when the user next publishes the Hub manifest; a team-wide removal SHALL NOT be sent by any automatic action. Deleting the last board SHALL leave the Hub with no boards and SHALL present the Hub's create-board empty state. Deleting a board SHALL NOT delete its projects, project directories, worktrees, branches, native conversations, or native workspaces.
 
 #### Scenario: Create a board with the default workflow
 - **WHEN** the user creates a board with a valid name
@@ -1007,30 +1068,32 @@ Creating a board SHALL require a name and SHALL initialize it with the default w
 - **THEN** the board is not deleted and the plugin reports how many tasks block it
 
 #### Scenario: Choose the scope of a board removal
-- **WHEN** the user deletes a board that is bound to the team's shared configuration and the board has no tasks
+- **WHEN** the user deletes a board that is bound to the team's published configuration and the board has no tasks
 - **THEN** the confirmation offers removing it only from this installation or for the team
 - **AND** no deletion happens before one of those choices
 
 #### Scenario: Remove a board only from this installation
 - **WHEN** the user confirms removing a published board only from this installation
 - **THEN** the board disappears from this installation
-- **AND** the shared document is unchanged
+- **AND** the published configuration is unchanged
 - **AND** later team updates do not recreate the board here
 
 #### Scenario: Remove a board for the team
-- **WHEN** the user confirms removing a published board for the team on a Git binding
+- **WHEN** the user confirms removing a published board for the team
 - **THEN** the board disappears from this installation
-- **AND** the removal is included in the next publish of that Hub
+- **AND** the removal is included in the next publish of the Hub manifest
 
 #### Scenario: Remove a board for the team on Google Drive
 - **WHEN** the user confirms removing a published board for the team on a Google Drive binding
 - **THEN** the board disappears from this installation
-- **AND** the removal is included in the team's shared configuration on the next automatic synchronization
+- **AND** the removal is included in the team's published configuration when the Hub manifest is published
+- **AND** nothing is sent by an automatic check
 
 #### Scenario: Remove a board for the team on a local folder
 - **WHEN** the user confirms removing a published board for the team on a local folder binding
 - **THEN** the board disappears from this installation
-- **AND** the removal is written into `kanban-hub.yaml` on the next automatic synchronization
+- **AND** the removal is written into the `kanban-hub.yaml` manifest when the user publishes the manifest
+- **AND** nothing is sent by an automatic check
 
 #### Scenario: Delete the last board
 - **WHEN** the user confirms deletion of the only board in a Hub and that board has no tasks
@@ -1301,32 +1364,112 @@ The active board SHALL keep its frame stable while a command is in flight. Comma
 - **THEN** a board-level notice states the failure
 - **AND** no global saving indicator or live save announcement is added for that command
 
+### Requirement: Board notice dismissal
+
+The active board SHALL present one dismiss control on each notice it allows the user to dismiss: a retained-checkout entry, the board command-failure notice, and the team-changes banner. The control SHALL be a compact icon-only button at the notice's trailing edge, SHALL carry an accessible name that identifies the notice it dismisses, SHALL have a visible tooltip, SHALL be reachable and operable with the keyboard, and SHALL NOT displace the notice's message, facts, or actions.
+
+The board SHALL NOT offer a dismiss control on a notice that reports work still to resolve: the board load failure, a failed destructive operation, and a project relocation that is waiting or failed. Those notices clear only from host state or from their own recovery action.
+
+Dismissing one notice SHALL remove only that notice. When the dismissed notice was the last dismissible notice on the board, focus SHALL move to the board body; otherwise focus SHALL move to the dismiss control of the next dismissible notice. A dismissal SHALL NOT change task, project, workflow, or publishing state.
+
+A dismissed board command-failure notice SHALL remain dismissed for the current page session, SHALL be replaced by the next failure, and SHALL NOT be stored on the host. Dismissing a retained-checkout entry SHALL be recorded by the host, as defined by the board destructive-operation notice requirement in this capability. Dismissing the team-changes banner SHALL follow the dismissible team-changes banner requirement in `hub-sharing`.
+
+#### Scenario: Dismiss a board command failure
+
+- **WHEN** the board presents a notice that the last command failed and the user activates its dismiss control
+- **THEN** the notice is removed from the board
+- **AND** the card, drawer, and operation surfaces keep whatever status they already present
+
+#### Scenario: The dismiss control is keyboard operable
+
+- **WHEN** keyboard focus reaches a dismissible notice's dismiss control
+- **THEN** the control exposes an accessible name for the notice it dismisses
+- **AND** activating it with the keyboard dismisses that notice
+
+#### Scenario: Focus moves after a dismissal
+
+- **WHEN** the user dismisses a notice and another dismissible notice remains
+- **THEN** focus moves to that notice's dismiss control
+- **WHEN** no dismissible notice remains
+- **THEN** focus moves to the board body
+
+#### Scenario: A notice that still needs resolution has no dismiss control
+
+- **WHEN** the board reports a load failure, a failed destructive operation, or an unresolved project relocation
+- **THEN** the notice presents no dismiss control
+- **AND** its recovery action or its owning surface stays available
+
+#### Scenario: A reload does not restore a dismissed command failure
+
+- **WHEN** the user dismisses a board command-failure notice and reloads the page
+- **THEN** the board presents no failure notice until another command fails
+
 ### Requirement: Board destructive-operation notice
-The active board SHALL present one persistent notice above the board body while a destructive operation is queued or running, while a destructive operation needs attention, or while a deletion retained a checkout path on disk. The notice SHALL summarize in-progress and queued deletions and worktree removals with the affected task titles. For a failed operation, the notice SHALL identify the task and offer recovery actions appropriate to the recorded operation, including retry, return when permitted, and force when the failure is `SHARED_WORKTREE`. The notice SHALL update from host state without a reload, SHALL not claim success for an unresolved or failed operation, and SHALL NOT replace the drawer operation status or the card status. A completed deletion that retained a checkout path — because the checkout is not Git-managed or because the project path or Git root could not be resolved — SHALL be reported with that path and SHALL be dismissible.
+
+The active board SHALL present one persistent notice above the board body while a destructive operation is queued or running, while a destructive operation needs attention, or while a deletion retained a checkout path on disk. The notice SHALL present running, queued, and failed operations in an operation group and retained checkouts in a retained group; the operation group SHALL NOT be dismissible, and the retained group SHALL be dismissible.
+
+The operation group SHALL summarize in-progress and queued deletions and worktree removals with the affected task titles. For a failed operation, the operation group SHALL identify the task and offer recovery actions appropriate to the recorded operation, including retry, return when permitted, and force when the failure is `SHARED_WORKTREE`.
+
+The retained group SHALL have its own heading, separate from the operation group, and SHALL report each retained path with the reason its checkout was kept: the checkout is not Git-managed, or the project path or Git root could not be resolved. Each retained entry SHALL be dismissible on its own, and the retained group SHALL offer one action that dismisses every entry it reports, present whenever it reports more than one. Dismissing a retained entry SHALL record the dismissal on the host, SHALL leave the directory on disk untouched, SHALL NOT affect any task, and SHALL NOT be undone by a reload, a panel switch, or another client. A retained record whose directory no longer exists SHALL be removed without a user action.
+
+The notice SHALL update from host state without a reload, SHALL not claim success for an unresolved or failed operation, and SHALL NOT replace the drawer operation status or the card status.
 
 #### Scenario: Show queued and in-progress deletions
+
 - **WHEN** one or more accepted deletions are queued or executing
 - **THEN** the board notice identifies the affected tasks and their aggregate state
 - **AND** the rest of the board remains usable
+- **AND** the operation group presents no dismiss control
 
 #### Scenario: Show a failed destructive operation with recovery
+
 - **WHEN** an accepted deletion or worktree removal fails
 - **THEN** the board notice presents the failure and the recovery actions
 - **AND** it offers force only when the failure is `SHARED_WORKTREE`
 - **AND** it offers return only when returning the task's conversations is permitted
+- **AND** the operation group presents no dismiss control
 
 #### Scenario: Report a retained plain checkout
-- **WHEN** a deletion completes and leaves a plain checkout on disk
-- **THEN** the board notice reports the retained path
-- **AND** the user can dismiss the report
+
+- **WHEN** a deletion completes and leaves a plain checkout on disk because its project is not Git-managed
+- **THEN** the retained group reports the retained path
+- **AND** the retained group reports that the checkout is not Git-managed
+- **AND** the retained group offers a dismiss control for that entry
 
 #### Scenario: Report a retained unverifiable checkout
+
 - **WHEN** a deletion completes after leaving a checkout on disk because the project path or Git root could not be resolved
-- **THEN** the board notice reports the retained checkout path
+- **THEN** the retained group reports the retained checkout path
+- **AND** the retained group reports that the project path or Git root could not be resolved
 - **AND** it does not report that checkout as removed
-- **AND** the user can dismiss the report
+- **AND** the retained group offers a dismiss control for that entry
+
+#### Scenario: Dismiss one retained checkout
+
+- **WHEN** the user dismisses one entry of the retained group
+- **THEN** that entry is removed from the board
+- **AND** every other entry of the retained group stays presented
+- **AND** the retained checkout directory remains on disk
+
+#### Scenario: Dismiss every retained checkout
+
+- **WHEN** the retained group reports more than one entry and the user activates its dismiss-all action
+- **THEN** every reported entry is removed from the board
+- **AND** the retained group is no longer presented when no retained checkout remains
+
+#### Scenario: A dismissed retained checkout stays dismissed
+
+- **WHEN** the user dismisses a retained entry and then switches the Kanban panel, or reloads, or connects another client
+- **THEN** that entry is not presented again
+
+#### Scenario: Prune a retained checkout whose directory is gone
+
+- **WHEN** the directory of a retained checkout no longer exists
+- **THEN** the entry is removed from the board without a user action
+- **AND** no other retained entry is removed for that reason
 
 #### Scenario: Notice clears when the operation resolves
+
 - **WHEN** every tracked queued or failed destructive operation resolves or is cleared
 - **THEN** the notice no longer presents that operation
 - **AND** the card and drawer status remain the authoritative per-task surfaces
@@ -1378,6 +1521,8 @@ A task SHALL have an optional auto-mode setting that is disabled unless the user
 
 Enabling auto mode SHALL arm the task and SHALL NOT move it, change its position, or send an instruction; the next completed turn remains the only trigger. Enabling it while creating a task SHALL persist the setting and SHALL NOT by itself start the first execution; the Start execution now option and Automatic first execution on task creation govern that execution. Disabling it SHALL stop future automatic advances and SHALL NOT retract an advance that is already admitted. A user movement of the task SHALL preserve the setting. The indicator SHALL distinguish disabled, armed, advancing, held, and paused. A paused state SHALL be explained in the status region defined by Task card status strip. A held state SHALL be presented by the control itself, including its accessible name, and SHALL NOT add a status-region entry, because it is derived from pending user work rather than a recorded cause. Held SHALL mean the task has pending user work as defined by Pending user work, and the state SHALL clear when that work is consumed, SHALL NOT be persisted, and SHALL NOT require a user action. The control SHALL name the stage the next completed turn reaches: the recorded transition's stage while that transition resolves, otherwise the default destination. A recorded transition that no longer resolves SHALL be presented as a pause with the `transition-stale` reason, and reading a conversation SHALL NOT change the setting or clear that pause.
 
+The paused state SHALL also present a pause requested by the agent as defined by Agent-requested task pause, and a task carrying that pause SHALL keep auto mode enabled. Activating the control while the task carries a recorded pause — the agent pause or a diagnostic pause — SHALL resume the task and SHALL NOT disable auto mode, whatever the recorded reason; activating it in every other state SHALL toggle the setting as before. A pause derived from a recorded transition that no longer resolves is not a recorded pause, so that presentation SHALL keep the setting toggle. Because a recorded pause resumes when the control is activated, the control SHALL present a task carrying a recorded pause as not pressed even while auto mode is enabled, so the pressed state continues to describe the action the control performs. Resuming SHALL NOT move the task, change its position, send an instruction, or start an execution, and the next completed turn SHALL remain the only trigger.
+
 #### Scenario: Auto mode is disabled by default
 
 - **WHEN** a task is created without enabling Auto mode
@@ -1385,6 +1530,7 @@ Enabling auto mode SHALL arm the task and SHALL NOT move it, change its position
 - **AND** the card presents the auto-mode control in its disabled state
 
 #### Scenario: Enable auto mode while creating
+
 - **WHEN** the user enables Auto mode in the New task dialog and saves
 - **THEN** the task is persisted with auto mode enabled
 - **AND** its stage and position are unchanged
@@ -1399,8 +1545,8 @@ Enabling auto mode SHALL arm the task and SHALL NOT move it, change its position
 
 #### Scenario: Disable auto mode
 
-- **WHEN** the user disables auto mode while no advance is in progress
-- **THEN** future automatic advances stop
+- **WHEN** the user activates the control of an armed task
+- **THEN** auto mode is disabled and future automatic advances stop
 - **AND** the task's stage and position are unchanged
 
 #### Scenario: Disable during an admitted advance
@@ -1443,12 +1589,39 @@ Enabling auto mode SHALL arm the task and SHALL NOT move it, change its position
 - **THEN** the control presents a pause whose label states that the recorded transition is no longer valid
 - **AND** the task's stage and position are unchanged
 
+#### Scenario: Present a pause requested by the agent
+
+- **WHEN** a task carries the agent-requested pause
+- **THEN** the control presents the paused state
+- **AND** auto mode remains enabled
+- **AND** the control presents the recorded reason in its tooltip and its accessible name
+
+#### Scenario: Resume a paused task from the control
+
+- **WHEN** the user activates the control of a task that carries a recorded pause for any reason
+- **THEN** the pause is cleared and the task returns to armed
+- **AND** auto mode is not disabled
+- **AND** the task's stage and position are unchanged
+- **AND** no instruction is sent and no agent execution starts
+
+#### Scenario: Present a paused task as not pressed
+
+- **WHEN** an enabled task carries a recorded pause
+- **THEN** the control presents itself as not pressed
+- **AND** its accessible name states the pause before the action the activation performs
+
+#### Scenario: Keep the setting toggle for a derived stale pause
+
+- **WHEN** an enabled task has a recorded transition that no longer resolves and carries no recorded pause
+- **THEN** the control presents itself as pressed
+- **AND** activating it disables auto mode instead of resuming
+
 ### Requirement: Automatic advance after a completed turn
-When a conversation of a task with auto mode enabled ends a turn whose reason is `completed`, and no open conversation of the task is running a turn, and the task has no pending user work as defined by Pending user work, the host SHALL admit exactly one automatic advance. The host SHALL perform the advance without requiring the board to be mounted, without a confirmation, without a conversation picker, and without arming the timed stage instruction. An admitted advance SHALL be durable: reloading the board SHALL NOT cancel it, and a host restart SHALL dispatch it when it had not been dispatched.
+When a conversation of a task with auto mode enabled ends a turn whose reason is `completed`, and no open conversation of the task is running a turn, and the task has no pending user work as defined by Pending user work, and the task does not carry the pause requested by the agent, the host SHALL admit exactly one automatic advance. The host SHALL perform the advance without requiring the board to be mounted, without a confirmation, without a conversation picker, and without arming the timed stage instruction. An admitted advance SHALL be durable: reloading the board SHALL NOT cancel it, and a host restart SHALL dispatch it when it had not been dispatched.
 
 The host SHALL evaluate pending user work when the completed turn ends and SHALL re-evaluate it when the advance is admitted, and SHALL NOT admit the advance when pending user work exists at either evaluation. Consuming pending user work SHALL NOT itself move the task; only an observed completed turn triggers an advance. A blocked advance SHALL NOT record a pause and SHALL NOT be dropped silently: the task SHALL present the held state defined by Auto mode on a task card, and the next completed turn SHALL re-evaluate the task.
 
-A turn ending for any other reason SHALL NOT advance the task. The host SHALL NOT admit an advance while the task has an unresolved context operation, an unresolved confirmed transition, or an unresolved entry for its current stage; those conditions SHALL NOT be recorded as a pause and the next completed turn SHALL re-evaluate them.
+A turn ending for any other reason SHALL NOT advance the task. The host SHALL NOT admit an advance while the task has an unresolved context operation, an unresolved confirmed transition, or an unresolved entry for its current stage; those conditions SHALL NOT be recorded as a pause and the next completed turn SHALL re-evaluate them. The host SHALL NOT admit an advance while the task carries the agent-requested pause defined by Agent-requested task pause; that pause SHALL NOT be recorded again or cleared by the evaluation, and a later completed turn SHALL re-evaluate it without advancing.
 
 The host SHALL NOT replay a turn that ended while it was not observing the task's conversations. Only a turn end observed while the host is running SHALL trigger an advance.
 
@@ -1507,6 +1680,17 @@ The host SHALL NOT replay a turn that ended while it was not observing the task'
 - **WHEN** a completed turn ends while the task has an unresolved context operation, an unresolved confirmed transition, or an unresolved entry for its current stage
 - **THEN** no advance is admitted
 - **AND** no pause reason is recorded for that condition
+
+#### Scenario: Do not advance a task paused by the agent
+- **WHEN** a completed turn ends while the task carries the pause requested by the agent
+- **THEN** no advance is admitted
+- **AND** the task remains in its current stage
+- **AND** the recorded pause and its reason are unchanged
+
+#### Scenario: Re-evaluate the agent pause at admission
+- **WHEN** the pause requested by the agent is recorded after the completed turn was evaluated and before the advance is admitted
+- **THEN** no advance is admitted
+- **AND** the task's stage and position are unchanged
 
 #### Scenario: Advance with the board closed
 - **WHEN** a completed turn ends while the Kanban board is not displayed and the task has no pending user work
@@ -1615,6 +1799,8 @@ A pause SHALL be recorded with the task when a turn ends for a reason other than
 
 An admitted advance that fails SHALL be reported through the task's transition state rather than as a new pause, SHALL keep auto mode enabled, and SHALL NOT be retried automatically. Auto mode SHALL remain armed after a pause, so the next completed turn attempts an advance again.
 
+The pause described here SHALL be a diagnostic record, distinct from the pause requested by the agent defined by Agent-requested task pause. A turn that ends for a reason other than `completed` while the task carries the agent-requested pause SHALL record its diagnostic reason without replacing, shortening, or clearing the agent's reason, and the card SHALL present both. Clearing a diagnostic record SHALL NOT clear the agent-requested pause. Resuming the agent-requested pause SHALL clear any diagnostic record held for the same task, and the task SHALL then advance on its next completed turn like any other armed task.
+
 #### Scenario: Pause after a failed turn
 - **WHEN** a turn ends with `error`
 - **THEN** the task records a pause naming the failed turn
@@ -1646,6 +1832,106 @@ An admitted advance that fails SHALL be reported through the task's transition s
 - **WHEN** an admitted advance fails
 - **THEN** the plugin does not retry it automatically
 - **AND** the task presents the failure with its existing recovery actions
+
+#### Scenario: Keep the agent reason when a paused turn fails
+- **WHEN** a turn ends with `error` while the task carries the pause requested by the agent
+- **THEN** the diagnostic pause is recorded beside the agent-requested pause
+- **AND** the agent's recorded reason is still presented
+
+#### Scenario: Resume clears the diagnostic record
+- **WHEN** the paused task is resumed after a diagnostic pause was also recorded
+- **THEN** both records are cleared
+- **AND** the next completed turn attempts an advance
+
+### Requirement: Agent-requested task pause
+
+A task SHALL support a pause requested by the agent that suspends its automatic advance while leaving auto mode enabled. The pause SHALL be persisted with the task, SHALL carry a reason written by the agent, and SHALL survive reloads, restarts, and reading a conversation.
+
+The reason SHALL be required and SHALL be nonempty after trimming. A blank reason SHALL be rejected. A reason longer than the accepted length SHALL be rejected with an actionable error, and the recorded reason SHALL never be a silent truncation of what the agent asked for. The recorded reason SHALL be presented in the card status region and in the auto-mode control's tooltip and accessible name.
+
+The pause SHALL suspend the automatic advance and SHALL NOT do anything else: it SHALL NOT move the task, change its position, clear or replace the recorded transition, send a message, start an execution, disable auto mode, or retract an advance that was already admitted. The stage run action, the next-stage action, a user drag, and a user-sent prompt SHALL remain available while the task is paused.
+
+A task SHALL be resumed by activating the auto-mode control, by the resume operation of the agent surface, or by a user movement of the task. Sending a prompt from a conversation SHALL NOT resume it. Resuming SHALL clear the pause, SHALL leave auto mode enabled, SHALL NOT move the task or send an instruction, and SHALL NOT cause an advance for a turn that already ended. Disabling auto mode SHALL clear the pause along with the setting. Moving the task SHALL clear the pause and SHALL keep auto mode enabled.
+
+The pause SHALL be requested only while the task's auto mode is enabled. A request against a task whose auto mode is disabled SHALL succeed with a result stating that auto mode is disabled and that the task therefore does not advance, and SHALL NOT record a pause.
+
+#### Scenario: Pause a task with a reason
+- **WHEN** the agent pauses a task whose auto mode is enabled and supplies a reason
+- **THEN** the pause is persisted with the task and its reason
+- **AND** auto mode remains enabled
+- **AND** the task's stage, position, and recorded transition are unchanged
+- **AND** no message is sent and no agent execution starts
+
+#### Scenario: Report the pause after the call
+- **WHEN** the pause or the resume succeeds
+- **THEN** the result reports the task, its stage, whether auto mode is enabled, and the pause in effect with its reason
+
+#### Scenario: Reject an empty reason
+- **WHEN** the agent requests a pause with a blank reason
+- **THEN** the request is rejected with an actionable error
+- **AND** no pause is recorded
+
+#### Scenario: Reject an oversized reason
+- **WHEN** the agent requests a pause with a reason longer than the accepted length
+- **THEN** the request is rejected with an actionable error
+- **AND** no pause is recorded
+- **AND** no truncated reason is stored
+
+#### Scenario: Do not advance while paused
+- **WHEN** a paused task's conversation ends a completed turn
+- **THEN** no automatic advance is admitted
+- **AND** the task remains in its stage with its pause and reason intact
+
+#### Scenario: Keep the user's actions available
+- **WHEN** a task is paused
+- **THEN** the stage run action, the next-stage action, and a drag remain available
+- **AND** using one of them is not refused because of the pause
+
+#### Scenario: Resume from the auto-mode control
+- **WHEN** the user activates the auto-mode control of a paused task
+- **THEN** the pause is cleared and auto mode remains enabled
+- **AND** the task's stage and position are unchanged
+
+#### Scenario: Resume through the agent surface
+- **WHEN** the agent resumes a task that carries the pause
+- **THEN** the pause is cleared and auto mode remains enabled
+- **AND** the task's stage and position are unchanged
+
+#### Scenario: A user prompt does not resume
+- **WHEN** the user sends a prompt in a conversation of a paused task
+- **THEN** the pause remains recorded with its reason
+- **AND** the completed turn of that prompt does not advance the task
+
+#### Scenario: Resume on a user movement
+- **WHEN** the user moves a paused task to another stage or another position
+- **THEN** the pause is cleared
+- **AND** auto mode remains enabled
+- **AND** the next completed turn advances from the new stage
+
+#### Scenario: Resume never advances by itself
+- **WHEN** the pause is cleared without a completed turn ending
+- **THEN** no advance is admitted
+- **AND** the task remains in its stage
+
+#### Scenario: Disabling auto mode clears the pause
+- **WHEN** the user disables auto mode on a paused task
+- **THEN** the pause is cleared along with the setting
+- **AND** no advance is admitted
+
+#### Scenario: Do not retract an admitted advance
+- **WHEN** the agent pauses a task with an automatic advance already admitted
+- **THEN** the admitted advance is not retracted
+- **AND** no later advance is admitted until the task is resumed
+
+#### Scenario: Request a pause with auto mode disabled
+- **WHEN** the agent pauses a task whose auto mode is disabled
+- **THEN** the call succeeds and reports that the task does not advance because auto mode is disabled
+- **AND** no pause is recorded
+
+#### Scenario: The pause does not clear the routing
+- **WHEN** the agent pauses a task that has a recorded transition
+- **THEN** the recorded transition and its target stage are unchanged
+- **AND** clearing the recorded transition does not pause the task
 
 ### Requirement: Bulk deletion fan-out
 The board SHALL provide an explicit selection mode that presents a selection control on each card and disables card dragging while active. The user SHALL be able to select multiple tasks across visible stages. A bulk deletion SHALL require one confirmation and SHALL apply the individual task deletion semantics to each selected task. On accept, the board SHALL close the confirmation, SHALL leave selection mode, and SHALL NOT present a result summary. A selected task whose persisted state permits admission SHALL be accepted for background deletion rather than reported as already deleted. A selected task that cannot be admitted SHALL remain on the board and SHALL be reported as a board error naming that task. The board SHALL NOT stop a conversation, resolve an operation, or discard local changes to force a bulk deletion, and SHALL present a later failure of an accepted task through the card status and the destructive-operation notice instead of as a bulk result. Leaving selection mode SHALL clear the selection.
@@ -2385,3 +2671,89 @@ The active board's header SHALL present a mark-all-read action. The action SHALL
 - **WHEN** the user activates the mark-all-read action
 - **THEN** no confirmation dialog is presented
 - **AND** the action takes effect immediately
+
+### Requirement: Board default model
+
+Each board's workflow SHALL accept an optional root model mapping that names the model the
+board's new conversations start on. The mapping SHALL carry a provider and a model, and MAY carry
+a reasoning effort. A workflow without the mapping SHALL keep today's behavior and start those
+conversations on the deployment default. The mapping SHALL be validated with the same accepted
+workflow semantics as the rest of the workflow: a mapping whose provider or model is missing or
+empty, whose reasoning effort is empty, or that carries a field the workflow does not define
+SHALL be rejected as invalid and SHALL NOT replace the last valid workflow. The board's stored
+parsed workflow and its authored YAML SHALL agree on the mapping, in the same way they agree on
+every other workflow field. The board's default model SHALL be part of the workflow's meaning and
+SHALL NOT be part of its layout. The board's default model SHALL be stored in the board's
+workflow and SHALL NOT be stored in a board setting outside it.
+
+#### Scenario: Accept a board default model
+
+- **WHEN** a workflow configures a root model mapping with a provider, a model, and a reasoning effort
+- **THEN** the configuration is accepted and the board keeps that model as its default
+- **AND** the stored parsed workflow and the authored YAML agree
+
+#### Scenario: Keep the deployment default when the field is absent
+
+- **WHEN** a workflow configures no root model mapping
+- **THEN** the configuration is accepted
+- **AND** the board has no default model of its own
+
+#### Scenario: Reject a model mapping without a model
+
+- **WHEN** a workflow configures a root model mapping whose model is missing or empty
+- **THEN** the configuration is rejected as invalid
+- **AND** the last valid workflow remains in effect
+
+#### Scenario: Reject an unsupported field in the model mapping
+
+- **WHEN** a workflow configures a root model mapping that carries a field the workflow does not define
+- **THEN** the configuration is rejected as invalid
+- **AND** the last valid workflow remains in effect
+
+#### Scenario: Count a model change as a workflow change
+
+- **WHEN** a board's workflow differs from another version of that workflow only in its model mapping
+- **THEN** that difference is a change to the workflow's meaning and not a layout difference
+
+### Requirement: Board default model configuration
+
+The board section of the board configuration SHALL present a control that names the model the
+board's new conversations start on. The control SHALL offer the models the host reports as
+available, each with its provider, SHALL offer the reasoning efforts that the chosen model
+reports, and SHALL offer an explicit option that keeps the deployment default. Choosing a model
+SHALL write the root model mapping into the board's authored workflow YAML and SHALL preserve the
+text and comments outside that mapping. Choosing to keep the deployment default SHALL remove that
+mapping from the authored YAML. Saving the board SHALL follow the same guarded save as the rest of
+the board's workflow, so an invalid document SHALL NOT replace the stored workflow. When the
+board's stored model is not among the models the host reports as available, the control SHALL
+present the stored provider and model and state that they are unavailable, and SHALL NOT remove
+them or alter the board on its own.
+
+#### Scenario: Choose a model for the board
+
+- **WHEN** the user chooses an available model and a reasoning effort in the board configuration and saves
+- **THEN** the board's authored workflow YAML carries that model mapping at the document root
+- **AND** the text and comments outside that mapping are unchanged
+
+#### Scenario: Keep the deployment default
+
+- **WHEN** the user chooses the option that keeps the deployment default and saves
+- **THEN** the board's authored workflow YAML no longer carries a model mapping
+- **AND** the board's new conversations start on the deployment default
+
+#### Scenario: Offer the reasoning effort of the chosen model
+
+- **WHEN** the user chooses a model that reports reasoning efforts
+- **THEN** the control offers those efforts and an option that keeps the model's own default
+
+#### Scenario: Reject an invalid document
+
+- **WHEN** the board's workflow document is invalid at save time
+- **THEN** the save is refused and the stored workflow is unchanged
+- **AND** the problem stays visible in the configuration
+
+#### Scenario: Present a stored model that the host no longer offers
+
+- **WHEN** the board's stored model is absent from the models the host reports as available
+- **THEN** the board configuration presents the stored provider and model and states that they are unavailable
+- **AND** the stored model is neither removed nor rewritten

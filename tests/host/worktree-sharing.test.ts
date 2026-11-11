@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { WorktreeSharingGuard } from '../../src/host/worktree-sharing.js';
+import { TaskBindingIndex } from '../../src/host/task-binding-index.js';
 import type { SessionTopologyPort } from '../../src/shared/ports.js';
 import type { BoardState, Task } from '../../src/shared/types.js';
 
@@ -28,8 +29,18 @@ function store(tasks: Task[], root: string) {
   const value = state(tasks, root);
   return {
     locate: (taskId: string) => { const found = value.tasks.find(item => item.id === taskId); if (!found) throw new Error('Missing task'); return { task: found }; },
-    allTasks: () => value.tasks,
+    worktreeBindings: () => value.tasks.map(item => ({
+      hubId: 'hub', taskId: item.id, title: item.title, projectId: item.projectId, lane: 'p',
+      sessionIds: item.sessionIds, worktreePath: item.worktree?.path ?? null, worktreeBranch: item.worktree?.branch ?? null,
+      unclaimedWorktreePaths: [] as string[], operationAttemptPath: null, pendingWorktreePath: null, operation: null,
+    })),
   };
+}
+
+/** The guard over one fake board, with its binding index. */
+function guardFor(tasks: Task[], root: string, sessions: SessionTopologyPort): WorktreeSharingGuard {
+  const source = store(tasks, root);
+  return new WorktreeSharingGuard(source, sessions, new TaskBindingIndex(source));
 }
 
 async function fixture() {
@@ -45,14 +56,14 @@ describe('WorktreeSharingGuard', () => {
   it('ignores a task-owned direct subagent child', async () => {
     const f = await fixture();
     const sessions: SessionTopologyPort = { topology: vi.fn(async () => ({ related: [{ sessionId: 'a', directory: f.root }, { sessionId: 'child', directory: path.join(f.root, 'sub') }], lineage: [{ sessionId: 'child', parentSessionId: 'a', origin: 'subagent' as const }] })) };
-    const guard = new WorktreeSharingGuard(store([task()], f.root), sessions);
+    const guard = guardFor([task()], f.root, sessions);
     await expect(guard.assertExclusive('task', f.root)).resolves.toBeUndefined();
   });
 
   it('rejects a foreign native session', async () => {
     const f = await fixture();
     const sessions: SessionTopologyPort = { topology: vi.fn(async () => ({ related: [{ sessionId: 'outside', directory: path.join(f.root, 'sub') }], lineage: [] })) };
-    const guard = new WorktreeSharingGuard(store([task()], f.root), sessions);
+    const guard = guardFor([task()], f.root, sessions);
     await expect(guard.assertExclusive('task', f.root)).rejects.toMatchObject({ code: 'SHARED_WORKTREE', details: { sessionId: 'outside' } });
   });
 
@@ -60,35 +71,35 @@ describe('WorktreeSharingGuard', () => {
     const f = await fixture();
     const other = task({ id: 'other', title: 'Other task', worktree: { path: f.root, branch: 'other', owned: true, status: 'ready' } });
     const sessions: SessionTopologyPort = { topology: vi.fn(async () => ({ related: [], lineage: [] })) };
-    const guard = new WorktreeSharingGuard(store([task(), other], f.root), sessions);
+    const guard = guardFor([task(), other], f.root, sessions);
     await expect(guard.assertExclusive('task', f.root)).rejects.toMatchObject({ code: 'SHARED_WORKTREE', details: { taskId: 'other', taskTitle: 'Other task' } });
   });
 
   it('rejects a fork that has a parent link but no subagent origin', async () => {
     const f = await fixture();
     const sessions: SessionTopologyPort = { topology: vi.fn(async () => ({ related: [{ sessionId: 'fork', directory: path.join(f.root, 'sub') }], lineage: [{ sessionId: 'fork', parentSessionId: 'a' }] })) };
-    const guard = new WorktreeSharingGuard(store([task()], f.root), sessions);
+    const guard = guardFor([task()], f.root, sessions);
     await expect(guard.assertExclusive('task', f.root)).rejects.toMatchObject({ code: 'SHARED_WORKTREE', details: { sessionId: 'fork' } });
   });
 
   it('ignores a fork the task already adopted', async () => {
     const f = await fixture();
     const sessions: SessionTopologyPort = { topology: vi.fn(async () => ({ related: [{ sessionId: 'a', directory: f.root }, { sessionId: 'fork', directory: path.join(f.root, 'sub') }], lineage: [{ sessionId: 'fork', parentSessionId: 'a' }] })) };
-    const guard = new WorktreeSharingGuard(store([task({ sessionIds: ['a', 'fork'] })], f.root), sessions);
+    const guard = guardFor([task({ sessionIds: ['a', 'fork'] })], f.root, sessions);
     await expect(guard.assertExclusive('task', f.root)).resolves.toBeUndefined();
   });
 
   it('fails closed when a subagent parent is unknown', async () => {
     const f = await fixture();
     const sessions: SessionTopologyPort = { topology: vi.fn(async () => ({ related: [{ sessionId: 'child', directory: path.join(f.root, 'sub') }], lineage: [{ sessionId: 'child', parentSessionId: 'missing', origin: 'subagent' as const }] })) };
-    const guard = new WorktreeSharingGuard(store([task()], f.root), sessions);
+    const guard = guardFor([task()], f.root, sessions);
     await expect(guard.assertExclusive('task', f.root)).rejects.toMatchObject({ code: 'SHARED_WORKTREE', details: { sessionId: 'child' } });
   });
 
   it('does not read topology when the target is already absent', async () => {
     const f = await fixture();
     const topology = vi.fn(async () => ({ related: [], lineage: [] }));
-    const guard = new WorktreeSharingGuard(store([task()], f.root), { topology });
+    const guard = guardFor([task()], f.root, { topology });
     await expect(guard.assertExclusive('task', path.join(f.root, 'missing'))).resolves.toBeUndefined();
     expect(topology).not.toHaveBeenCalled();
   });
@@ -96,14 +107,14 @@ describe('WorktreeSharingGuard', () => {
   it('ignores a related session whose current directory left the checkout', async () => {
     const f = await fixture();
     const sessions: SessionTopologyPort = { topology: vi.fn(async () => ({ related: [{ sessionId: 'moved', directory: f.outside }], lineage: [] })) };
-    const guard = new WorktreeSharingGuard(store([task()], f.root), sessions);
+    const guard = guardFor([task()], f.root, sessions);
     await expect(guard.assertExclusive('task', f.root)).resolves.toBeUndefined();
   });
 
   it('fails closed when topology cannot be read', async () => {
     const f = await fixture();
     const sessions: SessionTopologyPort = { topology: vi.fn(async () => { throw new Error('topology unavailable'); }) };
-    const guard = new WorktreeSharingGuard(store([task()], f.root), sessions);
+    const guard = guardFor([task()], f.root, sessions);
     await expect(guard.assertExclusive('task', f.root)).rejects.toThrow('topology unavailable');
   });
 
@@ -112,7 +123,7 @@ describe('WorktreeSharingGuard', () => {
     const other = task({ id: 'other', title: 'Other task', worktree: { path: f.root, branch: 'other', owned: true, status: 'ready' } });
     const extra = task({ id: 'second', title: 'Second task', worktree: { path: path.join(f.root, 'sub'), branch: 'second', owned: true, status: 'ready' } });
     const sessions: SessionTopologyPort = { topology: vi.fn(async () => ({ related: [{ sessionId: 'outside', directory: path.join(f.root, 'sub') }], lineage: [] })) };
-    const guard = new WorktreeSharingGuard(store([task(), other, extra], f.root), sessions);
+    const guard = guardFor([task(), other, extra], f.root, sessions);
     const failure = await guard.assertExclusive('task', f.root).catch(error => error);
     expect(failure.details.blockers).toEqual([
       { kind: 'task', taskId: 'other', title: 'Other task', path: f.root },
@@ -127,7 +138,7 @@ describe('WorktreeSharingGuard', () => {
     const f = await fixture();
     const other = task({ id: 'other', title: 'Other task', worktree: { path: f.root, branch: 'other', owned: true, status: 'ready' } });
     const topology = vi.fn(async () => ({ related: [{ sessionId: 'outside', directory: f.root }], lineage: [] }));
-    const guard = new WorktreeSharingGuard(store([task(), other], f.root), { topology });
+    const guard = guardFor([task(), other], f.root, { topology });
     await expect(guard.assertExclusive('task', f.root, { force: true })).resolves.toBeUndefined();
     expect(topology).not.toHaveBeenCalled();
   });

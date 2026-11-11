@@ -106,6 +106,25 @@ async function arm(app: KanbanApp, taskId: string): Promise<void> {
   await app.command({ type: 'task.autoMode', taskId, enabled: true });
 }
 
+const CHAIN_FLOW = [
+  'name: Instructed chain',
+  'initial_column: plan',
+  'columns:',
+  '  - id: plan',
+  '    label: Plan',
+  '    on_enter_prompt: |',
+  '      Plan the automatic advance.',
+  '  - id: review',
+  '    label: Review',
+  '    on_enter_prompt: |',
+  '      Review the automatic advance.',
+  '  - id: done',
+  '    label: Done',
+  '',
+].join('\n');
+
+const userPrompt = (seq: number) => ({ type: 'user/message', seq, time: Date.now(), data: { source: { kind: 'user' }, text: 'Review when you can.' } });
+
 describe('automatic advance', () => {
   it('moves to the instructed destination, sends once, and clears the entry marker', async () => {
     const f = await setup();
@@ -122,6 +141,76 @@ describe('automatic advance', () => {
     expect(f.sessions.sent).toHaveLength(1);
     expect(f.sessions.sent[0]).toMatchObject({ id: sessionId, text: 'Plan it.' });
     expect(f.sessions.dirs.size).toBe(1);
+  });
+
+  it('does not advance a turn that ended before a user move resumed the pause', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(SILENT_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Moved while paused', description: '' });
+    await arm(f.app, task.id);
+    await f.app.command({ type: 'task.pause', taskId: task.id, reason: 'Review the diff' });
+
+    // The completed turn is queued for the settle; moving the card resumes the task
+    // before that timer fires, which must not admit the already-ended turn.
+    f.app.observe(task.sessionIds[0]!, turnEnd(1));
+    await f.app.command({ type: 'task.move', taskId: task.id, columnId: task.columnId });
+    await expect.poll(() => f.store.requireTask(task.id).autoMode?.hold).toBeUndefined();
+    await delay(AUTO_ADVANCE_SETTLE_MS + 200);
+
+    const current = f.store.requireTask(task.id);
+    expect(current.columnId).toBe('backlog');
+    expect(current.autoMode).toEqual({ enabled: true });
+    expect(f.sessions.sent).toHaveLength(0);
+  });
+
+  it('does not resume the pause when the user sends a prompt', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(SILENT_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Prompted', description: '' });
+    await arm(f.app, task.id);
+    await f.app.command({ type: 'task.pause', taskId: task.id, reason: 'Review the diff' });
+    const sessionId = task.sessionIds[0]!;
+
+    f.app.observe(sessionId, userPrompt(1));
+    expect(f.store.requireTask(task.id).autoMode).toMatchObject({ enabled: true, hold: { reason: 'Review the diff' } });
+
+    await endTurn(f.app, sessionId, 2);
+    expect(f.store.requireTask(task.id).columnId).toBe('backlog');
+    expect(f.store.requireTask(task.id).autoMode?.hold?.reason).toBe('Review the diff');
+    expect(f.sessions.sent).toHaveLength(0);
+  });
+
+  it('records a failing turn beside the agent pause without replacing its reason', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(SILENT_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Failing while paused', description: '' });
+    await arm(f.app, task.id);
+    await f.app.command({ type: 'task.pause', taskId: task.id, reason: 'Review the diff' });
+
+    await endTurn(f.app, task.sessionIds[0]!, 1, 'error');
+
+    const current = f.store.requireTask(task.id);
+    expect(current.autoMode).toMatchObject({ enabled: true, hold: { reason: 'Review the diff' }, pause: { reason: 'turn-error' } });
+    expect(current.columnId).toBe('backlog');
+    expect(f.sessions.sent).toHaveLength(0);
+  });
+
+  it('advances after a play action that started the first execution', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(CHAIN_FLOW);
+    const task = await f.app.createTask({ projectId: f.project.id, title: 'Play then advance', description: '' });
+    await f.app.command({ type: 'task.autoMode', taskId: task.id, enabled: true });
+    const instruction = f.store.snapshot().workflow.columns.find(column => column.id === 'plan')!.onEnterPrompt!;
+    const marker = f.store.requireTask(task.id).instructionPending!;
+
+    await f.app.command({ type: 'task.prepareFirstExecution', taskId: task.id, columnId: 'plan', expectedEnteredAt: marker.enteredAt });
+    await f.app.command({ type: 'task.runInstruction', taskId: task.id, columnId: 'plan', expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
+    const sessionId = f.store.requireTask(task.id).sessionIds[0]!;
+    expect(f.sessions.sent).toHaveLength(1);
+
+    await endTurn(f.app, sessionId, 1);
+    await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('review');
+    await expect.poll(() => f.sessions.sent.length).toBe(2);
   });
 
   it('sends the transition briefing with the destination instruction', async () => {

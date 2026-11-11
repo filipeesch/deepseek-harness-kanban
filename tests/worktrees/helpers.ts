@@ -78,6 +78,27 @@ export class MemoryStore {
     return this.transact(draft => { value = change(draft); }).then(() => value);
   }
   allTasks() { return this.snapshot().tasks; }
+  worktreeBindings() {
+    const state = this.snapshot();
+    return state.tasks.map(task => {
+      const project = state.projects.find(item => item.id === task.projectId);
+      const operation = task.operation;
+      return {
+        hubId: state.id, taskId: task.id, title: task.title, projectId: task.projectId,
+        lane: project?.gitRootPath ?? 'project:' + task.projectId,
+        sessionIds: task.sessionIds, worktreePath: task.worktree?.path ?? null, worktreeBranch: task.worktree?.branch ?? null,
+        unclaimedWorktreePaths: (task.unclaimedWorktrees ?? []).map(entry => entry.path),
+        operationAttemptPath: operation?.createAttempt?.path ?? null,
+        pendingWorktreePath: task.pendingTransition?.worktreeRequest?.path ?? null,
+        operation: operation === null || operation === undefined ? null : {
+          id: operation.id, kind: operation.request.kind, phase: operation.phase,
+          targetPath: operation.targetPath ?? null,
+          requestPath: operation.request.kind === 'create' || operation.request.kind === 'attach' ? operation.request.path : null,
+          createdAt: operation.createdAt,
+        },
+      };
+    });
+  }
 }
 export function board(project: RegisteredProject): HubState {
   const now = new Date().toISOString();

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { SHARED_DOCUMENT_FILE } from '../../../domain/sharing/document.js';
+import { SHARED_MANIFEST_FILE } from '../../../domain/sharing/manifest.js';
 import { KanbanError } from '../../../shared/errors.js';
 import type { DriveBrowseView, DriveFolderEntry, DriveDiscoveryView, DriveLocationView } from '../../../shared/types.js';
 import { folderIdentity, isWithinPath } from '../local-folder-path.js';
@@ -138,7 +138,7 @@ export class GoogleDriveLocalDiscovery {
       path: located.path,
       parent: atRoot ? null : this.paths.dirname(located.path),
       entries: folderEntries,
-      hasDocument: listing.entries.some(entry => !entry.directory && entry.name === SHARED_DOCUMENT_FILE),
+      hasDocument: listing.entries.some(entry => !entry.directory && entry.name === SHARED_MANIFEST_FILE),
       truncated: listing.truncated || folders.length > shown.length,
       shown: folderEntries.length,
     };

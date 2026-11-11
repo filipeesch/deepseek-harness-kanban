@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { ScheduleModelCatalogSchema } from '../../src/remote.js';
+import { ModelCatalogSchema } from '../../src/remote.js';
 import { ScheduleRunRegistry } from '../../src/host/schedule-runs.js';
 import { fixture } from './helpers.js';
 import { memoryRunStorage } from './schedule-helpers.js';
 import type { ScheduleRuntimePort } from '../../src/host/schedule-port.js';
-import type { ScheduleModelCatalog } from '../../src/shared/types.js';
+import type { ModelCatalog } from '../../src/shared/types.js';
 
-const catalog: ScheduleModelCatalog = { default: { provider: 'deepseek', model: 'chat' }, providers: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'chat', name: 'Chat' }] }], failures: [] };
+const catalog: ModelCatalog = { default: { provider: 'deepseek', model: 'chat' }, providers: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'chat', name: 'Chat' }] }], failures: [] };
 
 describe('schedule runtime projection', () => {
   it('publishes the live registry without changing the state revision', async () => {
@@ -32,7 +32,7 @@ describe('schedule runtime projection', () => {
     expect(finished.stateRevision).toBe(running.stateRevision);
     expect(finished.scheduleRuntime?.[hubId]?.schedule).toEqual({ running: false, lastRun: { status: 'sent', at: '2026-01-01T09:00:00.000Z', manual: false, sessionId: 'session' } });
     expect(await harnessed.app.modelCatalog()).toEqual(catalog);
-    expect(ScheduleModelCatalogSchema.safeParse(catalog).success).toBe(true);
+    expect(ModelCatalogSchema.safeParse(catalog).success).toBe(true);
     await opened.close();
     await harnessed.close();
   });
@@ -51,7 +51,7 @@ describe('schedule runtime projection', () => {
   });
 
   it('rejects a malformed catalog payload at the transport boundary', () => {
-    expect(ScheduleModelCatalogSchema.safeParse({ default: { provider: '', model: 'chat' }, providers: [], failures: [] }).success).toBe(false);
-    expect(ScheduleModelCatalogSchema.safeParse({ ...catalog, extra: true }).success).toBe(false);
+    expect(ModelCatalogSchema.safeParse({ default: { provider: '', model: 'chat' }, providers: [], failures: [] }).success).toBe(false);
+    expect(ModelCatalogSchema.safeParse({ ...catalog, extra: true }).success).toBe(false);
   });
 });

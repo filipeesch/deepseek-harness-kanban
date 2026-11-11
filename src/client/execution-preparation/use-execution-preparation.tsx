@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import type { ClientApi } from '../../shared/types.js';
+import type { ClientApi, ConversationModelOutcome } from '../../shared/types.js';
 import { ConversationLeaseRegistry, type ConversationLeaseEnvironment } from '../conversation-leases.js';
-import { creationReceiptId, type RunCommand } from '../ui.js';
+import { creationModelOutcome, creationReceiptId, type RunCommand } from '../ui.js';
 import type { PrepareExecution, PreparationRequest } from './contract.js';
 import { ExecutionPreparationController } from './controller.js';
 import { ExecutionPreparationDialog } from './dialog.js';
@@ -14,6 +14,8 @@ export interface ExecutionPreparationOptions {
   seat?: PreparationSeat;
   /** The client session services; absent in isolated render harnesses. */
   leases?: ConversationLeaseEnvironment;
+  /** Report what became of the board's model on the conversation this preparation created. */
+  onConversationCreated?: (sessionId: string, outcome: ConversationModelOutcome | undefined) => void;
 }
 
 export interface ExecutionPreparation {
@@ -53,7 +55,7 @@ function retained(registry: ConversationLeaseRegistry | null, sessionId: string,
  * Owns the first-execution preparation for one mounted board: the controller,
  * the session lease used by the native model seat, and the dialog element.
  */
-export function useExecutionPreparation({ api, run, seat, leases }: ExecutionPreparationOptions): ExecutionPreparation {
+export function useExecutionPreparation({ api, run, seat, leases, onConversationCreated }: ExecutionPreparationOptions): ExecutionPreparation {
   const [controller] = useState(() => new ExecutionPreparationController());
   const registry = useMemo(() => leases === undefined ? null : new ConversationLeaseRegistry(leases), [leases]);
   useEffect(() => () => { registry?.dispose(); }, [registry]);
@@ -64,8 +66,8 @@ export function useExecutionPreparation({ api, run, seat, leases }: ExecutionPre
     update();
     return seat.slots.subscribe(MODEL_SELECTION_SLOT, update);
   }, [seat]);
-  const latest = useRef({ api, run, registry, seatAvailable, lifetime: leases?.lifetime });
-  latest.current = { api, run, registry, seatAvailable, lifetime: leases?.lifetime };
+  const latest = useRef({ api, run, registry, seatAvailable, lifetime: leases?.lifetime, onConversationCreated });
+  latest.current = { api, run, registry, seatAvailable, lifetime: leases?.lifetime, onConversationCreated };
 
   useEffect(() => {
     controller.configure({
@@ -76,11 +78,18 @@ export function useExecutionPreparation({ api, run, seat, leases }: ExecutionPre
         const result = await latest.current.run({ type: 'conversation.create', taskId, ensureFirst: true });
         const sessionId = creationReceiptId(result, 'conversation');
         if (sessionId === undefined) throw new Error('The created conversation could not be identified from its creation receipt.');
+        // The preparation itself is not the place to announce a fallback: it reports
+        // the outcome and the conversation presents it, so the move is never blocked.
+        latest.current.onConversationCreated?.(sessionId, creationModelOutcome(result));
         return sessionId;
       },
       retainSession: sessionId => retained(latest.current.registry, sessionId, latest.current.lifetime),
       releaseSession: sessionId => latest.current.registry?.release(sessionId),
       seatAvailable: () => latest.current.registry !== null && latest.current.seatAvailable,
+      modelCatalog: async () => {
+        try { return await latest.current.api.modelCatalog(false); }
+        catch { return null; }
+      },
     });
   }, [controller]);
 

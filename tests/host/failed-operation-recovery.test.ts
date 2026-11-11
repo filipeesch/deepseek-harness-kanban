@@ -45,7 +45,7 @@ describe('failed context operation recovery', () => {
     expect(f.store.snapshot().tasks.some(value => value.id === task.id)).toBe(false);
     expect(f.sessions.archived).toEqual(task.sessionIds);
     expect(f.git.removed).toEqual([]);
-    expect((await f.app.snapshot()).retainedCheckouts).toEqual([{ path: root, projectId: f.project.id, taskTitle: 'Stuck return' }]);
+    expect((await f.app.snapshot()).retainedCheckouts).toEqual([{ path: root, projectId: f.project.id, taskTitle: 'Stuck return', reason: 'unresolved' }]);
   });
 
   it('deletes a task with a failed return and no worktree without resolving the base', async () => {

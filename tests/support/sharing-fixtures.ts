@@ -1,13 +1,13 @@
 import { createBoard, initialHubState } from '../../src/domain/hub-schema.js';
-import type { SharedHubDocument } from '../../src/domain/sharing/document.js';
+import type { SharedHubManifest } from '../../src/domain/sharing/manifest.js';
 import type { HubState } from '../../src/shared/types.js';
 
 const NOW = '2026-01-01T00:00:00.000Z';
 export function flow(columns: string[] = ['backlog', 'plan', 'done']): string {
   return ['name: Flow', 'initial_column: ' + columns[0], 'columns:', ...columns.flatMap(column => ['  - id: ' + column, '    label: ' + column]), ''].join('\n');
 }
-export function documentOf(entries: Array<{ key: string; name: string; workflow: string; projectKeys?: string[] }>): SharedHubDocument {
-  return { version: 2, boards: entries.map(entry => ({ key: entry.key, name: entry.name, workflow: entry.workflow, ...(entry.projectKeys === undefined ? {} : { projectKeys: entry.projectKeys }) })) };
+export function manifestOf(entries: Array<{ key: string; name: string; projectKeys?: string[] }>): SharedHubManifest {
+  return { version: 3, boards: entries.map(entry => ({ key: entry.key, name: entry.name, ...(entry.projectKeys === undefined ? {} : { projectKeys: entry.projectKeys }) })) };
 }
 export function hubWith(boards: Array<{ id: string; name: string; workflow?: string; tasks?: Array<{ columnId: string }> }>): HubState {
   const hub = initialHubState('hub', 'My Hub', NOW);

@@ -11,9 +11,27 @@ async function viewportZoom(page: Page): Promise<number> {
   return match === null ? 1 : Number(match[1]);
 }
 
-/** The bounded inverse zoom the card's marks multiply by. */
-async function markScale(page: Page): Promise<number> {
-  return page.locator('.kb-flow-canvas').evaluate(element => Number(getComputedStyle(element).getPropertyValue('--kb-mark-scale').trim() || '1'));
+/** The live zoom and the bounded mark scale read from one frame, so they cannot disagree mid-animation. */
+async function viewportPair(page: Page): Promise<{ zoom: number; scale: number }> {
+  return page.evaluate(() => {
+    const style = document.querySelector('.react-flow__viewport')?.getAttribute('style') ?? '';
+    const match = /scale\(([\d.]+)\)/.exec(style);
+    const canvas = document.querySelector('.kb-flow-canvas');
+    const scale = canvas === null ? 1 : Number(getComputedStyle(canvas).getPropertyValue('--kb-mark-scale').trim() || '1');
+    return { zoom: match === null ? 1 : Number(match[1]), scale };
+  });
+}
+
+/** Wait for the animated zoom to stop so the pair describes the settled viewport. */
+async function settledViewport(page: Page): Promise<{ zoom: number; scale: number }> {
+  let previous = await viewportPair(page);
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    await page.waitForTimeout(50);
+    const current = await viewportPair(page);
+    if (current.zoom === previous.zoom && current.scale === previous.scale) return current;
+    previous = current;
+  }
+  return previous;
 }
 
 /** Click one zoom control until the diagram satisfies the predicate. */
@@ -70,26 +88,31 @@ test('keeps the attention marks readable at every diagram zoom', async ({ page }
 
   // Between the bound and zoom 1 the mark keeps a constant on-screen size.
   await zoomUntil(page, 'Zoom in', zoom => zoom >= 1);
-  const mid = await zoomUntil(page, 'Zoom out', zoom => zoom <= 0.5 + 0.001);
-  const midScale = await markScale(page);
-  expect(midScale).toBeGreaterThan(1);
-  expect(midScale).toBeLessThan(3.5);
-  expect(midScale).toBeCloseTo(1 / mid, 3);
+  await zoomUntil(page, 'Zoom out', zoom => zoom <= 0.5 + 0.001);
+  // The zoom animates, so the pair is read only once the viewport stopped moving;
+  // reading the two values from different frames compares different zooms.
+  const mid = await settledViewport(page);
+  expect(mid.zoom).toBeGreaterThan(0.2);
+  expect(mid.scale).toBeGreaterThan(1);
+  expect(mid.scale).toBeLessThan(3.5);
+  expect(mid.scale).toBeCloseTo(1 / mid.zoom, 3);
   expect((await dot.boundingBox())!.height).toBeCloseTo(authored, 0);
 
   // At the minimum zoom the bounded scale stops the mark from dwarfing the card.
-  const min = await zoomUntil(page, 'Zoom out', zoom => zoom <= 0.2 + 0.001);
-  expect(min).toBeCloseTo(0.2, 3);
-  expect(await markScale(page)).toBeCloseTo(3.5, 3);
+  await zoomUntil(page, 'Zoom out', zoom => zoom <= 0.2 + 0.001);
+  const min = await settledViewport(page);
+  expect(min.zoom).toBeCloseTo(0.2, 3);
+  expect(min.scale).toBeCloseTo(3.5, 3);
   const bounded = (await dot.boundingBox())!;
-  expect(bounded.height).toBeCloseTo(authored * 3.5 * min, 0);
+  expect(bounded.height).toBeCloseTo(authored * 3.5 * min.zoom, 0);
   expect(bounded.height).toBeLessThan(authored);
 
   // Past zoom 1 the mark follows the canvas instead of shrinking below its authored size.
-  const max = await zoomUntil(page, 'Zoom in', zoom => zoom >= 2.5 - 0.001);
-  expect(max).toBeCloseTo(2.5, 3);
-  expect(await markScale(page)).toBe(1);
-  expect((await dot.boundingBox())!.height).toBeCloseTo(authored * max, 0);
+  await zoomUntil(page, 'Zoom in', zoom => zoom >= 2.5 - 0.001);
+  const max = await settledViewport(page);
+  expect(max.zoom).toBeCloseTo(2.5, 3);
+  expect(max.scale).toBe(1);
+  expect((await dot.boundingBox())!.height).toBeCloseTo(authored * max.zoom, 0);
 
   // The marks keep their names at every zoom.
   const names = await page.locator('[data-task-id="long-3"] .kb-attention-dots .kb-dot').evaluateAll(dots => dots.map(dot => dot.getAttribute('aria-label')));

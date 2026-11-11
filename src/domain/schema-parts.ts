@@ -4,6 +4,7 @@ import { STAGE_MIN_SIZE, STAGE_SIZE_LIMIT } from './stage-size.js';
 import { PROJECT_KEY_PATTERN } from './project-key.js';
 import { transitionRule as normalizeTransitionRule } from './transition-rule.js';
 import { isAbsolutePath, isDomainId } from './validation.js';
+import { AUTO_MODE_PAUSE_REASONS } from '../shared/types.js';
 import { ANCHOR_POINTS_PER_SIDE, CONNECTION_OFFSET_LIMIT } from './connection-anchor.js';
 
 /**
@@ -36,7 +37,7 @@ export const operation = z.strictObject({
   id, request: operationRequest,
   phase: z.enum(['queued', 'waiting', 'preflight', 'git', 'switching', 'removing', 'archiving', 'failed']),
   targetPath: absolutePath.optional(), targetDirectory: absolutePath.optional(),
-  retainedCheckoutPath: absolutePath.optional(),
+  retainedCheckoutPath: absolutePath.optional(), retainedCheckoutReason: z.enum(['folder', 'unresolved']).optional(),
   previousDirectories: z.record(id, absolutePath), switchedSessionIds: z.array(id), archivedSessionIds: z.array(id),
   createAttempt: z.strictObject({ operationId: id, path: absolutePath, gitRootPath: absolutePath, branchName: nonempty, mode: z.enum(['new', 'existing']), absentBefore: z.literal(true) }).optional(),
   gitCompleted: z.boolean(), error: problem.optional(), createdAt: timestamp,
@@ -47,11 +48,15 @@ export const pendingTransition = z.strictObject({
   origin: z.literal('auto').optional(),
 });
 export const autoModePause = z.strictObject({
-  reason: z.enum(['turn-error', 'turn-blocked', 'turn-aborted', 'turn-max-tokens', 'advance-failed', 'transition-stale']),
+  reason: z.enum(AUTO_MODE_PAUSE_REASONS),
   at: timestamp,
   message: z.string().optional(),
 });
-export const autoMode = z.strictObject({ enabled: z.boolean(), pause: autoModePause.optional() });
+/** The pause the agent requested; it exists only while auto mode stays enabled. */
+export const autoModeHold = z.strictObject({ reason: nonempty, at: timestamp });
+export const autoMode = z.strictObject({ enabled: z.boolean(), pause: autoModePause.optional(), hold: autoModeHold.optional() }).superRefine((value, context) => {
+  if (value.hold !== undefined && !value.enabled) context.addIssue({ code: 'custom', path: ['hold'], message: 'A pause requires auto mode to be enabled.' });
+});
 /** An authored stage position; the workflow parser owns the accepted range. */
 export const stagePosition = z.strictObject({ x: z.number().finite(), y: z.number().finite() });
 /** One authored transition entry; the bare identifier form is normalized on read. */
@@ -81,11 +86,14 @@ export const connectionLayout = z.strictObject({
   from: id, to: id, source: connectionAnchor.optional(), target: connectionAnchor.optional(), segments: z.array(connectionSegment).optional(),
 });
 export const column = z.strictObject({
-  id, name: nonempty, onEnterPrompt: z.string().optional(), allowedTransitions: z.array(transitionRule).optional(), position: stagePosition.optional(), size: stageSize.optional(),
+  id, key: id.optional(), name: nonempty, onEnterPrompt: z.string().optional(), allowedTransitions: z.array(transitionRule).optional(), position: stagePosition.optional(), size: stageSize.optional(),
 });
 export const group = z.strictObject({ id, name: nonempty, columnIds: z.array(id).min(1) });
+/** One model route: a provider, the provider-owned model, and an optional adapter-owned effort. */
+export const modelSelection = z.strictObject({ provider: nonempty, model: nonempty, reasoningEffort: nonempty.optional() });
 export const workflow = z.strictObject({
   name: nonempty, initialColumnId: id, defaultView: z.enum(['board', 'workflow']).optional(), columns: z.array(column).min(1), groups: z.array(group),
+  model: modelSelection.optional(),
   connections: z.array(connectionLayout).optional(),
 });
 export const note = z.strictObject({
@@ -173,17 +181,18 @@ function shapeConnection(value: ConnectionLayout): Record<string, unknown> {
   };
 }
 
-function workflowShape(value: Workflow, includeLayout: boolean): string {
+function workflowShape(value: Workflow, includeLayout: boolean, includeIdentity = true): string {
   return JSON.stringify({
     name: value.name,
     defaultView: value.defaultView,
     initialColumnId: value.initialColumnId,
     columns: value.columns.map(item => ({
-      id: item.id, name: item.name, onEnterPrompt: item.onEnterPrompt,
+      id: item.id, ...(includeIdentity ? { key: item.key } : {}), name: item.name, onEnterPrompt: item.onEnterPrompt,
       allowedTransitions: item.allowedTransitions?.map(rule => normalizeTransitionRule(rule.to, rule.when)),
       ...(includeLayout ? { position: item.position, size: item.size } : {}),
     })),
     groups: value.groups.map(item => ({ id: item.id, name: item.name, columnIds: item.columnIds })),
+    model: value.model === undefined ? undefined : { provider: value.model.provider, model: value.model.model, reasoningEffort: value.model.reasoningEffort },
     ...(includeLayout ? { connections: sortedConnections(value.connections).map(shapeConnection) } : {}),
   });
 }
@@ -193,9 +202,13 @@ export function canonicalWorkflow(value: Workflow): string {
   return workflowShape(value, true);
 }
 
-/** The workflow without its diagram layout: the flow two versions must share to merge. */
+/**
+ * The workflow without its diagram layout: the flow two versions must share to merge.
+ * The stable identity is excluded: it says which stage is which, not what the stage
+ * means, so a board that gained identities is still comparable to one that has none.
+ */
 export function workflowMeaning(value: Workflow): string {
-  return workflowShape(value, false);
+  return workflowShape(value, false, false);
 }
 
 type Issue = (path: (string | number)[], message: string) => void;

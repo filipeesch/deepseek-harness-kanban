@@ -1,5 +1,5 @@
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { AutoModePause, Board, BoardSettings, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ScheduleModelSelection, StagePatch, Workflow } from '../shared/types.js';
+import type { AutoModePause, Board, BoardSettings, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ModelSelection, StagePatch, Workflow } from '../shared/types.js';
 import { assertId, isAbsolutePath } from './validation.js';
 import { assertSchedulable } from './cron.js';
 import { isPublishedProject, requireProjectPath } from '../shared/project.js';
@@ -7,6 +7,7 @@ import { createBoard } from './hub-schema.js';
 import { parseWorkflow } from './workflow.js';
 import { applyWorkflowEdits, type WorkflowTextEdit } from './workflow-edit.js';
 import { entryInstruction, nextEnteredAt } from './stage-entry.js';
+import { applyHold, clearAutoModeState, normalizePauseReason } from './auto-mode-hold.js';
 import { renameTaskStage, updateStage } from './stage-update.js';
 import { describeStageActivity, hasInFlightWork, persistedStageActivity } from '../shared/stage-activity.js';
 import { transitionTargets } from './transitions.js';
@@ -32,7 +33,7 @@ export interface ScheduleInput {
   cron: string;
   timeZone: string;
   projectId: string;
-  model?: ScheduleModelSelection;
+  model?: ModelSelection;
   newConversation: boolean;
   archiveWhenIdle: boolean;
 }
@@ -94,7 +95,7 @@ export function requireSchedule(hub: HubState, scheduleId: string): HubSchedule 
   return schedule;
 }
 
-function normalizeScheduleModel(value: ScheduleModelSelection | undefined): ScheduleModelSelection | undefined {
+function normalizeScheduleModel(value: ModelSelection | undefined): ModelSelection | undefined {
   if (value === undefined) return undefined;
   invariant(value && typeof value === 'object' && !Array.isArray(value), 'INVALID_INPUT', 'Schedule model must be a mapping.');
   const provider = requiredText(value.provider, 'Model provider').trim();
@@ -367,7 +368,8 @@ export function setAutoMode(hub: HubState, taskId: string, enabled: boolean, dep
   invariant(typeof enabled === 'boolean', 'INVALID_INPUT', 'Auto mode requires a boolean value.');
   const task = requireTask(hub, taskId);
   if (enabled) {
-    if (task.autoMode?.enabled === true && task.autoMode.pause === undefined) return task;
+    // Enabling a paused task is its resume, so clearing the records is the whole change.
+    if (task.autoMode?.enabled === true && task.autoMode.pause === undefined && task.autoMode.hold === undefined) return task;
     task.autoMode = { enabled: true };
   } else {
     if (task.autoMode === undefined) return task;
@@ -383,6 +385,37 @@ export function pauseAutoMode(hub: HubState, taskId: string, pause: AutoModePaus
   if (task.autoMode?.enabled !== true) return task;
   if (expectedColumnId !== undefined && task.columnId !== expectedColumnId) return task;
   task.autoMode.pause = { ...pause };
+  task.updatedAt = timestamp(deps);
+  hub.updatedAt = task.updatedAt;
+  return task;
+}
+
+/**
+ * Record the pause the agent requested. It suspends the automatic advance and
+ * leaves auto mode enabled, so the user's setting survives the pause. A task
+ * whose auto mode is disabled already does not advance, so nothing is recorded
+ * for it and the caller reports that instead.
+ */
+export function pauseTask(hub: HubState, taskId: string, reason: unknown, deps: OperationDeps): HubTask {
+  const task = requireTask(hub, taskId);
+  const normalized = normalizePauseReason(reason);
+  if (task.autoMode?.enabled !== true) return task;
+  if (task.autoMode.hold?.reason === normalized) return task;
+  const at = timestamp(deps);
+  applyHold(task, normalized, at);
+  task.updatedAt = at;
+  hub.updatedAt = task.updatedAt;
+  return task;
+}
+
+/**
+ * Resume a paused task: the agent pause and any diagnostic pause are cleared and
+ * auto mode keeps its setting, so resuming never enables a disabled task and
+ * never advances a turn that already ended.
+ */
+export function resumeTask(hub: HubState, taskId: string, deps: OperationDeps): HubTask {
+  const task = requireTask(hub, taskId);
+  if (!clearAutoModeState(task)) return task;
   task.updatedAt = timestamp(deps);
   hub.updatedAt = task.updatedAt;
   return task;
@@ -498,7 +531,7 @@ export function deleteNote(hub: HubState, taskId: string, noteId: string, deps: 
   return note;
 }
 
-export function placeTask(hub: HubState, taskId: string, columnId: string, placement: Placement, enteredAt: number): void {
+export function placeTask(hub: HubState, taskId: string, columnId: string, placement: Placement, enteredAt: number, options: { retainAgentPause?: boolean } = {}): void {
   const task = requireTask(hub, taskId);
   const board = boardForTask(hub, task);
   const sourceColumnId = task.columnId;
@@ -506,7 +539,11 @@ export function placeTask(hub: HubState, taskId: string, columnId: string, place
     .sort(compareTaskOrder);
   const index = placementIndex(placement, destination);
   task.columnId = columnId;
+  // A placement resolves the diagnostic pause. The agent pause is a user-facing
+  // stop, so a user movement resumes the task while an automatic advance that
+  // was already admitted keeps it.
   if (task.autoMode?.pause !== undefined) delete task.autoMode.pause;
+  if (options.retainAgentPause !== true && task.autoMode?.hold !== undefined) delete task.autoMode.hold;
   // A recorded transition is an edge of one stage, so it stops applying the
   // moment the task leaves that stage. A same-stage reorder keeps it.
   if (sourceColumnId !== columnId && task.recordedTransition !== undefined) delete task.recordedTransition;

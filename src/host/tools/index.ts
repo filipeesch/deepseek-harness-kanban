@@ -9,6 +9,7 @@ import { noteTools } from './notes.js';
 import { boardTools } from './boards.js';
 import { questionTools } from './questions.js';
 import { transitionTools } from './transitions.js';
+import { autoModeTools } from './auto-mode.js';
 import { teamFileTools } from './team-files.js';
 import { messageTools } from './messages.js';
 import type { InterCardMessaging } from '../inter-card-messaging.js';
@@ -20,6 +21,7 @@ export function productToolDefinitions(app:KanbanApp,boards:BoardAdministration=
   ...noteTools(app),
   ...boardTools(app,boards),
   ...transitionTools(app),
+  ...autoModeTools(app),
   ...teamFileTools(app),
   ...(messaging===undefined?[]:messageTools(messaging)),
   ...questionTools(),

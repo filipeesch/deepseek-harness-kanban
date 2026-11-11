@@ -151,6 +151,24 @@ describe('automatic advance admission', () => {
     expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
   });
 
+  it('does not admit a task that already carries the agent pause', async () => {
+    const f = fixture({}, { task: task({ autoMode: { enabled: true, hold: { reason: 'Review the diff', at: now } } }) });
+    await admitAutoAdvance(f.deps, 'task', plan());
+    expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
+    expect(f.dispatched).toHaveLength(0);
+  });
+
+  it('refuses to commit when the task was paused between the decision and the transaction', async () => {
+    const f = fixture();
+    f.deps.pending = async () => {
+      f.state.hub.tasks[0] = task({ autoMode: { enabled: true, hold: { reason: 'Review the diff', at: now } } });
+      return NO_PENDING_USER_WORK;
+    };
+    await expect(admitAutoAdvance(f.deps, 'task', plan())).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+    expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
+    expect(f.dispatched).toHaveLength(0);
+  });
+
   it('clears a recorded pause in the same transaction that admits the advance', async () => {
     const f = fixture();
     f.state.hub.tasks[0] = task({ autoMode: { enabled: true, pause: { reason: 'turn-aborted', at: now } } });

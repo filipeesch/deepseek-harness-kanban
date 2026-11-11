@@ -94,7 +94,7 @@ The plugin SHALL deliver exactly one plugin-sourced native message into the reso
 
 ### Requirement: Target conversation preparation
 
-The plugin SHALL resolve the target task's first open conversation. When the task has no open conversation, the plugin SHALL prepare one before delivering. A worktree binding in the preparing or error state SHALL block the delivery with an actionable error, and the plugin SHALL NOT create a worktree or a conversation. For a Git-backed task with no worktree and no recorded base-project choice, the plugin SHALL create the task's default worktree using the same title-derived defaults as the automatic first execution and SHALL wait until that worktree is ready before creating the conversation. For a task with a ready or attached worktree, a recorded base-project choice, or a folder project, the plugin SHALL use the task's current effective directory. The plugin SHALL create the first conversation through the same conversation-retention behavior as other first-conversation preparation, using the deployment default model and presenting no native model selector. If the worktree or the conversation cannot be prepared, the delivery SHALL fail without sending the message and SHALL report the failure, and a worktree already created SHALL remain. The result SHALL report the created worktree and the created conversation.
+The plugin SHALL resolve the target task's first open conversation. When the task has no open conversation, the plugin SHALL prepare one before delivering. A worktree binding in the preparing or error state SHALL block the delivery with an actionable error, and the plugin SHALL NOT create a worktree or a conversation. For a Git-backed task with no worktree and no recorded base-project choice, the plugin SHALL create the task's default worktree using the same title-derived defaults as the automatic first execution and SHALL wait until that worktree is ready before creating the conversation. For a task with a ready or attached worktree, a recorded base-project choice, or a folder project, the plugin SHALL use the task's current effective directory. The plugin SHALL create the first conversation through the same conversation-retention behavior as other first-conversation preparation, using the board's default model when the board names one and the deployment default otherwise, and presenting no native model selector. If the worktree or the conversation cannot be prepared, the delivery SHALL fail without sending the message and SHALL report the failure, and a worktree already created SHALL remain. The result SHALL report the created worktree and the created conversation.
 
 #### Scenario: Deliver to the first open conversation
 
@@ -128,10 +128,10 @@ The plugin SHALL resolve the target task's first open conversation. When the tas
 - **THEN** the delivery fails without sending the message
 - **AND** the created worktree remains
 
-#### Scenario: Use the deployment default model
+#### Scenario: Use the board or deployment default model
 
 - **WHEN** the delivery creates the target task's first conversation
-- **THEN** the conversation uses the deployment default model
+- **THEN** the conversation uses the board's default model when the board names one and the deployment default otherwise
 - **AND** no native model selector is presented and no model selection is submitted
 
 ### Requirement: Reply model

@@ -1,4 +1,4 @@
-import type { HubScheduleRuntime, ScheduleModelCatalog } from '../shared/types.js';
+import type { HubScheduleRuntime, ModelCatalog } from '../shared/types.js';
 
 /**
  * The live schedule runtime as the app sees it. It is attached after the app is
@@ -12,5 +12,5 @@ export interface ScheduleRuntimePort {
   /** Every Hub's runtime projection, keyed by Hub identity. */
   runtime(): Record<string, HubScheduleRuntime>;
   /** The model catalog offered to the schedule editor. */
-  modelCatalog(refresh: boolean): Promise<ScheduleModelCatalog>;
+  modelCatalog(refresh: boolean): Promise<ModelCatalog>;
 }

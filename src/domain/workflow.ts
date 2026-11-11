@@ -1,5 +1,5 @@
 import { parseDocument } from 'yaml';
-import type { Column, ColumnGroup, ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset, StagePosition, StageSize, Workflow, WorkflowView } from '../shared/types.js';
+import type { Column, ColumnGroup, ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset, ModelSelection, StagePosition, StageSize, Workflow, WorkflowView } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
 import { createYamlFields, invalidWorkflow } from './yaml-fields.js';
 import { STAGE_MIN_SIZE, STAGE_SIZE_LIMIT } from './stage-size.js';
@@ -32,6 +32,7 @@ const POSITION_NOTE = 'Only x and y are supported.';
 const SIZE_NOTE = 'Only width and height are supported.';
 const ANCHOR_NOTE = 'Only side and at are supported.';
 const SEGMENT_NOTE = 'Only axis and offset are supported.';
+const MODEL_NOTE = 'Only provider, model, and reasoning_effort are supported.';
 
 function view(value: unknown): WorkflowView {
   if (value === 'board' || value === 'workflow') return value;
@@ -105,6 +106,18 @@ function connectionLayout(value: unknown, context: string): ConnectionLayout {
   return layout;
 }
 
+/**
+ * The board's default model route, authored as the root `model` mapping. The
+ * host owns whether the route exists; the parser only owns its shape.
+ */
+function modelSelection(value: unknown, context: string): ModelSelection {
+  const map = record(value, context);
+  keys(map, ['provider', 'model', 'reasoning_effort'], 'model', MODEL_NOTE);
+  const selection: ModelSelection = { provider: text(map.provider, context + ' provider'), model: text(map.model, context + ' model') };
+  if (map.reasoning_effort !== undefined) selection.reasoningEffort = text(map.reasoning_effort, context + ' reasoning_effort');
+  return selection;
+}
+
 function label(value: Record<string, unknown>, context: string): string {
   if (value.label !== undefined && value.name !== undefined && value.label !== value.name) {
     invalidWorkflow(context + ' cannot have conflicting label and name values.');
@@ -126,15 +139,16 @@ export function parseWorkflow(yaml: string): Workflow {
     invalidWorkflow('Invalid workflow YAML: ' + (error instanceof Error ? error.message : String(error)));
   }
   const input = record(raw, 'Workflow');
-  keys(input, ['id', 'name', 'initial_column', 'default_view', 'columns', 'groups', 'connections'], 'workflow', COLUMN_NOTE);
+  keys(input, ['id', 'name', 'initial_column', 'default_view', 'columns', 'groups', 'model', 'connections'], 'workflow', COLUMN_NOTE);
   if (input.id !== undefined) id(input.id, 'Workflow ID');
   const name = input.name === undefined ? 'Workflow' : text(input.name, 'Workflow name');
   if (!Array.isArray(input.columns) || input.columns.length === 0) invalidWorkflow('Workflow requires at least one column.');
   const columns: Column[] = input.columns.map((item, index) => {
     const value = record(item, 'Column ' + index);
-    keys(value, ['id', 'label', 'name', 'description', 'allowed_transitions', 'on_enter_prompt', 'position', 'size'], 'column', COLUMN_NOTE);
+    keys(value, ['id', 'key', 'label', 'name', 'description', 'allowed_transitions', 'on_enter_prompt', 'position', 'size'], 'column', COLUMN_NOTE);
     if (value.description !== undefined && typeof value.description !== 'string') invalidWorkflow('Column description must be text.');
     const column: Column = { id: id(value.id, 'Column ID'), name: label(value, 'Column') };
+    if (value.key !== undefined) column.key = id(value.key, 'Column ' + column.id + ' key');
     if (value.allowed_transitions !== undefined) column.allowedTransitions = rules(value.allowed_transitions, 'allowed_transitions');
     if (value.on_enter_prompt !== undefined && value.on_enter_prompt !== null) {
       if (typeof value.on_enter_prompt !== 'string') invalidWorkflow('on_enter_prompt must be text or null.');
@@ -146,6 +160,8 @@ export function parseWorkflow(yaml: string): Workflow {
   });
   const columnIds = new Set(columns.map(column => column.id));
   if (columnIds.size !== columns.length) invalidWorkflow('Column IDs must be unique.');
+  const columnKeys = columns.flatMap(column => (column.key === undefined ? [] : [column.key]));
+  if (new Set(columnKeys).size !== columnKeys.length) invalidWorkflow('Column keys must be unique.');
   for (const column of columns) {
     for (const entry of column.allowedTransitions ?? []) {
       if (!columnIds.has(entry.to)) invalidWorkflow('Column ' + column.id + ' references unknown transition target ' + entry.to + '.');
@@ -175,6 +191,7 @@ export function parseWorkflow(yaml: string): Workflow {
   if (groups.some(group => columnIds.has(group.id))) invalidWorkflow('Group IDs must not collide with column IDs.');
   const workflow: Workflow = { name, initialColumnId, columns, groups };
   if (input.default_view !== undefined) workflow.defaultView = view(input.default_view);
+  if (input.model !== undefined) workflow.model = modelSelection(input.model, 'Workflow model');
   if (input.connections !== undefined) {
     if (!Array.isArray(input.connections)) invalidWorkflow('Workflow connections must be an array.');
     const parsed = input.connections.map((item, index) => connectionLayout(item, 'Connection ' + index));

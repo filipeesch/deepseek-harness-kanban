@@ -8,6 +8,8 @@ export const sharingStyles = String.raw`
 .dsh-kanban .kb-share-unavailable{background:#b91c1c}
 .dsh-kanban .kb-share-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 12px;border:1px solid color-mix(in srgb,var(--kb-state-unread) 35%,var(--kb-line));border-radius:8px;background:color-mix(in srgb,var(--kb-state-unread) 7%,var(--kb-surface));font-size:12.5px}
 .dsh-kanban .kb-share-banner p{margin:0}
+.dsh-kanban .kb-share-banner .kb-actions{margin-left:auto}
+.dsh-kanban .kb-share-banner .kb-dismiss-button{align-self:flex-start}
 .dsh-kanban .kb-share-status{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;border:1px solid var(--kb-line);background:var(--kb-soft)}
 .dsh-kanban .kb-share-status.is-attention{border-color:color-mix(in srgb,var(--kb-state-attention) 45%,var(--kb-line));background:color-mix(in srgb,var(--kb-state-attention) 10%,var(--kb-surface))}
 .dsh-kanban .kb-share-meta{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11.5px;opacity:.75;margin:0}
