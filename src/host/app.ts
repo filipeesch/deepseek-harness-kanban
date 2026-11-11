@@ -11,6 +11,7 @@ import { admitAutoAdvance } from './auto-advance-admission.js';
 import { readPendingUserWork, withQuestionPending } from './pending-source.js';
 import type { ConversationFactsSource } from './native-facts.js';
 import type { AutoModePauseReason, BoardSettings, Command, ConversationFacts, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, RetainedCheckout, SharingCommand, SnapshotRequest, Task, WorktreeDefaults } from '../shared/types.js';
+import type { TaskMessagePreparation } from '../shared/task-message.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionStore } from './question-storage.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
@@ -30,6 +31,7 @@ import { isGitProject, requireGitProject, requireProjectPath } from '../shared/p
 import { containsPath } from './git.js';
 import { defaultWorktreeDestination, taskTitleSlug } from '../shared/worktree-name.js';
 import { prepareFirstExecution } from './first-execution.js';
+import { worktreeDecision } from '../domain/first-execution.js';
 import { firstOpenSessionId } from '../shared/conversations.js';
 import { admitStageInstruction, type StageInstructionDeps } from './stage-instruction.js';
 import { requiresWorktreeDecision, unresolvedWorktreeBinding } from '../shared/worktree-decision.js';
@@ -398,6 +400,32 @@ export class KanbanApp {
   const latest=this.locator.bySession(sessionId);
   invariant(latest&&latest.hubId===located.hubId&&latest.task.projectId===task.projectId&&latest.project.projectPath===project.projectPath&&latest.project.gitRootPath===project.gitRootPath&&latest.task.sessionIds.includes(sessionId)&&latest.task.effectiveCwd===expected,'CONTEXT_CHANGED','The task context changed while execution was being validated. Review its directory before retrying.');
  }
+ /**
+  * Prepare the conversation a cross-card message lands in: the first open
+  * conversation, or a first conversation created after the default worktree when
+  * the task has none. The whole preparation is serialized so a concurrent user
+  * action cannot create a second conversation.
+  */
+ prepareMessageConversation(taskId:string):Promise<TaskMessagePreparation>{return this.serial(()=>this.prepareMessageConversationNow(taskId));}
+ private async prepareMessageConversationNow(taskId:string):Promise<TaskMessagePreparation>{
+  const located=this.locatedTask(taskId);const existing=firstOpenSessionId(located.task);
+  if(existing!==undefined)return {sessionId:existing,createdConversation:false};
+  const decision=worktreeDecision(located.task,located.project);
+  invariant(decision!=='blocked','WORKTREE_BINDING_UNRESOLVED','Resolve the worktree binding in the Git section before messaging this task.');
+  let createdWorktree:{path:string;branch:string}|undefined;
+  if(decision==='create-default'){
+   const defaults=await this.worktreeDefaultsFor(located.task);
+   if(defaults.kind==='unavailable')throw new KanbanError(defaults.reason.code,defaults.reason.message,defaults.reason.details);
+   await this.worktrees.request(located.task.id,{kind:'create',mode:'new',path:defaults.path,branchName:defaults.branchName,...(defaults.sourceBranch===undefined?{}:{sourceBranch:defaults.sourceBranch})});
+   const current=this.locatedTask(taskId);
+   createdWorktree=current.task.worktree?{path:current.task.worktree.path,branch:current.task.worktree.branch}:{path:defaults.path,branch:defaults.branchName};
+  }
+  // A concurrent path may have created a conversation while the worktree was prepared.
+  const reopened=firstOpenSessionId(this.locatedTask(taskId).task);
+  if(reopened!==undefined)return {sessionId:reopened,createdConversation:false,...(createdWorktree===undefined?{}:{createdWorktree})};
+  const sessionId=await this.createConversationNow(taskId,{ensureFirst:true});
+  return {sessionId,createdConversation:true,...(createdWorktree===undefined?{}:{createdWorktree})};
+ }
  /** The visible native workspace of one Hub project, provisioned on demand. */
  async ensureProjectWorkspace(hubId:string,projectId:string):Promise<string|undefined>{
   const project=this.hubStore(hubId).requireProject(projectId);
@@ -434,10 +462,13 @@ export class KanbanApp {
  /** A recorded project relocation owns every directory-changing action in its project. */
  private assertProjectRelocation(project:Project,action:string):void{invariant(!project.operation,'PROJECT_RELOCATING','Resolve the project relocation before '+action+'.');}
  private serial<T>(run:()=>Promise<T>):Promise<T>{const result=this.commandTail.then(run);this.commandTail=result.then(()=>undefined,()=>undefined);return result;}
- createConversation(taskId:string):Promise<string>{return this.serial(()=>this.createConversationNow(taskId));}
- private async createConversationNow(taskId:string,options:{allowUndecided?:boolean}={}):Promise<string>{
+ createConversation(taskId:string,options:{ensureFirst?:boolean}={}):Promise<string>{return this.serial(()=>this.createConversationNow(taskId,options));}
+ private async createConversationNow(taskId:string,options:{allowUndecided?:boolean;ensureFirst?:boolean}={}):Promise<string>{
   this.assertContext(taskId);const located=this.locatedTask(taskId);const store=this.hubs.hub(located.hubId);const before=located.task;const project=located.project;
   this.assertProjectRelocation(project,'creating a conversation');
+  // A first-start request queued behind a message preparation must reuse the
+  // conversation that preparation created; an explicit plus action never sets this.
+  if(options.ensureFirst===true){const existing=firstOpenSessionId(before);if(existing!==undefined)return existing;}
   invariant(!(options.allowUndecided===true&&before.sessionIds.length===0&&unresolvedWorktreeBinding(before,project)),'WORKTREE_BINDING_UNRESOLVED','Resolve the worktree binding in the Git section before starting the first conversation.');
   invariant(options.allowUndecided===true||!requiresWorktreeDecision(before,project),'WORKTREE_DECISION_REQUIRED','Choose whether to create a worktree or continue in the base project before starting the first conversation.');
   const projectDirectory=requireProjectPath(project);const workspaceId=await this.workspaceCoordinator?.ensureTaskWorkspace(located.hubId,before,project);const id=await this.sessions.create(projectDirectory,workspaceId);
@@ -496,7 +527,7 @@ export class KanbanApp {
    locate:value=>this.locatedTask(value),
    worktreeDefaults:value=>this.worktreeDefaultsFor(value),
    createWorktree:async(value,draft)=>{await this.worktrees.request(value,{kind:'create',...draft});},
-   createConversation:value=>this.createConversationNow(value),
+   createConversation:value=>this.createConversationNow(value,{ensureFirst:true}),
   },{taskId,columnId,expectedEnteredAt,...(request.expectedInstruction===undefined?{}:{expectedInstruction:request.expectedInstruction})});
   if(!request.send)return {...prepared,sent:false};
   await admitStageInstruction(this.stageInstructionDeps(),{taskId,columnId,instruction,expectedEnteredAt,sessionId:prepared.sessionId});
@@ -541,7 +572,7 @@ export class KanbanApp {
    case 'task.create':{const value=await this.createTaskNow(command);commandReceipt={kind:'task',id:value.id};break;}
    case 'task.prepareFirstExecution':{const value=await this.startFirstExecutionNow(command.taskId,{send:false,columnId:command.columnId,expectedEnteredAt:command.expectedEnteredAt,...(command.expectedInstruction===undefined?{}:{expectedInstruction:command.expectedInstruction})});commandReceipt={kind:'conversation',id:value.sessionId};break;}
    case 'task.edit':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).editTask(command.taskId,{...(command.title!==undefined?{title:command.title}:{}),...(command.description!==undefined?{description:command.description}:{})},command.expectedRevision);break;}
-   case 'conversation.create':{const id=await this.createConversationNow(command.taskId);commandReceipt={kind:'conversation',id};break;}
+   case 'conversation.create':{const id=await this.createConversationNow(command.taskId,{ensureFirst:command.ensureFirst===true});commandReceipt={kind:'conversation',id};break;}
    case 'conversation.close':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).closeSession(command.taskId,command.sessionId);break;}
    case 'conversation.reopen':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).reopenSession(command.taskId,command.sessionId);break;}
    case 'note.save':{const value=await this.saveNoteNow(command);commandReceipt={kind:'note',id:value.id};break;}

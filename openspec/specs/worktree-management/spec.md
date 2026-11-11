@@ -55,9 +55,10 @@ A worktree SHALL remain optional for a task whose project is Git-backed. When su
 - **WHEN** a Git-backed task already has a conversation and the user creates a worktree later
 - **THEN** the existing conversation is migrated as before
 - **AND** the explicit first-conversation start gate does not apply
+
 ### Requirement: Worktree choice before a card's first execution
 
-When a Git-backed task has no conversation, no worktree, and no recorded base-project choice, the execution preparation that precedes the task's first execution SHALL ask whether to create a worktree before that execution starts. The choice SHALL offer creating a worktree from the task's title-derived defaults or continuing in the base project, and it SHALL use the same derived branch, destination, and source defaults as the missing-worktree notice and the Git section. A Git-backed project SHALL always have a valid default destination, with or without a configured worktree base path, as defined by Title-derived worktree defaults. Declining SHALL record and persist the base-project choice and SHALL NOT create a branch or worktree. A created worktree SHALL be ready before the first conversation is created for the execution, so that conversation uses the worktree directory. A failed creation SHALL be reported in the preparation, SHALL keep the task's stage and position unchanged, and SHALL NOT start the execution. The automatic first execution on task creation SHALL NOT present this choice; for a Git-backed project it SHALL create the default worktree, and for a folder project it SHALL use the project directory. A worktree binding in the preparing or error state SHALL block the task's first execution: the preparation SHALL explain that the binding must be resolved in the Git section, SHALL NOT offer creating a worktree or continuing in the base project, and the move or run action SHALL NOT proceed. That block SHALL apply only to the task's first execution; a task that already has a conversation SHALL keep executing while its binding is in that state.
+When a Git-backed task has no conversation, no worktree, and no recorded base-project choice, the execution preparation that precedes the task's first execution SHALL ask whether to create a worktree before that execution starts. The choice SHALL offer creating a worktree from the task's title-derived defaults or continuing in the base project, and it SHALL use the same derived branch, destination, and source defaults as the missing-worktree notice and the Git section. A Git-backed project SHALL always have a valid default destination, with or without a configured worktree base path, as defined by Title-derived worktree defaults. Declining SHALL record and persist the base-project choice and SHALL NOT create a branch or worktree. A created worktree SHALL be ready before the first conversation is created for the execution, so that conversation uses the worktree directory. A failed creation SHALL be reported in the preparation, SHALL keep the task's stage and position unchanged, and SHALL NOT start the execution. The automatic first execution on task creation SHALL NOT present this choice; for a Git-backed project it SHALL create the default worktree, and for a folder project it SHALL use the project directory. A cross-card message delivery that needs the target task's first conversation SHALL NOT present this choice; for a Git-backed task it SHALL create the default worktree before creating the conversation, and for a folder project or a task with a recorded base-project choice it SHALL use the current effective directory. A worktree binding in the preparing or error state SHALL block that delivery with an actionable error and SHALL NOT create a worktree or a conversation. A worktree binding in the preparing or error state SHALL block the task's first execution: the preparation SHALL explain that the binding must be resolved in the Git section, SHALL NOT offer creating a worktree or continuing in the base project, and the move or run action SHALL NOT proceed. That block SHALL apply only to the task's first execution; a task that already has a conversation SHALL keep executing while its binding is in that state.
 
 #### Scenario: Ask before the first drop
 
@@ -124,6 +125,21 @@ When a Git-backed task has no conversation, no worktree, and no recorded base-pr
 - **THEN** the execution preparation does not ask the worktree choice
 - **AND** the default worktree is created
 - **AND** the first conversation uses its directory
+
+#### Scenario: No worktree question for a cross-card message
+
+- **WHEN** a cross-card message delivery needs the first conversation of a Git-backed task with no worktree and no recorded base-project choice
+- **THEN** the delivery does not ask the worktree choice
+- **AND** the default worktree is created
+- **AND** the first conversation uses its directory
+
+#### Scenario: Block a cross-card message on an errored binding
+
+- **WHEN** a cross-card message delivery needs the first conversation of a task whose worktree binding is preparing or in error
+- **THEN** the delivery fails with an actionable error
+- **AND** no worktree and no conversation are created
+- **AND** nothing is delivered
+
 ### Requirement: Git tab supports new and existing branches
 The task's Git section SHALL provide worktree creation using a new branch or an existing branch. The user SHALL be able to specify the destination worktree path and MAY choose a source branch when creating a new branch; when the source is omitted, the project's configured default branch or HEAD SHALL be used. Choosing an existing branch SHALL create a worktree for that branch, distinct from attaching an already existing worktree. Branch selection SHALL support searching the available local branches.
 
@@ -284,6 +300,7 @@ When the Git section offers new-branch creation for a task without a worktree, i
 - **WHEN** no worktree base path is configured and the project's Git root is `<parent>/<repository>`
 - **THEN** the suggested destination is `<parent>/<repository>-<default branch name>`
 - **AND** the destination is derived without user input
+
 ### Requirement: Collision-free title-derived names
 The default new-branch name and destination SHALL avoid collisions. A candidate SHALL be rejected when a local branch with that name exists in the task's repository, when the candidate destination is already used by another task's worktree or pending creation, or when the destination already exists on the filesystem. The Git section SHALL append `-2`, `-3`, and so on to the derived name until both the branch and the destination are free. The branch and destination SHALL advance together so the destination follows the same derivation rule for the renamed branch: the configured base path joined with the branch, or the repository-sibling `<repository>-<branch>` when no base path is configured. Existing-branch creation SHALL retain the existing branch name and SHALL NOT apply a counter.
 
@@ -295,6 +312,7 @@ The default new-branch name and destination SHALL avoid collisions. A candidate 
 - **WHEN** the user chooses an existing branch whose name or destination collides
 - **THEN** the existing branch name is kept
 - **AND** no counter is applied to the branch
+
 ### Requirement: Editable title-derived defaults
 The Git section SHALL prefill the new-branch name and destination with the derived defaults. The user SHALL be able to edit both fields. While the user has not edited the destination, changing the branch name SHALL update the destination using the same derivation rule: the configured base path joined with the edited branch name, or the repository-sibling `<repository>-<edited branch name>` when no base path is configured. Editing the destination SHALL stop that synchronization, and a reset action SHALL restore the derived default. A manually entered branch or destination SHALL be authoritative and SHALL be validated when creation is requested; the plugin SHALL NOT silently rename a manually entered branch. Editing a task title after a worktree exists SHALL NOT rename its branch or move its worktree.
 
@@ -317,6 +335,7 @@ The Git section SHALL prefill the new-branch name and destination with the deriv
 #### Scenario: Title edit after worktree creation
 - **WHEN** the user edits the task title after its worktree exists
 - **THEN** the branch name and worktree destination remain unchanged
+
 ### Requirement: One-click worktree creation from the missing-worktree notice
 
 The missing-worktree notice SHALL offer a Create action that starts a new-branch worktree creation from derived defaults without requiring the user to visit the Git section. Before creation, the notice SHALL show the derived branch and destination, and SHALL expose the source branch (the project default or HEAD) in the notice's tooltip when available. Activating Create SHALL NOT start an agent.
@@ -349,6 +368,7 @@ The missing-worktree notice SHALL offer a Create action that starts a new-branch
 #### Scenario: Task operation is active
 - **WHEN** the task has an unresolved context operation or confirmed transition
 - **THEN** the notice's Create action is unavailable until that operation is resolved
+
 ### Requirement: Shared worktree creation defaults
 The notice and the Git section SHALL present the same derived branch, destination, and source defaults for the same task. A source branch MAY be omitted, in which case the host SHALL use the project's configured default branch or HEAD. A draft edited in the Git section SHALL remain authoritative when the notice creates from it, and SHALL NOT be silently renamed.
 

@@ -3,6 +3,7 @@ import path from 'node:path';import os from 'node:os';
 import { HubRepository } from '../../src/host/hub-repository.js';
 import { KanbanApp } from '../../src/host/app.js';
 import type { BoardState, ConversationFacts, CreateWorktree, GitProject, HubState, KanbanMeta, NewTask, PendingUserWorkKind, Project, ProjectLocation, SettledTurn, Task } from '../../src/shared/types.js';
+import type { LocatedTask } from '../../src/host/hub-repository.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import type { HubStorage, SessionPort, StageInstructionDelivery, GitPort, GitTree, WorkspacePort, WorkspaceInfo, WorkspaceEnsureOptions, ProjectProbe } from '../../src/shared/ports.js';
 import { KanbanError } from '../../src/shared/errors.js';
@@ -94,4 +95,21 @@ export async function taskWithConversation(app: KanbanApp, input: NewTask): Prom
   if (isGitProject(located.project) && !task.worktree && !task.worktreeDismissed) await app.command({ type: 'worktree.dismiss', taskId: task.id });
   await app.createConversation(task.id);
   return app.hubs.requireTask(task.id).task;
+}
+
+/** One fake LocatedTask for policy tests that never persist board state. */
+export function fakeLocatedTask(input: { hubId?: string; hubName?: string; boardName?: string; taskId: string; title: string; open?: readonly string[]; closed?: readonly string[] }): LocatedTask {
+  const closed = [...(input.closed ?? [])];
+  const task = {
+    id: input.taskId, title: input.title, description: '', columnId: 'todo', position: 0, projectId: 'p',
+    sessionIds: [...(input.open ?? []), ...closed], closedSessionIds: closed, effectiveCwd: '/repo',
+    worktree: null, operation: null, createdAt: '', updatedAt: '',
+  };
+  return {
+    hubId: input.hubId ?? 'hub',
+    hub: { id: input.hubId ?? 'hub', name: input.hubName ?? 'Hub' },
+    board: { id: 'board', name: input.boardName ?? 'Board' },
+    project: { id: 'p', name: 'Project', projectKey: 'p', projectPath: '/repo' },
+    task,
+  } as unknown as LocatedTask;
 }

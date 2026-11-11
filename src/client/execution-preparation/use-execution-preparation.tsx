@@ -73,7 +73,7 @@ export function useExecutionPreparation({ api, run, seat, leases }: ExecutionPre
       createWorktree: async (taskId, draft) => { await latest.current.run({ type: 'worktree.create', taskId, ...draft }); },
       dismissWorktree: async taskId => { await latest.current.run({ type: 'worktree.dismiss', taskId }); },
       createConversation: async taskId => {
-        const result = await latest.current.run({ type: 'conversation.create', taskId });
+        const result = await latest.current.run({ type: 'conversation.create', taskId, ensureFirst: true });
         const sessionId = creationReceiptId(result, 'conversation');
         if (sessionId === undefined) throw new Error('The created conversation could not be identified from its creation receipt.');
         return sessionId;

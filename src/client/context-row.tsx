@@ -1,7 +1,7 @@
 import React, { Component, type ComponentType, type ReactNode } from 'react';
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type {
-  ChatConversationViewNode, ChatNode, ChatNodeViewProps,
+  ChatConversationViewNode, ChatNode, ChatNodeDataMap, ChatNodeViewProps,
 } from '@deepseek-ai/dsh-client-ui-chat/client';
 import type {
   ContextProducerView, ConversationMatch, ConversationNodeContext, ConversationNodeDefinition,
@@ -98,10 +98,12 @@ export function contextRowText(node: ChatNode<'context'> | { readonly data: Cont
 }
 
 const fallbackStyle = {
-  margin: '8px 0', border: '1px solid var(--dsh-alias-border-l2, #d0d0d0)', borderRadius: 8,
-  background: 'var(--dsh-alias-bg-l2, #f7f7f7)', fontSize: 12.5,
+  margin: '8px 0', border: '1px solid var(--dsw-alias-border-l2, #d0d0d0)', borderRadius: 8,
+  background: 'var(--dsw-alias-bg-l2, #f7f7f7)', fontSize: 12.5,
 } as const;
-const fallbackSummaryStyle = { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', cursor: 'pointer' } as const;
+// The default summary display keeps the browser's disclosure marker, so the
+// fallback still advertises that the row expands.
+const fallbackSummaryStyle = { padding: '8px 10px', cursor: 'pointer' } as const;
 const fallbackBodyStyle = { margin: 0, padding: '0 10px 10px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: 'inherit', maxHeight: 180, overflow: 'auto' } as const;
 
 class NativeContextBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, { failed: boolean }> {
@@ -134,11 +136,47 @@ export interface ContextRowViewProps {
 export function ContextRowView({ node, t, slots, title, fallbackClassName }: ContextRowViewProps) {
   useSlotEntries(slots, 'conversation.chat.node');
   const data = (node as { readonly data: ContextRowData }).data;
-  const fallback = <ContextRowFallback text={contextRowText({ data })} title={title} className={fallbackClassName} />;
+  // The native row reads the source summary; the fallback must keep the same
+  // sender identity instead of collapsing every row to the static title.
+  const source = (data.source as { readonly summary?: unknown } | null | undefined)?.summary;
+  const fallbackTitle = typeof source === 'string' && source.trim() !== '' ? source : title;
+  const fallback = <ContextRowFallback text={contextRowText({ data })} title={fallbackTitle} className={fallbackClassName} />;
   const nativeEntry = slots.entriesOfSlot('conversation.chat.node').find(entry => entry.options.key === 'context' && entry.component !== undefined);
   if (nativeEntry === undefined || t === undefined) return fallback;
   const Native = nativeEntry.component as ComponentType<Record<string, unknown>>;
   return <NativeContextBoundary key={String(nativeEntry.component)} fallback={fallback}>
     <Native node={{ ...(node as Record<string, unknown>), kind: 'context', data }} t={t} />
   </NativeContextBoundary>;
+}
+
+/** One plugin message row presented with the host's native context-row renderer. */
+export interface PluginContextRowOptions<K extends keyof ChatNodeDataMap> {
+  readonly nodeKind: K;
+  readonly sourceKind: string;
+  /** Fallback summary shown when the host's context-row renderer is unavailable. */
+  readonly title: string;
+  readonly fallbackClassName: string;
+}
+
+export interface PluginContextRowViewProps<K extends keyof ChatNodeDataMap> {
+  readonly node: ChatNodeViewProps<K>['node'];
+  readonly t?: ChatNodeViewProps<'context'>['t'];
+  readonly slots: NativeSlotSource;
+}
+
+export interface PluginContextRow<K extends keyof ChatNodeDataMap> {
+  readonly definition: ConversationNodeDefinition<ContextRowData>;
+  readonly View: (props: PluginContextRowViewProps<K>) => React.ReactElement;
+}
+
+/**
+ * Build the claim Definition and the visible view for one plugin message source.
+ * Every plugin message row has the same behavior: claim the source exclusively and
+ * delegate to the host's context-row renderer with an inline fallback.
+ */
+export function createPluginContextRow<K extends keyof ChatNodeDataMap>(options: PluginContextRowOptions<K>): PluginContextRow<K> {
+  function View({ node, t, slots }: PluginContextRowViewProps<K>) {
+    return <ContextRowView node={node} t={t} slots={slots} title={options.title} fallbackClassName={options.fallbackClassName} />;
+  }
+  return { definition: createContextRowDefinition(options.nodeKind, options.sourceKind), View };
 }

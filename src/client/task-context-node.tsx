@@ -1,6 +1,5 @@
 import type { ChatNodeDataMap, ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client';
-import { ContextRowView, createContextRowDefinition, type ContextRowData } from './context-row.js';
-import type { NativeSlotSource } from './native-slot-host.js';
+import { createPluginContextRow, type ContextRowData } from './context-row.js';
 
 export const TASK_CONTEXT_NODE_KIND = 'kanban-task-context';
 export const TASK_CONTEXT_SOURCE_KIND = 'kanban-task';
@@ -18,17 +17,15 @@ declare module '@deepseek-ai/dsh-client-ui-chat/client' {
  * Claim the durable `kanban-task` message before Chat's ordinary context
  * Definition hides it, and publish a visible custom node at its real position.
  */
-export const taskContextDefinition = createContextRowDefinition(TASK_CONTEXT_NODE_KIND, TASK_CONTEXT_SOURCE_KIND);
+const row = createPluginContextRow({
+  nodeKind: TASK_CONTEXT_NODE_KIND,
+  sourceKind: TASK_CONTEXT_SOURCE_KIND,
+  title: 'Task context',
+  fallbackClassName: 'kb-task-context-fallback',
+});
 
-export interface TaskContextNodeViewProps {
-  node: ChatNodeViewProps<'kanban-task-context'>['node'];
-  t?: ChatNodeViewProps<'context'>['t'];
-  slots: NativeSlotSource;
-}
-
+export const taskContextDefinition = row.definition;
 /** Delegate to the host's native context-row renderer, with an inline fallback. */
-export function TaskContextNodeView({ node, t, slots }: TaskContextNodeViewProps) {
-  return <ContextRowView node={node} t={t} slots={slots} title="Task context" fallbackClassName="kb-task-context-fallback" />;
-}
+export const TaskContextNodeView = row.View;
 
 export type TaskContextViewProps = ChatNodeViewProps<'kanban-task-context'>;

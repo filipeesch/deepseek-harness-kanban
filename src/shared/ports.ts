@@ -1,4 +1,5 @@
 import type { BoardState, ConversationFacts, CreateWorktree, GitProject, HubState, KanbanMeta, ProjectLocation } from './types.js';
+import type { TaskMessageDelivery } from './task-message.js';
 export interface StateStorage { load(): Promise<unknown | null>; save(state: BoardState): Promise<void> }
 /** Durable Hub-record storage. The adapter owns the DSH domain; the repository owns the write chain. */
 export interface HubStorage {
@@ -76,4 +77,10 @@ export interface CommandResult { exitCode: number; stdout: string; stderr: strin
 export interface GitExecutor {
   run(project: GitProject, args: string[], sessionIds: string[], signal?: AbortSignal, write?: boolean): Promise<CommandResult>;
   assertPolicy(project: GitProject, paths: string[], sessionIds: string[], write: boolean): Promise<void>;
+}
+
+/** Cross-card message delivery into one resolved target conversation. */
+export interface TaskMessageDeliveryPort {
+  /** Deliver at most once per delivery identity; a repeated identity is skipped. */
+  deliver(sessionId: string, delivery: TaskMessageDelivery): Promise<void>;
 }
