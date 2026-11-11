@@ -108,7 +108,7 @@ export function fakeApi(initial: TestSnapshot = fixture()) {
       case 'conversation.close': current?.closedSessionIds.push(input.sessionId); break;
       case 'conversation.reopen': if (current) current.closedSessionIds = current.closedSessionIds.filter(id => id !== input.sessionId); break;
       case 'task.delete': value.state.tasks = value.state.tasks.filter(item => item.id !== input.taskId); value.state.notes = value.state.notes.filter(note => note.taskId !== input.taskId); break;
-      case 'worktree.create': if (current) { current.worktree = { path: input.path, branch: input.branchName, owned: true, status: 'ready' }; current.effectiveCwd = input.path + '/apps/api'; } break;
+      case 'worktree.create': if (current) { const path = input.path ?? '/worktrees/derived'; current.worktree = { path, branch: input.branchName ?? 'derived', owned: true, status: 'ready' }; current.effectiveCwd = path + '/apps/api'; } break;
       case 'worktree.attach': if (current) { current.worktree = { path: input.path, branch: 'external', owned: false, status: 'ready' }; current.effectiveCwd = input.path + '/apps/api'; } break;
       case 'worktree.dismiss': if (current) current.worktreeDismissed = true; break;
       case 'worktree.remove': if (current) { current.worktree = null; current.effectiveCwd = value.state.projects.find(project => project.id === current.projectId)?.projectPath ?? ''; } break;

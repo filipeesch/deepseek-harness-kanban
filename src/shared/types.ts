@@ -77,6 +77,12 @@ export interface Workflow { name: string; initialColumnId: string; columns: Colu
 export interface Worktree { path: string; branch: string; owned: boolean; status: 'preparing' | 'ready' | 'error'; error?: Problem }
 export interface CreateWorktree { mode: 'new' | 'existing'; path: string; branchName: string; sourceBranch?: string }
 /**
+ * A creation request as a caller may state it. New-branch creation may omit the
+ * branch and destination, in which case the host derives the collision-free title
+ * defaults at creation time. Existing-branch creation always states both.
+ */
+export interface CreateWorktreeInput { mode: 'new' | 'existing'; path?: string; branchName?: string; sourceBranch?: string }
+/**
  * The host-derived default for a new worktree. `unavailable` is a real derivation
  * failure (an invalid path or exhausted names), never an unconfigured base path.
  */
@@ -378,7 +384,7 @@ export type Command =
   | { type: 'conversation.create'; hubId?: string; taskId: string }
   | { type: 'conversation.close' | 'conversation.reopen'; hubId?: string; taskId: string; sessionId: string }
   | { type: 'task.delete'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; force?: boolean }
-  | ({ type: 'worktree.create'; hubId?: string; taskId: string } & CreateWorktree)
+  | ({ type: 'worktree.create'; hubId?: string; taskId: string } & CreateWorktreeInput)
   | { type: 'worktree.attach'; hubId?: string; taskId: string; path: string }
   | { type: 'worktree.dismiss'; hubId?: string; taskId: string }
   | { type: 'worktree.remove'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; force?: boolean }
