@@ -1,12 +1,15 @@
 import React, { createContext, useContext, useEffect, useRef } from 'react';
 import { Handle, Position, useStore } from '@xyflow/react';
-import type { StageSize } from '../../shared/types.js';
+import type { StageSide, StageSize } from '../../shared/types.js';
 import { EMPTY_STAGE_COPY } from '../board-copy.js';
 import { StageHeader as SharedStageHeader } from '../stage/stage-header.js';
 import { useCardEnvironment } from './card-environment.js';
 import { beginStageResize } from './gestures/stage-resize.js';
 import type { GestureHandle, PointerEventsPort } from './gestures/stage-drag.js';
 import type { SnapPolicy } from './gestures/grid-snap.js';
+
+/** The sides a connection can be drawn from, in the order the ports are presented. */
+export const CONNECTION_SIDES: readonly StageSide[] = ['top', 'right', 'bottom', 'left'];
 
 export type StageNodeModel = {
   readonly id: string;
@@ -42,12 +45,13 @@ export interface StageCallbacks {
   /** Opens the board's stage editor; the board owns that dialog. */
   onEditStage?(stageId: string): void;
   /**
-   * Starts drawing a new connection from this stage. Present while the layout is
-   * unlocked; the port it starts from is a pointer affordance and stays out of the
-   * keyboard order, because adding a destination by keyboard happens in the stage
-   * editor.
+   * Starts drawing a new connection from one side of this stage. Present while the
+   * layout is unlocked; the ports are a pointer affordance and stay out of the keyboard
+   * order, because adding a destination by keyboard happens in the stage editor.
    */
-  onBeginConnect?(event: React.PointerEvent<HTMLElement>, stageId: string): void;
+  onBeginConnect?(event: React.PointerEvent<HTMLElement>, stageId: string, side: StageSide): void;
+  /** True while the diagram's layout lock is on, which disables the stage edit action. */
+  editDisabled?: boolean;
 }
 
 /** Shared by every stage node so node data stays serializable and stable. */
@@ -64,6 +68,8 @@ export interface StageHeaderProps {
   readonly onCreateTask?: () => void;
   /** The board's stage editor, absent when the board offers no editing. */
   readonly onEditStage?: () => void;
+  /** True while the diagram's layout lock is on, which disables the edit action. */
+  readonly editDisabled?: boolean;
   /** The canvas's stage-drag start; a harness without dragging leaves it out. */
   readonly onPointerDown?: (event: React.PointerEvent<HTMLElement>, stageId: string) => void;
 }
@@ -72,7 +78,7 @@ export interface StageHeaderProps {
  * The diagram's adapter over the shared stage header: it adds this presentation's
  * classes and turns the drag start into a stage-specific callback.
  */
-export function StageHeader({ id, label, cardCount, locked, creatable, onCreateTask, onEditStage, onPointerDown }: StageHeaderProps) {
+export function StageHeader({ id, label, cardCount, locked, creatable, onCreateTask, onEditStage, editDisabled, onPointerDown }: StageHeaderProps) {
   return <SharedStageHeader
     label={label}
     cardCount={cardCount}
@@ -81,6 +87,7 @@ export function StageHeader({ id, label, cardCount, locked, creatable, onCreateT
     creatable={creatable}
     {...(onCreateTask === undefined ? {} : { onCreateTask })}
     {...(onEditStage === undefined ? {} : { onEditStage })}
+    editDisabled={editDisabled === true || locked}
     {...(onPointerDown === undefined ? {} : { onPointerDown: event => onPointerDown(event, id) })}
   />;
 }
@@ -159,12 +166,15 @@ export function StageNodeView({ id, data }: { id: string; data: StageNodeModel }
       {data.cardIds.length === 0 && <p className="kb-empty-column">{EMPTY_STAGE_COPY}</p>}
       {drop && drag.indicatorY !== null && <div className="kb-drop-indicator" style={{ top: drag.indicatorY / (zoom === 0 ? 1 : zoom) }} aria-hidden="true" />}
     </div>
-    {!data.locked && callbacks?.onBeginConnect !== undefined && <div
+    {/* One port per side, so a connection can be drawn from wherever it should leave. */}
+    {!data.locked && callbacks?.onBeginConnect !== undefined && CONNECTION_SIDES.map(side => <div
+      key={side}
       className="kb-flow-port nodrag nopan"
+      data-side={side}
       aria-hidden="true"
-      title="Draw a connection"
-      onPointerDown={event => callbacks?.onBeginConnect?.(event, id)}
-    />}
+      title={'Draw a connection from the ' + side + ' side'}
+      onPointerDown={event => callbacks?.onBeginConnect?.(event, id, side)}
+    />)}
     {/* Position anchors for the drawn connections; they are not interactive. */}
     <Handle type="target" position={Position.Left} isConnectable={false} />
     <Handle type="source" position={Position.Right} isConnectable={false} />

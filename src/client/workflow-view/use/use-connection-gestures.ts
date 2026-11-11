@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ConnectionAnchor } from '../../../shared/types.js';
+import type { ConnectionAnchor, StageSide } from '../../../shared/types.js';
 import { sameAnchor, sameConnectionLayout } from '../../../domain/connection-anchor.js';
 import { beginConnectionDrag, type KeyboardEventsPort } from '../gestures/connection-drag.js';
 import { noSnap, segmentOffset, type SnapPolicy } from '../gestures/grid-snap.js';
 import type { GestureHandle, PointerEventsPort } from '../gestures/stage-drag.js';
 import type { DiagramPoint } from '../routing/orthogonal.js';
-import { automaticSourcePoint, nearestAnchor } from '../routing/ports.js';
+import { anchorPoint, automaticSourcePoint, nearestAnchor } from '../routing/ports.js';
 import { authoredOffsetAt, connectionLayoutOf, connectionRouteFor, withOffset, type ConnectionLayoutOverride, type LiveStageRect } from '../edge-model.js';
 import { decideCreationDrop, decideEndDrop } from '../connection-target.js';
 import { stepAnchor, type ConnectionEnd, type ConnectionHandlers } from '../connection-interaction.js';
@@ -35,7 +35,7 @@ export interface ConnectionGestureInput {
   /** The stage under a client coordinate, through the diagram's own hit test. */
   readonly resolveStage: (client: { readonly clientX: number; readonly clientY: number }) => string | null;
   readonly onConnectionEdit: (edit: ConnectionEdit) => void;
-  readonly onCreate: (sourceId: string, to: string) => void;
+  readonly onCreate: (sourceId: string, to: string, side: StageSide) => void;
   readonly onRepoint: (sourceId: string, from: string, to: string) => void;
   readonly onReown: (fromSource: string, to: string, toSource: string) => void;
 }
@@ -44,8 +44,8 @@ export interface ConnectionGestures {
   /** The connection as this gesture should draw it, with its preview applied. */
   present(connection: CanvasConnection): CanvasConnection;
   readonly handlers: Omit<ConnectionHandlers, 'selectedId' | 'onSelect' | 'onEditCondition'>;
-  /** Start drawing a new connection from one stage. */
-  beginCreation(event: React.PointerEvent<HTMLElement>, stageId: string): void;
+  /** Start drawing a new connection from one side of one stage. */
+  beginCreation(event: React.PointerEvent<HTMLElement>, stageId: string, side: StageSide): void;
   /** The stage a creation drag would land on. */
   readonly candidateStageId: string | null;
   /** The line being drawn, from its source stage to the pointer. */
@@ -206,14 +206,16 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
     });
   }, [clearPreview, commitPreview, connectionOf, routeOf]);
 
-  const beginCreation = useCallback((event: React.PointerEvent<HTMLElement>, stageId: string) => {
+  const beginCreation = useCallback((event: React.PointerEvent<HTMLElement>, stageId: string, side: StageSide) => {
     const current = inputRef.current;
     if (current.locked || event.button !== 0 || drag.current !== null) return;
     const stage = stageOf(stageId);
     if (stage === undefined) return;
     event.preventDefault();
     event.stopPropagation();
-    const from = automaticSourcePoint(rectOf(stage), 0, 1);
+    // The line starts at the middle of the side the user grabbed, so the gesture shows
+    // exactly the departure the connection will be drawn with.
+    const from = anchorPoint(rectOf(stage), { side, at: 2 }).point;
     let pointer: { clientX: number; clientY: number } = { clientX: event.clientX, clientY: event.clientY };
     setCreation({ from, to: from });
     setCandidateStageId(null);
@@ -232,7 +234,7 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
         setCreation(null);
         setCandidateStageId(null);
         const decision = decideCreationDrop({ sourceId: stageId, stageUnder: current.resolveStage(pointer) });
-        if (decision.kind === 'create') current.onCreate(stageId, decision.to);
+        if (decision.kind === 'create') current.onCreate(stageId, decision.to, side);
       },
       onCancel: () => {
         drag.current = null;

@@ -74,10 +74,15 @@ export function ConnectionEdgeView({ id, data }: EdgeProps) {
     className={'kb-flow-edge-group' + (selected ? ' is-selected' : '')}
     data-connection-id={id}
     onClick={event => { if (!handlers?.locked) handlers?.onSelect(id); event.stopPropagation(); }}
-    onDoubleClick={event => { handlers?.onEditCondition(id); event.stopPropagation(); }}
+    onDoubleClick={event => {
+      // Authoring a condition for a connection that has none is a structural edit, so the
+      // layout lock gates it; a condition that already exists stays editable.
+      if (!handlers?.locked || edge.hasCondition) handlers?.onEditCondition(id);
+      event.stopPropagation();
+    }}
   >
     <BaseEdge id={id} path={edge.path} interactionWidth={LINE_HIT_WIDTH} className={'kb-flow-edge ' + (edge.kind === 'implicit' ? 'is-implicit' : 'is-explicit') + (edge.returning ? ' is-returning' : '')} />
-    {middle !== undefined && !edge.hasCondition && edge.kind === 'explicit' && <circle
+    {middle !== undefined && !edge.hasCondition && edge.kind === 'explicit' && handlers?.locked !== true && <circle
       className="kb-flow-condition-mark"
       cx={middle.x}
       cy={middle.y}

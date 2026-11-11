@@ -55,9 +55,15 @@ export const workflowViewStyles = String.raw`
 .dsh-kanban .kb-flow-condition-mark{fill:var(--kb-surface);stroke:color-mix(in srgb,currentColor 55%,var(--kb-line));stroke-width:1.6;stroke-dasharray:2 1.8;pointer-events:none}
 /* The port a connection is drawn from: a pointer affordance on the stage boundary,
    revealed while the stage is pointed at and never part of the keyboard order. */
-.dsh-kanban .kb-flow-port{position:absolute;right:-8px;top:50%;width:15px;height:15px;margin-top:-7.5px;border-radius:50%;border:1.5px solid var(--kb-line);background:var(--kb-surface);opacity:0;transition:opacity 110ms ease;cursor:crosshair;pointer-events:all;z-index:5}
+.dsh-kanban .kb-flow-port{position:absolute;width:13px;height:13px;border-radius:50%;border:1.5px solid var(--kb-line);background:var(--kb-surface);opacity:0;transition:opacity 110ms ease;cursor:crosshair;pointer-events:all;z-index:5}
 .dsh-kanban .kb-flow-stage:hover .kb-flow-port{opacity:1}
 .dsh-kanban .kb-flow-port:hover{border-color:var(--dsw-alias-state-business-primary,CanvasText)}
+/* The stage clips its content, so every port sits just inside the boundary it anchors. */
+.dsh-kanban .kb-flow-port[data-side=right]{right:3px;top:50%;margin-top:-6.5px}
+.dsh-kanban .kb-flow-port[data-side=left]{left:3px;top:50%;margin-top:-6.5px}
+.dsh-kanban .kb-flow-port[data-side=top]{top:3px;left:50%;margin-left:-6.5px}
+.dsh-kanban .kb-flow-port[data-side=bottom]{bottom:3px;left:50%;margin-left:-6.5px}
+.dsh-kanban .kb-flow-stage-edit:disabled{opacity:.38;cursor:default}
 .dsh-kanban .kb-flow-stage[data-connect-candidate=true]{border-color:var(--dsw-alias-state-business-primary,CanvasText);box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-state-business-primary,CanvasText) 35%,transparent)}
 .dsh-kanban .kb-flow-creation{pointer-events:none}
 .dsh-kanban .kb-flow-creation line{stroke:var(--dsw-alias-state-business-primary,CanvasText);stroke-width:1.8;stroke-dasharray:5 4;fill:none}

@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import type { ConnectionLayout, KanbanSnapshot, StagePatch, TransitionRule, Workflow } from '../../../shared/types.js';
+import type { ConnectionLayout, KanbanSnapshot, StagePatch, StageSide, TransitionRule, Workflow } from '../../../shared/types.js';
 import { connectionKey, sameConnectionLayout } from '../../../domain/connection-anchor.js';
 import type { ConnectionLayouts } from '../../../domain/workflow-connections.js';
 import type { StagePositions } from '../../../domain/workflow-positions.js';
@@ -46,8 +46,11 @@ export interface TransitionActionInput {
 export interface TransitionActions {
   /** True while a connection gesture's writes are in flight. */
   readonly pending: boolean;
-  /** Author a destination on a stage. */
-  create(sourceId: string, to: string): void;
+  /**
+   * Author a destination on a stage. The side it was drawn from is kept as the
+   * connection's departure when that side is not the one the automatic route uses.
+   */
+  create(sourceId: string, to: string, side?: StageSide): void;
   /** Point one authored destination at another stage. */
   repoint(sourceId: string, from: string, to: string): void;
   /** Move an authored destination to another source stage. */
@@ -67,6 +70,12 @@ export interface TransitionActions {
   clearError(): void;
 }
 
+/** The connection layout a gesture changes, before and after it. */
+interface LayoutDelta {
+  readonly before: ConnectionLayouts;
+  readonly after: ConnectionLayouts;
+}
+
 /** One stage's destinations before and after one gesture. */
 interface TransitionChange {
   readonly stageId: string;
@@ -84,6 +93,19 @@ function withoutEntry(connections: ConnectionLayouts, from: string, to: string):
     result[id] = layout;
   }
   return result as ConnectionLayouts;
+}
+
+/** The layouts without the entry of one superseded pair, when it stored one. */
+function pruneLayout(connections: ConnectionLayouts, from: string, to: string): LayoutDelta | null {
+  const after = withoutEntry(connections, from, to);
+  return after === undefined ? null : { before: connections, after };
+}
+
+/** The side the automatic route would leave from: the right edge, or the bottom for a return. */
+function automaticDepartureSide(workflow: Workflow, from: string, to: string): StageSide {
+  const fromIndex = workflow.columns.findIndex(column => column.id === from);
+  const toIndex = workflow.columns.findIndex(column => column.id === to);
+  return toIndex >= 0 && fromIndex >= 0 && toIndex < fromIndex ? 'bottom' : 'right';
 }
 
 function sameLayouts(left: ConnectionLayouts, right: ConnectionLayouts): boolean {
@@ -115,15 +137,13 @@ export function useTransitionActions(input: TransitionActionInput): TransitionAc
   const inFlight = useRef(0);
   const inputRef = useRef(input); inputRef.current = input;
 
-  const run = useCallback((changes: readonly TransitionChange[], prune: { from: string; to: string } | null): void => {
+  const run = useCallback((changes: readonly TransitionChange[], layout: LayoutDelta | null): void => {
     const current = inputRef.current;
     if (changes.length === 0) return;
-    const stageIds = changes.map(change => change.stageId);
-    const beforeConnections = prune === null ? undefined : current.connections.current();
-    const afterConnections = prune === null || beforeConnections === undefined ? undefined : withoutEntry(beforeConnections, prune.from, prune.to);
-    const prunes = beforeConnections !== undefined && afterConnections !== undefined && !sameLayouts(beforeConnections, afterConnections);
+    // A layout delta that changes nothing is not a step of its own.
+    const delta = layout !== null && !sameLayouts(layout.before, layout.after) ? layout : null;
     for (const change of changes) current.overrides.intend(change.stageId, change.after);
-    if (prunes) current.connections.intend(afterConnections!);
+    if (delta !== null) current.connections.intend(delta.after);
     const positions = current.positions();
     const beforeTransitions: Record<string, readonly TransitionRule[] | null> = {};
     const afterTransitions: Record<string, readonly TransitionRule[] | null> = {};
@@ -134,8 +154,8 @@ export function useTransitionActions(input: TransitionActionInput): TransitionAc
     const step: PlacementStep = {
       before: positions,
       after: positions,
-      restores: prunes ? 'both' : 'transitions',
-      ...(prunes ? { beforeConnections: beforeConnections!, afterConnections: afterConnections! } : {}),
+      restores: delta === null ? 'transitions' : 'both',
+      ...(delta === null ? {} : { beforeConnections: delta.before, afterConnections: delta.after }),
       beforeTransitions,
       afterTransitions,
       beforeLayout: positions,
@@ -152,20 +172,20 @@ export function useTransitionActions(input: TransitionActionInput): TransitionAc
             const patch: StagePatch = { allowedTransitions: change.after === null ? null : [...change.after] };
             acknowledged = await send.patchStage(change.stageId, patch);
           }
-          if (!prunes || afterConnections === undefined || acknowledged === undefined) return;
-          // The prune is composed onto the document the patches acknowledged, so it can
+          if (delta === null || acknowledged === undefined) return;
+          // The layout is composed onto the document the patches acknowledged, so it can
           // never carry the transitions they replaced.
           const text = current.connections.authoritativeYaml(acknowledged);
           if (text === null) return;
           const yaml = current.connections.apply(text);
           await send.saveWorkflow(yaml);
-          current.connections.accept(afterConnections);
+          current.connections.accept(delta.after);
         });
       } catch (writeError) {
         // The store refused: undo exactly what this gesture presented.
         current.history.dropStep(step);
         current.overrides.release(Object.fromEntries(changes.map(change => [change.stageId, change.after])));
-        if (prunes) current.connections.restore(beforeConnections!);
+        if (delta !== null) current.connections.restore(delta.before);
         current.onError(writeError);
       } finally {
         inFlight.current -= 1;
@@ -179,17 +199,28 @@ export function useTransitionActions(input: TransitionActionInput): TransitionAc
     return changes.map(change => ({ stageId: change.stageId, before: presentedRules(workflow, change.stageId), after: change.after }));
   }, []);
 
-  const create = useCallback((sourceId: string, to: string) => {
-    const before = presentedRules(inputRef.current.workflow(), sourceId);
+  const create = useCallback((sourceId: string, to: string, side?: StageSide) => {
+    const current = inputRef.current;
+    const workflow = current.workflow();
+    const before = presentedRules(workflow, sourceId);
     const after = withDestination(before, to);
     if (before !== null && before.length === after.length && before.every((rule, index) => rule.to === after[index]?.to)) return;
-    run(changesFor([{ stageId: sourceId, after }]), null);
+    // A connection drawn from a side the automatic route would not use keeps that side.
+    let layout: LayoutDelta | null = null;
+    if (side !== undefined && side !== automaticDepartureSide(workflow, sourceId, to)) {
+      const currentLayouts = current.connections.current();
+      const key = connectionKey(sourceId, to);
+      if (currentLayouts[key] === undefined) {
+        layout = { before: currentLayouts, after: { ...currentLayouts, [key]: { from: sourceId, to, source: { side, at: 2 } } } };
+      }
+    }
+    run(changesFor([{ stageId: sourceId, after }]), layout);
   }, [changesFor, run]);
 
   const repoint = useCallback((sourceId: string, from: string, to: string) => {
     const before = presentedRules(inputRef.current.workflow(), sourceId);
     if (from === to) return;
-    run(changesFor([{ stageId: sourceId, after: replacingDestination(before, from, to) }]), { from: sourceId, to: from });
+    run(changesFor([{ stageId: sourceId, after: replacingDestination(before, from, to) }]), pruneLayout(inputRef.current.connections.current(), sourceId, from));
   }, [changesFor, run]);
 
   const reown = useCallback((fromSource: string, to: string, toSource: string) => {
@@ -205,7 +236,7 @@ export function useTransitionActions(input: TransitionActionInput): TransitionAc
     run(changesFor([
       { stageId: toSource, after: withMovedDestination(receiver, to, moved) },
       { stageId: fromSource, after: withoutDestination(previous, to) },
-    ]), { from: fromSource, to });
+    ]), pruneLayout(inputRef.current.connections.current(), fromSource, to));
   }, [changesFor, run]);
 
   const remove = useCallback((sourceId: string, to: string) => {
@@ -214,7 +245,7 @@ export function useTransitionActions(input: TransitionActionInput): TransitionAc
     // permitting no destination, which is the only way to stop drawing it.
     const after = before === null ? [] : withoutDestination(before, to);
     if (before !== null && !before.some(rule => rule.to === to)) return;
-    run(changesFor([{ stageId: sourceId, after }]), { from: sourceId, to });
+    run(changesFor([{ stageId: sourceId, after }]), pruneLayout(inputRef.current.connections.current(), sourceId, to));
   }, [changesFor, run]);
 
   const setCondition = useCallback(async (sourceId: string, to: string, when: string | null): Promise<void> => {
