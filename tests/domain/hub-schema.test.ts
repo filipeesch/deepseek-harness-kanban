@@ -19,6 +19,18 @@ describe('HubState schema', () => {
     expect(HubStateSchema.safeParse(hub).success).toBe(false);
   });
 
+  it('accepts a stored board whose YAML and workflow agree on the default model and rejects one where they disagree', () => {
+    const hub = hubWith();
+    const board = hub.boards[0]!;
+    board.workflowYaml = 'name: Flow\ninitial_column: backlog\ncolumns:\n  - id: backlog\n    label: Backlog\nmodel:\n  provider: anthropic\n  model: claude\n';
+    board.workflow = { ...board.workflow, model: { provider: 'anthropic', model: 'claude' } };
+    expect(HubStateSchema.safeParse(hub).success).toBe(true);
+    board.workflow = { ...board.workflow, model: { provider: 'openai', model: 'gpt' } };
+    expect(HubStateSchema.safeParse(hub).success).toBe(false);
+    delete board.workflow.model;
+    expect(HubStateSchema.safeParse(hub).success).toBe(false);
+  });
+
   it('accepts a board project scope of known keys and rejects an unknown or repeated one', () => {
     const hub = hubWith();
     hub.projects.push({ id: 'other', name: 'Other', projectKey: 'other', projectPath: '/repo/other' });

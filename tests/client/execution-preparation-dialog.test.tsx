@@ -11,7 +11,7 @@ afterEach(cleanup);
 function state(overrides: Partial<PreparationState> = {}): PreparationState {
   return {
     phase: 'worktree', kind: 'move', taskId: 't1', taskTitle: 'Alpha task', stageName: 'Review',
-    worktree: 'ask', model: false,
+    worktree: 'ask', model: false, boardModel: null,
     draft: { mode: 'new', branchName: 'alpha-task', path: '/trees/alpha-task', sourceBranch: 'main' },
     destinationMissing: false, sessionId: null, pending: false, error: null, failedStep: null,
     ...overrides,
@@ -99,13 +99,30 @@ describe('ExecutionPreparationDialog', () => {
       slots: { entriesOfSlot: key => key === MODEL_SELECTION_SLOT ? [entry] : [], subscribe: () => () => {} },
       locale: { bind: () => key => key, getSnapshot: () => ({ revision: 0 }), subscribe: () => () => {} },
     };
-    render(<ExecutionPreparationDialog state={state({ phase: 'model', model: true, sessionId: 'session-1' })} controller={controllerOf(stub)} seat={seat} />);
+    const { rerender } = render(<ExecutionPreparationDialog state={state({ phase: 'model', model: true, sessionId: 'session-1' })} controller={controllerOf(stub)} seat={seat} />);
     describedByExists();
+    // Without a board model, Start execution keeps DSH's own choice, and the dialog says so.
+    expect(screen.getByRole('note').textContent).toContain('keeps the model DSH chose for this conversation');
     const trigger = screen.getByRole('button', { name: 'Native model trigger' });
     expect(select).not.toHaveBeenCalled();
     screen.getByRole('button', { name: 'Start execution' }).click();
     expect(stub.confirmModel).toHaveBeenCalledTimes(1);
     trigger.click();
     expect(select).toHaveBeenCalledTimes(1);
+
+    // The step is only reopened when the board named a route this host cannot offer,
+    // so the person is told which model the board wanted and what pressing Start does.
+    rerender(<ExecutionPreparationDialog
+      state={state({ phase: 'model', model: true, sessionId: 'session-1', boardModel: { provider: 'deepseek', model: 'reason', reasoningEffort: 'high' } })}
+      controller={controllerOf(stub)}
+      seat={seat}
+    />);
+    const note = screen.getByRole('note').textContent ?? '';
+    expect(note).toContain('The board names deepseek · reason for new conversations');
+    expect(note).toContain('this host did not confirm that model here');
+    expect(note).toContain('begins the conversation on the model DSH chose');
+    // The step also opens when the catalog could not be read, so it must not claim a refusal.
+    expect(note).not.toContain('does not offer');
+    expect(screen.queryByText('Pressing Start execution keeps the model DSH chose for this conversation.')).toBeNull();
   });
 });

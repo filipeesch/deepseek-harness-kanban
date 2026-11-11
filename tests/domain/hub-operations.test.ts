@@ -46,6 +46,70 @@ describe('Hub operations', () => {
     expect(hub.tasks[0]!.autoMode?.enabled).toBe(true);
   });
 
+  it('records the pause the agent requested and resumes it without changing the setting', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Paused', description: '' }, deps);
+    operations.setAutoMode(hub, task.id, true, deps);
+    operations.pauseTask(hub, task.id, '  Review the diff  ', deps);
+    expect(task.autoMode?.hold).toEqual({ reason: 'Review the diff', at: expect.any(String) });
+    expect(task.autoMode?.enabled).toBe(true);
+    expect(task.columnId).toBe('backlog');
+
+    operations.resumeTask(hub, task.id, deps);
+    expect(task.autoMode).toEqual({ enabled: true });
+    const settled = task.updatedAt;
+    operations.resumeTask(hub, task.id, deps);
+    expect(task.updatedAt).toBe(settled);
+  });
+
+  it('records nothing for a task whose auto mode is disabled and rejects a blank reason', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Idle', description: '' }, deps);
+    operations.pauseTask(hub, task.id, 'Review the diff', deps);
+    expect(task.autoMode).toBeUndefined();
+
+    operations.setAutoMode(hub, task.id, true, deps);
+    expect(() => operations.pauseTask(hub, task.id, '   ', deps)).toThrowError(/nonempty/);
+    expect(task.autoMode?.hold).toBeUndefined();
+  });
+
+  it('clears a diagnostic pause and the agent pause together on resume', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Paused', description: '' }, deps);
+    operations.setAutoMode(hub, task.id, true, deps);
+    operations.pauseAutoMode(hub, task.id, { reason: 'turn-error', at: '2026-01-01T00:00:00.000Z' }, deps);
+    operations.pauseTask(hub, task.id, 'Review the diff', deps);
+    expect(task.autoMode?.pause?.reason).toBe('turn-error');
+    expect(task.autoMode?.hold?.reason).toBe('Review the diff');
+
+    operations.resumeTask(hub, task.id, deps);
+    expect(task.autoMode).toEqual({ enabled: true });
+  });
+
+  it('treats enabling auto mode on a paused task as its resume', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Paused', description: '' }, deps);
+    operations.setAutoMode(hub, task.id, true, deps);
+    operations.pauseTask(hub, task.id, 'Review the diff', deps);
+    operations.setAutoMode(hub, task.id, true, deps);
+    expect(task.autoMode).toEqual({ enabled: true });
+  });
+
+  it('resumes the agent pause on a user move and keeps it on an automatic placement', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    hub.boards[0]!.workflow.columns.push({ id: 'done', name: 'Done' });
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Moved', description: '' }, deps);
+    operations.setAutoMode(hub, task.id, true, deps);
+    operations.pauseTask(hub, task.id, 'Review the diff', deps);
+
+    operations.placeTask(hub, task.id, 'done', 'end', 1, { retainAgentPause: true });
+    expect(task.autoMode?.hold?.reason).toBe('Review the diff');
+
+    operations.placeTask(hub, task.id, 'backlog', 'end', 2);
+    expect(task.autoMode?.hold).toBeUndefined();
+    expect(task.autoMode?.enabled).toBe(true);
+  });
+
   it('records, replaces, and clears the transition of the current stage without moving the task', () => {
     const hub = sampleHub(); const deps = operationDeps();
     hub.boards[0]!.workflow.columns.push({ id: 'review', name: 'Review' }, { id: 'done', name: 'Done' });

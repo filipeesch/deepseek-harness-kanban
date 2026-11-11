@@ -89,6 +89,10 @@ it('advances the card and dispatches the next instruction after a completed turn
   const newTask = page.getByRole('dialog', { name: 'New task' });
   await newTask.getByRole('textbox', { name: 'Title' }).fill('Auto mode chain');
   await newTask.getByRole('combobox', { name: 'Project', exact: true }).selectOption({ label: 'Auto mode' });
+  // Creating a task in an instructed stage starts its first execution, which would
+  // resolve this entry before the lane could start the turn itself. Creating
+  // without starting leaves the card play action to admit the instruction.
+  await newTask.getByRole('checkbox', { name: 'Start execution now' }).uncheck();
   await newTask.getByRole('button', { name: 'Create task' }).click();
   const openTask = page.getByRole('button', { name: 'Open task Auto mode chain' });
   await visible(openTask);
@@ -104,7 +108,13 @@ it('advances the card and dispatches the next instruction after a completed turn
 
   // Running the current stage instruction starts the turn; the replay completes it,
   // and the host advances the card and dispatches the destination instruction itself.
+  // This play action starts the task's first execution, so the preparation creates
+  // the conversation and asks for the model before it sends anything.
   await cardInPlan.getByRole('button', { name: 'Run Plan instruction' }).click();
+  const preparation = page.getByRole('dialog');
+  const startExecution = preparation.getByRole('button', { name: 'Start execution' });
+  await visible(startExecution);
+  await startExecution.click();
   const cardInReview = page.locator('[data-column-id="review"] [data-task-id]').filter({ has: openTask });
   await count(cardInReview, 1);
   await count(page.locator('.kb-card-countdown'), 0);
@@ -112,10 +122,19 @@ it('advances the card and dispatches the next instruction after a completed turn
   await openTask.click();
   const drawer = page.locator('.kb-drawer');
   const conversation = drawer.locator('.kb-conversation-window');
-  await contains(conversation.getByText(REVIEW, { exact: false }), REVIEW);
-  await contains(conversation.getByText(PLAN, { exact: false }), PLAN);
+  // Each delivered instruction is a collapsed, plugin-sourced context row; expanding
+  // it reveals the text. Neither one is a user message.
+  const stageRows = () => conversation.locator('[data-disclosure-row]').filter({ hasText: 'stage-instruction' });
+  await count(stageRows(), 2);
+  await contains(stageRows().first(), 'Stage: Plan');
+  await contains(stageRows().last(), 'Stage: Review');
+  await stageRows().last().click();
+  await contains(conversation.locator('[data-context-injection-body]'), REVIEW);
+  await contains(conversation.getByText('Automatic instruction received.', { exact: false }), 'Automatic instruction received.');
   await count(drawer.getByRole('tablist', { name: 'Agent conversations' }).getByRole('tab'), 1);
   await attribute(cardInReview.locator('.kb-auto-chip'), 'aria-pressed', 'true');
   await attribute(drawer.locator('.kb-drawer-header .kb-auto-chip'), 'aria-pressed', 'true');
-  await attribute(drawer.locator('.kb-drawer-header .kb-auto-chip'), 'title', 'Auto mode is on: the next completed turn moves to Done.');
+  // Review configures no transitions, so the chain stops there and the control
+  // reports the dead end instead of naming a destination.
+  await attribute(drawer.locator('.kb-drawer-header .kb-auto-chip'), 'title', 'Auto mode is on. No next stage is configured.');
 });

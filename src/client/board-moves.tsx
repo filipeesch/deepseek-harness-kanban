@@ -58,8 +58,13 @@ export function useBoardMoves({ state, run, autoRun, selectionMode, prepare, onE
     if (intent.task.columnId === intent.column.id) return true;
     if (entryInstruction(intent.column) === undefined) return true;
     const project = stateRef.current?.projects.find(value => value.id === intent.task.projectId);
+    const boardModel = stateRef.current?.workflow.model;
     try {
-      return await prepareRef.current({ kind: 'move', task: intent.task, column: intent.column, ...(project === undefined ? {} : { project }) });
+      return await prepareRef.current({
+        kind: 'move', task: intent.task, column: intent.column,
+        ...(project === undefined ? {} : { project }),
+        ...(boardModel === undefined ? {} : { boardModel }),
+      });
     } catch {
       return false;
     }
@@ -98,7 +103,14 @@ export function useBoardMoves({ state, run, autoRun, selectionMode, prepare, onE
     const project = current.projects.find(value => value.id === task.projectId);
     void (async () => {
       let proceed = true;
-      try { proceed = await prepareRef.current({ kind: 'run', task, column, ...(project === undefined ? {} : { project }) }); }
+      const boardModel = current.workflow.model;
+      try {
+        proceed = await prepareRef.current({
+          kind: 'run', task, column,
+          ...(project === undefined ? {} : { project }),
+          ...(boardModel === undefined ? {} : { boardModel }),
+        });
+      }
       catch { proceed = false; }
       if (proceed) void autoRunRef.current.runNow(input);
     })();

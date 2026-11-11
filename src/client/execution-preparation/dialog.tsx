@@ -74,6 +74,13 @@ export function ExecutionPreparationDialog({ state, controller, seat }: Executio
       {state.phase === 'model' && <>
         {identity}
         <p id={summary}>The first conversation is ready. Choose the model it should use for {state.kind === 'move' ? 'the move to ' + state.stageName : 'this instruction'}.</p>
+        {/* Say what Start execution accepts, so the default being kept is a decision
+            the person can see instead of something they discover afterwards. The board
+            route is only *named* here: this step also opens when the catalog could not
+            be read, so it must not claim the host rejected it. */}
+        <p className="kb-hint" role="note">{state.boardModel === null
+          ? 'Pressing Start execution keeps the model DSH chose for this conversation.'
+          : `The board names ${state.boardModel.provider} · ${state.boardModel.model} for new conversations, but this host did not confirm that model here. Pressing Start execution begins the conversation on the model DSH chose.`}</p>
         {seat !== undefined && state.sessionId !== null
           ? <NativeModelSeat seat={seat} sessionId={state.sessionId} onSelectingChange={setSelecting} />
           : <p className="kb-hint" role="status">The native model selector is unavailable. This conversation will use the default model.</p>}
