@@ -1,6 +1,6 @@
 import { KanbanError } from '../../shared/errors.js';
 import { SHARING_STORAGES, type SharingStorage } from '../../shared/types.js';
-import type { SharedConfigStore } from './store.js';
+import type { SharedLayoutStore } from './ports.js';
 import type { TeamFileStore } from './team-file-store.js';
 
 /** Storage identifiers supported by the sharing boundary, derived from the shared list. */
@@ -48,7 +48,8 @@ export interface SharingProviderDescriptor {
   /** Validate and normalize the stored string settings for this provider. */
   normalizeSettings(settings: Record<string, string>): Record<string, string>;
   describe(binding: SharingBinding): string;
-  createStore(hubId: string, binding: SharingBinding, state: ProviderState): SharedConfigStore;
+  /** The published layout of this storage: the hub manifest plus one log per board. */
+  createLayoutStore(hubId: string, binding: SharingBinding, state: ProviderState): SharedLayoutStore;
   /** Absent when the storage cannot serve the team files directory. */
   createFileStore?(hubId: string, binding: SharingBinding, state: ProviderState): TeamFileStore;
   /** Validate the persisted provider state; an unusable state falls back to empty. */
@@ -63,7 +64,7 @@ export interface SharingProviderDescriptor {
 
 /** The service-facing resolver; tests can provide a small fake implementation. */
 export interface SharingProviderResolver {
-  create(hubId: string, binding: SharingBinding, state: ProviderState): SharedConfigStore;
+  createLayoutStore(hubId: string, binding: SharingBinding, state: ProviderState): SharedLayoutStore;
   /** Absent in narrow test resolvers; a service then reports the storage as unsupported. */
   createFileStore?(hubId: string, binding: SharingBinding, state: ProviderState): TeamFileStore | undefined;
   describe(binding: SharingBinding): ProviderDescription;
@@ -91,9 +92,9 @@ export class SharingProviderRegistry implements SharingProviderResolver {
     return this.get(id).normalizeSettings(settings);
   }
 
-  create(hubId: string, binding: SharingBinding, state: ProviderState): SharedConfigStore {
+  createLayoutStore(hubId: string, binding: SharingBinding, state: ProviderState): SharedLayoutStore {
     const descriptor = this.get(binding.provider);
-    return descriptor.createStore(hubId, binding, descriptor.normalizeState(state));
+    return descriptor.createLayoutStore(hubId, binding, descriptor.normalizeState(state));
   }
 
   createFileStore(hubId: string, binding: SharingBinding, state: ProviderState): TeamFileStore | undefined {

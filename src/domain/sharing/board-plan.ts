@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { SharedBoardEntry } from './manifest.js';
 import { canonicalWorkflow } from '../schema-parts.js';
 import { parseWorkflow } from '../workflow.js';
@@ -53,6 +54,12 @@ export interface BoardEvaluation {
   readonly refuses: boolean;
   /** Published content differs from local content, for a review panel. */
   readonly difference: { readonly local: string; readonly published: string } | null;
+}
+
+/** A stable digest of a workflow, so a local edit is comparable to the published one. */
+export function workflowDigest(text: string): string {
+  try { return createHash('sha256').update(canonicalWorkflow(parseWorkflow(text))).digest('hex'); }
+  catch { return createHash('sha256').update(text).digest('hex'); }
 }
 
 function sameWorkflow(left: string, right: string): boolean {

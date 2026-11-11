@@ -47,6 +47,14 @@ export class MemoryLayoutStore implements SharedLayoutStore {
     return { probe: 'probe-' + String(this.probes.get(key) ?? 0), head: headToken(decoded.log), log: decoded.log };
   }
 
+  async createLog(key: string, text: string): Promise<BoardLogSnapshot> {
+    if (this.logs.has(key)) throw new KanbanError('SHARING_STALE_TOKEN', 'The board log already exists.');
+    const log = createBoardLog(text);
+    this.logs.set(key, JSON.stringify(encodeBoardLog(log)));
+    this.probes.set(key, (this.probes.get(key) ?? 0) + 1);
+    return { probe: 'probe-' + String(this.probes.get(key)), head: headToken(log), log };
+  }
+
   async appendChanges(key: string, changes: readonly BoardChange[], options: AppendOptions): Promise<BoardLogSnapshot> {
     const current = await this.readLog(key);
     const head = current?.head ?? null;

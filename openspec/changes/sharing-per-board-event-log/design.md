@@ -59,6 +59,9 @@ Hub-wide blast radius the change exists to remove).
 
 ### D2 — Layout: `kanban-hub.yaml` manifest plus `kanban-boards/<key>.yaml`
 
+Google Drive Cloud has no directories to speak of, so there each board log is a sibling
+file named `kanban-board-<key>.yaml`. Every other storage uses the directory.
+
 The manifest keeps its current file name and directory position, and the board logs live in a
 sibling directory. The `team-files` directory is untouched.
 

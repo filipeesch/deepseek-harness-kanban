@@ -259,6 +259,8 @@ export interface SharingBoardView {
   boardId: string; key?: string; name: string; state: SharingBoardState; bound: boolean;
   /** The decision still requires review. */
   pending: boolean;
+  /** Published events this installation has not applied yet. */
+  updates?: number;
   /** Both versions, present for a board that needs a choice. */
   detail?: {
     local: string; team: string; localName: string; teamName: string;
@@ -303,6 +305,8 @@ export type SharingCommand =
   | { type: 'sharing.publishInitial'; hubId: string; confirmed: boolean }
   | { type: 'sharing.check'; hubId: string }
   | { type: 'sharing.getUpdates'; hubId: string }
+  | { type: 'sharing.updateBoard'; hubId: string; boardId: string }
+  | { type: 'sharing.publishBoard'; hubId: string; boardId: string }
   | { type: 'sharing.resolve'; hubId: string; boardId: string; choice: 'local' | 'team' }
   | { type: 'sharing.publish'; hubId: string }
   | { type: 'sharing.setInterval'; hubId: string; intervalMinutes: number }

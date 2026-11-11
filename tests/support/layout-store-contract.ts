@@ -23,10 +23,12 @@ export function storedBoardLog(text: string): string {
  * The behaviour every storage must show through the published-layout ports. A
  * provider test runs this against its own store, so the four storages cannot drift.
  */
-export function describeLayoutStoreContract(name: string, factory: () => SharedLayoutStore, emptyFactory?: () => SharedLayoutStore): void {
+export type LayoutStoreFactory = () => SharedLayoutStore | Promise<SharedLayoutStore>;
+
+export function describeLayoutStoreContract(name: string, factory: LayoutStoreFactory, emptyFactory?: LayoutStoreFactory): void {
   describe(name + ' published-layout contract', () => {
     it('serves a manifest with its token and honours a matching cache', async () => {
-      const store = factory();
+      const store = await factory();
       const first = await store.readManifest();
       expect(first).not.toBeNull();
       expect(first!.token).toBe(sharedManifestToken(first!.manifest));
@@ -34,7 +36,7 @@ export function describeLayoutStoreContract(name: string, factory: () => SharedL
     });
 
     it('refuses a stale manifest write and accepts a matching one', async () => {
-      const store = factory();
+      const store = await factory();
       const read = await store.readManifest();
       await expect(store.writeManifest(contractManifest(['delivery', 'ops']), { expectedToken: null, message: 'm' })).rejects.toThrow(expect.objectContaining({ code: 'SHARING_STALE_TOKEN' }));
       const written = await store.writeManifest(contractManifest(['delivery', 'ops']), { expectedToken: read!.token, message: 'm' });
@@ -45,7 +47,7 @@ export function describeLayoutStoreContract(name: string, factory: () => SharedL
     });
 
     it('serves a board log with its probe and head', async () => {
-      const store = factory();
+      const store = await factory();
       const read = await store.readLog('delivery');
       expect(read).not.toBeNull();
       expect(read!.head).toBe(headToken(read!.log));
@@ -53,7 +55,7 @@ export function describeLayoutStoreContract(name: string, factory: () => SharedL
     });
 
     it('refuses a stale append and reports a new head after an accepted one', async () => {
-      const store = factory();
+      const store = await factory();
       const read = await store.readLog('delivery');
       const appended = await store.appendChanges('delivery', [{ kind: 'workflow.field-changed', field: 'name', value: 'Renamed' }], { expectedHead: read!.head, message: 'm', at: AT });
       expect(appended.log.events.map(event => event.seq)).toEqual([1]);
@@ -62,15 +64,15 @@ export function describeLayoutStoreContract(name: string, factory: () => SharedL
     });
 
     it('changes the probe after an append', async () => {
-      const store = factory();
+      const store = await factory();
       const before = await store.probe('delivery');
       const read = await store.readLog('delivery');
-      await store.appendChanges('delivery', [], { expectedHead: read!.head, message: 'm', at: AT });
+      await store.appendChanges('delivery', [{ kind: 'workflow.field-changed', field: 'name', value: 'Renamed' }], { expectedHead: read!.head, message: 'm', at: AT });
       expect(await store.probe('delivery')).not.toBe(before);
     });
 
     it('reports only the events a cursor has not seen', async () => {
-      const store = factory();
+      const store = await factory();
       const read = await store.readLog('delivery');
       const appended = await store.appendChanges('delivery', [
         { kind: 'workflow.field-changed', field: 'name', value: 'One' },
@@ -81,13 +83,22 @@ export function describeLayoutStoreContract(name: string, factory: () => SharedL
     });
 
     it('reports a board it has never stored', async () => {
-      const store = factory();
+      const store = await factory();
       expect(await store.probe('missing')).toBeNull();
       expect(await store.readLog('missing')).toBeNull();
     });
 
+    it('creates a board log once and refuses to replace one', async () => {
+      const store = await (emptyFactory === undefined ? factory() : emptyFactory());
+      const key = 'fresh';
+      const created = await store.createLog(key, CONTRACT_WORKFLOW);
+      expect(created.log.snapshot.text).toBe(CONTRACT_WORKFLOW);
+      expect(created.head).toBe(headToken(created.log));
+      await expect(store.createLog(key, CONTRACT_WORKFLOW)).rejects.toThrow();
+    });
+
     it('refuses an append against a head that no longer matches', async () => {
-      const store = factory();
+      const store = await factory();
       const read = await store.readLog('delivery');
       await store.appendChanges('delivery', [{ kind: 'workflow.field-changed', field: 'name', value: 'One' }], { expectedHead: read!.head, message: 'm', at: AT });
       await expect(store.appendChanges('delivery', [], { expectedHead: read!.head, message: 'm', at: AT })).rejects.toThrow(expect.objectContaining({ code: 'SHARING_STALE_TOKEN' }));
@@ -95,7 +106,7 @@ export function describeLayoutStoreContract(name: string, factory: () => SharedL
 
     if (emptyFactory !== undefined) {
       it('refuses an append to a board that has no log', async () => {
-        const store = emptyFactory();
+        const store = await emptyFactory();
         expect(await store.readLog('delivery')).toBeNull();
         await expect(store.appendChanges('delivery', [], { expectedHead: null, message: 'm', at: AT })).rejects.toThrow();
       });

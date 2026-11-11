@@ -124,6 +124,8 @@ export const SharingCommandSchema:z.ZodType<SharingCommand>=z.discriminatedUnion
  z.object({type:z.literal('sharing.publishInitial'),hubId:id,confirmed:z.boolean()}).strict(),
  z.object({type:z.literal('sharing.check'),hubId:id}).strict(),
  z.object({type:z.literal('sharing.getUpdates'),hubId:id}).strict(),
+ z.object({type:z.literal('sharing.updateBoard'),hubId:id,boardId:id}).strict(),
+ z.object({type:z.literal('sharing.publishBoard'),hubId:id,boardId:id}).strict(),
  z.object({type:z.literal('sharing.resolve'),hubId:id,boardId:id,choice:z.enum(['local','team'])}).strict(),
  z.object({type:z.literal('sharing.publish'),hubId:id}).strict(),
  z.object({type:z.literal('sharing.setInterval'),hubId:id,intervalMinutes:z.number().int().min(0).max(1440)}).strict(),

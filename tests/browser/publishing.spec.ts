@@ -33,8 +33,8 @@ test('publishes only after getting team updates', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing&sharing=updates');
   await expect(page.getByText('Updates available', { exact: true }).first()).toBeVisible();
   await expect(page.locator('[aria-label="Team settings"] .kb-share-meta').getByText('Git repository', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Publish' })).toBeDisabled();
-  await page.getByRole('button', { name: 'Get updates (2)' }).click();
+  await expect(page.getByRole('button', { name: /Publish the board list/ })).toBeDisabled();
+  await page.getByRole('button', { name: 'Get updates for every board (2)' }).click();
   await expect.poll(async () => (await sharingCommands(page))[0]).toMatchObject({ type: 'sharing.getUpdates' });
   await expect(page.getByText(/New from the team: Team board/)).toBeVisible();
   const text = await page.locator('[aria-label="Team settings"]').innerText();
@@ -57,13 +57,13 @@ test('resolves a board conflict and republishes an orphan', async ({ page }) => 
 test('applies a pending team removal and enables Get updates for a pending orphan', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing&sharing=removal');
   await expect(page.getByText(/Removed by the team with no local work: Old board/)).toBeVisible();
-  await page.getByRole('button', { name: 'Get updates (1)' }).click();
+  await page.getByRole('button', { name: 'Get updates for every board (1)' }).click();
   await expect.poll(async () => (await sharingCommands(page))[0]).toMatchObject({ type: 'sharing.getUpdates' });
 
   await page.goto(HARNESS + '?scenario=publishing&sharing=pending-orphan');
-  await expect(page.getByRole('button', { name: 'Get updates (1)' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Get updates for every board (1)' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Publish as a new board' })).toHaveCount(0);
-  await expect(page.getByText(/Get updates to keep it as an orphan/)).toBeVisible();
+  await expect(page.getByText(/Get the team updates to keep it as an orphan/)).toBeVisible();
 });
 
 test('restores a board removed only here and explains an unavailable repository', async ({ page }) => {
@@ -84,7 +84,7 @@ test('restores a board removed only here and explains an unavailable repository'
 
 test('shows a board banner and publishing indicators on both tab rows', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=sharing&sharing=updates');
-  await expect(page.getByText('Your team published changes to this Hub.')).toBeVisible();
+  await expect(page.getByText('Your team published changes to this board.')).toBeVisible();
   await expect(page.getByRole('img', { name: 'Team updates available', exact: true })).toBeVisible();
   await expect(page.getByRole('img', { name: 'Team updates available for this board' })).toBeVisible();
   await page.getByRole('button', { name: 'Review team changes' }).click();
@@ -95,7 +95,7 @@ test('shows a board banner and publishing indicators on both tab rows', async ({
   await expect(page.getByRole('img', { name: 'Board changes not sent' })).toBeVisible();
 
   await page.goto(HARNESS + '?scenario=sharing&sharing=review');
-  await expect(page.getByText('Your team changed boards that also changed on this machine. Review the differences.')).toBeVisible();
+  await expect(page.getByText('Your team changed this board in a way that needs a choice.')).toBeVisible();
   await expect(page.getByRole('img', { name: 'Team review needed' })).toBeVisible();
   await expect(page.getByRole('img', { name: 'This board needs a team review' })).toBeVisible();
 
@@ -123,7 +123,7 @@ test('a name collision has no resolve action and a Hub shows drafts and updates 
 
 test('a refused update shows the blocking board, column, and task count', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing&sharing=refuse-error');
-  await page.getByRole('button', { name: 'Get updates (1)' }).click();
+  await page.getByRole('button', { name: 'Get updates for every board (1)' }).click();
   await expect(page.getByText(/would leave 2 tasks in column "plan"/)).toBeVisible();
   await expect(page.getByText('SHARING_REFUSED')).toBeVisible();
 });
@@ -205,7 +205,8 @@ test('resolves a Google Drive conflict and uses a single save action', async ({ 
   await expect.poll(async () => (await sharingCommands(page))[0]).toMatchObject({ type: 'sharing.resolve', boardId: 'board', choice: 'team' });
   await page.goto(HARNESS + '?scenario=workflow&sharing=drive');
   await expect(page.getByRole('button', { name: 'Save workflow' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Save and share' })).toHaveCount(0);
+  // Publishing is manual for every storage, so the share action is always available.
+  await expect(page.getByRole('button', { name: 'Save and share' })).toBeVisible();
 });
 
 test('shows Google Drive preview differences and stages the replace action', async ({ page }) => {

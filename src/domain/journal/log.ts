@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { parse as parseYaml } from 'yaml';
 import { applyEvents } from './conflict.js';
 import { decodeEvent, encodeEvent, EVENT_FORMAT_VERSION, type BoardChange, type EventDecode, type JournalEvent } from './event.js';
 
@@ -120,6 +121,14 @@ export function encodeBoardLog(log: BoardLogFile): Record<string, unknown> {
     snapshot: { seq: log.snapshot.seq, text: log.snapshot.text },
     events: log.events.map(event => encodeEvent(event)),
   };
+}
+
+/** Read one stored board log from its YAML text. */
+export function readBoardLogText(text: string): BoardLogDecode {
+  let raw: unknown;
+  try { raw = parseYaml(text); }
+  catch (error) { return { ok: false, reason: 'invalid', message: 'A board log must be valid YAML: ' + (error instanceof Error ? error.message : String(error)) }; }
+  return decodeBoardLog(raw);
 }
 
 export type BoardLogDecode =

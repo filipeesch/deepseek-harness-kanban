@@ -4,12 +4,34 @@ import { BoardNotices } from '../board-notices.js';
 import { DestructiveOperationsNotice, type RetainedCheckoutNotice } from '../destructive-notices.js';
 import { ProjectRelocationNotice } from '../project-relocation-notice.js';
 
-/** The publishing banner shown when the team has changes that need attention. */
-export function ShareBanner({ view, onReview }: { view: HubSharingView | undefined; onReview: () => void }) {
+/**
+ * The publishing banner for the active board. It offers the board's own update
+ * action, because applying is per board, and falls back to the review surface when
+ * the board needs a choice or the Hub has a blocker.
+ */
+export function ShareBanner({ view, boardId, pending, onReview, onUpdate }: {
+  view: HubSharingView | undefined;
+  boardId: string | undefined;
+  pending: boolean;
+  onReview: () => void;
+  onUpdate: (boardId: string) => void;
+}) {
   if (!view || view.status === 'preview' || view.status === 'not-published') return null;
-  if (view.updates === 0 && view.conflicts === 0 && view.blockers.length === 0) return null;
-  const message = view.conflicts > 0 ? 'Your team changed boards that also changed on this machine. Review the differences.' : view.updates > 0 ? 'Your team published changes to this Hub.' : view.blockers[0]?.message ?? 'Team changes cannot be applied until the blocking boards are resolved.';
-  return <div className="kb-share-banner" role="status"><p>{message}</p><div className="kb-actions"><button type="button" className="kb-button" onClick={onReview}>Review team changes</button></div></div>;
+  const board = boardId === undefined ? undefined : view.boards.find(entry => entry.boardId === boardId);
+  const boardUpdates = board?.state === 'updates-available';
+  const boardReview = board?.state === 'needs-review';
+  if (!boardUpdates && !boardReview && view.conflicts === 0 && view.blockers.length === 0) return null;
+  const message = boardReview || view.conflicts > 0
+    ? 'Your team changed this board in a way that needs a choice.'
+    : boardUpdates
+      ? 'Your team published changes to this board.'
+      : view.blockers[0]?.message ?? 'Team changes cannot be applied until the blocking boards are resolved.';
+  return <div className="kb-share-banner" role="status"><p>{message}</p><div className="kb-actions">
+    {boardUpdates && boardId !== undefined
+      ? <button type="button" className="kb-button kb-primary" disabled={pending} onClick={() => onUpdate(boardId)}>{pending ? 'Updating…' : 'Update board'}</button>
+      : null}
+    <button type="button" className="kb-button" onClick={onReview}>{boardReview || view.conflicts > 0 ? 'Review the choice' : 'Review team changes'}</button>
+  </div></div>;
 }
 
 export interface BoardProblemNoticesProps {
