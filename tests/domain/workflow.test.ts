@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_WORKFLOW_YAML, parseWorkflow } from '../../src/domain/workflow.js';
 import { canTransition } from '../../src/domain/transitions.js';
+import { canonicalWorkflow, workflowMeaning } from '../../src/domain/schema-parts.js';
 
 const minimal = 'columns:\n  - id: todo\n    label: To do\n  - id: done\n    label: Done\n';
 
@@ -143,6 +144,47 @@ describe('workflow configuration', () => {
 
   it('bounds oversized documents', () => {
     expect(() => parseWorkflow(' '.repeat(1_000_001))).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+  });
+});
+
+describe('workflow stage identity', () => {
+  const keyed = 'columns:' + String.fromCharCode(10)
+    + '  - id: todo' + String.fromCharCode(10)
+    + '    key: stage-1' + String.fromCharCode(10)
+    + '    label: To do' + String.fromCharCode(10)
+    + '  - id: done' + String.fromCharCode(10)
+    + '    label: Done' + String.fromCharCode(10);
+
+  it('accepts an authored stage key and leaves an absent one undefined', () => {
+    const result = parseWorkflow(keyed);
+    expect(result.columns[0]?.key).toBe('stage-1');
+    expect(result.columns[1]?.key).toBeUndefined();
+  });
+
+  it('keeps the stage key out of behaviour when it is absent', () => {
+    expect(parseWorkflow(minimal).columns.map(column => column.key)).toEqual([undefined, undefined]);
+  });
+
+  it.each([
+    'columns: [{id: one, key: stage, label: One}, {id: two, key: stage, label: Two}]',
+    'columns: [{id: one, key: "../escape", label: One}]',
+    'columns: [{id: one, key: constructor, label: One}]',
+    'columns: [{id: one, key: 3, label: One}]',
+  ])('rejects a malformed or duplicate stage key %#', yaml => {
+    expect(() => parseWorkflow(yaml)).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+  });
+
+  it('keeps the stage key in the persisted identity and in the workflow meaning', () => {
+    const keyedWorkflow = parseWorkflow(keyed);
+    const rekeyed = parseWorkflow(keyed.replace('key: stage-1', 'key: stage-2'));
+    const renamed = parseWorkflow(keyed.replace('id: todo', 'id: planning'));
+    expect(canonicalWorkflow(keyedWorkflow)).toBe(canonicalWorkflow(parseWorkflow(keyed)));
+    expect(canonicalWorkflow(keyedWorkflow)).not.toBe(canonicalWorkflow(rekeyed));
+    // The identity is persisted but is not part of what the workflow means, so the
+    // legacy merge can still compare a board that gained identities to one without.
+    expect(workflowMeaning(keyedWorkflow)).toBe(workflowMeaning(rekeyed));
+    expect(workflowMeaning(keyedWorkflow)).toBe(workflowMeaning(parseWorkflow(keyed)));
+    expect(workflowMeaning(keyedWorkflow)).not.toBe(workflowMeaning(renamed));
   });
 });
 

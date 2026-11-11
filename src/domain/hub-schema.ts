@@ -66,6 +66,7 @@ export const HubStateSchema = z.strictObject({
   const boardById = new Map(state.boards.map(value => [value.id, value]));
   for (const [index, value] of state.boards.entries()) {
     unique(value.workflow.columns.map(item => item.id), ['boards', index, 'workflow', 'columns']);
+    unique(value.workflow.columns.flatMap(item => (item.key === undefined ? [] : [item.key])), ['boards', index, 'workflow', 'columns']);
     unique(value.workflow.groups.map(item => item.id), ['boards', index, 'workflow', 'groups']);
     if (value.allowedProjectKeys !== undefined) {
       unique(value.allowedProjectKeys, ['boards', index, 'allowedProjectKeys']);

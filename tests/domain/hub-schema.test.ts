@@ -101,6 +101,33 @@ describe('HubState schema', () => {
     expect(HubStateSchema.safeParse(hub).success).toBe(false);
   });
 
+  it('accepts a stage identity and rejects one two stages share', () => {
+    const keyed = (first: string | undefined, second: string | undefined): HubState => {
+      const hub = hubWith();
+      const board = hub.boards[0]!;
+      board.workflow = {
+        name: 'Keyed',
+        initialColumnId: 'one',
+        columns: [
+          { id: 'one', name: 'One', ...(first === undefined ? {} : { key: first }) },
+          { id: 'two', name: 'Two', ...(second === undefined ? {} : { key: second }) },
+        ],
+        groups: [],
+      };
+      board.workflowYaml = 'name: Keyed' + String.fromCharCode(10) + 'columns:' + String.fromCharCode(10)
+        + '  - id: one' + String.fromCharCode(10)
+        + (first === undefined ? '' : '    key: ' + first + String.fromCharCode(10))
+        + '    label: One' + String.fromCharCode(10)
+        + '  - id: two' + String.fromCharCode(10)
+        + (second === undefined ? '' : '    key: ' + second + String.fromCharCode(10))
+        + '    label: Two' + String.fromCharCode(10);
+      return hub;
+    };
+    expect(HubStateSchema.safeParse(keyed('stage-1', 'stage-2')).success).toBe(true);
+    expect(HubStateSchema.safeParse(keyed(undefined, undefined)).success).toBe(true);
+    expect(HubStateSchema.safeParse(keyed('stage-1', 'stage-1')).success).toBe(false);
+  });
+
   it('rejects unknown top-level fields', () => {
     expect(HubStateSchema.safeParse({ ...hubWith(task()), extra: true }).success).toBe(false);
   });

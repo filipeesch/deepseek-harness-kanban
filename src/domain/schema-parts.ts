@@ -81,7 +81,7 @@ export const connectionLayout = z.strictObject({
   from: id, to: id, source: connectionAnchor.optional(), target: connectionAnchor.optional(), segments: z.array(connectionSegment).optional(),
 });
 export const column = z.strictObject({
-  id, name: nonempty, onEnterPrompt: z.string().optional(), allowedTransitions: z.array(transitionRule).optional(), position: stagePosition.optional(), size: stageSize.optional(),
+  id, key: id.optional(), name: nonempty, onEnterPrompt: z.string().optional(), allowedTransitions: z.array(transitionRule).optional(), position: stagePosition.optional(), size: stageSize.optional(),
 });
 export const group = z.strictObject({ id, name: nonempty, columnIds: z.array(id).min(1) });
 export const workflow = z.strictObject({
@@ -173,13 +173,13 @@ function shapeConnection(value: ConnectionLayout): Record<string, unknown> {
   };
 }
 
-function workflowShape(value: Workflow, includeLayout: boolean): string {
+function workflowShape(value: Workflow, includeLayout: boolean, includeIdentity = true): string {
   return JSON.stringify({
     name: value.name,
     defaultView: value.defaultView,
     initialColumnId: value.initialColumnId,
     columns: value.columns.map(item => ({
-      id: item.id, name: item.name, onEnterPrompt: item.onEnterPrompt,
+      id: item.id, ...(includeIdentity ? { key: item.key } : {}), name: item.name, onEnterPrompt: item.onEnterPrompt,
       allowedTransitions: item.allowedTransitions?.map(rule => normalizeTransitionRule(rule.to, rule.when)),
       ...(includeLayout ? { position: item.position, size: item.size } : {}),
     })),
@@ -193,9 +193,13 @@ export function canonicalWorkflow(value: Workflow): string {
   return workflowShape(value, true);
 }
 
-/** The workflow without its diagram layout: the flow two versions must share to merge. */
+/**
+ * The workflow without its diagram layout: the flow two versions must share to merge.
+ * The stable identity is excluded: it says which stage is which, not what the stage
+ * means, so a board that gained identities is still comparable to one that has none.
+ */
 export function workflowMeaning(value: Workflow): string {
-  return workflowShape(value, false);
+  return workflowShape(value, false, false);
 }
 
 type Issue = (path: (string | number)[], message: string) => void;
