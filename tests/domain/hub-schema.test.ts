@@ -180,6 +180,15 @@ describe('HubState schema', () => {
     expect(parsed.success && parsed.data.tasks[0]!.pendingTransition?.origin).toBe('auto');
     expect(HubStateSchema.safeParse(hubWith(task({ pendingTransition: { id: 'p', fromColumnId: 'backlog', columnId: 'backlog', mode: 'move', status: 'waiting', origin: 'user' as never } }))).success).toBe(false);
   });
+
+  it('requires a reason on an agent-declared pending transition', () => {
+    const declared = task({ pendingTransition: { id: 'p', fromColumnId: 'backlog', columnId: 'backlog', mode: 'run', status: 'waiting', origin: 'agent', reason: 'Ready for review.' } });
+    const parsed = HubStateSchema.safeParse(hubWith(declared));
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.tasks[0]!.pendingTransition).toMatchObject({ origin: 'agent', reason: 'Ready for review.' });
+    const missing = task({ pendingTransition: { id: 'p', fromColumnId: 'backlog', columnId: 'backlog', mode: 'run', status: 'waiting', origin: 'agent' } });
+    expect(HubStateSchema.safeParse(hubWith(missing)).success).toBe(false);
+  });
 });
 describe('HubState schedule schema', () => {
   const schedule = {

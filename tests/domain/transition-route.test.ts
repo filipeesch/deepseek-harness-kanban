@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Column, Workflow } from '../../src/shared/types.js';
-import { recordedTransition, resolveAdvanceRoute, resolveNextStageRoute, routeDestination } from '../../src/domain/transition-route.js';
+import { advanceArmed, declaredTransitionReason, recordedTransition, resolveAdvanceRoute, resolveNextStageRoute, routeDestination } from '../../src/domain/transition-route.js';
 import { transitions } from '../support/transition-rules.js';
 
 const column = (id: string, extra: Partial<Column> = {}): Column => ({ id, name: id.toUpperCase(), ...extra });
@@ -15,7 +15,7 @@ function workflow(): Workflow {
   );
 }
 
-const recorded = (fromColumnId: string, columnId: string, at = '2026-01-01T00:00:00.000Z') => ({ fromColumnId, columnId, at });
+const recorded = (fromColumnId: string, columnId: string, reason?: string) => ({ fromColumnId, columnId, at: '2026-01-01T00:00:00.000Z', ...(reason === undefined ? {} : { reason }) });
 
 describe('recorded transition resolution', () => {
   it('resolves nothing without a recording', () => {
@@ -92,6 +92,35 @@ describe('next-stage route', () => {
   it('reports a stale recording instead of stepping forward', () => {
     const route = resolveNextStageRoute(workflow(), { columnId: 'review', recordedTransition: recorded('review', 'gone') });
     expect(route.kind).toBe('stale');
+  });
+});
+
+describe('advance arming', () => {
+  it('arms an auto-mode task without a recording', () => {
+    expect(advanceArmed(workflow(), { columnId: 'review', autoMode: { enabled: true } })).toBe(true);
+  });
+
+  it('does not arm a task whose auto mode is disabled and that recorded nothing', () => {
+    expect(advanceArmed(workflow(), { columnId: 'review' })).toBe(false);
+    expect(advanceArmed(workflow(), { columnId: 'review', autoMode: { enabled: false } })).toBe(false);
+  });
+
+  it('arms the turn after a declared transition that carries a reason', () => {
+    expect(advanceArmed(workflow(), { columnId: 'review', recordedTransition: recorded('review', 'rework', 'Needs another pass.') })).toBe(true);
+  });
+
+  it('keeps a recording stored without a reason inert', () => {
+    expect(advanceArmed(workflow(), { columnId: 'review', recordedTransition: recorded('review', 'rework') })).toBe(false);
+  });
+
+  it('does not arm a recording that no longer resolves', () => {
+    expect(advanceArmed(workflow(), { columnId: 'review', recordedTransition: recorded('review', 'gone', 'Review failed.') })).toBe(false);
+  });
+
+  it('resolves the declared reason for the delivery', () => {
+    expect(declaredTransitionReason(workflow(), { columnId: 'review', recordedTransition: recorded('review', 'done', 'Approved.') })).toBe('Approved.');
+    expect(declaredTransitionReason(workflow(), { columnId: 'review', recordedTransition: recorded('review', 'done') })).toBeUndefined();
+    expect(declaredTransitionReason(workflow(), { columnId: 'review' })).toBeUndefined();
   });
 });
 

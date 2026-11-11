@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { KanbanApp } from '../../src/host/app.js';
-import { AUTO_ADVANCE_SETTLE_MS } from '../../src/host/auto-advance.js';
+import { TURN_ADVANCE_SETTLE_MS } from '../../src/host/turn-advance.js';
 import { HubRepository } from '../../src/host/hub-repository.js';
 import type { HubState } from '../../src/shared/types.js';
 import { fixture, taskWithConversation } from './helpers.js';
@@ -109,7 +109,7 @@ describe('move placement', () => {
     vi.useFakeTimers();
     try {
       f.app.observe(advancing.sessionIds[0]!, { type: 'turn/end', seq: 1, data: { turn: 1, reason: { kind: 'completed' } } });
-      await vi.advanceTimersByTimeAsync(AUTO_ADVANCE_SETTLE_MS + 25);
+      await vi.advanceTimersByTimeAsync(TURN_ADVANCE_SETTLE_MS + 25);
     } finally {
       vi.useRealTimers();
     }

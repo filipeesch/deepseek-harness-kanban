@@ -2,8 +2,10 @@ import type { Task, Workflow } from '../shared/types.js';
 import { defaultDestination, transitionTargets } from '../domain/transitions.js';
 import { recordedTransition, staleTransitionMessage } from '../domain/transition-route.js';
 
-/** The product tool the model calls to record the transition it followed. */
+/** The product tool the model calls to declare the transition it followed. */
 const RECORD_TOOL = 'set_next_transition';
+const TARGET_PARAM = 'column_id';
+const REASON_PARAM = 'reason';
 
 /** The task fields the briefing reads. */
 export type BriefedTask = Pick<Task, 'columnId' | 'recordedTransition'>;
@@ -29,7 +31,10 @@ export function buildTransitionBriefing(workflow: Workflow, task: BriefedTask): 
   else if (recorded.kind === 'stale') lines.push('The recorded transition no longer applies: ' + staleTransitionMessage(workflow, task, recorded.reason) + ' Record another one, or the advance pauses.');
   else lines.push('No transition recorded.');
   const fallback = defaultDestination(workflow, task.columnId);
-  lines.push('Record the transition this turn ends in with ' + RECORD_TOOL
-    + (fallback === undefined ? '; with none recorded the task does not advance.' : '; with none recorded the advance uses ' + fallback.name + '.'));
+  // The declaration is what makes the turn end move the task, so the briefing states
+  // both halves of the contract: the reason is required, and the move happens then.
+  lines.push('Declare the transition this turn ends in with ' + RECORD_TOOL + ': pass ' + TARGET_PARAM + ' with the target listed above and '
+    + REASON_PARAM + ' with the reason for it. A declared transition requires a reason, and the task follows it at the end of the turn'
+    + (fallback === undefined ? '; with none declared the task does not advance.' : '; with none declared the advance uses ' + fallback.name + '.'));
   return lines.join('\n');
 }

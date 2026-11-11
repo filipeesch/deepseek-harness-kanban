@@ -7,12 +7,12 @@ import type { SessionModelPort } from './session-model.js';
 import { conversationStageActivity, persistedStageActivity } from '../shared/stage-activity.js';
 import { entryInstruction, nextEnteredAt } from '../domain/stage-entry.js';
 import { placementFromAnchor } from '../domain/placement.js';
-import { AUTO_ADVANCE_SETTLE_MS, AutoAdvanceCoordinator } from './auto-advance.js';
+import { TURN_ADVANCE_SETTLE_MS, TurnAdvanceCoordinator } from './turn-advance.js';
 import type { AutoAdvancePlan } from '../domain/auto-advance.js';
-import { admitAutoAdvance } from './auto-advance-admission.js';
+import { admitTurnAdvance } from './advance-admission.js';
 import { readPendingUserWork, withQuestionPending } from './pending-source.js';
 import type { ConversationFactsSource } from './native-facts.js';
-import type { AutoModePauseReason, Board, BoardSettings, Command, ConversationFacts, ConversationModelOutcome, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, RetainedCheckout, RetainedCheckoutReason, SharingCommand, SnapshotRequest, Task, WorktreeDefaults } from '../shared/types.js';
+import type { AdvanceOrigin, AutoModePauseReason, Board, BoardSettings, Command, ConversationFacts, ConversationModelOutcome, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, RetainedCheckout, RetainedCheckoutReason, SharingCommand, SnapshotRequest, Task, WorktreeDefaults } from '../shared/types.js';
 import type { TaskMessagePreparation } from '../shared/task-message.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionStore } from './question-storage.js';
@@ -105,7 +105,7 @@ export class KanbanApp {
  private retainedPrune:Promise<void>|undefined;
  private retainedPruneTimer:ReturnType<typeof setTimeout>|undefined;
  private pruningRetained=false;
- private readonly autoAdvance:AutoAdvanceCoordinator;
+ private readonly turnAdvance:TurnAdvanceCoordinator;
  /** The one conversation-fact read every host consumer shares; the question projection is folded in here. */
  private readonly factsSource:ConversationFactsSource;
  private readonly workspaceCoordinator?:WorkspaceCoordinator;
@@ -129,13 +129,13 @@ export class KanbanApp {
   this.relocations=new ProjectRelocationCoordinator(new RepositoryProjectRelocationStore(hubs),sessions,git,{queue:this.operationQueue,signal:options.signal,...(this.workspaceCoordinator?{workspaces:{bind:async(hubId,project)=>{await this.workspaceCoordinator!.rebindProject(hubId,project);}}}:{}),...(options.report?{report:options.report}:{})});
   this.pendingWork=new PendingWorkRunner({resumeWorktrees:async()=>{await this.worktrees.resumePending();},resumeRelocations:async()=>{await this.relocations.resumePending();},dispatchPending:async()=>{await this.dispatchPending();},report:error=>this.options.report?.(error)});
   this.attention=new AttentionCoordinator({source:this.factsSource,tasks:()=>this.attentionTasks(),runPendingWork:async()=>{await this.pendingWork.run();},onChange:()=>this.attentionChanged(),onFacts:()=>this.markChanged(),report:error=>this.options.report?.(error)});
-  this.autoAdvance=new AutoAdvanceCoordinator({
+  this.turnAdvance=new TurnAdvanceCoordinator({
    locateBySession:sessionId=>{const located=this.locator.bySession(sessionId);return located?{task:located.task,board:located.board}:undefined;},
    locate:taskId=>{const located=this.locator.byTask(taskId);return located?{task:located.task,board:located.board}:undefined;},
    facts:sessionId=>this.factsSource.read(sessionId),
-   admit:(taskId,plan,isCurrent)=>this.admitAutoAdvance(taskId,plan,isCurrent),
+   admit:(taskId,plan,origin,isCurrent)=>this.admitTurnAdvance(taskId,plan,origin,isCurrent),
    pause:(taskId,reason,message,expectedColumnId)=>this.pauseAutoMode(taskId,reason,message,expectedColumnId),
-   schedule:callback=>setTimeout(callback,AUTO_ADVANCE_SETTLE_MS),
+   schedule:callback=>setTimeout(callback,TURN_ADVANCE_SETTLE_MS),
    cancel:handle=>clearTimeout(handle as ReturnType<typeof setTimeout>),
    report:error=>this.options.report?.(error),
   });
@@ -358,7 +358,7 @@ export class KanbanApp {
   const questionChanged=isEvent(event)&&this.questions.apply(sessionId,event);
   if(questionChanged)this.schedulePersist(sessionId);
   const taskRelevant=this.locator.hasSession(sessionId);
-  if(taskRelevant)this.autoAdvance.observe(sessionId,event);
+  if(taskRelevant)this.turnAdvance.observe(sessionId,event);
   if(taskRelevant)this.attention.touch(sessionId);
   if(taskRelevant&&!questionChanged)this.markChanged();
  }
@@ -651,6 +651,14 @@ export class KanbanApp {
  /** The pause tools' port: run the command, then re-read the task it changed. */
  pauseTask(taskId:string,reason:string):Promise<LocatedTask>{return this.command({type:'task.pause',taskId,reason}).then(()=>this.locatedTask(taskId));}
  resumeTask(taskId:string):Promise<LocatedTask>{return this.command({type:'task.resume',taskId}).then(()=>this.locatedTask(taskId));}
+ /**
+  * The routing write the transition tools depend on. It goes through the command
+  * lane, so a declaration is serialized with every other write and a stale one
+  * never lands after the task moved.
+  */
+ recordTransition(taskId:string,write:{columnId?:string;reason?:string}):Promise<LocatedTask>{
+  return this.command({type:'task.recordTransition',taskId,...(write.columnId===undefined?{}:{columnId:write.columnId}),...(write.reason===undefined?{}:{reason:write.reason})}).then(()=>this.locatedTask(taskId));
+ }
  private async execute(command:Command):Promise<FullHostSnapshot>{
   invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');
   let commandReceipt:HostSnapshot['commandReceipt'];
@@ -705,10 +713,10 @@ export class KanbanApp {
    case 'task.move':await this.move(command);break;
    // Changing the setting forgets a turn that has not settled yet, so enabling — or
    // resuming a paused task — never advances a turn that ended before the change.
-   case 'task.autoMode':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).setAutoMode(command.taskId,command.enabled);this.autoAdvance.forget(command.taskId);break;}
-   case 'task.recordTransition':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).recordTransition(command.taskId,command.columnId);break;}
-   case 'task.pause':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).pauseTask(command.taskId,command.reason);this.autoAdvance.forget(command.taskId);break;}
-   case 'task.resume':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).resumeTask(command.taskId);this.autoAdvance.forget(command.taskId);break;}
+   case 'task.autoMode':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).setAutoMode(command.taskId,command.enabled);this.turnAdvance.forget(command.taskId);break;}
+   case 'task.recordTransition':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).recordTransition(command.taskId,command.columnId,command.reason);break;}
+   case 'task.pause':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).pauseTask(command.taskId,command.reason);this.turnAdvance.forget(command.taskId);break;}
+   case 'task.resume':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).resumeTask(command.taskId);this.turnAdvance.forget(command.taskId);break;}
    case 'task.runInstruction':await this.runInstruction(command);break;
    case 'schedule.save':{
     const store=this.hubStore(command.hubId);
@@ -774,33 +782,40 @@ export class KanbanApp {
   this.assertContext(command.taskId);
   this.assertProjectRelocation(this.locatedTask(command.taskId).project,'running a stage instruction');
   const pending=this.locatedTask(command.taskId).task.pendingTransition;
-  invariant(!pending||(pending.origin==='auto'&&pending.status==='failed'),'TASK_BUSY','Resolve the confirmed transition first.');
+  // A failed host advance — automatic or declared — is recovered by running the
+  // entry it left unresolved, with the justification it kept and the delivery
+  // identity it was admitted with: a replay then never sends the instruction twice,
+  // and a delivery that never landed is still attempted.
+  const recovering=pending!==undefined&&pending.origin!==undefined&&pending.status==='failed'?pending:undefined;
+  invariant(pending===undefined||recovering!==undefined,'TASK_BUSY','Resolve the confirmed transition first.');
   await admitStageInstruction(this.stageInstructionDeps(),{
    taskId:command.taskId,columnId:command.columnId,instruction:command.expectedInstruction,reviewedInstruction:command.expectedInstruction,expectedEnteredAt:command.expectedEnteredAt,
+   ...(recovering===undefined?{}:{requestId:recovering.id}),
+   ...(recovering===undefined||recovering.reason===undefined?{}:{transition:{fromColumnId:recovering.fromColumnId,reason:recovering.reason}}),
   });
  }
- private admitAutoAdvance(taskId:string,plan:AutoAdvancePlan,isCurrent:()=>boolean):Promise<void>{
+ private admitTurnAdvance(taskId:string,plan:AutoAdvancePlan,origin:AdvanceOrigin,isCurrent:()=>boolean):Promise<void>{
   // The drain shares the command lane, so a pause or resume queued ahead of this
   // admission must still win: the settle's own generation decides.
-  return this.serial(()=>isCurrent()?this.admitAutoAdvanceNow(taskId,plan):Promise.resolve());
+  return this.serial(()=>isCurrent()?this.admitTurnAdvanceNow(taskId,plan,origin):Promise.resolve());
  }
- /** The serialized adapter around the one automatic-advance admission path. */
- private admitAutoAdvanceNow(taskId:string,plan:AutoAdvancePlan):Promise<void>{
-  return admitAutoAdvance({
+ /** The serialized adapter around the one turn-end advance admission path. */
+ private admitTurnAdvanceNow(taskId:string,plan:AutoAdvancePlan,origin:AdvanceOrigin):Promise<void>{
+  return admitTurnAdvance({
    locate:taskId=>this.locatedTask(taskId),
    transact:(hubId,change)=>this.hubs.hub(hubId).transact(change),
    resolveSession:async task=>firstOpenSessionId(task)??(await this.createConversationNow(task.id,{allowUndecided:true})).sessionId,
    pending:task=>readPendingUserWork(this.factsSource,task.sessionIds),
    dispatch:()=>this.dispatchPending(),
    report:error=>this.options.report?.(error),
-  },taskId,plan);
+  },taskId,plan,origin);
  }
  private async dismissFailedAdvance(taskId:string):Promise<void>{
   const located=this.locatedTask(taskId);const pending=located.task.pendingTransition;
   invariant(!located.task.operation,'CONTEXT_OPERATION_PENDING','Resolve the context operation before dismissing an automatic advance.');
-  invariant(pending?.origin==='auto','INVALID_TARGET','Only an automatic advance can be dismissed.');
-  invariant(pending.status==='failed','TASK_BUSY','Only a failed automatic advance can be dismissed.');
-  await this.hubs.hub(located.hubId).transact(d=>{const value=d.tasks.find(candidate=>candidate.id===taskId);if(value?.pendingTransition?.origin==='auto'&&value.pendingTransition.status==='failed')delete value.pendingTransition;});
+  invariant(pending?.origin!==undefined,'INVALID_TARGET','Only a host advance can be dismissed.');
+  invariant(pending.status==='failed','TASK_BUSY','Only a failed host advance can be dismissed.');
+  await this.hubs.hub(located.hubId).transact(d=>{const value=d.tasks.find(candidate=>candidate.id===taskId);if(value?.pendingTransition!==undefined&&value.pendingTransition.origin!==undefined&&value.pendingTransition.status==='failed')delete value.pendingTransition;});
  }
  private async pauseAutoMode(taskId:string,reason:AutoModePauseReason,message:string|undefined,expectedColumnId:string):Promise<void>{
   const located=this.locatedTask(taskId);
@@ -820,10 +835,10 @@ export class KanbanApp {
   if(this.disposed)return;if(this.driving){this.driveAgain=true;return;}this.driving=true;
   try{do{this.driveAgain=false;this.pendingTransitions.refresh(this.locator.summaries());for(const taskId of [...this.pendingTransitions.list()]){const located=this.locator.byTask(taskId);const task=located?.task;const pending=task?.pendingTransition;if(!located||!task||!pending||pending.status!=='waiting'||task.operation||(pending.worktreeRequest&&task.worktree?.status!=='ready'))continue;const store=this.hubs.hub(located.hubId);
    try{
-    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');operations.placeTask(d,t.id,pending.columnId,placementFromAnchor(pending.beforeTaskId),nextEnteredAt(),{retainAgentPause:pending.origin==='auto',at:this.hubs.operationDeps().now()});if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});if(pending.origin!=='auto')this.autoAdvance.forget(task.id);
+    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');operations.placeTask(d,t.id,pending.columnId,placementFromAnchor(pending.beforeTaskId),nextEnteredAt(),{retainAgentPause:pending.origin!==undefined,at:this.hubs.operationDeps().now()});if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});if(pending.origin===undefined)this.turnAdvance.forget(task.id);
     if(pending.mode==='run'){
      invariant(pending.sessionId&&pending.text,'INVALID_TARGET','Confirmed execution is missing its target or instruction.');
-     await admitStageInstruction(this.stageInstructionDeps(),{taskId:task.id,columnId:pending.columnId,instruction:pending.text,sessionId:pending.sessionId,requestId:pending.id});
+     await admitStageInstruction(this.stageInstructionDeps(),{taskId:task.id,columnId:pending.columnId,instruction:pending.text,sessionId:pending.sessionId,requestId:pending.id,...(pending.reason===undefined?{}:{transition:{fromColumnId:pending.fromColumnId,reason:pending.reason}})});
      await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id);if(t?.pendingTransition?.id===pending.id)delete t.pendingTransition;});
     }
    }catch(error){await this.failPending(located.hubId,task.id,pending.id,error);this.options.report?.(error);}
@@ -838,5 +853,5 @@ export class KanbanApp {
   await this.retainedPrune;
   // The settling prune re-arms while the host is still open; close clears that one too.
   if(this.retainedPruneTimer!==undefined){clearTimeout(this.retainedPruneTimer);this.retainedPruneTimer=undefined;}
-  await this.flushQuestions();this.publisher.flush();this.disposed=true;this.publisher.dispose();this.attention.dispose();this.autoAdvance.dispose();for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();this.relocations.dispose();this.operationQueue.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.relocations.settle();}
+  await this.flushQuestions();this.publisher.flush();this.disposed=true;this.publisher.dispose();this.attention.dispose();this.turnAdvance.dispose();for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();this.relocations.dispose();this.operationQueue.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.relocations.settle();}
 }

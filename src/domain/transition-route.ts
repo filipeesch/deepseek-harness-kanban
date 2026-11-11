@@ -10,7 +10,7 @@ export type TransitionStaleReason = 'missing-stage' | 'not-configured' | 'not-al
 
 export type RecordedTransitionResolution =
   | { readonly kind: 'none' }
-  | { readonly kind: 'resolved'; readonly column: Column }
+  | { readonly kind: 'resolved'; readonly column: Column; readonly reason?: string }
   | { readonly kind: 'stale'; readonly reason: TransitionStaleReason };
 
 /**
@@ -29,7 +29,30 @@ export function recordedTransition(workflow: Workflow, task: RoutedTask): Record
   if (column === undefined) return { kind: 'stale', reason: 'missing-stage' };
   if (source.allowedTransitions === undefined) return { kind: 'stale', reason: 'not-configured' };
   if (!source.allowedTransitions.some(rule => rule.to === recorded.columnId)) return { kind: 'stale', reason: 'not-allowed' };
-  return { kind: 'resolved', column };
+  return recorded.reason === undefined ? { kind: 'resolved', column } : { kind: 'resolved', column, reason: recorded.reason };
+}
+
+/** The task fields the advance-arming rule reads. */
+export type ArmedTask = RoutedTask & Pick<Task, 'autoMode'>;
+
+/**
+ * Whether a completed turn produces an advance for this task. Auto mode arms
+ * every completed turn. A declared transition arms the completed turn that
+ * follows it, whether or not auto mode is enabled, which is what lets a workflow
+ * route without asking the user to turn auto mode on. A recording stored without
+ * a reason predates this rule: it keeps its routing meaning for the destination
+ * and for the drawer, and arms nothing by itself.
+ */
+export function advanceArmed(workflow: Workflow, task: ArmedTask): boolean {
+  if (task.autoMode?.enabled === true) return true;
+  const recorded = recordedTransition(workflow, task);
+  return recorded.kind === 'resolved' && recorded.reason !== undefined;
+}
+
+/** The reason a resolving declared transition carries, or undefined when none applies. */
+export function declaredTransitionReason(workflow: Workflow, task: RoutedTask): string | undefined {
+  const recorded = recordedTransition(workflow, task);
+  return recorded.kind === 'resolved' ? recorded.reason : undefined;
 }
 
 /** The user-facing explanation for a recording that no longer resolves. */

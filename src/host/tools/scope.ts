@@ -16,11 +16,22 @@ export interface TaskScopeSource {
   readonly hubs: { findTask(taskId: string): LocatedTask | undefined };
 }
 
-export function taskContext(app:KanbanApp,exec:ToolRunContext):LocatedTask|undefined{return exec.agent?app.locator.bySession(exec.agent.id):undefined;}
+export function taskContext(source:TaskScopeSource,exec:ToolRunContext):LocatedTask|undefined{return exec.agent?source.locator.bySession(exec.agent.id):undefined;}
 
 export function requireTask(source:TaskScopeSource,args:ToolArgs,exec:ToolRunContext):LocatedTask{
  if(args.task_id){const located=source.hubs.findTask(args.task_id);invariant(located,'TASK_NOT_FOUND','Task does not exist.');return located;}
  const located=exec.agent?source.locator.bySession(exec.agent.id):undefined;invariant(located,'MISSING_TASK_CONTEXT','Specify task_id or use a conversation belonging to a task.');return located;
+}
+
+/**
+ * The task that owns the calling conversation. A tool that changes where a task
+ * goes uses this instead of `requireTask`: the model can only route the task it
+ * is working on, never another card of the Hub.
+ */
+export function requireOwnTask(source:TaskScopeSource,exec:ToolRunContext):LocatedTask{
+ const located=taskContext(source,exec);
+ invariant(located,'MISSING_TASK_CONTEXT','This tool acts on the task that owns the calling conversation. Use it from that task conversation.');
+ return located;
 }
 
 export function resolveHub(app:KanbanApp,args:ToolArgs,exec:ToolRunContext):{hubId:string;hub:HubState}{

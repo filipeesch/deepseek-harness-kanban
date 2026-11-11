@@ -8,6 +8,7 @@ import { parseWorkflow } from './workflow.js';
 import { applyWorkflowEdits, type WorkflowTextEdit } from './workflow-edit.js';
 import { entryInstruction, nextEnteredAt } from './stage-entry.js';
 import { applyHold, clearAutoModeState, normalizePauseReason } from './auto-mode-hold.js';
+import { normalizeTransitionReason } from './transition-reason.js';
 import { renameTaskStage, updateStage } from './stage-update.js';
 import { describeStageActivity, hasInFlightWork, persistedStageActivity } from '../shared/stage-activity.js';
 import { transitionTargets } from './transitions.js';
@@ -446,11 +447,13 @@ export function resumeTask(hub: HubState, taskId: string, deps: OperationDeps): 
 }
 
 /**
- * Record, replace, or clear the transition the task follows on its next advance.
- * The current stage must configure transitions and the target must be one of
- * them. A recording never moves the task, sends a message, or changes auto mode.
+ * Record, replace, or clear the transition the task follows at the end of its
+ * next completed turn. The current stage must configure transitions and the
+ * target must be one of them, and naming a target requires the reason the agent
+ * declares it with. Clearing needs no reason. A recording never moves the task,
+ * sends a message, or changes auto mode.
  */
-export function recordTransition(hub: HubState, taskId: string, columnId: string | undefined, deps: OperationDeps): HubTask {
+export function recordTransition(hub: HubState, taskId: string, columnId: string | undefined, reason: unknown, deps: OperationDeps): HubTask {
   const task = requireTask(hub, taskId);
   const board = boardForTask(hub, task);
   const source = board.workflow.columns.find(column => column.id === task.columnId);
@@ -466,7 +469,7 @@ export function recordTransition(hub: HubState, taskId: string, columnId: string
       'TRANSITION_NOT_ALLOWED', 'The destination stage is not a configured transition of the current stage.');
     const fromColumnId = task.columnId;
     const at = timestamp(deps);
-    task.recordedTransition = { fromColumnId, columnId, at };
+    task.recordedTransition = { fromColumnId, columnId, at, reason: normalizeTransitionReason(reason) };
     recordIntent(task, fromColumnId, columnId, at);
   }
   task.updatedAt = timestamp(deps);

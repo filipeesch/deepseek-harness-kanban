@@ -46,7 +46,12 @@ export const operation = z.strictObject({
 export const pendingTransition = z.strictObject({
   id, fromColumnId: id, columnId: id, mode: z.enum(['move', 'run']), sessionId: id.optional(), text: z.string().optional(), beforeTaskId: id.nullable().optional(),
   worktreeRequest: createWorktree.optional(), transitionOverride: z.boolean().optional(), status: z.enum(['waiting', 'sending', 'failed']), error: problem.optional(),
-  origin: z.literal('auto').optional(),
+  origin: z.enum(['auto', 'agent']).optional(), reason: nonempty.optional(),
+}).superRefine((value, context) => {
+  // An agent-declared advance exists to carry its reason to the destination stage
+  // and to the manual retry; a record without one would promise a justification it
+  // cannot deliver.
+  if (value.origin === 'agent' && value.reason === undefined) context.addIssue({ code: 'custom', path: ['reason'], message: 'An agent-declared advance requires the reason it carries.' });
 });
 export const autoModePause = z.strictObject({
   reason: z.enum(AUTO_MODE_PAUSE_REASONS),
@@ -160,7 +165,7 @@ export const baseTask = z.strictObject({
   unclaimedWorktrees: z.array(z.strictObject({ path: absolutePath, branch: nonempty, error: problem })).optional(),
   worktreeWorkspaceId: id.optional(), worktreeWorkspaceOwned: z.boolean().optional(),
   operation: operation.nullable(), pendingTransition: pendingTransition.optional(), instructionPending: z.strictObject({ columnId: id, enteredAt: z.number().finite() }).optional(), autoMode: autoMode.optional(),
-  recordedTransition: z.strictObject({ fromColumnId: id, columnId: id, at: timestamp }).optional(), history: taskHistorySchema.optional(), createdAt: timestamp, updatedAt: timestamp,
+  recordedTransition: z.strictObject({ fromColumnId: id, columnId: id, at: timestamp, reason: nonempty.optional() }).optional(), history: taskHistorySchema.optional(), createdAt: timestamp, updatedAt: timestamp,
 });
 
 /** The task fields the shared invariant check reads. */

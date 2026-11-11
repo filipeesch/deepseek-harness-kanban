@@ -1,13 +1,13 @@
-import type { AutoModePauseReason, Board, ConversationFacts, HubTask } from '../shared/types.js';
+import type { AdvanceOrigin, AutoModePauseReason, Board, ConversationFacts, HubTask } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
 import { openSessionIds } from '../shared/conversations.js';
 import { resolveAdvanceDecision, type AutoAdvancePlan } from '../domain/auto-advance.js';
-import { resolveAdvanceRoute } from '../domain/transition-route.js';
+import { advanceArmed, resolveAdvanceRoute } from '../domain/transition-route.js';
 
 /** Delay before a completed turn is evaluated, so the native activity projection has settled. */
-export const AUTO_ADVANCE_SETTLE_MS = 250;
+export const TURN_ADVANCE_SETTLE_MS = 250;
 /** Bounded re-reads while the ending conversation itself still reports activity. */
-export const AUTO_ADVANCE_SETTLE_ATTEMPTS = 3;
+export const TURN_ADVANCE_SETTLE_ATTEMPTS = 3;
 
 const PAUSE_REASONS: Readonly<Record<string, AutoModePauseReason>> = {
   error: 'turn-error',
@@ -38,12 +38,12 @@ export function turnEndKey(sessionId: string, event: unknown): string | undefine
   return typeof seq === 'number' && Number.isSafeInteger(seq) ? sessionId + ':' + seq : undefined;
 }
 
-export interface AutoAdvanceTaskView { task: HubTask; board: Board }
+export interface TurnAdvanceTaskView { task: HubTask; board: Board }
 
-export interface AutoAdvancePorts {
+export interface TurnAdvancePorts {
   /** The task and board that own a conversation, when any. */
-  locateBySession(sessionId: string): AutoAdvanceTaskView | undefined;
-  locate(taskId: string): AutoAdvanceTaskView | undefined;
+  locateBySession(sessionId: string): TurnAdvanceTaskView | undefined;
+  locate(taskId: string): TurnAdvanceTaskView | undefined;
   facts(sessionId: string): Promise<ConversationFacts>;
   /**
    * Persist one durable advance and dispatch it; throws when nothing was admitted.
@@ -51,7 +51,7 @@ export interface AutoAdvancePorts {
    * latest for the task, so an admission queued behind a pause or resume drops the
    * turn it no longer owns.
    */
-  admit(taskId: string, plan: AutoAdvancePlan, isCurrent: () => boolean): Promise<void>;
+  admit(taskId: string, plan: AutoAdvancePlan, origin: AdvanceOrigin, isCurrent: () => boolean): Promise<void>;
   pause(taskId: string, reason: AutoModePauseReason, message: string | undefined, expectedColumnId: string): Promise<void>;
   schedule(callback: () => void): unknown;
   cancel(handle: unknown): void;
@@ -66,7 +66,7 @@ interface QueuedTask { sessions: Set<string>; attempts: number; generation: numb
  * admission hand-off. The advance decision is the pure domain rule, and
  * persistence and execution stay with the injected ports.
  */
-export class AutoAdvanceCoordinator {
+export class TurnAdvanceCoordinator {
   private readonly handled = new Set<string>();
   private readonly queued = new Map<string, QueuedTask>();
   private readonly generations = new Map<string, number>();
@@ -74,7 +74,7 @@ export class AutoAdvanceCoordinator {
   private armed = false;
   private disposed = false;
 
-  constructor(private readonly ports: AutoAdvancePorts) {}
+  constructor(private readonly ports: TurnAdvancePorts) {}
 
   /** Observe one native session event; only an open task conversation's turn end matters. */
   observe(sessionId: string, event: unknown): void {
@@ -84,7 +84,7 @@ export class AutoAdvanceCoordinator {
     if (kind === undefined || key === undefined) return;
     const located = this.ports.locateBySession(sessionId);
     if (!located || !openSessionIds(located.task).includes(sessionId)) return;
-    if (located.task.autoMode?.enabled !== true) return;
+    if (!advanceArmed(located.board.workflow, located.task)) return;
     if (this.handled.has(key)) return;
     this.handled.add(key);
     if (this.handled.size > 1024) {
@@ -102,6 +102,10 @@ export class AutoAdvanceCoordinator {
     }
     const reason = pauseReasonFor(kind);
     if (reason === undefined) return;
+    // A diagnostic pause lives inside the auto-mode record, and a task whose auto
+    // mode is disabled has none: the declaration survives the turn and the next
+    // completed turn still acts on it.
+    if (located.task.autoMode?.enabled !== true) return;
     void this.ports.pause(located.task.id, reason, undefined, located.task.columnId).catch(error => this.ports.report(error));
   }
 
@@ -142,7 +146,7 @@ export class AutoAdvanceCoordinator {
         if (this.disposed) return;
         if ((this.generations.get(taskId) ?? 0) !== entry.generation) continue;
         const located = this.ports.locate(taskId);
-        if (!located || located.task.autoMode?.enabled !== true) continue;
+        if (!located || !advanceArmed(located.board.workflow, located.task)) continue;
         const facts = await this.readTaskFacts(located.task);
         if (this.disposed) return;
         if ((this.generations.get(taskId) ?? 0) !== entry.generation) continue;
@@ -154,7 +158,7 @@ export class AutoAdvanceCoordinator {
         if (decision.kind === 'pending') continue;
         if (decision.kind === 'running') {
           if (decision.sessions.some(sessionId => entry.sessions.has(sessionId))
-            && entry.attempts + 1 < AUTO_ADVANCE_SETTLE_ATTEMPTS) {
+            && entry.attempts + 1 < TURN_ADVANCE_SETTLE_ATTEMPTS) {
             this.queued.set(taskId, { sessions: entry.sessions, attempts: entry.attempts + 1, generation: entry.generation });
             retry = true;
           }
@@ -186,16 +190,22 @@ export class AutoAdvanceCoordinator {
     // A recorded transition that no longer resolves is a workflow-edit condition,
     // not an admission failure: it pauses with its own reason and never retries.
     if (route.kind === 'stale') {
+      if (task.autoMode?.enabled !== true) return;
       try { await this.ports.pause(task.id, 'transition-stale', route.message, task.columnId); }
       catch (error) { this.ports.report(error); }
       return;
     }
+    // The origin says which arming condition must still hold when the admission
+    // runs: an auto-mode task advances for every completed turn, while a declared
+    // transition advances the one turn that follows it.
+    const origin: AdvanceOrigin = task.autoMode?.enabled === true ? 'auto' : 'agent';
     try {
       // The admission runs behind the command lane, so it re-reads this predicate
       // right before it decides; a forget after the settle still wins.
-      await this.ports.admit(task.id, route.plan, () => (this.generations.get(task.id) ?? 0) === generation);
+      await this.ports.admit(task.id, route.plan, origin, () => (this.generations.get(task.id) ?? 0) === generation);
     } catch (error) {
       this.ports.report(error);
+      if (task.autoMode?.enabled !== true) return;
       const message = error instanceof Error ? error.message : String(error);
       const reason: AutoModePauseReason = error instanceof KanbanError && error.code === 'TRANSITION_STALE' ? 'transition-stale' : 'advance-failed';
       try { await this.ports.pause(task.id, reason, message, task.columnId); }

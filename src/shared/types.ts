@@ -131,7 +131,9 @@ export interface ContextOperation {
   archivedSessionIds: string[]; gitCompleted: boolean; error?: Problem; createdAt: string;
   createAttempt?: { operationId: string; path: string; gitRootPath: string; branchName: string; mode: 'new' | 'existing'; absentBefore: true };
 }
-export interface PendingTransition { id: string; fromColumnId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; text?: string; /** Absent places the task at the start of the destination; `null` places it at the end; an id places it before that task. */ beforeTaskId?: string | null; worktreeRequest?: CreateWorktree; transitionOverride?: boolean; status: 'waiting' | 'sending' | 'failed'; error?: Problem; /** Absent means a user-confirmed transition; `auto` is a host automatic advance. */ origin?: 'auto' }
+/** Why a host advance exists: auto mode armed the completed turn, or the agent declared the transition it ends in. */
+export type AdvanceOrigin = 'auto' | 'agent';
+export interface PendingTransition { id: string; fromColumnId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; text?: string; /** Absent places the task at the start of the destination; `null` places it at the end; an id places it before that task. */ beforeTaskId?: string | null; worktreeRequest?: CreateWorktree; transitionOverride?: boolean; status: 'waiting' | 'sending' | 'failed'; error?: Problem; /** Absent means a user-confirmed transition; `auto` is the turn-end advance of an auto-mode task and `agent` the advance of a transition the agent declared. */ origin?: AdvanceOrigin; /** The reason a declared transition carries, kept for the manual retry of a failed advance. */ reason?: string }
 /** Why auto mode is paused; only reasons that cannot be derived from the snapshot are recorded. */
 export const AUTO_MODE_PAUSE_REASONS = ['turn-error', 'turn-blocked', 'turn-aborted', 'turn-max-tokens', 'advance-failed', 'transition-stale'] as const;
 export type AutoModePauseReason = (typeof AUTO_MODE_PAUSE_REASONS)[number];
@@ -140,8 +142,8 @@ export interface AutoModePause { reason: AutoModePauseReason; at: string; messag
 export interface AutoModeHold { reason: string; at: string }
 /** Per-task auto mode: arms the host advance on the next completed turn. */
 export interface AutoModeState { enabled: boolean; pause?: AutoModePause; hold?: AutoModeHold }
-/** One transition recorded for a task's current stage, and the stage it was recorded for. */
-export interface RecordedTransition { fromColumnId: string; columnId: string; at: string }
+/** One transition recorded for a task's current stage, the stage it was recorded for, and the reason the agent gave. */
+export interface RecordedTransition { fromColumnId: string; columnId: string; at: string; /** Absent only on a recording stored before reasons existed; such a recording never arms an advance by itself. */ reason?: string }
 export interface Task {
   id: string; projectId: string; title: string; description: string; columnId: string; position: number;
   sessionIds: string[]; closedSessionIds: string[]; effectiveCwd: string;
@@ -442,7 +444,7 @@ export type Command =
   /** Clear the agent pause and any diagnostic pause, leaving auto mode as it is. */
   | { type: 'task.resume'; hubId?: string; taskId: string }
   /** An omitted `columnId` clears the recording. */
-  | { type: 'task.recordTransition'; hubId?: string; taskId: string; columnId?: string }
+  | { type: 'task.recordTransition'; hubId?: string; taskId: string; columnId?: string; reason?: string }
   | { type: 'task.runInstruction'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction: string }
   | { type: 'task.prepareFirstExecution'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction?: string }
   | { type: 'conversation.create'; hubId?: string; taskId: string; /** A first-start request reuses a conversation created while it was queued. */ ensureFirst?: boolean }
