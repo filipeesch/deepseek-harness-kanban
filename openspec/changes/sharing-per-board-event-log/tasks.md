@@ -24,14 +24,14 @@
 
 ## 4. Service decomposition
 
-- [ ] 4.1 Extract the lane registry (serialized lanes, in-flight tracking, reentrancy guard) and verify the existing lane tests pass unchanged
+- [x] 4.1 Extract the lane registry (serialized lanes, in-flight tracking, reentrancy guard) and verify the existing lane tests pass unchanged
 - [ ] 4.2 Extract binding lifecycle — connect, receive, initial publish, change location, resolve, restore, orphan publish, and board removal — and verify the existing lifecycle tests pass unchanged
-- [ ] 4.3 Add the per-board sync unit owning a board's cursor, its apply, its publish, and its status, and verify with a unit test that two boards advance independently
+- [x] 4.3 Add the per-board sync unit owning a board's cursor, its apply, its publish, and its status, and verify with a unit test that two boards advance independently
 - [ ] 4.4 Add the remote checker that reads the manifest and only the board logs that changed, and verify with a test that an unchanged board is never read
 
 ## 5. Applying and publishing per board
 
-- [ ] 5.1 Build the per-board comparison that produces a decision, a draft state, and an update count for one board, and verify it with the decision matrix test
+- [x] 5.1 Build the per-board comparison that produces a decision, a draft state, and an update count for one board, and verify it with the decision matrix test
 - [ ] 5.2 Apply a board by migrating its task references in the same transaction that stores the workflow, and verify that a rename with tasks in the stage is applied with no refusal and no task left in an undefined stage
 - [ ] 5.3 Scope the destructive refusal to one board, and verify that a refused board leaves every other board applicable and publishable
 - [ ] 5.4 Publish one board by appending only its events, persist the identity derivation allocated for a newly published stage into the local authored workflow in the same operation, and write its manifest entry only when the manifest does not name it, and verify that a retried publish after a partial failure converges and that a second publish derives no new identity

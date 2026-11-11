@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { applyEvents } from './conflict.js';
-import { decodeEvent, encodeEvent, EVENT_FORMAT_VERSION, type EventDecode, type JournalEvent } from './event.js';
+import { decodeEvent, encodeEvent, EVENT_FORMAT_VERSION, type BoardChange, type EventDecode, type JournalEvent } from './event.js';
 
 /**
  * One board's published log: the state the log starts from and the events appended
@@ -52,7 +52,7 @@ export function headToken(log: BoardLogFile): string {
 }
 
 /** Append events to a log, stamped with their positions. */
-export function appendEvents(log: BoardLogFile, changes: readonly Omit<JournalEvent, 'seq' | 'at' | 'v'>[], at: string): BoardLogFile {
+export function appendEvents(log: BoardLogFile, changes: readonly BoardChange[], at: string): BoardLogFile {
   let seq = nextSequence(log);
   const events = changes.map(change => ({ ...change, seq: seq++, at, v: EVENT_FORMAT_VERSION } as JournalEvent));
   return { ...log, events: [...log.events, ...events] };

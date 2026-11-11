@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { KanbanError, invariant } from '../../shared/errors.js';
 import type { HubSharingView, SharingCommand } from '../../shared/types.js';
@@ -10,6 +9,7 @@ import { projectSharingBoards } from '../../domain/sharing/projection.js';
 import type { HubRepository } from '../hub-repository.js';
 import { isAuthorizationCommand, type SharingAuthorizationPort } from './auth-coordinator.js';
 import type { BindingCandidate, ProviderState, SharingBinding, SharingProviderId, SharingProviderResolver } from './provider.js';
+import { LaneRegistry } from './lanes.js';
 import type { SharedConfigStore, SharedDocumentSnapshot } from './store.js';
 import type { HubSharingRecord, HubSharingStore } from './state.js';
 import type { TeamFileStore, TeamFileStoreResolution } from './team-file-store.js';
@@ -71,12 +71,8 @@ function stored(document: SharedHubDocument): { token: string; document: SharedH
  * operation is rejected rather than deadlocking.
  */
 export class HubSharingService {
-  private readonly tails = new Map<string, Promise<unknown>>();
-  private readonly inflight = new Set<string>();
-  /** The Hub whose publishing lane the current async context already holds. */
-  private readonly active = new AsyncLocalStorage<string>();
+  private readonly lanes: LaneRegistry;
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly lanes = new Map<string, number>();
   private connectTail: Promise<unknown> = Promise.resolve();
   private readonly now: () => string;
   private readonly id: () => string;
@@ -87,6 +83,7 @@ export class HubSharingService {
     this.now = options.now ?? (() => new Date().toISOString());
     this.id = options.id ?? randomUUID;
     this.debounceMs = options.debounceMs ?? 2_000;
+    this.lanes = new LaneRegistry({ onChange: () => this.options.notify?.() });
   }
 
   views(): Record<string, HubSharingView> {
@@ -110,7 +107,7 @@ export class HubSharingService {
     return buildSharingView(record, hub, {
       provider,
       ...(provider.requiresAuthorization ? { authorization: this.options.auth?.status() ?? 'not-connected' } : {}),
-      syncing: this.inflight.has(record.hubId),
+      syncing: this.lanes.busy(record.hubId),
     });
   }
 
@@ -148,7 +145,7 @@ export class HubSharingService {
     return this.options.store.load(hubId)?.bindings[boardId] !== undefined;
   }
 
-  busy(hubId: string): boolean { return this.inflight.has(hubId); }
+  busy(hubId: string): boolean { return this.lanes.busy(hubId); }
 
   command(command: SharingCommand): Promise<void> {
     if (isAuthorizationCommand(command)) throw new KanbanError('SHARING_UNAVAILABLE', 'Authorization is handled outside the publishing service.');
@@ -334,7 +331,7 @@ export class HubSharingService {
       this.timers.delete(hubId);
       // This timer is scheduled inside a lane; leave its async context so the
       // check is not rejected as reentrant, and keep the rejection reported.
-      this.active.exit(() => { void this.check(hubId).catch(error => this.options.report?.(error)); });
+      this.lanes.outside(() => { void this.check(hubId).catch(error => this.options.report?.(error)); });
     }, this.debounceMs);
     timer.unref?.();
     this.timers.set(hubId, timer);
@@ -494,8 +491,7 @@ export class HubSharingService {
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
     await this.options.auth?.cancel();
-    await Promise.allSettled([...this.tails.values()]);
-    this.tails.clear();
+    await this.lanes.close();
   }
 
   private storeFor(hubId: string, binding: SharingBinding, state: ProviderState): SharedConfigStore {
@@ -525,9 +521,7 @@ export class HubSharingService {
    * read-modify-write while the store it uses takes the same lane again.
    */
   exclusive<T>(hubId: string, operation: () => Promise<T>): Promise<T> {
-    if (this.disposed) throw new KanbanError('PLUGIN_DISPOSED', 'The Kanban plugin is shutting down.');
-    if (this.active.getStore() === hubId) return operation();
-    return this.run(hubId, operation);
+    return this.lanes.exclusive(hubId, operation);
   }
 
   /** Reads stay outside the lane; mutations queue behind whatever already holds the binding. */
@@ -697,21 +691,6 @@ export class HubSharingService {
 
   private run<T>(hubId: string, operation: () => Promise<T>): Promise<T> {
     if (this.disposed) throw new KanbanError('PLUGIN_DISPOSED', 'The Kanban plugin is shutting down.');
-    // A nested publishing operation stays refused. The public `exclusive` seam is
-    // the only way to reuse the lane, because a nested `run` would queue behind
-    // the operation that is waiting for it.
-    if (this.active.getStore() !== undefined) throw new KanbanError('SHARING_REENTRANT', 'A publishing operation cannot start inside another publishing operation.');
-    const active = (this.lanes.get(hubId) ?? 0) + 1;
-    this.lanes.set(hubId, active);
-    this.inflight.add(hubId);
-    if (active === 1) this.options.notify?.();
-    const prior = this.tails.get(hubId) ?? Promise.resolve();
-    const execution = prior.then(() => this.active.run(hubId, operation));
-    this.tails.set(hubId, execution.then(() => undefined, () => undefined));
-    return execution.finally(() => {
-      const remaining = (this.lanes.get(hubId) ?? 1) - 1;
-      if (remaining <= 0) { this.lanes.delete(hubId); this.inflight.delete(hubId); this.options.notify?.(); }
-      else this.lanes.set(hubId, remaining);
-    });
+    return this.lanes.run(hubId, operation);
   }
 }
