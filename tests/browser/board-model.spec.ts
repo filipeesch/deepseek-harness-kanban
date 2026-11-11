@@ -83,24 +83,36 @@ test('renders the board default model control in both appearances', async ({ pag
   const form = page.getByRole('form', { name: 'Board default model' });
   await expect(form.getByRole('heading', { name: 'Default model' })).toBeVisible();
   await expect(form.getByText('Every new conversation on this board starts on this model.')).toBeVisible();
-  const picker = page.getByRole('combobox', { name: 'Model' });
+  const picker = page.getByRole('button', { name: /^Model: / });
   await expect(picker).toBeEnabled();
-  await expect(picker).toHaveValue('deepseek::reason');
-  await expect(picker).toHaveText(/DeepSeek · Reason/);
+  await expect(picker).toHaveAttribute('aria-label', 'Model: DeepSeek · Reason');
   await expect(page.getByRole('button', { name: 'Save model' })).toBeDisabled();
-  // The route and its effort belong to one field, with the refresh beside them.
   await expect(page.getByRole('combobox', { name: 'Reasoning effort' })).toBeVisible();
-  const reload = page.getByRole('button', { name: 'Reload models' });
-  await expect(reload).toBeVisible();
-  await expect(reload.locator('xpath=preceding-sibling::*[1]')).toHaveCount(1);
   await expect(page.getByText('No changes to save.')).toBeVisible();
   const pickerLight = await legibility(picker);
   expect(pickerLight, 'the model picker is rendered').not.toBeNull();
   expect(pickerLight!.contrast, 'the picker text is legible in light').toBeGreaterThanOrEqual(4.5);
   await page.screenshot({ path: path.join(OUT, 'board-model-picker-light.png') });
 
+  // The closed control opens a searchable list of providers and routes, the way DSH's
+  // own selector does, and the reload lives inside it beside the routes it refreshes.
+  await picker.click();
+  const list = page.getByRole('dialog', { name: 'Choose the model' });
+  await expect(list).toBeVisible();
+  const search = list.getByRole('combobox', { name: 'Search models' });
+  await expect(search).toBeFocused();
+  await expect(list.getByRole('group', { name: 'DeepSeek' })).toBeVisible();
+  await expect(list.getByRole('option', { name: /Reason/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(list.getByRole('button', { name: 'Reload models' })).toBeVisible();
+  await search.fill('chat');
+  await expect(list.getByRole('option')).toHaveCount(1);
+  await expect(list.getByRole('option', { name: /Chat/ })).toBeVisible();
+  await page.screenshot({ path: path.join(OUT, 'board-model-picker-open-light.png') });
+  await page.keyboard.press('Escape');
+  await expect(list).toBeHidden();
+
   await toDark(page);
-  const pickerDark = await legibility(page.getByRole('combobox', { name: 'Model' }));
+  const pickerDark = await legibility(page.getByRole('button', { name: /^Model: / }));
   expect(pickerDark!.contrast, 'the picker text is legible in dark').toBeGreaterThanOrEqual(4.5);
   await page.screenshot({ path: path.join(OUT, 'board-model-picker-dark.png') });
 });
@@ -111,7 +123,7 @@ test('keeps the stored-model readout legible when the host dropped the route', a
   const readout = page.getByRole('status').filter({ hasText: 'is not offered by this host' });
   await expect(readout).toBeVisible();
   await expect(readout).toContainText('deepseek · retired');
-  await expect(page.getByRole('combobox', { name: 'Model' })).toContainText('(not in the catalog)');
+  await expect(page.getByRole('button', { name: /^Model: / })).toContainText('(not in the catalog)');
   const light = await legibility(readout);
   expect(light, 'the readout is rendered').not.toBeNull();
   expect(light!.contrast, 'the stored-model readout is legible in light').toBeGreaterThanOrEqual(4.5);
