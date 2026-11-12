@@ -18,7 +18,7 @@ import type { NativeSlotSource } from '../../src/client/native-slot-host.js';
 
 const scenario = new URLSearchParams(window.location.search).get('scenario') ?? 'board';
 const sharingCase = new URLSearchParams(window.location.search).get('sharing');
-const flowScenario = scenario === 'flow' || scenario === 'flow-anchored' || scenario === 'flow-orphan' || scenario === 'flow-offgrid' || scenario === 'flow-restricted' || scenario === 'flow-restricted-next' || scenario === 'flow-presence' || scenario === 'flow-refused';
+const flowScenario = scenario === 'flow' || scenario === 'flow-anchored' || scenario === 'flow-orphan' || scenario === 'flow-offgrid' || scenario === 'flow-placed' || scenario === 'flow-restricted' || scenario === 'flow-restricted-next' || scenario === 'flow-presence' || scenario === 'flow-refused';
 const query = new URLSearchParams(window.location.search);
 const themed = query.get('theme') === 'host';
 const refuse = query.get('refuse');
@@ -105,7 +105,12 @@ if (flowScenario) {
     // The off-grid scenario stores a placement that is not on the snapping lattice.
     const positioned = scenario === 'flow-offgrid'
       ? board.workflowYaml.replace('  - id: explore', '  - id: explore' + String.fromCharCode(10) + '    position: {x: 13, y: 7}')
-      : board.workflowYaml;
+      : scenario === 'flow-placed'
+        ? board.workflowYaml
+          .replace('  - id: explore', '  - id: explore' + String.fromCharCode(10) + '    position: {x: 0, y: 0}')
+          .replace('  - id: propose', '  - id: propose' + String.fromCharCode(10) + '    position: {x: 400, y: 200}')
+          .replace('  - id: apply', '  - id: apply' + String.fromCharCode(10) + '    position: {x: 800, y: 300}')
+        : board.workflowYaml;
     board.workflowYaml = 'default_view: workflow' + String.fromCharCode(10) + positioned + anchored;
     board.workflow = parseWorkflow(board.workflowYaml);
   });

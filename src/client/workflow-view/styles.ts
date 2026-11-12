@@ -12,7 +12,7 @@ export const workflowViewStyles = String.raw`
 .dsh-kanban .kb-flow-control[data-tooltip]:hover::after,.dsh-kanban .kb-flow-control[data-tooltip]:focus-visible::after{opacity:1}
 .dsh-kanban .kb-flow-control-divider{height:1px;margin:2px 4px;background:var(--kb-line)}
 .dsh-kanban .kb-flow-stage{position:relative;display:flex;flex-direction:column;background:var(--kb-surface);border:1px solid var(--kb-line);border-radius:14px;box-shadow:0 8px 22px #00000014;font:inherit;color:inherit;overflow:hidden;box-sizing:border-box}
-.dsh-kanban .kb-flow-stage[data-drop=true]{border-color:var(--dsw-alias-state-business-primary,CanvasText);box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-state-business-primary,CanvasText) 35%,transparent)}
+.dsh-kanban .kb-flow-stage[data-drop=true]{border-color:var(--dsw-alias-state-business-primary,CanvasText);box-shadow:0 0 0 calc(2px * var(--kb-affordance-scale,1)) color-mix(in srgb,var(--dsw-alias-state-business-primary,CanvasText) 45%,transparent)}
 .dsh-kanban .kb-flow-stage-header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;min-height:24px;cursor:grab;border-bottom:1px solid var(--kb-line);user-select:none}
 .dsh-kanban .kb-flow-stage-header[data-locked=true]{cursor:default}
 .dsh-kanban .kb-flow-stage-header:active{cursor:grabbing}
@@ -36,16 +36,30 @@ export const workflowViewStyles = String.raw`
 .dsh-kanban .kb-flow-canvas .react-flow__minimap-mask{fill:color-mix(in srgb,var(--kb-surface) 65%,transparent)}
 .dsh-kanban .kb-flow-edge{stroke:var(--kb-line);stroke-width:1.6;fill:none}
 .dsh-kanban .kb-flow-edge.is-implicit{stroke-dasharray:6 5}
-.dsh-kanban .kb-flow-arrow{fill:currentColor;opacity:.4}
+.dsh-kanban .kb-flow-arrow{fill:currentColor;opacity:.4;pointer-events:none}
 .dsh-kanban .kb-flow-canvas .react-flow__edge-interaction{pointer-events:stroke}
-.dsh-kanban .kb-flow-contact{fill:var(--kb-surface);stroke:var(--kb-line);stroke-width:1.4;opacity:0;transition:opacity 110ms ease;pointer-events:all;cursor:grab}
-.dsh-kanban .react-flow__edge:hover .kb-flow-contact,.dsh-kanban .react-flow__edge:focus-within .kb-flow-contact{opacity:1}
-.dsh-kanban .kb-flow-contact:focus-visible{outline:none;stroke:var(--dsw-alias-state-business-primary,CanvasText);stroke-width:2;opacity:1}
-.dsh-kanban .kb-flow-contact-hit{fill:transparent;stroke:none;pointer-events:all;cursor:grab}
-.dsh-kanban .kb-flow-canvas[data-locked=true] .kb-flow-contact-hit{cursor:default}
-.dsh-kanban .kb-flow-segment{fill:var(--kb-surface);stroke:var(--kb-line);stroke-width:1.2;opacity:0;transition:opacity 110ms ease;pointer-events:all;cursor:move}
-.dsh-kanban .react-flow__edge:hover .kb-flow-segment,.dsh-kanban .react-flow__edge:focus-within .kb-flow-segment{opacity:1}
-.dsh-kanban .kb-flow-canvas[data-locked=true] .kb-flow-contact,.dsh-kanban .kb-flow-canvas[data-locked=true] .kb-flow-segment{cursor:default}
+/* The marks that move a connection live above the stage regions, so a stage
+   boundary or the arrowhead can never swallow a press. Each target is sized in
+   screen pixels by the layer, which corrects for the viewport zoom. */
+.dsh-kanban .kb-flow-affordances{position:absolute;left:0;top:0;width:0;height:0;z-index:6;pointer-events:none}
+.dsh-kanban .kb-flow-marks{position:absolute;left:0;top:0;width:0;height:0;opacity:0;transition:opacity 110ms ease;pointer-events:none}
+.dsh-kanban .kb-flow-marks[data-active=true],.dsh-kanban .kb-flow-marks:focus-within{opacity:1}
+.dsh-kanban .kb-flow-handle{position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;border-radius:50%;pointer-events:none;cursor:grab}
+.dsh-kanban .kb-flow-marks[data-active=true] .kb-flow-handle,.dsh-kanban .kb-flow-marks:focus-within .kb-flow-handle{pointer-events:auto}
+.dsh-kanban .kb-flow-handle:active{cursor:grabbing}
+.dsh-kanban .kb-flow-canvas[data-locked=true] .kb-flow-handle{cursor:default}
+.dsh-kanban .kb-flow-handle-dot{flex:0 0 auto;width:var(--kb-affordance-mark,12px);height:var(--kb-affordance-mark,12px);transform:scale(var(--kb-affordance-scale,1));border-radius:50%;border:1.5px solid color-mix(in srgb,currentColor 55%,var(--kb-line));background:var(--kb-surface);box-shadow:0 1px 4px #00000024}
+.dsh-kanban .kb-flow-handle:hover .kb-flow-handle-dot,.dsh-kanban .kb-flow-marks.is-selected .kb-flow-handle-dot{border-color:var(--dsw-alias-state-business-primary,CanvasText)}
+.dsh-kanban .kb-flow-marks.is-selected .kb-flow-handle-dot{border-width:2px}
+.dsh-kanban .kb-flow-handle:focus-visible{outline:calc(var(--dsw-focus-ring-width,2px) * var(--kb-affordance-scale,1)) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:calc(2px * var(--kb-affordance-scale,1))}
+.dsh-kanban .kb-flow-grip{position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;border-radius:4px;pointer-events:none;cursor:move}
+.dsh-kanban .kb-flow-marks[data-active=true] .kb-flow-grip{pointer-events:auto}
+.dsh-kanban .kb-flow-canvas[data-locked=true] .kb-flow-marks .kb-flow-handle,.dsh-kanban .kb-flow-canvas[data-locked=true] .kb-flow-marks .kb-flow-grip{pointer-events:none}
+.dsh-kanban .kb-flow-grip[data-axis=x]{cursor:ew-resize}
+.dsh-kanban .kb-flow-grip[data-axis=y]{cursor:ns-resize}
+.dsh-kanban .kb-flow-canvas[data-locked=true] .kb-flow-grip{cursor:default}
+.dsh-kanban .kb-flow-grip-dot{flex:0 0 auto;width:var(--kb-affordance-mark,12px);height:var(--kb-affordance-mark,12px);transform:scale(var(--kb-affordance-scale,1));border-radius:2px;border:1.2px solid color-mix(in srgb,currentColor 55%,var(--kb-line));background:var(--kb-surface);box-shadow:0 1px 4px #00000024}
+.dsh-kanban .kb-flow-grip:hover .kb-flow-grip-dot,.dsh-kanban .kb-flow-marks.is-selected .kb-flow-grip-dot{border-color:var(--dsw-alias-state-business-primary,CanvasText)}
 /* A connection is pressed to select it and double-pressed to edit its condition, so
    the line itself carries a cursor that says so. */
 .dsh-kanban .react-flow__edge{cursor:pointer}
@@ -55,19 +69,23 @@ export const workflowViewStyles = String.raw`
 .dsh-kanban .kb-flow-condition-mark{fill:var(--kb-surface);stroke:color-mix(in srgb,currentColor 55%,var(--kb-line));stroke-width:1.6;stroke-dasharray:2 1.8;pointer-events:none}
 /* The port a connection is drawn from: a pointer affordance on the stage boundary,
    revealed while the stage is pointed at and never part of the keyboard order. */
-.dsh-kanban .kb-flow-port{position:absolute;width:13px;height:13px;border-radius:50%;border:1.5px solid var(--kb-line);background:var(--kb-surface);opacity:0;transition:opacity 110ms ease;cursor:crosshair;pointer-events:all;z-index:5}
-.dsh-kanban .kb-flow-stage:hover .kb-flow-port{opacity:1}
-.dsh-kanban .kb-flow-port:hover{border-color:var(--dsw-alias-state-business-primary,CanvasText)}
-/* The stage clips its content, so every port sits just inside the boundary it anchors. */
-.dsh-kanban .kb-flow-port[data-side=right]{right:3px;top:50%;margin-top:-6.5px}
-.dsh-kanban .kb-flow-port[data-side=left]{left:3px;top:50%;margin-top:-6.5px}
-.dsh-kanban .kb-flow-port[data-side=top]{top:3px;left:50%;margin-left:-6.5px}
-.dsh-kanban .kb-flow-port[data-side=bottom]{bottom:3px;left:50%;margin-left:-6.5px}
+/* The creation ports live above the stage too, so the stage can never clip half of
+   their pointer target, and the pointer crossing from the stage onto a port keeps
+   them presented through the hover linger. */
+.dsh-kanban .kb-flow-port{position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;border-radius:50%;pointer-events:auto;cursor:crosshair}
+.dsh-kanban .kb-flow-port-dot{position:absolute;width:var(--kb-port-mark,12px);height:var(--kb-port-mark,12px);border-radius:50%;border:1.5px solid color-mix(in srgb,currentColor 55%,var(--kb-line));background:var(--kb-surface);box-shadow:0 1px 4px #00000024}
+.dsh-kanban .kb-flow-port[data-side=top] .kb-flow-port-dot{left:50%;bottom:0;transform:translate(-50%,50%) scale(var(--kb-affordance-scale,1))}
+.dsh-kanban .kb-flow-port[data-side=bottom] .kb-flow-port-dot{left:50%;top:0;transform:translate(-50%,-50%) scale(var(--kb-affordance-scale,1))}
+.dsh-kanban .kb-flow-port[data-side=left] .kb-flow-port-dot{top:50%;right:0;transform:translate(50%,-50%) scale(var(--kb-affordance-scale,1))}
+.dsh-kanban .kb-flow-port[data-side=right] .kb-flow-port-dot{top:50%;left:0;transform:translate(-50%,-50%) scale(var(--kb-affordance-scale,1))}
+.dsh-kanban .kb-flow-port:hover .kb-flow-port-dot{border-color:var(--dsw-alias-state-business-primary,CanvasText)}
 .dsh-kanban .kb-flow-stage-edit:disabled{opacity:.38;cursor:default}
-.dsh-kanban .kb-flow-stage[data-connect-candidate=true]{border-color:var(--dsw-alias-state-business-primary,CanvasText);box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-state-business-primary,CanvasText) 35%,transparent)}
-.dsh-kanban .kb-flow-creation{pointer-events:none}
-.dsh-kanban .kb-flow-creation line{stroke:var(--dsw-alias-state-business-primary,CanvasText);stroke-width:1.8;stroke-dasharray:5 4;fill:none}
-.dsh-kanban .kb-flow-creation circle{fill:var(--dsw-alias-state-business-primary,CanvasText)}
+.dsh-kanban .kb-flow-stage[data-connect-candidate=true]{border-color:var(--dsw-alias-state-business-primary,CanvasText);box-shadow:0 0 0 calc(2px * var(--kb-affordance-scale,1)) color-mix(in srgb,var(--dsw-alias-state-business-primary,CanvasText) 45%,transparent)}
+.dsh-kanban .kb-flow-creation{position:absolute;overflow:visible;pointer-events:none}
+.dsh-kanban .kb-flow-creation-line{fill:none;stroke:var(--dsw-alias-state-business-primary,CanvasText);stroke-width:1.6;stroke-dasharray:5 4;vector-effect:non-scaling-stroke}
+.dsh-kanban .kb-flow-creation-route{fill:none;stroke:var(--dsw-alias-state-business-primary,CanvasText);stroke-width:1.8;vector-effect:non-scaling-stroke}
+.dsh-kanban .kb-flow-creation-arrow{fill:var(--dsw-alias-state-business-primary,CanvasText)}
+.dsh-kanban .kb-flow-creation-tip{fill:var(--dsw-alias-state-business-primary,CanvasText)}
 .dsh-kanban .kb-condition-popover{position:fixed;z-index:70;display:flex;flex-direction:column;gap:8px;max-height:calc(100vh - 16px);overflow:auto;padding:12px;border:1px solid var(--kb-line);border-radius:10px;background:var(--kb-surface);box-shadow:0 14px 34px #00000026;font:inherit;color:inherit}
 .dsh-kanban .kb-condition-popover .kb-condition-field{max-height:40vh}
 .dsh-kanban .kb-flow-shell:focus{outline:none}

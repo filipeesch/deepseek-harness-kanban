@@ -77,6 +77,23 @@ describe('connection route', () => {
     expect(pushed.lines[0]!.axis).toBe('y');
   });
 
+  it('clears the corridor the displaced route really occupies', () => {
+    const source = { x: 0, y: 0, width: 200, height: 100 };
+    const target = { x: 0, y: 300, width: 200, height: 100 };
+    // A stage beside the automatic gutter, which the displaced route no longer reaches.
+    const third = { x: -50, y: 600, width: 30, height: 100 };
+    const input: ConnectionRouteInput = {
+      from: source, to: target, returning: true, fanOut: 0, fanOutCount: 1,
+      clearanceStages: [source, target, third], segments: [{ axis: 'x', offset: 372 }],
+    };
+    const drawn = connectionRoute(input);
+    const xs = drawn.points.map(point => point.x);
+    expect(Math.min(...xs)).toBeGreaterThanOrEqual(100);
+    expect(Math.max(...xs)).toBe(300);
+    const moved = connectionRoute({ ...input, clearanceStages: [source, target, { ...third, y: 900 }] });
+    expect(moved.points).toEqual(drawn.points);
+  });
+
   it('applies each displacement to the line of its own axis in path order', () => {
     const input: ConnectionRouteInput = {
       from: { x: 400, y: 0, width: 200, height: 100 }, to: { x: 0, y: 0, width: 200, height: 100 },

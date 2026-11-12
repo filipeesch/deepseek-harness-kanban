@@ -88,7 +88,7 @@ export function buildWorkflowScene(input: {
     };
   });
   const byId = new Map(nodes.map(node => [node.id, node]));
-  const lowest = nodes.reduce((bottom, node) => Math.max(bottom, node.position.y + node.size.height), 0);
+  const clearanceStages = nodes.map(nodeRect);
   const edges = graph.connections.flatMap(connection => {
     const from = byId.get(connection.from);
     const to = byId.get(connection.to);
@@ -103,7 +103,7 @@ export function buildWorkflowScene(input: {
       fanOutCount: connection.fanOutCount,
       shape: connectionRoute({
         from: nodeRect(from), to: nodeRect(to), returning: connection.returning,
-        fanOut: connection.fanOut, fanOutCount: connection.fanOutCount, clearance: lowest,
+        fanOut: connection.fanOut, fanOutCount: connection.fanOutCount, clearanceStages,
         ...layoutOf(layouts, connection.from, connection.to),
       }).shape,
     }];
