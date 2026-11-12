@@ -39,15 +39,21 @@ function messages(socket, callback) {
     }
   });
 }
-// An inaccessible environment is only irrelevant when the process belongs to
-// another user; one of ours that cannot be read makes membership unknown.
+// Identity of a process that cannot be inspected. A descendant of this run must
+// have started after this guard, so an older process of any user cannot carry the
+// token; a same-user process that started later may, and is therefore uncertain.
+function ticks(pid) {
+  const stat = require('node:fs').readFileSync('/proc/' + pid + '/stat', 'utf8');
+  return Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]);
+}
 function foreignOrOwned(pid) {
   const fs = require('node:fs');
   let status;
   try { status = fs.readFileSync('/proc/' + pid + '/status', 'utf8'); } catch { return 'uncertain'; }
   const uid = /^Uid:\s*([0-9]+)/m.exec(status);
   if (!uid) return 'uncertain';
-  return Number(uid[1]) === process.getuid() ? 'own' : 'foreign';
+  if (Number(uid[1]) !== process.getuid()) return 'foreign';
+  try { return ticks(pid) >= ticks(process.pid) ? 'own' : 'older'; } catch { return 'uncertain'; }
 }
 // One run token is inherited through the environment, so an ownership sweep can
 // find a descendant that left the process group. Membership is the only authority:
@@ -65,7 +71,7 @@ function candidates(needle) {
       catch (error) {
         if (error.code === 'ENOENT' || error.code === 'ESRCH') continue;
         if (error.code !== 'EACCES' && error.code !== 'EPERM') throw error;
-        if (foreignOrOwned(pid) === 'foreign') continue;
+        if (foreignOrOwned(pid) !== 'own') continue;
         throw new Error('Process membership of an owned candidate could not be read.');
       }
       if (!environment.includes(needle)) continue;
@@ -98,7 +104,7 @@ function inspect(pid, needle) {
     catch (error) {
       if (error.code === 'ENOENT' || error.code === 'ESRCH') return 'absent';
       if (error.code !== 'EACCES' && error.code !== 'EPERM') throw error;
-      return foreignOrOwned(pid) === 'foreign' ? 'not-owned' : 'uncertain';
+      return foreignOrOwned(pid) === 'own' ? 'uncertain' : 'not-owned';
     }
     return environment.includes(needle) ? 'owned' : 'not-owned';
   }
