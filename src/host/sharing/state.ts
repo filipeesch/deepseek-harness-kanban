@@ -1,178 +1,145 @@
 import type { Context } from '@deepseek-ai/cordis';
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain';
 import { z } from 'zod';
-import type { SharedHubManifest } from '../../domain/sharing/manifest.js';
-import { readSharedConfiguration, serializeSharedManifest, sharedManifestToken, SHARED_MANIFEST_VERSION, SharedHubManifestSchema, SHARED_MANIFEST_FILE } from '../../domain/sharing/manifest.js';
-import type { OrphanMap, BoardBindings } from '../../domain/sharing/identity.js';
+import type { SharingBinding, ProviderState } from './provider.js';
+import { isSharingProviderId } from './provider.js';
+import type { BoardBindings, OrphanMap } from '../../domain/sharing/identity.js';
 import { KanbanError } from '../../shared/errors.js';
 import { SHARING_STORAGES } from '../../shared/types.js';
-import type { ProviderState, SharingBinding } from './provider.js';
-import { isSharingProviderId } from './provider.js';
 
-/** One manifest the installation read or applied, with its content token. */
-export interface StoredManifest { token: string; manifest: SharedHubManifest }
-
-/** What this installation observed and applied for one board. */
+/** What this installation last applied for one board, plus what the last check observed. */
 export interface StoredBoard {
-  /** The last sequence applied to the local board. */
+  /** The last sequence applied. */
   seq: number;
-  /** The head the append must match. */
+  /** The head token the last append must match. */
   head: string | null;
   /** The cheap probe the last check saw. */
   probe: string | null;
-  /** How many published events this installation has not applied. */
-  behind: number;
-  /** The digest of the board's published workflow, so a local edit is visible as a draft. */
-  published: string | null;
-  /**
-   * The published workflow text, kept only while the board needs a choice, so the
-   * review panel can show both versions without reading the storage.
-   */
-  publishedText?: string | null;
-  /** The local board differs from the published board, so a publish is due. */
-  draft: boolean;
+  /** Whether the storage enumerated this board's log at the last observation. */
+  present: boolean;
+  /** The applied authored workflow. */
+  workflow: string | null;
+  /** The applied board name. */
+  name: string | null;
+  /** The applied project scope; null means the board allows every project. */
+  projectKeys: string[] | null;
+  /** The applied position in the Hub's board order. */
+  rank: string | null;
+  /** Published events observed beyond the cursor. */
+  updates: number;
+  /** The observed log carries a removal event this installation has not applied. */
+  removal: boolean;
+  /** The team's text that could not be applied, while the board needs a choice. */
+  incoming: string | null;
   /** Applying this board requires a choice before it can proceed. */
   conflict: 'identity' | 'lifecycle' | null;
   /** A board-local format error must not block observation of other boards. */
-  problem?: { code: string; message: string } | null;
+  problem: { code: string; message: string } | null;
 }
+
+/** One board as the last check enumerated it. */
+export interface PublishedBoard { key: string; name: string; rank: string | null; removed: boolean }
+
+/** One published board read at connection time, so the choice can name what differs. */
+export interface PreviewBoard { key: string; name: string; projectKeys: string[] | null; rank: string | null; workflow: string }
 
 /** One Hub's local publishing state. A record exists only while the Hub is published. */
 export interface HubSharingRecord {
-  version: 3;
+  version: 4;
   hubId: string;
   binding: SharingBinding;
   providerState: ProviderState;
-  /** Hub revision whose content is present in the last published configuration. */
-  syncedRevision: number | null;
-  /** The last manifest this installation applied. */
-  base: StoredManifest | null;
-  /** The last manifest read from the provider. */
-  seen: StoredManifest | null;
-  /** The manifest read during connect, waiting for receive or publish-initial. */
-  preview: StoredManifest | null;
   bindings: BoardBindings;
   orphans: OrphanMap;
-  /** Keys removed only from this installation; the team manifest keeps them. */
+  /** Keys removed only from this installation; the team still carries them. */
   removed: Record<string, { boardId: string; name: string }>;
-  /** Keys this installation will drop from the team manifest on the next publish. */
-  pendingRemovals: string[];
-  /** What was observed and applied per board key. */
+  /** Keys whose removal this installation still owes the team a removal event for. */
+  pendingRemovals: Record<string, { name: string }>;
+  /** What this installation applied, per published board key. */
   boards: Record<string, StoredBoard>;
+  /** The published set as the last check enumerated it. */
+  published: Record<string, PublishedBoard>;
+  /** The published boards read during connect, waiting for receive or publish-initial. */
+  preview: { boards: PreviewBoard[] } | null;
+  /** Something the connection must report without failing, such as an abandoned older layout. */
+  notice?: { code: string; message: string } | null;
   lastCheck: { at: string; token: string } | null;
-  lastSyncedAt?: string | null;
+  lastSyncedAt: string | null;
   reviewRequired?: { code: string; message: string } | null;
   storageReview?: { code: string; message: string; files: string[] } | null;
   lastError: { code: string; message: string } | null;
 }
 
 const storedBoard = z.strictObject({
-  seq: z.number().int().min(0),
-  published: z.string().min(1).nullable().optional(),
-  publishedText: z.string().nullable().optional(),
+  seq: z.number().int().min(-1),
   head: z.string().min(1).nullable(),
   probe: z.string().min(1).nullable(),
-  behind: z.number().int().min(0),
-  draft: z.boolean(),
+  present: z.boolean(),
+  workflow: z.string().nullable(),
+  name: z.string().nullable(),
+  projectKeys: z.array(z.string()).nullable(),
+  rank: z.string().nullable(),
+  updates: z.number().int().min(0),
+  removal: z.boolean(),
+  incoming: z.string().nullable(),
   conflict: z.enum(['identity', 'lifecycle']).nullable(),
-  problem: z.strictObject({ code: z.string().min(1), message: z.string() }).nullable().optional(),
+  problem: z.strictObject({ code: z.string().min(1), message: z.string() }).nullable(),
 });
-const storedManifest = z.strictObject({ token: z.string().min(1), manifest: SharedHubManifestSchema });
+const publishedBoard = z.strictObject({
+  key: z.string().min(1), name: z.string().min(1), rank: z.string().nullable(), removed: z.boolean(),
+});
+const previewBoard = z.strictObject({
+  key: z.string().min(1), name: z.string().min(1), projectKeys: z.array(z.string()).nullable(), rank: z.string().nullable(), workflow: z.string().min(1),
+});
 const binding = z.strictObject({
   provider: z.enum(SHARING_STORAGES),
   intervalMinutes: z.number().int().min(0).max(1440),
   settings: z.record(z.string(), z.string()),
 });
-const v3Record = z.strictObject({
-  version: z.literal(3),
+const recordSchema = z.strictObject({
+  version: z.literal(4),
   hubId: z.string().min(1),
   binding,
   providerState: z.record(z.string(), z.unknown()),
-  syncedRevision: z.number().int().nonnegative().nullable(),
-  base: storedManifest.nullable(),
-  seen: storedManifest.nullable(),
-  preview: storedManifest.nullable(),
   bindings: z.record(z.string(), z.string()),
   orphans: z.record(z.string(), z.strictObject({ lastKey: z.string().min(1), lastPublishedName: z.string().min(1) })),
   removed: z.record(z.string(), z.strictObject({ boardId: z.string().min(1), name: z.string().min(1) })),
-  pendingRemovals: z.array(z.string()),
+  pendingRemovals: z.record(z.string(), z.strictObject({ name: z.string().min(1) })),
   boards: z.record(z.string(), storedBoard),
+  published: z.record(z.string(), publishedBoard),
+  preview: z.strictObject({ boards: z.array(previewBoard) }).nullable(),
+  notice: z.strictObject({ code: z.string().min(1), message: z.string() }).nullable().optional(),
   lastCheck: z.strictObject({ at: z.string().min(1), token: z.string().min(1) }).nullable(),
-  lastSyncedAt: z.string().min(1).nullable().optional(),
+  lastSyncedAt: z.string().min(1).nullable(),
   reviewRequired: z.strictObject({ code: z.string().min(1), message: z.string() }).nullable().optional(),
   storageReview: z.strictObject({ code: z.string().min(1), message: z.string(), files: z.array(z.string()) }).nullable().optional(),
   lastError: z.strictObject({ code: z.string().min(1), message: z.string() }).nullable(),
 });
 
-/** The shape every previous version stored, read only to migrate it. */
-const legacyDocument = z.strictObject({
-  version: z.number().int().positive(),
-  boards: z.array(z.object({ key: z.string(), name: z.string(), projectKeys: z.array(z.string()).optional() }).passthrough()),
-});
-const legacyStoredDocument = z.strictObject({ token: z.string().min(1), document: legacyDocument });
-const legacyRecord = z.strictObject({
-  version: z.union([z.literal(1), z.literal(2)]),
-  hubId: z.string().min(1),
-  binding: z.object({ provider: z.string(), intervalMinutes: z.number().int().min(0).max(1440), settings: z.record(z.string(), z.string()).optional(), repository: z.string().optional() }).passthrough(),
-  providerState: z.record(z.string(), z.unknown()).optional(),
-  syncedRevision: z.number().int().nonnegative().nullable().optional(),
-  base: legacyStoredDocument.nullable(),
-  seen: legacyStoredDocument.nullable(),
-  preview: legacyStoredDocument.nullable(),
-  bindings: z.record(z.string(), z.string()),
-  orphans: z.record(z.string(), z.strictObject({ lastKey: z.string().min(1), lastPublishedName: z.string().min(1) })),
-  removed: z.record(z.string(), z.strictObject({ boardId: z.string().min(1), name: z.string().min(1) })),
-  pendingRemovals: z.array(z.string()),
-  lastCheck: z.strictObject({ at: z.string().min(1), token: z.string().min(1) }).nullable(),
-  lastSyncedAt: z.string().min(1).nullable().optional(),
-  reviewRequired: z.strictObject({ code: z.string().min(1), message: z.string() }).nullable().optional(),
-  storageReview: z.strictObject({ code: z.string().min(1), message: z.string(), files: z.array(z.string()) }).nullable().optional(),
-  lastError: z.strictObject({ code: z.string().min(1), message: z.string() }).nullable(),
-});
+export const HubSharingRecordSchema: z.ZodType<HubSharingRecord> = recordSchema as unknown as z.ZodType<HubSharingRecord>;
 
-export const HubSharingRecordSchema: z.ZodType<HubSharingRecord> = v3Record as unknown as z.ZodType<HubSharingRecord>;
-
-/** The manifest a previously stored document described. */
-function manifestOf(document: z.infer<typeof legacyDocument>): StoredManifest {
-  const read = readSharedConfiguration(serializeSharedManifest({ version: SHARED_MANIFEST_VERSION, boards: document.boards.map(entry => ({ key: entry.key, name: entry.name, ...(entry.projectKeys === undefined ? {} : { projectKeys: entry.projectKeys }) })) }));
-  return { token: sharedManifestToken(read.manifest), manifest: read.manifest };
+/** A board this installation never observed: nothing applied, nothing pending. */
+export function emptyBoard(): StoredBoard {
+  return { seq: -1, head: null, probe: null, present: false, workflow: null, name: null, projectKeys: null, rank: null, updates: 0, removal: false, incoming: null, conflict: null, problem: null };
 }
 
-/** Read the current record shape, or migrate one written before per-board publishing. */
-export function migrateSharingRecord(raw: unknown): HubSharingRecord | undefined {
-  const current = v3Record.safeParse(raw);
-  if (current.success) {
-    const record = current.data as HubSharingRecord;
-    for (const [key, board] of Object.entries(record.boards)) {
-      record.boards[key] = { ...board, published: board.published ?? null, publishedText: board.publishedText ?? null };
-    }
-    return record;
-  }
-  const legacy = legacyRecord.safeParse(raw);
-  if (!legacy.success) return undefined;
-  const provider = legacy.data.binding.provider;
-  if (!isSharingProviderId(provider)) return undefined;
-  const settings = legacy.data.binding.settings ?? (legacy.data.binding.repository === undefined ? {} : { repository: legacy.data.binding.repository });
+/** A record for a Hub that is being connected. */
+export function emptyRecord(hubId: string, binding: SharingBinding, at: string): HubSharingRecord {
   return {
-    version: 3,
-    hubId: legacy.data.hubId,
-    binding: { provider, intervalMinutes: legacy.data.binding.intervalMinutes, settings },
-    providerState: legacy.data.providerState ?? {},
-    syncedRevision: legacy.data.syncedRevision ?? null,
-    base: legacy.data.base === null ? null : manifestOf(legacy.data.base.document),
-    seen: legacy.data.seen === null ? null : manifestOf(legacy.data.seen.document),
-    preview: legacy.data.preview === null ? null : manifestOf(legacy.data.preview.document),
-    bindings: legacy.data.bindings,
-    orphans: legacy.data.orphans,
-    removed: legacy.data.removed,
-    pendingRemovals: legacy.data.pendingRemovals,
-    boards: {},
-    lastCheck: legacy.data.lastCheck,
-    lastSyncedAt: legacy.data.lastSyncedAt ?? null,
-    reviewRequired: legacy.data.reviewRequired ?? null,
-    storageReview: legacy.data.storageReview ?? null,
-    lastError: legacy.data.lastError,
+    version: 4, hubId, binding, providerState: {},
+    bindings: {}, orphans: {}, removed: {}, pendingRemovals: {}, boards: {}, published: {},
+    preview: null, notice: null, lastCheck: { at, token: 'none' }, lastSyncedAt: null,
+    reviewRequired: null, storageReview: null, lastError: null,
   };
+}
+
+/** Read the current record shape. A record from another layout version is ignored. */
+export function readSharingRecord(raw: unknown): HubSharingRecord | undefined {
+  const parsed = recordSchema.safeParse(raw);
+  if (!parsed.success) return undefined;
+  const record = parsed.data as HubSharingRecord;
+  if (!isSharingProviderId(record.binding.provider)) return undefined;
+  return record;
 }
 
 export interface HubSharingStore {
@@ -183,27 +150,22 @@ export interface HubSharingStore {
   close(): Promise<void>;
 }
 
-/** A board cursor with no observation yet, which is what a fresh binding starts from. */
-export function emptyBoard(): StoredBoard {
-  return { seq: 0, head: null, probe: null, behind: 0, published: null, publishedText: null, draft: false, conflict: null };
-}
-
 /**
- * Durable publishing state, independent from the Hub aggregate. Records are
- * validated on read; a corrupt record is quarantined with a typed error rather
- * than preventing the Hub domain from opening.
+ * Durable publishing state, independent from the Hub aggregate. Records are validated
+ * on read; a corrupt or older record is quarantined with a typed error rather than
+ * preventing the Hub domain from opening.
  */
 export async function openSharingStorage(ctx: Context, options: { report?: (error: unknown) => void } = {}): Promise<{ storage: HubSharingStore; close: () => Promise<void> }> {
   const domain = await ctx.storageDomain.open(defineDomain({
     name: 'kanban_sharing',
-    version: 1,
+    version: 2,
     layout: 'per-record',
     tables: { records: domainTable<string, unknown>(z.unknown()) },
   }));
   const table = domain.table('records');
   const records = new Map<string, HubSharingRecord>();
   for (const [hubId, raw] of table.entries()) {
-    const parsed = migrateSharingRecord(raw);
+    const parsed = readSharingRecord(raw);
     if (!parsed || parsed.hubId !== hubId) {
       options.report?.(new KanbanError('SHARING_STORAGE_INVALID', 'Stored publishing state is invalid and was ignored.', { hubId }));
       continue;
@@ -224,5 +186,3 @@ export async function openSharingStorage(ctx: Context, options: { report?: (erro
   };
   return { storage, close: () => domain.close() };
 }
-
-export { SHARED_MANIFEST_FILE };

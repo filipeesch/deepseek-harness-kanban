@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { KanbanError, invariant } from '../../shared/errors.js';
 import { TEAM_FILES_DIRECTORY } from '../../shared/types.js';
-import { DirectoryLayoutStore, normalizeDirectoryLayoutState } from './layout-directory.js';
+import { DirectoryLayoutStore } from './layout-directory.js';
 import { DirectoryTeamFileStore, TeamFileDirectory } from './team-file-directory.js';
 import {
   abbreviateHome,
@@ -37,7 +37,6 @@ export function createLocalFolderProviderDescriptor(options: LocalFolderProvider
   return {
     id: 'local-folder',
     label: 'Local folder',
-    syncMode: 'explicit',
     defaultIntervalMinutes: 1,
     requiresAuthorization: false,
     normalizeSettings(settings) {
@@ -78,8 +77,8 @@ export function createLocalFolderProviderDescriptor(options: LocalFolderProvider
   };
 }
 
-function normalizeState(state: ProviderState): ProviderState {
-  return normalizeDirectoryLayoutState(state);
+function normalizeState(_state: ProviderState): ProviderState {
+  return {};
 }
 
 /** The bound folder, or a refusal naming the missing setting. */

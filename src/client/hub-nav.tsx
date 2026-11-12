@@ -4,7 +4,6 @@ import { EMPTY_SCOPE_ACTIVITY, type ScopeActivity } from './scope-activity.js';
 import { RunningTasksBadge } from './running-tasks-badge.js';
 import { PlusIcon } from './icons.js';
 import { BoardPublishingBadge, HubPublishingBadge } from './sharing/indicators.js';
-import { boardSharing } from './sharing/status.js';
 
 export interface HubTabRowProps {
   hubs: readonly HubState[];
@@ -82,7 +81,7 @@ export function BoardTabRow({ boards, activeHubId, activeBoardId, boardActivity,
         className="kb-board-tab"
         selected={board.id === activeBoardId}
         activity={boardActivity.get(board.id) ?? EMPTY_SCOPE_ACTIVITY}
-        sharing={<BoardPublishingBadge state={activeHubId === undefined || sharing[activeHubId]?.status === 'preview' ? undefined : boardSharing(sharing[activeHubId], board.id)?.state} />}
+        sharing={<BoardPublishingBadge view={activeHubId === undefined || sharing[activeHubId]?.status === 'preview' ? undefined : sharing[activeHubId]} boardId={board.id} />}
         onSelect={() => { if (activeHubId !== undefined) onSelectBoard(activeHubId, board.id); }}
       />)}
       <button type="button" className="kb-tab-add" aria-label="Create board" title="Create board" onClick={onCreateBoard}><PlusIcon size={13} /></button>

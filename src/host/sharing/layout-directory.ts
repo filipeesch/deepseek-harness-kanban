@@ -1,18 +1,16 @@
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { KanbanError } from '../../shared/errors.js';
+import { KanbanError, invariant } from '../../shared/errors.js';
 import {
-  boardLogPath, readSharedConfiguration, serializeSharedManifest, sharedManifestToken,
-  SHARED_BOARD_DIRECTORY, SHARED_MANIFEST_FILE, type SharedHubManifest,
-} from '../../domain/sharing/manifest.js';
-import { appendEvents, BOARD_LOG_VERSION, createBoardLog, decodeBoardLog, encodeBoardLog, headToken, type BoardLogFile } from '../../domain/journal/log.js';
+  boardLogPath, readLayoutStamp, serializeLayoutStamp,
+  SHARED_BOARD_DIRECTORY, SHARED_BOARD_EXTENSION, SHARED_BOARD_KEY_PATTERN, SHARED_LAYOUT_FILE, SHARED_LAYOUT_VERSION,
+} from '../../domain/sharing/layout.js';
+import { appendEvents, decodeBoardLog, encodeBoardLog, headToken, type BoardLog } from '../../domain/journal/log.js';
 import type { BoardChange } from '../../domain/journal/event.js';
-import type { AppendOptions, BoardLogSnapshot, ManifestSnapshot, SharedLayoutStore } from './ports.js';
-import type { StorageReview } from './ports.js';
+import type { AppendOptions, BoardLogSnapshot, LayoutStampSnapshot, SharedLayoutStore, StorageReview } from './ports.js';
 
 /**
- * The published layout in a directory: the manifest beside a directory of board
+ * The published layout in a directory: a layout stamp beside a directory of board
  * logs. It is the storage for a local folder and for a Google Drive Local folder,
  * which differ only in how the directory is discovered.
  */
@@ -36,11 +34,11 @@ export class DirectoryLayoutStore implements SharedLayoutStore {
 
   protected get directory(): string { return this.options.directory; }
 
-  private get manifestPath(): string { return path.join(this.options.directory, SHARED_MANIFEST_FILE); }
+  private get stampPath(): string { return path.join(this.options.directory, SHARED_LAYOUT_FILE); }
 
-  private logPath(key: string): string {
-    return path.join(this.options.directory, SHARED_BOARD_DIRECTORY, key + '.yaml');
-  }
+  private get boardsPath(): string { return path.join(this.options.directory, SHARED_BOARD_DIRECTORY); }
+
+  private logPath(key: string): string { return path.join(this.options.directory, boardLogPath(key)); }
 
   review(): StorageReview | null { return this.reviewValue; }
 
@@ -59,44 +57,64 @@ export class DirectoryLayoutStore implements SharedLayoutStore {
     this.reviewValue = await this.detectConflictCopies();
   }
 
-  /** A copy of the manifest a synchronization client left beside it requires a decision. */
+  /** A copy of the stamp, or of a board log, that a synchronization client left behind. */
   private async detectConflictCopies(): Promise<StorageReview | null> {
     let entries: string[];
     try { entries = await readdir(this.options.directory); }
     catch { throw new KanbanError('SHARING_FOLDER_MISSING', 'The selected folder is not accessible.', { path: this.options.directory }); }
-    const base = path.basename(SHARED_MANIFEST_FILE, path.extname(SHARED_MANIFEST_FILE));
+    const base = path.basename(SHARED_LAYOUT_FILE, path.extname(SHARED_LAYOUT_FILE));
     const files = entries
-      .filter(name => name !== SHARED_MANIFEST_FILE && !name.startsWith(TEMP_PREFIX) && name.startsWith(base))
+      .filter(name => name !== SHARED_LAYOUT_FILE && !name.startsWith(TEMP_PREFIX) && name.startsWith(base))
       .sort();
-    if (files.length === 0) return null;
+    let boardCopies: string[] = [];
+    try { boardCopies = (await readdir(this.boardsPath)).filter(name => looksLikeBoardCopy(name)).sort().map(name => SHARED_BOARD_DIRECTORY + '/' + name); }
+    catch { /* the board directory may not exist yet */ }
+    const found = [...files, ...boardCopies];
+    if (found.length === 0) return null;
     return {
       code: 'SHARING_CONFLICT_COPY',
-      message: 'Another copy of the team configuration is in this folder: ' + files.join(', ') + '. Review the copies before synchronizing.',
-      files,
+      message: 'Another copy of the team configuration is in this folder: ' + found.join(', ') + '. Review the copies before synchronizing.',
+      files: found,
     };
   }
 
-  async readManifest(_signal?: AbortSignal, cached?: ManifestSnapshot | null): Promise<ManifestSnapshot | null> {
-    const text = await this.readOptional(this.manifestPath);
-    if (text === null) return null;
-    const read = readSharedConfiguration(text);
-    const token = sharedManifestToken(read.manifest);
-    if (cached !== null && cached !== undefined && cached.token === token) return cached;
-    return { token, manifest: read.manifest, legacyWorkflows: read.legacyWorkflows };
+  async readStamp(): Promise<LayoutStampSnapshot | null> {
+    const text = await this.readOptional(this.stampPath);
+    return text === null ? null : { version: readLayoutStamp(text).version };
   }
 
-  async writeManifest(manifest: SharedHubManifest, options: { expectedToken: string | null; message: string }, signal?: AbortSignal): Promise<{ token: string }> {
-    signal?.throwIfAborted();
+  async writeStamp(version: number, options: { expectedVersion: number | null }): Promise<LayoutStampSnapshot> {
+    invariant(version === SHARED_LAYOUT_VERSION, 'SHARING_INVALID_DOCUMENT', 'This installation writes a single layout version.');
     await this.ensure();
-    const current = await this.readManifest();
-    if ((current?.token ?? null) !== options.expectedToken) {
-      throw new KanbanError('SHARING_STALE_TOKEN', 'The team configuration changed since it was read. Get the team updates before publishing.', { expected: options.expectedToken ?? 'none', actual: current?.token ?? 'none' });
+    const current = await this.readStamp();
+    const actual = current?.version ?? null;
+    if (actual !== options.expectedVersion) {
+      throw new KanbanError('SHARING_STALE_TOKEN', 'The team configuration changed since it was read. Get the team updates before publishing.', { expected: options.expectedVersion ?? 'none', actual: actual ?? 'none' });
     }
-    const token = sharedManifestToken(manifest);
-    await this.writeAtomically(this.manifestPath, serializeSharedManifest(manifest));
-    const verified = await this.readManifest();
-    if (verified?.token !== token) throw new KanbanError('SHARING_CONCURRENT_WRITE', 'The team configuration changed while it was being written. Review the team changes before retrying.');
-    return { token };
+    await this.writeAtomically(this.stampPath, serializeLayoutStamp());
+    const verified = await this.readStamp();
+    if (verified?.version !== version) throw new KanbanError('SHARING_CONCURRENT_WRITE', 'The team configuration changed while it was being written. Review the team changes before retrying.');
+    return { version };
+  }
+
+  async listLogs(): Promise<readonly { key: string; probe: string }[]> {
+    await this.ensure();
+    let names: string[];
+    try { names = await readdir(this.boardsPath); }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') return [];
+      throw new KanbanError('SHARING_FOLDER_MISSING', 'The team configuration cannot be inspected.', { path: this.options.directory, code });
+    }
+    const listed: Array<{ key: string; probe: string }> = [];
+    for (const name of names.sort()) {
+      if (!name.endsWith(SHARED_BOARD_EXTENSION)) continue;
+      const key = name.slice(0, -SHARED_BOARD_EXTENSION.length);
+      if (!SHARED_BOARD_KEY_PATTERN.test(key)) continue;
+      const probe = await this.probe(key);
+      if (probe !== null) listed.push({ key, probe });
+    }
+    return listed;
   }
 
   async probe(key: string, signal?: AbortSignal): Promise<string | null> {
@@ -112,22 +130,20 @@ export class DirectoryLayoutStore implements SharedLayoutStore {
     }
   }
 
-  async readLog(key: string, signal?: AbortSignal, cached?: BoardLogSnapshot | null): Promise<BoardLogSnapshot | null> {
+  async readLog(key: string, signal?: AbortSignal): Promise<BoardLogSnapshot | null> {
     signal?.throwIfAborted();
     const probe = await this.probe(key, signal);
     if (probe === null) return null;
-    if (cached !== null && cached !== undefined && cached.probe === probe) return cached;
     const text = await this.readOptional(this.logPath(key));
     if (text === null) return null;
-    const log = this.parseLog(text, key);
+    const log = parseLog(text, key);
     return { probe, head: headToken(log), log };
   }
 
-  async createLog(key: string, text: string, signal?: AbortSignal): Promise<BoardLogSnapshot> {
+  async createLog(key: string, log: BoardLog, signal?: AbortSignal): Promise<BoardLogSnapshot> {
     signal?.throwIfAborted();
     await this.ensure();
     if (await this.probe(key) !== null) throw new KanbanError('SHARING_STALE_TOKEN', 'The board already has a published log.', { key });
-    const log = createBoardLog(text);
     await this.writeLog(key, log);
     const probe = await this.probe(key);
     return { probe: probe ?? '', head: headToken(log), log };
@@ -146,33 +162,21 @@ export class DirectoryLayoutStore implements SharedLayoutStore {
     return { probe: probe ?? '', head: headToken(log), log };
   }
 
-  async removeLog(key: string): Promise<void> {
-    await rm(this.logPath(key), { force: true });
-  }
-
   async destroy(): Promise<void> {
     // The folder and the published layout belong to the team; disconnecting never deletes them.
   }
 
-  private parseLog(text: string, key: string): BoardLogFile {
-    let raw: unknown;
-    try { raw = parseYaml(text); }
-    catch (error) { throw new KanbanError('SHARING_INVALID_DOCUMENT', 'The board log is not valid YAML.', { key, cause: error instanceof Error ? error.message : String(error) }); }
-    const decoded = decodeBoardLog(raw);
-    if (!decoded.ok) {
-      if (decoded.reason === 'unsupported-version') throw new KanbanError('SHARING_DOCUMENT_VERSION_UNSUPPORTED', 'The team configuration was written by a newer plugin version. Update the plugin to read or publish it.', { key, version: decoded.version });
-      if (decoded.reason === 'unknown-kind') throw new KanbanError('SHARING_DOCUMENT_VERSION_UNSUPPORTED', 'The team configuration carries a change this plugin does not know. Update the plugin to read or publish it.', { key, kind: decoded.kind });
-      throw new KanbanError('SHARING_INVALID_DOCUMENT', 'The board log is invalid.', { key, message: decoded.message });
+  private async writeLog(key: string, log: BoardLog): Promise<void> {
+    const encoded = encodeBoardLog(log);
+    if (!decodeBoardLog(encoded).ok) throw new KanbanError('SHARING_INVALID_DOCUMENT', 'The board log content is not supported.');
+    try { await mkdir(this.boardsPath, { recursive: true }); }
+    catch (error) { throw new KanbanError('SHARING_FOLDER_MISSING', 'The board log directory cannot be created.', { path: this.boardsPath, cause: error instanceof Error ? error.message : String(error) }); }
+    await this.writeAtomically(this.logPath(key), encoded);
+    // A folder offers no conditional write, so the written content is verified.
+    const written = await this.readOptional(this.logPath(key));
+    if (written === null || headToken(parseLog(written, key)) !== headToken(log)) {
+      throw new KanbanError('SHARING_CONCURRENT_WRITE', 'The board changed while it was being written. Review the team changes before retrying.', { key });
     }
-    return decoded.log;
-  }
-
-  private async writeLog(key: string, log: BoardLogFile): Promise<void> {
-    if (log.version < 1 || log.version > BOARD_LOG_VERSION || !decodeBoardLog(encodeBoardLog(log)).ok) throw new KanbanError('SHARING_INVALID_DOCUMENT', 'The board log version or content is not supported.');
-    const directory = path.join(this.options.directory, SHARED_BOARD_DIRECTORY);
-    try { await mkdir(directory, { recursive: true }); }
-    catch (error) { throw new KanbanError('SHARING_FOLDER_MISSING', 'The board log directory cannot be created.', { path: directory, cause: error instanceof Error ? error.message : String(error) }); }
-    await this.writeAtomically(this.logPath(key), stringifyYaml(encodeBoardLog(log), { lineWidth: 0 }));
   }
 
   private async readOptional(file: string): Promise<string | null> {
@@ -198,19 +202,22 @@ export class DirectoryLayoutStore implements SharedLayoutStore {
   }
 }
 
-/** The observation state a directory provider persists, kept for the provider descriptor. */
-export function normalizeDirectoryLayoutState(state: Record<string, unknown>): Record<string, unknown> {
-  const number = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) ? value : undefined);
-  const mtimeMs = number(state.mtimeMs);
-  const ctimeMs = number(state.ctimeMs);
-  const size = number(state.size);
-  const ino = number(state.ino);
-  return {
-    ...(mtimeMs === undefined ? {} : { mtimeMs }),
-    ...(ctimeMs === undefined ? {} : { ctimeMs }),
-    ...(size === undefined ? {} : { size }),
-    ...(ino === undefined ? {} : { ino }),
-  };
+/** A board-directory entry that is not a log the plugin wrote. */
+function looksLikeBoardCopy(name: string): boolean {
+  if (!name.endsWith(SHARED_BOARD_EXTENSION)) return false;
+  if (name.startsWith(TEMP_PREFIX)) return false;
+  const key = name.slice(0, -SHARED_BOARD_EXTENSION.length);
+  return !SHARED_BOARD_KEY_PATTERN.test(key);
+}
+
+function parseLog(text: string, key: string): BoardLog {
+  const decoded = decodeBoardLog(text);
+  if (!decoded.ok) {
+    if (decoded.reason === 'unsupported-version') throw new KanbanError('SHARING_DOCUMENT_VERSION_UNSUPPORTED', 'The team configuration was written by a newer plugin version. Update the plugin to read or publish it.', { key, version: decoded.version });
+    if (decoded.reason === 'unknown-kind') throw new KanbanError('SHARING_DOCUMENT_VERSION_UNSUPPORTED', 'The team configuration carries a change this plugin does not know. Update the plugin to read or publish it.', { key, kind: decoded.kind });
+    throw new KanbanError('SHARING_INVALID_DOCUMENT', 'The board log is invalid.', { key, message: decoded.message });
+  }
+  return decoded.log;
 }
 
 /** The published layout path of one board, for a provider that needs to name the file itself. */

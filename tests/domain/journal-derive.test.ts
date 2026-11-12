@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveChanges } from '../../src/domain/journal/derive.js';
+import { deriveBoardChanges, deriveChanges } from '../../src/domain/journal/derive.js';
 import { materialize } from '../../src/domain/journal/materialize.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 
@@ -193,5 +193,39 @@ describe('board change derivation', () => {
     expect(produced.groups).toEqual(wanted.groups);
     expect(produced.connections).toEqual(wanted.connections);
     expect(produced.columns[0]?.position).toEqual({ x: 3, y: 4 });
+  });
+});
+
+describe('board identity derivation', () => {
+  const local = { workflow: BEFORE, name: 'Delivery', projectKeys: null as string[] | null, rank: 'i' };
+
+  it('publishes a board with no published state whole, identity included', () => {
+    const changes = deriveBoardChanges(null, local);
+    expect(changes.map(change => change.kind)).toEqual(['workflow.replaced', 'board.renamed', 'board.scope-changed', 'board.rank-changed']);
+  });
+
+  it('derives a rename alone', () => {
+    expect(deriveBoardChanges({ workflow: BEFORE, name: 'Delivery', projectKeys: null, rank: 'i' }, { ...local, name: 'Renamed' })).toEqual([{ kind: 'board.renamed', name: 'Renamed' }]);
+  });
+
+  it('derives a project scope change alone', () => {
+    expect(deriveBoardChanges({ workflow: BEFORE, name: 'Delivery', projectKeys: null, rank: 'i' }, { ...local, projectKeys: ['app'] })).toEqual([{ kind: 'board.scope-changed', projectKeys: ['app'] }]);
+    expect(deriveBoardChanges({ workflow: BEFORE, name: 'Delivery', projectKeys: ['app'], rank: 'i' }, { ...local, projectKeys: null })).toEqual([{ kind: 'board.scope-changed', projectKeys: null }]);
+  });
+
+  it('derives a position change alone', () => {
+    expect(deriveBoardChanges({ workflow: BEFORE, name: 'Delivery', projectKeys: null, rank: 'i' }, { ...local, rank: 'n' })).toEqual([{ kind: 'board.rank-changed', rank: 'n' }]);
+  });
+
+  it('derives nothing when everything matches', () => {
+    expect(deriveBoardChanges({ workflow: BEFORE, name: 'Delivery', projectKeys: null, rank: 'i' }, local)).toEqual([]);
+  });
+
+  it('mixes workflow and identity changes in one batch', () => {
+    const changes = deriveBoardChanges(
+      { workflow: BEFORE, name: 'Delivery', projectKeys: null, rank: 'i' },
+      { ...local, name: 'Renamed', projectKeys: ['app'], rank: 'n', workflow: BEFORE.replace('label: Plan', 'label: Planning') },
+    );
+    expect(changes.map(change => change.kind)).toEqual(['stage.field-changed', 'board.renamed', 'board.scope-changed', 'board.rank-changed']);
   });
 });

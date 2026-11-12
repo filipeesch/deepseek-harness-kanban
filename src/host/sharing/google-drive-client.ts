@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { KanbanError } from '../../shared/errors.js';
-import { SHARED_MANIFEST_FILE } from '../../domain/sharing/manifest.js';
+import { SHARED_LAYOUT_FILE } from '../../domain/sharing/layout.js';
 
 export interface GoogleDriveFile {
   id: string;
@@ -11,11 +11,6 @@ export interface GoogleDriveFile {
   parents?: string[];
   driveId?: string;
   trashed?: boolean;
-}
-export interface GoogleDriveChange {
-  fileId?: string;
-  removed?: boolean;
-  file?: GoogleDriveFile;
 }
 export interface GoogleDriveClientOptions {
   accessToken: () => Promise<string>;
@@ -120,7 +115,7 @@ export class GoogleDriveClient {
   async findFile(folderId: string, name: string, driveId?: string): Promise<GoogleDriveFile | null> {
     const escaped = name.replace(/'/g, String.fromCharCode(92) + "'");
     const query = "name = '" + escaped + "' and '" + folderId + "' in parents and trashed = false";
-    const response = await this.request('/files?' + new URLSearchParams({ q: query, fields: 'files(id,name,mimeType,headRevisionId,driveId,trashed)', pageSize: '10', ...(driveId === undefined ? {} : { driveId, corpora: 'drive', includeItemsFromAllDrives: 'true', supportsAllDrives: 'true' }) }).toString());
+    const response = await this.request('/drive/v3/files?' + new URLSearchParams({ q: query, fields: 'files(id,name,mimeType,headRevisionId,driveId,trashed)', pageSize: '10', ...(driveId === undefined ? {} : { driveId, corpora: 'drive', includeItemsFromAllDrives: 'true', supportsAllDrives: 'true' }) }).toString());
     const files = (response.files ?? []) as GoogleDriveFile[];
     return files[0] ?? null;
   }
@@ -128,15 +123,14 @@ export class GoogleDriveClient {
   /** Create one file with text content inside a folder. */
   async createFile(folderId: string, name: string, content: string): Promise<GoogleDriveFile> {
     const metadata = { name, parents: [folderId], mimeType: 'text/yaml' };
-    const boundary = 'dsh-kanban-' + Math.random().toString(36).slice(2);
-    const body = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(metadata) + '\r\n--' + boundary + '\r\nContent-Type: text/yaml\r\n\r\n' + content + '\r\n--' + boundary + '--';
-    const response = await this.request('/files?uploadType=multipart&fields=id,name,mimeType,headRevisionId,driveId,trashed', { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + boundary }, body });
-    return response as unknown as GoogleDriveFile;
+    const payload = this.multipart(metadata, content);
+    return await this.request('/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,mimeType,headRevisionId,modifiedTime,parents,driveId,trashed', { method: 'POST', body: payload.body, headers: { 'content-type': payload.contentType } }) as unknown as GoogleDriveFile;
   }
 
-  async findDocument(folderId: string, driveId?: string): Promise<GoogleDriveFile | null> {
+  /** The published layout's stamp file directly inside a folder, or null. */
+  async findLayoutStamp(folderId: string, driveId?: string): Promise<GoogleDriveFile | null> {
     const params = new URLSearchParams({
-      q: "name='" + SHARED_MANIFEST_FILE + "' and '" + folderId.replace(/'/g, "\\'") + "' in parents and trashed=false",
+      q: "name='" + SHARED_LAYOUT_FILE + "' and '" + folderId.replace(/'/g, "\\'") + "' in parents and trashed=false",
       fields: 'files(id,name,mimeType,headRevisionId,modifiedTime,parents,driveId,trashed)', pageSize: '10', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true',
     });
     if (driveId) { params.set('corpora', 'drive'); params.set('driveId', driveId); }
@@ -164,8 +158,9 @@ export class GoogleDriveClient {
     return { body, contentType: 'multipart/related; boundary=' + boundary };
   }
 
-  async createDocument(folderId: string, content: string): Promise<GoogleDriveFile> {
-    const metadata = { name: SHARED_MANIFEST_FILE, mimeType: 'text/yaml', parents: [folderId] };
+  /** Create the layout stamp inside a folder. */
+  async createLayoutStamp(folderId: string, content: string): Promise<GoogleDriveFile> {
+    const metadata = { name: SHARED_LAYOUT_FILE, mimeType: 'text/yaml', parents: [folderId] };
     const params = new URLSearchParams({ uploadType: 'multipart', supportsAllDrives: 'true', fields: 'id,name,mimeType,headRevisionId,modifiedTime,parents,driveId,trashed' });
     const payload = this.multipart(metadata, content);
     return await this.request('/upload/drive/v3/files?' + params.toString(), { method: 'POST', body: payload.body, headers: { 'content-type': payload.contentType } }) as unknown as GoogleDriveFile;
@@ -178,25 +173,16 @@ export class GoogleDriveClient {
     return await this.request('/upload/drive/v3/files/' + encodeURIComponent(fileId) + '?' + params.toString(), { method: 'PATCH', body: payload.body, headers: { 'content-type': payload.contentType } }) as unknown as GoogleDriveFile;
   }
 
-  async getStartPageToken(driveId?: string): Promise<string> {
-    const params = new URLSearchParams({ supportsAllDrives: 'true' });
-    if (driveId) params.set('driveId', driveId);
-    const body = await this.request('/drive/v3/changes/startPageToken?' + params.toString());
-    if (typeof body.startPageToken !== 'string') throw new KanbanError('SHARING_FAILED', 'Google Drive did not return a change cursor.');
-    return body.startPageToken;
+  /** Every file directly inside a folder whose name starts with a prefix. */
+  async listFiles(folderId: string, namePrefix: string, driveId?: string): Promise<GoogleDriveFile[]> {
+    const params = new URLSearchParams({
+      q: "name contains '" + namePrefix.replace(/'/g, "\\'") + "' and '" + folderId.replace(/'/g, "\\'") + "' in parents and trashed=false",
+      fields: 'files(id,name,mimeType,headRevisionId,modifiedTime,parents,driveId,trashed)', pageSize: '1000', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true',
+    });
+    if (driveId) { params.set('corpora', 'drive'); params.set('driveId', driveId); }
+    else params.set('corpora', 'allDrives');
+    const body = await this.request('/drive/v3/files?' + params.toString());
+    return (Array.isArray(body.files) ? body.files : []).filter((value): value is GoogleDriveFile => typeof value === 'object' && value !== null && typeof (value as { id?: unknown }).id === 'string');
   }
 
-  async listChanges(pageToken: string, driveId?: string): Promise<{ changes: GoogleDriveChange[]; nextPageToken?: string; newStartPageToken?: string }> {
-    const params = new URLSearchParams({
-      pageToken, includeItemsFromAllDrives: 'true', supportsAllDrives: 'true', pageSize: '100',
-      fields: 'nextPageToken,newStartPageToken,changes(fileId,removed,file(id,name,mimeType,headRevisionId,modifiedTime,parents,trashed))',
-    });
-    if (driveId) params.set('driveId', driveId);
-    const body = await this.request('/drive/v3/changes?' + params.toString());
-    return {
-      changes: Array.isArray(body.changes) ? body.changes as GoogleDriveChange[] : [],
-      ...(typeof body.nextPageToken === 'string' ? { nextPageToken: body.nextPageToken } : {}),
-      ...(typeof body.newStartPageToken === 'string' ? { newStartPageToken: body.newStartPageToken } : {}),
-    };
-  }
 }

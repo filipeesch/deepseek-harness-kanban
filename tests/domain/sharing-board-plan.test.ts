@@ -1,113 +1,103 @@
 import { describe, expect, it } from 'vitest';
-import type { SharedBoardEntry } from '../../src/domain/sharing/manifest.js';
-import { evaluateBoard, publishedWorkflow, wouldOrphanTasks, type LocalBoardView } from '../../src/domain/sharing/board-plan.js';
-import { appendEvents, compactBoardLog, createBoardLog } from '../../src/domain/journal/log.js';
+import { boardChanges, evaluateBoard, orphanedColumns, type BoardMirrorView } from '../../src/domain/sharing/board-plan.js';
+import type { LocalSharedBoard } from '../../src/domain/sharing/projection.js';
 
 const NL = String.fromCharCode(10);
-const AT = '2026-01-01T00:00:00.000Z';
 const BASE = ['name: Delivery', 'initial_column: backlog', 'columns:', '  - id: backlog', '    key: s1', '    label: Backlog', '  - id: plan', '    key: s2', '    label: Plan', ''].join(NL);
 
-function local(overrides: Partial<LocalBoardView> = {}): LocalBoardView {
-  return { boardId: 'board', name: 'Delivery', workflow: BASE, tasks: 0, taskColumns: [], ...overrides };
+function local(overrides: Partial<LocalSharedBoard> = {}): LocalSharedBoard {
+  return { boardId: 'board', name: 'Delivery', workflow: BASE, projectKeys: null, tasks: 0, taskColumns: [], ...overrides };
 }
-const entry: SharedBoardEntry = { key: 'delivery', name: 'Delivery' };
+function mirror(overrides: Partial<BoardMirrorView> = {}): BoardMirrorView {
+  return { cursor: 0, present: true, workflow: BASE, name: 'Delivery', projectKeys: null, rank: 'i', updates: 0, removal: false, incoming: null, conflict: null, problem: null, ...overrides };
+}
 
 describe('per-board evaluation', () => {
   it('reports a local board that is not published as a draft', () => {
-    const evaluation = evaluateBoard({ entry: undefined, local: local(), log: null, cursor: 0 });
-    expect(evaluation).toMatchObject({ boardId: 'board', state: 'draft', draft: true });
-    expect(evaluation.apply).toEqual({ kind: 'nothing' });
+    expect(evaluateBoard({ local: local(), mirror: null, orphaned: false, rank: 'i' })).toMatchObject({ boardId: 'board', state: 'draft', draft: true });
   });
 
-  it('reports a published board with no log yet as having updates', () => {
-    const evaluation = evaluateBoard({ entry, local: local(), log: null, cursor: 0 });
-    expect(evaluation.state).toBe('updates-available');
+  it('reports a board the team removed as an orphan', () => {
+    expect(evaluateBoard({ local: local(), mirror: null, orphaned: true, rank: null }).state).toBe('orphan');
+  });
+
+  it('reports a bound board whose log is absent as a draft, never as removed', () => {
+    const evaluation = evaluateBoard({ local: local({ key: 'delivery' }), mirror: { ...mirror(), cursor: -1, present: false, workflow: null, name: null, rank: null }, orphaned: false, rank: 'i' });
+    expect(evaluation.state).toBe('draft');
     expect(evaluation.draft).toBe(true);
   });
 
   it('reports an identical board as in sync', () => {
-    const evaluation = evaluateBoard({ entry, local: local(), log: createBoardLog(BASE), cursor: 0 });
+    const evaluation = evaluateBoard({ local: local({ key: 'delivery' }), mirror: mirror(), orphaned: false, rank: 'i' });
     expect(evaluation.state).toBe('in-sync');
     expect(evaluation.draft).toBe(false);
-    expect(evaluation.apply).toEqual({ kind: 'nothing' });
+  });
+
+  it('reports a workflow, name, scope, or position difference as a draft', () => {
+    expect(evaluateBoard({ local: local({ key: 'delivery', workflow: BASE.replace('label: Plan', 'label: Planning') }), mirror: mirror(), orphaned: false, rank: 'i' }).state).toBe('draft');
+    expect(evaluateBoard({ local: local({ key: 'delivery', name: 'Renamed' }), mirror: mirror(), orphaned: false, rank: 'i' }).state).toBe('draft');
+    expect(evaluateBoard({ local: local({ key: 'delivery', projectKeys: ['app'] }), mirror: mirror(), orphaned: false, rank: 'i' }).state).toBe('draft');
+    expect(evaluateBoard({ local: local({ key: 'delivery' }), mirror: mirror(), orphaned: false, rank: 'n' }).state).toBe('draft');
   });
 
   it('reports the events a member has not applied', () => {
-    const log = appendEvents(createBoardLog(BASE), [{ kind: 'workflow.field-changed', field: 'name', value: 'Renamed' }], AT);
-    const evaluation = evaluateBoard({ entry, local: local(), log, cursor: 0 });
+    const evaluation = evaluateBoard({ local: local({ key: 'delivery' }), mirror: mirror({ updates: 2 }), orphaned: false, rank: 'i' });
     expect(evaluation.state).toBe('updates-available');
-    expect(evaluation.apply).toMatchObject({ kind: 'applies', events: 1 });
+    expect(evaluation.updates).toBe(2);
+    expect(evaluation.draft).toBe(false);
   });
 
-  it('reports no update once the member applied the events', () => {
-    const log = appendEvents(createBoardLog(BASE), [{ kind: 'workflow.field-changed', field: 'name', value: 'Renamed' }], AT);
-    const applied = evaluateBoard({ entry, local: local(), log, cursor: 0 });
-    if (applied.apply.kind !== 'applies') throw new Error('expected an application');
-    const after = evaluateBoard({ entry, local: local({ workflow: applied.apply.text }), log, cursor: 1 });
-    expect(after.state).toBe('in-sync');
-    expect(after.draft).toBe(false);
-  });
-
-  it('reports an unapplied compacted snapshot even when its event tail is empty', () => {
-    const changed = appendEvents(createBoardLog(BASE), [{ kind: 'workflow.field-changed', field: 'name', value: 'Compacted update' }], AT);
-    const log = compactBoardLog(changed, 0); expect(log.events).toEqual([]);
-    const evaluation = evaluateBoard({ entry, local: local(), log, cursor: 0 });
-    expect(evaluation.state).toBe('updates-available');
-    expect(evaluation.apply).toMatchObject({ kind: 'applies', events: 1, text: expect.stringContaining('Compacted update') });
-  });
-
-  it('reports a local draft beside team events', () => {
-    const log = appendEvents(createBoardLog(BASE), [{ kind: 'workflow.field-changed', field: 'name', value: 'Renamed' }], AT);
-    const evaluation = evaluateBoard({ entry, local: local({ workflow: BASE.replace('label: Plan', 'label: Planning') }), log, cursor: 0 });
+  it('records local work even while team updates wait', () => {
+    const evaluation = evaluateBoard({ local: local({ key: 'delivery', workflow: BASE.replace('label: Plan', 'label: Planning') }), mirror: mirror({ updates: 2 }), orphaned: false, rank: 'i' });
     expect(evaluation.state).toBe('updates-available');
     expect(evaluation.draft).toBe(true);
   });
 
-  it('reports a divergent local rename as needing a review', () => {
-    const log = appendEvents(createBoardLog(BASE), [{ kind: 'stage.id-changed', key: 's1', from: 'backlog', id: 'inbox' }], AT);
-    const renamed = BASE.replace('initial_column: backlog', 'initial_column: todo').replace('  - id: backlog', '  - id: todo');
-    const evaluation = evaluateBoard({ entry, local: local({ workflow: renamed }), log, cursor: 0 });
-    expect(evaluation.state).toBe('needs-review');
-    expect(evaluation.apply).toMatchObject({ kind: 'conflict', conflict: 'identity' });
+  it('reports an observed removal event as an orphan with its pending update', () => {
+    const evaluation = evaluateBoard({ local: local({ key: 'delivery' }), mirror: mirror({ removal: true, updates: 1 }), orphaned: false, rank: 'i' });
+    expect(evaluation.state).toBe('orphan');
+    expect(evaluation.updates).toBe(1);
   });
 
-  it('previews migrated tasks across sequential team renames without a false orphan refusal', () => {
-    const log = appendEvents(createBoardLog(BASE), [
-      { kind: 'stage.id-changed', key: 's2', from: 'plan', id: 'review' },
-      { kind: 'stage.id-changed', key: 's2', from: 'review', id: 'ready' },
-    ], AT);
-    const evaluation = evaluateBoard({ entry, local: local({ tasks: 1, taskColumns: [{ columnId: 'plan', tasks: 1 }] }), log, cursor: 0 });
-    expect(evaluation.apply).toMatchObject({ kind: 'applies' }); expect(evaluation.refuses).toBe(false);
+  it('reports a needed choice and a required plugin update', () => {
+    expect(evaluateBoard({ local: local({ key: 'delivery' }), mirror: mirror({ conflict: 'identity' }), orphaned: false, rank: 'i' }).state).toBe('needs-review');
+    expect(evaluateBoard({ local: local({ key: 'delivery' }), mirror: mirror({ problem: { code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED', message: 'x' } }), orphaned: false, rank: 'i' }).state).toBe('update-required');
   });
 
-  it('previews named deterministic exits after a destination identity rename', () => {
-    const source = BASE.replace('    label: Backlog', '    label: Backlog\n    deterministic: {language: bash, code: "printf ready", exits: {passed: plan}}');
-    const log = appendEvents(createBoardLog(source), [{ kind: 'stage.id-changed', key: 's2', from: 'plan', id: 'review' }], AT);
-    const evaluation = evaluateBoard({ entry, local: local({ workflow: source, tasks: 1, taskColumns: [{ columnId: 'plan', tasks: 1 }] }), log, cursor: 0 });
-    expect(evaluation.refuses).toBe(false); expect(evaluation.apply).toMatchObject({ kind: 'applies' });
-    if (evaluation.apply.kind !== 'applies') throw new Error('Expected team update.');
-    expect(evaluation.apply.text).toContain('passed: review');
+  it('names the stages that hold tasks and the resulting workflow drops', () => {
+    expect(orphanedColumns(BASE, local({ tasks: 1, taskColumns: [{ columnId: 'plan', tasks: 1 }] }))).toEqual([]);
+    const withoutPlan = BASE.replace('  - id: plan' + NL + '    key: s2' + NL + '    label: Plan' + NL, '');
+    expect(orphanedColumns(withoutPlan, local({ tasks: 1, taskColumns: [{ columnId: 'plan', tasks: 1 }] }))).toEqual(['plan']);
+  });
+});
+
+describe('board change summary', () => {
+  it('is empty for a board that matches what was applied', () => {
+    expect(boardChanges({ local: local({ key: 'delivery' }), mirror: mirror(), rank: 'i' })).toEqual([]);
   });
 
-  it('refuses an application that would leave a task in an undefined stage', () => {
-    const log = appendEvents(createBoardLog(BASE), [{ kind: 'stage.removed', key: 's2' }], AT);
-    const evaluation = evaluateBoard({
-      entry,
-      local: local({ tasks: 1, taskColumns: [{ columnId: 'plan', tasks: 1 }] }),
-      log,
-      cursor: 0,
+  it('describes a rename, a scope change, and a position change', () => {
+    const changes = boardChanges({
+      local: local({ key: 'delivery', name: 'Renamed', projectKeys: ['app'] }),
+      mirror: mirror(),
+      rank: 'n',
     });
-    expect(evaluation.apply).toMatchObject({ kind: 'applies' });
-    expect(evaluation.refuses).toBe(true);
+    expect(changes).toContainEqual({ kind: 'board.renamed', name: 'Renamed' });
+    expect(changes).toContainEqual({ kind: 'board.scope-changed', projects: 1, closed: false });
+    expect(changes).toContainEqual({ kind: 'board.rank-changed' });
   });
 
-  it('describes the published workflow from the log', () => {
-    const log = appendEvents(createBoardLog(BASE), [{ kind: 'workflow.field-changed', field: 'name', value: 'Renamed' }], AT);
-    expect(publishedWorkflow(log)).toContain('name: Renamed');
-    expect(publishedWorkflow(null)).toBeNull();
+  it('describes a workflow edit without carrying the authored text', () => {
+    const changes = boardChanges({
+      local: local({ key: 'delivery', workflow: BASE.replace('label: Plan', 'label: Planning') }),
+      mirror: mirror(),
+      rank: 'i',
+    });
+    expect(changes).toEqual([{ kind: 'stage.field-changed', stage: 's2', field: 'name' }]);
+    expect(JSON.stringify(changes)).not.toContain('Planning');
   });
 
-  it('treats a task whose stage exists as not orphaned', () => {
-    expect(wouldOrphanTasks(BASE, local({ tasks: 1, taskColumns: [{ columnId: 'plan', tasks: 1 }] }))).toBe(false);
+  it('describes the whole workflow for a board with no applied version', () => {
+    expect(boardChanges({ local: local(), mirror: null, rank: 'i' })).toEqual([{ kind: 'board.created' }]);
   });
 });

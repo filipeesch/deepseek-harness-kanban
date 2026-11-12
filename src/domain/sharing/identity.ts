@@ -1,4 +1,4 @@
-import { SHARED_BOARD_KEY_PATTERN } from './manifest.js';
+import { SHARED_BOARD_KEY_PATTERN } from './layout.js';
 
 /** Local board id → published board key. Board ids never cross the sharing boundary. */
 export type BoardBindings = Record<string, string>;

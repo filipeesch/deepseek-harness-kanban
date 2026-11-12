@@ -276,7 +276,6 @@ export type SharingStorage = (typeof SHARING_STORAGES)[number];
 export const TEAM_FILES_DIRECTORY = 'team-files';
 /** Deleted team files move here; no tool can list, read, create, edit, or delete inside it. */
 export const TEAM_FILES_TRASH_DIRECTORY = '.trash';
-export type SharingSyncMode = 'explicit' | 'continuous';
 export type SharingAuthStatus = 'not-connected' | 'authorizing' | 'connected' | 'error' | 'reconnect-required';
 export interface SharingAuthView {
   status: SharingAuthStatus;
@@ -288,17 +287,36 @@ export interface SharingAuthView {
   folders?: Array<{ id: string; name: string }>;
 }
 export interface SharingBlockerView { code: string; message: string; boardId?: string; boardName?: string; columnId?: string; tasks?: number }
+/** One change a publish would send, or one the team sent, in the product's vocabulary. */
+export type SharingChangeSummary =
+  | { kind: 'workflow.replaced' }
+  | { kind: 'workflow.field-changed'; field: string }
+  | { kind: 'workflow.initial-changed'; columnId: string }
+  | { kind: 'stage.created'; id: string; name: string }
+  | { kind: 'stage.field-changed'; stage: string; field: string }
+  | { kind: 'stage.id-changed'; from: string; to: string }
+  | { kind: 'stage.removed'; stage: string }
+  | { kind: 'stage.layout-set'; stage: string }
+  | { kind: 'group.created'; id: string; name: string }
+  | { kind: 'group.field-changed'; id: string; field: string }
+  | { kind: 'group.removed'; id: string }
+  | { kind: 'connection.set'; from: string; to: string }
+  | { kind: 'connection.removed'; from: string; to: string }
+  | { kind: 'board.created' }
+  | { kind: 'board.renamed'; name: string }
+  | { kind: 'board.scope-changed'; projects: number; closed: boolean }
+  | { kind: 'board.rank-changed' }
+  | { kind: 'board.removed' };
 export interface SharingBoardView {
   boardId: string; key?: string; name: string; state: SharingBoardState; bound: boolean;
-  /** The decision still requires review. */
-  pending: boolean;
+  /** The local board differs from the version this installation last applied. */
+  draft: boolean;
   /** Published events this installation has not applied yet. */
   updates?: number;
-  /** Both versions, present for a board that needs a choice. */
+  /** What a publish would send, or what the team changed; the texts only for a review. */
   detail?: {
-    local: string; team: string; localName: string; teamName: string;
-    /** The local project scope; absent means every project, an empty list means closed. */
-    localProjectKeys?: string[]; teamProjectKeys?: string[];
+    changes: SharingChangeSummary[];
+    local?: string; team?: string; localName?: string; teamName?: string;
   };
 }
 export interface HubSharingView {
@@ -308,9 +326,8 @@ export interface HubSharingView {
   /** Whether this storage serves the Hub's team files, derived from its descriptor. */
   supportsFiles: boolean;
   address: string;
-  /** Kept for Git callers; equal to the repository address. */
-  repository?: string;
-  syncMode: SharingSyncMode;
+  /** Something the connection reports without failing, such as an abandoned older layout. */
+  notice?: { code: string; message: string };
   /** Drive authorization state; absent for storage that needs no account. */
   authorization?: SharingAuthStatus;
   intervalMinutes: number;
@@ -318,18 +335,18 @@ export interface HubSharingView {
   lastSyncedAt?: string;
   error?: Problem;
   drafts: number;
-  pending: number;
   updates: number;
   conflicts: number;
-  orderChanged: boolean;
   syncing: boolean;
   boards: SharingBoardView[];
   incoming: Array<{ key: string; name: string }>;
+  /** Board removals this installation still owes the team a removal event for. */
+  pendingRemovals: Array<{ key: string; name: string }>;
+  /** The teams' boards read at connection time, before the user chooses. */
+  previewBoards?: Array<{ key: string; name: string }>;
   removed: Array<{ boardId: string; key: string; name: string }>;
   blockers: SharingBlockerView[];
   preview?: { publishedBoards: number; localBoards: number };
-  /** Board a team update would remove locally because it holds no local work. */
-  removing: Array<{ boardId: string; name: string }>;
 }
 /** Actions that operate a Hub's team storage. They are not board commands. */
 export type SharingCommand =
@@ -341,7 +358,7 @@ export type SharingCommand =
   | { type: 'sharing.updateBoard'; hubId: string; boardId: string }
   | { type: 'sharing.publishBoard'; hubId: string; boardId: string }
   | { type: 'sharing.resolve'; hubId: string; boardId: string; choice: 'local' | 'team' }
-  | { type: 'sharing.publish'; hubId: string }
+  | { type: 'sharing.publishAll'; hubId: string }
   | { type: 'sharing.setInterval'; hubId: string; intervalMinutes: number }
   | { type: 'sharing.disconnect'; hubId: string }
   | { type: 'sharing.restore'; hubId: string; boardId: string }

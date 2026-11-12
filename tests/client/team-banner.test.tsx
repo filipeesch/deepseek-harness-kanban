@@ -12,7 +12,7 @@ function view(overrides: Partial<HubSharingView> = {}): HubSharingView {
   return {
     status: 'published', provider: 'local-folder', providerLabel: 'Local folder', supportsFiles: true, address: '/team',
     syncMode: 'explicit', intervalMinutes: 5, drafts: 0, pending: 0, updates: 2, conflicts: 0, orderChanged: false, syncing: false,
-    boards: [], incoming: [], removed: [], blockers: [], ...overrides,
+    boards: [], incoming: [], pendingRemovals: [], removed: [], blockers: [], ...overrides,
   } as HubSharingView;
 }
 

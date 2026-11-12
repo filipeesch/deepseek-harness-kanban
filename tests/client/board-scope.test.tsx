@@ -149,9 +149,10 @@ describe('published project adoption', () => {
 
 describe('outdated team configuration', () => {
   const sharing: HubSharingView = {
-    status: 'unavailable', provider: 'git', providerLabel: 'Git', supportsFiles: true, address: 'team/repo', repository: 'team/repo',
-    syncMode: 'explicit', intervalMinutes: 0, drafts: 0, pending: 0, updates: 0, conflicts: 0, orderChanged: false,
-    syncing: false, boards: [], incoming: [], removed: [], blockers: [], removing: [],
+    status: 'unavailable', provider: 'git', providerLabel: 'Git', supportsFiles: true, address: 'team/repo',
+    intervalMinutes: 0, drafts: 0, updates: 0, conflicts: 0,
+    syncing: false, boards: [], incoming: [], pendingRemovals: [], removed: [],
+    blockers: [{ code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED', message: 'The team configuration was written by a newer plugin version. Update the plugin to read or publish it.' }],
     error: { code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED', message: 'The team configuration was written by a newer plugin version. Update the plugin to read or publish it.' },
   };
 
@@ -162,7 +163,7 @@ describe('outdated team configuration', () => {
   });
 
   it('clears the warning for a supported document', () => {
-    render(<TeamSettings hub={fixture().state.hubs[0]!} sharing={{ ...sharing, status: 'published', error: undefined }} />);
+    render(<TeamSettings hub={fixture().state.hubs[0]!} sharing={{ ...sharing, status: 'published', error: undefined, blockers: [] }} />);
     expect(screen.queryByText('Update the plugin')).toBeNull();
   });
 
@@ -175,14 +176,14 @@ describe('outdated team configuration', () => {
 
 describe('team files in Team Settings', () => {
   const view: HubSharingView = {
-    status: 'published', provider: 'git', providerLabel: 'Git', supportsFiles: true, address: 'team/repo', repository: 'team/repo',
-    syncMode: 'explicit', intervalMinutes: 5, drafts: 0, pending: 0, updates: 0, conflicts: 0, orderChanged: false,
-    syncing: false, boards: [], incoming: [], removed: [], blockers: [], removing: [],
+    status: 'published', provider: 'git', providerLabel: 'Git', supportsFiles: true, address: 'team/repo',
+    intervalMinutes: 5, drafts: 0, updates: 0, conflicts: 0,
+    syncing: false, boards: [], incoming: [], pendingRemovals: [], removed: [], blockers: [],
   };
 
   it('names the team files directory for a storage that serves it', () => {
     render(<TeamSettings hub={fixture().state.hubs[0]!} sharing={view} />);
-    expect(screen.getByText(/documents the agent tools/)).toBeTruthy();
+    expect(screen.getByText(/Team documents live in/)).toBeTruthy();
     expect(screen.getAllByText(/team-files\//).length).toBeGreaterThan(0);
   });
 
@@ -193,6 +194,6 @@ describe('team files in Team Settings', () => {
 
   it('says nothing about team files while the Hub has no storage', () => {
     render(<TeamSettings hub={fixture().state.hubs[0]!} sharing={undefined} />);
-    expect(screen.queryByText(/Team files/)).toBeNull();
+    expect(screen.queryByText(/Team documents/)).toBeNull();
   });
 });

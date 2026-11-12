@@ -1,23 +1,22 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { stringify as stringifyYaml } from 'yaml';
 import { KanbanError } from '../../shared/errors.js';
 import {
-  boardLogPath, readSharedConfiguration, serializeSharedManifest, sharedManifestToken,
-  SHARED_MANIFEST_FILE, type SharedHubManifest,
-} from '../../domain/sharing/manifest.js';
-import { appendEvents, createBoardLog, headToken, readBoardLogText, type BoardLogFile } from '../../domain/journal/log.js';
+  boardLogPath, readLayoutStamp, serializeLayoutStamp,
+  SHARED_BOARD_DIRECTORY, SHARED_BOARD_EXTENSION, SHARED_BOARD_KEY_PATTERN, SHARED_LAYOUT_FILE, SHARED_LAYOUT_VERSION,
+} from '../../domain/sharing/layout.js';
+import { appendEvents, decodeBoardLog, encodeBoardLog, headToken, type BoardLog } from '../../domain/journal/log.js';
 import type { BoardChange } from '../../domain/journal/event.js';
 import { GitClone } from './git-clone.js';
-import type { AppendOptions, BoardLogSnapshot, ManifestSnapshot, SharedLayoutStore } from './ports.js';
+import type { AppendOptions, BoardLogSnapshot, LayoutStampSnapshot, SharedLayoutStore } from './ports.js';
 import type { SharingCommandRunner } from './command-runner.js';
 
 /**
- * The published layout in a Git repository: the manifest and one board log per
- * board, committed and pushed together with the team files' clone.
+ * The published layout in a Git repository: the layout stamp beside one board log per
+ * board, committed and pushed through the team files' clone.
  *
- * A commit is the optimistic token for both halves, so a stale publish is refused
- * by Git rather than by a comparison the plugin could get wrong.
+ * A commit is the optimistic token, so a stale publish is refused by Git rather than by
+ * a comparison the plugin could get wrong.
  */
 export interface GitLayoutStoreOptions {
   readonly root: string;
@@ -51,31 +50,42 @@ export class GitLayoutStore implements SharedLayoutStore {
     return this.clone.remoteHead();
   }
 
-  async readManifest(_signal?: AbortSignal, cached?: ManifestSnapshot | null): Promise<ManifestSnapshot | null> {
+  async readStamp(): Promise<LayoutStampSnapshot | null> {
     const commit = await this.commit();
     if (commit === null) return null;
     // The check is the only thing that refreshes the clone, so it also brings the
     // checked-out team files to the fetched head when nothing local is modified.
     if (await this.clone.isClean()) await this.clone.resetHard(commit);
-    const text = await this.clone.showFile(commit, SHARED_MANIFEST_FILE);
+    const text = await this.clone.showFile(commit, SHARED_LAYOUT_FILE);
     if (text === null) return null;
-    const read = readSharedConfiguration(text);
-    const token = sharedManifestToken(read.manifest);
-    if (cached !== null && cached !== undefined && cached.token === token) return cached;
-    return { token, manifest: read.manifest, legacyWorkflows: read.legacyWorkflows };
+    return { version: readLayoutStamp(text).version };
   }
 
-  async writeManifest(manifest: SharedHubManifest, options: { expectedToken: string | null; message: string }, signal?: AbortSignal): Promise<{ token: string }> {
-    signal?.throwIfAborted();
+  async writeStamp(version: number, options: { expectedVersion: number | null }): Promise<LayoutStampSnapshot> {
+    if (version !== SHARED_LAYOUT_VERSION) throw new KanbanError('SHARING_INVALID_DOCUMENT', 'This installation writes a single layout version.');
     const commit = await this.commit();
-    const text = commit === null ? null : await this.clone.showFile(commit, SHARED_MANIFEST_FILE);
-    const current = text === null ? null : sharedManifestToken(readSharedConfiguration(text).manifest);
-    if (current !== options.expectedToken) {
-      throw new KanbanError('SHARING_STALE_TOKEN', 'The team configuration changed since it was read. Get the team updates before publishing.', { expected: options.expectedToken ?? 'none', actual: current ?? 'none' });
+    const text = commit === null ? null : await this.clone.showFile(commit, SHARED_LAYOUT_FILE);
+    const current = text === null ? null : readLayoutStamp(text).version;
+    if (current !== options.expectedVersion) {
+      throw new KanbanError('SHARING_STALE_TOKEN', 'The team configuration changed since it was read. Get the team updates before publishing.', { expected: options.expectedVersion ?? 'none', actual: current ?? 'none' });
     }
-    const token = sharedManifestToken(manifest);
-    await this.writeAndPush([SHARED_MANIFEST_FILE], { [SHARED_MANIFEST_FILE]: serializeSharedManifest(manifest) }, commit, options.message);
-    return { token };
+    await this.writeAndPush([SHARED_LAYOUT_FILE], { [SHARED_LAYOUT_FILE]: serializeLayoutStamp() }, commit, 'Update published Kanban layout');
+    return { version };
+  }
+
+  async listLogs(): Promise<readonly { key: string; probe: string }[]> {
+    const commit = await this.commit();
+    if (commit === null) return [];
+    const names = await this.clone.listDirectory(commit, SHARED_BOARD_DIRECTORY);
+    const listed: Array<{ key: string; probe: string }> = [];
+    for (const name of names) {
+      if (!name.endsWith(SHARED_BOARD_EXTENSION)) continue;
+      const key = name.slice(0, -SHARED_BOARD_EXTENSION.length);
+      if (!SHARED_BOARD_KEY_PATTERN.test(key)) continue;
+      // One commit covers the whole tree, so the commit is the probe for every log.
+      listed.push({ key, probe: commit });
+    }
+    return listed;
   }
 
   async probe(key: string): Promise<string | null> {
@@ -84,56 +94,47 @@ export class GitLayoutStore implements SharedLayoutStore {
     return (await this.clone.hasFile(commit, boardLogPath(key))) ? commit : null;
   }
 
-  async readLog(key: string, _signal?: AbortSignal, cached?: BoardLogSnapshot | null): Promise<BoardLogSnapshot | null> {
+  async readLog(key: string): Promise<BoardLogSnapshot | null> {
     const commit = await this.commit();
     if (commit === null) return null;
     const text = await this.clone.showFile(commit, boardLogPath(key));
     if (text === null) return null;
-    const log = this.parse(text, key);
-    const head = headToken(log);
-    if (cached !== null && cached !== undefined && cached.head === head) return cached;
-    return { probe: commit, head, log };
+    const log = parseLog(text, key);
+    return { probe: commit, head: headToken(log), log };
   }
 
-  async createLog(key: string, text: string): Promise<BoardLogSnapshot> {
+  async createLog(key: string, log: BoardLog): Promise<BoardLogSnapshot> {
     const commit = await this.commit();
     if (commit !== null && await this.clone.hasFile(commit, boardLogPath(key))) {
       throw new KanbanError('SHARING_STALE_TOKEN', 'The board already has a published log.', { key });
     }
-    const log = createBoardLog(text);
-    await this.writeAndPush([boardLogPath(key)], { [boardLogPath(key)]: this.serialize(log) }, commit, 'Publish Kanban board');
-    return { probe: '', head: headToken(log), log };
+    const head = await this.writeAndPush([boardLogPath(key)], { [boardLogPath(key)]: encodeBoardLog(log) }, commit, 'Publish Kanban board');
+    return { probe: head, head: headToken(log), log };
   }
 
   async appendChanges(key: string, changes: readonly BoardChange[], options: AppendOptions): Promise<BoardLogSnapshot> {
     options.signal?.throwIfAborted();
-    const current = await this.readLog(key, options.signal);
+    const current = await this.readLog(key);
     if (current === null) throw new KanbanError('SHARING_BOARD_LOG_MISSING', 'The board has no published log.', { key });
     if (current.head !== options.expectedHead) {
       throw new KanbanError('SHARING_STALE_TOKEN', 'The board changed since it was read. Get the team updates before publishing.', { key, expected: options.expectedHead ?? 'none', actual: current.head });
     }
     const log = appendEvents(current.log, changes, options.at);
     const commit = await this.commit();
-    await this.writeAndPush([boardLogPath(key)], { [boardLogPath(key)]: this.serialize(log) }, commit, options.message);
-    return { probe: '', head: headToken(log), log };
-  }
-
-  async removeLog(key: string): Promise<void> {
-    const relative = boardLogPath(key);
-    await this.clone.ensure();
-    const commit = await this.commit();
-    if (commit === null) return;
-    if (!await this.clone.hasFile(commit, relative)) return;
-    const branch = await this.clone.branchName();
-    if (await this.clone.isClean()) await this.clone.resetHard(commit);
-    await this.clone.require(['rm', '--quiet', '--', relative]);
-    // `git rm` staged exactly this deletion, so the commit takes the index as it is.
-    const committed = await this.clone.commitStaged('Remove Kanban board');
-    if (committed) await this.clone.push(branch);
+    // The fetch above may have moved the branch after the head was read. Re-read the log
+    // at the exact commit the push will extend, so a teammate's append is never replaced.
+    if (commit !== null) {
+      const fresh = await this.clone.showFile(commit, boardLogPath(key));
+      if (fresh !== null && headToken(parseLog(fresh, key)) !== current.head) {
+        throw new KanbanError('SHARING_STALE_TOKEN', 'The board changed since it was read. Get the team updates before publishing.', { key });
+      }
+    }
+    const head = await this.writeAndPush([boardLogPath(key)], { [boardLogPath(key)]: encodeBoardLog(log) }, commit, options.message);
+    return { probe: head, head: headToken(log), log };
   }
 
   /** Write the given paths into the clone at the fetched commit, then commit and push them. */
-  private async writeAndPush(paths: readonly string[], files: Readonly<Record<string, string>>, commit: string | null, message: string): Promise<void> {
+  private async writeAndPush(paths: readonly string[], files: Readonly<Record<string, string>>, commit: string | null, message: string): Promise<string> {
     const branch = await this.clone.branchName();
     if (commit !== null && await this.clone.isClean()) await this.clone.resetHard(commit);
     for (const relative of paths) {
@@ -143,20 +144,18 @@ export class GitLayoutStore implements SharedLayoutStore {
     }
     const committed = await this.clone.commitPaths(paths, message);
     if (committed) await this.clone.push(branch);
+    const head = await this.clone.currentHead() ?? await this.clone.remoteHead() ?? commit;
+    if (head === null) throw new KanbanError('SHARING_FAILED', 'The published board could not be committed.');
+    return head;
   }
+}
 
-  private parse(text: string, key: string): BoardLogFile {
-    const decoded = readBoardLogText(text);
-    if (!decoded.ok) {
-      if (decoded.reason === 'unsupported-version') throw new KanbanError('SHARING_DOCUMENT_VERSION_UNSUPPORTED', 'The team configuration was written by a newer plugin version. Update the plugin to read or publish it.', { key, version: decoded.version });
-      if (decoded.reason === 'unknown-kind') throw new KanbanError('SHARING_DOCUMENT_VERSION_UNSUPPORTED', 'The team configuration carries a change this plugin does not know. Update the plugin to read or publish it.', { key, kind: decoded.kind });
-      throw new KanbanError('SHARING_INVALID_DOCUMENT', 'The board log is invalid.', { key, message: decoded.message });
-    }
-    return decoded.log;
+function parseLog(text: string, key: string): BoardLog {
+  const decoded = decodeBoardLog(text);
+  if (!decoded.ok) {
+    if (decoded.reason === 'unsupported-version') throw new KanbanError('SHARING_DOCUMENT_VERSION_UNSUPPORTED', 'The team configuration was written by a newer plugin version. Update the plugin to read or publish it.', { key, version: decoded.version });
+    if (decoded.reason === 'unknown-kind') throw new KanbanError('SHARING_DOCUMENT_VERSION_UNSUPPORTED', 'The team configuration carries a change this plugin does not know. Update the plugin to read or publish it.', { key, kind: decoded.kind });
+    throw new KanbanError('SHARING_INVALID_DOCUMENT', 'The board log is invalid.', { key, message: decoded.message });
   }
-
-  /** The log is stored as YAML, like the manifest, so a team can read it. */
-  private serialize(log: BoardLogFile): string {
-    return stringifyYaml({ version: log.version, snapshot: { seq: log.snapshot.seq, text: log.snapshot.text }, events: log.events }, { lineWidth: 0 });
-  }
+  return decoded.log;
 }

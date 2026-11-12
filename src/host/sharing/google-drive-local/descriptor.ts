@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { DriveDiscoveryView, DriveLocationView } from '../../../shared/types.js';
 import { TEAM_FILES_DIRECTORY } from '../../../shared/types.js';
 import { KanbanError, invariant } from '../../../shared/errors.js';
-import { GoogleDriveLocalLayoutStore, normalizeDirectoryLayoutState } from './layout-store.js';
+import { GoogleDriveLocalLayoutStore } from './layout-store.js';
 import { GuardedTeamFileStore } from '../guarded-team-file-store.js';
 import { DirectoryTeamFileStore, TeamFileDirectory } from '../team-file-directory.js';
 import {
@@ -70,7 +70,6 @@ export function createGoogleDriveLocalProviderDescriptor(options: GoogleDriveLoc
   return {
     id: 'google-drive-local',
     label: 'Google Drive Local',
-    syncMode: 'explicit',
     defaultIntervalMinutes: 1,
     requiresAuthorization: false,
     normalizeSettings(settings) {
@@ -139,7 +138,7 @@ export function createGoogleDriveLocalProviderDescriptor(options: GoogleDriveLoc
       const guard = createDriveMountGuard(guardOptions({ directory, mountRoot, discovery: options.discovery, platform }));
       return new GuardedTeamFileStore(guard, new DirectoryTeamFileStore(new TeamFileDirectory(path.join(directory, TEAM_FILES_DIRECTORY))));
     },
-    normalizeState(state: ProviderState): ProviderState { return normalizeDirectoryLayoutState(state); },
+    normalizeState(_state: ProviderState): ProviderState { return {}; },
   };
 }
 
