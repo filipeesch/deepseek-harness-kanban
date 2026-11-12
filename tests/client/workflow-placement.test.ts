@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Workflow } from '../../src/shared/types.js';
-import { computeAutoLayout, freezeAutoLayout, graphKey } from '../../src/client/workflow-view/auto-layout.js';
+import { computeAutoLayout, freezeAutoLayout, graphKey } from '../../src/domain/diagram/auto-layout.js';
 import { mergePlacements, samePlacements } from '../../src/client/workflow-view/placement-merge.js';
 import { transitions } from '../support/transition-rules.js';
 

@@ -36,6 +36,32 @@ describe('task flow record', () => {
     expect(recorded(task)).toHaveLength(1);
   });
 
+  it('records how a stage entry happened, and none when no origin is known', () => {
+    const task = target();
+    recordStageEntry(task, 'backlog', 'plan', FIRST, 'manual');
+    recordStageEntry(task, 'plan', 'backlog', SECOND, 'agent');
+    recordStageEntry(task, 'backlog', 'plan', THIRD, 'auto');
+    recordStageEntry(task, 'plan', 'backlog', THIRD, 'script:passed');
+    recordStageEntry(task, 'backlog', 'plan', THIRD, 'error:error');
+    recordStageEntry(task, 'plan', 'backlog', THIRD);
+    expect(recorded(task)).toEqual([
+      { kind: 'stage', at: FIRST, fromColumnId: 'backlog', columnId: 'plan', origin: 'manual' },
+      { kind: 'stage', at: SECOND, fromColumnId: 'plan', columnId: 'backlog', origin: 'agent' },
+      { kind: 'stage', at: THIRD, fromColumnId: 'backlog', columnId: 'plan', origin: 'auto' },
+      { kind: 'stage', at: THIRD, fromColumnId: 'plan', columnId: 'backlog', origin: 'script:passed' },
+      { kind: 'stage', at: THIRD, fromColumnId: 'backlog', columnId: 'plan', origin: 'error:error' },
+      { kind: 'stage', at: THIRD, fromColumnId: 'plan', columnId: 'backlog' },
+    ]);
+    expect(taskHistorySchema.safeParse(recorded(task)).success).toBe(true);
+  });
+
+  it('decodes a stage entry stored before origins without adding one', () => {
+    const stored = { kind: 'stage', at: FIRST, fromColumnId: 'backlog', columnId: 'plan' };
+    const parsed = taskHistorySchema.safeParse([stored]);
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data[0]).toEqual(stored);
+  });
+
   it('records every auto mode change with the reason that produced it', () => {
     const task = target();
     recordAutoModeChange(task, { action: 'enabled' }, FIRST);
@@ -119,6 +145,15 @@ describe('task flow record validation', () => {
   it('accepts an entry whose identifiers match after a rename reused them', () => {
     expect(taskHistorySchema.safeParse([{ kind: 'stage', at: FIRST, fromColumnId: 'plan', columnId: 'plan' }]).success).toBe(true);
     expect(taskHistorySchema.safeParse([{ kind: 'intent', at: FIRST, fromColumnId: 'plan', columnId: 'plan' }]).success).toBe(true);
+  });
+
+  it('accepts exactly the stage entry origins the record stores', () => {
+    for (const origin of ['manual', 'agent', 'auto', 'script:passed', 'error:error', 'script:exit-1']) {
+      expect(taskHistorySchema.safeParse([{ kind: 'stage', at: FIRST, fromColumnId: 'backlog', columnId: 'plan', origin }]).success).toBe(true);
+    }
+    for (const origin of ['operator', 'script:', 'script:a b', 'script:a:b', 'error', 'manual:x', 'AUTO', '']) {
+      expect(taskHistorySchema.safeParse([{ kind: 'stage', at: FIRST, fromColumnId: 'backlog', columnId: 'plan', origin }]).success).toBe(false);
+    }
   });
 
   it('rejects an unknown kind', () => {

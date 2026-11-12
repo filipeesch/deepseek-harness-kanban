@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anchorPoint, automaticSourcePoint, fanOutOffset, nearestAnchor, returningDeparturePoint } from '../../src/client/workflow-view/routing/ports.js';
+import { anchorPoint, automaticSourcePoint, fanOutOffset, nearestAnchor, returningDeparturePoint } from '../../src/domain/diagram/ports.js';
 
 const rect = { x: 100, y: 200, width: 200, height: 100 };
 

@@ -11,6 +11,12 @@ export interface CaptureRequest {
   exits: Record<string, DeterministicTarget>;
   signal?: AbortSignal;
 }
+/** What one capture definition resolves to, before any bytes are stored. */
+export interface CapturePlan {
+  readonly content: Omit<DeterministicCapture, 'sourceRef' | 'fingerprint'>;
+  readonly code: string;
+  readonly fingerprint: string;
+}
 export interface DeterministicPolicyPort {
   directory(path: string, signal?: AbortSignal): Promise<string>;
   source(path: string, directory: string, signal?: AbortSignal): Promise<{ path: string; code: string }>;
@@ -42,6 +48,8 @@ export interface ExecuteRequest {
 }
 export interface DeterministicRuntime {
   capture(request: CaptureRequest): Promise<DeterministicCapture>;
+  /** Resolve one definition without storing it, so a report can name its fingerprint. */
+  plan(request: CaptureRequest): Promise<CapturePlan>;
   loadCapture(capture: DeterministicCapture): Promise<string>;
   collectSources(referencedSourceRefs: readonly string[]): Promise<void>;
   releaseSource?(sourceRef: string): void;

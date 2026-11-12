@@ -4,8 +4,8 @@ import { sameAnchor, sameConnectionLayout } from '../../../domain/connection-anc
 import { beginConnectionDrag, type KeyboardEventsPort } from '../gestures/connection-drag.js';
 import { noSnap, segmentOffset, type SnapPolicy } from '../gestures/grid-snap.js';
 import type { GestureHandle, PointerEventsPort } from '../gestures/stage-drag.js';
-import type { ConnectionShape, DiagramPoint } from '../routing/orthogonal.js';
-import { anchorPoint, nearestAnchor } from '../routing/ports.js';
+import type { ConnectionShape, DiagramPoint } from '../../../domain/diagram/orthogonal.js';
+import { anchorPoint, nearestAnchor } from '../../../domain/diagram/ports.js';
 import { creationCandidateFor, creationPreviewRoute } from '../creation-preview.js';
 import { authoredOffsetAt, baselineCoordinateOf, connectionLayoutOf, connectionRouteFor, withOffset, type ConnectionLayoutOverride, type LiveStageRect } from '../edge-model.js';
 import { candidateStageFor, decideEndDrop } from '../connection-target.js';

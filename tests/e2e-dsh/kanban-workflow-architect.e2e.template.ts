@@ -67,8 +67,19 @@ it('mounts the installed architect preset, scopes its persona and skill, and reu
   expect(modules).toContain('@deepseek-ai/dsh-skill-filesystem');
   expect(modules).not.toContain('dsh-kanban');
 
+  // The tool surface a step is actually admitted to, which is where a
+  // step-time activation condition applies; inspecting registered definitions
+  // would list every global tool regardless of the calling agent.
+  const admitted = async (agent: typeof architect) => {
+    const set = await scaffold.ctx.tools.resolve({ agent, modelSelection: { provider: 'test', model: 'test' }, signal: new AbortController().signal });
+    const names = [...set.view(agent).keys()];
+    set.dispose();
+    return names;
+  };
   const architectTools = scaffold.ctx.tools.schemas(architect).map(tool => tool.name);
   const standardTools = scaffold.ctx.tools.schemas(standard).map(tool => tool.name);
+  const architectAdmitted = await admitted(architect);
+  const standardAdmitted = await admitted(standard);
   expect(new Set(architectTools).size).toBe(architectTools.length);
   expect(architectTools).toEqual(expect.arrayContaining([
     'read', 'write', 'edit', 'glob', 'grep', 'job_output', 'job_kill',
@@ -77,6 +88,12 @@ it('mounts the installed architect preset, scopes its persona and skill, and reu
     'skill', 'cordis_inspect_list', 'cordis_inspect_query',
     'decision_request', 'list_hubs', 'list_boards', 'get_board_summary', 'create_board', 'edit_board_yaml',
   ]));
+  // The workflow design tools are registered globally but admitted only to the
+  // Architect; another agent shares the registry without ever being offered them.
+  const designTools = ['get_board_yaml', 'get_stage', 'set_stage_prompt', 'set_stage_routes', 'set_layout', 'add_stage', 'remove_stage',
+    'get_route_stats', 'render_workflow_diagram', 'layout_metrics', 'list_board_revisions', 'diff_board_revisions', 'revert_board'];
+  expect(architectAdmitted).toEqual(expect.arrayContaining(designTools));
+  for (const name of designTools) expect(standardAdmitted).not.toContain(name);
   expect(architectTools).toContain(process.platform === 'win32' ? 'pwsh' : 'bash');
   // Plan mode intentionally does not compete with the Architect's approval interview.
   expect(architectTools).not.toContain('exit_plan_mode');

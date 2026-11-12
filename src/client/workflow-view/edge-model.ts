@@ -1,6 +1,6 @@
 import type { ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset } from '../../shared/types.js';
-import { connectionRoute, type ConnectionRoute, type RouteLine } from './routing/route.js';
-import type { ConnectionShape, DiagramRect } from './routing/orthogonal.js';
+import { connectionRoute, type ConnectionRoute, type RouteLine } from '../../domain/diagram/route.js';
+import type { ConnectionShape, DiagramRect } from '../../domain/diagram/orthogonal.js';
 
 /** One stage as the diagram currently shows it, before the change is stored. */
 export interface LiveStageRect {

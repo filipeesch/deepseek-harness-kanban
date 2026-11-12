@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { authoredOffsetAt, baselineCoordinateOf, edgeModel, withOffset, type LiveConnectionDescriptor, type LiveStageRect } from '../../src/client/workflow-view/edge-model.js';
-import { connectionRoute } from '../../src/client/workflow-view/routing/route.js';
-import { buildWorkflowScene } from '../../src/client/workflow-view/scene.js';
+import { connectionRoute } from '../../src/domain/diagram/route.js';
+import { buildWorkflowScene } from '../../src/domain/diagram/scene.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import type { ConnectionLayout } from '../../src/shared/types.js';
 

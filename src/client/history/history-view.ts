@@ -1,4 +1,4 @@
-import type { TaskHistoryEntry } from '../../shared/task-history.js';
+import type { StageEntryOrigin, TaskHistoryEntry } from '../../shared/task-history.js';
 import type { Column } from '../../shared/types.js';
 
 /**
@@ -92,6 +92,18 @@ function transition(fromColumnId: string, columnId: string, columns: readonly Pi
   return stageName(columns, fromColumnId) + ' \u2192 ' + stageName(columns, columnId);
 }
 
+/** How a stage entry happened; a named exit carries the exit that routed the card. */
+function stageOrigin(origin: StageEntryOrigin | undefined): string {
+  // The copy names what produced the move, not the record's field, so a reader
+  // never confuses a missing trigger with a missing stage.
+  if (origin === undefined) return 'Move trigger not recorded';
+  if (origin === 'manual') return 'Moved by an operator';
+  if (origin === 'agent') return 'Moved by an agent-declared transition';
+  if (origin === 'auto') return 'Moved by an automatic advance';
+  if (origin.startsWith('error:')) return 'Moved by the reserved error route';
+  return 'Moved by script exit ' + origin.slice('script:'.length);
+}
+
 function autoModeRow(entry: Extract<TaskHistoryEntry, { kind: 'auto-mode' }>): { event: string; detail: string; tone: HistoryTone } {
   switch (entry.action) {
     case 'enabled': return { event: 'Auto mode enabled', detail: 'Automatic advance on', tone: 'neutral' };
@@ -122,7 +134,7 @@ function present(entry: TaskHistoryEntry, columns: readonly Pick<Column, 'id' | 
     case 'deterministic-execution': return { event: 'Script ' + entry.outcome, detail: stageName(columns, entry.columnId) + ' · Execution ' + entry.executionId + (entry.exit ? ' · Exit ' + entry.exit : '') + (entry.parameters && Object.keys(entry.parameters).length > 0 ? ' · Parameters ' + Object.entries(entry.parameters).map(([name, value]) => name + '=' + value).join(', ').slice(0, 4096) : '') + (entry.message ? ' — ' + entry.message : '') + (entry.error ? ' — ' + entry.error.message : ''), tone: entry.outcome === 'failed' ? 'warning' : 'neutral' };
     case 'deterministic-handoff': return { event: 'Script handoff ' + entry.outcome, detail: transition(entry.fromColumnId, entry.columnId, columns) + ' · Execution ' + entry.executionId + ' · Delivery ' + entry.deliveryId + ' · Exit ' + entry.exit + ' — ' + entry.message + (entry.error ? ' — ' + entry.error.message : ''), tone: entry.outcome === 'failed' ? 'warning' : 'neutral' };
     case 'created': return { event: 'Created', detail: stageName(columns, entry.columnId), tone: 'accent' };
-    case 'stage': return { event: 'Stage changed', detail: transition(entry.fromColumnId, entry.columnId, columns), tone: 'accent' };
+    case 'stage': return { event: 'Stage changed', detail: transition(entry.fromColumnId, entry.columnId, columns) + ' · ' + stageOrigin(entry.origin), tone: 'accent' };
     case 'intent': return { event: 'Next stage recorded', detail: transition(entry.fromColumnId, entry.columnId, columns), tone: 'neutral' };
     case 'auto-mode': return autoModeRow(entry);
     case 'worktree': return worktreeRow(entry);

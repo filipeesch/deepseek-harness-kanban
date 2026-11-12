@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { connectionRoute } from '../../src/client/workflow-view/routing/route.js';
+import { connectionRoute } from '../../src/domain/diagram/route.js';
 import { connectionRouteFor, type LiveConnectionDescriptor, type LiveStageRect } from '../../src/client/workflow-view/edge-model.js';
-import type { DiagramPoint, DiagramRect } from '../../src/client/workflow-view/routing/orthogonal.js';
+import type { DiagramPoint, DiagramRect } from '../../src/domain/diagram/orthogonal.js';
 
 /** True when any segment of the polyline runs through the rectangle's interior. */
 function crossesInterior(points: readonly DiagramPoint[], rect: DiagramRect): boolean {

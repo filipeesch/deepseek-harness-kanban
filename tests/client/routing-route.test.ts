@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { connectionRoute, type ConnectionRouteInput } from '../../src/client/workflow-view/routing/route.js';
-import { anchorPoint } from '../../src/client/workflow-view/routing/ports.js';
+import { connectionRoute, type ConnectionRouteInput } from '../../src/domain/diagram/route.js';
+import { anchorPoint } from '../../src/domain/diagram/ports.js';
 
 const from = { x: 0, y: 0, width: 200, height: 100 };
 const to = { x: 400, y: 40, width: 200, height: 100 };

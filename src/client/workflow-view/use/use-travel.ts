@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ConnectionLayout, StagePosition, StageSize, Task, Workflow } from '../../../shared/types.js';
 import { prefersReducedMotion } from '../../card-motion/preference.js';
-import { buildWorkflowScene } from '../scene.js';
+import { buildWorkflowScene } from '../../../domain/diagram/scene.js';
 import { planTravel } from '../travel.js';
 import type { TravelMoveView } from '../travel-layer.js';
 

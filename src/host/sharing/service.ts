@@ -11,6 +11,7 @@ import { stageRenames } from '../../domain/journal/migrate.js';
 import { materializeIdentities } from '../../domain/journal/materialize.js';
 import { renameTaskStage } from '../../domain/stage-update.js';
 import * as operations from '../../domain/hub-operations.js';
+import type { BoardRevisionPort } from '../board-administration.js';
 import type { HubRepository } from '../hub-repository.js';
 import { isAuthorizationCommand, type SharingAuthorizationPort } from './auth-coordinator.js';
 import type { BindingCandidate, ProviderState, SharingBinding, SharingProviderId, SharingProviderResolver } from './provider.js';
@@ -29,6 +30,8 @@ export interface HubSharingOptions {
   store: HubSharingStore;
   providers: SharingProviderResolver;
   auth?: SharingAuthorizationPort;
+  /** Records the local revisions an applied team document produces; absent keeps none. */
+  revisions?: BoardRevisionPort;
   now?: () => string;
   id?: () => string;
   notify?: () => void;
@@ -337,6 +340,8 @@ export class HubSharingService {
       }
       if (board !== undefined) {
         await this.options.hubs.hub(hubId).transact(draft => { operations.deleteBoard(draft, boardId, this.deps()); return draft; }, hub.revision);
+        try { await this.options.revisions?.remove?.(boardId); }
+        catch (error) { this.options.report?.(error); }
       }
       const bindings = { ...next.bindings };
       delete bindings[boardId];
@@ -384,6 +389,14 @@ export class HubSharingService {
     await this.save({ ...record, boards, lastSyncedAt: this.now(), reviewRequired: null, lastError: null });
   }
 
+  /** Record one workflow write this service applied from team storage. */
+  private async noteRevision(hubId: string, boardId: string, previous: string | null, next: string): Promise<void> {
+    const revisions = this.options.revisions;
+    if (revisions === undefined) return;
+    try { await revisions.record({ hubId, boardId, previous, next, actor: { kind: 'team', source: 'team storage' }, origin: 'team' }); }
+    catch (error) { this.options.report?.(error); }
+  }
+
   /** Apply one published board, creating it locally when this installation does not hold it. */
   private async applyEntry(hubId: string, entry: SharedBoardEntry): Promise<void> {
     const record = this.requireRecord(hubId);
@@ -404,6 +417,7 @@ export class HubSharingService {
         operations.setBoardProjectScope(draft, added.id, entry.projectKeys, this.deps());
         return added.id;
       }, hub.revision);
+      await this.noteRevision(hubId, created, null, recovered.text);
       await this.save({ ...record, bindings: { ...record.bindings, [created]: entry.key }, boards: { ...record.boards, [entry.key]: { seq: recovered.cursor, head: snapshot.head, probe: snapshot.probe, behind: 0, published: workflowDigest(recovered.text), draft: false, conflict: null } } });
       return;
     }
@@ -423,6 +437,7 @@ export class HubSharingService {
       operations.saveBoardWorkflow(draft, board.id, recovered.text, this.deps());
       operations.setBoardProjectScope(draft, board.id, entry.projectKeys, this.deps());
     }, hub.revision);
+    await this.noteRevision(hubId, board.id, board.workflowYaml, recovered.text);
     await this.save({
       ...record,
       boards: { ...record.boards, [entry.key]: { seq: recovered.cursor, head: snapshot.head, probe: snapshot.probe, behind: 0, published: workflowDigest(recovered.text), draft: false, conflict: null } },
@@ -450,6 +465,7 @@ export class HubSharingService {
           for (const rename of renames) for (const task of draft.tasks) if (task.boardId === boardId) renameTaskStage(task, rename.from, rename.to);
           operations.saveBoardWorkflow(draft, boardId, head.text, this.deps());
         }, hub.revision);
+        await this.noteRevision(hubId, boardId, hub.boards.find(candidate => candidate.id === boardId)?.workflowYaml ?? null, head.text);
         await this.save({ ...record, boards: { ...record.boards, [key]: { seq: head.cursor, head: snapshot.head, probe: snapshot.probe, behind: 0, published: workflowDigest(head.text), draft: false, conflict: null } }, reviewRequired: null });
         return;
       }
@@ -625,6 +641,7 @@ export class HubSharingService {
     if (seeded === workflow) return workflow;
     const hub = this.options.hubs.requireHub(hubId);
     await this.options.hubs.hub(hubId).transact(draft => { operations.saveBoardWorkflow(draft, boardId, seeded, this.deps()); return draft; }, hub.revision);
+    await this.noteRevision(hubId, boardId, hub.boards.find(candidate => candidate.id === boardId)?.workflowYaml ?? null, seeded);
     return seeded;
   }
 

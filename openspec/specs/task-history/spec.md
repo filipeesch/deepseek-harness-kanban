@@ -28,7 +28,9 @@ Every task SHALL carry an ordered record of the flow facts that happened to it. 
 
 ### Requirement: Flow facts recorded
 
-The record SHALL include, as separate entries: the task's creation together with the stage it was created in; every stage entry, naming the origin stage and the destination stage; every next-stage intent recorded on the task; every auto mode change, naming whether auto mode was enabled, disabled, paused with its reason, paused by the agent, or resumed; and the settled outcome of every worktree creation, attachment, and removal, and of every failed context operation, naming the path and branch the operation acted on and the failure reason when it failed.
+The record SHALL include, as separate entries: the task's creation together with the stage it was created in; every stage entry, naming the origin stage, the destination stage, and the origin of the transition that produced it; every next-stage intent recorded on the task; every auto mode change, naming whether auto mode was enabled, disabled, paused with its reason, paused by the agent, or resumed; and the settled outcome of every worktree creation, attachment, and removal, and of every failed context operation, naming the path and branch the operation acted on and the failure reason when it failed.
+
+The origin a stage entry carries SHALL distinguish an operator move, a transition the task declared, an automatic advance, a named script exit, and the reserved error route, and SHALL name the exit when a script or the error route produced the move. An entry recorded before origins were stored SHALL remain present and SHALL read as an unrecorded origin rather than being backfilled, inferred, or rewritten.
 
 The record SHALL additionally include the settled outcome of each deterministic execution, distinguishing a completed named result, an executor failure, and an explicit or superseding cancellation. The outcome SHALL identify its execution and source stage and SHALL carry the named exit and redacted message or diagnostic when one exists. A settled execution SHALL additionally carry, bounded, the parameter names and values that execution used, so two executions of the same entry can be compared; it SHALL NOT carry a value the execution did not receive. A completed script outcome SHALL NOT claim that its destination was entered before that transition settles. A logical deterministic handoff acceptance or failure SHALL be recorded when that fact settles, with its delivery identity and destination reference, rather than by copying raw transcript events. Replaying the same execution outcome or handoff receipt after restart SHALL NOT create another occurrence; a later explicit Play creates a different execution whose settled outcome SHALL be recorded even when its text repeats a previous outcome. These entries SHALL contain no resolved variable values, trust grants, captured code, or polling log stream and SHALL remain installation-local. Parameter values are task data, not credentials, and SHALL be recorded only on the execution that received them.
 
@@ -41,6 +43,18 @@ The record SHALL additionally include the settled outcome of each deterministic 
 
 - **WHEN** a task moves from one stage to another
 - **THEN** the record gains an entry naming the origin stage and the destination stage
+
+#### Scenario: Record the origin of a stage entry
+
+- **WHEN** a task enters a stage because an operator moved it, because it declared the transition, because its automatic advance ran, because a named script exit routed it, or because the reserved error route routed it
+- **THEN** that stage entry names the matching origin
+- **AND** an entry produced by a script exit or by the error route names that exit
+
+#### Scenario: Read an entry recorded before origins existed
+
+- **WHEN** a stage entry was recorded before origins were stored
+- **THEN** the entry remains in the record with its moment and its stages
+- **AND** it reads as an unrecorded origin, without a backfilled or inferred value
 
 #### Scenario: Record a next-stage intent
 

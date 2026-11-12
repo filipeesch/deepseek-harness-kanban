@@ -1,48 +1,54 @@
 # Safe workflow management
 
-Load before board writes or choosing execution behavior. Do not bypass tool scope/intent rules through shell, state files, APIs, or another session.
+Load before board writes or execution choices. Never bypass tool scope, intent rules, or session boundaries through shell, state files, APIs, or a session.
 
 ## Locate the installed contract
 
-Start each design/change with a bounded installed-version/tool-contract check. Use `cordis_inspect_list`, then its declared Host Tool provider for callable schemas. Discover Kanban via Host Config `listConfigs` with `name: dsh-kanban`; query the returned entry ID for `packageDir` (currently `include:kanban`). Read its version and relevant documentation/source, not an arbitrary checkout. Inspect is read-only. If unavailable, use shipped references conservatively and report unverified freshness; claim no new capability. If remote tools cannot read host references, use local ordinary chat or report the limitation; never bypass namespaces/policy.
+Start each design/change with a bounded installed-version/tool-contract check. Use `cordis_inspect_list`, then its Host Tool provider for callable schemas. Discover Kanban via Host Config `listConfigs` with `name: dsh-kanban`, and read the resolved `packageDir` version and relevant documentation/source. Never read an arbitrary checkout as proof of deployment. If inspection is unavailable, use these references conservatively and report unverified freshness; claim no new capability and never bypass namespaces or policy.
 
-## Prepare and apply
+## Read before writing
 
-Read exact YAML, project scope, model, Hub revision, sharing state, and affected tasks/transition state. A bounded `list_cards` result is not proof that no other tasks exist; counts can expose omissions. Preserve occupied IDs and pending transition references: generic YAML writes do not migrate tasks like the UI stage editor.
+- `get_board_yaml`: the exact authored document, in line ranges, with the Hub revision and a file path for ordinary file reading.
+- `get_stage`: one stage's authored block; inline script source is withheld as a digest and byte length unless requested.
+- `get_board_summary` with `include_workflow: true`: parsed workflow, default model, Hub revision, publishing state — never the authored text.
+- `get_route_stats`: route and named-exit usage, parked cards, and loops. Origin exists only from the upgrade on; earlier entries read as unrecorded.
+- `list_board_revisions` / `diff_board_revisions`: what changed and who changed it; the log is local and never published.
 
-Board administration rejects task-owned chat, including descendants. Provide a design summary for the user to take to ordinary chat. Task creation/text editing have different scopes but still require explicit user requests. Never create cards, notes, or team files for internal tracking.
+Also read project scope, model, revision, sharing state, and affected tasks. A bounded `list_cards` result is not proof that no other tasks exist. Preserve occupied IDs and pending transition references: generic YAML writes do not migrate tasks like the UI stage editor.
 
-After approval of the concrete summary/impacts:
+Board administration rejects task-owned chat, including descendants; give the user a summary for ordinary chat. Task creation and text editing still require explicit requests. Never create cards, notes, or team files for internal tracking.
 
-1. `create_board` accepts a complete custom document; omission uses the default uninstructed delivery flow. Capture returned IDs. Board creation itself starts no task or agent.
-2. Prefer `edit_board_yaml` for targeted changes. Copy exact old spans, including indentation/comments, with enough context to match once. Edits run sequentially against the previous result, validate together, and save all-or-nothing for **one board**.
-3. Use `update_board` for rename or approved whole replacement. Preserve unrelated model, keys, layout, descriptions, comments, and formatting; omission can clear them. Board display name and workflow root name are separate.
-4. Supply fresh `expected_revision` for update, literal edit, and deletion. It is **Hub-wide**: refresh after every write before the next write in that Hub, even to another board. Serialize related writes.
-5. On revision/literal-match conflict, re-read and reconcile; never defeat the guard by dropping the revision. Renew approval if meaning or impacts change.
-6. Re-read saved content, verify changed spans and retained model/layout/identities, and report IDs plus manual follow-up.
+## Apply an approved change
 
-No cross-board transaction or automatic rollback exists. Apply prerequisites before dependents and inactive intake before enabling starts; do not depend on uncreated IDs. Stop if failure invalidates later steps. Report applied, not applied, or uncertain per board. Compensation is another authorized write with a fresh revision.
+1. `create_board` accepts a complete document; omission uses the default uninstructed flow. Creation starts no task or agent.
+2. Prefer `set_stage_prompt`, `set_stage_routes`, `set_layout`, `add_stage`, and `remove_stage`: each rewrites only the named field and preserves every other authored character. Use `edit_board_yaml` for spans they do not cover, copying exact old text with enough context to match once. Validation and saving are all-or-nothing for **one board**.
+3. Use `update_board` for rename or approved whole replacement, preserving unrelated model, keys, layout, descriptions, comments, and formatting; omission can clear them. Board display name and workflow root name are separate.
+4. Supply fresh `expected_revision` for every write. It is **Hub-wide**: refresh after every write before the next one in that Hub, even to another board. Serialize related writes.
+5. Read the report every write returns: per-stage difference, graph warnings, the reviewed authorization of each deterministic stage in every allowed project, and affected cards. A refusal saves nothing and returns the same report; reconcile and retry rather than dropping the revision.
+6. Re-read saved content and verify changed spans with the retained model, layout, and identities. `revert_board` restores a retained revision as a new revision.
 
-Delete only an explicitly confirmed empty board, with local/team scope when bound. Projects, directories, worktrees, conversations, and workspaces stay. These tools expose no task movement/deletion or Hub administration; explain manual UI steps.
+`remove_stage` refuses while the stage holds cards and names them by identifier and count. Removing the initial stage requires naming its replacement. A connection layout for a pair the workflow does not draw is saved and ignored, and the report warns about it. There is no cross-board transaction or automatic rollback: apply prerequisites first, stop when failure invalidates later work, and report per board.
+
+Delete only a confirmed empty board, with local/team scope when bound; projects, worktrees, conversations, and workspaces stay. These tools expose no task movement, deletion, or Hub administration; explain manual UI steps.
+
+## Preview the diagram
+
+`render_workflow_diagram` writes the saved or a proposed document as SVG, and as PNG when a rasterizer is installed; it attaches the image only for an image-capable model. `layout_metrics` measures the same geometry — crossings, segments through stages, overlapping segments and stages, covered exit labels, folds, total route length — with a problem list. Stage heights are an estimate from the authored size and each stage's cards, not a measurement.
 
 ## Local success versus publishing
 
-Bound-Hub writes can publish automatically: disclose team impact before approval. Inspect `sharing`: local success may mean blocked/failed publishing, preview/unbound local state, or pending sync, not “published.”
-
-Publishing failure keeps local data. Inspect before retrying; replaying creation/edits can duplicate or conflict. Other boards' drafts are not atomic parts of this operation. Report partial application/publication per board. Sharing carries workflows, not local tasks or coordinator/child IDs.
+Bound-Hub writes can publish automatically: disclose team impact before approval. Inspect `sharing`; local success may mean blocked or failed publishing, preview or unbound local state, or pending sync, not "published." Publishing failure keeps local data; inspect before retrying, since replaying creation or edits can duplicate. Sharing carries workflows, not local tasks or IDs.
 
 ## Automation and human gates
 
 Choose **work start**, **destination selector**, and **default advance** separately. There is no per-stage YAML automation switch.
 
-- **Manual:** no entry instruction means no work starts on entry. With task auto mode off and no declared route, completed turns do not move it. Humans move cards in the UI.
-- **Agent-selected:** instruct the stage to read `list_allowed_transitions`, choose a configured target from evidence, and call `set_next_transition` with a reason. Only its own card moves, at its next completed-turn end, even with auto mode off; the call itself does not move it. A task message may ask for a route; the receiving stage decides: configured targets, conditions, and holds apply, a request never overrides its instruction, and a deterministic entry routes only through its captured exit. For a target with parameters, pass exactly those names with nonempty values; values are entry data, never secrets or YAML. A value-less entry fails in place and is repaired from the panel, never via the error exit. Ordinary chat cannot route other cards. Omitted transition lists offer no configurable targets.
-- **Task auto mode:** eligible completed turns advance by the first configured target, or workflow order when omitted, unless a route is declared. Conditions are not evaluated. Default resolution crosses uninstructed stages toward the first instructed stage or last reachable stage, without revisiting a stage. A declared route stops exactly at its destination.
+- **Manual:** no entry instruction means no work starts on entry. With auto mode off and no declared route, completed turns do not move the card.
+- **Agent-selected:** the stage reads `list_allowed_transitions`, chooses a configured target from evidence, and calls `set_next_transition` with a reason. Only its own card moves, at its next completed-turn end, even with auto mode off. A task message may ask for a route; the receiving stage decides, and a deterministic entry routes only through its captured exit. Parameters are entry data, never secrets or YAML; a value-less entry fails in place and is repaired from the panel.
+- **Task auto mode:** eligible completed turns advance by the first configured target, or workflow order when omitted, unless a route is declared. Conditions are not evaluated. Default resolution crosses uninstructed stages toward the first instructed stage or last reachable stage, without revisiting a stage.
 
-An uninstructed stage or auto mode off alone is not a human gate. Never predeclare a gated route. Ask for approval/input; for an auto-mode task needing a deliberate durable hold, use `pause_task` and ask the human to resume. `[]` prevents default exit if terminal policy fits. Pausing leaves auto mode/recorded routes unchanged, does not retract admitted advances, and records no pause for auto-mode-off tasks.
+An uninstructed stage or auto mode off alone is not a human gate. Ask for approval instead of predeclaring a gated route; for a deliberate durable hold use `pause_task` and ask the human to resume. `[]` prevents default exit. Pausing leaves auto mode and recorded routes unchanged. Unanswered questions, pending approvals, and queued messages hold eligible advance; dismissing a question is not approval. `resume_task` neither enables auto mode nor moves a card.
 
-Unanswered questions, pending approvals, and queued user messages hold eligible advance; consuming them alone triggers no move. Dismissing a question is not approval. `resume_task` neither enables auto mode nor starts work, moves a card, or catches up an old completed turn. Messages, including task messages, do not resume deliberate pauses. Recheck evidence/authorization on the next turn.
+Tool-created tasks in an instructed initial stage prepare execution and dispatch in the creation call, without a countdown, regardless of `auto_mode`. For capture-only intake use an uninstructed initial stage. Inspect `firstExecution`; creation can succeed while start fails — recover that task, not a duplicate.
 
-Tool-created tasks in an instructed initial stage prepare execution and dispatch **in the creation call**, without the UI countdown, regardless of `auto_mode`; worktrees/conversations may be created. For capture-only intake use an uninstructed initial stage: no tool flag suppresses the instruction. Inspect `firstExecution`; creation can succeed while start fails. Recover that task, not a duplicate.
-
-Instruction edits do not replace already delivered instructions; admitted advances retain captured destination/instruction. Failed/interrupted turns do not advance; stale declared routes block rather than fall back. Restarts/resume do not guarantee replay of missed completions. Do not promise continuous operation or durable dependency scheduling.
+Instruction edits do not replace delivered instructions; admitted advances keep their captured destination. Failed turns do not advance, and stale declared routes block rather than fall back. Do not promise continuous operation or durable dependency scheduling.

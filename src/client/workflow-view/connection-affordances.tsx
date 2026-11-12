@@ -4,7 +4,7 @@ import type { StageSide } from '../../shared/types.js';
 import { AFFORDANCE, affordanceScale } from './affordance-geometry.js';
 import { useConnectionHandlers, type ConnectionEnd } from './connection-interaction.js';
 import type { LiveEdge, LiveStageRect } from './edge-model.js';
-import type { DiagramPoint } from './routing/orthogonal.js';
+import type { DiagramPoint } from '../../domain/diagram/orthogonal.js';
 import type { CreationState } from './use/use-connection-gestures.js';
 
 /** The sides a connection can be drawn from, in the order the ports are presented. */

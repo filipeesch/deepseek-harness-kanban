@@ -1,4 +1,4 @@
-import type { ConnectionAnchor, ConnectionSegmentOffset } from '../../../shared/types.js';
+import type { ConnectionAnchor, ConnectionSegmentOffset } from '../../shared/types.js';
 import { automaticPoints, DETOUR_DEPTH } from './automatic.js';
 import { corridorOfPoints } from './clearance.js';
 import { anchorPoint, automaticSourcePoint, automaticTargetPoint, returningArrivalPoint, returningDeparturePoint } from './ports.js';

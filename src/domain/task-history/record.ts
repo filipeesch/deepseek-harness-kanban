@@ -1,5 +1,5 @@
 import type { AutoModePauseReason, Problem, Task } from '../../shared/types.js';
-import type { TaskHistoryEntry } from '../../shared/task-history.js';
+import type { StageEntryOrigin, TaskHistoryEntry } from '../../shared/task-history.js';
 
 /**
  * Appends to one task's flow record.
@@ -45,10 +45,14 @@ export function recordCreation(target: RecordTarget, columnId: string, at: strin
   append(target, { kind: 'created', at, columnId });
 }
 
-/** A stage entry is a move, so it is recorded only when the stage actually changes. */
-export function recordStageEntry(target: RecordTarget, fromColumnId: string, columnId: string, at: string): void {
+/**
+ * A stage entry is a move, so it is recorded only when the stage actually changes.
+ * The origin says how the move happened; an absent one stores no origin at all,
+ * which is what a record written before origins existed carries.
+ */
+export function recordStageEntry(target: RecordTarget, fromColumnId: string, columnId: string, at: string, origin?: StageEntryOrigin): void {
   if (fromColumnId === columnId) return;
-  append(target, { kind: 'stage', at, fromColumnId, columnId });
+  append(target, { kind: 'stage', at, fromColumnId, columnId, ...(origin === undefined ? {} : { origin }) });
 }
 
 /** The task recorded the destination of its next advance. */

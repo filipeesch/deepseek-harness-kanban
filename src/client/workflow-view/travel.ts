@@ -1,6 +1,6 @@
 import type { Task } from '../../shared/types.js';
-import { directShape, type DiagramPoint } from './routing/orthogonal.js';
-import { nodeRect, type WorkflowScene } from './scene.js';
+import { directShape, type DiagramPoint } from '../../domain/diagram/orthogonal.js';
+import { nodeRect, type WorkflowScene } from '../../domain/diagram/scene.js';
 
 /** How the card travel reads: a glide along the drawn curve with short fades. */
 export const TRAVEL = { durationMs: 450, fadeMs: 120, easing: 'ease-out', batchLimit: 8 } as const;

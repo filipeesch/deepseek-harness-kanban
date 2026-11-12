@@ -6,9 +6,9 @@ import { readStageSizes, type StageSizes } from '../../../domain/workflow-sizes.
 import { readConnections, type ConnectionLayouts } from '../../../domain/workflow-connections.js';
 import type { ConnectionLayoutPort } from './use-transition-actions.js';
 import { mergeConnectionOverrides, useConnectionOverrides } from './use-connection-overrides.js';
-import { computeAutoLayout, freezeAutoLayout, graphKey, type FrozenAutoLayout } from '../auto-layout.js';
+import { computeAutoLayout, freezeAutoLayout, graphKey, type FrozenAutoLayout } from '../../../domain/diagram/auto-layout.js';
 import { mergePlacements } from '../placement-merge.js';
-import { placementBounds, type StageLayout } from '../layout.js';
+import { placementBounds, type StageLayout } from '../../../domain/diagram/layout.js';
 import { usePlacementHistory, type PlacementHistoryState } from './use-placement-history.js';
 import { usePlacementOverrides } from './use-placement-overrides.js';
 import { usePlacementSaver, type PlacementSaver } from './use-placement-saver.js';

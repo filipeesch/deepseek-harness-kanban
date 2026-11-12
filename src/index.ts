@@ -8,6 +8,9 @@ import type {} from '@deepseek-ai/dsh-subagent';
 import type {} from '@deepseek-ai/dsh-llm';
 import { TYPERT_HOST } from './remote.js';
 import { HubRepository } from './host/hub-repository.js';
+import { openRevisionStorage } from './host/revision-storage.js';
+import { BoardRevisions } from './host/revisions.js';
+import { createWorkflowImagePort } from './host/workflow-image.js';
 import { openKanbanStorage } from './host/storage.js';
 import { openQuestionStorage } from './host/question-storage.js';
 import { openSharingStorage } from './host/sharing/state.js';
@@ -125,6 +128,8 @@ export interface HubSharingRuntime {
 /** Compose the publishing runtime over its own storage domain so it can be closed as one unit. */
 export interface HubSharingOpenOptions {
  report?:(error:unknown)=>void;
+ /** Records the local revisions an applied team document produces. */
+ revisions?:import('./host/board-administration.js').BoardRevisionPort;
  root?:string;
  runner?:SharingCommandRunner;
  clientId?:string;
@@ -163,7 +168,7 @@ export async function openHubSharing(ctx:Context,hubs:HubRepository,options:HubS
   createLocalFolderProviderDescriptor({home,managedRoot:root}),
   createGoogleDriveLocalProviderDescriptor({discovery,home,managedRoot:root}),
  ]);
- const service=new HubSharingService({hubs,store:storage.storage,providers,auth,notify:()=>notify(),...(options.report===undefined?{}:{report:options.report}),...(options.debounceMs===undefined?{}:{debounceMs:options.debounceMs})});
+ const service=new HubSharingService({hubs,store:storage.storage,providers,auth,notify:()=>notify(),...(options.report===undefined?{}:{report:options.report}),...(options.revisions===undefined?{}:{revisions:options.revisions}),...(options.debounceMs===undefined?{}:{debounceMs:options.debounceMs})});
  await auth.refresh();
  const scheduler=new SharingPollScheduler({service,...(options.report===undefined?{}:{report:options.report})});
  return {
@@ -191,13 +196,16 @@ export async function apply(ctx:Context):Promise<void>{
  let conversationFacts!:Awaited<ReturnType<typeof registerConversationFacts>>;
  try{conversationFacts=await registerConversationFacts(ctx);ctx.effect(()=>()=>conversationFacts.dispose());}catch(error){conversationFacts?.dispose();await questions.close().catch(()=>undefined);await storage.close().catch(()=>undefined);throw error;}
  const native=createNativePorts(ctx,{conversationFacts,history});const hubs=await HubRepository.open(opened.storage);
+ let revisionStore:Awaited<ReturnType<typeof openRevisionStorage>>;
+ try{revisionStore=await openRevisionStorage(ctx);}catch(error){await hubs.close();await questions.close();await storage.close();throw error;}
+ const revisions=new BoardRevisions({store:revisionStore,report});
  let schedules:{storage:import('./host/schedule-run-storage.js').ScheduleRunStorage;close:()=>Promise<void>};
  try{schedules=await openScheduleRunStorage(ctx);}catch(error){await hubs.close();await questions.close();await storage.close();throw error;}
  let sharing:HubSharingRuntime;
- try{sharing=await openHubSharing(ctx,hubs,{report});}catch(error){await schedules.close();await hubs.close();await questions.close();await storage.close();throw error;}
+ try{sharing=await openHubSharing(ctx,hubs,{report,revisions});}catch(error){await revisionStore.close();await schedules.close();await hubs.close();await questions.close();await storage.close();throw error;}
  const teamFiles=new TeamFiles({store:hubId=>sharing.service.fileStoreFor(hubId),exclusive:(hubId,operation)=>sharing.service.exclusive(hubId,operation)});
  const sessionModels=createSessionModelPort(ctx);
- const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,models:sessionModels,report,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
+ const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,models:sessionModels,report,revisions,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
  const profile=ctx.get('profileContext') as {readonly dir:string}|undefined;
  if(profile&&isAbsolute(profile.dir)){
   // Optional child injection grants access without making conventional boards
@@ -261,7 +269,9 @@ export async function apply(ctx:Context):Promise<void>{
    try{await scheduleRuns.settle();}finally{
     try{await sharing.close();}finally{
      try{await hubs.close();}finally{
-      try{await schedules.close();}finally{await questions.close();}
+      try{await revisionStore.close();}finally{
+       try{await schedules.close();}finally{await questions.close();}
+      }
      }
     }
    }
@@ -269,7 +279,7 @@ export async function apply(ctx:Context):Promise<void>{
  });
  offWire=ctx.typert.register(TYPERT_HOST);
  ctx.plugin(KanbanController,app);
- offTools=registerProductTools(ctx,app,taskMessages);
+ offTools=registerProductTools(ctx,app,taskMessages,{revisions,images:createWorkflowImagePort(ctx)});
  ctx.on('session/event',(session,event)=>{app.observe(session.id,event);if(event.type==='turn/end')scheduleWatcher.observe(String(session.id));});
  offScheduleStatus=ctx.on('agent/status',({agent})=>scheduleWatcher.observe(String(agent.id)));
  offSignals=registerAttentionSignals(ctx,app);

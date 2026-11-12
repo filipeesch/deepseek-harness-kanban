@@ -21,6 +21,7 @@ import { applyNoteTags, validateNoteWrite, type NoteInput } from './note.js';
 import type { Placement } from './placement.js';
 import { compareTaskOrder } from './task-order.js';
 import { recordAutoModeChange, recordCreation, recordIntent, type AutoModeChange } from './task-history/record.js';
+import type { StageEntryOrigin } from '../shared/task-history.js';
 import { placeTaskIn } from './task-placement.js';
 
 export type { NoteInput } from './note.js';
@@ -585,7 +586,7 @@ export function deleteNote(hub: HubState, taskId: string, noteId: string, deps: 
   return note;
 }
 
-export function placeTask(hub: HubState, taskId: string, columnId: string, placement: Placement, enteredAt: number, options: { retainAgentPause?: boolean; at: string; parameters?: Readonly<Record<string, string>> }): void {
+export function placeTask(hub: HubState, taskId: string, columnId: string, placement: Placement, enteredAt: number, options: { retainAgentPause?: boolean; at: string; /** How the move happened; absent records no origin. */ origin?: StageEntryOrigin; parameters?: Readonly<Record<string, string>> }): void {
   const task = requireTask(hub, taskId);
   const board = boardForTask(hub, task);
   placeTaskIn(

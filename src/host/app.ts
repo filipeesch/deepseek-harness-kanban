@@ -14,6 +14,7 @@ import { readPendingUserWork, withQuestionPending } from './pending-source.js';
 import type { ConversationFactsSource } from './native-facts.js';
 import type { AdvanceOrigin, AutoModePauseReason, Board, BoardSettings, Command, ConversationFacts, ConversationModelOutcome, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionDraftContent, QuestionRound, RetainedCheckout, RetainedCheckoutReason, SharingCommand, SnapshotRequest, StoredQuestionDraft, Task, WorktreeDefaults } from '../shared/types.js';
 import type { TaskMessagePreparation } from '../shared/task-message.js';
+import type { StageEntryOrigin } from '../shared/task-history.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
 import type { QuestionDraftStore, QuestionStore } from './question-storage.js';
 import { QuestionDraftContentSchema } from '../remote.js';
@@ -40,7 +41,7 @@ import { firstOpenSessionId } from '../shared/conversations.js';
 import { admitStageInstruction, type StageInstructionDeps } from './stage-instruction.js';
 import { requiresWorktreeDecision, unresolvedWorktreeBinding } from '../shared/worktree-decision.js';
 import { HubRepository, HubStore } from './hub-repository.js';
-import { BoardAdministration, type BoardSharingPort } from './board-administration.js';
+import { BoardAdministration, type BoardRevisionPort, type BoardSharingPort } from './board-administration.js';
 import type { LocatedTask, TaskSummary } from './hub-repository.js';
 import { RepositoryWorktreeStore, TaskLocator } from './task-locator.js';
 import { QuestionIndex } from '../questions/indexer.js';
@@ -59,6 +60,7 @@ import type { DeterministicReview, DeterministicSummary } from '../shared/determ
 import { DeterministicSupervisor } from './deterministic-supervisor.js';
 import { createNativeSupervisorPorts } from './deterministic-control.js';
 import { createDeterministicRouter } from './deterministic-routing.js';
+import { createDeterministicImpact } from './deterministic-impact.js';
 import { deterministicEqual } from '../domain/deterministic-definition.js';
 import { declaredParameterNames, validateParameterValues } from '../domain/deterministic-parameters.js';
 import { ensureLocalStageIdentity } from '../domain/deterministic-state.js';
@@ -89,7 +91,7 @@ function boardSharingPort(sharing:HubSharingService):BoardSharingPort{
 }
 /** One created conversation and, when its board named a default model, how that model fared. */
 export interface CreatedConversation { sessionId: string; model?: ConversationModelOutcome }
-export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore; questionDraftStore?:QuestionDraftStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number }
+export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; /** Records each accepted workflow write; absent keeps no local history. */ revisions?:BoardRevisionPort; questionStore?:QuestionStore; questionDraftStore?:QuestionDraftStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number }
 /** Coordinates Hub-scoped commands while the host continues to own sessions and execution. */
 export class KanbanApp {
  readonly questions=new QuestionIndex();
@@ -130,6 +132,8 @@ export class KanbanApp {
  private readonly workspaceCoordinator?:WorkspaceCoordinator;
  private scheduleRuntime:ScheduleRuntimePort|undefined;
  private deterministicRuntime:DeterministicSupervisor|undefined;
+ /** The native runtime a write report asks for the fingerprint of a proposed executable. */
+ private nativeDeterministic:DeterministicRuntime|undefined;
  private initialized=false;
  private closing=false;
  private readonly handoffAdmissions=new Map<string,{entryId:string;deliveryId:string}>();
@@ -140,7 +144,7 @@ export class KanbanApp {
   this.retainedCheckoutExists=options.retainedCheckoutExists??entryExists;
   this.retainedCheckoutPruneIntervalMs=options.retainedCheckoutPruneIntervalMs??15000;
   if(options.teamFiles)this.teamFiles=options.teamFiles;
-  this.boards=new BoardAdministration({hubs,...(options.sharing?{sharing:boardSharingPort(options.sharing)}:{}),...(options.report?{report:options.report}:{}),activity:{inFlight:(hubId,boardId)=>this.boardActivity(hubId,boardId)}});
+  this.boards=new BoardAdministration({hubs,...(options.sharing?{sharing:boardSharingPort(options.sharing)}:{}),...(options.report?{report:options.report}:{}),activity:{inFlight:(hubId,boardId)=>this.boardActivity(hubId,boardId)},impact:createDeterministicImpact(()=>this.nativeDeterministic),...(options.revisions?{revisions:options.revisions}:{})});
   this.factsSource=withQuestionPending({read:id=>this.sessions.facts(id)},this.questions);
   if(workspaces)this.workspaceCoordinator=new WorkspaceCoordinator({
    workspaces,sessions,store:{
@@ -188,6 +192,7 @@ export class KanbanApp {
  }
  /** Attach isolated execution after composition; task records remain the only authority. */
  attachDeterministicRuntime(nativeRuntime:DeterministicRuntime):()=>Promise<void>{
+  this.nativeDeterministic=nativeRuntime;
   const route=createDeterministicRouter({hubs:this.hubs,sessions:this.sessions,pending:task=>readPendingUserWork(this.factsSource,task.sessionIds),reserved:id=>this.handoffAdmissions.has(id)||this.contextAdmissions.has(id),notify:()=>{void this.dispatchDeterministicHandoffs().catch(error=>this.options.report?.(error));}});
   this.deterministicRuntime=new DeterministicSupervisor(createNativeSupervisorPorts({nativeRuntime,
    locate:id=>this.locator.byTask(id),all:()=>this.locator.all(),
@@ -198,7 +203,7 @@ export class KanbanApp {
   }));
   const attached=this.deterministicRuntime;
   if(this.initialized)attached.start();this.markChanged();
-  return async()=>{attached.dispose();await attached.settle();if(this.deterministicRuntime===attached){this.deterministicRuntime=undefined;this.markChanged();}};
+  return async()=>{attached.dispose();await attached.settle();if(this.deterministicRuntime===attached){this.deterministicRuntime=undefined;if(this.nativeDeterministic===nativeRuntime)this.nativeDeterministic=undefined;this.markChanged();}};
  }
  private requireDeterministic():DeterministicSupervisor{invariant(this.deterministicRuntime,'DETERMINISTIC_UNAVAILABLE','This host does not expose isolated deterministic execution.');return this.deterministicRuntime;}
  private async ensureDeterministicEntry(taskId:string):Promise<HubTask>{
@@ -955,6 +960,7 @@ export class KanbanApp {
    case 'hub.delete':{
     invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the Hub and its task-free projects.');
     await this.hubs.deleteHub(command.hubId);
+    try{await this.options.revisions?.removeHub?.(command.hubId);}catch(error){this.options.report?.(error);}
     try{await this.options.sharing?.removeHub(command.hubId);}catch(error){this.options.report?.(error);}
     this.options.scheduler?.sync();
     break;
@@ -1128,9 +1134,12 @@ export class KanbanApp {
  private async drainPending():Promise<void>{
   if(this.disposed)return;if(this.driving){this.driveAgain=true;return;}this.driving=true;
   try{do{this.driveAgain=false;this.pendingTransitions.refresh(this.locator.summaries());for(const taskId of [...this.pendingTransitions.list()]){const located=this.locator.byTask(taskId);const task=located?.task;const pending=task?.pendingTransition;if(!located||!task||!pending||pending.status!=='waiting'||task.operation||this.handoffAdmissions.has(task.id)||(pending.worktreeRequest&&task.worktree?.status!=='ready'))continue;const store=this.hubs.hub(located.hubId);
+   // The pending transition distinguishes a declared transition from an automatic
+   // advance; an absent origin is the operator's own move.
+   const origin:StageEntryOrigin=pending.origin==='agent'?'agent':pending.origin==='auto'?'auto':'manual';
    try{
     await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');if(pending.parameters!==undefined){const destination=board.workflow.columns.find(column=>column.id===pending.columnId);const checked=validateParameterValues(declaredParameterNames(destination?.deterministic?.params),pending.parameters);invariant(checked.ok,'INVALID_PARAMETERS',checked.ok?'':checked.message);}
-      operations.placeTask(d,t.id,pending.columnId,placementFromAnchor(pending.beforeTaskId),nextEnteredAt(),{retainAgentPause:pending.origin!==undefined,at:this.hubs.operationDeps().now(),...(pending.parameters===undefined?{}:{parameters:pending.parameters})});if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});if(pending.origin===undefined)this.turnAdvance.forget(task.id);
+      operations.placeTask(d,t.id,pending.columnId,placementFromAnchor(pending.beforeTaskId),nextEnteredAt(),{retainAgentPause:pending.origin!==undefined,origin,at:this.hubs.operationDeps().now(),...(pending.parameters===undefined?{}:{parameters:pending.parameters})});if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});if(pending.origin===undefined)this.turnAdvance.forget(task.id);
     if(pending.mode==='run'){
      invariant(pending.sessionId&&pending.text,'INVALID_TARGET','Confirmed execution is missing its target or instruction.');
      await admitStageInstruction(this.stageInstructionDeps(),{taskId:task.id,columnId:pending.columnId,instruction:pending.text,sessionId:pending.sessionId,requestId:pending.id,...(pending.reason===undefined?{}:{transition:{fromColumnId:pending.fromColumnId,reason:pending.reason}})});

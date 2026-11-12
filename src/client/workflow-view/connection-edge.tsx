@@ -1,6 +1,6 @@
 import React from 'react';
 import { BaseEdge, EdgeLabelRenderer, useStore, type EdgeProps } from '@xyflow/react';
-import type { DiagramPoint } from './routing/orthogonal.js';
+import type { DiagramPoint } from '../../domain/diagram/orthogonal.js';
 import { useConnectionHandlers } from './connection-interaction.js';
 
 /** The hollow mark that identifies a connection authoring no condition. */
