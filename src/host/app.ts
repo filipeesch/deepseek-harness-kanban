@@ -12,10 +12,11 @@ import type { AutoAdvancePlan } from '../domain/auto-advance.js';
 import { admitTurnAdvance } from './advance-admission.js';
 import { readPendingUserWork, withQuestionPending } from './pending-source.js';
 import type { ConversationFactsSource } from './native-facts.js';
-import type { AdvanceOrigin, AutoModePauseReason, Board, BoardSettings, Command, ConversationFacts, ConversationModelOutcome, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionRound, RetainedCheckout, RetainedCheckoutReason, SharingCommand, SnapshotRequest, Task, WorktreeDefaults } from '../shared/types.js';
+import type { AdvanceOrigin, AutoModePauseReason, Board, BoardSettings, Command, ConversationFacts, ConversationModelOutcome, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionDraftContent, QuestionRound, RetainedCheckout, RetainedCheckoutReason, SharingCommand, SnapshotRequest, StoredQuestionDraft, Task, WorktreeDefaults } from '../shared/types.js';
 import type { TaskMessagePreparation } from '../shared/task-message.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
-import type { QuestionStore } from './question-storage.js';
+import type { QuestionDraftStore, QuestionStore } from './question-storage.js';
+import { QuestionDraftContentSchema } from '../remote.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
 import { entryExists } from './paths.js';
 import { WorktreeCoordinator } from './worktrees.js';
@@ -72,6 +73,10 @@ function userPromptTime(event:unknown):number|undefined{
  const time=(event as {time?:unknown}).time;
  return typeof time==='number'&&Number.isFinite(time)?time:Date.now();
 }
+/** Draft records kept by recency; draft retention never depends on age. */
+export const QUESTION_DRAFT_RETENTION=100;
+/** Coalescing window for pruning drafts whose round just ended. */
+export const QUESTION_DRAFT_PRUNE_MS=500;
 function boardSharingPort(sharing:HubSharingService):BoardSharingPort{
  return {
   view:hubId=>sharing.view(hubId),
@@ -84,7 +89,7 @@ function boardSharingPort(sharing:HubSharingService):BoardSharingPort{
 }
 /** One created conversation and, when its board named a default model, how that model fared. */
 export interface CreatedConversation { sessionId: string; model?: ConversationModelOutcome }
-export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number }
+export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; questionStore?:QuestionStore; questionDraftStore?:QuestionDraftStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number }
 /** Coordinates Hub-scoped commands while the host continues to own sessions and execution. */
 export class KanbanApp {
  readonly questions=new QuestionIndex();
@@ -97,6 +102,8 @@ export class KanbanApp {
  readonly teamFiles?:TeamFiles;
  private readonly listeners=new Set<()=>void>();
  private readonly prepared=new Map<string,Promise<void>>();
+ /** Conversations whose task was deleted; replay and persistence must never resurrect them. */
+ private readonly forgottenSessions=new Set<string>();
  private readonly attention:AttentionCoordinator;
  private readonly assembler:SnapshotAssembler;
  private readonly pendingTransitions=new PendingTransitionIndex();
@@ -106,6 +113,9 @@ export class KanbanApp {
  private readonly disposers:Array<()=>void>=[];
  private sequence=0; private disposed=false; private driving=false; private driveAgain=false; private drivePromise:Promise<void>|undefined; private commandTail:Promise<void>=Promise.resolve();
  private readonly saveTimers=new Map<string,ReturnType<typeof setTimeout>>();
+ private readonly draftWrites=new Map<string,Promise<void>>();
+ private readonly draftPruneTimers=new Map<string,ReturnType<typeof setTimeout>>();
+ private retentionPrune:Promise<void>|undefined;
  /** Transient, in-memory retention notices; the checkout itself lives on disk. */
  private readonly retainedCheckouts:RetainedCheckout[]=[];
  private readonly retainedCheckoutExists:(path:string)=>Promise<boolean>;
@@ -140,7 +150,7 @@ export class KanbanApp {
    },
    ...(options.report?{report:options.report}:{}),
   });
-  this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,queue:this.operationQueue,worktreeDefaults:{derive:async taskId=>this.worktreeDefaultsFor(this.locatedTask(taskId).task)},onTaskDeleted:async task=>{try{await this.workspaceCoordinator?.cleanup(task as HubTask);await this.deterministicRuntime?.collectSources();}catch(error){this.options.report?.(error);}},onCheckoutRetained:(task,project,retainedPath,reason)=>this.retainCheckout(task,project,retainedPath,reason)});
+  this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,queue:this.operationQueue,worktreeDefaults:{derive:async taskId=>this.worktreeDefaultsFor(this.locatedTask(taskId).task)},onTaskDeleted:async task=>{try{await this.workspaceCoordinator?.cleanup(task as HubTask);await this.deterministicRuntime?.collectSources();}catch(error){this.options.report?.(error);}await this.removeConversationQuestionState(task.sessionIds);},onCheckoutRetained:(task,project,retainedPath,reason)=>this.retainCheckout(task,project,retainedPath,reason)});
   this.relocations=new ProjectRelocationCoordinator(new RepositoryProjectRelocationStore(hubs),sessions,git,{queue:this.operationQueue,signal:options.signal,...(this.workspaceCoordinator?{workspaces:{bind:async(hubId,project)=>{await this.workspaceCoordinator!.rebindProject(hubId,project);}}}:{}),...(options.report?{report:options.report}:{})});
   this.pendingWork=new PendingWorkRunner({resumeWorktrees:async()=>{await this.worktrees.resumePending();},resumeRelocations:async()=>{await this.relocations.resumePending();},dispatchPending:async()=>{await this.dispatchPending();},report:error=>this.options.report?.(error)});
   this.attention=new AttentionCoordinator({source:this.factsSource,tasks:()=>this.attentionTasks(),runPendingWork:async()=>{await this.pendingWork.run();},onChange:()=>this.attentionChanged(),onFacts:()=>this.markChanged(),report:error=>this.options.report?.(error)});
@@ -363,6 +373,7 @@ export class KanbanApp {
   await this.relocations.resumePending();
   await this.dispatchPending();
   this.scheduleStartupReconciliation(summaries);
+  this.startup.run([() => this.runDraftRetention()]);
   this.initialized=true;this.deterministicRuntime?.start();
   await this.dispatchDeterministicHandoffs();
  }
@@ -386,6 +397,7 @@ export class KanbanApp {
   this.startup.run(jobs);
  }
  private restoreQuestionProjection(sessionId:string):void{
+  if(this.forgottenSessions.has(sessionId))return;
   const record=this.options.questionStore?.load(sessionId);
   if(record===undefined)return;
   try{this.questions.restoreSession(record);}catch(error){this.options.report?.(error);}
@@ -394,9 +406,11 @@ export class KanbanApp {
   if(this.prepared.has(sessionId))return this.prepared.get(sessionId);
   const work=(async()=>{
    this.restoreQuestionProjection(sessionId);
-   if(this.options.history){for(const event of await this.options.history(sessionId))if(isEvent(event))this.questions.apply(sessionId,event);}
+   if(this.options.history){for(const event of await this.options.history(sessionId)){if(this.forgottenSessions.has(sessionId))return;if(isEvent(event))this.questions.apply(sessionId,event);}}
    // A restored or replayed unanswered round changes the pending user work the
    // attention snapshot and the auto-mode hold derive from, without a live event.
+   // A conversation deleted while its history was replayed must not resurrect.
+   if(this.forgottenSessions.has(sessionId))return;
    this.rederiveAttention(sessionId);
    this.schedulePersist(sessionId);
   })();
@@ -409,12 +423,13 @@ export class KanbanApp {
   this.saveTimers.set(sessionId,setTimeout(()=>{this.saveTimers.delete(sessionId);void this.persistSession(sessionId);},250));
  }
  private async persistSession(sessionId:string):Promise<void>{
-  const store=this.options.questionStore;if(!store)return;
+  const store=this.options.questionStore;if(!store||this.forgottenSessions.has(sessionId))return;
   const record=this.questions.serializeSession(sessionId);if(record===undefined)return;
   try{await store.save(sessionId,record);}catch(error){this.options.report?.(error);}
  }
  private async persistSessionStrict(sessionId:string):Promise<void>{
   const store=this.options.questionStore;if(!store)return;
+  if(this.forgottenSessions.has(sessionId))throw new KanbanError('QUESTION_CONVERSATION_GONE','The conversation no longer exists.');
   const record=this.questions.serializeSession(sessionId);if(record===undefined)return;
   await store.save(sessionId,record);
  }
@@ -426,33 +441,181 @@ export class KanbanApp {
  }
  async rounds(sessionId:string):Promise<QuestionRound[]>{await this.prepareQuestions(sessionId);return structuredClone([...this.questions.getRounds(sessionId)]);}
  async dismissQuestions(sessionId:string,roundId:string):Promise<QuestionRound[]>{
-  await this.prepareQuestions(sessionId);
-  const rounds=this.questions.getRounds(sessionId);
-  const target=rounds.find(round=>round.id===roundId);
-  if(!target||target.answered)throw new KanbanError('QUESTION_ROUND_NOT_FOUND','The question round is not available for dismissal.');
-  const unresolved=rounds.filter(round=>!round.answered);
-  const turns=unresolved.map(round=>Number(round.turnId));
-  this.questions.dismiss(sessionId,unresolved.map(round=>round.id));
-  // Dismissal consumes pending user work without a conversation event, so the derived
-  // hold must be re-projected even when the task has no activity left to reconcile.
-  this.rederiveAttention(sessionId,true);
-  const existing=this.saveTimers.get(sessionId);
-  if(existing!==undefined){clearTimeout(existing);this.saveTimers.delete(sessionId);}
-  try{await this.persistSessionStrict(sessionId);}
-  catch(error){
-   this.questions.undismiss(sessionId,turns);
+  // Dismissal and its persistence/rollback share the session's draft lane: a
+  // concurrent draft write must not observe the provisional dismissal and prune a
+  // draft that a failed projection write would bring back.
+  return this.enqueueDraftWrite(sessionId,async()=>{
+   await this.prepareQuestions(sessionId);
+   const rounds=this.questions.getRounds(sessionId);
+   const target=rounds.find(round=>round.id===roundId);
+   if(!target||target.answered)throw new KanbanError('QUESTION_ROUND_NOT_FOUND','The question round is not available for dismissal.');
+   const unresolved=rounds.filter(round=>!round.answered);
+   const turns=unresolved.map(round=>Number(round.turnId));
+   this.questions.dismiss(sessionId,unresolved.map(round=>round.id));
+   // Dismissal consumes pending user work without a conversation event, so the derived
+   // hold must be re-projected even when the task has no activity left to reconcile.
    this.rederiveAttention(sessionId,true);
-   this.schedulePersist(sessionId);
-   this.options.report?.(error);
-   throw new KanbanError('STORAGE_SAVE_FAILED','The question dismissal could not be saved.');
+   const existing=this.saveTimers.get(sessionId);
+   if(existing!==undefined){clearTimeout(existing);this.saveTimers.delete(sessionId);}
+   try{await this.persistSessionStrict(sessionId);}
+   catch(error){
+    this.questions.undismiss(sessionId,turns);
+    this.rederiveAttention(sessionId,true);
+    this.schedulePersist(sessionId);
+    this.options.report?.(error);
+    throw new KanbanError('STORAGE_SAVE_FAILED','The question dismissal could not be saved.');
+   }
+   this.cancelDraftPrune(sessionId);
+   await this.pruneAnsweredDrafts(sessionId);
+   return structuredClone([...this.questions.getRounds(sessionId)]);
+  });
+ }
+ /** The stored drafts of one conversation's unresolved rounds; the round feed baseline carries them. */
+ async questionDrafts(sessionId:string):Promise<Record<string,StoredQuestionDraft>>{
+  const store=this.options.questionDraftStore;if(!store)return {};
+  await this.prepareQuestions(sessionId);
+  let record:ReturnType<QuestionDraftStore['load']>;
+  // A draft-store read is best effort: a quarantined backend must not suppress the
+  // rounds and their Submit surface that are otherwise available.
+  try{record=store.load(sessionId);}
+  catch(error){this.options.report?.(error);return {};}
+  return record===undefined?{}:this.unresolvedDrafts(sessionId,record.drafts);
+ }
+ /**
+  * Persist one round's draft, or clear it. Writes for one session are serialized and
+  * merged per round, and a round that is already answered or dismissed is never
+  * stored, so a late debounced write cannot resurrect a finished round's draft.
+  */
+ async saveQuestionDraft(sessionId:string,roundId:string,draft:QuestionDraftContent|null):Promise<StoredQuestionDraft|null>{
+  const store=this.options.questionDraftStore;if(!store)return null;
+  let content:QuestionDraftContent|null;
+  try{content=draft===null?null:QuestionDraftContentSchema.parse(draft);}
+  catch{throw new KanbanError('INVALID_QUESTION_DRAFT','The question draft is malformed or too large.');}
+  return this.enqueueDraftWrite(sessionId,async()=>{
+   if(this.disposed)return null;
+   await this.prepareQuestions(sessionId);
+   let existing:ReturnType<QuestionDraftStore['load']>;
+   try{existing=store.load(sessionId);}
+   catch(error){this.options.report?.(error);return null;}
+   const drafts=this.unresolvedDrafts(sessionId,existing?.drafts??{});
+   let changed=existing!==undefined&&Object.keys(drafts).length!==Object.keys(existing.drafts).length;
+   const keep=content!==null&&this.isUnresolvedRound(sessionId,roundId);
+   if(keep){drafts[roundId]={...content!,updatedAt:new Date().toISOString()};changed=true;}
+   else if(content===null&&Object.hasOwn(drafts,roundId)){delete drafts[roundId];changed=true;}
+   if(!changed)return null;
+   try{
+    if(Object.keys(drafts).length===0)await store.remove(sessionId);
+    else await store.save(sessionId,{version:1,sessionId,drafts,updatedAt:new Date().toISOString()});
+   }catch(error){this.options.report?.(error);return null;}
+   // Any nonempty write can push the bound over (a creation, or a refresh that recreates
+   // a record evicted in another session's lane); re-check retention after each one.
+   if(Object.keys(drafts).length>0)await this.runDraftRetention();
+   return keep?drafts[roundId]??null:null;
+  });
+ }
+ /** Answer, dismissal, and retention all drop drafts whose round is no longer answerable. */
+ private unresolvedDrafts(sessionId:string,drafts:Readonly<Record<string,StoredQuestionDraft>>):Record<string,StoredQuestionDraft>{
+  const unresolved=new Set(this.questions.getRounds(sessionId).filter(round=>!round.answered).map(round=>round.id));
+  const result:Record<string,StoredQuestionDraft>={};
+  for(const [roundId,draft] of Object.entries(drafts))if(unresolved.has(roundId))result[roundId]=structuredClone(draft);
+  return result;
+ }
+ private isUnresolvedRound(sessionId:string,roundId:string):boolean{
+  return this.questions.getRounds(sessionId).some(round=>round.id===roundId&&!round.answered);
+ }
+ /** Serialize draft writes for one conversation; the next write runs even after a failed one. */
+ private enqueueDraftWrite<T>(sessionId:string,work:()=>Promise<T>):Promise<T>{
+  const previous=this.draftWrites.get(sessionId)??Promise.resolve();
+  const next=previous.then(work,work);
+  const settled=next.then(()=>undefined,()=>undefined);
+  this.draftWrites.set(sessionId,settled);
+  void settled.then(()=>{if(this.draftWrites.get(sessionId)===settled)this.draftWrites.delete(sessionId);});
+  return next;
+ }
+ private scheduleDraftPrune(sessionId:string):void{
+  if(this.disposed||!this.options.questionDraftStore)return;
+  this.cancelDraftPrune(sessionId);
+  this.draftPruneTimers.set(sessionId,setTimeout(()=>{
+   this.draftPruneTimers.delete(sessionId);
+   void this.enqueueDraftWrite(sessionId,()=>this.pruneAnsweredDrafts(sessionId)).catch(error=>this.options.report?.(error));
+  },QUESTION_DRAFT_PRUNE_MS));
+ }
+ private cancelDraftPrune(sessionId:string):void{
+  const timer=this.draftPruneTimers.get(sessionId);
+  if(timer===undefined)return;
+  clearTimeout(timer);this.draftPruneTimers.delete(sessionId);
+ }
+ private async pruneAnsweredDrafts(sessionId:string):Promise<void>{
+  const store=this.options.questionDraftStore;if(!store||this.disposed)return;
+  try{
+   const existing=store.load(sessionId);if(existing===undefined)return;
+   const drafts=this.unresolvedDrafts(sessionId,existing.drafts);
+   if(Object.keys(drafts).length===Object.keys(existing.drafts).length)return;
+   if(Object.keys(drafts).length===0)await store.remove(sessionId);
+   else await store.save(sessionId,{version:1,sessionId,drafts,updatedAt:new Date().toISOString()});
+  }catch(error){this.options.report?.(error);}
+ }
+ /**
+  * Keep only the most recently updated draft records, at startup and whenever a new
+  * conversation record is created, so orphaned conversations stay bounded. Runs are
+  * single-flight, refreshed candidates are never deleted by an older view of them,
+  * and a pass with skips re-reads the newer timestamps for replacement candidates.
+  */
+ private runDraftRetention():Promise<void>{
+  const current=this.retentionPrune;
+  if(current!==undefined)return current;
+  const run=this.pruneDraftsToRetention().finally(()=>{this.retentionPrune=undefined;});
+  this.retentionPrune=run;
+  return run;
+ }
+ private async pruneDraftsToRetention():Promise<void>{
+  const store=this.options.questionDraftStore;if(!store||this.disposed)return;
+  try{
+   for(;;){
+    if(this.disposed)return;
+    const records=store.records().sort((left,right)=>right.updatedAt.localeCompare(left.updatedAt)||right.sessionId.localeCompare(left.sessionId));
+    const excess=records.length-QUESTION_DRAFT_RETENTION;
+    if(excess<=0)return;
+    const candidates=records.slice(QUESTION_DRAFT_RETENTION).reverse();
+    let removed=0;
+    for(const record of candidates){
+     if(removed>=excess)break;
+     const current=store.load(record.sessionId);
+     if(current===undefined||current.updatedAt!==record.updatedAt)continue;
+     if(await store.remove(record.sessionId))removed+=1;
+    }
+    // A refreshed candidate keeps its record; the next pass picks a replacement from
+    // the newer ordering instead of leaving the bound exceeded without one.
+    if(removed===0)return;
+   }
+  }catch(error){this.options.report?.(error);}
+ }
+ /**
+  * Task deletion removes the conversation-scoped question state: the draft records
+  * and the durable projection. A failure is reported and never fails the deletion.
+  */
+ private async removeConversationQuestionState(sessionIds:readonly string[]):Promise<void>{
+  const drafts=this.options.questionDraftStore;const projections=this.options.questionStore;
+  for(const sessionId of sessionIds){
+   // A history replay already in flight must not re-apply events or persist after this.
+   this.forgottenSessions.add(sessionId);
+   this.cancelDraftPrune(sessionId);
+   const saveTimer=this.saveTimers.get(sessionId);
+   if(saveTimer!==undefined){clearTimeout(saveTimer);this.saveTimers.delete(sessionId);}
+   this.questions.forget(sessionId);
+   if(drafts){try{await this.enqueueDraftWrite(sessionId,async()=>{await drafts.remove(sessionId);});}catch(error){this.options.report?.(error);}}
+   if(projections){try{await projections.remove(sessionId);}catch(error){this.options.report?.(error);}}
   }
-  return structuredClone([...this.questions.getRounds(sessionId)]);
+ }
+ /** Drain queued draft writes before shutdown, like the projection flush. */
+ private async flushQuestionDrafts():Promise<void>{
+  await Promise.allSettled([...this.draftWrites.values()]);
  }
  observe(sessionId:string,event:unknown):void{
-  if(this.disposed)return;
+  if(this.disposed||this.forgottenSessions.has(sessionId))return;
   const promptTime=userPromptTime(event);if(promptTime!==undefined)this.clearInstructionPending(sessionId,promptTime);
   const questionChanged=isEvent(event)&&this.questions.apply(sessionId,event);
-  if(questionChanged)this.schedulePersist(sessionId);
+  if(questionChanged){this.schedulePersist(sessionId);this.scheduleDraftPrune(sessionId);}
   const taskRelevant=this.locator.hasSession(sessionId);
   if(taskRelevant)this.turnAdvance.observe(sessionId,event);
   if(taskRelevant)this.attention.touch(sessionId);
@@ -986,5 +1149,12 @@ export class KanbanApp {
   await this.retainedPrune;
   // The settling prune re-arms while the host is still open; close clears that one too.
   if(this.retainedPruneTimer!==undefined){clearTimeout(this.retainedPruneTimer);this.retainedPruneTimer=undefined;}
-  await this.flushQuestions();this.publisher.flush();this.disposed=true;this.publisher.dispose();this.attention.dispose();this.turnAdvance.dispose();for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();this.relocations.dispose();this.operationQueue.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.relocations.settle();}
+  // Pending answered-draft prunes are required cleanup, not disposable timers: run
+  // them in the session lane before the final flush instead of cancelling them.
+  const pendingPrunes=[...this.draftPruneTimers.keys()];
+  for(const timer of this.draftPruneTimers.values())clearTimeout(timer);
+  this.draftPruneTimers.clear();
+  await Promise.allSettled(pendingPrunes.map(sessionId=>this.enqueueDraftWrite(sessionId,()=>this.pruneAnsweredDrafts(sessionId))));
+  await this.retentionPrune;
+  await this.flushQuestions();await this.flushQuestionDrafts();this.publisher.flush();this.disposed=true;this.publisher.dispose();this.attention.dispose();this.turnAdvance.dispose();for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();this.relocations.dispose();this.operationQueue.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.relocations.settle();}
 }

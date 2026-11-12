@@ -143,6 +143,104 @@ describe('QuestionForm strip', () => {
     expect(restored.pending('a')).toBe(false);
   });
 
+  it('restores a stored draft on the recorded page without submitting it', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const onDraftChange = vi.fn();
+    const value = round([choice, free]);
+    const storedDraft = {
+      answers: {
+        'page-0': { choices: ['Remote'], text: '', other: '', notes: 'Use only if needed.' },
+        'page-1': { choices: [], text: 'Preserve histories.', other: '', notes: '' },
+      },
+      generalNotes: 'Stay local.',
+      active: { kind: 'page' as const, callId: 'page-1' },
+      updatedAt: '2026-11-12T10:00:00.000Z',
+    };
+    render(<QuestionForm round={value} storedDraft={storedDraft} onDraftChange={onDraftChange} onSubmit={onSubmit} />);
+    expect(screen.getByRole('heading', { name: 'Explain the constraints' })).toBeTruthy();
+    expect(screen.getByText('2 / 3')).toBeTruthy();
+    expect((screen.getByRole('textbox', { name: 'Your answer' }) as HTMLTextAreaElement).value).toBe('Preserve histories.');
+    expect(onSubmit).not.toHaveBeenCalled();
+    await user.click(backButton());
+    expect((screen.getByRole('radio', { name: 'Remote' }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole('textbox', { name: 'Notes for this answer' }) as HTMLTextAreaElement).value).toBe('Use only if needed.');
+    await user.type(screen.getByRole('textbox', { name: 'Notes for this answer' }), ' Keep it.');
+    expect(onDraftChange).toHaveBeenCalled();
+    expect(onDraftChange.mock.calls.at(-1)?.[0]).toMatchObject({
+      answers: { 'page-0': { choices: ['Remote'], notes: 'Use only if needed. Keep it.' } },
+      generalNotes: 'Stay local.',
+      active: { kind: 'page', callId: 'page-0' },
+    });
+    await user.click(nextButton());
+    await user.click(nextButton());
+    expect((screen.getByRole('textbox', { name: 'Additional Notes' }) as HTMLTextAreaElement).value).toBe('Stay local.');
+    await user.click(submitButton());
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0]?.[0]).toContain('Answer: Remote');
+    expect(onSubmit.mock.calls[0]?.[0]).toContain('Stay local.');
+  });
+
+  it('restores the Additional Notes slide and stays expanded', () => {
+    render(<QuestionForm round={round([free])} storedDraft={{
+      answers: { 'page-0': { choices: [], text: 'Answered earlier.', other: '', notes: '' } },
+      generalNotes: '',
+      active: { kind: 'notes' },
+      updatedAt: '2026-11-12T10:00:00.000Z',
+    }} onSubmit={vi.fn()} />);
+    expect(headerButton().getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('heading', { name: 'Additional Notes' })).toBeTruthy();
+    expect(screen.getByText('2 / 2')).toBeTruthy();
+  });
+
+  it('keeps a restored answer on its page when an earlier page arrives later', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const initial = round([free]);
+    const storedDraft = {
+      answers: { 'page-0': { choices: [], text: 'Answered earlier.', other: '', notes: '' } },
+      generalNotes: '',
+      active: { kind: 'page' as const, callId: 'page-0' },
+      updatedAt: '2026-11-12T10:00:00.000Z',
+    };
+    const view = render(<QuestionForm round={initial} storedDraft={storedDraft} onSubmit={onSubmit} />);
+    const withEarlier = { ...initial, pages: [{ callId: 'earlier', sequence: -1, page: choice }, ...initial.pages] };
+    view.rerender(<QuestionForm round={withEarlier} storedDraft={storedDraft} onSubmit={onSubmit} />);
+    expect(screen.getByText('2 / 3')).toBeTruthy();
+    expect((screen.getByRole('textbox', { name: 'Your answer' }) as HTMLTextAreaElement).value).toBe('Answered earlier.');
+    await user.click(backButton());
+    expect(screen.getByRole('heading', { name: 'Choose storage' })).toBeTruthy();
+  });
+
+  it('restores Additional Notes, announces a newly arrived page, and keeps the whole draft', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const initial = round([free]);
+    const storedDraft = {
+      answers: { 'page-0': { choices: [], text: 'Earlier answer.', other: '', notes: 'Earlier note.' } },
+      generalNotes: 'Stay local.',
+      active: { kind: 'notes' as const },
+      updatedAt: '2026-11-12T10:00:00.000Z',
+    };
+    const view = render(<QuestionForm round={initial} storedDraft={storedDraft} onSubmit={onSubmit} />);
+    expect(screen.getByRole('heading', { name: 'Additional Notes' })).toBeTruthy();
+    expect((screen.getByRole('textbox', { name: 'Additional Notes' }) as HTMLTextAreaElement).value).toBe('Stay local.');
+    const withNewPage = { ...initial, pages: [...initial.pages, { callId: 'new-page', sequence: 2, page: { question: 'A newly arrived question', type: 'freetext' as const } }] };
+    view.rerender(<QuestionForm round={withNewPage} storedDraft={storedDraft} onSubmit={onSubmit} />);
+    expect(screen.getByText('New question received.')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Answer new question' }));
+    expect(screen.getByRole('heading', { name: 'A newly arrived question' })).toBeTruthy();
+    expect(screen.getByText('2 / 3')).toBeTruthy();
+    await user.click(backButton());
+    expect((screen.getByRole('textbox', { name: 'Your answer' }) as HTMLTextAreaElement).value).toBe('Earlier answer.');
+    expect((screen.getByRole('textbox', { name: 'Notes for this answer' }) as HTMLTextAreaElement).value).toBe('Earlier note.');
+    await user.click(nextButton());
+    // The newly received page still needs its own answer before the round can end.
+    await user.type(screen.getByRole('textbox', { name: 'Your answer' }), 'New answer.');
+    await user.click(nextButton());
+    expect((screen.getByRole('textbox', { name: 'Additional Notes' }) as HTMLTextAreaElement).value).toBe('Stay local.');
+  });
+
   it('starts a new round without reusing a prior round answer', async () => {
     const user = userEvent.setup();
     const view = render(<QuestionForm round={round([free])} onSubmit={vi.fn()} />);

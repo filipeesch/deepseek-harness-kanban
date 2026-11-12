@@ -226,6 +226,33 @@ describe('QuestionIndex canonical events', () => {
     expect(index.revisionOf('b')).toBe(1);
   });
 
+  it('forgets every trace of one conversation without touching another', () => {
+    const index = new QuestionIndex();
+    for (const sessionId of ['a', 'b']) {
+      index.apply(sessionId, call(1, 1, 'c'));
+      index.apply(sessionId, result(2, 1, 'c'));
+      index.apply(sessionId, end(3, 1));
+      expect(index.getRounds(sessionId)).toHaveLength(1);
+    }
+    const revision = index.revisionOf('a');
+    expect(revision).toBeGreaterThan(0);
+    index.forget('a');
+    expect(index.getRounds('a')).toEqual([]);
+    expect(index.getRounds()).toEqual(index.getRounds('b'));
+    expect(index.revisionOf('a')).toBe(0);
+    expect(index.serializeSession('a')).toBeUndefined();
+    expect(index.pending('a')).toBe(false);
+    expect(index.getRounds('b')).toHaveLength(1);
+    // Forgetting an absent conversation is a no-op that emits nothing.
+    const listener = vi.fn();
+    index.subscribe(listener);
+    index.forget('missing');
+    expect(listener).not.toHaveBeenCalled();
+    index.forget('b');
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(index.getRounds('b')).toEqual([]);
+  });
+
   it('keeps an unresolvable PTC page while the dismissal marker hides its round', () => {
     const index = new QuestionIndex();
     index.apply('a', ptcStart(1, 'root', 'nested'));

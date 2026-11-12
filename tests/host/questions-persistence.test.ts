@@ -90,7 +90,7 @@ describe('conversation question persistence', () => {
       { kind: 'end', seq: 3, turn: 1 },
       { kind: 'human', seq: 4 },
     ] };
-    const store: QuestionStore = { load: id => id === 's' ? record : undefined, save: async () => {} };
+    const store: QuestionStore = { load: id => id === 's' ? record : undefined, save: async () => {}, remove: async () => false };
     const app = await appWith(store);
     const rounds = await app.rounds('s');
     expect(rounds[0]?.pages[0]?.page.question).toBe('Stored question');
@@ -101,7 +101,7 @@ describe('conversation question persistence', () => {
   it('debounces accepted events into one write and flushes on close', async () => {
     vi.useFakeTimers();
     const saves: string[] = [];
-    const store: QuestionStore = { load: () => undefined, save: async id => { saves.push(id); } };
+    const store: QuestionStore = { load: () => undefined, save: async id => { saves.push(id); }, remove: async () => false };
     const app = await appWith(store);
     app.observe('s', call(1, 1, 'c'));
     app.observe('s', result(2, 1, 'c'));
@@ -117,7 +117,7 @@ describe('conversation question persistence', () => {
   it('reports a write failure and keeps the in-memory round available', async () => {
     vi.useFakeTimers();
     const report = vi.fn();
-    const store: QuestionStore = { load: () => undefined, save: async () => { throw new Error('write failed'); } };
+    const store: QuestionStore = { load: () => undefined, save: async () => { throw new Error('write failed'); }, remove: async () => false };
     const app = await appWith(store, { report });
     app.observe('s', call(1, 1, 'c'));
     app.observe('s', result(2, 1, 'c'));
@@ -130,7 +130,7 @@ describe('conversation question persistence', () => {
 
   it('dismisses every unresolved round, persists immediately, and returns the remaining rounds', async () => {
     const saves: QuestionSessionRecord[] = [];
-    const store: QuestionStore = { load: () => undefined, save: async (_id, record) => { saves.push(structuredClone(record)); } };
+    const store: QuestionStore = { load: () => undefined, save: async (_id, record) => { saves.push(structuredClone(record)); }, remove: async () => false };
     const app = await appWith(store);
     app.observe('s', call(1, 1, 'a'));
     app.observe('s', result(2, 1, 'a'));
@@ -171,7 +171,7 @@ describe('conversation question persistence', () => {
 
   it('rolls back the dismissal and rejects when the durable write fails', async () => {
     const report = vi.fn();
-    const store: QuestionStore = { load: () => undefined, save: async () => { throw new Error('disk full'); } };
+    const store: QuestionStore = { load: () => undefined, save: async () => { throw new Error('disk full'); }, remove: async () => false };
     const app = await appWith(store, { report });
     app.observe('s', call(1, 1, 'a'));
     app.observe('s', result(2, 1, 'a'));
@@ -186,7 +186,7 @@ describe('conversation question persistence', () => {
 
   it('keeps the round dismissed when the app and transcript are reconstructed', async () => {
     let saved: QuestionSessionRecord | undefined;
-    const store: QuestionStore = { load: id => id === 's' ? saved : undefined, save: async (_id, record) => { saved = structuredClone(record); } };
+    const store: QuestionStore = { load: id => id === 's' ? saved : undefined, save: async (_id, record) => { saved = structuredClone(record); }, remove: async () => false };
     const first = await appWith(store);
     first.observe('s', call(1, 1, 'a'));
     first.observe('s', result(2, 1, 'a'));

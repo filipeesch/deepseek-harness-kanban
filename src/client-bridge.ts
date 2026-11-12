@@ -10,6 +10,7 @@ import type { KeyValueStorage } from './client/key-value-storage.js';
 import type { KanbanRemote } from './remote.js';
 import type { ClientApi, Command, HostSnapshot, KanbanSnapshot, Outcome, Problem, QuestionFeedFrame, QuestionRound, SharingCommand, SnapshotRequest } from './shared/types.js';
 import { QuestionRoundCache, type QuestionRoundView } from './client/question-round-cache.js';
+import { QuestionDraftState, type QuestionDraftPort } from './client/question-draft-state.js';
 
 export interface BridgeStatus { error: Problem | null; connected: boolean }
 export type BridgeRemote = Pick<ClientRemote, '$stream'> & { kanban: KanbanRemote };
@@ -49,14 +50,26 @@ export class ClientBridge {
   private merged: KanbanSnapshot | undefined;
   private clientEpoch = 0;
   private readonly readState: ConversationReadState;
+  private readonly draftState: QuestionDraftState;
+  /** The dock-facing draft surface; the cache stays unaware of drafts. */
+  readonly questionDrafts: QuestionDraftPort;
+  private readonly stopPagehide: (() => void) | undefined;
   private readonly composers = new Set<string>();
   private readonly stopStatus: () => void;
   private control: RemoteSnapshotStream<Baseline, Update>;
   private restarting: Promise<void> | undefined;
   private disposed = false;
   readonly api: ClientApi;
-  constructor(private readonly remote: BridgeRemote, private readonly nativeStatus: HostObservable<SessionStatusSnapshot>, options: { storage?: KeyValueStorage } = {}) {
+  constructor(private readonly remote: BridgeRemote, private readonly nativeStatus: HostObservable<SessionStatusSnapshot>, options: { storage?: KeyValueStorage; report?: (error: unknown) => void } = {}) {
     this.readState = new ConversationReadState(options.storage);
+    this.draftState = new QuestionDraftState({
+      transport: { save: async request => { unwrap(await this.remote.kanban.saveQuestionDraft(request)); } },
+      ...(options.report === undefined ? {} : { report: options.report }),
+    });
+    this.questionDrafts = this.draftState;
+    const pagehide = typeof globalThis.window === 'undefined' ? undefined : () => this.draftState.flush();
+    if (pagehide !== undefined) globalThis.window.addEventListener('pagehide', pagehide);
+    this.stopPagehide = pagehide === undefined ? undefined : () => globalThis.window.removeEventListener('pagehide', pagehide);
     this.questions = new QuestionRoundCache({
       feed: { open: (sessionId, onFrame, onError) => this.openQuestionFeed(sessionId, onFrame, onError) },
       dismissal: { dismiss: async (sessionId, roundId) => unwrap(await this.remote.kanban.dismissQuestions({ sessionId, roundId })) },
@@ -231,11 +244,24 @@ export class ClientBridge {
   /** Dismiss the displayed round and every other unresolved round in that conversation. */
   async dismissQuestions(sessionId: string, roundId: string): Promise<readonly QuestionRound[]> {
     if (this.disposed) return [];
-    return this.questions.dismiss(sessionId, roundId);
+    const remaining = await this.questions.dismiss(sessionId, roundId);
+    // A successful dismissal retires every unresolved round, but a stale target only
+    // retires the displayed one; keep exactly the rounds the cache still presents so a
+    // newer round's draft survives.
+    const live = this.questions.view.getSnapshot().rounds.filter(round => round.sessionId === sessionId).map(round => round.id);
+    this.draftState.retainSession(sessionId, live);
+    return remaining;
   }
 
   private openQuestionFeed(sessionId: string, onFrame: (frame: QuestionFeedFrame) => void, onError: (error: Problem) => void): () => void {
     const remote = this.remote;
+    // Drafts hydrate before the frame reaches the cache, so the dock renders the
+    // restored answer in the same paint as its round; answered rounds retire theirs.
+    const deliver = (frame: QuestionFeedFrame): void => {
+      if (frame.drafts !== undefined) this.draftState.hydrate(sessionId, frame.drafts);
+      this.draftState.retire(frame.rounds.filter(round => round.answered).map(round => round.id));
+      onFrame(frame);
+    };
     const feed = remote.$stream<QuestionFeedFrame>({
       name: 'Question rounds',
       open: async function* (signal) {
@@ -247,8 +273,8 @@ export class ClientBridge {
     const control = new RemoteSnapshotStream<QuestionFeedFrame, QuestionFeedFrame>(feed, {
       name: 'Question rounds',
       isSnapshot: (frame): frame is QuestionFeedFrame => frame.kind === 'baseline',
-      replace: frame => onFrame(frame),
-      update: frame => onFrame(frame),
+      replace: deliver,
+      update: deliver,
       failed: error => onError(problem(error)),
     });
     control.start();
@@ -257,8 +283,8 @@ export class ClientBridge {
 
   async dispose(): Promise<void> {
     if (this.disposed) return;
-    this.disposed = true; this.stopStatus(); this.snapshots.clear(); this.composers.clear();
-    this.questions.dispose(); this.health.clear();
+    this.disposed = true; this.stopStatus(); this.stopPagehide?.(); this.snapshots.clear(); this.composers.clear();
+    this.questions.dispose(); this.draftState.dispose(); this.health.clear();
     await this.restarting; await this.control.dispose();
   }
 }

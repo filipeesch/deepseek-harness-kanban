@@ -499,6 +499,16 @@ export interface QuestionPage {
 }
 export interface RoundPage { callId: string; sequence: number; page: QuestionPage }
 export interface QuestionRound { id: string; sessionId: string; turnId: string; pages: RoundPage[]; complete: boolean; answered: boolean }
-/** One conversation-scoped question projection frame; baseline replaces, update supersedes the same session. */
-export interface QuestionFeedFrame { kind: 'baseline' | 'update'; rounds: QuestionRound[] }
 export interface QuestionAnswer { choices: string[]; text: string; other: string; notes: string }
+/** The slide a draft resumes on: one received question page, or the round's Additional Notes. */
+export type QuestionDraftSlide = { kind: 'page'; callId: string } | { kind: 'notes' };
+/** The durable subset of one round's form state; transient UI state is never stored. */
+export interface QuestionDraftContent {
+  answers: Record<string, QuestionAnswer>;
+  generalNotes: string;
+  active: QuestionDraftSlide | null;
+}
+/** One conversation's stored draft for a round, with the host timestamp retention uses. */
+export interface StoredQuestionDraft extends QuestionDraftContent { updatedAt: string }
+/** One conversation-scoped question projection frame; baseline replaces, update supersedes the same session. */
+export interface QuestionFeedFrame { kind: 'baseline' | 'update'; rounds: QuestionRound[]; drafts?: Record<string, StoredQuestionDraft> }
