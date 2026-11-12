@@ -1,4 +1,5 @@
 import { captureDeterministicTargets, establishStageEntry, ensureLocalStageIdentity, reconcileLocalStageIdentities } from './deterministic-state.js';
+import { declaredParameterNames, validateParameterValues } from './deterministic-parameters.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 import type { AutoModePause, AutoModeState, Board, BoardSettings, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ModelSelection, StagePatch, Workflow } from '../shared/types.js';
 import { assertId, isAbsolutePath } from './validation.js';
@@ -463,13 +464,14 @@ export function resumeTask(hub: HubState, taskId: string, deps: OperationDeps): 
  * declares it with. Clearing needs no reason. A recording never moves the task,
  * sends a message, or changes auto mode.
  */
-export function recordTransition(hub: HubState, taskId: string, columnId: string | undefined, reason: unknown, deps: OperationDeps): HubTask {
+export function recordTransition(hub: HubState, taskId: string, columnId: string | undefined, reason: unknown, parameters: unknown, deps: OperationDeps): HubTask {
   const task = requireTask(hub, taskId);
   const board = boardForTask(hub, task);
   const source = board.workflow.columns.find(column => column.id === task.columnId);
   invariant(source, 'INVALID_TARGET', 'The task stage does not exist.');
   invariant(source.allowedTransitions !== undefined, 'TRANSITIONS_NOT_CONFIGURED', 'The current stage does not configure transitions.');
   if (columnId === undefined) {
+    invariant(parameters === undefined, 'INVALID_PARAMETERS', 'Parameters require a destination stage. Omit parameters to clear the recorded transition.');
     if (task.recordedTransition === undefined) return task;
     delete task.recordedTransition;
   } else {
@@ -477,9 +479,21 @@ export function recordTransition(hub: HubState, taskId: string, columnId: string
     invariant(columnId !== task.columnId, 'INVALID_TARGET', 'A recorded transition must target another stage.');
     invariant(transitionTargets(board.workflow, task.columnId).some(target => target.column.id === columnId),
       'TRANSITION_NOT_ALLOWED', 'The destination stage is not a configured transition of the current stage.');
+    const destination = board.workflow.columns.find(column => column.id === columnId);
+    const declared = declaredParameterNames(destination?.deterministic?.params);
+    let values: Record<string, string> | undefined;
+    // A destination that declares none takes no set at all; a destination that
+    // declares parameters requires exactly that set.
+    if (declared.length === 0) {
+      invariant(parameters === undefined, 'INVALID_PARAMETERS', 'The destination stage declares no parameters. Omit parameters.');
+    } else {
+      const checked = validateParameterValues(declared, parameters);
+      invariant(checked.ok, 'INVALID_PARAMETERS', checked.ok ? '' : checked.message);
+      values = checked.values;
+    }
     const fromColumnId = task.columnId;
     const at = timestamp(deps);
-    task.recordedTransition = { fromColumnId, columnId, at, reason: normalizeTransitionReason(reason) };
+    task.recordedTransition = { fromColumnId, columnId, at, reason: normalizeTransitionReason(reason), ...(values === undefined ? {} : { parameters: values }) };
     recordIntent(task, fromColumnId, columnId, at);
   }
   task.updatedAt = timestamp(deps);
@@ -571,7 +585,7 @@ export function deleteNote(hub: HubState, taskId: string, noteId: string, deps: 
   return note;
 }
 
-export function placeTask(hub: HubState, taskId: string, columnId: string, placement: Placement, enteredAt: number, options: { retainAgentPause?: boolean; at: string }): void {
+export function placeTask(hub: HubState, taskId: string, columnId: string, placement: Placement, enteredAt: number, options: { retainAgentPause?: boolean; at: string; parameters?: Readonly<Record<string, string>> }): void {
   const task = requireTask(hub, taskId);
   const board = boardForTask(hub, task);
   placeTaskIn(

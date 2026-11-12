@@ -32,6 +32,16 @@ describe('deterministic journal configuration', () => {
     const added = deterministic().replace('  - {id: repair', '  - {id: added, key: added-key, label: Added, deterministic: {language: bash, file: poll.sh, exits: {ok: done}}}\n  - {id: repair');
     roundTrip(deterministic(), added);
   });
+  it('carries declared parameter names and descriptions without values', () => {
+    const declared = { ...definition, params: [{ name: 'pipeline', description: 'CI workflow' }, { name: 'app' }] };
+    const result = roundTrip(BASE, deterministic(declared));
+    expect(parseWorkflow(result.text).columns[0]?.deterministic?.params).toEqual(declared.params);
+    const encoded = JSON.stringify(encodeBoardLog(result.log));
+    expect(encoded).toContain('pipeline');
+    expect(encoded).toContain('CI workflow');
+    expect(encoded).not.toContain('ci-main');
+    expect(encoded).not.toContain('sourceRef');
+  });
   it('keeps code bytes and unrelated comments and quoting in block and flow materializers', () => {
     const block = roundTrip(BASE, deterministic());
     expect(block.text).toContain('# root stays'); expect(block.text).toContain('label: "Wait" # label stays');
@@ -66,18 +76,18 @@ describe('deterministic journal configuration', () => {
   });
 });
 
-describe('v1/v2 compatibility and content heads', () => {
+describe('v1/v2/v3 compatibility and content heads', () => {
   it('signals script-bearing genesis before events or workflow interpretation', () => {
     expect(SHARED_MANIFEST_VERSION).toBe(3);
-    const fresh = createBoardLog(deterministic()); expect(fresh.version).toBe(2); expect(fresh.events).toEqual([]);
+    const fresh = createBoardLog(deterministic()); expect(fresh.version).toBe(3); expect(fresh.events).toEqual([]);
     expect(decodeBoardLog(encodeBoardLog(fresh))).toEqual({ ok: true, log: fresh });
-    expect(decodeBoardLog({ ...encodeBoardLog(fresh), version: 3 })).toEqual({ ok: false, reason: 'unsupported-version', version: 3 });
-    expect(decodeBoardLog({ ...encodeBoardLog(fresh), version: 1 })).toEqual({ ok: false, reason: 'unsupported-version', version: 2 });
+    expect(decodeBoardLog({ ...encodeBoardLog(fresh), version: 4 })).toEqual({ ok: false, reason: 'unsupported-version', version: 4 });
+    expect(decodeBoardLog({ ...encodeBoardLog(fresh), version: 1 })).toEqual({ ok: false, reason: 'unsupported-version', version: 3 });
   });
   it('refuses executable events hidden under a legacy envelope or event stamp', () => {
     const event = { kind: 'stage.field-changed' as const, key: 'wait-key', field: 'deterministic' as const, value: definition, seq: 1, at: AT, v: 2 };
-    expect(decodeEvent({ ...event, v: 1 })).toEqual({ ok: false, reason: 'unsupported-version', version: 2 });
-    expect(decodeBoardLog({ version: 1, snapshot: { text: BASE, seq: 0 }, events: [event] })).toEqual({ ok: false, reason: 'unsupported-version', version: 2 });
+    expect(decodeEvent({ ...event, v: 1 })).toEqual({ ok: false, reason: 'unsupported-version', version: 3 });
+    expect(decodeBoardLog({ version: 1, snapshot: { text: BASE, seq: 0 }, events: [event] })).toEqual({ ok: false, reason: 'unsupported-version', version: 3 });
   });
   it('preserves a legacy log canonical head and every retained historical stamp on read/upgrade', () => {
     const old = appendEvents(createBoardLog(BASE), [{ kind: 'workflow.field-changed', field: 'name', value: 'Flow renamed' }], AT);
@@ -88,16 +98,16 @@ describe('v1/v2 compatibility and content heads', () => {
     const decoded = decodeBoardLog(encoded); expect(decoded.ok).toBe(true); if (!decoded.ok) return;
     expect(decoded.log.version).toBe(1); expect(headToken(decoded.log)).toBe(expectedHead);
     const upgraded = appendEvents(decoded.log, [{ kind: 'stage.field-changed', key: 'wait-key', field: 'deterministic', value: definition }], '2026-01-02T00:00:00.000Z');
-    expect(upgraded.version).toBe(2); expect(upgraded.events[0]).toEqual(old.events[0]);
-    expect(encodeEvent(upgraded.events[0]!)).toEqual(encodeEvent(old.events[0]!)); expect(upgraded.events[1]?.v).toBe(2);
+    expect(upgraded.version).toBe(3); expect(upgraded.events[0]).toEqual(old.events[0]);
+    expect(encodeEvent(upgraded.events[0]!)).toEqual(encodeEvent(old.events[0]!)); expect(upgraded.events[1]?.v).toBe(3);
   });
   it('keeps the envelope after compaction and later removal of the last executable definition', () => {
     const { log } = roundTrip(BASE, deterministic());
-    const compacted = compactBoardLog(log, 0); expect(compacted.version).toBe(2); expect(compacted.events).toEqual([]);
+    const compacted = compactBoardLog(log, 0); expect(compacted.version).toBe(3); expect(compacted.events).toEqual([]);
     expect(parseWorkflow(compacted.snapshot.text).columns[0]?.deterministic).toEqual(definition);
     const cleared = compactBoardLog(appendEvents(compacted, [{ kind: 'stage.field-changed', key: 'wait-key', field: 'deterministic', value: null }], AT), 0);
-    expect(cleared.version).toBe(2); expect(encodeBoardLog(cleared).version).toBe(2);
+    expect(cleared.version).toBe(3); expect(encodeBoardLog(cleared).version).toBe(3);
     expect(parseWorkflow(cleared.snapshot.text).columns[0]?.deterministic).toBeUndefined();
-    const decoded = decodeBoardLog(encodeBoardLog(cleared)); expect(decoded.ok).toBe(true); if (decoded.ok) expect(decoded.log.version).toBe(2);
+    const decoded = decodeBoardLog(encodeBoardLog(cleared)); expect(decoded.ok).toBe(true); if (decoded.ok) expect(decoded.log.version).toBe(3);
   });
 });

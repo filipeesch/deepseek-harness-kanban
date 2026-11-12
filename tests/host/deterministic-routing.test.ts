@@ -16,7 +16,7 @@ async function fixture(kind: 'manual' | 'agent' | 'script' = 'manual') {
     + '  - id: repair\n    key: repair-key\n    label: Repair\n';
   board.workflow = parseWorkflow(board.workflowYaml);
   const definition = board.workflow.columns[0]!.deterministic!;
-  const capture = { sourceRef: 'blob', fingerprint: 'approved', language: 'typescript' as const, directory: 'task' as const, executionDirectory: '/repo/app', source: { kind: 'inline' as const }, env: [], exits: { passed: { columnId: 'review', stageIdentity: 'review-key' }, error: { columnId: 'repair', stageIdentity: 'repair-key' } } };
+  const capture = { sourceRef: 'blob', fingerprint: 'approved', language: 'typescript' as const, directory: 'task' as const, executionDirectory: '/repo/app', source: { kind: 'inline' as const }, env: [], params: [], exits: { passed: { columnId: 'review', stageIdentity: 'review-key' }, error: { columnId: 'repair', stageIdentity: 'repair-key' } } };
   const result = { id: 'result', exit: 'passed', message: 'CI passed', at, target: capture.exits.passed, deliveryId: 'delivery', deliveryStatus: 'pending' as const };
   const task: HubTask = { id: 'task', boardId: 'board', projectId: 'project', title: 'Task', description: '', columnId: 'wait', position: 0, sessionIds: [], closedSessionIds: [], effectiveCwd: '/repo/app', worktree: null, operation: null, createdAt: at, updatedAt: at,
     stageEntry: { id: 'entry', columnId: 'wait', stageIdentity: 'wait-key', enteredAt: at }, deterministic: { entryId: 'entry', executionId: 'execution', stageIdentity: 'wait-key', definition: structuredClone(definition), phase: 'delivering', startedAt: at, attempt: 1, attemptId: 'attempt', restartCount: 0, capture, result } };

@@ -44,7 +44,7 @@ describe('journal event codec', () => {
   });
 
   it('reports a newer event version instead of guessing', () => {
-    expect(decodeEvent({ ...base, v: 3, kind: 'stage.removed', key: 's1' })).toEqual({ ok: false, reason: 'unsupported-version', version: 3 });
+    expect(decodeEvent({ ...base, v: 4, kind: 'stage.removed', key: 's1' })).toEqual({ ok: false, reason: 'unsupported-version', version: 4 });
   });
 
   it('reports an unknown event kind instead of skipping it', () => {

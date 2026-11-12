@@ -72,6 +72,7 @@ it('runs local Bash/TypeScript loops, repairs via Play, reloads captures, and ha
   const workflow = [
     'name: Deterministic native lane', 'initial_column: wait_bash', 'columns:',
     '  - id: wait_bash', '    label: Wait Bash', '    deterministic:', '      language: bash', '      directory: task', '      file: wait-ci.sh',
+    '      params:', '        - name: pipeline', '          description: Local CI pipeline identifier.',
     '      exits: { passed: wait_ts, rejected: fix, error: repair }',
     '  - id: wait_ts', '    label: Wait TypeScript', '    deterministic:', '      language: typescript', '      directory: task', '      file: wait-review.ts',
     '      exits: { passed: review, rejected: fix, error: repair }',
@@ -82,6 +83,12 @@ it('runs local Bash/TypeScript loops, repairs via Play, reloads captures, and ha
   await command({ type: 'task.create', hubId, boardId, projectId, title: 'Local deterministic check', description: '', autoMode: false });
   const taskId = (await task()).id;
   expect((await task()).sessionIds).toEqual([]);
+  // A parameterized initial stage refuses the value-less entry in place.
+  await expect.poll(async () => (await summary())?.phase).toBe('failed');
+  expect((await summary())?.error?.code).toBe('PARAMETERS_REQUIRED');
+  const firstEntry = (await task()).stageEntry.id;
+  await command({ type: 'task.deterministicParameters', taskId, entryId: firstEntry, values: { pipeline: 'local-ci' } });
+  await command({ type: 'task.deterministicPlay', taskId });
   await approve();
   await expect.poll(async () => (await observe('.fake-ci-observations')).filter(value => value === 'pending').length).toBeGreaterThanOrEqual(2);
   const firstExecution = await summary();
@@ -102,6 +109,11 @@ it('runs local Bash/TypeScript loops, repairs via Play, reloads captures, and ha
   expect(failures).toHaveLength(1);
   await writeFile(join(scaffold.workspaceCwd, 'wait-ci.sh'), originalBash);
   await command({ type: 'task.move', hubId, taskId, columnId: 'wait_bash' });
+  await expect.poll(async () => (await summary())?.phase).toBe('failed');
+  expect((await summary())?.error?.code).toBe('PARAMETERS_REQUIRED');
+  const reentry = (await task()).stageEntry.id;
+  await command({ type: 'task.deterministicParameters', taskId, entryId: reentry, values: { pipeline: 'local-ci' } });
+  await command({ type: 'task.deterministicPlay', taskId });
   await expect.poll(async () => (await summary())?.phase).toBe('active');
   await writeFile(join(scaffold.workspaceCwd, '.fake-ci-state'), 'passed');
   await expect.poll(async () => (await task()).columnId).toBe('wait_ts');
@@ -158,7 +170,7 @@ it('runs local Bash/TypeScript loops, repairs via Play, reloads captures, and ha
   await writeFile(join(ROOT, '.verification/deterministic-e2e-report.json'), JSON.stringify({
     status: 'passed', nativeBundleActivated: true, bashLoop: true, typeScriptLoop: true,
     stoppedAcrossReload: true, activeRestartPreservedStart: true, changedPrimaryIgnored: true, interruptedNativeAdmissionRecovered: true,
-    errorRoute: true, playInPlace: true, scriptChainWithoutConversation: true, downstreamReplayTurns: 1, handoffContexts: 1,
+    errorRoute: true, playInPlace: true, parameterRefusalRepairedInPlace: true, scriptChainWithoutConversation: true, downstreamReplayTurns: 1, handoffContexts: 1,
     boundary: 'Native profile/plugin reload; abrupt process loss is separately verified by deterministic-ownership.test.ts.',
   }, null, 2) + '\n');
 });

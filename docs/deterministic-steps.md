@@ -6,7 +6,7 @@ Deterministic stages run repeatable Bash or TypeScript checks without creating a
 
 ## Compatibility and installation
 
-Artifact **0.25.0** requires **DSH >=0.2.2-rc.1 <0.3.0-0**, **Node >=24.9.0**, and development **pnpm 10.15.1**. The lockfile records the tested **0.2.2-rc.1** SDK; declared SDK ranges are bounded. DSH evaluates prereleases in admission, so the explicit upper bound excludes 0.3 prereleases too. Host admission is not a claim that every optional execution provider is available.
+Artifact **0.27.0** requires **DSH >=0.2.2-rc.1 <0.3.0-0**, **Node >=24.9.0**, and development **pnpm 10.15.1**. The lockfile records the tested **0.2.2-rc.1** SDK; declared SDK ranges are bounded. DSH evaluates prereleases in admission, so the explicit upper bound excludes 0.3 prereleases too. Host admission is not a claim that every optional execution provider is available.
 
 Install from `https://github.com/filipeesch/deepseek-harness-kanban`, optionally pinned with `#<commit sha>` (immutable) or an existing version tag (a convenience, not an immutable pin). Follow [repository installation](<../README.md#install-from-the-repository-url>): the profile must approve the resolved Git dependency's **prepare** build. An unbuilt clone has no loadable bundle and can report installation success before failing to import. Verify its built entries and actual native activation; installation alone is not activation evidence.
 
@@ -23,6 +23,9 @@ The complete [local CI workflow fixture](<../tests/e2e-dsh/deterministic/workflo
     language: typescript
     directory: task
     file: wait-ci.ts
+    params:
+      - name: pipeline
+        description: Local CI pipeline identifier.
     exits:
       passed: review
       rejected: fix
@@ -33,9 +36,18 @@ The complete [local CI workflow fixture](<../tests/e2e-dsh/deterministic/workflo
 - **source:** exactly one nonempty `code` or `file`. Files contain the same primary program body as inline code, not an export-default module.
 - **directory:** `task` (default effective task directory, including a bound worktree) or `project` (base project). Relative file paths resolve there; absolute paths still require native policy admission. Review shows the canonical source.
 - **env:** optional authorized names only, for example `env: [CI_TOKEN]`. Never put values or credential references in shared YAML.
+- **params:** required parameters declared as a list of `{ name, description? }`. Names are unique safe identifiers; each description is optional guidance for the origin stage. The declaration is reviewed authority and never carries a value.
 - **exits:** named outcomes to existing stages. Different names may share a destination; self-routes are rejected. There is no first-exit default. Do not also configure a nonempty entry instruction or an allowed-transition list.
 
 The exit mapping is the only script routing declaration. Existing free-text transition conditions remain documentation, not expressions.
+
+### Required parameters
+
+A deterministic stage can declare parameters when the same script must monitor a different pipeline, app, or environment per task. The declaration is published with the workflow; the values are not. Every declared name is required: there is no default, optionality, or secret parameter, because local variables remain the credential channel. The accepted bounds are 32 parameters, a 64-character name, a 200-character description, a 4,096-character value, and 32 KiB across the value set.
+
+The values come from the transition that creates the entry. `list_allowed_transitions` reports each target's declared names and descriptions, and `set_next_transition` accepts a `parameters` object containing exactly those names as nonempty strings. A missing, unknown, empty, or oversized value is rejected with the accepted names, so the agent corrects before the task moves. Placement revalidates the recorded set against the destination's current declaration and fails that transition instead of creating a mismatched entry.
+
+An entry created without a value, including by a manual move, task creation, an automatic advance, or a script exit, fails in place with a diagnostic that names the missing parameters. That failure is a configuration refusal, not an executor failure: it never follows the `error` exit, it adds no history entry, and the entry stays available for repair. The card and drawer script panel show the entry's values read-only and offer **Edit parameters** whenever the entry is not active or stopping. Saving values neither grants trust nor starts code; press **Play** afterwards. Play captures the latest saved declaration and revalidates against it, so a newly declared name must be filled before the new execution starts. Parameter values are task data: they are recorded on the execution that used them and are never published, resolved as credentials, or interpolated into source.
 
 ## Script ABI
 
@@ -45,7 +57,7 @@ A successful program produces exactly `{ exit: string, message: string }`, with 
 
 TypeScript is an asynchronous function body supporting top-level await/return. The host provides:
 
-- `input`: structured task/project metadata, entry and execution identity, original `startedAt`, attempt identity/restart count, and an incoming deterministic handoff when applicable. It contains no resolved secrets.
+- `input`: structured task/project metadata, entry and execution identity, original `startedAt`, attempt identity/restart count, the entry's declared parameter values as `params`, and an incoming deterministic handoff when applicable. It contains no resolved secrets and never an undeclared parameter name.
 - `await env.get("CI_TOKEN")`: read-only access to an explicitly authorized local variable, separate from metadata.
 - **Only** `tools.bash({ command, timeoutMs? })` in the tool namespace. The command deadline is optional and kills on expiry; it never creates a detached chat job. The result includes `exitCode`, `signal`, `timedOut`, `aborted`, and bounded `stdout/stderr: { text, truncated }`. A nonzero nested Bash exit is data that the program may handle.
 
@@ -77,6 +89,8 @@ The [equivalent looping Bash fixture](<../tests/e2e-dsh/deterministic/wait-ci.sh
 
 ## Completion, handoff, and errors
 
+An entry that lacks a declared parameter value never reaches the program: it fails in place with a diagnostic that names the missing parameters, follows no error exit, adds no history entry, and stays available for Play and parameter editing.
+
 A valid exit selects exactly the destination in the trusted captured mapping, independently of Auto mode. The host persists the terminal result before movement or native delivery. Pending user work/context changes may hold delivery without checking CI again. A renamed destination retains its stable identity; removing it causes a routing failure, and reusing its authored identifier cannot hijack delivery. Editing a mapping affects the next capture, not an active result.
 
 An executor/protocol error, including an unmapped exit, may use the captured reserved **error** route. Without that route the task stays recoverably failed. Ungranted trust is an authorization wait, not an error. Stop/supersession never routes through error. Destination removal or native handoff delivery failure does not recursively follow error.
@@ -86,7 +100,7 @@ An agent destination receives its own instruction and one identified output/prov
 ## Stop, Play, edits, and restart
 
 - **Stop** durably revokes the current run, then aborts/drains its owned processes. It stays in the stage, sends no handoff, and remains stopped after restart.
-- **Play** captures the latest valid saved configuration and primary file, performs any new trust review, and starts a new execution/start time in the same entry. It is not dry-run: a later success routes normally. It waits for predecessor cleanup before replacement.
+- **Play** captures the latest valid saved configuration and primary file, performs any new trust review, revalidates the entry's parameter values against the captured declaration, and starts a new execution/start time in the same entry. A declaration name added after the entry was created fails in the card until its value is edited. Play is not dry-run: a later success routes normally. It waits for predecessor cleanup before replacement.
 - Saving agent/manual mode does not stop an existing captured script or hide Stop. Play explains when saved configuration is no longer deterministic instead of silently running old code or starting an agent.
 - A genuine move away invalidates the old entry. Moving back creates a new one; late results and native admission from the old visit are rejected. A refused move does not stop a run.
 - Active recovery restarts **from the beginning**, using captured primary bytes/routes, the same logical execution and original start, and a new attempt/restart count. No stack, shell variables, timer remainder, or missed polls are restored. Compute business deadlines from `input.startedAt`.
@@ -95,7 +109,7 @@ An agent destination receives its own instruction and one identified output/prov
 
 ## Local trust and variables
 
-Approval is installation-local and scoped to the selected board, project, and stable stage. Review covers primary code bytes, language/format, canonical provenance, directory scope, routes, and authorized variable names. Saving YAML, publishing, and accepting team updates never approve code. Changed code or expanded authority needs a new review; unchanged captures can reuse their approval.
+Approval is installation-local and scoped to the selected board, project, and stable stage. Review covers primary code bytes, language/format, canonical provenance, directory scope, routes, authorized variable names, and declared parameter names. Editing the entry's parameter values does not invalidate that approval; adding or removing a declared name does. Saving YAML, publishing, and accepting team updates never approve code. Changed code or expanded authority needs a new review; unchanged captures can reuse their approval.
 
 Only the primary program is frozen. Imported modules, executables, and remote services can change after approval; review those dependencies and avoid irreversible side effects. Trust is not a native filesystem-policy exemption.
 
@@ -103,10 +117,10 @@ Local settings expose configured/missing status and masked **write-only** replac
 
 Known resolved values are redacted before persisted/displayed results, diagnostics, history, and native handoffs. Diagnostic/output sizes are bounded; polling/console output does not flood History. Redaction cannot stop a trusted program from transforming or exfiltrating a secret. Never embed credentials in source literals.
 
-Team journals share authored definitions and file references only, not file bytes, captures, execution state, trust, local bindings, credential references/values, or task data. Board-log v2 requires an updated reader even after compaction or later removal of deterministic configuration; unsupported clients must not overwrite it. Hub manifest v3 is unchanged.
+Team journals share authored definitions and file references only, not file bytes, captures, execution state, trust, local bindings, credential references/values, parameter values, or task data. A log that declares a parameter uses board-log envelope 3, which requires an updated reader even after compaction or later removal of deterministic configuration; an envelope-2 reader reports the board as requiring an update instead of reading it as invalid, and unsupported clients must not overwrite it. Hub manifest v3 is unchanged.
 
 ## Safe rollback and verification
 
 Stop all active scripts explicitly; the guard drains its owned token-bearing processes before it reports a clean stop. Preserve/back up local records and native credentials, and review workflows plus a compatible shared-log backup before selecting an older plugin. Do not delete captures to force a downgrade, strip executable fields silently, or rewrite a v2 journal as v1. There is no automatic downgrade writer.
 
-Fast gates are separate: `pnpm check`, `pnpm test:browser`, then the isolated [real-composition lane](<../tests/e2e-dsh/README.md>) against a built DSH checkout. The lane stages plugin tests in a temporary directory, uses a throwaway HOME/DSH_HOME/profile/workspace and replay-only model fixtures, and imports native scaffolding read-only. No acceptance check may use personal GUI/profile data, real model traffic, or real CI/CD credentials. Native admission and package installation checks do not by themselves prove bundle activation or process-ownership cleanup; retain those separate integration results.
+Fast gates are separate: `pnpm check`, `pnpm test:browser`, then the isolated [real-composition lane](<../tests/e2e-dsh/README.md>) against a built DSH checkout. The lane's deterministic fixture declares parameters so a run covers supplied values, the in-place refusal, and the repair overlay. The lane stages plugin tests in a temporary directory, uses a throwaway HOME/DSH_HOME/profile/workspace and replay-only model fixtures, and imports native scaffolding read-only. No acceptance check may use personal GUI/profile data, real model traffic, or real CI/CD credentials. Native admission and package installation checks do not by themselves prove bundle activation or process-ownership cleanup; retain those separate integration results.

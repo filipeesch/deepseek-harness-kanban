@@ -29,7 +29,7 @@ export interface StageEditorDraft {
 }
 
 /** A problem the editor shows next to the field that caused it. */
-export interface StageEditorProblem { readonly field: 'name' | 'id' | 'transitions' | 'source' | 'env' | 'exits' | 'execution'; readonly message: string }
+export interface StageEditorProblem { readonly field: 'name' | 'id' | 'transitions' | 'source' | 'env' | 'params' | 'exits' | 'execution'; readonly message: string }
 
 /** The mode a stored stage's transition list describes. */
 export function transitionMode(transitions: TransitionRule[] | undefined): StageTransitionMode {

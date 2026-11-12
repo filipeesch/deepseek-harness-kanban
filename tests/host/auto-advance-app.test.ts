@@ -68,6 +68,27 @@ const REMOVED_DESTINATION_FLOW = [
   '    label: Review',
   '',
 ].join('\n');
+const PARAMETERIZED_ADVANCE_FLOW = [
+  'name: Parameterized advance',
+  'initial_column: backlog',
+  'columns:',
+  '  - id: backlog',
+  '    label: Backlog',
+  '    allowed_transitions:',
+  '      - to: wait',
+  '  - id: wait',
+  '    label: Wait',
+  '    deterministic:',
+  '      language: bash',
+  '      code: echo ok',
+  '      params:',
+  '        - name: pipeline',
+  '      exits:',
+  '        ok: done',
+  '  - id: done',
+  '    label: Done',
+  '',
+].join('\n');
 const CASCADE_FLOW = [
   'name: Cascade flow',
   'initial_column: backlog',
@@ -226,6 +247,21 @@ describe('automatic advance', () => {
     expect(text).toContain('- Done — The plan approved the task without further work.');
     expect(text).toContain('- Review — The plan needs a review before implementation.');
     expect(text).toContain('set_next_transition');
+  });
+
+
+  it('fails a declared transition when the destination declaration changed before the move', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(PARAMETERIZED_ADVANCE_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Monitor', description: '' });
+    await arm(f.app, task.id);
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'wait', reason: 'Monitor the CI workflow.', parameters: { pipeline: 'ci-main' } });
+    await f.store.setWorkflow(PARAMETERIZED_ADVANCE_FLOW.replace('        - name: pipeline', '        - name: pipeline\n        - name: app'));
+    await endTurn(f.app, task.sessionIds[0]!, 1);
+    await expect.poll(() => f.store.requireTask(task.id).pendingTransition?.status).toBe('failed');
+    expect(f.store.requireTask(task.id).pendingTransition?.error?.code).toBe('INVALID_PARAMETERS');
+    expect(f.store.requireTask(task.id).columnId).toBe('backlog');
+    expect(f.store.requireTask(task.id).deterministic).toBeUndefined();
   });
 
   it('advances to the recorded destination instead of the first configured target', async () => {

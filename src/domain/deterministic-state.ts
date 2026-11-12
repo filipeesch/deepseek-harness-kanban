@@ -2,7 +2,8 @@ import { z } from 'zod';
 import type { Board, Column, Task, Workflow } from '../shared/types.js';
 import type { DeterministicControl, DeterministicTarget } from '../shared/deterministic.js';
 import { DETERMINISTIC_PHASES } from '../shared/deterministic.js';
-import { deterministicDefinitionSchema } from './deterministic-definition.js';
+import { PARAMETER_LIMITS, PARAMETER_NAME, deterministicDefinitionSchema } from './deterministic-definition.js';
+import { parameterValuesProblem } from './deterministic-parameters.js';
 import { isDomainId, isAbsolutePath } from './validation.js';
 
 const id = z.string().refine(isDomainId);
@@ -11,14 +12,20 @@ const problem = z.strictObject({ code: z.string(), message: z.string(), details:
 export const localStageIdentitiesSchema = z.record(id, id).refine(value => new Set(Object.values(value)).size === Object.keys(value).length, 'Local stage associations must be unique.');
 export const deterministicTargetSchema = z.strictObject({ columnId: id, stageIdentity: id });
 export const taskStageEntrySchema = z.strictObject({ id, columnId: id, stageIdentity: id, enteredAt: timestamp });
+/** The durable value set: declared-shaped names within the accepted bounds; undeclared extras are allowed after a declaration edit. */
+export const parameterValuesSchema = z.record(z.string().regex(PARAMETER_NAME), z.string().min(1).max(PARAMETER_LIMITS.valueLength)).superRefine((values, context) => {
+  const issue = parameterValuesProblem(values);
+  if (issue !== null) context.addIssue({ code: 'custom', message: issue });
+});
 export const deterministicCaptureSchema = z.strictObject({
   sourceRef: z.string().min(1), fingerprint: z.string().min(1), language: z.enum(['bash', 'typescript']), directory: z.enum(['task', 'project']),
   executionDirectory: z.string().refine(isAbsolutePath), source: z.strictObject({ kind: z.enum(['inline', 'file']), path: z.string().optional() }),
-  env: z.array(z.string()), exits: z.record(z.string(), deterministicTargetSchema),
+  env: z.array(z.string()), params: z.array(z.string().regex(PARAMETER_NAME)).max(PARAMETER_LIMITS.count), exits: z.record(z.string(), deterministicTargetSchema),
 });
 export const deterministicResultSchema = z.strictObject({ id, exit: z.string(), message: z.string(), at: timestamp, target: deterministicTargetSchema.optional(), synthetic: z.boolean().optional(), deliveryId: id.optional(), deliveryStatus: z.enum(['pending', 'accepted', 'failed']).optional(), error: problem.optional() });
 export const deterministicControlSchema = z.strictObject({
   entryId: id, executionId: id, stageIdentity: id, definition: deterministicDefinitionSchema, targets: z.record(z.string(), deterministicTargetSchema).optional(),
+  parameters: parameterValuesSchema.optional(),
   phase: z.enum(DETERMINISTIC_PHASES), startedAt: timestamp, attempt: z.number().int().nonnegative(), restartCount: z.number().int().nonnegative(),
   attemptId: id.optional(), capture: deterministicCaptureSchema.optional(), result: deterministicResultSchema.optional(), error: problem.optional(),
 });
@@ -82,11 +89,11 @@ export function captureDeterministicTargets(board: Pick<Board, 'workflow' | 'loc
   return Object.fromEntries(Object.entries(column.deterministic.exits).map(([name, columnId]) => [name, { columnId, stageIdentity: ensureLocalStageIdentity(board, columnId, allocate) }]));
 }
 /** Called only by actual entry placement or creation, inside the caller's transaction. */
-export function establishStageEntry(task: Task, column: Column, stageIdentity: string, at: string, allocate: () => string, targets?: Record<string, DeterministicTarget>): void {
+export function establishStageEntry(task: Task, column: Column, stageIdentity: string, at: string, allocate: () => string, targets?: Record<string, DeterministicTarget>, parameters?: Readonly<Record<string, string>>): void {
   const entryId = allocate();
   task.stageEntry = { id: entryId, columnId: column.id, stageIdentity, enteredAt: at };
   delete task.deterministicHandoff;
   if (column.deterministic === undefined) { delete task.deterministic; return; }
-  task.deterministic = { entryId, executionId: allocate(), stageIdentity, definition: structuredClone(column.deterministic), ...(targets === undefined ? {} : { targets }), phase: 'capture-pending', startedAt: at, attempt: 0, restartCount: 0 };
+  task.deterministic = { entryId, executionId: allocate(), stageIdentity, definition: structuredClone(column.deterministic), ...(targets === undefined ? {} : { targets }), ...(parameters === undefined ? {} : { parameters: { ...parameters } }), phase: 'capture-pending', startedAt: at, attempt: 0, restartCount: 0 };
   delete task.instructionPending;
 }
