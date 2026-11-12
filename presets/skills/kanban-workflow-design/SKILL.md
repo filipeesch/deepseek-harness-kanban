@@ -7,13 +7,13 @@ description: Design, create, review, and safely edit one or more Kanban board wo
 
 ## Discover and interview
 
-1. Identify the outcome and whether this is a new design, an edit, or a multi-board architecture. Discover Hubs and boards; never infer scope from the selected UI board. For existing boards, read `get_board_summary` with `include_workflow: true` and inspect affected tasks as needed.
+1. Identify the outcome and whether this is a new design, an edit, or a multi-board architecture. Discover Hubs and boards; never infer scope from the selected UI board. For an existing board read `get_board_yaml` for the exact authored document, `get_stage` for one stage in full, and `get_board_summary` with `include_workflow: true` for the parsed workflow, the default model, the Hub revision, and the publishing state. Read `get_route_stats` before proposing routing changes, and `list_board_revisions` to see what changed recently and who changed it.
 2. Reuse supplied/discovered facts. Ask only questions that change the design: scope and deliverables; stages and ownership; evidence and approvals; routing and rework; automation per stage; coordination across workflows. Do not force a fixed questionnaire.
 3. During an interview, use sequential `decision_request` calls for 3–5 useful pages per turn, then **end the turn** so the user can submit. Use fewer when fewer unknowns remain; never pad a batch. Put choices in options; omit options for free text. Recommendations must match an option title. Accept ordinary chat answers equally. Dismissal or skipping is neither an answer nor consent. Create no decision records.
 
 ## Design the architecture
 
-Describe stages, work and evidence, routes and their conditions, failure/rework paths, and human gates. Every executing stage needs a complete entry instruction: objective, inputs, bounded actions, output, acceptance criteria, blocking/failure behavior, and routing responsibility. A title such as “implement” is not an instruction.
+Describe stages, work and evidence, routes and their conditions, failure/rework paths, and human gates. Every executing stage needs a complete entry instruction: objective, inputs, bounded actions, output, acceptance criteria, blocking/failure behavior, and routing responsibility. A title such as "implement" is not an instruction.
 
 Choose automation **stage by stage**: human-controlled, agent-selected route, or task auto-mode default progression. Explain how the choice actually works using [execution and human gates](references/operations.md#automation-and-human-gates); do not imply there is a YAML stage automation switch.
 
@@ -21,7 +21,11 @@ For multiple workflows, design one integrated architecture: board responsibiliti
 
 ## Prepare the approved change
 
-Offer a concise summary and impacts: affected boards, stage/instruction/route changes, automation, coordination, retained model/layout, execution side effects, and publishing scope. Obtain approval for concrete writes; full YAML is available only on request. If scope or impact changes during reconciliation, renew approval.
+Offer a concise summary and impacts: affected boards, stage/instruction/route changes, automation, coordination, retained model/layout, execution side effects, and publishing scope. Obtain approval for concrete writes; full YAML is available on request. If scope or impact changes during reconciliation, renew approval.
+
+Prefer the structured tools over literal edits: `set_stage_prompt`, `set_stage_routes`, `set_layout`, `add_stage`, and `remove_stage` rewrite only what they name and preserve every other authored character. Use `edit_board_yaml` for spans those tools do not cover. Every write returns a report: the per-stage difference, graph warnings, the reviewed authorization of each deterministic stage in every allowed project, and the affected cards — on success as well as on refusal. Read it before the next write, and use `revert_board` when a change must be undone.
+
+Preview before saving when the shape matters: `render_workflow_diagram` draws the saved or proposed document with the same geometry the workflow view draws, and `layout_metrics` reports crossings, segments through stages, overlapping stages, covered labels, folds, and total route length.
 
 Load [workflow YAML](references/workflow-yaml.md) before authoring and [operations](references/operations.md) before writes. Preserve exact authored text/comments, identities, model, and layout outside approved spans. Refresh Hub-wide revisions after every write and apply boards sequentially. Verify saved content; report local success and publication separately, including partial results. Finish the requested management work without starting a continuous operator loop.
 

@@ -1,6 +1,7 @@
 import { captureDeterministicTargets, establishStageEntry, ensureLocalStageIdentity } from './deterministic-state.js';
 import { declaredParameterValues } from './deterministic-parameters.js';
 import type { HubTask, Task, Workflow } from '../shared/types.js';
+import type { StageEntryOrigin } from '../shared/task-history.js';
 import { compareTaskOrder } from './task-order.js';
 import { entryInstruction } from './stage-entry.js';
 import { placementIndex, type Placement } from './placement.js';
@@ -28,6 +29,8 @@ export interface TaskPlacementOptions {
   readonly retainAgentPause?: boolean;
   /** The moment the move settled, recorded with the stage entry. */
   readonly at: string;
+  /** How the move happened; absent means no origin was known and none is recorded. */
+  readonly origin?: StageEntryOrigin;
   readonly allocateId?: () => string;
   /** Values a declared transition supplies for the destination's declared parameters. */
   readonly parameters?: Readonly<Record<string, string>>;
@@ -56,7 +59,7 @@ export function placeTaskIn(board: TaskPlacementBoard, task: HubTask, columnId: 
       const used = superseded.parameters === undefined || superseded.attempt === 0 ? {} : declaredParameterValues(superseded.capture?.params ?? Object.keys(superseded.parameters), superseded.parameters);
       recordDeterministicExecution(task, { at: options.at, executionId: superseded.executionId, columnId: sourceColumnId, outcome: 'stopped', ...(Object.keys(used).length === 0 ? {} : { parameters: used }) });
     }
-    recordStageEntry(task as Task, sourceColumnId, columnId, options.at);
+    recordStageEntry(task as Task, sourceColumnId, columnId, options.at, options.origin);
     const destinationColumn = board.workflow.columns.find(value => value.id === columnId);
     if (entryInstruction(destinationColumn) !== undefined) task.instructionPending = { columnId, enteredAt };
     else delete task.instructionPending;

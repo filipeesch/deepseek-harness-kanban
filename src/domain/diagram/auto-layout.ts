@@ -1,5 +1,5 @@
 import type { Workflow } from '../../shared/types.js';
-import { workflowGraph } from '../../domain/workflow-graph.js';
+import { workflowGraph } from '../workflow-graph.js';
 import { placeStages, type StageLayout } from './layout.js';
 
 /** The workflow structure that automatic placement depends on. */

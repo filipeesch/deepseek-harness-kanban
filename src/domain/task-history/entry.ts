@@ -7,12 +7,13 @@ import { isDomainId } from '../validation.js';
 const identifier = z.string().refine(isDomainId, 'Expected a safe identifier.');
 const moment = z.string().datetime({ offset: true });
 const failure = z.strictObject({ code: z.string().min(1), message: z.string(), details: z.record(z.string(), z.unknown()).optional() });
+const stageOrigin = z.string().regex(/^(?:manual|agent|auto|(?:script|error):[A-Za-z][A-Za-z0-9_-]*)$/, 'Expected a stage entry origin.');
 
 export const taskHistoryEntrySchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('deterministic-execution'), at: moment, executionId: identifier, columnId: identifier, outcome: z.enum(['completed', 'stopped', 'failed']), exit: z.string().optional(), message: z.string().optional(), error: failure.optional(), parameters: parameterValuesSchema.optional() }),
   z.strictObject({ kind: z.literal('deterministic-handoff'), at: moment, deliveryId: identifier, executionId: identifier, fromColumnId: identifier, columnId: identifier, outcome: z.enum(['accepted', 'failed']), exit: z.string(), message: z.string(), error: failure.optional() }),
   z.strictObject({ kind: z.literal('created'), at: moment, columnId: identifier }),
-  z.strictObject({ kind: z.literal('stage'), at: moment, fromColumnId: identifier, columnId: identifier }),
+  z.strictObject({ kind: z.literal('stage'), at: moment, fromColumnId: identifier, columnId: identifier, origin: stageOrigin.optional() }),
   z.strictObject({ kind: z.literal('intent'), at: moment, fromColumnId: identifier, columnId: identifier }),
   z.strictObject({
     kind: z.literal('auto-mode'), at: moment, action: z.enum(AUTO_MODE_HISTORY_ACTIONS),

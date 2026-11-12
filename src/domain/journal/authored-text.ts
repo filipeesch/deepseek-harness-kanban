@@ -257,6 +257,62 @@ export function removeSequenceItem(input: {
   return input.text.slice(0, span.start) + input.text.slice(span.end);
 }
 
+/** The authored text of one sequence entry, dash line included, without its trailing newline. */
+export function sequenceItemText(input: {
+  readonly text: string;
+  readonly sequenceKey: string;
+} & EntryLocator): string | undefined {
+  const { node } = sequenceOf(input.text, input.sequenceKey);
+  const index = locateIndex(node, input);
+  if (index === undefined) return undefined;
+  const entry = items(node)[index];
+  if ((node as { flow?: boolean }).flow === true) {
+    const range = nodeRange(entry);
+    return range === undefined ? undefined : input.text.slice(range[0], range[1]);
+  }
+  const entries = items(node);
+  const boundary = sequenceBoundary(input.text, input.sequenceKey);
+  const nextStart = index + 1 < entries.length ? itemStart(input.text, entries[index + 1]) : undefined;
+  const span = spanOf(input.text, entry, boundary, nextStart);
+  if (span === undefined) return undefined;
+  const authored = input.text.slice(span.start, span.end);
+  return authored.endsWith(NEWLINE) ? authored.slice(0, -1) : authored;
+}
+
+/**
+ * Insert one entry after a located entry of an authored sequence, keeping every
+ * other character. A flow-style sequence keeps its one-line form.
+ */
+export function insertSequenceItemAfter(input: {
+  readonly text: string;
+  readonly sequenceKey: string;
+  readonly after: EntryLocator;
+  readonly item: readonly string[];
+  /** One-line form, required when the sequence is authored in flow style. */
+  readonly flowItem?: string;
+  readonly invalid?: (message: string) => never;
+}): string {
+  const reject = input.invalid ?? invalid;
+  const { node } = sequenceOf(input.text, input.sequenceKey);
+  if (!isSeq(node)) return reject('Workflow ' + input.sequenceKey + ' must be an array.');
+  const index = locateIndex(node, input.after);
+  if (index === undefined) return reject('Workflow ' + input.sequenceKey + ' does not contain the named entry.');
+  const entries = items(node);
+  if ((node as { flow?: boolean }).flow === true) {
+    if (input.flowItem === undefined) return reject('Workflow ' + input.sequenceKey + ' is authored in flow style and cannot take this entry.');
+    const range = nodeRange(entries[index]);
+    if (range === undefined) return reject('Workflow ' + input.sequenceKey + ' cannot be extended.');
+    return input.text.slice(0, range[1]) + ', ' + input.flowItem + input.text.slice(range[1]);
+  }
+  const boundary = sequenceBoundary(input.text, input.sequenceKey);
+  const nextStart = index + 1 < entries.length ? itemStart(input.text, entries[index + 1]) : undefined;
+  const span = spanOf(input.text, entries[index], boundary, nextStart);
+  if (span === undefined) return reject('Workflow ' + input.sequenceKey + ' cannot be extended.');
+  const insertAt = span.end;
+  const needsNewline = insertAt > 0 && input.text[insertAt - 1] !== NEWLINE;
+  return input.text.slice(0, insertAt) + (needsNewline ? NEWLINE : '') + renderItem(itemIndent(input.text, node), input.item) + NEWLINE + input.text.slice(insertAt);
+}
+
 /** Replace one authored sequence entry in place, keeping every other entry's text. */
 export function replaceSequenceItem(input: {
   readonly text: string;

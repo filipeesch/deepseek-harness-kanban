@@ -448,3 +448,55 @@ describe('board administration publishing policy', () => {
     expect(sharing.published).toEqual([]);
   });
 });
+
+describe('reviewed workflow writes', () => {
+  it('returns the report with the saved board', async () => {
+    const f = await setup();
+    const before = f.service.read(f.boardId);
+    const value = await f.service.saveWorkflowReviewed({ boardId: f.boardId, compose: current => current.replace('label: Plan', 'label: Planning') });
+    expect(value.report.valid).toBe(true);
+    expect(value.report.difference?.stages).toEqual([{ stage: 'plan', change: 'changed', fields: [{ field: 'name', from: 'Plan', to: 'Planning' }] }]);
+    expect(value.board.workflow.columns.find(column => column.id === 'plan')?.name).toBe('Planning');
+    expect(value.hubRevision).toBeGreaterThan(before.hubRevision);
+  });
+
+  it('refuses an invalid document, saves nothing, and returns the report', async () => {
+    const f = await setup();
+    const before = f.service.read(f.boardId);
+    const error: unknown = await f.service.saveWorkflowReviewed({ boardId: f.boardId, compose: current => current.replace('label: Plan', 'label: [oops') }).catch(value => value);
+    expect(error).toBeInstanceOf(KanbanError);
+    expect(error).toMatchObject({ code: 'INVALID_WORKFLOW' });
+    const report = (error as KanbanError).details?.report as { valid: boolean; problems: unknown[] };
+    expect(report.valid).toBe(false);
+    expect(report.problems.length).toBeGreaterThan(0);
+    const after = f.service.read(f.boardId);
+    expect(after.board.workflowYaml).toBe(before.board.workflowYaml);
+    expect(after.hubRevision).toBe(before.hubRevision);
+  });
+
+  it('rejects a stale revision before saving', async () => {
+    const f = await setup();
+    const current = f.service.read(f.boardId).hubRevision;
+    await f.service.saveWorkflowReviewed({ boardId: f.boardId, compose: current => current });
+    await expect(f.service.saveWorkflowReviewed({ boardId: f.boardId, compose: current => current, expectedRevision: current })).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+  });
+
+  it('asks the script-impact port about the composed document', async () => {
+    const storage = new MemoryHubStorage();
+    const hubs = await HubRepository.open(storage, { id: () => 'reviewed', now: () => NOW });
+    repositories.push(hubs);
+    const seen: string[] = [];
+    const service = new BoardAdministration({
+      hubs,
+      impact: {
+        async describe(input) {
+          seen.push(input.after.initialColumnId);
+          return [{ stage: 'wait', projectId: 'project', verdict: 'holds' as const, reasons: [] }];
+        },
+      },
+    });
+    const value = await service.saveWorkflowReviewed({ boardId: 'board', compose: current => current.replace('label: Plan', 'label: Planning') });
+    expect(seen).toEqual(['backlog']);
+    expect(value.report.scripts).toEqual([{ stage: 'wait', projectId: 'project', verdict: 'holds', reasons: [] }]);
+  });
+});

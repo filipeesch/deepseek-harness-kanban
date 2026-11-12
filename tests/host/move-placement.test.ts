@@ -3,6 +3,7 @@ import { KanbanApp } from '../../src/host/app.js';
 import { TURN_ADVANCE_SETTLE_MS } from '../../src/host/turn-advance.js';
 import { HubRepository } from '../../src/host/hub-repository.js';
 import type { HubState } from '../../src/shared/types.js';
+import type { TaskHistoryEntry } from '../../src/shared/task-history.js';
 import { fixture, taskWithConversation } from './helpers.js';
 
 let active: Array<Awaited<ReturnType<typeof fixture>>> = [];
@@ -18,17 +19,30 @@ async function create(app: KanbanApp, projectId: string, title: string) {
   return app.createTask({ projectId, title, description: '' });
 }
 
+function stageEntries(task: { history?: readonly TaskHistoryEntry[] }) {
+  return (task.history ?? []).filter(entry => entry.kind === 'stage');
+}
+
 describe('move placement', () => {
   it('records the stage entry, and none for a reorder inside the destination', async () => {
     const f = await setup();
     const task = await create(f.app, f.project.id, 'Recorded');
     await f.app.command({ type: 'task.move', taskId: task.id, columnId: 'plan' });
     const moved = f.store.requireTask(task.id);
-    expect((moved.history ?? []).filter(entry => entry.kind === 'stage')).toEqual([
-      { kind: 'stage', at: expect.any(String), fromColumnId: 'backlog', columnId: 'plan' },
+    expect(stageEntries(moved)).toEqual([
+      { kind: 'stage', at: expect.any(String), fromColumnId: 'backlog', columnId: 'plan', origin: 'manual' },
     ]);
     await f.app.command({ type: 'task.move', taskId: task.id, columnId: 'plan', beforeTaskId: null });
     expect((f.store.requireTask(task.id).history ?? []).filter(entry => entry.kind === 'stage')).toHaveLength(1);
+  });
+
+  it('records an operator move as the manual origin', async () => {
+    const f = await setup();
+    const task = await create(f.app, f.project.id, 'Operator');
+    await f.app.command({ type: 'task.move', taskId: task.id, columnId: 'plan' });
+    expect(stageEntries(f.store.requireTask(task.id))).toEqual([
+      { kind: 'stage', at: expect.any(String), fromColumnId: 'backlog', columnId: 'plan', origin: 'manual' },
+    ]);
   });
 
   it('places an unanchored move at the top of the destination', async () => {
@@ -115,5 +129,35 @@ describe('move placement', () => {
     }
     await expect.poll(() => f.store.requireTask(advancing.id).columnId).toBe('plan');
     expect(order(f.store.snapshot(), 'plan', f.board.id)).toEqual(['Advancing', 'Existing']);
+  });
+
+  it('records an automatic advance as the automatic origin', async () => {
+    const f = await setup();
+    await f.store.setWorkflow([
+      'name: Auto flow',
+      'initial_column: backlog',
+      'columns:',
+      '  - id: backlog',
+      '    label: Backlog',
+      '  - id: plan',
+      '    label: Plan',
+      '    on_enter_prompt: Plan it.',
+      '  - id: done',
+      '    label: Done',
+      '',
+    ].join('\n'));
+    const advancing = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Advancing', description: '' });
+    await f.app.command({ type: 'task.autoMode', taskId: advancing.id, enabled: true });
+    vi.useFakeTimers();
+    try {
+      f.app.observe(advancing.sessionIds[0]!, { type: 'turn/end', seq: 1, data: { turn: 1, reason: { kind: 'completed' } } });
+      await vi.advanceTimersByTimeAsync(TURN_ADVANCE_SETTLE_MS + 25);
+    } finally {
+      vi.useRealTimers();
+    }
+    await expect.poll(() => f.store.requireTask(advancing.id).columnId).toBe('plan');
+    expect(stageEntries(f.store.requireTask(advancing.id))).toEqual([
+      { kind: 'stage', at: expect.any(String), fromColumnId: 'backlog', columnId: 'plan', origin: 'auto' },
+    ]);
   });
 });

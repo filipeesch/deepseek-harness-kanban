@@ -17,6 +17,7 @@ import type { HubRepository } from '../hub-repository.js';
 import type { SharingProviderResolver, SharingBinding, ProviderState } from './provider.js';
 import type { BoardLogSnapshot, SharedLayoutStore } from './ports.js';
 import type { HubSharingRecord, HubSharingStore, PreviewBoard, PublishedBoard, StoredBoard } from './state.js';
+import type { BoardRevisionPort } from '../board-administration.js';
 import { emptyBoard } from './state.js';
 
 /**
@@ -34,6 +35,8 @@ export interface BoardSyncOptions {
   readonly id: () => string;
   readonly save: (record: HubSharingRecord) => Promise<void>;
   readonly report?: (error: unknown) => void;
+  /** Records the local revisions an applied team document produces; absent keeps none. */
+  readonly revisions?: BoardRevisionPort;
 }
 
 export type RemovalScope = 'local' | 'team';
@@ -46,6 +49,14 @@ function sameWorkflow(left: string, right: string): boolean {
 
 export class BoardSync {
   constructor(private readonly options: BoardSyncOptions) {}
+
+  /** Record one workflow write this layer applied from, or published to, team storage. */
+  private async noteRevision(hubId: string, boardId: string, previous: string | null, next: string): Promise<void> {
+    const revisions = this.options.revisions;
+    if (revisions === undefined) return;
+    try { await revisions.record({ hubId, boardId, previous, next, actor: { kind: 'team', source: 'team storage' }, origin: 'team' }); }
+    catch (error) { this.options.report?.(error); }
+  }
 
   /** No board operation runs while the storage or the layout version blocks the Hub. */
   private assertReady(record: HubSharingRecord): void {
@@ -253,13 +264,15 @@ export class BoardSync {
       const name = entry?.name ?? identityName(snapshot.log) ?? key;
       const identity = foldIdentity({ name: stored.name, projectKeys: stored.projectKeys, rank: stored.rank }, pending);
       const orderClean = this.orderIsClean(record, hub);
+      const createdText = materializeIdentities(published);
       const created = await this.options.hubs.hub(record.hubId).transact(draft => {
         const added = operations.addBoard(draft, name, this.deps());
-        operations.saveBoardWorkflow(draft, added.id, materializeIdentities(published), this.deps());
+        operations.saveBoardWorkflow(draft, added.id, createdText, this.deps());
         operations.setBoardProjectScope(draft, added.id, appliedScope(snapshot.log), this.deps());
         if (orderClean && identity.rank !== null) reorderBoundBoards(draft, { ...record.bindings, [added.id]: key }, { ...record.boards, [key]: { ...stored, rank: identity.rank } });
         return added.id;
       }, hub.revision);
+      await this.noteRevision(record.hubId, created, null, createdText);
       // A board that no longer exists must not keep a binding to this key.
       const bindings = { ...record.bindings };
       for (const [boundId, boundKey] of Object.entries(bindings)) if (boundKey === key) delete bindings[boundId];
@@ -306,6 +319,7 @@ export class BoardSync {
       if (adoptScope && !sameScope(identity.projectKeys, board.allowedProjectKeys ?? null)) operations.setBoardProjectScope(draft, board.id, identity.projectKeys === null ? undefined : [...identity.projectKeys], this.deps());
       if (orderClean && identity.rank !== null) reorderBoundBoards(draft, record.bindings, { ...record.boards, [key]: { ...stored, rank: identity.rank } });
     }, hub.revision);
+    if (adoptWorkflow && workflowChanged) await this.noteRevision(record.hubId, board.id, board.workflowYaml, appliedText);
     await this.options.save({
       ...record,
       boards: { ...record.boards, [key]: { ...stored, seq: recovered.cursor, head: snapshot.head, probe: snapshot.probe, present: true, workflow: appliedText, name: identity.name, projectKeys: identity.projectKeys, rank: identity.rank, updates: 0, removal: false, incoming: null, conflict: null, problem: null } },
@@ -345,6 +359,8 @@ export class BoardSync {
     }
     if (board !== undefined) {
       await this.options.hubs.hub(record.hubId).transact(draft => { operations.deleteBoard(draft, boardId, this.deps()); return draft; }, hub.revision);
+      try { await this.options.revisions?.remove?.(boardId); }
+      catch (error) { this.options.report?.(error); }
     }
     await this.options.save({ ...record, bindings, boards, orphans, lastSyncedAt: this.options.now() });
   }
@@ -378,6 +394,7 @@ export class BoardSync {
         if (identity.name !== null && identity.name !== board.name) operations.renameBoard(draft, boardId, identity.name, this.deps());
         operations.setBoardProjectScope(draft, boardId, identity.projectKeys === null ? undefined : [...identity.projectKeys], this.deps());
       }, hub.revision);
+      await this.noteRevision(hubId, boardId, board.workflowYaml, head.text);
     } catch (error) {
       throw this.refusal(error, head.text, hub, board);
     }
@@ -551,6 +568,7 @@ export class BoardSync {
     const located = this.options.hubs.findBoard(boardId);
     invariant(located, 'BOARD_NOT_FOUND', 'Board does not exist.');
     await this.options.hubs.hub(located.hubId).transact(draft => { operations.saveBoardWorkflow(draft, boardId, seeded, this.deps()); return draft; }, located.hub.revision);
+    await this.noteRevision(located.hubId, boardId, workflow, seeded);
     return seeded;
   }
 

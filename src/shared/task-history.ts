@@ -16,12 +16,19 @@ export type AutoModeHistoryAction = (typeof AUTO_MODE_HISTORY_ACTIONS)[number];
 export const WORKTREE_HISTORY_ACTIONS = ['created', 'attached', 'removed', 'failed'] as const;
 export type WorktreeHistoryAction = (typeof WORKTREE_HISTORY_ACTIONS)[number];
 
+/**
+ * How one stage entry happened: an operator move, a transition the task declared,
+ * an automatic advance, a named script exit, or the reserved error route. A script
+ * or error origin names the exit that routed the card.
+ */
+export type StageEntryOrigin = 'manual' | 'agent' | 'auto' | `script:${string}` | `error:${string}`;
+
 /** One settled fact about a task's flow, with the moment it happened. */
 export type TaskHistoryEntry =
   | { readonly kind: 'deterministic-execution'; readonly at: string; readonly executionId: string; readonly columnId: string; readonly outcome: 'completed' | 'stopped' | 'failed'; readonly exit?: string; readonly message?: string; readonly error?: Problem; /** Bounded values that execution used; absent when its stage declared none. */ readonly parameters?: Record<string, string> }
   | { readonly kind: 'deterministic-handoff'; readonly at: string; readonly deliveryId: string; readonly executionId: string; readonly fromColumnId: string; readonly columnId: string; readonly outcome: 'accepted' | 'failed'; readonly exit: string; readonly message: string; readonly error?: Problem }
   | { readonly kind: 'created'; readonly at: string; readonly columnId: string }
-  | { readonly kind: 'stage'; readonly at: string; readonly fromColumnId: string; readonly columnId: string }
+  | { readonly kind: 'stage'; readonly at: string; readonly fromColumnId: string; readonly columnId: string; /** Absent on an entry recorded before origins were stored; never backfilled. */ readonly origin?: StageEntryOrigin }
   | { readonly kind: 'intent'; readonly at: string; readonly fromColumnId: string; readonly columnId: string }
   | {
     readonly kind: 'auto-mode';

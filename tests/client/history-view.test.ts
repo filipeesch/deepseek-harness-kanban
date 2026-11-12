@@ -18,7 +18,7 @@ describe('task history rows', () => {
       { kind: 'stage', at: SECOND, fromColumnId: 'backlog', columnId: 'plan' },
     ]);
     expect(value.map(row => row.event)).toEqual(['Stage changed', 'Created']);
-    expect(value[0]).toMatchObject({ moment: SECOND, detail: 'Backlog \u2192 Plan', tone: 'accent', duration: '1 h 30 min' });
+    expect(value[0]).toMatchObject({ moment: SECOND, detail: 'Backlog \u2192 Plan \u00b7 Move trigger not recorded', tone: 'accent', duration: '1 h 30 min' });
     expect(value[1]).toMatchObject({ moment: FIRST, detail: 'Backlog', duration: EMPTY_CELL });
   });
 
@@ -26,7 +26,7 @@ describe('task history rows', () => {
     const value = rows([
       { kind: 'stage', at: FIRST, fromColumnId: 'ghost', columnId: 'plan' },
     ]);
-    expect(value[0]?.detail).toBe('ghost \u2192 Plan');
+    expect(value[0]?.detail).toBe('ghost \u2192 Plan \u00b7 Move trigger not recorded');
   });
 
   it('measures each stage until the next stage entry, and the current one until now', () => {
@@ -40,6 +40,26 @@ describe('task history rows', () => {
       ['Auto mode enabled', EMPTY_CELL],
       ['Stage changed', '1 h 00 min'],
     ]);
+  });
+
+  it('presents how each stage entry happened, and an entry without an origin as unrecorded', () => {
+    const value = rows([
+      { kind: 'stage', at: FIRST, fromColumnId: 'backlog', columnId: 'plan' },
+      { kind: 'stage', at: SECOND, fromColumnId: 'backlog', columnId: 'plan', origin: 'manual' },
+      { kind: 'stage', at: SECOND, fromColumnId: 'backlog', columnId: 'plan', origin: 'agent' },
+      { kind: 'stage', at: SECOND, fromColumnId: 'backlog', columnId: 'plan', origin: 'auto' },
+      { kind: 'stage', at: SECOND, fromColumnId: 'backlog', columnId: 'plan', origin: 'script:passed' },
+      { kind: 'stage', at: SECOND, fromColumnId: 'backlog', columnId: 'plan', origin: 'error:error' },
+    ]);
+    expect(value.map(row => row.detail)).toEqual([
+      'Backlog \u2192 Plan \u00b7 Moved by the reserved error route',
+      'Backlog \u2192 Plan \u00b7 Moved by script exit passed',
+      'Backlog \u2192 Plan \u00b7 Moved by an automatic advance',
+      'Backlog \u2192 Plan \u00b7 Moved by an agent-declared transition',
+      'Backlog \u2192 Plan \u00b7 Moved by an operator',
+      'Backlog \u2192 Plan \u00b7 Move trigger not recorded',
+    ]);
+    expect(value.every(row => row.event === 'Stage changed' && row.tone === 'accent')).toBe(true);
   });
 
   it('presents a recorded destination as an intention, separate from a stage change', () => {

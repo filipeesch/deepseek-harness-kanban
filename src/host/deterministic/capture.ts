@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { DeterministicCapture } from '../../shared/deterministic.js';
 import { PARAMETER_LIMITS } from '../../domain/deterministic-definition.js';
 import { declaredParameterNames } from '../../domain/deterministic-parameters.js';
-import type { CaptureRequest, DeterministicPolicyPort, DeterministicScope, DeterministicTrust } from './ports.js';
+import type { CapturePlan, CaptureRequest, DeterministicPolicyPort, DeterministicScope, DeterministicTrust } from './ports.js';
 import { failure } from './ports.js';
 import { scopeKey } from './variables.js';
 import { SOURCE_MAX_BYTES, validateVariableName } from './safety.js';
@@ -37,7 +37,15 @@ export class DeterministicCaptureStore {
     }
     try { await file.writeFile(text); await file.sync(); } finally { await file.close(); }
   }
-  async capture(request: CaptureRequest): Promise<DeterministicCapture> {
+  /**
+   * The capture one definition resolves to, computed without storing anything.
+   *
+   * A write report asks what a proposed executable would fingerprint to, and that
+   * answer must be the bytes the capturing path would authorize. Sharing this
+   * computation is what keeps the answer honest; the store keeps only the
+   * immutable write and its verification.
+   */
+  async plan(request: CaptureRequest): Promise<CapturePlan> {
     request.signal?.throwIfAborted();
     const definition = request.definition;
     if ((definition.code === undefined) === (definition.file === undefined)) failure('SOURCE_INVALID', 'Select exactly one inline code or primary file source.');
@@ -60,14 +68,19 @@ export class DeterministicCaptureStore {
       if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(name) || !target.columnId || !target.stageIdentity || definition.exits[name] !== target.columnId) failure('ROUTES_INVALID', 'Captured exits must match reviewed authored destinations and stable identities.');
     }
     const content = { language: definition.language, directory, executionDirectory, source: primary ? { kind: 'file' as const, path: primary.path } : { kind: 'inline' as const }, env, params, exits };
-    const fp = fingerprint(content, code);
-    const blob = canonical({ version: 1, content, code, fingerprint: fp });
+    return { content, code, fingerprint: fingerprint(content, code) };
+  }
+
+  /** Store one planned capture as the immutable bytes an approval names. */
+  async capture(request: CaptureRequest): Promise<DeterministicCapture> {
+    const plan = await this.plan(request);
+    const blob = canonical({ version: 1, content: plan.content, code: plan.code, fingerprint: plan.fingerprint });
     const sourceRef = digest(blob);
     this.uncommitted.set(sourceRef, (this.uncommitted.get(sourceRef) ?? 0) + 1);
     try {
       request.signal?.throwIfAborted();
       await this.immutable(join(this.root, 'sources', sourceRef + '.json'), blob);
-      const capture = { ...content, fingerprint: fp, sourceRef };
+      const capture: DeterministicCapture = { ...plan.content, fingerprint: plan.fingerprint, sourceRef };
       await this.load(capture);
       return capture;
     } catch (error) { this.releaseSource(sourceRef); throw error; }

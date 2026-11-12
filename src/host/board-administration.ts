@@ -1,9 +1,13 @@
-import type { Board, HubSharingView, Problem, StagePatch } from '../shared/types.js';
-import { invariant, problem } from '../shared/errors.js';
+import type { Board, HubSharingView, HubState, Problem, StagePatch } from '../shared/types.js';
+import { KanbanError, invariant, problem } from '../shared/errors.js';
 import type { HubRepository } from './hub-repository.js';
 import type { OperationDeps } from '../domain/hub-operations.js';
 import * as operations from '../domain/hub-operations.js';
 import type { WorkflowTextEdit } from '../domain/workflow-edit.js';
+import { DEFAULT_WORKFLOW_YAML } from '../domain/workflow.js';
+import type { RevisionActor, RevisionOrigin } from '../domain/revisions/log.js';
+import { composeWorkflowReport, reviewWorkflowText, withScripts, type ScriptImpact, type WorkflowCardReference, type WorkflowWriteReport } from '../domain/workflow-report.js';
+import type { DeterministicImpactPort } from './deterministic-impact.js';
 import { describeStageActivity, hasInFlightWork } from '../shared/stage-activity.js';
 
 /** The narrow publishing surface a board write needs; no dependency on the Kanban app. */
@@ -20,6 +24,23 @@ export interface BoardSharingPort {
 
 /** The command path keeps the UI publishing flow; the tool path publishes automatically. */
 export type BoardPublishingPolicy = 'never' | 'when-bound';
+
+/** The one-line reason a refused write reports, counting the problems behind it. */
+function refusalMessage(report: WorkflowWriteReport): string {
+  const first = report.problems[0]?.message ?? 'The workflow document is invalid.';
+  const rest = report.problems.length - 1;
+  return rest > 0 ? first + ' (' + rest + ' more problem' + (rest === 1 ? '' : 's') + ')' : first;
+}
+
+/** The failures a composed document itself causes, which a report explains. */
+const WORKFLOW_REFUSALS: ReadonlySet<string> = new Set(['INVALID_WORKFLOW', 'WORKFLOW_ORPHAN_COLUMNS']);
+
+/** A workflow refusal that happened after the review keeps the report it was reviewed with. */
+function attachReport(error: unknown, report: WorkflowWriteReport): unknown {
+  return error instanceof KanbanError && WORKFLOW_REFUSALS.has(error.code)
+    ? new KanbanError(error.code, error.message, { ...error.details, report })
+    : error;
+}
 
 /**
  * What happened to the team document after a local board write. `blocked` means the
@@ -62,15 +83,38 @@ export interface BoardAdministrationOptions {
   readonly sharing?: BoardSharingPort;
   readonly report?: (error: unknown) => void;
   readonly activity?: BoardActivityPort;
+  /** Resolves the reviewed authorization of a composed document's scripts; absent reports none. */
+  readonly impact?: DeterministicImpactPort;
+  /** Records each accepted workflow write; absent keeps no local history. */
+  readonly revisions?: BoardRevisionPort;
 }
 
-export interface CreateBoardInput { hubId?: string; name: string; workflowYaml?: string }
-export interface UpdateBoardInput { hubId?: string; boardId: string; name?: string; workflowYaml?: string; expectedRevision?: number }
-export interface SaveBoardWorkflowInput { hubId?: string; boardId: string; yaml: string; expectedRevision?: number }
+/** Who made a workflow write, and through which surface. */
+export interface RevisionAttribution { readonly actor: RevisionActor; readonly origin: RevisionOrigin }
+
+/** The revision log a board write records into; absent reports no history. */
+export interface BoardRevisionPort {
+  record(input: { hubId: string; boardId: string; previous: string | null; next: string; actor: RevisionActor; origin: RevisionOrigin }): Promise<void>;
+  /** Drop one board's history with the board itself. */
+  remove?(boardId: string): Promise<void>;
+  /** Drop every board's history with the Hub itself. */
+  removeHub?(hubId: string): Promise<void>;
+}
+
+export interface CreateBoardInput { hubId?: string; name: string; workflowYaml?: string; revision?: RevisionAttribution | false }
+export interface UpdateBoardInput { hubId?: string; boardId: string; name?: string; workflowYaml?: string; expectedRevision?: number; revision?: RevisionAttribution | false }
+export interface SaveBoardWorkflowInput { hubId?: string; boardId: string; yaml: string; expectedRevision?: number; revision?: RevisionAttribution }
 /** An absent `projectKeys` allows every project of the Hub; an empty list closes the board. */
 export interface SaveBoardProjectScopeInput { hubId?: string; boardId: string; projectKeys?: string[]; expectedRevision?: number }
-export interface EditBoardWorkflowInput { hubId?: string; boardId: string; edits: readonly WorkflowTextEdit[]; expectedRevision?: number }
-export interface UpdateBoardStageInput { hubId?: string; boardId: string; stageId: string; patch: StagePatch; expectedRevision?: number }
+export interface EditBoardWorkflowInput { hubId?: string; boardId: string; edits: readonly WorkflowTextEdit[]; expectedRevision?: number; revision?: RevisionAttribution }
+export interface UpdateBoardStageInput { hubId?: string; boardId: string; stageId: string; patch: StagePatch; expectedRevision?: number; revision?: RevisionAttribution }
+/** A workflow write composed from the document the board holds now. */
+export interface ComposeBoardWorkflowInput { hubId?: string; boardId: string; compose: (current: string) => string; name?: string; expectedRevision?: number; actor?: RevisionActor; origin?: RevisionOrigin }
+/** A reviewed board creation; an omitted document uses the default workflow. */
+export interface CreateBoardReviewedInput extends CreateBoardInput {
+  readonly actor?: RevisionActor;
+  readonly origin?: RevisionOrigin;
+}
 export interface RemoveBoardInput { hubId?: string; boardId: string; confirmed: boolean; sharing?: 'local' | 'team'; expectedRevision?: number }
 
 /**
@@ -99,6 +143,26 @@ export class BoardAdministration {
     return { hubId: located.hubId, board: located.board, hubRevision: located.hub.revision };
   }
 
+  /** The task references a report needs; identities only, never card text. */
+  private cardsOf(hub: HubState, boardId: string): WorkflowCardReference[] {
+    return hub.tasks.filter(task => task.boardId === boardId).map(task => ({
+      id: task.id,
+      columnId: task.columnId,
+      ...(task.recordedTransition === undefined ? {} : { recordedTransition: { columnId: task.recordedTransition.columnId } }),
+      ...(task.pendingTransition === undefined ? {} : { pendingTransition: { fromColumnId: task.pendingTransition.fromColumnId, columnId: task.pendingTransition.columnId } }),
+    }));
+  }
+
+  /** Review one composed document against the board it will replace. */
+  private async review(input: { hub: HubState; board: Board | undefined; boardId: string; previousText: string | null; nextText: string }): Promise<WorkflowWriteReport> {
+    const review = reviewWorkflowText({ text: input.nextText, previousText: input.previousText, cards: this.cardsOf(input.hub, input.boardId) });
+    let scripts: ScriptImpact[] = [];
+    if (review.valid && review.workflow !== null && input.board !== undefined && this.options.impact !== undefined) {
+      scripts = await this.options.impact.describe({ hub: input.hub, board: input.board, before: review.previous, after: review.workflow });
+    }
+    return composeWorkflowReport(review, scripts);
+  }
+
   private requireBoard(hubId: string, boardId: string): Board {
     const board = this.options.hubs.requireHub(hubId).boards.find(value => value.id === boardId);
     invariant(board, 'BOARD_NOT_FOUND', 'Board does not exist.');
@@ -119,6 +183,12 @@ export class BoardAdministration {
     return this.locate(boardId, hubId);
   }
 
+  /** The card references one board's write report names, without any card text. */
+  cards(boardId: string, hubId?: string): WorkflowCardReference[] {
+    const located = this.locate(boardId, hubId);
+    return this.cardsOf(this.options.hubs.requireHub(located.hubId), boardId);
+  }
+
   /** The Hub's publishing view without cloning the board; undefined when unbound. */
   sharingView(hubId: string): HubSharingView | undefined {
     return this.options.sharing?.view(hubId);
@@ -134,6 +204,7 @@ export class BoardAdministration {
         return operations.requireBoard(draft, created.id);
       });
       this.noteLocalChange(hubId);
+      if (input.revision !== false) await this.noteRevision(hubId, board.id, null, board.workflowYaml, input.revision);
       return this.result(hubId, board, await this.publishOutcome(hubId, board.id, policy));
     });
   }
@@ -142,6 +213,7 @@ export class BoardAdministration {
     invariant(input.name !== undefined || input.workflowYaml !== undefined, 'INVALID_EDIT', 'Provide a board name or a workflow YAML.');
     return this.enqueue(async () => {
       const located = this.locate(input.boardId, input.hubId);
+      const previous = located.board.workflowYaml;
       const deps = this.deps();
       const board = await this.options.hubs.hub(located.hubId).transact(draft => {
         if (input.name !== undefined) operations.renameBoard(draft, input.boardId, input.name, deps);
@@ -149,6 +221,7 @@ export class BoardAdministration {
         return operations.requireBoard(draft, input.boardId);
       }, input.expectedRevision);
       this.noteLocalChange(located.hubId);
+      if (input.workflowYaml !== undefined && input.revision !== false) await this.noteRevision(located.hubId, board.id, previous, board.workflowYaml, input.revision);
       return this.result(located.hubId, board, await this.publishOutcome(located.hubId, board.id, policy));
     });
   }
@@ -159,6 +232,7 @@ export class BoardAdministration {
       await this.options.hubs.hub(located.hubId).saveBoardWorkflow(input.boardId, input.yaml, input.expectedRevision);
       const board = this.requireBoard(located.hubId, input.boardId);
       this.noteLocalChange(located.hubId);
+      await this.noteRevision(located.hubId, input.boardId, located.board.workflowYaml, board.workflowYaml, input.revision);
       return this.result(located.hubId, board, await this.publishOutcome(located.hubId, board.id, policy));
     });
   }
@@ -177,6 +251,7 @@ export class BoardAdministration {
   async updateStage(input: UpdateBoardStageInput, policy: BoardPublishingPolicy = 'never'): Promise<BoardWriteResult> {
     return this.enqueue(async () => {
       const located = this.locate(input.boardId, input.hubId);
+      const previous = located.board.workflowYaml;
       const renaming = input.patch.id !== undefined && input.patch.id !== input.stageId;
       if (renaming) {
         const reasons = (await this.options.activity?.inFlight(located.hubId, input.boardId)) ?? [];
@@ -189,15 +264,90 @@ export class BoardAdministration {
       );
       const board = this.requireBoard(located.hubId, input.boardId);
       this.noteLocalChange(located.hubId);
+      await this.noteRevision(located.hubId, input.boardId, previous, board.workflowYaml, input.revision);
       return this.result(located.hubId, board, await this.publishOutcome(located.hubId, board.id, policy));
     });
+  }
+
+  /** Record one accepted workflow write, reporting a log failure without undoing the write. */
+  private async noteRevision(hubId: string, boardId: string, previous: string | null, next: string, attribution: RevisionAttribution | undefined): Promise<void> {
+    const revisions = this.options.revisions;
+    if (revisions === undefined) return;
+    try { await revisions.record({ hubId, boardId, previous, next, actor: attribution?.actor ?? { kind: 'operator' }, origin: attribution?.origin ?? 'editor' }); }
+    catch (error) { this.options.report?.(error); }
+  }
+
+  /**
+   * Write one board's workflow composed from the document it holds now, after
+   * reviewing the composed document. The report describes exactly the text that
+   * is saved: the write pins the revision the review read, so a concurrent change
+   * surfaces as a conflict instead of saving a document nobody reported.
+   */
+  async saveWorkflowReviewed(input: ComposeBoardWorkflowInput, policy: BoardPublishingPolicy = 'when-bound'): Promise<BoardWriteResult & { report: WorkflowWriteReport }> {
+    const located = this.locate(input.boardId, input.hubId);
+    let nextText: string;
+    try {
+      nextText = input.compose(located.board.workflowYaml);
+    } catch (error) {
+      // A composition that refuses its own edit (an invalid document, a missing
+      // initial stage, a malformed stage snippet) is a refusal like any other, and
+      // the caller gets the report instead of a bare failure.
+      if (error instanceof KanbanError) {
+        const report = composeWorkflowReport({ valid: false, problems: [{ message: error.message }], difference: null, warnings: [], affectedCards: [], workflow: null, previous: null });
+        throw new KanbanError(error.code, error.message, { ...error.details, report });
+      }
+      throw error;
+    }
+    const hub = this.options.hubs.requireHub(located.hubId);
+    const report = await this.review({ hub, board: located.board, boardId: input.boardId, previousText: located.board.workflowYaml, nextText });
+    if (!report.valid) throw new KanbanError('INVALID_WORKFLOW', refusalMessage(report), { report });
+    // The revision is recorded by the write itself, before it publishes: a
+    // publishing pass may rewrite the document to seed stage identities, and the
+    // tool's revision must describe the text the tool actually saved.
+    const attribution: RevisionAttribution = { actor: input.actor ?? { kind: 'operator' }, origin: input.origin ?? 'editor' };
+    try {
+      const written = await this.update({ boardId: input.boardId, ...(input.hubId === undefined ? {} : { hubId: input.hubId }), ...(input.name === undefined ? {} : { name: input.name }), workflowYaml: nextText, expectedRevision: input.expectedRevision ?? located.hubRevision, revision: attribution }, policy);
+      return { ...written, report };
+    } catch (error) {
+      throw attachReport(error, report);
+    }
+  }
+
+  /**
+   * Create one board and report what its supplied document requires. A creation
+   * reports no script impact: there is no board yet whose reviewed approvals
+   * could be evaluated, and a new board starts without any.
+   */
+  async createReviewed(input: CreateBoardReviewedInput, policy: BoardPublishingPolicy = 'when-bound'): Promise<BoardWriteResult & { report: WorkflowWriteReport }> {
+    const hubId = this.options.hubs.resolveHubId(input.hubId);
+    const hub = this.options.hubs.requireHub(hubId);
+    const workflowYaml = input.workflowYaml ?? DEFAULT_WORKFLOW_YAML;
+    const report = await this.review({ hub, board: undefined, boardId: '', previousText: null, nextText: workflowYaml });
+    if (!report.valid) throw new KanbanError('INVALID_WORKFLOW', refusalMessage(report), { report });
+    try {
+      const created = await this.create({ ...input, workflowYaml, revision: { actor: input.actor ?? { kind: 'operator' }, origin: input.origin ?? 'editor' } }, policy);
+      if (this.options.impact === undefined) return { ...created, report };
+      // A creation has no evaluated approvals yet, which is exactly the answer an
+      // author needs: every deterministic stage of the new board is unreviewed.
+      try {
+        const scripts = await this.options.impact.describe({ hub: this.options.hubs.requireHub(hubId), board: created.board, before: null, after: created.board.workflow });
+        return { ...created, report: withScripts(report, scripts) };
+      } catch (error) {
+        this.options.report?.(error);
+        return { ...created, report };
+      }
+    } catch (error) {
+      throw attachReport(error, report);
+    }
   }
 
   async editWorkflow(input: EditBoardWorkflowInput, policy: BoardPublishingPolicy = 'never'): Promise<BoardWriteResult> {
     return this.enqueue(async () => {
       const located = this.locate(input.boardId, input.hubId);
+      const previous = located.board.workflowYaml;
       const board = await this.options.hubs.hub(located.hubId).editBoardWorkflow(input.boardId, input.edits, input.expectedRevision);
       this.noteLocalChange(located.hubId);
+      await this.noteRevision(located.hubId, input.boardId, previous, board.workflowYaml, input.revision);
       return this.result(located.hubId, board, await this.publishOutcome(located.hubId, board.id, policy));
     });
   }
@@ -209,6 +359,8 @@ export class BoardAdministration {
       const bound = this.options.sharing?.isBound(located.hubId, input.boardId) === true;
       if (bound) invariant(input.sharing === 'local' || input.sharing === 'team', 'SHARING_SCOPE_REQUIRED', 'Choose whether this board removal applies only here or to the team.');
       const board = await this.options.hubs.hub(located.hubId).deleteBoard(input.boardId, input.expectedRevision);
+      try { await this.options.revisions?.remove?.(input.boardId); }
+      catch (error) { this.options.report?.(error); }
       // A team removal appends its removal event inside the sharing layer; a local-only
       // removal must not publish anything, and neither may publish another board.
       if (this.options.sharing) {

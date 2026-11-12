@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { KanbanApp } from '../../src/host/app.js';
 import { TURN_ADVANCE_SETTLE_MS } from '../../src/host/turn-advance.js';
 import type { ConversationFacts } from '../../src/shared/types.js';
+import type { TaskHistoryEntry } from '../../src/shared/task-history.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { call, human, result } from '../questions/fixtures.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
@@ -837,6 +838,22 @@ describe('declared transition advance', () => {
     '    label: Done',
     '',
   ].join('\n');
+
+  function stageEntries(task: { history?: readonly TaskHistoryEntry[] }) {
+    return (task.history ?? []).filter(entry => entry.kind === 'stage');
+  }
+
+  it('records the declared transition as the declared origin', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(DECLARED_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Declared origin', description: '' });
+    await f.app.command({ type: 'task.recordTransition', taskId: task.id, columnId: 'plan', reason: 'The bug needs a plan before code.' });
+    await endTurn(f.app, task.sessionIds[0]!, 1);
+    await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('plan');
+    expect(stageEntries(f.store.requireTask(task.id))).toEqual([
+      { kind: 'stage', at: expect.any(String), fromColumnId: 'backlog', columnId: 'plan', origin: 'agent' },
+    ]);
+  });
 
   it('advances without auto mode and delivers the declared reason after the instruction', async () => {
     const f = await setup();

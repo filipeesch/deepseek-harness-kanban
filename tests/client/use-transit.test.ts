@@ -2,7 +2,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Task, Workflow } from '../../src/shared/types.js';
-import { buildWorkflowScene } from '../../src/client/workflow-view/scene.js';
+import { buildWorkflowScene } from '../../src/domain/diagram/scene.js';
 import { useTransit, type TransitInput } from '../../src/client/workflow-view/use/use-transit.js';
 import { transitions } from '../support/transition-rules.js';
 

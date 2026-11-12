@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Task } from '../../../shared/types.js';
-import type { WorkflowScene } from '../scene.js';
+import type { WorkflowScene } from '../../../domain/diagram/scene.js';
 import { planTransit, type Transit } from '../transit/plan.js';
 import type { TransitPolicy } from '../transit/policy.js';
 

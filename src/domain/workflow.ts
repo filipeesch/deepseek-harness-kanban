@@ -26,6 +26,9 @@ export const DEFAULT_WORKFLOW_YAML = [
 /** The largest accepted absolute coordinate of an authored stage position. */
 export const STAGE_POSITION_LIMIT = 1_000_000;
 
+/** The largest workflow document the parser accepts. */
+export const WORKFLOW_TEXT_LIMIT = 1_000_000;
+
 const { record, keys, text, id, ids, rules } = createYamlFields(invalidWorkflow);
 
 const COLUMN_NOTE = 'WIP and agent-engine settings are not supported.';
@@ -129,7 +132,7 @@ function label(value: Record<string, unknown>, context: string): string {
 /** Parse only the supported presentation/transition subset of workflow YAML. */
 export function parseWorkflow(yaml: string): Workflow {
   if (typeof yaml !== 'string' || !yaml.trim()) invalidWorkflow('Workflow YAML must be nonempty text.');
-  if (yaml.length > 1_000_000) invalidWorkflow('Workflow YAML exceeds the one-megabyte limit.');
+  if (yaml.length > WORKFLOW_TEXT_LIMIT) invalidWorkflow('Workflow YAML exceeds the one-megabyte limit.');
   let raw: unknown;
   try {
     const document = parseDocument(yaml, { uniqueKeys: true, prettyErrors: false, version: '1.2' });

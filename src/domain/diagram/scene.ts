@@ -1,10 +1,10 @@
 import type { ConnectionLayout, StagePosition, Task, Workflow } from '../../shared/types.js';
-import { workflowGraph, type WorkflowConnectionKind } from '../../domain/workflow-graph.js';
-import { effectiveStageSize } from '../../domain/stage-size.js';
-import { connectionKey } from '../../domain/connection-anchor.js';
-import { readConnections } from '../../domain/workflow-connections.js';
-import { connectionRoute } from './routing/route.js';
-import type { ConnectionShape, DiagramRect } from './routing/orthogonal.js';
+import { workflowGraph, type WorkflowConnectionKind } from '../workflow-graph.js';
+import { effectiveStageSize } from '../stage-size.js';
+import { connectionKey } from '../connection-anchor.js';
+import { readConnections } from '../workflow-connections.js';
+import { connectionRoute } from './route.js';
+import type { ConnectionShape, DiagramRect } from './orthogonal.js';
 import { placementBounds, type PlacementBounds, type StageSize } from './layout.js';
 
 export interface WorkflowSceneNode {

@@ -23,8 +23,26 @@ describe('the history panel', () => {
     expect(within(table).getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['When', 'Event', 'Detail', 'In stage']);
     const rows = within(table).getAllByRole('row').slice(1);
     expect(rows.map(row => within(row).getAllByRole('cell')[1]!.textContent)).toEqual(['Stage changed', 'Created']);
-    expect(within(rows[0]!).getAllByRole('cell')[2]!.textContent).toBe('Intake \u2192 Doing');
+    expect(within(rows[0]!).getAllByRole('cell')[2]!.textContent).toBe('Intake \u2192 Doing \u00b7 Move trigger not recorded');
     expect(within(rows[0]!).getAllByRole('cell')[0]!.querySelector('time')?.getAttribute('datetime')).toBe(MOVED);
+  });
+
+  it('reads each stage entry origin distinctly in its Detail cell', () => {
+    render(<HistoryPanel columns={COLUMNS} history={[
+      { kind: 'stage', at: MOVED, fromColumnId: 'intake', columnId: 'doing', origin: 'manual' },
+      { kind: 'stage', at: MOVED, fromColumnId: 'intake', columnId: 'doing', origin: 'agent' },
+      { kind: 'stage', at: MOVED, fromColumnId: 'intake', columnId: 'doing', origin: 'auto' },
+      { kind: 'stage', at: MOVED, fromColumnId: 'intake', columnId: 'doing', origin: 'script:passed' },
+      { kind: 'stage', at: MOVED, fromColumnId: 'intake', columnId: 'doing', origin: 'error:error' },
+    ]} />);
+    const rows = within(screen.getByRole('table', { name: 'Task history' })).getAllByRole('row').slice(1);
+    expect(rows.map(row => within(row).getAllByRole('cell')[2]!.textContent)).toEqual([
+      'Intake \u2192 Doing \u00b7 Moved by the reserved error route',
+      'Intake \u2192 Doing \u00b7 Moved by script exit passed',
+      'Intake \u2192 Doing \u00b7 Moved by an automatic advance',
+      'Intake \u2192 Doing \u00b7 Moved by an agent-declared transition',
+      'Intake \u2192 Doing \u00b7 Moved by an operator',
+    ]);
   });
 
   it('refreshes the current stage duration while mounted and stops the refresh on unmount', () => {

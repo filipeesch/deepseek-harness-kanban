@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_STAGE_SIZE, STAGE_COLUMN_GAP, placeStages, placementBounds } from '../../src/client/workflow-view/layout.js';
-import type { LayoutConnection, LayoutNode } from '../../src/client/workflow-view/layout.js';
+import { DEFAULT_STAGE_SIZE, STAGE_COLUMN_GAP, placeStages, placementBounds } from '../../src/domain/diagram/layout.js';
+import type { LayoutConnection, LayoutNode } from '../../src/domain/diagram/layout.js';
 
 const nodes: LayoutNode[] = [
   { id: 'one', index: 0 },

@@ -1,5 +1,5 @@
-import type { ConnectionAnchor, StageSide } from '../../../shared/types.js';
-import { ANCHOR_FRACTIONS, anchorFraction } from '../../../domain/connection-anchor.js';
+import type { ConnectionAnchor, StageSide } from '../../shared/types.js';
+import { ANCHOR_FRACTIONS, anchorFraction } from '../connection-anchor.js';
 import type { DiagramPoint, DiagramRect } from './orthogonal.js';
 
 /** A point on a stage boundary and the direction that leaves the stage there. */

@@ -9,6 +9,7 @@ import { placeTask } from '../../src/domain/hub-operations.js';
 
 const at = '2026-11-12T07:00:00.000Z';
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(yes => { resolve = yes; }); return { promise, resolve }; }
+function stageEntries(task: HubTask) { return (task.history ?? []).filter(entry => entry.kind === 'stage'); }
 async function fixture(kind: 'manual' | 'agent' | 'script' = 'manual') {
   const storage = new MemoryHubStorage(); const hub = sampleHub(); const board = hub.boards[0]!;
   board.workflowYaml = 'name: Flow\ninitial_column: wait\ncolumns:\n  - id: wait\n    key: wait-key\n    label: Wait\n    deterministic: {language: typescript, code: "return input", exits: {passed: review, error: repair}}\n  - id: review\n    key: review-key\n    label: Review\n'
@@ -38,6 +39,26 @@ describe('deterministic saved-result routing', () => {
     if (kind === 'script') expect(task.deterministic?.phase).toBe('capture-pending'); else expect(task.deterministic).toBeUndefined();
     if (kind === 'agent') expect(task.deterministicHandoff!.instruction).toBe('Review this result'); else expect(task.deterministicHandoff!.instruction).toBeUndefined();
     expect(task.autoMode).toBeUndefined(); expect(f.notified()).toBe(1); await f.close();
+  });
+  it('records the named script exit as the stage origin', async () => {
+    const f = await fixture();
+    expect(await f.route(f.request)).toEqual({ status: 'accepted' });
+    expect(stageEntries(f.task())).toEqual([
+      { kind: 'stage', at, fromColumnId: 'wait', columnId: 'review', origin: 'script:passed' },
+    ]);
+    await f.close();
+  });
+  it('records the reserved error route as the stage origin', async () => {
+    const f = await fixture();
+    const failed = { id: 'result', exit: 'error', message: 'The script could not run.', at, target: f.request.capture.exits.error!, deliveryId: 'delivery', deliveryStatus: 'pending' as const, synthetic: true };
+    await f.edit(hub => { hub.tasks[0]!.deterministic!.result = structuredClone(failed); });
+    f.request.result = structuredClone(failed);
+    expect(await f.route(f.request)).toEqual({ status: 'accepted' });
+    expect(f.task().columnId).toBe('repair');
+    expect(stageEntries(f.task())).toEqual([
+      { kind: 'stage', at, fromColumnId: 'wait', columnId: 'repair', origin: 'error:error' },
+    ]);
+    await f.close();
   });
   it('ignores latest exit remapping and resolves an identifier rename by captured stable target', async () => {
     const f = await fixture(); await f.edit(hub => { const board = hub.boards[0]!; board.workflowYaml = board.workflowYaml.replace('passed: review', 'passed: repair').replace('id: review', 'id: renamed-review'); board.workflow = parseWorkflow(board.workflowYaml); });

@@ -1,7 +1,7 @@
 import type { Task } from '../../../shared/types.js';
 import { connectionKey } from '../../../domain/connection-anchor.js';
-import type { DiagramPoint } from '../routing/orthogonal.js';
-import type { WorkflowScene, WorkflowSceneEdge } from '../scene.js';
+import type { DiagramPoint } from '../../../domain/diagram/orthogonal.js';
+import type { WorkflowScene, WorkflowSceneEdge } from '../../../domain/diagram/scene.js';
 import { TRANSIT_POLICY, type TransitPolicy } from './policy.js';
 
 /** One card moving along one connection the diagram draws. */

@@ -104,10 +104,11 @@ describe('board workflow reads', () => {
     expect(value.sharing).toBeUndefined();
   });
 
-  it('returns the exact workflow YAML, parsed workflow, revision, and publishing state on request', async () => {
+  it('returns the parsed workflow, revision, and publishing state on request', async () => {
     const f = await setup();
     const value = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
-    expect(value.workflowYaml).toBe(f.board.workflowYaml);
+    expect(value.workflowYaml).toBeUndefined();
+    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).toBe(f.board.workflowYaml);
     expect(value.workflow.columns.map((column: { id: string }) => column.id)).toEqual(['backlog', 'plan', 'in_progress', 'in_review', 'done']);
     expect(value.initialColumnId).toBe('backlog');
     expect(value.sharing).toMatchObject({ status: 'not-published', bound: false });
@@ -155,15 +156,18 @@ describe('board creation tools', () => {
     const f = await setup();
     const value = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Second' });
     expect(value).toMatchObject({ hubId: f.hub.id, name: 'Second', sharing: { status: 'not-bound' } });
+    // The write result stays compact; the document is read through its own tool.
+    expect(value.workflowYaml).toBeUndefined();
     expect(boards(f).map(board => board.name)).toEqual(['Kanban', 'Second']);
-    expect(value.workflow.columns.map((column: { id: string }) => column.id)).toEqual(['backlog', 'plan', 'in_progress', 'in_review', 'done']);
+    const read = await run(f, 'get_board_summary', { board_id: value.id, include_workflow: true });
+    expect(read.workflow.columns.map((column: { id: string }) => column.id)).toEqual(['backlog', 'plan', 'in_progress', 'in_review', 'done']);
   });
 
   it('creates a board with a supplied workflow', async () => {
     const f = await setup();
     const value = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Custom', workflow_yaml: CUSTOM_FLOW });
-    expect(value.workflowYaml).toBe(CUSTOM_FLOW);
-    expect(value.workflow.columns.map((column: { id: string }) => column.id)).toEqual(['todo', 'done']);
+    expect((await run(f, 'get_board_yaml', { board_id: value.id })).yaml).toBe(CUSTOM_FLOW);
+    expect((await run(f, 'get_board_summary', { board_id: value.id, include_workflow: true })).workflow.columns.map((column: { id: string }) => column.id)).toEqual(['todo', 'done']);
   });
 
   it('rejects a duplicate board name', async () => {
@@ -173,9 +177,12 @@ describe('board creation tools', () => {
     expect(boards(f)).toHaveLength(2);
   });
 
-  it('rejects an invalid workflow without creating a board', async () => {
+  it('reports an invalid workflow without creating a board', async () => {
     const f = await setup();
-    await expect(run(f, 'create_board', { hub_id: f.hub.id, name: 'Broken', workflow_yaml: 'columns: []' })).rejects.toMatchObject({ code: 'INVALID_WORKFLOW' });
+    const value = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Broken', workflow_yaml: 'columns: []' });
+    expect(value.saved).toBe(false);
+    expect(value.report.valid).toBe(false);
+    expect(value.report.problems[0].message).toContain('at least one column');
     expect(boards(f)).toHaveLength(1);
   });
 
@@ -237,7 +244,8 @@ describe('board update tools', () => {
   it('replaces the whole workflow', async () => {
     const f = await setup();
     const value = await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: CUSTOM_FLOW });
-    expect(value.workflow.columns.map((column: { id: string }) => column.id)).toEqual(['todo', 'done']);
+    expect(value.workflowYaml).toBeUndefined();
+    expect((await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true })).workflow.columns.map((column: { id: string }) => column.id)).toEqual(['todo', 'done']);
   });
 
   it('requires a name or a workflow', async () => {
@@ -252,11 +260,16 @@ describe('board update tools', () => {
     expect(boards(f)[0]!.name).toBe('First');
   });
 
-  it('rejects a workflow that orphans a task stage', async () => {
+  it('reports a workflow that would orphan a task stage and changes nothing', async () => {
     const f = await setup();
     const task = await f.app.createTask({ projectId: f.project.id, title: 'Task', description: '' });
     await f.hubs.hub(f.hub.id).transact(draft => { draft.tasks.find(value => value.id === task.id)!.columnId = 'done'; });
-    await expect(run(f, 'update_board', { board_id: f.board.id, workflow_yaml: CUSTOM_FLOW.replace('  - id: done\n    label: Done\n', '') })).rejects.toMatchObject({ code: 'WORKFLOW_ORPHAN_COLUMNS' });
+    const before = await run(f, 'get_board_yaml', { board_id: f.board.id });
+    const value = await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: CUSTOM_FLOW.replace('  - id: done\n    label: Done\n', '') });
+    expect(value.saved).toBe(false);
+    expect(value.error.code).toBe('WORKFLOW_ORPHAN_COLUMNS');
+    expect(value.report.affectedCards).toContainEqual({ taskId: task.id, stage: 'done', reason: 'stage-removed' });
+    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).toBe(before.yaml);
   });
 
   it('rejects a write for a Hub that does not exist', async () => {
@@ -272,7 +285,7 @@ describe('partial workflow edit tools', () => {
       board_id: f.board.id,
       edits: [{ old: '  - id: plan\n    label: Plan\n', new: '  - id: plan\n    label: Plan\n    on_enter_prompt: Plan first.\n' }],
     });
-    expect(value.workflow.columns[1].onEnterPrompt).toBe('Plan first.');
+    expect((await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true })).workflow.columns[1].onEnterPrompt).toBe('Plan first.');
   });
 
   it('applies several edits in order', async () => {
@@ -284,32 +297,40 @@ describe('partial workflow edit tools', () => {
         { old: '    label: Planning\n', new: '    label: Planning\n    allowed_transitions: [backlog]\n' },
       ],
     });
-    expect(value.workflow.columns[1].allowedTransitions).toEqual([{ to: 'backlog' }]);
+    expect((await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true })).workflow.columns[1].allowedTransitions).toEqual([{ to: 'backlog' }]);
   });
 
   it('rejects a missing match without changing the board', async () => {
     const f = await setup();
-    await expect(run(f, 'edit_board_yaml', { board_id: f.board.id, edits: [{ old: 'label: Missing', new: 'label: Other' }] })).rejects.toMatchObject({ code: 'WORKFLOW_EDIT_NOT_FOUND' });
+    const value = await run(f, 'edit_board_yaml', { board_id: f.board.id, edits: [{ old: 'label: Missing', new: 'label: Other' }] });
+    expect(value.saved).toBe(false);
+    expect(value.error.code).toBe('WORKFLOW_EDIT_NOT_FOUND');
+    expect(value.report.valid).toBe(false);
     expect(boards(f)[0]!.workflowYaml).toBe(f.board.workflowYaml);
   });
 
   it('rejects an ambiguous match without changing the board', async () => {
     const f = await setup();
-    await expect(run(f, 'edit_board_yaml', { board_id: f.board.id, edits: [{ old: '    label: ', new: '    label: X' }] })).rejects.toMatchObject({ code: 'WORKFLOW_EDIT_AMBIGUOUS' });
+    const value = await run(f, 'edit_board_yaml', { board_id: f.board.id, edits: [{ old: '    label: ', new: '    label: X' }] });
+    expect(value.saved).toBe(false);
+    expect(value.error.code).toBe('WORKFLOW_EDIT_AMBIGUOUS');
     expect(boards(f)[0]!.workflowYaml).toBe(f.board.workflowYaml);
   });
 
   it('rejects an empty edit collection', async () => {
     const f = await setup();
-    await expect(run(f, 'edit_board_yaml', { board_id: f.board.id, edits: [] })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    const value = await run(f, 'edit_board_yaml', { board_id: f.board.id, edits: [] });
+    expect(value.saved).toBe(false);
+    expect(value.error.code).toBe('INVALID_INPUT');
   });
 
   it('preserves comments outside the replaced span', async () => {
     const f = await setup();
     await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: COMMENTED_FLOW });
-    const value = await run(f, 'edit_board_yaml', { board_id: f.board.id, edits: [{ old: '    label: Done', new: '    label: Complete' }] });
-    expect(value.workflowYaml).toContain('# Keep this comment');
-    expect(value.workflowYaml).toContain('label: Complete');
+    await run(f, 'edit_board_yaml', { board_id: f.board.id, edits: [{ old: '    label: Done', new: '    label: Complete' }] });
+    const text = (await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml;
+    expect(text).toContain('# Keep this comment');
+    expect(text).toContain('label: Complete');
   });
 });
 
@@ -466,7 +487,7 @@ describe('board tool publishing', () => {
     const f = await setup({ sharing });
     const value = await run(f, 'edit_board_yaml', { board_id: f.board.id, edits: [{ old: '    label: Done', new: '    label: Complete' }] });
     expect(value.sharing).toMatchObject({ status: 'blocked' });
-    expect(value.workflowYaml).toContain('label: Complete');
+    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).toContain('label: Complete');
     expect(sharing.published).toEqual([]);
   });
 
@@ -497,7 +518,7 @@ describe('the board default model', () => {
     await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MODEL_FLOW });
     const value = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
     expect(value.defaultModel).toEqual({ provider: 'deepseek', model: 'chat', reasoningEffort: 'high' });
-    expect(value.workflowYaml).toBe(MODEL_FLOW);
+    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).toBe(MODEL_FLOW);
   });
 
   it('clears the model when the replacement workflow omits it', async () => {
@@ -513,10 +534,12 @@ describe('the board default model', () => {
     const f = await setup();
     await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MODEL_FLOW });
     const before = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
-    await expect(run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MALFORMED_MODEL_FLOW })).rejects.toMatchObject({ code: 'INVALID_WORKFLOW' });
+    const value = await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MALFORMED_MODEL_FLOW });
+    expect(value.saved).toBe(false);
+    expect(value.report.problems[0].message).toContain('temperature');
     const after = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
     expect(after).toEqual(before);
-    expect(after.workflowYaml).toBe(MODEL_FLOW);
+    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).toBe(MODEL_FLOW);
   });
 
   it('guides the agent to the model mapping before it writes a workflow', async () => {

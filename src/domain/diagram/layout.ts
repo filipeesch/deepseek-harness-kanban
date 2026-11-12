@@ -1,5 +1,5 @@
 import type { StagePosition, StageSize } from '../../shared/types.js';
-import { STAGE_MIN_SIZE } from '../../domain/stage-size.js';
+import { STAGE_MIN_SIZE } from '../stage-size.js';
 
 export type { StageSize };
 export interface LayoutNode { readonly id: string; readonly index: number; readonly groupId?: string }

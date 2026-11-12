@@ -10,6 +10,7 @@ import type { HubSharingRecord, HubSharingStore } from './state.js';
 import type { TeamFileStore, TeamFileStoreResolution } from './team-file-store.js';
 import { buildSharingView, type SharingViewContext } from './view.js';
 import { BoardSync, type RemovalScope } from './board-sync.js';
+import type { BoardRevisionPort } from '../board-administration.js';
 import { BindingLifecycle } from './binding.js';
 import { DEFAULT_SHARING_INTERVAL_MINUTES, normalizeSharingInterval } from './interval.js';
 
@@ -26,6 +27,8 @@ export interface HubSharingOptions {
   report?: (error: unknown) => void;
   /** Kept for callers that configured the removed automatic synchronization. */
   debounceMs?: number;
+  /** Records every workflow write an applied or published team document produces. */
+  revisions?: BoardRevisionPort;
 }
 
 /**
@@ -62,6 +65,7 @@ export class HubSharingService {
       id: this.id,
       save,
       ...(this.options.report === undefined ? {} : { report: this.options.report }),
+      ...(this.options.revisions === undefined ? {} : { revisions: this.options.revisions }),
     });
     this.lifecycle = new BindingLifecycle({
       hubs: this.options.hubs,

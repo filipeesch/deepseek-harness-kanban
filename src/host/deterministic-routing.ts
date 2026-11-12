@@ -3,6 +3,7 @@ import { resolveDeterministicTarget } from '../domain/deterministic-state.js';
 import { entryInstruction } from '../domain/stage-entry.js';
 import { placeTask } from '../domain/hub-operations.js';
 import type { PendingUserWork, Task } from '../shared/types.js';
+import type { StageEntryOrigin } from '../shared/task-history.js';
 import type { SessionPort } from '../shared/ports.js';
 import type { HubRepository, LocatedTask } from './hub-repository.js';
 import type { SupervisorRoute, SupervisorRouteOutcome } from './deterministic-supervisor.js';
@@ -73,7 +74,10 @@ export function createDeterministicRouter(ports: DeterministicRoutingPorts): (re
       const fromColumnId = task.columnId;
       const instruction = entryInstruction(destination);
       const at = ports.now?.() ?? new Date().toISOString();
-      placeTask(hub, taskId, destination.id, 'start', Date.parse(at), { at });
+      // The saved result names the exit that routed the card; the reserved error
+      // route records itself as such.
+      const origin: StageEntryOrigin = result.synthetic === true ? `error:${result.exit}` : `script:${result.exit}`;
+      placeTask(hub, taskId, destination.id, 'start', Date.parse(at), { at, origin });
       // The result receipt and destination entry/handoff share this one task transaction.
       task.deterministicHandoff = { id: result.deliveryId ?? result.id, entryId: task.stageEntry!.id,
         executionId: control.executionId, fromColumnId, columnId: destination.id, exit: result.exit, message: result.message, at,

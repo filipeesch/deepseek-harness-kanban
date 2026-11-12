@@ -1,6 +1,6 @@
 import type { StageSide } from '../../shared/types.js';
-import type { ConnectionShape } from './routing/orthogonal.js';
-import { connectionRoute } from './routing/route.js';
+import type { ConnectionShape } from '../../domain/diagram/orthogonal.js';
+import { connectionRoute } from '../../domain/diagram/route.js';
 import type { LiveConnectionDescriptor, LiveStageRect } from './edge-model.js';
 
 /** What a creation drag would author, from the stage and side it started at. */

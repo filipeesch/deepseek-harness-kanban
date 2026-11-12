@@ -35,6 +35,7 @@ class FakeNativeRuntime implements DeterministicRuntime {
     return { sourceRef, fingerprint: createHash('sha256').update(JSON.stringify({ code, definition: request.definition, executionDirectory, exits: request.exits })).digest('hex'), language: request.definition.language, directory: request.definition.directory, executionDirectory,
       source: request.definition.file === undefined ? { kind: 'inline' } : { kind: 'file', path: request.definition.file }, env: [...(request.definition.env ?? [])], params: (request.definition.params ?? []).map(parameter => parameter.name), exits: structuredClone(request.exits) };
   });
+  plan = vi.fn(async (request: CaptureRequest) => { const capture = await this.capture(request); const { sourceRef: _sourceRef, fingerprint, ...content } = capture; return { content, code: this.sources.get(capture.sourceRef) ?? '', fingerprint }; });
   loadCapture = vi.fn(async (capture: DeterministicCapture) => { const source = this.sources.get(capture.sourceRef); if (source === undefined) throw new Error('Missing immutable source.'); return source; });
   collectSources = vi.fn(async (_references: readonly string[]) => {});
   verify = vi.fn(async (_capture: DeterministicCapture, _signal?: AbortSignal) => {});

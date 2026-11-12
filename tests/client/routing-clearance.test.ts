@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { corridorClearance, corridorOf, stageCrossesCorridor } from '../../src/client/workflow-view/routing/clearance.js';
-import type { DiagramRect } from '../../src/client/workflow-view/routing/orthogonal.js';
+import { corridorClearance, corridorOf, stageCrossesCorridor } from '../../src/domain/diagram/clearance.js';
+import type { DiagramRect } from '../../src/domain/diagram/orthogonal.js';
 
 const stages: readonly DiagramRect[] = [
   { x: 0, y: 0, width: 200, height: 100 },

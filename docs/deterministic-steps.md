@@ -122,7 +122,7 @@ An agent destination receives its own instruction and one identified output/prov
 
 ## Local trust and variables
 
-Approval is installation-local and scoped to the selected board, project, and stable stage. Review covers primary code bytes, language/format, canonical provenance, directory scope, routes, authorized variable names, and declared parameter names. Editing the entry's parameter values does not invalidate that approval; adding or removing a declared name does. Saving YAML, publishing, and accepting team updates never approve code. Changed code or expanded authority needs a new review; unchanged captures can reuse their approval.
+Approval is installation-local and scoped to the selected board, project, and stable stage. Review covers primary code bytes, language/format, canonical provenance, directory scope, routes, authorized variable names, and declared parameter names. Editing the entry's parameter values does not invalidate that approval; adding or removing a declared name does. Saving YAML, publishing, and accepting team updates never approve code. Changed code or expanded authority needs a new review; unchanged captures can reuse their approval. Retargeting a named exit to another stage changes the captured route, so it needs a new review even when the code is unchanged; the board write report states, per allowed project, whether the previous approval still holds and why.
 
 Only the primary program is frozen. Imported modules, executables, and remote services can change after approval; review those dependencies and avoid irreversible side effects. Trust is not a native filesystem-policy exemption.
 

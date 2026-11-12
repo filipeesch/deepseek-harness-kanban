@@ -109,7 +109,7 @@ export function createDeterministicRuntime(options: DeterministicRuntimeOptions)
     try { return await running; } finally { if (active.get(key) === running) active.delete(key); }
   };
   return {
-    capture: request => captures.capture(request), loadCapture: capture => captures.load(capture), trust, variables, execute,
+    capture: request => captures.capture(request), plan: request => captures.plan(request), loadCapture: capture => captures.load(capture), trust, variables, execute,
     collectSources: referenced => captures.collectSources(referenced),
     releaseSource: reference => captures.releaseSource(reference),
     async verify(capture, signal) { await captures.load(capture); await verify(capture, signal); },

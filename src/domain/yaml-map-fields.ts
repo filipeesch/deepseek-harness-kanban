@@ -67,8 +67,10 @@ export interface SequenceFieldEdit {
   readonly sequenceKey: string;
   /** The key that identifies one map inside the sequence, e.g. `id`. */
   readonly idKey: string;
-  /** The id of the entry this edit writes. */
-  readonly id: string;
+  /** The id of the entry this edit writes; absent when `index` addresses it. */
+  readonly id?: string;
+  /** The position of the entry this edit writes, for a sequence whose entries may omit an id. */
+  readonly index?: number;
   /** The accepted keys, in order; the first existing one is rewritten, else the first is added. */
   readonly fieldKeys: readonly string[];
   /** Render the field, or return null to remove it. */
@@ -274,12 +276,16 @@ export function writeSequenceItemField(edit: SequenceFieldEdit): string {
   const document = documentOf(edit.text, edit.invalid);
   const sequence = document.getIn([edit.sequenceKey]);
   if (!isSeq(sequence)) edit.invalid('Workflow ' + edit.sequenceKey + ' must be an array.');
-  for (const item of sequence.items) {
+  for (const [position, item] of sequence.items.entries()) {
     if (!isMap(item)) continue;
     const pairs = item.items as unknown as NodePair[];
-    const idPair = pairs.find(pair => pairKey(pair) === edit.idKey);
-    if (idPair === undefined) continue;
-    if ((idPair.value as { value?: unknown } | null)?.value !== edit.id) continue;
+    if (edit.index !== undefined) {
+      if (position !== edit.index) continue;
+    } else {
+      const idPair = pairs.find(pair => pairKey(pair) === edit.idKey);
+      if (idPair === undefined) continue;
+      if ((idPair.value as { value?: unknown } | null)?.value !== edit.id) continue;
+    }
     const authored = pairs.filter(pair => { const key = pairKey(pair); return key !== undefined && edit.fieldKeys.includes(key); });
     const edits: TextEdit[] = [];
     if (authored.length === 0) {
@@ -291,7 +297,7 @@ export function writeSequenceItemField(edit: SequenceFieldEdit): string {
     }
     return applyEdits(edit.text, edits);
   }
-  return edit.invalid('Workflow ' + edit.sequenceKey + ' has no entry ' + edit.id + '.');
+  return edit.invalid('Workflow ' + edit.sequenceKey + ' has no entry ' + (edit.id ?? edit.index ?? '') + '.');
 }
 
 /** Rewrite one nested mapping field without serializing its parent or siblings. */
@@ -299,15 +305,16 @@ export function writeNestedSequenceItemField(edit: SequenceFieldEdit & { readonl
   const document = documentOf(edit.text, edit.invalid);
   const sequence = document.getIn([edit.sequenceKey]);
   if (!isSeq(sequence)) return edit.invalid('Workflow ' + edit.sequenceKey + ' must be an array.');
-  for (const item of sequence.items) {
-    if (!isMap(item) || item.get(edit.idKey) !== edit.id) continue;
+  for (const [position, item] of sequence.items.entries()) {
+    if (!isMap(item)) continue;
+    if (edit.index !== undefined ? position !== edit.index : item.get(edit.idKey) !== edit.id) continue;
     const nested = item.getIn([...edit.path], true);
     if (!isMap(nested)) return edit.invalid('The nested field must be a mapping.');
     const pairs = nested.items as unknown as NodePair[];
     const planned = planFieldEdit(edit.text, nested, pairs, edit.fieldKeys, edit.render);
     return planned === null ? edit.text : applyEdits(edit.text, [planned]);
   }
-  return edit.invalid('Workflow ' + edit.sequenceKey + ' has no entry ' + edit.id + '.');
+  return edit.invalid('Workflow ' + edit.sequenceKey + ' has no entry ' + (edit.id ?? edit.index ?? '') + '.');
 }
 
 /** Rewrite one authored top-level field, preserving every character outside it. */
