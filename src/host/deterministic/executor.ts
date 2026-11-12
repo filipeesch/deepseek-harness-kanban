@@ -1,8 +1,12 @@
 import type { PtcBindingNamespace, PtcJsonValue } from '@deepseek-ai/dsh-ptc-runtime';
 import type { ShellRunResult } from '@deepseek-ai/dsh-shell';
 import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox';
-import type { NativeLifetime } from './lifetime.js';
+import type { FailureAttempt } from '../../shared/deterministic-failure.js';
 import type { DeterministicCapture } from '../../shared/deterministic.js';
+import { classifyFailureCode } from '../../domain/deterministic-failure.js';
+import { readGuardOutcome } from './guard-outcome.js';
+import { createBashRetry, type BashRetry } from './retry.js';
+import type { NativeLifetime } from './lifetime.js';
 import type { DeterministicVariables, ExecuteRequest, ExecutionOutcome, NativePtcPort, NativeShellPort } from './ports.js';
 import { DeterministicRuntimeError, failure } from './ports.js';
 import { COMPLETION_MAX_BYTES, DIAGNOSTIC_MAX_BYTES, SecretRedactor, bounded, parseCompletion } from './safety.js';
@@ -43,8 +47,11 @@ function checkPolicyResult(result: { sandbox?: { denied: boolean; runnerFailed?:
 export async function executeCapturedProgram(options: {
   request: ExecuteRequest; code: string; policy: SandboxExecutionPolicy;
   shell: NativeShellPort; runtime?: NativePtcPort; variables: DeterministicVariables; lifetime?: NativeLifetime;
+  /** Bounded repetition policy for a guarded Bash call the host did not admit. */
+  retry?: BashRetry;
 }): Promise<ExecutionOutcome> {
   const { request, code, policy, shell, runtime, variables } = options;
+  const retry = options.retry ?? createBashRetry();
   const controller = new AbortController();
   let stopping: Promise<void> | undefined;
   const stopOwned = () => stopping ??= (options.lifetime?.stop() ?? Promise.resolve()).finally(() => controller.abort(request.signal.reason));
@@ -54,6 +61,21 @@ export async function executeCapturedProgram(options: {
   const redactor = new SecretRedactor();
   const pending = new Set<Promise<PtcJsonValue>>();
   let accepting = true;
+  /** The first host failure of this execution; a program exception may only be its symptom. */
+  let rootCause: { code: string; message: string; detail?: Record<string, unknown> } | undefined;
+  const recordRootCause = (error: unknown): void => {
+    if (rootCause !== undefined) return;
+    const code = error instanceof DeterministicRuntimeError ? error.code : 'EXECUTOR_FAILED';
+    // A program-caused rejection is not a host failure: the program's own error stays the failure.
+    if (classifyFailureCode(code) === 'script') return;
+    rootCause = { code, message: error instanceof Error ? error.message : String(error), ...(error instanceof DeterministicRuntimeError && error.detail !== undefined ? { detail: error.detail } : {}) };
+  };
+  /** Redact first, then cut the retained window, so a boundary cannot split a value. */
+  const guardText = { head: (value: string, maxBytes: number) => redactor.head(value, maxBytes), tail: (value: string, maxBytes: number) => redactor.tail(value, maxBytes) };
+  /** Record a host rejection from any binding, so no origin is lost at the process boundary. */
+  const hostBinding = <T>(work: (args: unknown) => Promise<T>): ((args: unknown) => Promise<T>) => async (args: unknown) => {
+    try { return await work(args); } catch (error) { recordRootCause(error); throw error; }
+  };
   const resolveValues = async () => {
     signal.throwIfAborted();
     const values = await variables.resolve(request.scope, request.capture.env);
@@ -64,25 +86,32 @@ export async function executeCapturedProgram(options: {
   const runBash = async (command: string, timeoutMs?: number, stdin?: string): Promise<ShellRunResult> => {
     signal.throwIfAborted();
     const env = await resolveValues();
-    const spec = shell.resolve({ command: options.lifetime?.shell(command) ?? command, workdir: request.capture.executionDirectory, onExpiry: timeoutMs === undefined ? 'none' : 'kill', ...(timeoutMs === undefined ? {} : { timeoutMs }), sandboxPolicy: policy, stdoutMaxBytes: 256 * 1024, signal, stdin, env, dshEnv: {} });
-    if (spec.onExpiry !== (timeoutMs === undefined ? 'none' : 'kill') || spec.stdoutMaxBytes < 256 * 1024 || spec.workdir !== request.capture.executionDirectory || !samePolicy(spec.sandboxPolicy, policy)) failure('BASH_LIFETIME_UNSUPPORTED', 'The native Bash executor changed the requested lifetime, directory, or policy.');
-    const handle = await shell.execute(spec);
-    try {
-      const result = await handle.result();
+    /** Every attempt of this call, so its settled failure explains its own retries. */
+    const attempts: FailureAttempt[] = [];
+    for (let attempt = 1; ; attempt += 1) {
+      // A Stop must veto the next attempt immediately, even while native cleanup is
+      // still draining: the graceful drain and the admission gate are separate signals.
+      signal.throwIfAborted();
+      request.signal.throwIfAborted();
+      const started = Date.now();
+      const spec = shell.resolve({ command: options.lifetime?.shell(command) ?? command, workdir: request.capture.executionDirectory, onExpiry: timeoutMs === undefined ? 'none' : 'kill', ...(timeoutMs === undefined ? {} : { timeoutMs }), sandboxPolicy: policy, stdoutMaxBytes: 256 * 1024, signal, stdin, env, dshEnv: {} });
+      if (spec.onExpiry !== (timeoutMs === undefined ? 'none' : 'kill') || spec.stdoutMaxBytes < 256 * 1024 || spec.workdir !== request.capture.executionDirectory || !samePolicy(spec.sandboxPolicy, policy)) failure('BASH_LIFETIME_UNSUPPORTED', 'The native Bash executor changed the requested lifetime, directory, or policy.');
+      const handle = await shell.execute(spec);
+      let result: ShellRunResult;
+      try {
+        result = await handle.result();
+      } finally {
+        // The authenticated guard drains its owned tree and proves that quiescence;
+        // killing it first would destroy that proof. Escalate only if it wedges.
+        const escalation = signal.aborted ? setTimeout(() => { void handle.kill(); }, 5000) : undefined;
+        try { await handle.done; } finally { if (escalation) clearTimeout(escalation); }
+      }
       if (!options.lifetime || result.aborted || result.timedOut) return result;
-      if (result.stdout.truncated) failure('OUTPUT_LIMIT', 'Guarded shell output exceeded its transport limit.');
-      let envelope: unknown;
-      try { envelope = JSON.parse(result.stdout.text); } catch { return failure('BASH_PROTOCOL', 'The isolated Bash guard did not return a valid result.'); }
-      if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) return failure('BASH_PROTOCOL', 'The isolated Bash guard returned an invalid result.');
-      const value = envelope as Record<string, unknown>;
-      if (value.overflow === true) return failure('OUTPUT_LIMIT', 'The script exceeded its bounded stdout or stderr limit.');
-      if (value.overflow !== false || typeof value.stdout !== 'string' || typeof value.stderr !== 'string') return failure('BASH_PROTOCOL', 'The isolated Bash guard returned invalid output.');
-      return { ...result, stdout: { text: value.stdout, truncated: false }, stderr: { text: value.stderr, truncated: false } };
-    } finally {
-      // The authenticated guard drains its owned tree and proves that quiescence;
-      // killing it first would destroy that proof. Escalate only if it wedges.
-      const escalation = signal.aborted ? setTimeout(() => { void handle.kill(); }, 5000) : undefined;
-      try { await handle.done; } finally { if (escalation) clearTimeout(escalation); }
+      const outcome = readGuardOutcome(result, Date.now() - started, guardText);
+      if (outcome.kind === 'command') return { ...result, stdout: { text: outcome.stdout, truncated: false }, stderr: { text: outcome.stderr, truncated: false } };
+      attempts.push({ attempt, code: outcome.code, guard: outcome.facts });
+      if (!outcome.retryable || attempt >= retry.attempts) failure(outcome.code, outcome.message, { attempts: [...attempts], guard: outcome.facts });
+      await retry.wait(attempt, request.signal);
     }
   };
   const bash = (args: unknown): Promise<PtcJsonValue> => {
@@ -115,12 +144,12 @@ export async function executeCapturedProgram(options: {
     } else {
       if (!runtime) failure('TYPESCRIPT_UNAVAILABLE', 'Mount the native TypeScript function-body runtime.');
       const bindings: PtcBindingNamespace[] = [
-        { global: 'tools', functions: { bash } },
-        { global: 'stepContext', functions: { read: async () => structuredClone(request.input) } },
-        { global: 'authorizedEnvironment', functions: { get: async (name: unknown) => {
+        { global: 'tools', functions: { bash: hostBinding(bash) } },
+        { global: 'stepContext', functions: { read: hostBinding(async () => structuredClone(request.input)) } },
+        { global: 'authorizedEnvironment', functions: { get: hostBinding(async (name: unknown) => {
           if (typeof name !== 'string' || !request.capture.env.includes(name)) failure('VARIABLE_UNAUTHORIZED', 'This variable name was not authorized in the reviewed capture.');
           return (await resolveValues())[name] ?? null;
-        } } },
+        }) } },
       ];
       const result = await runtime.run(runtime.resolve({ program: (options.lifetime?.typescriptPrelude() ?? '') + TYPESCRIPT_PRELUDE + code, bindings, cwd: request.capture.executionDirectory, timeoutMs: null, sandboxPolicy: runtime.sandboxMode === undefined ? undefined : policy, signal }));
       if (request.signal.aborted || result.error?.kind === 'abort') return { kind: 'aborted' };
@@ -136,7 +165,17 @@ export async function executeCapturedProgram(options: {
   } catch (error) {
     if (request.signal.aborted) return { kind: 'aborted' };
     const code = error instanceof DeterministicRuntimeError ? error.code : 'EXECUTOR_FAILED';
-    return { kind: 'failed', diagnostic: { code, message: redactor.text(error instanceof Error ? error.message : String(error)) } };
+    const message = error instanceof Error ? error.message : String(error);
+    const detail = error instanceof DeterministicRuntimeError ? error.detail : undefined;
+    const cause = rootCause;
+    // A program exception that only carried a host rejection is not the failure:
+    // report the host cause and keep the exception as the nested detail.
+    if (cause !== undefined && code !== cause.code && code.startsWith('TYPESCRIPT_')) {
+      const details = redactor.details({ ...cause.detail, cause: { code, message } });
+      return { kind: 'failed', diagnostic: { code: cause.code, message: redactor.text(cause.message), ...(details === undefined ? {} : { details }) } };
+    }
+    const details = redactor.details(detail);
+    return { kind: 'failed', diagnostic: { code, message: redactor.text(message), ...(details === undefined ? {} : { details }) } };
   } finally {
     accepting = false;
     // Give the authenticated guards a chance to drain before native AbortSignal

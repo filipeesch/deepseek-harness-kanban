@@ -32,7 +32,7 @@ export function HistoryPanel({ history, columns }: HistoryPanelProps) {
     <tbody>{rows.map(row => <tr key={row.key} data-tone={row.tone}>
       <td className="kb-history-time"><time dateTime={row.moment}>{row.when}</time></td>
       <td className="kb-history-event">{row.event}</td>
-      <td className="kb-history-detail">{row.detail}</td>
+      <td className="kb-history-detail">{row.detail}{row.evidence === undefined ? null : <details className="kb-history-evidence"><summary>Evidence</summary><pre className="kb-history-evidence-text">{row.evidence}</pre></details>}</td>
       <td className="kb-history-duration">{row.duration}</td>
     </tr>)}</tbody>
   </table>;

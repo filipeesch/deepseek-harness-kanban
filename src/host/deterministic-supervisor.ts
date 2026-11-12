@@ -6,6 +6,12 @@ import type { LocatedTask } from './hub-repository.js';
 import { captureDeterministicTargets } from '../domain/deterministic-state.js';
 import { declaredParameterNames, declaredParameterValues, missingParameterNames, validateParameterValues } from '../domain/deterministic-parameters.js';
 import { recordDeterministicExecution, recordDeterministicHandoff } from '../domain/task-history/record.js';
+import { classifyFailureCode, failureDetail, failureDetailValues } from '../domain/deterministic-failure.js';
+import type { FailureDetail } from '../shared/deterministic-failure.js';
+import { failureMessage, providerFailureMessage } from '../domain/deterministic-failure-message.js';
+import { settleFailureRoute } from '../domain/deterministic-failure-settlement.js';
+import { bounded } from '../shared/bounded.js';
+import { redactExact, redactRecord } from '../shared/redact.js';
 import { buildDeterministicInput } from './deterministic/input.js';
 
 export interface DeterministicIdentity { taskId: string; entryId: string; executionId: string; attemptId?: string }
@@ -74,9 +80,7 @@ function historyParameters(control: Pick<DeterministicControl, 'parameters' | 'c
   return Object.keys(used).length === 0 ? {} : { parameters: used };
 }
 function safeText(value: string, secrets: Readonly<Record<string, string>>, limit: number): string {
-  let text = value;
-  for (const secret of Object.values(secrets).filter(Boolean).sort((a, b) => b.length - a.length)) text = text.split(secret).join('[REDACTED]');
-  return text.slice(0, limit);
+  return bounded(redactExact(value, Object.values(secrets)), limit);
 }
 function completion(value: unknown): StepCompletion {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new KanbanError('INVALID_COMPLETION', 'The program must return exactly { exit, message }.');
@@ -457,7 +461,27 @@ export class DeterministicSupervisor {
       if (error instanceof SupervisorPersistenceFailure) throw error.cause;
       if (!this.valid(taskId, owner)) return;
       const errorCode = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'DETERMINISTIC_EXECUTION_FAILED';
-      const diagnostic: Problem = { code: errorCode, message: safeText(error instanceof Error ? error.message : String(error), secrets, MAX_DIAGNOSTIC) };
+      // The runtime already knows the origin; a code that reaches here without one is
+      // classified from its code so every settled failure can be routed and presented.
+      // Redact the structured detail before the codec bounds it: a value cut by that
+      // bound can no longer be matched, so the order matters here too.
+      const recorded = failureDetail(redactRecord(error instanceof KanbanError ? error.details : undefined, Object.values(secrets)));
+      const origin = recorded?.origin ?? classifyFailureCode(errorCode);
+      const raw = error instanceof Error ? error.message : String(error);
+      // Redact before any bound: a truncation that cuts a known value leaves a
+      // fragment that exact-value matching can no longer recognize.
+      const safeRaw = redactExact(raw, Object.values(secrets));
+      // A provider's own text never becomes the delivered message: it is kept as the
+      // nested cause, and the public sentence comes from the code.
+      const provider = origin === 'script' || origin === 'contract' ? undefined : providerFailureMessage(errorCode);
+      const detail: FailureDetail = provider !== undefined && recorded?.cause === undefined
+        ? { ...(recorded ?? {}), origin, cause: { code: errorCode, message: bounded(safeRaw, MAX_DIAGNOSTIC) } }
+        : { ...(recorded ?? {}), origin };
+      const diagnostic: Problem = {
+        code: errorCode,
+        message: safeText(failureMessage({ code: errorCode, origin, message: provider ?? safeRaw, details: detail }), secrets, MAX_DIAGNOSTIC),
+        details: redactRecord(failureDetailValues(detail), Object.values(secrets)) ?? failureDetailValues(detail),
+      };
       output = undefined;
       if (diagnostic.code === 'TRUST_REQUIRED') {
         await this.persist(taskId, (task, value) => { if (current(value, owner.control) && !['stopping', 'stopped'].includes(task.deterministic!.phase)) task.deterministic!.phase = 'awaiting-trust'; });
@@ -469,8 +493,10 @@ export class DeterministicSupervisor {
         await this.persist(taskId, (task, value) => { if (current(value, owner.control) && !['stopping', 'stopped'].includes(task.deterministic!.phase)) { task.deterministic!.phase = 'failed'; task.deterministic!.error = diagnostic; } });
         return;
       }
-      if (trusted && !['OWNERSHIP_UNCERTAIN', 'OWNERSHIP_CONFLICT', 'EXECUTION_OWNERSHIP_UNCERTAIN'].includes(diagnostic.code) && owner.control.capture && Object.hasOwn(owner.control.capture.exits, 'error')) {
-        output = { exit: 'error', message: diagnostic.message }; synthetic = diagnostic;
+      const captured = owner.control.capture;
+      const route = trusted && captured !== undefined ? settleFailureRoute({ code: errorCode, origin, exits: Object.keys(captured.exits) }) : null;
+      if (route !== null) {
+        output = { exit: route, message: diagnostic.message }; synthetic = diagnostic;
       } else await this.persist(taskId, (task, value) => {
         if (current(value, owner.control) && !['stopping', 'stopped'].includes(task.deterministic!.phase)) {
           task.deterministic!.phase = 'failed'; task.deterministic!.error = diagnostic;
