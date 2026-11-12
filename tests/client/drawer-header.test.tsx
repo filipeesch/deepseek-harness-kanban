@@ -145,6 +145,30 @@ describe('DrawerActions', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it('preserves tooltips, pressed state and keyboard callbacks', async () => {
+    const user = userEvent.setup();
+    const onToggle = vi.fn(); const onDelete = vi.fn(); const onClose = vi.fn();
+    const off = view();
+    const { rerender } = render(<DrawerActions autoMode={off} onToggleAutoMode={onToggle} blocked={false} onDelete={onDelete} onClose={onClose} />);
+    const auto = screen.getByRole('button', { name: 'Turn on auto mode' });
+    expect(auto.textContent).toBe('Auto');
+    expect(auto.getAttribute('aria-pressed')).toBe('false');
+    expect(auto.getAttribute('title')).toBe(off.title);
+    auto.focus();
+    await user.keyboard(' ');
+    expect(onToggle).toHaveBeenCalledWith(true);
+    const on = autoModeView(task({ autoMode: { enabled: true } }), workflow);
+    rerender(<DrawerActions autoMode={on} onToggleAutoMode={onToggle} blocked={false} onDelete={onDelete} onClose={onClose} />);
+    expect(screen.getByRole('button', { name: 'Turn off auto mode' }).getAttribute('aria-pressed')).toBe('true');
+    for (const [name, callback] of [['Delete task', onDelete], ['Close task details', onClose]] as const) {
+      const button = screen.getByRole('button', { name });
+      expect(button.getAttribute('title')).toBe(name);
+      button.focus();
+      await user.keyboard('{Enter}');
+      expect(callback).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it('disables delete while blocked and omits the auto control without a toggle', () => {
     const { rerender } = render(<DrawerActions autoMode={view()} autoModePending={false} onToggleAutoMode={() => {}} blocked onDelete={() => {}} onClose={() => {}} />);
     expect((screen.getByRole('button', { name: 'Delete task' }) as HTMLButtonElement).disabled).toBe(true);

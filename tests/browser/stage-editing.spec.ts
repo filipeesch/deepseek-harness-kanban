@@ -38,11 +38,17 @@ test('presents the stage edit action on every stage of both presentations', asyn
 
   await openBoard(page, 'flow');
   const diagramStages = await page.locator('.kb-flow-stage').count();
+  await expect(page.locator('.kb-flow-stage-edit')).toHaveCount(0);
+  const unlock = page.getByRole('button', { name: 'Unlock layout editing', exact: true });
+  await expect(unlock).toBeVisible();
+  await unlock.focus();
+  await page.keyboard.press('Enter');
+  const lock = page.getByRole('button', { name: 'Lock layout editing', exact: true });
+  await expect(lock).toBeFocused();
   await expect(page.locator('.kb-flow-stage-edit')).toHaveCount(diagramStages);
-  // The layout lock is on by default and gates the diagram's edit action, because an edit
-  // changes the same transition policy the diagram's structural gestures do.
-  await expect(page.getByRole('button', { name: 'Lock layout editing' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Edit stage Explore' })).toBeDisabled();
+  await page.keyboard.press('Enter');
+  await expect(unlock).toBeFocused();
+  await expect(page.locator('.kb-flow-stage-edit')).toHaveCount(0);
 
   // Card selection does not gate it either; opening the editor keeps the selection.
   await openBoard(page);
@@ -175,9 +181,9 @@ test('moves the creation action when another stage is made initial', async ({ pa
 
 test('opens the editor from the diagram once the layout is unlocked', async ({ page }) => {
   await openBoard(page, 'flow');
-  await expect(page.getByRole('button', { name: 'Edit stage Explore' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Edit stage Explore' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Unlock layout editing', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Unlock layout editing' }).click();
+  await page.getByRole('button', { name: 'Unlock layout editing', exact: true }).click();
   // Wheel zoom anchors on the pointer, so the header stays in view while it grows.
   const header = page.locator('.kb-flow-stage[data-column-id="explore"] .kb-flow-stage-header');
   const box = await header.boundingBox();
@@ -191,7 +197,21 @@ test('opens the editor from the diagram once the layout is unlocked', async ({ p
     await page.getByRole('button', { name: 'Fit to view' }).click({ force: true });
     await page.waitForTimeout(300);
   }
-  await page.getByRole('button', { name: 'Edit stage Explore' }).click();
+  const pencil = page.getByRole('button', { name: 'Edit stage Explore' });
+  const stage = page.locator('.kb-flow-stage[data-column-id="explore"]');
+  const before = await stage.boundingBox();
+  const press = (await pencil.boundingBox())!;
+  await page.mouse.move(press.x + press.width / 2, press.y + press.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(press.x + 100, press.y + 80, { steps: 8 });
+  await page.mouse.up();
+  expect(await stage.boundingBox()).toEqual(before);
+  await pencil.focus();
+  await page.keyboard.press('Enter');
+  await expect.poll(() => page.evaluate(() => document.activeElement?.closest('[role="dialog"]') !== null)).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(pencil).toBeFocused();
+  await pencil.click();
   // Editing a stage is not a layout edit: nothing moved and no history entry exists.
   await expect(page.getByRole('button', { name: 'Undo layout change' })).toBeDisabled();
   expect((await commands(page)).filter(command => command.type === 'board.workflow.save')).toEqual([]);
@@ -259,6 +279,37 @@ test('keeps the action available when the filter hides every card', async ({ pag
   await popover.getByRole('button', { name: 'Close filters' }).click();
   await expect(page.locator('.kb-card')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Edit stage Explore' })).toBeEnabled();
+});
+
+test('keeps diagram stage editing available through search, project filtering, and selection', async ({ page }) => {
+  await openBoard(page, 'flow');
+  await page.getByRole('button', { name: 'Unlock layout editing', exact: true }).click();
+  const stage = page.locator('.kb-flow-stage[data-column-id="explore"]');
+  const pencil = stage.getByRole('button', { name: 'Edit stage Explore' });
+  await page.getByRole('button', { name: /^Filter tasks/ }).click();
+  const popover = page.getByRole('dialog', { name: 'Filter tasks' });
+  await popover.getByLabel('Search tasks').fill('zzz-no-task-matches');
+  await popover.getByRole('button', { name: 'Close filters' }).click();
+  await expect(stage.locator('.kb-card')).toHaveCount(0);
+  await expect(pencil).toBeEnabled();
+  await page.getByRole('button', { name: /^Filter tasks/ }).click();
+  await popover.getByLabel('Search tasks').clear();
+  await popover.getByRole('combobox', { name: 'Project filter' }).selectOption('p2');
+  await popover.getByRole('button', { name: 'Close filters' }).click();
+  await expect(stage.locator('.kb-card')).toHaveCount(0);
+  await expect(pencil).toBeEnabled();
+  await page.getByRole('button', { name: /^Filter tasks/ }).click();
+  await popover.getByRole('combobox', { name: 'Project filter' }).selectOption('');
+  await popover.getByRole('button', { name: 'Close filters' }).click();
+  await page.getByRole('button', { name: 'Select cards to delete' }).click();
+  const card = page.getByRole('button', { name: 'Select task Long column task 0' });
+  await card.click();
+  await expect(card).toHaveAttribute('aria-pressed', 'true');
+  await pencil.click();
+  const dialog = page.getByRole('dialog', { name: 'Edit stage' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(card).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('keeps a selected card selected while the editor opens and closes', async ({ page }) => {

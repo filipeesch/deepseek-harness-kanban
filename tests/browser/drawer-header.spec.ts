@@ -62,6 +62,42 @@ test('the narrow drawer wraps the header into two rows without hiding controls',
   }
 });
 
+test('header actions share geometry and remain inside the drawer', async ({ page }) => {
+  for (const width of [1000, 620, 420, 360]) {
+    await openDrawer(page, width);
+    const header = page.locator('.kb-drawer-header');
+    const metrics = await header.evaluate(element => {
+      const rect = (selector: string) => {
+        const target = selector === ':scope' ? element : element.querySelector(selector);
+        if (!target) throw new Error('Missing header control: ' + selector);
+        const box = target.getBoundingClientRect();
+        return { x: box.x, y: box.y, right: box.right, bottom: box.bottom, width: box.width, height: box.height };
+      };
+      return { header: rect(':scope'), advance: rect('.kb-stage-advance'), auto: rect('.kb-auto-chip'), delete: rect('[aria-label="Delete task"]'), close: rect('[aria-label="Close task details"]'), icons: ['.kb-stage-advance svg', '.kb-auto-chip svg', '[aria-label="Delete task"] svg', '[aria-label="Close task details"] svg'].map(rect), scrollWidth: element.scrollWidth, clientWidth: element.clientWidth };
+    });
+    for (const control of [metrics.advance, metrics.delete, metrics.close]) {
+      expect(control.width).toBe(32);
+      expect(control.height).toBe(32);
+    }
+    expect(metrics.auto.height).toBe(32);
+    for (const icon of metrics.icons) {
+      expect(icon.width).toBe(16);
+      expect(icon.height).toBe(16);
+    }
+    expect(metrics.delete.x - metrics.auto.right).toBe(4);
+    expect(metrics.close.x - metrics.delete.right).toBe(4);
+    if (width > 560) expect(metrics.auto.x - metrics.advance.right).toBe(4);
+    for (const control of [metrics.advance, metrics.auto, metrics.delete, metrics.close]) {
+      expect(control.x).toBeGreaterThanOrEqual(metrics.header.x);
+      expect(control.right).toBeLessThanOrEqual(metrics.header.right);
+      expect(control.y).toBeGreaterThanOrEqual(metrics.header.y);
+      expect(control.bottom).toBeLessThanOrEqual(metrics.header.bottom);
+    }
+    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth);
+    await page.getByRole('button', { name: 'Close task details' }).click();
+  }
+});
+
 test('the selected section is visibly marked and keyboard focus keeps its ring', async ({ page }) => {
   await openDrawer(page, 620);
   const selected = page.locator('.kb-icon-tab[aria-selected=true]');
@@ -98,10 +134,10 @@ test('a long title truncates on one line with the full text in its tooltip', asy
   await expect(heading).toHaveAttribute('title', title);
 });
 
-test('captures the header in both appearances at three widths', async ({ page }) => {
+test('captures the header in both appearances at four widths', async ({ page }) => {
   for (const scheme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme: scheme });
-    for (const width of [1000, 620, 420]) {
+    for (const width of [1000, 620, 420, 360]) {
       await openDrawer(page, width, 'Long column task 2', 'appearance');
       await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe(scheme === 'dark' ? '' : null);
       await expect(page.locator('.kb-drawer').getByRole('tab', { name: /^Conversations/ })).toHaveAttribute('aria-selected', 'true');
@@ -113,6 +149,28 @@ test('captures the header in both appearances at three widths', async ({ page })
       await expect(page.locator('.kb-drawer')).toHaveCount(0);
     }
   }
+});
+
+test('narrow header actions retain tooltips and keyboard activation', async ({ page }) => {
+  await openDrawer(page, 360, 'First execution task', 'prepare');
+  const drawer = page.locator('.kb-drawer');
+  const advance = drawer.getByRole('button', { name: 'Move to Propose' });
+  await expect(advance).toHaveAttribute('title', 'Move to Propose');
+  const auto = drawer.locator('.kb-auto-chip');
+  await expect(auto).toContainText('Auto');
+  await expect(auto).toHaveAttribute('aria-pressed', 'false');
+  await expect(auto).toHaveAttribute('title', /auto mode/i);
+  for (const name of ['Delete task', 'Close task details']) {
+    await expect(drawer.getByRole('button', { name })).toHaveAttribute('title', name);
+  }
+  await advance.focus();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { name: 'Prepare the first execution' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await drawer.getByRole('button', { name: 'Close task details' }).focus();
+  await page.keyboard.press('Space');
+  await expect(drawer).toHaveCount(0);
 });
 
 test('the next-stage action prepares the first execution before moving', async ({ page }) => {
