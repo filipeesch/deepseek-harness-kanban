@@ -7,7 +7,8 @@ export function entryInstruction(column: Pick<Column, 'onEnterPrompt'> | undefin
 }
 
 /** The current entry is unresolved when the persisted marker still matches its stage. */
-export function hasUnresolvedEntry(task: Pick<Task, 'columnId' | 'instructionPending'>, columnId: string = task.columnId): boolean {
+export function hasUnresolvedEntry(task: Pick<Task, 'columnId' | 'instructionPending'> & Partial<Pick<Task, 'stageEntry' | 'deterministic'>>, columnId: string = task.columnId): boolean {
+  if (task.stageEntry !== undefined && task.deterministic?.entryId === task.stageEntry.id) return false;
   return task.instructionPending?.columnId === columnId;
 }
 

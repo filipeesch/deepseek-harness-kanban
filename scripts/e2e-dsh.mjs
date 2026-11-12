@@ -1,7 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import semver from 'semver';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const args = process.argv.slice(2);
@@ -14,7 +17,7 @@ if (args.includes('--only') && only === undefined) {
   process.exit(2);
 }
 if (!checkoutArg) {
-  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only background-delete|board|conversation|deletion|hubs|schedules|override|native-drawer|auto-run|auto-mode|declared|create-start|prepare|board-model|project|messages|history]');
+  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only background-delete|board|conversation|deletion|hubs|schedules|override|native-drawer|auto-run|auto-mode|declared|create-start|prepare|board-model|project|messages|history|deterministic] [--skip-build]');
   process.exit(2);
 }
 const checkout = resolve(checkoutArg);
@@ -26,7 +29,7 @@ function describeCheckout() {
 function pluginDshVersion() {
   try {
     const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    return manifest.dependencies?.['@deepseek-ai/dsh-llm'] ?? manifest.devDependencies?.['@deepseek-ai/dsh-llm'];
+    return manifest.engines?.dsh;
   } catch { return undefined; }
 }
 function verify() {
@@ -45,14 +48,18 @@ function verify() {
   if (!existsSync(join(root, 'tests/e2e-dsh/declared-transition.replay.override.json'))) fail('missing declared-transition replay override');
   if (!existsSync(join(root, 'tests/e2e-dsh/create-start.replay.override.json'))) fail('missing create-start replay override');
   const pinned = pluginDshVersion();
-  if (pinned !== undefined && version !== 'unknown' && pinned !== version) {
+  if (pinned !== undefined && version !== 'unknown' && !semver.satisfies(version, pinned, { includePrerelease: true })) {
     console.warn('e2e-dsh: the plugin expects DSH ' + pinned + ' but the checkout reports ' + version + '; continuing with the checkout as requested.');
   }
   console.log('e2e-dsh prerequisites: ' + checkout + ' (' + tag + '; version ' + version + ')');
 }
 verify();
 if (checkOnly) process.exit(0);
-execFileSync('pnpm', ['run', 'build'], { cwd: root, stdio: 'inherit' });
+if (!args.includes('--skip-build')) execFileSync('pnpm', ['run', 'build'], { cwd: root, stdio: 'inherit' });
+// Templates belong to this plugin, so resolve their browser from the plugin's
+// installed test dependency rather than assuming a hoisted host dependency.
+const localRequire = createRequire(import.meta.url);
+const playwright = createRequire(localRequire.resolve('@playwright/test/package.json')).resolve('playwright');
 const scenarioTemplates = new Map([
   ['board', ['kanban-board-ux.e2e.template.ts', 'kanban-board-ux.e2e.ts']],
   ['conversation', ['kanban-conversation-ux.e2e.template.ts', 'kanban-conversation-ux.e2e.ts']],
@@ -71,6 +78,7 @@ const scenarioTemplates = new Map([
   ['project', ['kanban-project-management.e2e.template.ts', 'kanban-project-management.e2e.ts']],
   ['messages', ['kanban-messages.e2e.template.ts', 'kanban-messages.e2e.ts']],
   ['history', ['kanban-history.e2e.template.ts', 'kanban-history.e2e.ts']],
+  ['deterministic', ['kanban-deterministic.e2e.template.ts', 'kanban-deterministic.e2e.ts']],
 ]);
 if (only !== undefined && !scenarioTemplates.has(only)) fail('unknown --only value: ' + only);
 // A group is one [template, target] pair or a list of them, so one selector can
@@ -82,24 +90,52 @@ const requested = (only === undefined ? [...scenarioTemplates.values()] : [scena
 // flattens every group. One destination is copied exactly once, or the second copy
 // trips the refusal to overwrite and the whole suite dies before it starts.
 const scenarios = [...new Map(requested.map(pair => [pair[1], pair])).values()];
-const setupTarget = join(checkout, 'apps/web/tests', 'kanban-e2e-setup.ts');
-const copied = [];
+// Stage plugin-owned files outside the native checkout. Import its helpers by
+// absolute path so their built-artifact anchors remain correct, without writing
+// source files into a shared DSH checkout or loading its personal .env.
+const stage = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-kanban-e2e-')));
+const home = join(stage, 'home');
+const config = join(stage, 'vitest.config.mts');
 const testFiles = [];
 try {
-  if (existsSync(setupTarget)) throw new Error('Refusing to overwrite existing DSH test file: ' + setupTarget);
-  copyFileSync(join(root, 'tests/e2e-dsh', 'kanban-e2e-setup.ts'), setupTarget);
-  copied.push(setupTarget);
+  mkdirSync(home);
+  symlinkSync(join(checkout, 'node_modules'), join(stage, 'node_modules'), 'dir');
+  writeFileSync(join(stage, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
+  // Alias discovery is importer-ancestor scoped; give staged tests a local
+  // facade that inherits the native source contract without copying it.
+  writeFileSync(join(stage, 'tsconfig.json'), JSON.stringify({ extends: join(checkout, 'tsconfig.base.json'), include: ['**/*.ts'] }));
+  writeFileSync(join(stage, 'kanban-e2e-setup.ts'), readFileSync(join(root, 'tests/e2e-dsh/kanban-e2e-setup.ts')));
   for (const [template, target] of scenarios) {
-    const destination = join(checkout, 'apps/web/tests', target);
-    if (existsSync(destination)) throw new Error('Refusing to overwrite existing DSH test file: ' + destination);
-    copyFileSync(join(root, 'tests/e2e-dsh', template), destination);
-    copied.push(destination);
+    const destination = join(stage, target);
+    const source = readFileSync(join(root, 'tests/e2e-dsh', template), 'utf8')
+      .replaceAll("'./scaffold.ts'", JSON.stringify(join(checkout, 'apps/web/tests/scaffold.ts')))
+      .replaceAll("'./support.ts'", JSON.stringify(join(checkout, 'apps/web/tests/support.ts')))
+      .replaceAll("new URL('../../../snapshots/web/live-interactions/session.v3.jsonl', import.meta.url)",
+        'new URL(' + JSON.stringify(new URL('snapshots/web/live-interactions/session.v3.jsonl', 'file://' + checkout + '/').href) + ')');
+    writeFileSync(destination, source);
     testFiles.push(destination);
   }
-  execFileSync(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', '--config', 'vitest.web.config.ts', ...testFiles.map(file => file.slice(checkout.length + 1))], {
-    cwd: checkout, stdio: 'inherit',
-    env: { ...process.env, DSH_SNAPSHOT: 'replay', KANBAN_ROOT: root, KANBAN_QUESTION_FIXTURE: join(root, 'tests/e2e-dsh/question-round.jsonl'), KANBAN_TASK_CONTEXT_FIXTURE: join(root, 'tests/e2e-dsh/task-context.jsonl'), KANBAN_AUTORUN_OVERRIDE: join(root, 'tests/e2e-dsh/auto-run.replay.override.json'), KANBAN_AUTOMODE_OVERRIDE: join(root, 'tests/e2e-dsh/auto-mode.replay.override.json'), KANBAN_DECLARED_OVERRIDE: join(root, 'tests/e2e-dsh/declared-transition.replay.override.json'), KANBAN_CREATESTART_OVERRIDE: join(root, 'tests/e2e-dsh/create-start.replay.override.json') },
+  writeFileSync(config, [
+    "import { defineConfig } from 'vitest/config';",
+    "import tsconfigPaths from 'vite-tsconfig-paths';",
+    'import { standardDecoratorPlugin, vitestExecArgv } from ' + JSON.stringify(join(checkout, 'vitest.shared.ts')) + ';',
+    'export default defineConfig({',
+    'root:' + JSON.stringify(stage) + ', cacheDir:' + JSON.stringify(join(stage, 'cache')) + ',',
+    'resolve:{alias:{playwright:' + JSON.stringify(playwright) + '}},',
+    'plugins:[tsconfigPaths({projects:[' + JSON.stringify(join(stage, 'tsconfig.json')) + ',' + JSON.stringify(join(checkout, 'tsconfig.base.json')) + ']}),standardDecoratorPlugin()],',
+    'test:{execArgv:vitestExecArgv,include:["*.e2e.ts"],testTimeout:180000,hookTimeout:120000,fileParallelism:false}',
+    '});',
+  ].join('\n'));
+  const environment = Object.fromEntries(['PATH', 'TMPDIR', 'SystemRoot', 'LANG', 'LC_ALL', 'TERM']
+    .filter(name => process.env[name] !== undefined).map(name => [name, process.env[name]]));
+  execFileSync(process.execPath, [join(checkout, 'node_modules/vitest/vitest.mjs'), 'run', '--config', config, ...testFiles], {
+    cwd: stage, stdio: 'inherit',
+    env: { ...environment, HOME: home, USERPROFILE: home, DSH_HOME: join(home, '.dsh'), PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH ?? join(root, '.verification/playwright-browsers'), DSH_SNAPSHOT: 'replay', KANBAN_ROOT: root,
+      KANBAN_QUESTION_FIXTURE: join(root, 'tests/e2e-dsh/question-round.jsonl'), KANBAN_TASK_CONTEXT_FIXTURE: join(root, 'tests/e2e-dsh/task-context.jsonl'),
+      KANBAN_AUTORUN_OVERRIDE: join(root, 'tests/e2e-dsh/auto-run.replay.override.json'), KANBAN_AUTOMODE_OVERRIDE: join(root, 'tests/e2e-dsh/auto-mode.replay.override.json'),
+      KANBAN_DECLARED_OVERRIDE: join(root, 'tests/e2e-dsh/declared-transition.replay.override.json'), KANBAN_CREATESTART_OVERRIDE: join(root, 'tests/e2e-dsh/create-start.replay.override.json') },
   });
 } finally {
-  for (const file of copied) rmSync(file, { force: true });
+  // stage is the verified, test-owned mkdtemp result, never a computed checkout path.
+  rmSync(stage, { recursive: true, force: true });
 }

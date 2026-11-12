@@ -18,6 +18,8 @@ export type WorktreeHistoryAction = (typeof WORKTREE_HISTORY_ACTIONS)[number];
 
 /** One settled fact about a task's flow, with the moment it happened. */
 export type TaskHistoryEntry =
+  | { readonly kind: 'deterministic-execution'; readonly at: string; readonly executionId: string; readonly columnId: string; readonly outcome: 'completed' | 'stopped' | 'failed'; readonly exit?: string; readonly message?: string; readonly error?: Problem }
+  | { readonly kind: 'deterministic-handoff'; readonly at: string; readonly deliveryId: string; readonly executionId: string; readonly fromColumnId: string; readonly columnId: string; readonly outcome: 'accepted' | 'failed'; readonly exit: string; readonly message: string; readonly error?: Problem }
   | { readonly kind: 'created'; readonly at: string; readonly columnId: string }
   | { readonly kind: 'stage'; readonly at: string; readonly fromColumnId: string; readonly columnId: string }
   | { readonly kind: 'intent'; readonly at: string; readonly fromColumnId: string; readonly columnId: string }

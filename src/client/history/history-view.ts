@@ -119,6 +119,8 @@ function worktreeRow(entry: Extract<TaskHistoryEntry, { kind: 'worktree' }>): { 
 
 function present(entry: TaskHistoryEntry, columns: readonly Pick<Column, 'id' | 'name'>[]): { event: string; detail: string; tone: HistoryTone } {
   switch (entry.kind) {
+    case 'deterministic-execution': return { event: 'Script ' + entry.outcome, detail: stageName(columns, entry.columnId) + ' · Execution ' + entry.executionId + (entry.exit ? ' · Exit ' + entry.exit : '') + (entry.message ? ' — ' + entry.message : '') + (entry.error ? ' — ' + entry.error.message : ''), tone: entry.outcome === 'failed' ? 'warning' : 'neutral' };
+    case 'deterministic-handoff': return { event: 'Script handoff ' + entry.outcome, detail: transition(entry.fromColumnId, entry.columnId, columns) + ' · Execution ' + entry.executionId + ' · Delivery ' + entry.deliveryId + ' · Exit ' + entry.exit + ' — ' + entry.message + (entry.error ? ' — ' + entry.error.message : ''), tone: entry.outcome === 'failed' ? 'warning' : 'neutral' };
     case 'created': return { event: 'Created', detail: stageName(columns, entry.columnId), tone: 'accent' };
     case 'stage': return { event: 'Stage changed', detail: transition(entry.fromColumnId, entry.columnId, columns), tone: 'accent' };
     case 'intent': return { event: 'Next stage recorded', detail: transition(entry.fromColumnId, entry.columnId, columns), tone: 'neutral' };

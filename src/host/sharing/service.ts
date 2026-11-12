@@ -258,8 +258,16 @@ export class HubSharingService {
       // reads a board the team did not touch.
       const probe = await layout.probe(entry.key);
       if (probe !== null && probe === stored.probe && stored.head !== null) continue;
-      const snapshot = await layout.readLog(entry.key);
-      if (snapshot === null) { boards[entry.key] = { ...stored, behind: 0 }; continue; }
+      let snapshot;
+      try { snapshot = await layout.readLog(entry.key); }
+      catch (error) {
+        if (!(error instanceof KanbanError) || error.code !== 'SHARING_DOCUMENT_VERSION_UNSUPPORTED') throw error;
+        // A newer board is not authority to overwrite it, but it must not prevent
+        // other independently versioned boards from being observed or applied.
+        boards[entry.key] = { ...stored, probe: null, problem: { code: error.code, message: error.message } };
+        continue;
+      }
+      if (snapshot === null) { boards[entry.key] = { ...stored, behind: 0, problem: null }; continue; }
       const evaluation = evaluateBoard({ entry, local: board, log: snapshot.log, cursor: stored.seq });
       boards[entry.key] = {
         ...stored,
@@ -270,6 +278,7 @@ export class HubSharingService {
         draft: evaluation.draft,
         publishedText: evaluation.apply.kind === 'conflict' ? (publishedWorkflow(snapshot.log) ?? null) : null,
         conflict: evaluation.apply.kind === 'conflict' ? evaluation.apply.conflict : null,
+        problem: null,
       };
     }
     return boards;
@@ -625,6 +634,9 @@ export class HubSharingService {
     const hub = this.options.hubs.requireHub(hubId);
     const board = hub.boards.find(candidate => candidate.id === boardId);
     invariant(board, 'BOARD_NOT_FOUND', 'Board does not exist.');
+    const knownKey = record.bindings[boardId];
+    const problem = knownKey === undefined ? undefined : record.boards[knownKey]?.problem;
+    if (problem?.code === 'SHARING_DOCUMENT_VERSION_UNSUPPORTED') throw new KanbanError(problem.code, problem.message, { key: knownKey, boardId });
     // Name every stage before deriving, so an identity allocated for a new stage is
     // written into the local text instead of existing only in the events.
     const localWorkflow = await this.applyIdentities(hubId, boardId, board.workflowYaml);

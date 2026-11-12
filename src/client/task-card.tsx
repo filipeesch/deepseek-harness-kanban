@@ -8,6 +8,9 @@ import { CardInstructionAction, useAutoRunEntry } from './auto-run-view.js';
 import { AutoModeControl, type AutoModeView } from './auto-mode.js';
 import { cardStatusEntries, type CardStatusEntry } from './card-status-entries.js';
 import { projectCardDominance } from '../domain/card-presence.js';
+import { CardScriptActions } from './deterministic-actions.js';
+import { useScriptSummary } from './deterministic-context.js';
+import { ownedScript, scriptActive, scriptLabel } from './deterministic-view.js';
 import { advanceStageLabel } from './stage-advance.js';
 import { AdvanceStageIcon, AlertIcon, ClockIcon } from './icons.js';
 
@@ -47,9 +50,10 @@ function CardContext({ taskId, title, projectName, attention, selectionMode, sel
   </div>;
 }
 
-function CardActivity({ attention, label, controls }: { attention: Attention; label: string; controls: React.ReactNode }) {
+function CardActivity({ attention, label, controls, script }: { attention: Attention; label: string; controls: React.ReactNode; script?: string }) {
   return <div className="kb-card-activity">
     <WorkingAnnouncement running={attention.running} label={label} />
+    {script && <span className="kb-script-card-label" role="status" title={script}>{script}</span>}
     <div className="kb-card-actions">{controls}</div>
   </div>;
 }
@@ -80,6 +84,8 @@ function CardStatus({ entries }: { entries: readonly CardStatusEntry[] }) {
 /** One task card; every board concern arrives through props. */
 export function TaskCard({ task, column, projectName, attention, selectionMode, selected, autoRun, autoMode, autoModePending, onToggleAutoMode, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick, next, onMove, advancePending = false, onRun }: TaskCardProps) {
   const openButton = useRef<HTMLButtonElement>(null);
+  const script = ownedScript(task, useScriptSummary(task.id));
+  const activeScript = scriptActive(script);
   const presence = projectCardDominance(attention);
   const runEntry = useAutoRunEntry(autoRun, task.id);
   const currentRun = autoRunEntryForColumn(runEntry, column.id);
@@ -97,10 +103,11 @@ export function TaskCard({ task, column, projectName, attention, selectionMode, 
   };
   const controls = selectionMode ? null : <>
     <AutoModeControl view={autoMode} pending={autoModePending === true} onToggle={enabled => onToggleAutoMode(task.id, enabled)} />
-    <CardInstructionAction key={column.id} task={task} column={column} controller={autoRun} {...(onRun === undefined ? {} : { onRun })} />
+    <CardScriptActions task={task} column={column} />
+    {!script && <CardInstructionAction key={column.id} task={task} column={column} controller={autoRun} {...(onRun === undefined ? {} : { onRun })} />}
     {next !== undefined && !attention.running && <CardAdvanceAction next={next} disabled={blocked || advancePending} onMove={advance} />}
   </>;
-  return <article className={'kb-card' + (selected ? ' kb-card-selected' : '')} data-task-id={task.id} data-working={attention.running ? 'true' : undefined} data-presence={presence}
+  return <article className={'kb-card' + (selected ? ' kb-card-selected' : '')} data-task-id={task.id} data-working={attention.running || activeScript ? 'true' : undefined} data-presence={presence}
     onPointerDown={event => {
       if (selectionMode) return;
       if ((event.target as Element).closest('.kb-card-activity, .kb-auto-chip, input, select, textarea, a')) return;
@@ -110,7 +117,7 @@ export function TaskCard({ task, column, projectName, attention, selectionMode, 
       <strong>{task.title}</strong>
     </button>
     <CardContext taskId={task.id} title={task.title} projectName={projectName} attention={attention} selectionMode={selectionMode} selected={selected} onToggleSelect={onToggleSelect} onActivate={activate} />
-    <CardActivity attention={attention} label={task.title} controls={controls} />
-    <CardStatus entries={cardStatusEntries(task, runFailure, autoMode.status, autoMode.secondaryStatuses)} />
+    <CardActivity attention={attention} label={task.title} controls={controls} script={script ? scriptLabel(script) : undefined} />
+    <CardStatus entries={[...cardStatusEntries(task, runFailure, autoMode.status, autoMode.secondaryStatuses), ...(script?.error ? [{ key: 'script-error', tone: 'danger' as const, label: script.error.message.slice(0, 512), alert: true }] : [])]} />
   </article>;
 }

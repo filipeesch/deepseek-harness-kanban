@@ -12,6 +12,17 @@ import type { TaskHistoryEntry } from '../../shared/task-history.js';
 /** The task field an append writes; the caller keeps the rest of the task. */
 type RecordTarget = Pick<Task, 'history'>;
 
+/** Append each logical execution outcome once, never starts, attempts, or polling output. */
+export function recordDeterministicExecution(target: RecordTarget, entry: Omit<Extract<TaskHistoryEntry, { kind: 'deterministic-execution' }>, 'kind'>): void {
+  if (target.history?.some(value => value.kind === 'deterministic-execution' && value.executionId === entry.executionId)) return;
+  append(target, { kind: 'deterministic-execution', ...entry });
+}
+/** A failed delivery and later acceptance are distinct settled facts; recovery repeats neither. */
+export function recordDeterministicHandoff(target: RecordTarget, entry: Omit<Extract<TaskHistoryEntry, { kind: 'deterministic-handoff' }>, 'kind'>): void {
+  if (target.history?.some(value => value.kind === 'deterministic-handoff' && value.deliveryId === entry.deliveryId && value.outcome === entry.outcome)) return;
+  append(target, { kind: 'deterministic-handoff', ...entry });
+}
+
 function append(target: RecordTarget, entry: TaskHistoryEntry): void {
   target.history = [...(target.history ?? []), entry];
 }

@@ -363,10 +363,13 @@ export function WorkflowView(props: WorkflowViewProps) {
   const connections: CanvasConnection[] = scene.edges.map(edge => {
     const authored = presentedRules(presented, edge.from);
     const rule = authored?.find(value => value.to === edge.to);
+    const definition = presented.columns.find(column => column.id === edge.from)?.deterministic;
+    const exits = definition ? Object.entries(definition.exits).filter(([, to]) => to === edge.to).map(([name]) => name) : undefined;
     const connection = layout.connectionLayouts[connectionKey(edge.from, edge.to)];
     return {
       id: edge.id, from: edge.from, to: edge.to, kind: edge.kind, returning: edge.returning, fanOut: edge.fanOut, fanOutCount: edge.fanOutCount,
       ...(rule?.when === undefined ? {} : { condition: rule.when }),
+      ...(exits === undefined ? {} : { exitLabels: exits }),
       ...(connection?.source === undefined ? {} : { source: connection.source }),
       ...(connection?.target === undefined ? {} : { target: connection.target }),
       ...(connection?.segments === undefined ? {} : { segments: connection.segments }),
@@ -405,9 +408,11 @@ export function WorkflowView(props: WorkflowViewProps) {
   }), [tasksById, columnsById, props.card, presented, props.onOpenTask, props.beginDrag, props.shouldSuppressClick]);
 
   const openCondition = useCallback((connectionId: string, anchor: ConditionAnchor) => {
+    const connection = connectionsRef.current.find(value => value.id === connectionId);
+    if (connection && presented.columns.find(column => column.id === connection.from)?.deterministic) { props.onEditStage?.(connection.from); return; }
     setSelectedConnectionId(connectionId);
     setConditionEditor({ connectionId, anchor });
-  }, []);
+  }, [presented, props.onEditStage]);
 
   const editorConnection = conditionEditor === null ? undefined : connections.find(value => value.id === conditionEditor.connectionId);
 

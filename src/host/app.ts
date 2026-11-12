@@ -53,6 +53,14 @@ import { WorkspaceCoordinator } from './workspace-coordinator.js';
 import { resolveCanonicalPath } from './path-resolution.js';
 import type { ScheduleRuntimePort } from './schedule-port.js';
 import type { ModelCatalog } from '../shared/types.js';
+import type { DeterministicRuntime } from './deterministic/ports.js';
+import type { DeterministicReview, DeterministicSummary } from '../shared/deterministic.js';
+import { DeterministicSupervisor } from './deterministic-supervisor.js';
+import { createNativeSupervisorPorts } from './deterministic-control.js';
+import { createDeterministicRouter } from './deterministic-routing.js';
+import { deterministicEqual } from '../domain/deterministic-definition.js';
+import { ensureLocalStageIdentity } from '../domain/deterministic-state.js';
+import { recordDeterministicHandoff } from '../domain/task-history/record.js';
 
 async function pathExists(value:string):Promise<boolean>{try{await lstat(value);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}}
 function isEvent(value:unknown):value is {type:string;seq:number;data:unknown}{return Boolean(value&&typeof value==='object'&&'type'in value&&typeof value.type==='string'&&'seq'in value&&typeof value.seq==='number'&&Number.isSafeInteger(value.seq)&&'data'in value);}
@@ -110,6 +118,12 @@ export class KanbanApp {
  private readonly factsSource:ConversationFactsSource;
  private readonly workspaceCoordinator?:WorkspaceCoordinator;
  private scheduleRuntime:ScheduleRuntimePort|undefined;
+ private deterministicRuntime:DeterministicSupervisor|undefined;
+ private initialized=false;
+ private closing=false;
+ private readonly handoffAdmissions=new Map<string,{entryId:string;deliveryId:string}>();
+ private readonly contextAdmissions=new Set<string>();
+ private readonly handoffDeliveries=new Map<string,Promise<void>>();
  constructor(readonly hubs:HubRepository,readonly sessions:SessionPort,readonly git:GitPort,private readonly options:AppOptions={},private readonly workspaces?:WorkspacePort){
   this.locator=new TaskLocator(hubs);
   this.retainedCheckoutExists=options.retainedCheckoutExists??entryExists;
@@ -125,7 +139,7 @@ export class KanbanApp {
    },
    ...(options.report?{report:options.report}:{}),
   });
-  this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,queue:this.operationQueue,worktreeDefaults:{derive:async taskId=>this.worktreeDefaultsFor(this.locatedTask(taskId).task)},onTaskDeleted:async task=>{try{await this.workspaceCoordinator?.cleanup(task as HubTask);}catch(error){this.options.report?.(error);}},onCheckoutRetained:(task,project,retainedPath,reason)=>this.retainCheckout(task,project,retainedPath,reason)});
+  this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,queue:this.operationQueue,worktreeDefaults:{derive:async taskId=>this.worktreeDefaultsFor(this.locatedTask(taskId).task)},onTaskDeleted:async task=>{try{await this.workspaceCoordinator?.cleanup(task as HubTask);await this.deterministicRuntime?.collectSources();}catch(error){this.options.report?.(error);}},onCheckoutRetained:(task,project,retainedPath,reason)=>this.retainCheckout(task,project,retainedPath,reason)});
   this.relocations=new ProjectRelocationCoordinator(new RepositoryProjectRelocationStore(hubs),sessions,git,{queue:this.operationQueue,signal:options.signal,...(this.workspaceCoordinator?{workspaces:{bind:async(hubId,project)=>{await this.workspaceCoordinator!.rebindProject(hubId,project);}}}:{}),...(options.report?{report:options.report}:{})});
   this.pendingWork=new PendingWorkRunner({resumeWorktrees:async()=>{await this.worktrees.resumePending();},resumeRelocations:async()=>{await this.relocations.resumePending();},dispatchPending:async()=>{await this.dispatchPending();},report:error=>this.options.report?.(error)});
   this.attention=new AttentionCoordinator({source:this.factsSource,tasks:()=>this.attentionTasks(),runPendingWork:async()=>{await this.pendingWork.run();},onChange:()=>this.attentionChanged(),onFacts:()=>this.markChanged(),report:error=>this.options.report?.(error)});
@@ -142,7 +156,7 @@ export class KanbanApp {
   this.assembler=new SnapshotAssembler({hubs,onChange:()=>this.markChanged(),...(options.report===undefined?{}:{report:options.report}),...(options.sharing===undefined?{}:{sharing:()=>options.sharing!.views()}),...(options.sharingAuth===undefined?{}:{sharingAuth:options.sharingAuth})});
   this.startup=new StartupReconciler({...(options.signal===undefined?{}:{signal:options.signal}),...(options.report===undefined?{}:{report:options.report})});
   this.pendingTransitions.refresh(this.locator.summaries());
-  this.disposers.push(hubs.subscribe(()=>{this.assembler.invalidateState();this.pendingTransitions.refresh(this.locator.summaries());this.markChanged();void this.dispatchPending().catch(error=>options.report?.(error));}));
+  this.disposers.push(hubs.subscribe(()=>{if(this.initialized)this.deterministicRuntime?.sync();this.assembler.invalidateState();this.pendingTransitions.refresh(this.locator.summaries());this.markChanged();void this.dispatchPending().catch(error=>options.report?.(error));void this.dispatchDeterministicHandoffs().catch(error=>options.report?.(error));}));
  }
  /** Attach the live schedule runtime once the app exists; commands require it. */
  attachScheduleRuntime(port:ScheduleRuntimePort):void{this.scheduleRuntime=port;}
@@ -160,6 +174,85 @@ export class KanbanApp {
   const models=this.options.models;
   if(models!==undefined)return models.catalog(refresh);
   return this.requireScheduleRuntime().modelCatalog(refresh);
+ }
+ /** Attach isolated execution after composition; task records remain the only authority. */
+ attachDeterministicRuntime(nativeRuntime:DeterministicRuntime):()=>Promise<void>{
+  const route=createDeterministicRouter({hubs:this.hubs,sessions:this.sessions,pending:task=>readPendingUserWork(this.factsSource,task.sessionIds),reserved:id=>this.handoffAdmissions.has(id)||this.contextAdmissions.has(id),notify:()=>{void this.dispatchDeterministicHandoffs().catch(error=>this.options.report?.(error));}});
+  this.deterministicRuntime=new DeterministicSupervisor(createNativeSupervisorPorts({nativeRuntime,
+   locate:id=>this.locator.byTask(id),all:()=>this.locator.all(),
+   transact:<T>(taskId:string,change:(task:HubTask,located:LocatedTask)=>T):Promise<T>=>{
+    const found=this.locatedTask(taskId);
+    return this.hubs.hub(found.hubId).transact(draft=>{const task=draft.tasks.find(value=>value.id===taskId);invariant(task,'TASK_NOT_FOUND','The task no longer exists.');const board=draft.boards.find(value=>value.id===task.boardId)!;const project=draft.projects.find(value=>value.id===task.projectId)!;return change(task,{hubId:draft.id,hub:draft,board,project,task});});
+   },route,canStart:id=>!this.contextAdmissions.has(id),report:error=>this.options.report?.(error),notify:()=>this.markChanged(),id:()=>randomUUID(),now:()=>new Date().toISOString(),
+  }));
+  const attached=this.deterministicRuntime;
+  if(this.initialized)attached.start();this.markChanged();
+  return async()=>{attached.dispose();await attached.settle();if(this.deterministicRuntime===attached){this.deterministicRuntime=undefined;this.markChanged();}};
+ }
+ private requireDeterministic():DeterministicSupervisor{invariant(this.deterministicRuntime,'DETERMINISTIC_UNAVAILABLE','This host does not expose isolated deterministic execution.');return this.deterministicRuntime;}
+ private async ensureDeterministicEntry(taskId:string):Promise<HubTask>{
+  const found=this.locatedTask(taskId);if(found.task.stageEntry)return found.task;
+  await this.hubs.hub(found.hubId).transact(hub=>{const task=hub.tasks.find(value=>value.id===taskId)!;if(task.stageEntry)return;const board=hub.boards.find(value=>value.id===task.boardId)!;
+   const stageIdentity=ensureLocalStageIdentity(board,task.columnId,()=>randomUUID());
+   task.stageEntry={id:randomUUID(),columnId:task.columnId,stageIdentity,enteredAt:task.createdAt};
+  });return this.locatedTask(taskId).task;
+ }
+ async deterministicReview(taskId:string):Promise<DeterministicReview>{
+  await this.ensureDeterministicEntry(taskId);return this.requireDeterministic().review(taskId);
+ }
+ private deterministicSummaries():Record<string,DeterministicSummary>{
+  const result:Record<string,DeterministicSummary>={};
+  for(const {task,board} of this.locator.all()){
+   const value=task.deterministic;if(!value||task.stageEntry?.id!==value.entryId)continue;
+   const saved=board.workflow.columns.find(column=>column.id===task.columnId)?.deterministic;
+   const unavailable=!this.deterministicRuntime;
+   result[task.id]={entryId:value.entryId,executionId:value.executionId,phase:unavailable?'failed':value.phase,startedAt:value.startedAt,attempt:value.attempt,restartCount:value.restartCount,
+    ...(unavailable?{error:{code:'DETERMINISTIC_UNAVAILABLE',message:'Mount the native filesystem, sandbox, shell, and function-body TypeScript capabilities to run deterministic steps.'}}:value.error?{error:value.error}:{}),...(value.result?{exit:value.result.exit,message:value.result.message,...(value.result.deliveryStatus?{deliveryStatus:value.result.deliveryStatus}:{})}:{}),...(value.capture?{fingerprint:value.capture.fingerprint}:{}),savedVersionChanged:!saved||!deterministicEqual(saved,value.definition)};
+  }return result;
+ }
+ private assertNoHandoffAdmission(taskId:string):void{invariant(!this.handoffAdmissions.has(taskId),'NATIVE_ADMISSION_PENDING','Wait for native context admission before moving this task or changing its directory.');}
+ /** Reserve only native context admission, never an agent turn or the global command lane. */
+ reserveDeterministicHandoff(taskId:string,entryId:string,deliveryId:string):()=>void{
+  const task=this.locatedTask(taskId).task;
+  invariant(task.stageEntry?.id===entryId&&task.deterministicHandoff?.id===deliveryId&&!task.pendingTransition&&!task.operation,'STALE_HANDOFF','The destination entry was replaced before context admission.');
+  invariant(!this.handoffAdmissions.has(taskId),'NATIVE_ADMISSION_PENDING','Another conversation is admitting context for this task.');
+  const token={entryId,deliveryId};this.handoffAdmissions.set(taskId,token);
+  return ()=>{if(this.handoffAdmissions.get(taskId)===token){this.handoffAdmissions.delete(taskId);this.deterministicRuntime?.reconcile(taskId);void this.dispatchPending().catch(error=>this.options.report?.(error));}};
+ }
+ async acceptDeterministicHandoff(taskId:string,entryId:string,deliveryId:string):Promise<void>{
+  const found=this.locator.byTask(taskId);if(!found)return;
+  await this.hubs.hub(found.hubId).transact(draft=>{const task=draft.tasks.find(value=>value.id===taskId);const handoff=task?.deterministicHandoff;
+   if(!task||task.stageEntry?.id!==entryId||handoff?.id!==deliveryId||handoff.acceptedAt)return;
+   handoff.acceptedAt=new Date().toISOString();delete handoff.error;
+   recordDeterministicHandoff(task,{at:handoff.acceptedAt,deliveryId:handoff.id,executionId:handoff.executionId,fromColumnId:handoff.fromColumnId,columnId:task.columnId,outcome:'accepted',exit:handoff.exit,message:handoff.message});
+  });
+ }
+ private async dispatchDeterministicHandoffs():Promise<void>{
+  if(this.disposed||!this.initialized)return;
+  const jobs:Promise<void>[]=[];
+  for(const {task} of this.locator.all()){
+   const handoff=task.deterministicHandoff;
+   if(!handoff?.instruction||handoff.acceptedAt||handoff.error||task.stageEntry?.id!==handoff.entryId||task.operation||this.handoffAdmissions.has(task.id))continue;
+   const existing=this.handoffDeliveries.get(task.id);if(existing){jobs.push(existing);continue;}
+   const done=Promise.resolve().then(async()=>{
+    try{
+     let current=this.locatedTask(task.id);if(current.task.stageEntry?.id!==handoff.entryId||current.project.operation)return;
+     const sessionId=handoff.sessionId??firstOpenSessionId(current.task)??(await this.createConversationNow(task.id,{allowUndecided:true})).sessionId;
+     current=this.locatedTask(task.id);if(current.task.stageEntry?.id!==handoff.entryId)return;
+     await this.hubs.hub(current.hubId).transact(draft=>{const value=draft.tasks.find(t=>t.id===task.id);if(value?.stageEntry?.id===handoff.entryId&&value.deterministicHandoff?.id===handoff.id)value.deterministicHandoff.sessionId=sessionId;});
+     await admitStageInstruction(this.stageInstructionDeps(),{taskId:task.id,columnId:current.task.columnId,instruction:handoff.instruction!,sessionId,requestId:handoff.id,expectedEntryId:handoff.entryId,isCurrent:()=>!this.closing});
+     await this.acceptDeterministicHandoff(task.id,handoff.entryId,handoff.id);
+    }catch(error){
+     if(this.closing)return;
+     const current=this.locator.byTask(task.id);if(!current)return;
+     await this.hubs.hub(current.hubId).transact(draft=>{const value=draft.tasks.find(t=>t.id===task.id);const h=value?.deterministicHandoff;
+      if(!value||value.stageEntry?.id!==handoff.entryId||h?.id!==handoff.id||h.acceptedAt)return;
+      h.error=problem(error);recordDeterministicHandoff(value,{at:new Date().toISOString(),deliveryId:h.id,executionId:h.executionId,fromColumnId:h.fromColumnId,columnId:h.columnId,outcome:'failed',exit:h.exit,message:h.message,error:h.error});
+     });this.options.report?.(error);
+    }
+   }).finally(()=>{this.handoffDeliveries.delete(task.id);});
+   this.handoffDeliveries.set(task.id,done);jobs.push(done);
+  }await Promise.all(jobs);
  }
  /** The first/default Hub facade retained for single-Hub callers and tests. */
  get store():HubStore{return this.hubs.defaultHub();}
@@ -251,7 +344,7 @@ export class KanbanApp {
   this.retainedCheckouts.splice(0,this.retainedCheckouts.length,...kept);
   this.markChanged();
  }
- private attentionChanged():void{if(this.disposed)return;this.sequence++;this.publisher.request();this.publisher.flush();}
+ private attentionChanged():void{if(this.disposed)return;this.deterministicRuntime?.sync();this.sequence++;this.publisher.request();this.publisher.flush();}
  subscribe(listener:()=>void):()=>void{this.listeners.add(listener);return()=>this.listeners.delete(listener);}
  private attentionTasks():AttentionTask[]{
   return this.locator.summaries().map(summary=>({id:summary.taskId,sessionIds:summary.sessionIds,closedSessionIds:summary.closedSessionIds,...(summary.autoModeEnabled?{priority:'active' as const}:{})}));
@@ -269,6 +362,8 @@ export class KanbanApp {
   await this.relocations.resumePending();
   await this.dispatchPending();
   this.scheduleStartupReconciliation(summaries);
+  this.initialized=true;this.deterministicRuntime?.start();
+  await this.dispatchDeterministicHandoffs();
  }
  /** Resolves when the background startup reconciliation and any retained checkout check have finished. */
  async whenSettled():Promise<void>{await this.startup.whenSettled();await this.retainedPrune;}
@@ -397,7 +492,7 @@ export class KanbanApp {
   }
   return [...reasons];
  }
- sessionActivity(sessionId?:string):void{if(this.disposed)return;if(sessionId!==undefined&&!this.locator.hasSession(sessionId))return;this.attention.touch(sessionId);this.markChanged();}
+ sessionActivity(sessionId?:string):void{if(this.disposed)return;if(sessionId!==undefined&&!this.locator.hasSession(sessionId))return;this.attention.touch(sessionId);this.markChanged();if(sessionId!==undefined){const task=this.locator.bySession(sessionId)?.task;if(task)this.deterministicRuntime?.wake(task.id);}else for(const {task} of this.locator.all())if(task.deterministic?.result)this.deterministicRuntime?.wake(task.id);}
  /**
   * One snapshot request. Presentation projects only resolved facts and schedules the
   * rest; an explicit refresh awaits only the conversations it was asked to re-read.
@@ -416,8 +511,9 @@ export class KanbanApp {
   else{sequence=this.sequence;conversations=this.attention.present(tasks);}
   const parts=await this.assembler.assemble(conversations,{refreshAuth:request.refreshAuth===true,allowAuthRefresh:mode==='full'});
   const scheduleRuntime=this.scheduleRuntime?.runtime()??{};
+  const deterministic=this.deterministicSummaries();
   this.scheduleRetainedPrune();
-  return {...parts,sequence,...(Object.keys(scheduleRuntime).length===0?{}:{scheduleRuntime}),...(this.retainedCheckouts.length===0?{}:{retainedCheckouts:this.retainedCheckouts.map(value=>({...value}))})};
+  return {...parts,sequence,deterministic,...(Object.keys(scheduleRuntime).length===0?{}:{scheduleRuntime}),...(this.retainedCheckouts.length===0?{}:{retainedCheckouts:this.retainedCheckouts.map(value=>({...value}))})};
  }
  /** Publish a new snapshot after publishing or authorization state changed outside a board command. */
  sharingChanged():void{this.assembler.invalidateAuth();this.assembler.invalidateSharing();this.markChanged();}
@@ -647,7 +743,34 @@ export class KanbanApp {
  saveNote(input:Extract<Command,{type:'note.save'}>){return this.serial(()=>this.saveNoteNow(input));}
  private async saveNoteNow(input:Extract<Command,{type:'note.save'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).saveNote(input.taskId,{id:input.noteId,content:input.content,tags:input.tags});}
  private async deleteNoteNow(input:Extract<Command,{type:'note.delete'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).deleteNote(input.taskId,input.noteId);}
- command(command:Command):Promise<FullHostSnapshot>{return this.serial(()=>this.execute(command));}
+ async command(command:Command):Promise<FullHostSnapshot>{
+  if(command.type.startsWith('task.deterministic'))return this.execute(command);
+  const ids=command.type==='project.relocate'&&command.confirmed?this.locator.all().filter(value=>value.project.id===command.project.id).map(value=>value.task.id)
+   :((command.type==='task.delete'||command.type==='worktree.remove')&&command.confirmed)||command.type==='worktree.create'||command.type==='worktree.attach'||command.type==='operation.return'?[command.taskId]:[];
+  for(const id of ids)invariant(!this.contextAdmissions.has(id),'CONTEXT_ADMISSION_PENDING','Another operation is changing this task context.');
+  for(const id of ids)this.contextAdmissions.add(id);
+  try { const preparing=this.prepareDeterministicContext(command); if(preparing)await preparing; return await this.serial(()=>this.execute(command)); }
+  finally { for(const id of ids){this.contextAdmissions.delete(id);this.deterministicRuntime?.reconcile(id);} }
+ }
+ /** Cancellation may wait for native drain, so it stays outside the global command lane. */
+ private prepareDeterministicContext(command:Command):Promise<void>|undefined{
+  if(!this.deterministicRuntime)return undefined;
+  let taskIds:string[]=[];
+  if(command.type==='project.relocate'&&command.confirmed)taskIds=this.locator.all().filter(value=>value.project.id===command.project.id).map(value=>value.task.id);
+  else if(command.type==='task.delete'||command.type==='worktree.remove'){
+   if(!command.confirmed)return undefined;
+   this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,command.type==='task.delete'?'delete':'remove');taskIds=[command.taskId];
+  }else if(command.type==='worktree.create'||command.type==='worktree.attach'||command.type==='operation.return')taskIds=[command.taskId];
+  for(const id of taskIds)this.assertNoHandoffAdmission(id);
+  if(taskIds.length===0)return undefined;
+  // A replaced entry can leave a native lease even when the current task has no control.
+  return Promise.all(taskIds.map(id=>this.deterministicRuntime!.beforeContextChange(id))).then(()=>undefined);
+ }
+ private assertScriptContextStopped(taskId:string):void{
+  this.assertNoHandoffAdmission(taskId);const control=this.locatedTask(taskId).task.deterministic;
+  invariant(!this.deterministicRuntime?.hasContextOwner(taskId)&&(!control||(['stopped','failed'].includes(control.phase)&&!['OWNERSHIP_UNCERTAIN','OWNERSHIP_CONFLICT','EXECUTION_OWNERSHIP_UNCERTAIN'].includes(control.error?.code??''))),'EXECUTION_CONTEXT_CHANGED','A new script execution owns this task; stop it before changing its directory.');
+ }
+
  /** The pause tools' port: run the command, then re-read the task it changed. */
  pauseTask(taskId:string,reason:string):Promise<LocatedTask>{return this.command({type:'task.pause',taskId,reason}).then(()=>this.locatedTask(taskId));}
  resumeTask(taskId:string):Promise<LocatedTask>{return this.command({type:'task.resume',taskId}).then(()=>this.locatedTask(taskId));}
@@ -683,7 +806,8 @@ export class KanbanApp {
     invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm the project relocation and its migration impact.');
     const store=this.hubStore(command.hubId);
     const found=this.hubs.findProject(command.project.id);invariant(found,'PROJECT_NOT_FOUND','Project does not exist.');invariant(found.hubId===store.hubId,'PROJECT_NOT_FOUND','Project does not exist in the selected Hub.');
-    await this.relocations.request({...await this.project(command.project),id:command.project.id},command.expectedRevision);
+    for(const value of this.locator.all())if(value.project.id===command.project.id)this.assertScriptContextStopped(value.task.id);
+     await this.relocations.request({...await this.project(command.project),id:command.project.id},command.expectedRevision);
     commandReceipt={kind:'project',id:command.project.id};
     break;
    }
@@ -693,21 +817,26 @@ export class KanbanApp {
    case 'settings.save':await this.settings(command.settings,command.expectedRevision);break;
    case 'task.create':{const value=await this.createTaskNow(command);commandReceipt={kind:'task',id:value.id};break;}
    case 'task.prepareFirstExecution':{const value=await this.startFirstExecutionNow(command.taskId,{send:false,columnId:command.columnId,expectedEnteredAt:command.expectedEnteredAt,...(command.expectedInstruction===undefined?{}:{expectedInstruction:command.expectedInstruction})});commandReceipt={kind:'conversation',id:value.sessionId,...(value.model===undefined?{}:{model:value.model})};break;}
+   case 'task.deterministicPlay':{invariant(!this.contextAdmissions.has(command.taskId),'CONTEXT_ADMISSION_PENDING','A task context operation is being admitted.');const task=await this.ensureDeterministicEntry(command.taskId);invariant(task.stageEntry,'STAGE_ENTRY_REQUIRED','Move into this stage before starting a script.');await this.requireDeterministic().play(task.id,task.stageEntry.id);break;}
+   case 'task.deterministicStop':{const task=this.locatedTask(command.taskId).task;invariant(task.deterministic,'EXECUTION_NOT_FOUND','This task has no deterministic execution.');await this.requireDeterministic().stop({taskId:task.id,entryId:task.deterministic.entryId,executionId:command.executionId??task.deterministic.executionId});break;}
+   case 'task.deterministicApprove':await this.requireDeterministic().approve(command.taskId,command.executionId,command.fingerprint);break;
+   case 'task.deterministicVariable':{const located=this.locatedTask(command.taskId);invariant(located.project.id===command.projectId,'STALE_STAGE','The task project changed before this value could be saved.');await this.ensureDeterministicEntry(command.taskId);const current=this.locatedTask(command.taskId).task;invariant(current.stageEntry?.stageIdentity===command.stageIdentity,'STALE_STAGE','The task moved to another stage before this value could be saved.');await this.requireDeterministic().variable(command.taskId,command.name,command.value??null,command.stageIdentity);break;}
+   case 'task.deterministicRetryDelivery':{const task=this.locatedTask(command.taskId).task;invariant(task.deterministic?.entryId===command.entryId&&task.deterministic.executionId===command.executionId,'STALE_EXECUTION','This saved result no longer owns the stage entry.');await this.requireDeterministic().retryDelivery({taskId:task.id,entryId:command.entryId,executionId:command.executionId});break;}
    case 'task.edit':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).editTask(command.taskId,{...(command.title!==undefined?{title:command.title}:{}),...(command.description!==undefined?{description:command.description}:{})},command.expectedRevision);break;}
    case 'conversation.create':{const created=await this.createConversationNow(command.taskId,{ensureFirst:command.ensureFirst===true});commandReceipt={kind:'conversation',id:created.sessionId,...(created.model===undefined?{}:{model:created.model})};break;}
    case 'conversation.close':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).closeSession(command.taskId,command.sessionId);break;}
    case 'conversation.reopen':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).reopenSession(command.taskId,command.sessionId);break;}
    case 'note.save':{const value=await this.saveNoteNow(command);commandReceipt={kind:'note',id:value.id};break;}
    case 'note.delete':{const value=await this.deleteNoteNow(command);commandReceipt={kind:'note',id:value.id};break;}
-   case 'task.delete':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm task data/worktree removal and native conversation archiving.');this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'delete');await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'delete',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true});break;
-   case 'worktree.create':this.assertContext(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'create',mode:command.mode,path:command.path,branchName:command.branchName,sourceBranch:command.sourceBranch});break;
-   case 'worktree.attach':this.assertContext(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'attach',path:command.path});break;
+   case 'task.delete':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm task data/worktree removal and native conversation archiving.');this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'delete');this.assertScriptContextStopped(command.taskId);await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'delete',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true});break;
+   case 'worktree.create':this.assertScriptContextStopped(command.taskId);this.assertContext(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'create',mode:command.mode,path:command.path,branchName:command.branchName,sourceBranch:command.sourceBranch});break;
+   case 'worktree.attach':this.assertScriptContextStopped(command.taskId);this.assertContext(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'attach',path:command.path});break;
    case 'worktree.dismiss':{this.assertContext(command.taskId);const located=this.locatedTask(command.taskId);invariant(isGitProject(located.project),'PROJECT_NOT_GIT','Worktree choices require a Git-backed project.');invariant(!located.task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');invariant(!located.task.worktree,'WORKTREE_EXISTS','The task already has a worktree.');if(located.task.worktreeDismissed!==true)await this.hubs.hub(located.hubId).dismissWorktree(command.taskId);break;}
-   case 'worktree.remove':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm removal of the worktree while preserving the task and branch.');this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'remove');await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'remove',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true});break;
+   case 'worktree.remove':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm removal of the worktree while preserving the task and branch.');this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'remove');this.assertScriptContextStopped(command.taskId);await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'remove',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true});break;
    case 'operation.retry':{
     const located=this.locatedTask(command.taskId);const store=this.hubs.hub(located.hubId);const task=located.task;this.assertProjectRelocation(located.project,'retrying a context operation');if(task.operation){await this.worktrees.retry(command.taskId,{background:true});const current=store.snapshot().tasks.find(t=>t.id===command.taskId);if(current&&!current.operation&&current.pendingTransition?.worktreeRequest&&current.pendingTransition.status==='failed')await store.transact(d=>{const p=d.tasks.find(t=>t.id===command.taskId)!.pendingTransition!;p.status='waiting';delete p.error;});}else if(task.pendingTransition){await store.transact(d=>{const t=d.tasks.find(t=>t.id===command.taskId)!;if(t.pendingTransition){t.pendingTransition.status='waiting';delete t.pendingTransition.error;}});}await this.dispatchPending();break;
    }
-   case 'operation.return':this.assertProjectRelocation(this.locatedTask(command.taskId).project,'returning to the base project');await this.clearPending(command.taskId);await this.worktrees.returnToBase(command.taskId);break;
+   case 'operation.return':this.assertScriptContextStopped(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'returning to the base project');await this.clearPending(command.taskId);await this.worktrees.returnToBase(command.taskId);break;
    case 'operation.dismiss':await this.dismissFailedAdvance(command.taskId);break;
    case 'retainedCheckout.dismiss':this.dismissRetainedCheckouts(command.paths);break;
    case 'task.move':await this.move(command);break;
@@ -716,7 +845,7 @@ export class KanbanApp {
    case 'task.autoMode':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).setAutoMode(command.taskId,command.enabled);this.turnAdvance.forget(command.taskId);break;}
    case 'task.recordTransition':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).recordTransition(command.taskId,command.columnId,command.reason);break;}
    case 'task.pause':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).pauseTask(command.taskId,command.reason);this.turnAdvance.forget(command.taskId);break;}
-   case 'task.resume':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).resumeTask(command.taskId);this.turnAdvance.forget(command.taskId);break;}
+   case 'task.resume':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).resumeTask(command.taskId);this.turnAdvance.forget(command.taskId);this.deterministicRuntime?.wake(command.taskId);break;}
    case 'task.runInstruction':await this.runInstruction(command);break;
    case 'schedule.save':{
     const store=this.hubStore(command.hubId);
@@ -735,7 +864,7 @@ export class KanbanApp {
    case 'schedule.setEnabled':{const store=this.hubStore(command.hubId);await store.setScheduleEnabled(command.scheduleId,command.enabled,command.expectedRevision);break;}
    case 'schedule.runNow':{const store=this.hubStore(command.hubId);store.requireSchedule(command.scheduleId);await this.requireScheduleRuntime().runNow(store.hubId,command.scheduleId);break;}
   }
-  await this.dispatchPending();const snapshot=await this.snapshot({},'cache');return {...snapshot,...(commandReceipt?{commandReceipt}:{})};
+  this.deterministicRuntime?.sync();await this.dispatchPending();const snapshot=await this.snapshot({},'cache');return {...snapshot,...(commandReceipt?{commandReceipt}:{})};
  }
  /**
   * The in-memory command guard. It runs before any pending transition is cleared,
@@ -765,7 +894,7 @@ export class KanbanApp {
   };
  }
  private async move(command:Extract<Command,{type:'task.move'}>):Promise<void>{
-  this.assertContext(command.taskId);const located=this.locatedTask(command.taskId);const store=this.hubs.hub(located.hubId);const state=store.snapshot();const task=located.task;const board=state.boards.find(b=>b.id===task.boardId);invariant(board,'BOARD_NOT_FOUND','The task board does not exist.');const column=board.workflow.columns.find(c=>c.id===command.columnId);
+  this.assertContext(command.taskId);this.assertNoHandoffAdmission(command.taskId);const located=this.locatedTask(command.taskId);const store=this.hubs.hub(located.hubId);const state=store.snapshot();const task=located.task;const board=state.boards.find(b=>b.id===task.boardId);invariant(board,'BOARD_NOT_FOUND','The task board does not exist.');const column=board.workflow.columns.find(c=>c.id===command.columnId);
   const sameColumn=task.columnId===column?.id;
   invariant(!task.pendingTransition,'TASK_BUSY','Resolve the already confirmed transition first.');
   invariant(column,'INVALID_TARGET','The destination stage does not exist.');
@@ -833,7 +962,7 @@ export class KanbanApp {
  }
  private async drainPending():Promise<void>{
   if(this.disposed)return;if(this.driving){this.driveAgain=true;return;}this.driving=true;
-  try{do{this.driveAgain=false;this.pendingTransitions.refresh(this.locator.summaries());for(const taskId of [...this.pendingTransitions.list()]){const located=this.locator.byTask(taskId);const task=located?.task;const pending=task?.pendingTransition;if(!located||!task||!pending||pending.status!=='waiting'||task.operation||(pending.worktreeRequest&&task.worktree?.status!=='ready'))continue;const store=this.hubs.hub(located.hubId);
+  try{do{this.driveAgain=false;this.pendingTransitions.refresh(this.locator.summaries());for(const taskId of [...this.pendingTransitions.list()]){const located=this.locator.byTask(taskId);const task=located?.task;const pending=task?.pendingTransition;if(!located||!task||!pending||pending.status!=='waiting'||task.operation||this.handoffAdmissions.has(task.id)||(pending.worktreeRequest&&task.worktree?.status!=='ready'))continue;const store=this.hubs.hub(located.hubId);
    try{
     await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');operations.placeTask(d,t.id,pending.columnId,placementFromAnchor(pending.beforeTaskId),nextEnteredAt(),{retainAgentPause:pending.origin!==undefined,at:this.hubs.operationDeps().now()});if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});if(pending.origin===undefined)this.turnAdvance.forget(task.id);
     if(pending.mode==='run'){
@@ -846,6 +975,7 @@ export class KanbanApp {
  }
  async close():Promise<void>{
   if(this.disposed)return;
+  this.closing=true;this.initialized=false;this.deterministicRuntime?.dispose();await this.deterministicRuntime?.settle();
   // Let the background reconciliation finish (or abort) before flushing question
   // persistence, so no replay can schedule a write after the final flush.
   this.startup.dispose();await this.startup.whenSettled();

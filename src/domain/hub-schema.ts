@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { localStageIdentitiesSchema } from './deterministic-state.js';
 import type { Board, HubSchedule, HubState, HubTask, KanbanMeta, KanbanSettings } from '../shared/types.js';
 import { DEFAULT_WORKFLOW_YAML, parseWorkflow } from './workflow.js';
 import { absolutePath, baseTask, canonicalWorkflow, createTaskInvariantChecker, id, modelSelection, nonempty, note, project, projectKey, revision, storedProject, timestamp, workflow } from './schema-parts.js';
@@ -7,7 +8,7 @@ import { isTimeZone, parseCron } from './cron.js';
 export { canonicalWorkflow } from './schema-parts.js';
 
 const board = z.strictObject({
-  id, name: nonempty, workflowYaml: nonempty, workflow,
+  id, name: nonempty, workflowYaml: nonempty, workflow, localStageIdentities: localStageIdentitiesSchema.optional(),
   /** Absent means every project of the Hub; an empty list closes the board to creation. */
   allowedProjectKeys: z.array(projectKey).optional(),
   createdAt: timestamp, updatedAt: timestamp,

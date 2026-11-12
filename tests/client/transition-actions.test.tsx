@@ -79,6 +79,14 @@ function harness(workflow: Workflow, connections: ConnectionLayouts = {}) {
   return { view, state, writes, sent, pushes, intends, released, applied, accepted, restored, layoutIntents, onError, dropped };
 }
 describe('transition actions', () => {
+  it('never adds a legacy routing source to deterministic exits, including diagram undo', async () => {
+    const workflow = workflowWith(undefined);
+    workflow.columns[0]!.deterministic = { language: 'bash', code: 'echo ok', directory: 'task', exits: { ok: 'b', cached: 'b' } };
+    const h = harness(workflow);
+    await act(async () => { h.view.result.current.create('a', 'c'); h.view.result.current.repoint('a', 'b', 'c'); h.view.result.current.remove('a', 'b'); h.view.result.current.restore({ a: [{ to: 'c' }] }); });
+    expect(h.sent).toEqual([]); expect(h.intends).toEqual([]); expect(h.onError).toHaveBeenCalled();
+    await expect(h.view.result.current.setCondition('a', 'b', 'not an exit')).rejects.toThrow('named exits');
+  });
   it('authors only the destination that was drawn from a stage that allowed any stage', async () => {
     const h = harness(workflowWith(undefined));
     await act(async () => { h.view.result.current.create('a', 'c'); });

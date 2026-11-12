@@ -1,3 +1,4 @@
+import { captureDeterministicTargets, establishStageEntry, ensureLocalStageIdentity, reconcileLocalStageIdentities } from './deterministic-state.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 import type { AutoModePause, AutoModeState, Board, BoardSettings, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ModelSelection, StagePatch, Workflow } from '../shared/types.js';
 import { assertId, isAbsolutePath } from './validation.js';
@@ -208,6 +209,7 @@ export function saveBoardWorkflow(hub: HubState, boardId: string, yaml: string, 
     task.pendingTransition ? [task.columnId, task.pendingTransition.fromColumnId, task.pendingTransition.columnId] : [task.columnId]);
   const orphaned = [...new Set(referenced.filter(columnId => !ids.has(columnId)))];
   invariant(orphaned.length === 0, 'WORKFLOW_ORPHAN_COLUMNS', 'Workflow update would orphan existing task columns: ' + orphaned.join(', ') + '.');
+  reconcileLocalStageIdentities(board, workflow);
   board.workflowYaml = yaml;
   board.workflow = workflow;
   board.updatedAt = timestamp(deps);
@@ -229,6 +231,7 @@ export interface UpdateStageInput { stageId: string; patch: StagePatch }
 export function updateBoardStage(hub: HubState, boardId: string, input: UpdateStageInput, deps: OperationDeps): Workflow {
   const board = requireBoard(hub, boardId);
   const result = updateStage({ text: board.workflowYaml, stageId: input.stageId, patch: input.patch });
+  const localIdentity = board.localStageIdentities?.[input.stageId];
   if (result.renamedFrom !== undefined && result.renamedTo !== undefined) {
     const reasons = new Set<string>();
     for (const task of hub.tasks) {
@@ -236,12 +239,18 @@ export function updateBoardStage(hub: HubState, boardId: string, input: UpdateSt
       for (const reason of persistedStageActivity(task)) reasons.add(reason);
     }
     invariant(!hasInFlightWork([...reasons]), 'STAGE_RENAME_IN_FLIGHT', 'The board has work in flight (' + describeStageActivity([...reasons]) + '). Finish it before renaming a stage.');
+    if (board.localStageIdentities?.[result.renamedFrom] !== undefined) {
+      board.localStageIdentities[result.renamedTo] = board.localStageIdentities[result.renamedFrom]!;
+      delete board.localStageIdentities[result.renamedFrom];
+    }
     for (const task of hub.tasks) {
       if (task.boardId !== board.id) continue;
       renameTaskStage(task, result.renamedFrom, result.renamedTo);
     }
   }
-  return saveBoardWorkflow(hub, boardId, result.text, deps);
+  const workflow = saveBoardWorkflow(hub, boardId, result.text, deps);
+  if (result.renamedTo !== undefined && localIdentity !== undefined) (board.localStageIdentities ??= {})[result.renamedTo] = localIdentity;
+  return workflow;
 }
 
 /** Apply literal text edits to the authored YAML, then validate the result through the one save path. */
@@ -353,6 +362,7 @@ export function createTask(hub: HubState, input: { boardId: string; projectId: s
     ...(entryInstruction(initialColumn) !== undefined ? { instructionPending: { columnId: initialColumn!.id, enteredAt: nextEnteredAt(Date.parse(at)) } } : {}),
     createdAt: at, updatedAt: at,
   };
+  if (initialColumn !== undefined) establishStageEntry(task, initialColumn, ensureLocalStageIdentity(board, initialColumn.id, deps.id), at, deps.id, captureDeterministicTargets(board, initialColumn, deps.id));
   recordCreation(task, board.workflow.initialColumnId, at);
   hub.tasks.push(task);
   hub.updatedAt = at;
@@ -565,7 +575,7 @@ export function placeTask(hub: HubState, taskId: string, columnId: string, place
   const task = requireTask(hub, taskId);
   const board = boardForTask(hub, task);
   placeTaskIn(
-    { workflow: board.workflow, tasks: hub.tasks.filter(value => value.boardId === board.id) },
+    { workflow: board.workflow, localStageIdentities: (board.localStageIdentities ??= {}), tasks: hub.tasks.filter(value => value.boardId === board.id) },
     task, columnId, placement, enteredAt, options,
   );
 }

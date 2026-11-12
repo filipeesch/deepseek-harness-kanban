@@ -74,6 +74,7 @@ export class ClientBridge {
       command: (command: Command) => this.unarySnapshot(() => remote.kanban.command(command)),
       sharing: (command: SharingCommand) => this.unarySnapshot(() => remote.kanban.sharing(command)),
       localDrive: async request => unwrap(await remote.kanban.localDrive(request)),
+      deterministicReview: async (taskId: string) => unwrap(await remote.kanban.deterministicReview({ taskId })),
       branches: async (taskId: string) => unwrap(await remote.kanban.branches({ taskId })),
       modelCatalog: async (refresh = false) => unwrap(await remote.kanban.modelCatalog(refresh ? { refresh: true } : {})),
       worktreeDefault: async (taskId: string) => unwrap(await remote.kanban.worktreeDefault({ taskId })),

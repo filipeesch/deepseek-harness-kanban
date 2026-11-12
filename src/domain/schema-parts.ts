@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { canonicalDeterministic, deterministicDefinitionSchema } from './deterministic-definition.js';
+import { deterministicControlSchema, deterministicHandoffSchema, taskStageEntrySchema } from './deterministic-state.js';
 import type { ConnectionLayout, Task, TransitionRule, Workflow } from '../shared/types.js';
 import { STAGE_MIN_SIZE, STAGE_SIZE_LIMIT } from './stage-size.js';
 import { PROJECT_KEY_PATTERN } from './project-key.js';
@@ -92,7 +94,7 @@ export const connectionLayout = z.strictObject({
   from: id, to: id, source: connectionAnchor.optional(), target: connectionAnchor.optional(), segments: z.array(connectionSegment).optional(),
 });
 export const column = z.strictObject({
-  id, key: id.optional(), name: nonempty, onEnterPrompt: z.string().optional(), allowedTransitions: z.array(transitionRule).optional(), position: stagePosition.optional(), size: stageSize.optional(),
+  id, key: id.optional(), name: nonempty, deterministic: deterministicDefinitionSchema.optional(), onEnterPrompt: z.string().optional(), allowedTransitions: z.array(transitionRule).optional(), position: stagePosition.optional(), size: stageSize.optional(),
 });
 export const group = z.strictObject({ id, name: nonempty, columnIds: z.array(id).min(1) });
 /** One model route: a provider, the provider-owned model, and an optional adapter-owned effort. */
@@ -101,6 +103,13 @@ export const workflow = z.strictObject({
   name: nonempty, initialColumnId: id, defaultView: z.enum(['board', 'workflow']).optional(), columns: z.array(column).min(1), groups: z.array(group),
   model: modelSelection.optional(),
   connections: z.array(connectionLayout).optional(),
+}).superRefine((value, context) => {
+  const ids = new Set(value.columns.map(column => column.id));
+  value.columns.forEach((column, index) => {
+    if (column.deterministic === undefined) return;
+    if (column.onEnterPrompt?.trim() || column.allowedTransitions !== undefined) context.addIssue({code: 'custom', path: ['columns', index, 'deterministic'], message: 'Deterministic execution cannot be combined with prompt or allowed transitions.'});
+    for (const target of Object.values(column.deterministic.exits)) if (target === column.id || !ids.has(target)) context.addIssue({code: 'custom', path: ['columns', index, 'deterministic', 'exits'], message: 'A deterministic target must name another existing stage.'});
+  });
 });
 export const note = z.strictObject({
   id, taskId: id, content: nonempty, createdAt: timestamp, updatedAt: timestamp, tags: z.array(nonempty).optional(),
@@ -158,6 +167,7 @@ export const project = z.strictObject({ ...projectFields, projectKey }).superRef
 
 /** The task fields both aggregates persist; the Hub aggregate adds `boardId`. */
 export const baseTask = z.strictObject({
+  stageEntry: taskStageEntrySchema.optional(), deterministic: deterministicControlSchema.optional(), deterministicHandoff: deterministicHandoffSchema.optional(),
   id, projectId: id, title: nonempty, description: z.string(), columnId: id, position: z.number().finite(),
   sessionIds: z.array(id), closedSessionIds: z.array(id), effectiveCwd: absolutePath,
   worktree: z.strictObject({ path: absolutePath, branch: nonempty, owned: z.boolean(), status: z.enum(['preparing', 'ready', 'error']), error: problem.optional() }).nullable(),
@@ -194,6 +204,7 @@ function workflowShape(value: Workflow, includeLayout: boolean, includeIdentity 
     initialColumnId: value.initialColumnId,
     columns: value.columns.map(item => ({
       id: item.id, ...(includeIdentity ? { key: item.key } : {}), name: item.name, onEnterPrompt: item.onEnterPrompt,
+      deterministic: canonicalDeterministic(item.deterministic),
       allowedTransitions: item.allowedTransitions?.map(rule => normalizeTransitionRule(rule.to, rule.when)),
       ...(includeLayout ? { position: item.position, size: item.size } : {}),
     })),

@@ -1,7 +1,8 @@
 import {describe,expect,it,vi} from 'vitest';
 import {Context} from '@deepseek-ai/cordis';
-import {ToolRuntime,type ToolGuard,type ToolExecutionInput} from '@deepseek-ai/dsh-tools';
+import {ToolRuntime,type ToolGuard,type ToolBatchInput} from '@deepseek-ai/dsh-tools';
 import type {Agent} from '@deepseek-ai/dsh-agent';
+import {ToolExecutionPipeline,executeToolBatch} from '@deepseek-ai/dsh-tools/pipeline';
 // @ts-expect-error Standalone Node-native acceptance helper intentionally has no TypeScript build step.
 import {installFixtureToolGuard} from '../../scripts/verify-native-conversations.mjs';
 const ids=['fixture-a','fixture-b','fixture-c'];
@@ -57,13 +58,15 @@ describe('authorized fixture-only public tool execution guard',()=>{
   });
   it('actually denies the published ToolRuntime body before dispatch, but passes through other user IDs',async()=>{
     const root=new Context();root.provide('systemPrompt',{tools:()=>()=>{}});const tools=new ToolRuntime(root);let bodies=0;
+    const pipeline=new ToolExecutionPipeline(root);
+    const releaseExecutor=tools.setExecutor({describe:()=>({schemas:[]}),execute:input=>executeToolBatch(input,pipeline,()=>1)});
     const unregister=tools.register({name:'g2_guard_probe',description:'In-memory test only',parameters:{type:'object',properties:{},additionalProperties:false},output:{schema:{type:'object',properties:{ok:{type:'boolean'}},required:['ok'],additionalProperties:false},render:()=>[{type:'text',text:'ok'}]},execute:async()=>{bodies++;return{ok:true};}});
     const f=fixture(tools);const guard=await installFixtureToolGuard.call(f.host,authorization,ids,cwd);
-    const call=(id:string):ToolExecutionInput=>({callId:('call-'+id) as ToolExecutionInput['callId'],name:'g2_guard_probe',arguments:{},signal:new AbortController().signal,agent:{id,ctx:root} as unknown as Agent});
+    const call=(id:string):ToolBatchInput=>({calls:[{type:'tool-call',id:('call-'+id) as ToolBatchInput['calls'][number]['id'],name:'g2_guard_probe',arguments:'{}'}],signal:new AbortController().signal,agent:{id,ctx:root} as unknown as Agent});
     try{
-      const denied=await tools.execute(call('fixture-a'));expect(denied.isError).toBe(true);expect(bodies).toBe(0);expect(guard.snapshot().blockedCounts['fixture-a']).toBe(1);
-      const allowed=await tools.execute(call('unrelated-user'));expect(allowed.isError).not.toBe(true);expect(bodies).toBe(1);
+      const denied=await tools.execute(call('fixture-a'));expect(denied.results[0]!.result.isError).toBe(true);expect(bodies).toBe(0);expect(guard.snapshot().blockedCounts['fixture-a']).toBe(1);
+      const allowed=await tools.execute(call('unrelated-user'));expect(allowed.results[0]!.result.isError).not.toBe(true);expect(bodies).toBe(1);
       await guard.dispose();await tools.execute(call('fixture-a'));expect(bodies).toBe(2);
-    }finally{await guard.dispose();unregister();}
+    }finally{await guard.dispose();unregister();releaseExecutor();}
   });
 });

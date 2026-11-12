@@ -1,6 +1,7 @@
 import type { Column, ConversationFacts, PendingUserWork, Task, Workflow } from '../shared/types.js';
 import { NO_PENDING_USER_WORK } from '../shared/types.js';
 import { openSessionIds } from '../shared/conversations.js';
+import { ownsDeterministicEntry } from './deterministic-state.js';
 import { entryInstruction } from './stage-entry.js';
 import { blocksAdvance } from './auto-mode-hold.js';
 import { hasPendingUserWork, mergePendingUserWork } from './pending-user-work.js';
@@ -38,7 +39,7 @@ export type AdvanceDecision =
  * never records a pause.
  */
 export function resolveAdvanceDecision(task: Task, facts: ReadonlyMap<string, ConversationFacts>): AdvanceDecision {
-  if (blocksAdvance(task)) return { kind: 'busy' };
+  if (ownsDeterministicEntry(task) || blocksAdvance(task)) return { kind: 'busy' };
   const open = new Set(openSessionIds(task));
   const running: string[] = [];
   for (const sessionId of task.sessionIds) {
@@ -78,6 +79,7 @@ export function resolveAutoAdvance(workflow: Workflow, fromColumnId: string, opt
     cursor = next.id;
     const instruction = entryInstruction(next);
     if (instruction !== undefined) return { fromColumnId, path, destination: next, instruction };
+    if (next.deterministic !== undefined) return { fromColumnId, path, destination: next };
   }
   const destination = path[path.length - 1];
   return destination === undefined ? { fromColumnId, path } : { fromColumnId, path, destination };

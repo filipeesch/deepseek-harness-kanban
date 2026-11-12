@@ -54,6 +54,9 @@ expect.extend({
   async toBeEnabled(received: Locator, options?: MatcherOptions) {
     return { pass: await until(() => received.isEnabled(), timeoutOf(options)), message: () => 'expected the locator to be enabled' };
   },
+  async toBeFocused(received: Locator, options?: MatcherOptions) {
+    return { pass: await until(() => received.evaluate(element => element.ownerDocument.activeElement === element), timeoutOf(options)), message: () => 'expected the locator to be focused' };
+  },
   async toBeDisabled(received: Locator, options?: MatcherOptions) {
     return { pass: await until(async () => !(await received.isEnabled()), timeoutOf(options)), message: () => 'expected the locator to be disabled' };
   },

@@ -1,4 +1,5 @@
 import { parseDocument } from 'yaml';
+import { deterministicYamlIssues } from './deterministic-yaml-diagnostics.js';
 import { parseWorkflow } from '../domain/workflow.js';
 import type { Workflow } from '../shared/types.js';
 
@@ -84,6 +85,8 @@ export function analyzeWorkflow(yaml: string): WorkflowAnalysis {
       diagnostics: issues.map(issue => ({ from: issue.from ?? 0, to: issue.to ?? 0, severity: 'error' as const, message: issue.message })),
     };
   }
+  const deterministic = deterministicYamlIssues(document);
+  if (deterministic.length > 0) return { status: 'invalid', issues: deterministic, diagnostics: deterministic.map(issue => ({ from: issue.from ?? 0, to: issue.to ?? 1, severity: 'error' as const, message: issue.message })) };
   try {
     const workflow = parseWorkflow(text);
     return { status: 'valid', workflow, issues: [], diagnostics: [] };

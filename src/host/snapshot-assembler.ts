@@ -4,6 +4,15 @@ import type { GoogleDriveAuthCoordinator } from './sharing/auth-coordinator.js';
 
 const DEFAULT_AUTH_TTL_MS = 5_000;
 
+/** Execution authority and source references are host-private, never ordinary state. */
+export function publicKanbanState(state: KanbanState): KanbanState {
+  for (const hub of state.hubs) {
+    for (const task of hub.tasks) delete task.deterministic;
+    for (const board of hub.boards) delete board.localStageIdentities;
+  }
+  return state;
+}
+
 export interface SnapshotAssemblerOptions {
   hubs: Pick<HubRepository, 'snapshot'>;
   /** The team-sharing views for every Hub, when publishing is available. */
@@ -94,7 +103,7 @@ export class SnapshotAssembler {
     // together, after that await, or a Hub write during the await would label the old
     // state with the new revision and the client would never receive the new state.
     const sharingAuth = await this.auth(options.refreshAuth === true, options.allowAuthRefresh !== false);
-    const state = this.stateCache ??= this.options.hubs.snapshot();
+    const state = this.stateCache ??= publicKanbanState(this.options.hubs.snapshot());
     const stateRevision = this.revision;
     const key = sharingSignature(state);
     if (this.sharingCache === undefined || this.sharingKey !== key) {

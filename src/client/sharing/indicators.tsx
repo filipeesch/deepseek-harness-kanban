@@ -18,6 +18,7 @@ const BOARD_LABEL: Record<Exclude<SharingBoardState, 'in-sync'>, { className: st
   draft: { className: 'kb-share-draft', label: 'Board changes not sent' },
   'updates-available': { className: 'kb-share-updates', label: 'Team updates available for this board' },
   'needs-review': { className: 'kb-share-review', label: 'This board needs a team review' },
+  'update-required': { className: 'kb-share-review', label: 'Update the plugin to use this team board' },
   orphan: { className: 'kb-share-orphan', label: 'Board removed by the team' },
 };
 

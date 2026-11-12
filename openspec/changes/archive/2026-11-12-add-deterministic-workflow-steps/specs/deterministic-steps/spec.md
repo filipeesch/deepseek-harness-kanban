@@ -1,0 +1,290 @@
+# Spec Delta
+
+## Purpose
+
+Lets a workflow stage wait for external conditions using repeatable Bash or TypeScript code without a model turn, recover its execution after a host restart, and deliver a named outcome and message to the next stage.
+
+## ADDED Requirements
+
+### Requirement: Deterministic stage definition
+
+A workflow SHALL support a deterministic stage configured with a language of Bash or TypeScript, exactly one nonempty inline script or external file path, a working-directory choice of task or base project, a mapping of named exits to existing stages, and an optional list of authorized environment-variable names. The default directory SHALL be the task's effective project directory, inside its worktree when one is bound and otherwise the base-project directory. A deterministic stage SHALL NOT also configure a nonempty agent entry instruction or a second allowed-transition list. Its exit mapping SHALL be the authoritative set of configured destinations; distinct exits MAY name the same destination, but an exit SHALL NOT target the source stage. Reexecution in the current stage SHALL use Play rather than a self-transition. Existing workflows without deterministic configuration SHALL retain their behavior. Saving invalid configuration SHALL fail without changing the stored workflow.
+
+#### Scenario: Configure either supported language and source form
+- **WHEN** a user saves a deterministic stage with Bash or TypeScript and exactly one inline script or external file path
+- **THEN** the workflow stores that configuration and its named exit routes
+- **AND** neither saving the configuration nor opening the editor executes the script
+
+#### Scenario: Reject conflicting execution and routing definitions
+- **WHEN** a deterministic stage also supplies an agent entry instruction, an allowed-transition list, both script source forms, or a self-targeting exit
+- **THEN** saving fails with a diagnostic identifying the conflicting field
+- **AND** the previous workflow remains unchanged
+
+#### Scenario: Validate exit destinations
+- **WHEN** an exit points to a stage that does not exist
+- **THEN** the workflow is rejected before it can be activated
+
+#### Scenario: Select the base project explicitly
+- **WHEN** a task has a worktree but its stage selects the base-project directory
+- **THEN** script execution and relative external-script paths use the base-project directory
+- **AND** the input context still identifies the task's worktree separately
+
+### Requirement: Repeatable program execution without a model
+
+A deterministic stage SHALL execute code outside the plugin's main process without creating a conversation, selecting a model, or starting a model turn for that execution. Bash and TypeScript scripts SHALL own their polling loops, sleep intervals, and business deadlines. The host SHALL NOT replace those loops with per-poll scheduling or impose the chat runtime's short-call deadline on the entire wait. The host SHALL supervise cancellation and bounded diagnostic/resource handling separately from the script's business deadline. TypeScript SHALL expose only bash from the DSH tool surface, callable as tools.bash, and SHALL support asynchronous function-body evaluation with top-level await and return. External TypeScript files SHALL use the same program format as inline TypeScript. Other DSH/MCP tools and model invocations SHALL NOT be injected. The documented contract SHALL require scripts to perform repeatable checks; the product SHALL NOT claim that arbitrary Bash or TypeScript is provably read-only.
+
+#### Scenario: Wait inside the script
+- **WHEN** a script checks an external condition, sleeps, and checks again before returning
+- **THEN** the same supervised execution remains active through that loop
+- **AND** the host does not create a new run, model turn, or scheduled prompt for each check
+
+#### Scenario: Call Bash from TypeScript
+- **WHEN** a TypeScript script awaits tools.bash
+- **THEN** the command executes within that run's authorized directory, environment scope, and native execution policy
+- **AND** its result is returned to the script without a model call or promotion to a detached chat job
+
+#### Scenario: Required runtime capability is unavailable
+- **WHEN** the host cannot provide the required language format, long-lived cancellable execution, confinement, or child-process cleanup
+- **THEN** execution does not silently fall back to an in-process evaluator, an agent turn, or broader permissions
+- **AND** the user receives an actionable capability diagnostic
+
+### Requirement: Immutable execution capture
+
+Before an executable run is admitted, the host SHALL resolve the selected directory, read and validate the primary external script when applicable, and durably capture the exact primary script bytes, language, directory choice and resolved directory, named routes, authorized variable names, and incoming handoff. Configuration edits and changes to the primary file SHALL NOT modify an active or recovering run. Explicit Play SHALL capture the latest configuration and file contents for a new execution in the same stage. The host SHALL distinguish the selected file path from the bytes it actually approved and captured, and SHALL NOT substitute changed bytes during recovery. The product SHALL disclose that imported modules, called executables, and external services are not frozen transitively.
+
+#### Scenario: Edit an active stage
+- **WHEN** the user saves corrected script text or routes while a run remains active
+- **THEN** the saved workflow changes but that run continues with its captured version
+- **AND** the interface indicates that Play is required to apply the new version
+
+#### Scenario: Recover after the file changed
+- **WHEN** the host restarts an active run whose original external file was subsequently modified
+- **THEN** it executes the captured primary script bytes and routes, not the changed file
+
+#### Scenario: Missing capture cannot be reconstructed safely
+- **WHEN** a recovering run's captured program is missing or corrupt
+- **THEN** recovery stops with a diagnostic rather than reading a newer primary script and executing it under the old approval
+
+### Requirement: Entry activation independent of auto mode
+
+A newly persisted entry into a deterministic stage SHALL request its execution even when task auto mode is disabled, subject to local trust, native execution policy, and valid task/project context. The activation request and entry identity SHALL be persisted atomically with the task creation or actual stage placement, before asynchronous capture, file reads, trust review, or program launch. Startup SHALL resume a pending activation without inventing one for historical occupied stages. Initial task creation in a deterministic initial stage SHALL count as a new entry. Starting a script-only entry SHALL NOT require conversation or model preparation, create a worktree implicitly, or use the prompt-stage five-second countdown. Reordering a card in its current stage, loading an existing card, or changing a stage's configuration SHALL NOT synthesize a new entry or reactivate a stopped or failed run. A task whose worktree is preparing or in error SHALL not execute from that unresolved binding.
+
+#### Scenario: Enter without auto mode or a conversation
+- **WHEN** a task with auto mode disabled and no conversation enters an approved deterministic stage with a valid execution context
+- **THEN** the script starts without a model-selection dialog or prompt countdown
+- **AND** no conversation is created merely to run the script
+
+#### Scenario: Create in a deterministic initial stage
+- **WHEN** a task is created in a deterministic initial stage
+- **THEN** that new entry requests execution using the same trust and admission rules as a later entry
+
+#### Scenario: Do not start historical entries retroactively
+- **WHEN** deterministic configuration is added to a stage that already contains cards
+- **THEN** those existing cards do not execute solely because configuration changed or the host restarted
+- **AND** Play can explicitly start the current stage for a selected card
+
+#### Scenario: Recover a new entry before capture begins
+- **WHEN** the host crashes after creating or moving a task into a deterministic entry but before its primary script has been captured
+- **THEN** startup recovers the persisted activation request and requested authored definition
+- **AND** it captures and authorizes the primary program before execution rather than losing the entry or implicitly executing historical cards
+
+### Requirement: Stop and Play on the current stage
+
+The card and drawer SHALL provide Stop for an active deterministic execution and Play for a stopped, failed, or not-yet-started deterministic entry whose latest saved configuration is still deterministic. The durable entry and its captured control state, not the latest saved execution mode, SHALL determine whether an existing run is deterministic. Saving an agent or manual mode SHALL NOT hide Stop, arm an agent instruction, or let a completed conversation turn bypass that run. If the latest saved mode is no longer deterministic, Play SHALL not silently execute the old code or start an agent; the interface SHALL explain that valid deterministic configuration or a genuine stage change is required. Stop SHALL durably revoke the active run before requesting cancellation of its TypeScript/Bash program and owned Bash children, SHALL leave the task in its current stage, and SHALL neither follow an exit nor generate an error-route handoff. A successful Stop SHALL remain effective after restart. Play SHALL create a new execution identity and start time in the same stage, capture the latest configuration, and perform any required trust review. Play SHALL NOT move the task merely to begin execution, but a subsequent completed result SHALL follow its configured route normally. There SHALL be no dry-run behavior implied by Play. A new run SHALL NOT overlap an owned predecessor whose termination has not been confirmed.
+
+#### Scenario: Stop during sleep or an external command
+- **WHEN** Stop is admitted while the script is sleeping or awaiting Bash
+- **THEN** the run is recorded as stopped and its owned processes are cancelled
+- **AND** a late completion cannot move the card or produce a handoff
+
+#### Scenario: Correct and reexecute without changing stages
+- **WHEN** the user stops or encounters a failed execution, edits the stage, and presses Play
+- **THEN** a new execution starts in the same stage with the corrected captured version and a new start time
+- **AND** a completed result can then follow its named route
+
+#### Scenario: Preserve stopped state across restart
+- **WHEN** the host restarts with a stopped run
+- **THEN** the task remains stopped until explicit Play or another new stage entry
+
+#### Scenario: Do not undo an already admitted transition
+- **WHEN** a stale Stop request arrives after the source run's result has already admitted its transition
+- **THEN** it is rejected as stale rather than undoing the move or stopping a different run
+
+#### Scenario: Change the saved mode while a script still owns the entry
+- **WHEN** the user saves an agent or manual mode while the current entry owns a deterministic run
+- **THEN** its captured run remains supervised and Stop remains available until that run is stopped or settled
+- **AND** the new saved mode does not start an agent or enable incidental turn-driven movement
+- **AND** after Stop, Play cannot start a different execution kind implicitly
+
+### Requirement: Durable recovery from host loss
+
+The host SHALL persist an execution intent before launching code. If the host exits or crashes while that intent remains active and no terminal result has been saved, startup SHALL recover the same execution by running its captured program from the beginning. Its execution identity, original start time, entry identity, and incoming handoff SHALL remain unchanged; its process-attempt identity and restart count SHALL distinguish the replacement process. Recovery SHALL NOT restore variables, instruction position, timers, or process memory, and SHALL NOT replay every polling check missed while the host was unavailable. Stopped, failed, superseded, and completed executions SHALL NOT be rerun automatically. A saved terminal result awaiting transition or handoff SHALL resume interrupted delivery instead of rerunning the script, reusing its identity and reconciling any existing native admission. A delivery explicitly recorded as failed SHALL remain failed after restart and require explicit retry; it SHALL NOT be retried merely because the host restarted. The host SHALL prevent concurrent owners or surviving predecessor processes from acting on the same active execution.
+
+#### Scenario: Recover an active loop
+- **WHEN** the host restarts after losing a script that had not returned a terminal result
+- **THEN** it restarts the captured script from the beginning with the same execution identity and original start time
+- **AND** the script can calculate its total business deadline from that preserved start time
+
+#### Scenario: Resume a saved result
+- **WHEN** the host crashes after persisting a terminal result but before its transition or handoff completes
+- **THEN** startup resumes the saved result's delivery with the same delivery identity
+- **AND** does not execute the source script again
+
+#### Scenario: Refuse uncertain duplicate ownership
+- **WHEN** recovery cannot establish that an older owned process has stopped or cannot acquire exclusive ownership
+- **THEN** it reports a recoverable diagnostic rather than starting a concurrent duplicate execution
+
+### Requirement: Entry and run identity protect against stale results
+
+Each actual stage entry and each explicit execution SHALL have distinct durable identities. Moving a card away from an active deterministic stage SHALL revoke that run and cancel its owned processes without waiting for its external condition to complete. A result SHALL be accepted only for the current entry, current run, and current process attempt, before a Stop or movement has revoked it. Returning to the same stage SHALL create a new entry rather than accepting a result from an earlier visit. Turn-end events from conversations SHALL NOT route a task past an active, stopped, untrusted, or failed deterministic entry.
+
+#### Scenario: Move away and return to the same stage
+- **WHEN** a card leaves a deterministic stage, later returns, and the original process produces a delayed result
+- **THEN** the original result is ignored even though the stage identifier matches again
+- **AND** only the new entry's execution can select its output route
+
+#### Scenario: Reorder within the current stage
+- **WHEN** a card is reordered without changing stages
+- **THEN** its current execution identity and state remain unchanged
+
+#### Scenario: A conversation finishes while the script is active
+- **WHEN** an owned conversation completes a turn while the task's current entry is deterministic
+- **THEN** that turn does not bypass or complete the deterministic stage
+
+### Requirement: Structured completion and exact named routing
+
+A successfully completed script SHALL return an object containing a nonempty exit name and a nonempty message. TypeScript SHALL return that object as its completion value. A standalone Bash script SHALL exit successfully and emit exactly one JSON completion object on stdout; diagnostic output SHALL use stderr. The host SHALL reject missing, malformed, truncated, oversized, or nonconforming completion values and SHALL NOT infer an exit from log text. A valid mapped exit SHALL select exactly its captured destination, not the first configured transition or the next stage in display order. Distinct exit names MAY select the same stage. Before admitting the move, the host SHALL confirm that the task still owns that run, the same captured destination stage still exists by stable identity, and applicable task-context and pending-user-work guards permit delivery. The trusted captured mapping SHALL remain the authority for that run even when the saved workflow changes its exits; the host SHALL NOT substitute the new mapping or reject an otherwise valid captured route solely because it is absent from the latest saved exit list. A result held by those guards SHALL remain durable without polling the external system again. A script result SHALL NOT authorize an otherwise required manual transition override.
+
+#### Scenario: Route a rejected review to correction
+- **WHEN** a script returns exit rejected with a message and that exit maps to the correction stage
+- **THEN** the host moves to exactly that stage and carries the returned message
+- **AND** does not choose another exit based on ordering or documentary condition text
+
+#### Scenario: Hold delivery while user work is pending
+- **WHEN** a mapped terminal result is saved while the task still owes pending user work
+- **THEN** no move or downstream execution is admitted until that guard clears
+- **AND** the saved result remains available without rerunning the script
+
+#### Scenario: A destination disappeared after capture
+- **WHEN** a saved exit's captured destination no longer exists when routing is admitted
+- **THEN** the task remains in its current stage with a routing diagnostic
+- **AND** the host does not substitute a newer route or another stage
+
+#### Scenario: Edit a route while its captured execution remains active
+- **WHEN** an active approved run captured exit passed to stage B and the saved workflow later maps passed to stage C
+- **THEN** that run still routes passed to B if B is the same existing stable stage and current task safety guards pass
+- **AND** only explicit Play or a genuine new entry captures C as its route
+
+#### Scenario: Preserve the target through an identifier rename
+- **WHEN** the target of a captured route is renamed while retaining its stable stage identity
+- **THEN** the result resolves to that same stage under its current identifier
+- **AND** another stage reusing the old identifier cannot receive the result
+
+### Requirement: Executor failure routing and repair
+
+A script exception, parse failure, nonzero standalone Bash exit, invalid completion, or executor failure SHALL produce a structured diagnostic and a synthetic error exit message. When an error route was captured and remains admissible, that synthetic result SHALL follow it through the normal durable routing path. Without that route, the run SHALL remain failed in its current stage and offer correction followed by Play. Trust not yet granted, explicit cancellation, and a source entry that is no longer current SHALL NOT be treated as script error outcomes. An unmapped script exit SHALL become a diagnostic rather than falling back to an unrelated route. Failure to deliver a saved result SHALL be handled as transition/handoff recovery, not as a reason to execute the script again or recursively follow error routes.
+
+#### Scenario: Follow a configured error exit
+- **WHEN** an executor fails before returning a valid completion and the run captured a valid error route
+- **THEN** the host saves an error result with a diagnostic message and follows that route once
+
+#### Scenario: Repair without an error route
+- **WHEN** an executor fails and there is no error route
+- **THEN** the card remains in the current stage with its failure and Play action
+- **AND** correcting configuration does not start code until Play is explicitly requested
+
+#### Scenario: Missing local trust is not a failure transition
+- **WHEN** a stage has not been authorized locally
+- **THEN** it waits for trust review without running code or following error
+
+### Requirement: Handoff to any destination type
+
+The host SHALL preserve the completed exit name, message, source stage, source execution identity, and delivery identity as a handoff bound to the exact destination entry. An agent destination SHALL receive the message as identified native context accompanying its own stage instruction. A deterministic destination SHALL receive the handoff in its input without creating a conversation. A manual destination SHALL retain it for its next execution and expose it in the task's history. Routing SHALL stop at the mapped destination even if that destination has no agent instruction. Delivery retries and restart recovery SHALL reuse the same identity and SHALL NOT duplicate the handoff. After any awaited destination preparation or durable-log read, final native admission SHALL still require the exact destination entry identity and delivery identity; matching a stage identifier alone SHALL NOT authorize a handoff after the task moved away and returned. The host SHALL serialize the final check and native admission against an intervening placement for that task or provide an equivalent entry-bound admission guarantee. A future visit to the same stage SHALL NOT inherit an unrelated older entry's handoff.
+
+#### Scenario: Chain two deterministic stages
+- **WHEN** a deterministic stage exits to another deterministic stage
+- **THEN** the second script receives the first stage's named exit and message as its incoming handoff
+- **AND** neither script requires a conversation or model turn
+
+#### Scenario: Stop at a manual destination
+- **WHEN** an exit maps to a manual stage without a prompt or script
+- **THEN** the task stops there with its handoff retained
+- **AND** the host does not skip ahead to a later instructed stage
+
+#### Scenario: Retry a handoff after host loss
+- **WHEN** the destination already accepted a handoff but the source receipt was not yet observed before restart
+- **THEN** delivery recovery recognizes the existing identity instead of adding the same context twice
+
+#### Scenario: Reject a stale handoff after awaited preparation
+- **WHEN** handoff delivery awaits destination preparation and the task moves away and returns to the same stage before native admission
+- **THEN** the old delivery does not inject context or trigger an obsolete instruction in the new entry
+- **AND** sharing the same stage identifier does not satisfy the entry-bound authorization
+
+#### Scenario: Keep an explicitly failed handoff failed after restart
+- **WHEN** a deterministic result delivery was durably recorded as failed before host shutdown
+- **THEN** recovery retains its failure and explicit retry action without rerunning the script or automatically resending the handoff
+
+### Requirement: Minimal input context
+
+The script SHALL receive structured input containing task identity, title and description; Hub, board and stage identity; project identity and directory; effective directory and any recorded worktree/branch; entry and execution identities and timestamps; process-attempt/restart information; and the incoming handoff when present. The context SHALL NOT automatically include the entire conversation history or secret values. TypeScript SHALL receive the context without source-code interpolation of task text. Standalone Bash SHALL receive JSON input through stdin rather than interpolating task fields into shell code. Recorded branch metadata SHALL NOT be presented as proof of the live Git HEAD.
+
+#### Scenario: Pass untrusted task text as data
+- **WHEN** a task title or description contains shell syntax or TypeScript delimiters
+- **THEN** the script sees that text only as structured input
+- **AND** the host does not execute it as part of constructing the script
+
+#### Scenario: Recover without changing the business deadline
+- **WHEN** a script receives context after automatic recovery
+- **THEN** its execution start remains the original value and its process-attempt/restart information identifies the recovery
+
+### Requirement: Local executable trust
+
+The first execution of an executable version SHALL require explicit local approval after review of the exact captured primary code, language, source location, working-directory scope, routes, and authorized variable names. Changes to that reviewed executable configuration, including external primary file contents or an expansion of variable access, SHALL invalidate the previous approval. Approval SHALL be local to the project/stage scope and SHALL NOT be granted by saving, publishing, or accepting a shared workflow. Repeated use and restart recovery of the same approved version SHALL not request trust again. Rejecting or withholding approval SHALL leave the task in its current stage without executing code. Trust SHALL NOT bypass native filesystem/execution policy or claim to freeze dependencies outside the captured program.
+
+#### Scenario: Receive executable YAML from the team
+- **WHEN** a shared update introduces or changes a deterministic script
+- **THEN** accepting the update does not authorize it locally
+- **AND** the next requested execution waits for approval of the actual captured version
+
+#### Scenario: Recover an approved execution
+- **WHEN** the host restarts a run with the same captured version and valid local approval
+- **THEN** it does not ask for the same approval again
+
+#### Scenario: Change a primary file between review and launch
+- **WHEN** the source file changes after the user reviews its captured contents
+- **THEN** the launch uses the reviewed captured bytes or requires another approval
+- **AND** it never launches changed bytes under the earlier approval
+
+### Requirement: Local variables isolated by project and stage
+
+Explicit execution variables SHALL be configured independently for each local project-and-stage pair using the host credential mechanism. Stable stage identity SHALL keep that scope intact across a stage identifier rename; another project or stage SHALL NOT inherit its variables. A deterministic definition SHALL list only the variable names that run is authorized to access, not their values. TypeScript and Bash execution SHALL enforce the same authorized set without implicitly exposing other installation credentials. Resolved values SHALL remain outside shared YAML, task input metadata, run snapshots, and ordinary client projections. Configuration UI SHALL show configured/missing status without reading stored values back to the browser. An unavailable native credential provider or missing explicitly required variable SHALL report an actionable diagnostic rather than silently widening access or substituting an unrelated credential. A recovering process SHALL resolve authorized values again rather than persisting secret values for replay.
+
+#### Scenario: Separate two projects using the same stage
+- **WHEN** the same workflow stage runs for tasks in two projects with different local values
+- **THEN** each run receives only its own project-and-stage values for the authorized names
+
+#### Scenario: Separate two stages in one project
+- **WHEN** one stage has a configured token but another stage has no value for that name
+- **THEN** the second stage does not inherit the first stage's token
+
+#### Scenario: Restart after credential rotation
+- **WHEN** an active run is recovered after an authorized variable's local value has changed
+- **THEN** the replacement process resolves the current value for the same authorized name
+- **AND** the old secret was not recovered from a run snapshot
+
+### Requirement: Truthful execution controls and diagnostics
+
+Cards and drawers SHALL distinguish awaiting trust, active, stopping, stopped, failed, and result-awaiting-delivery states without reporting a running agent when no conversation is running. The interface SHALL display the captured version and whether a saved edit requires Play, the relevant failure, and Stop/Play controls with accessible names and action-local progress. Available diagnostics SHALL be bounded and SHALL not add one task-history row per polling iteration. The host SHALL avoid logging resolved variable values and redact known secret values from persisted/displayed diagnostics and handoff messages; documentation SHALL explain that arbitrary user code can transform or disclose secrets and that redaction is not a complete data-loss-prevention boundary. Secret values SHALL NOT appear in ordinary snapshots or verification evidence. Switching panels or closing the browser SHALL not stop a host-owned active script.
+
+#### Scenario: Observe a sleeping script without an agent
+- **WHEN** a deterministic script is active while no conversation is running
+- **THEN** the card identifies script execution and offers Stop without falsely claiming an agent turn is active
+
+#### Scenario: Inspect an executor failure
+- **WHEN** an execution fails
+- **THEN** the card and drawer expose the diagnostic and the appropriate recovery action without a global board-saving indicator
+
+#### Scenario: Keep secrets out of diagnostics
+- **WHEN** captured output contains an exact resolved secret value known to the host
+- **THEN** that value is redacted before diagnostic or handoff persistence and display
+- **AND** tests and screenshots contain no real credentials

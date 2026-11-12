@@ -1,3 +1,4 @@
+import { captureDeterministicTargets, ensureLocalStageIdentity, establishStageEntry, reconcileLocalStageIdentities } from './deterministic-state.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import type { StateStorage } from '../shared/ports.js';
@@ -254,6 +255,7 @@ export class BoardStore {
         columnId: state.workflow.initialColumnId, position, sessionIds: [], closedSessionIds: [], effectiveCwd: requireProjectPath(project),
         worktree: null, operation: null, ...(value.autoMode === true ? { autoMode: { enabled: true as const } } : {}), ...(initialInstruction !== undefined ? { instructionPending: { columnId: initialColumn!.id, enteredAt: nextEnteredAt() } } : {}), createdAt: timestamp, updatedAt: timestamp,
       };
+      if (initialColumn !== undefined) establishStageEntry(task, initialColumn, ensureLocalStageIdentity(state, initialColumn.id, randomUUID), timestamp, randomUUID, captureDeterministicTargets(state, initialColumn, randomUUID));
       state.tasks.push(task);
       return task;
     });
@@ -302,6 +304,7 @@ export class BoardStore {
       const referencedColumns = state.tasks.flatMap(task => task.pendingTransition ? [task.columnId, task.pendingTransition.fromColumnId, task.pendingTransition.columnId] : [task.columnId]);
       const orphaned = [...new Set(referencedColumns.filter(columnId => !ids.has(columnId)))];
       invariant(orphaned.length === 0, 'WORKFLOW_ORPHAN_COLUMNS', 'Workflow update would orphan existing task columns: ' + orphaned.join(', ') + '.');
+      reconcileLocalStageIdentities(state, workflow);
       state.workflowYaml = yaml;
       state.workflow = workflow;
       return workflow;

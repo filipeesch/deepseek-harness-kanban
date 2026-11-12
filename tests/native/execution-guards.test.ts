@@ -15,7 +15,7 @@ function fixture(){
   const assertExecutionContext=vi.fn(async(id:string)=>{if(!directory.exists)throw new KanbanError('SESSION_CONTEXT_UNAVAILABLE','Expected tree disappeared.');if(id==='bound'&&directory.actual!==directory.expected)throw new KanbanError('CONTEXT_MISMATCH','Native recovery changed the directory.');});
   const dispose=registerTaskExecutionGuards(ctx,store,{assertExecutionContext});
   const signal=new AbortController();const agent={id:SessionId('bound')} as Agent;
-  const payload={agent,turn:1,step:1,signal:signal.signal};
+  const payload={agent,turn:1,step:1,modelSelection:{provider:'fixture',model:'fixture'},signal:signal.signal};
   const model=vi.fn();
   const prepare=vi.fn(async function*(){model();yield {type:'text',text:'ok'} as never;});
   const options=(sessionId:string,purpose?:StreamOptions['purpose']):StreamOptions=>({provider:'test-provider',model:'test-model',messages:[],sessionId:SessionId(sessionId),signal:signal.signal,...(purpose===undefined?{}:{purpose})});

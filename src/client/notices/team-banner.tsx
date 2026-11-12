@@ -38,24 +38,29 @@ export function TeamChangesBanner({ view, boardId, pending, dismissedSignature, 
   const signature = teamBannerSignature(view, boardId);
   if (dismissedSignature === signature) return null;
   const boardReview = board?.state === 'needs-review';
+  const updateRequired = board?.state === 'update-required';
   const boardUpdates = board?.state === 'updates-available';
   // Naming the board matters as soon as more than one is published, because the
   // banner speaks for the active tab.
   const named = view.boards.filter(entry => entry.bound).length > 1 && board !== undefined ? ' “' + board.name + '”' : '';
-  const message = boardReview || view.conflicts > 0
+  const message = updateRequired
+    ? 'This team board was written by a newer plugin version. Update dsh-kanban, then refresh' + named + '.'
+    : boardReview
     ? 'Your team changed this board' + named + ' in a way that needs a choice.'
     : boardUpdates
       ? 'Your team published changes to this board' + named + '.'
       : view.updates > 0
         ? 'Your team published changes to this Hub.'
-        : view.blockers[0]?.message ?? 'Team changes cannot be applied until the blocking boards are resolved.';
+        : view.conflicts > 0
+          ? 'Some team boards require attention.'
+          : view.blockers[0]?.message ?? 'Team changes cannot be applied until the blocking boards are resolved.';
   return <div className="kb-share-banner" role="status">
     <p>{message}</p>
     <div className="kb-actions">
       {boardUpdates && boardId !== undefined && onUpdate !== undefined
         ? <button type="button" className="kb-button kb-primary" disabled={pending === true} onClick={() => onUpdate(boardId)}>{pending === true ? 'Updating…' : 'Update board'}</button>
         : null}
-      <button type="button" className="kb-button" onClick={onReview}>{boardReview || view.conflicts > 0 ? 'Review the choice' : 'Review team changes'}</button>
+      <button type="button" className="kb-button" onClick={onReview}>{updateRequired ? 'Team settings' : boardReview ? 'Review the choice' : 'Review team changes'}</button>
     </div>
     <DismissButton
       label="Dismiss team changes"

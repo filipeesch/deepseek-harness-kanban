@@ -23,11 +23,13 @@ export function end(seq: number, turn: number): QuestionEvent { return canonical
 export function human(seq: number): QuestionEvent { return canonical(seq, 'user/message', { role: 'user', id: ('human-' + seq) as SessionEvent<'user/message'>['data']['id'], source: { kind: 'user' }, content: [{ type: 'text', text: 'I prefer a normal text reply.' }] }); }
 export function runtime(seq: number): QuestionEvent { return canonical(seq, 'user/message', { role: 'user', id: ('context-' + seq) as SessionEvent<'user/message'>['data']['id'], source: { kind: 'system-prompt' }, content: [{ type: 'text', text: 'Runtime context changed.' }] }); }
 export function ptcStart(seq: number, rootCallId: string, subCallId: string, parentCallId = rootCallId): QuestionEvent {
-  return canonical(seq, 'tool/ptc-dispatch-start', { rootCallId: rootCallId as CallId, parentCallId: parentCallId as CallId, subCallId: subCallId as CallId, name: 'decision_request', arguments: {} });
+  // Executor-owned extension events are intentionally read as structural data;
+  // importing their producer would add the chat transport to this plugin's SDK.
+  return { seq, type: 'tool/ptc-dispatch-start', data: { rootCallId: rootCallId as CallId, parentCallId: parentCallId as CallId, subCallId: subCallId as CallId, name: 'decision_request', arguments: {} } };
 }
 export function ptcResult(seq: number, rootCallId: string, subCallId: string, page: QuestionPage = choice, parentCallId = rootCallId): QuestionEvent {
-  return canonical(seq, 'tool/ptc-dispatch', { rootCallId: rootCallId as CallId, parentCallId: parentCallId as CallId, subCallId: subCallId as CallId,
-    name: 'decision_request', arguments: {}, isError: false, content: [], meta: { kind: 'kanban.question-page', version: 1, page: JSON.parse(JSON.stringify(page)) } });
+  return { seq, type: 'tool/ptc-dispatch', data: { rootCallId: rootCallId as CallId, parentCallId: parentCallId as CallId, subCallId: subCallId as CallId,
+    name: 'decision_request', arguments: {}, isError: false, content: [], meta: { kind: 'kanban.question-page', version: 1, page: JSON.parse(JSON.stringify(page)) } } };
 }
 export function round(pages: QuestionPage[] = [choice], complete = true): QuestionRound {
   return { id: 'round-1', sessionId: 'session-1', turnId: '1', pages: pages.map((page, index) => ({ callId: 'page-' + index, sequence: index, page })), complete, answered: false };

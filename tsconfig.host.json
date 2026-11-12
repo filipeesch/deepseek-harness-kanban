@@ -11,6 +11,7 @@
     "tests/host/**/*.ts",
     "tests/domain/**/*.ts",
     "tests/native/**/*.ts",
+    "tests/distribution/**/*.ts",
     "tests/worktrees/**/*.ts",
     "tests/inspector/**/*.ts",
     "tests/*-helper/**/*.ts",

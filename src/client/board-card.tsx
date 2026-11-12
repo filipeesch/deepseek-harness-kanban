@@ -3,6 +3,8 @@ import type { Attention, Column, Task, Workflow } from '../shared/types.js';
 import { TaskCard } from './task-card.js';
 import { autoModeView } from './auto-mode.js';
 import { advanceDestination } from '../domain/transitions.js';
+import { useScriptSummary } from './deterministic-context.js';
+import { ownedScript } from './deterministic-view.js';
 import type { AutoRunController, AutoRunInput } from './auto-run.js';
 
 export interface BoardCardProps {
@@ -35,12 +37,13 @@ export const BoardCard = memo(function BoardCard({
   task, column, projectName, attention, workflow, selectionMode, selected, autoRun, autoModePending,
   onToggleAutoMode, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick, onMoveTask, advancePending = false, onRun,
 }: BoardCardProps) {
+  const scriptOwned = ownedScript(task, useScriptSummary(task.id)) !== undefined;
   return <TaskCard
     task={task}
     column={column}
     projectName={projectName}
     attention={attention}
-    autoMode={autoModeView(task, workflow, attention.pending)}
+    autoMode={autoModeView(task, workflow, attention.pending, scriptOwned)}
     selectionMode={selectionMode}
     selected={selected}
     autoRun={autoRun}

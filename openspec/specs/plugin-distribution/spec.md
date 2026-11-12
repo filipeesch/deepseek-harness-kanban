@@ -29,7 +29,7 @@ The published host entries SHALL activate on every supported DSH host even when 
 
 ### Requirement: Compatibility is declared with the host version
 
-The plugin manifest SHALL declare `engines.dsh` as `>=0.2.1-rc.2 <0.3.0-0` so DSH's own admission check decides whether the artifact may load. The upper bound SHALL exclude `0.3` prereleases as well as `0.3` releases, because DSH evaluates the range with prerelease matching. The Typert protocol package SHALL be a build-time dependency only: the published manifest SHALL NOT list it as a runtime dependency or as a peer dependency, because the artifact no longer imports it at runtime. Other DSH SDK packages that remain external peer dependencies SHALL keep their declared ranges.
+The plugin manifest SHALL declare `engines.dsh` as `>=0.2.2-rc.1 <0.3.0-0` so DSH's own admission check decides whether the artifact may load. The upper bound SHALL exclude `0.3` prereleases as well as `0.3` releases, because DSH evaluates the range with prerelease matching. The Typert protocol package SHALL be a build-time dependency only: the published manifest SHALL NOT list it as a runtime dependency or as a peer dependency, because the artifact no longer imports it at runtime. Other DSH SDK packages that remain external peer dependencies SHALL declare bounded ranges aligned with the supported DSH 0.2.2 baseline. Build-time SDK dependencies SHALL use bounded compatible ranges rather than require the former exact 0.2.1-rc.2 SDK, and the committed lockfile SHALL record the reproducible tested resolution. The available 0.2.2-rc.1 host SHALL be supported alongside later compatible hosts admitted by the declared range; an unbounded latest-version dependency SHALL NOT substitute for a declared compatibility contract.
 
 #### Scenario: Host inside the declared range
 
@@ -38,7 +38,7 @@ The plugin manifest SHALL declare `engines.dsh` as `>=0.2.1-rc.2 <0.3.0-0` so DS
 
 #### Scenario: Host outside the declared range
 
-- **WHEN** the artifact is installed on a DSH release below `0.2.1-rc.2`
+- **WHEN** the artifact is installed on a DSH release below `0.2.2-rc.1`
 - **THEN** DSH refuses the bundle through its native incompatibility report instead of failing later with an import error
 - **AND** the refusal names the declared `engines.dsh` range
 
@@ -47,6 +47,18 @@ The plugin manifest SHALL declare `engines.dsh` as `>=0.2.1-rc.2 <0.3.0-0` so DS
 - **WHEN** the packed `package.json` is inspected
 - **THEN** it declares `engines.dsh`
 - **AND** `@deepseek-ai/dsh-typert-protocol` appears only under `devDependencies`
+
+#### Scenario: Exclude the next minor prerelease
+
+- **WHEN** the artifact is installed on a DSH 0.3 prerelease or release
+- **THEN** the native admission check rejects it as outside the declared range
+- **AND** no runtime import failure is used as the compatibility check
+
+#### Scenario: Resolve the tested SDK reproducibly
+
+- **WHEN** the plugin is installed and built from its committed dependency metadata
+- **THEN** its bounded SDK ranges and lockfile resolve the tested DSH 0.2.2-compatible build dependencies
+- **AND** compatibility does not depend on retaining the exact former 0.2.1-rc.2 SDK
 
 ### Requirement: Installation is documented from the repository URL
 
@@ -79,3 +91,40 @@ The installation documentation SHALL document `https://github.com/filipeesch/dee
 
 - **WHEN** activation fails because the profile carries an older DSH SDK copy
 - **THEN** the troubleshooting guidance names that cause and the commands that identify the installed copy
+
+### Requirement: Deterministic execution capability availability
+
+Admission by the host version range SHALL NOT be treated as proof that every optional execution provider is installed or configured. Before starting or recovering a deterministic program, the plugin SHALL verify the native capabilities needed by that program: its supported TypeScript source form when applicable, Bash execution, cancellation of the program and its nested Bash calls, execution without a host-imposed business deadline, the required file-policy enforcement, and explicitly authorized local-variable access. It SHALL use the public native execution and credential capabilities rather than require a model turn or the chat run_code transport. An absent or incompatible capability SHALL prevent that program from starting or recovering and SHALL produce a diagnostic identifying the unsupported capability and corrective action. The failure SHALL follow the configured deterministic error route when present and otherwise remain a recoverable failure in the current stage. It SHALL NOT disable conventional Kanban behavior, silently change the script language or source form, impose a short tool-call deadline on the whole program, invoke a model to perform the deterministic verification, broaden permissions, or fall back to a separate plaintext credential store. Local trust that has not been granted SHALL remain an authorization wait rather than being inferred from runtime availability.
+
+#### Scenario: A supported host lacks the TypeScript execution provider
+
+- **WHEN** a host inside the declared version range starts a TypeScript deterministic stage without the required compatible native provider
+- **THEN** no script starts and no model turn substitutes for the missing verification capability
+- **AND** the diagnostic identifies the missing or incompatible execution capability
+- **AND** the configured error route is used or the task remains recoverably failed in its stage
+- **AND** conventional boards and conversations remain available
+
+#### Scenario: Refuse an incompatible source form or uncancellable provider
+
+- **WHEN** the installed runtime cannot execute the approved source form or cannot cancel the program and its nested Bash calls
+- **THEN** the stage does not start with a silently altered program or an unmanaged process
+- **AND** the diagnostic identifies the unsupported capability
+
+#### Scenario: Preserve the script-owned waiting deadline
+
+- **WHEN** an approved script waits longer than an ordinary interactive tool-call timeout while its own loop has not completed
+- **THEN** the whole program is not terminated or restarted merely because that interactive timeout passed
+- **AND** Stop can still cancel the program and its nested Bash processes
+
+#### Scenario: Native credentials are unavailable for a configured local variable
+
+- **WHEN** an execution requires an explicitly authorized local variable but the native credential capability is unavailable
+- **THEN** execution fails before exposing an unapproved environment or starting the script
+- **AND** the diagnostic identifies the credential capability problem
+- **AND** no value is copied into workflow YAML or a plaintext substitute
+
+#### Scenario: Runtime availability does not replace executable trust
+
+- **WHEN** every required runtime capability is available but the executable version lacks local trust
+- **THEN** the stage waits for its local authorization
+- **AND** no script starts and no runtime-availability success grants trust

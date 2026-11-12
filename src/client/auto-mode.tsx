@@ -155,7 +155,7 @@ function presentationOf(task: Task, workflow: Workflow, pendingWork: PendingUser
  * first — an advance in flight, its failure — never hides the reason the agent
  * gave, on the card or in the drawer.
  */
-export function autoModeView(task: Task, workflow: Workflow, pendingWork: PendingUserWork = NO_PENDING_USER_WORK): AutoModeView {
+export function autoModeView(task: Task, workflow: Workflow, pendingWork: PendingUserWork = NO_PENDING_USER_WORK, scriptOwned = false): AutoModeView {
   const enabled = task.autoMode?.enabled === true;
   const hold = activeHold(task);
   const pause = task.autoMode?.pause;
@@ -163,7 +163,7 @@ export function autoModeView(task: Task, workflow: Workflow, pendingWork: Pendin
     ...(hold === undefined ? [] : [{ tone: 'pending' as const, label: agentPauseLabel(hold.reason) }]),
     ...(pause === undefined ? [] : [{ tone: pauseTone(pause.reason), label: pauseLabel(pause.reason, pause.message), ...(pause.reason === 'advance-failed' ? { alert: true } : {}) }]),
   ];
-  const presentation = presentationOf(task, workflow, pendingWork);
+  const presentation: AutoModePresentation = scriptOwned || workflow.columns.find(column => column.id === task.columnId)?.deterministic ? { state: enabled ? 'instruction' : 'off', title: 'Deterministic execution owns this entry. Script results route independently of Auto mode.', label: enabled ? 'Auto mode waits for the deterministic result' : undefined } : presentationOf(task, workflow, pendingWork);
   const statuses = presentation.status === undefined ? recorded : [presentation.status, ...recorded];
   const labels = joinLabels([...(presentation.label === undefined ? [] : [presentation.label]), ...recorded.map(value => value.label)]);
   const title = [presentation.title ?? '', ...recorded.map(value => value.label)].filter(value => value.length > 0).join(' ');

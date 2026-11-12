@@ -1,8 +1,7 @@
 import React, { type ReactNode } from 'react';
-import type { Attention } from '../shared/types.js';
 import { IconTabs, type IconTabItem } from './ui.js';
 import type { DrawerSection } from './page-state.js';
-import { ActivityDot, sectionTabName } from './activity-dot.js';
+import { ActivityDot, sectionTabName, type ActivityFacts } from './activity-dot.js';
 import { GitBranchIcon, HistoryIcon, InfoIcon, MessageIcon, NoteIcon } from './icons.js';
 
 /** The section navigation entries that carry the activity facts. */
@@ -22,7 +21,7 @@ export interface DrawerSectionNavProps {
   sections: readonly DrawerSection[];
   selected: DrawerSection;
   onSelect: (section: DrawerSection) => void;
-  activity: Pick<Attention, 'running' | 'background'>;
+  activity: ActivityFacts;
 }
 
 /** Icon-only section tabs; the Conversations tab also carries the activity dot. */
@@ -34,7 +33,7 @@ export function DrawerSectionNav({ id, sections, selected, onSelect, activity }:
       icon: sectionIcon(section),
       accessibleName: sectionTabName(section, activity),
       tooltip: sectionTabName(section, activity),
-      badge: <ActivityDot running={activity.running} background={activity.background} />,
+      badge: <ActivityDot {...activity} />,
     }
     : { id: section, label: section, icon: sectionIcon(section) });
   return <IconTabs label="Task sections" items={items} selected={selected} onSelect={value => onSelect(value as DrawerSection)} id={id} />;

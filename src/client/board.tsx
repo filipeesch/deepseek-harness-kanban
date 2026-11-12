@@ -37,6 +37,7 @@ import { BoardTabRow, HubTabRow } from './hub-nav.js';
 import { asProblem } from './ui.js';
 import { adviseCommandFailure } from './command-failure.js';
 import { styles } from './styles/index.js';
+import { DeterministicProvider } from './deterministic-context.js';
 import { DeleteTaskDialog, DiscardDialog, RemoveWorktreeDialog, type DestructiveRequest } from './destructive-dialogs.js';
 import { BulkDeleteDialog } from './bulk-delete-dialogs.js';
 import { ForceRemovalDialog } from './force-removal-dialog.js';
@@ -132,13 +133,13 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   const hubActivity = useMemo(() => {
     const values = new Map<string, ScopeActivity>();
     if (!snapshot) return values;
-    for (const hub of snapshot.state.hubs) values.set(hub.id, projectScopeActivity(hub.tasks, snapshot.attention));
+    for (const hub of snapshot.state.hubs) values.set(hub.id, projectScopeActivity(hub.tasks, snapshot.attention, snapshot.deterministic));
     return values;
   }, [snapshot]);
   const boardActivity = useMemo(() => {
     const values = new Map<string, ScopeActivity>();
     if (!snapshot || !activeHub) return values;
-    for (const board of activeHub.boards) values.set(board.id, projectScopeActivity(activeHub.tasks.filter(task => task.boardId === board.id), snapshot.attention));
+    for (const board of activeHub.boards) values.set(board.id, projectScopeActivity(activeHub.tasks.filter(task => task.boardId === board.id), snapshot.attention, snapshot.deterministic));
     return values;
   }, [snapshot, activeHub]);
   // The board's own aggregated attention already answers whether anything on it is
@@ -174,7 +175,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   const autoRun = providedAutoRun ?? fallbackAutoRun;
   useEffect(() => { if (providedAutoRun) return; return () => fallbackAutoRun.dispose(); }, [providedAutoRun, fallbackAutoRun]);
   // Owned fallback only: a provided controller is reconciled by the client generation that owns it.
-  useEffect(() => { if (providedAutoRun || !snapshot) return; fallbackAutoRun.reconcile(allTasks(snapshot)); }, [providedAutoRun, snapshot, fallbackAutoRun]);
+  useEffect(() => { if (providedAutoRun || !snapshot) return; fallbackAutoRun.reconcile(allTasks(snapshot), snapshot.deterministic); }, [providedAutoRun, snapshot, fallbackAutoRun]);
   // One memory of what became of each conversation's board model, for as long as
   // this board is mounted: it feeds the notice, never the saved document.
   const modelFallbacks = useModelFallbackRegistry();
@@ -376,7 +377,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     requestCloseDrawer();
   }
 
-  return <DirectoryPickerProvider picker={picker}><ModelFallbacksProvider registry={modelFallbacks}><section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style>
+  return <DirectoryPickerProvider picker={picker}><ModelFallbacksProvider registry={modelFallbacks}><DeterministicProvider api={api} run={command => run(command, false)} summaries={snapshot?.deterministic ?? {}}><section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style>
     <BoardHeader
       hubTabs={<HubTabRow
         hubs={snapshot?.state.hubs ?? []}
@@ -506,5 +507,5 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     <BoardCreationDialogs hub={activeHub} run={run} taskDialog={creation.dialog} containers={containers} />
     {moves.overrideDialog && <div hidden={preparation.dialog !== null}>{moves.overrideDialog}</div>}
     {preparation.dialog}
-  </section></ModelFallbacksProvider></DirectoryPickerProvider>;
+  </section></DeterministicProvider></ModelFallbacksProvider></DirectoryPickerProvider>;
 }

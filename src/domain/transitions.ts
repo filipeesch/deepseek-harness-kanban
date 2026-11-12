@@ -30,7 +30,7 @@ export function authoredTransitions(workflow: Workflow, columnId: string): Autho
   if (index < 0) return null;
   const column = workflow.columns[index]!;
   const next = workflow.columns[index + 1];
-  return { targets: column.allowedTransitions ?? null, ...(next === undefined ? {} : { next }) };
+  return { targets: column.deterministic === undefined ? column.allowedTransitions ?? null : [...new Set(Object.values(column.deterministic.exits))].map(to => ({ to })),  ...(next === undefined ? {} : { next }) };
 }
 
 /** Classifies a move between existing stages without applying any policy beyond the workflow. */
@@ -49,9 +49,10 @@ export function transitionAccess(workflow: Workflow, from: string, to: string): 
  */
 export function transitionTargets(workflow: Workflow, columnId: string): ResolvedTransition[] {
   const source = workflow.columns.find(column => column.id === columnId);
-  if (source?.allowedTransitions === undefined) return [];
+  const rules = source?.deterministic === undefined ? source?.allowedTransitions : [...new Set(Object.values(source.deterministic.exits))].map(to => ({ to }));
+  if (rules === undefined) return [];
   const targets: ResolvedTransition[] = [];
-  for (const rule of source.allowedTransitions) {
+  for (const rule of rules) {
     if (rule.to === columnId) continue;
     const column = workflow.columns.find(value => value.id === rule.to);
     if (column !== undefined) targets.push({ column, rule });
@@ -68,6 +69,7 @@ export function defaultDestination(workflow: Workflow, fromColumnId: string): Co
   const index = workflow.columns.findIndex(column => column.id === fromColumnId);
   if (index < 0) return undefined;
   const source = workflow.columns[index]!;
+  if (source.deterministic !== undefined) return undefined;
   if (source.allowedTransitions !== undefined) {
     const first = source.allowedTransitions[0];
     if (first === undefined) return undefined;
@@ -91,6 +93,7 @@ export function transitionDestinations(workflow: Workflow, from: string): Transi
 export function advanceDestination(workflow: Workflow, from: string): TransitionDestination | undefined {
   const index = workflow.columns.findIndex(column => column.id === from);
   if (index < 0) return undefined;
+  if (workflow.columns[index]!.deterministic !== undefined) return undefined;
   if (workflow.columns[index]!.allowedTransitions?.length === 0) return undefined;
   return nextStage(workflow, from);
 }

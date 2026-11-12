@@ -1,0 +1,20 @@
+name: Local deterministic CI
+initial_column: wait_ci
+columns:
+  - id: wait_ci
+    label: Wait for local CI
+    deterministic:
+      language: typescript
+      directory: task
+      file: wait-ci.ts
+      exits:
+        passed: review
+        rejected: fix
+        error: repair
+  - id: review
+    label: Review
+    on_enter_prompt: Review the local CI result supplied in the incoming handoff.
+  - id: fix
+    label: Fix implementation
+  - id: repair
+    label: Repair wait step

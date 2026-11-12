@@ -1,10 +1,37 @@
 import { expect, test, type Page } from '@playwright/test';
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
+import { expectLegible } from './contrast.js';
 
 const HARNESS = new URL('./.tmp/index.html', import.meta.url).href;
 
 async function sharingCommands(page: Page): Promise<Array<Record<string, unknown>>> {
   return page.evaluate(() => (window as unknown as { __harness: { sharingCommands(): Array<Record<string, unknown>> } }).__harness.sharingCommands());
 }
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test('shows a safe update-required board in ' + colorScheme, async ({ page }) => {
+    await page.emulateMedia({ colorScheme });
+    await page.goto(HARNESS + '?scenario=publishing&sharing=update-required&theme=host');
+    if (colorScheme === 'dark') await expect(page.locator('body')).toHaveAttribute('data-ds-dark-theme', '');
+    else await expect(page.locator('body')).not.toHaveAttribute('data-ds-dark-theme');
+    const row = page.getByRole('list', { name: 'Shared boards' }).getByRole('listitem').filter({ hasText: 'Harness board' });
+    await expect(row.getByText('Plugin update required')).toBeVisible();
+    await expect(row.getByRole('button', { name: /Publish|Use the team version|Keep the local version/ })).toHaveCount(0);
+    await expectLegible(page, '.kb-share-board-state');
+    await mkdir('.verification', { recursive: true });
+    await page.screenshot({ path: path.join('.verification', 'deterministic-team-update-required-' + colorScheme + '.png') });
+  });
+}
+
+test('explains an unsupported board without offering an unsafe conflict choice', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=sharing&sharing=update-required');
+  await expect(page.getByText('This team board was written by a newer plugin version. Update dsh-kanban, then refresh.')).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Update the plugin to use this team board' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Review the choice' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Team settings' }).click();
+  await expect(page.getByText('Plugin update required')).toBeVisible();
+});
 
 test('connects an unpublished Hub through Team Settings', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing');

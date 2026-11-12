@@ -58,8 +58,13 @@ it('creates a second Hub and board and keeps their cards isolated', async () => 
   await page.getByLabel('Project').selectOption({ label: 'Harness' });
   await page.getByRole('button', { name: 'Create task' }).click();
   await expect(page.getByRole('button', { name: 'Open task Second hub task' })).toBeVisible();
+  expect(scaffold.ctx.sessions.list()).toHaveLength(sessionsBefore);
+  await page.getByRole('button', { name: 'Open task Second hub task' }).click();
+  await page.getByRole('tab', { name: 'Conversations' }).click();
+  await page.locator('.kb-preset-cards').getByRole('button', { name: /^Standard mode/ }).click();
   await expect.poll(() => scaffold.ctx.sessions.list().length, { timeout: 20_000 }).toBeGreaterThan(sessionsBefore);
   expect(scaffold.ctx.sessions.list().filter(session => session.header.cwd === workspaceRoot).length).toBeGreaterThan(0);
+  await page.getByRole('button', { name: 'Close task details' }).click();
 
   await page.getByRole('tab', { name: 'My Hub' }).click();
   await expect(page.getByRole('button', { name: 'Open task Second hub task' })).toHaveCount(0);

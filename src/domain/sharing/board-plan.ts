@@ -3,6 +3,7 @@ import type { SharedBoardEntry } from './manifest.js';
 import { canonicalWorkflow } from '../schema-parts.js';
 import { parseWorkflow } from '../workflow.js';
 import { recoverBoard, type BoardLogFile } from '../journal/log.js';
+import { stageRenames } from '../journal/migrate.js';
 
 /**
  * What one board looks like to the sharing rules.
@@ -101,12 +102,20 @@ export function evaluateBoard(input: BoardEvaluationInput): BoardEvaluation {
 
   const published = publishedWorkflow(input.log);
   const draft = published === null ? true : !sameWorkflow(recovered.text, published);
-  const applied = recovered.events > 0;
+  // A compacted snapshot can advance the cursor even when no retained tail
+  // events remain; that still represents an unapplied team update.
+  const events = Math.max(recovered.events, recovered.cursor - input.cursor);
+  const applied = events > 0;
   const state: BoardSharingState = applied ? 'updates-available' : draft ? 'draft' : 'in-sync';
-  const refuses = applied && wouldOrphanTasks(recovered.text, input.local);
+  // Applying the same accepted rename sequence migrates tasks atomically with
+  // the workflow. Preview those migrated identifiers rather than flagging them
+  // as orphaned merely because their old name no longer appears.
+  const renames = stageRenames(input.log.events.filter(event => event.seq > input.cursor));
+  const taskColumns = input.local.taskColumns.map(entry => ({ ...entry, columnId: renames.reduce((id, rename) => id === rename.from ? rename.to : id, entry.columnId) }));
+  const refuses = applied && wouldOrphanTasks(recovered.text, { ...input.local, taskColumns });
   return {
     ...base, key, state,
-    apply: applied ? { kind: 'applies', events: recovered.events, text: recovered.text } : { kind: 'nothing' },
+    apply: applied ? { kind: 'applies', events, text: recovered.text } : { kind: 'nothing' },
     draft,
     refuses,
     difference: published === null ? null : { local: input.local.workflow, published },

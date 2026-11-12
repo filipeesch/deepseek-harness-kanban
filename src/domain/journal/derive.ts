@@ -1,3 +1,8 @@
+import { authoredScalar, writeSequenceItemField } from '../yaml-map-fields.js';
+import { invalidWorkflow } from '../yaml-fields.js';
+import { applyEvents } from './conflict.js';
+import { canonicalWorkflow } from '../schema-parts.js';
+import { canonicalDeterministic } from '../deterministic-definition.js';
 import { randomUUID } from 'node:crypto';
 import type { ConnectionLayout, TransitionRule, Workflow } from '../../shared/types.js';
 import { connectionKey } from '../connection-anchor.js';
@@ -36,6 +41,7 @@ export interface DeriveOptions {
 
 function definition(stage: Workflow['columns'][number]): StageDefinition {
   const result: StageDefinition = { id: stage.id, key: stage.key!, name: stage.name };
+  if (stage.deterministic !== undefined) result.deterministic = structuredClone(stage.deterministic);
   if (stage.onEnterPrompt !== undefined) result.onEnterPrompt = stage.onEnterPrompt;
   if (stage.allowedTransitions !== undefined) result.allowedTransitions = stage.allowedTransitions.map(rule => cloneRule(rule));
   if (stage.position !== undefined) result.position = { ...stage.position };
@@ -81,15 +87,28 @@ export function deriveChanges(previous: BoardVersion | null, local: BoardVersion
   // missing ones, so a partially keyed state is handled like a fully keyed one instead
   // of leaving a column without an identity to diff.
   const before = seedStageIdentities(parseWorkflow(previous.text));
+  const authored = parseWorkflow(local.text);
   const after = assignStageIdentities({
-    workflow: parseWorkflow(local.text),
+    workflow: authored,
     previous: stageIdentitySeeds(before),
     allocate: options.allocate ?? (() => randomUUID()),
   });
 
+  const replacement = (): BoardChange[] => {
+    let text = local.text;
+    for (const column of after.columns) {
+      if (authored.columns.find(value => value.id === column.id)?.key === column.key) continue;
+      text = writeSequenceItemField({ text, sequenceKey: 'columns', idKey: 'id', id: column.id, fieldKeys: ['key'], render: () => 'key: ' + authoredScalar(column.key!), invalid: invalidWorkflow });
+    }
+    return [{ kind: 'workflow.replaced', text }];
+  };
   const changes: BoardChange[] = [];
   const beforeById = new Map(before.columns.map(column => [column.key!, column]));
   const afterById = new Map(after.columns.map(column => [column.key!, column]));
+  // Creation appends; use the existing whole-workflow event when an edit changes
+  // stage order, because order also determines conventional default routing.
+  const appendOrder = [...before.columns.filter(column => afterById.has(column.key!)), ...after.columns.filter(column => !beforeById.has(column.key!))].map(column => column.key);
+  if (JSON.stringify(appendOrder) !== JSON.stringify(after.columns.map(column => column.key))) return replacement();
   const beforeIdentity = identityMap(before);
   const afterIdentity = identityMap(after);
 
@@ -114,6 +133,8 @@ export function deriveChanges(previous: BoardVersion | null, local: BoardVersion
         value: column.allowedTransitions === undefined ? null : column.allowedTransitions.map(rule => cloneRule(rule)),
       });
     }
+    const signature = (definition: typeof column.deterministic, map: ReadonlyMap<string, string>): string => JSON.stringify(canonicalDeterministic(definition === undefined ? undefined : { ...definition, exits: Object.fromEntries(Object.entries(definition.exits).map(([name, target]) => [name, identity(map, target)])) }));
+    if (signature(previousColumn.deterministic, beforeIdentity) !== signature(column.deterministic, afterIdentity)) changes.push({ kind: 'stage.field-changed', key: column.key!, field: 'deterministic', value: column.deterministic === undefined ? null : structuredClone(column.deterministic) });
     if (layoutSignature(previousColumn) !== layoutSignature(column)) {
       changes.push({
         kind: 'stage.layout-set', key: column.key!,
@@ -163,5 +184,12 @@ export function deriveChanges(previous: BoardVersion | null, local: BoardVersion
   if (identity(beforeIdentity, before.initialColumnId) !== identity(afterIdentity, after.initialColumnId)) {
     changes.push({ kind: 'workflow.initial-changed', columnId: after.initialColumnId });
   }
+  // Dependent stage creation/removal and route edits may not admit a valid
+  // intermediate workflow. Publish the already supported atomic replacement
+  // rather than discard executable fields or change the resulting route.
+  try {
+    const result = applyEvents(previous.text, changes.map((change, seq) => ({ ...change, seq, at: 'derive', v: 2 })));
+    if (!result.ok || canonicalWorkflow(seedStageIdentities(parseWorkflow(result.text))) !== canonicalWorkflow(after)) return replacement();
+  } catch { return replacement(); }
   return changes;
 }

@@ -28,6 +28,8 @@ export interface LiveConnectionDescriptor {
   readonly segments?: readonly ConnectionSegmentOffset[];
   /** The condition this transition authors; absent means it authors none. */
   readonly condition?: string;
+  /** Deterministic exit names sharing this exact destination. */
+  readonly exitLabels?: readonly string[];
 }
 
 export interface LiveEdge extends ConnectionShape {
@@ -38,6 +40,8 @@ export interface LiveEdge extends ConnectionShape {
   readonly returning: boolean;
   /** The condition this transition authors; absent means it authors none. */
   readonly condition?: string;
+  /** Deterministic exit names sharing this exact destination. */
+  readonly exitLabels?: readonly string[];
   /** The adjustable segments of the drawn path, in path order. */
   readonly lines: readonly RouteLine[];
 }
@@ -123,7 +127,7 @@ export function edgeModel(stages: readonly LiveStageRect[], connections: readonl
   for (const connection of connections) {
     const route = connectionRouteFor(stages, connection, true);
     if (route === null) continue;
-    edges.push({ id: connection.id, from: connection.from, to: connection.to, kind: connection.kind, returning: connection.returning, path: route.shape.path, points: route.shape.points, tipAngle: route.shape.tipAngle, lines: route.lines, ...(connection.condition === undefined ? {} : { condition: connection.condition }) });
+    edges.push({ id: connection.id, from: connection.from, to: connection.to, kind: connection.kind, returning: connection.returning, path: route.shape.path, points: route.shape.points, tipAngle: route.shape.tipAngle, lines: route.lines, ...(connection.condition === undefined ? {} : { condition: connection.condition }), ...(connection.exitLabels === undefined ? {} : { exitLabels: connection.exitLabels }) });
   }
   return edges;
 }

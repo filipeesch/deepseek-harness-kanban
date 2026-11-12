@@ -8,6 +8,8 @@ const moment = z.string().datetime({ offset: true });
 const failure = z.strictObject({ code: z.string().min(1), message: z.string(), details: z.record(z.string(), z.unknown()).optional() });
 
 export const taskHistoryEntrySchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('deterministic-execution'), at: moment, executionId: identifier, columnId: identifier, outcome: z.enum(['completed', 'stopped', 'failed']), exit: z.string().optional(), message: z.string().optional(), error: failure.optional() }),
+  z.strictObject({ kind: z.literal('deterministic-handoff'), at: moment, deliveryId: identifier, executionId: identifier, fromColumnId: identifier, columnId: identifier, outcome: z.enum(['accepted', 'failed']), exit: z.string(), message: z.string(), error: failure.optional() }),
   z.strictObject({ kind: z.literal('created'), at: moment, columnId: identifier }),
   z.strictObject({ kind: z.literal('stage'), at: moment, fromColumnId: identifier, columnId: identifier }),
   z.strictObject({ kind: z.literal('intent'), at: moment, fromColumnId: identifier, columnId: identifier }),
@@ -31,6 +33,7 @@ export function taskHistoryIssue(entry: TaskHistoryEntry): string | null {
   // stage to an identifier a removed one used rewrites history into the same
   // identifier on both sides, which is the truthful result of that rename. The
   // record's write path still refuses a placement that changes no stage.
+  if ((entry.kind === 'deterministic-execution' || entry.kind === 'deterministic-handoff') && entry.outcome === 'failed' && entry.error === undefined) return 'A failed deterministic outcome requires its diagnostic.';
   if (entry.kind === 'auto-mode') {
     const paused = entry.action === 'paused' || entry.action === 'agent-paused';
     if (paused && (entry.reason === undefined || entry.reason.trim().length === 0)) return 'A pause entry requires the reason that paused it.';

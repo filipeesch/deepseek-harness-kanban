@@ -1,0 +1,61 @@
+import type { PtcJsonValue, PtcRuntime } from '@deepseek-ai/dsh-ptc-runtime';
+import type { ShellExecutor } from '@deepseek-ai/dsh-shell';
+import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox';
+import type { DeterministicCapture, DeterministicDefinition, DeterministicTarget, StepCompletion } from '../../shared/deterministic.js';
+
+export interface DeterministicScope { hubId: string; boardId: string; projectId: string; stageIdentity: string }
+export interface CaptureRequest {
+  definition: DeterministicDefinition;
+  projectDirectory: string;
+  taskDirectory?: string;
+  exits: Record<string, DeterministicTarget>;
+  signal?: AbortSignal;
+}
+export interface DeterministicPolicyPort {
+  directory(path: string, signal?: AbortSignal): Promise<string>;
+  source(path: string, directory: string, signal?: AbortSignal): Promise<{ path: string; code: string }>;
+  execution(directory: string, signal?: AbortSignal): Promise<SandboxExecutionPolicy>;
+}
+export interface DeterministicVariables {
+  status(scope: DeterministicScope, names: readonly string[]): Promise<Array<{ name: string; configured: boolean }>>;
+  set(scope: DeterministicScope, name: string, value: string): Promise<void>;
+  remove(scope: DeterministicScope, name: string): Promise<void>;
+  /** Host-only: never expose this operation through a client/remote interface. */
+  resolve(scope: DeterministicScope, names: readonly string[]): Promise<Readonly<Record<string, string>>>;
+}
+export interface DeterministicTrust {
+  isApproved(scope: DeterministicScope, fingerprint: string): Promise<boolean>;
+  approve(scope: DeterministicScope, fingerprint: string): Promise<void>;
+  reject(scope: DeterministicScope, fingerprint: string): Promise<void>;
+}
+export type ExecutionOutcome =
+  | { kind: 'completed'; completion: StepCompletion; diagnostics: string[] }
+  | { kind: 'failed'; diagnostic: { code: string; message: string } }
+  | { kind: 'aborted' };
+export interface ExecuteRequest {
+  executionId?: string;
+  taskId?: string;
+  capture: DeterministicCapture;
+  input: PtcJsonValue;
+  scope: DeterministicScope;
+  signal: AbortSignal;
+}
+export interface DeterministicRuntime {
+  capture(request: CaptureRequest): Promise<DeterministicCapture>;
+  loadCapture(capture: DeterministicCapture): Promise<string>;
+  collectSources(referencedSourceRefs: readonly string[]): Promise<void>;
+  releaseSource?(sourceRef: string): void;
+  verify(capture: DeterministicCapture, signal?: AbortSignal): Promise<void>;
+  /** Confirms provider-owned predecessor cleanup; never kills a process by bare PID. */
+  reclaim(executionId: string): Promise<void>;
+  reclaimTask?(scope: DeterministicScope, taskId: string): Promise<void>;
+  execute(request: ExecuteRequest): Promise<ExecutionOutcome>;
+  trust: DeterministicTrust;
+  variables: DeterministicVariables;
+}
+export type NativePtcPort = Pick<PtcRuntime, 'language' | 'isolation' | 'programFormat' | 'retainsState' | 'sandboxMode' | 'resolve' | 'run'>;
+export type NativeShellPort = Pick<ShellExecutor, 'sandboxMode' | 'resolve' | 'execute'>;
+export class DeterministicRuntimeError extends Error {
+  constructor(readonly code: string, message: string) { super(message); this.name = 'DeterministicRuntimeError'; }
+}
+export function failure(code: string, message: string): never { throw new DeterministicRuntimeError(code, message); }

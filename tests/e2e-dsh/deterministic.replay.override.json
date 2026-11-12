@@ -1,0 +1,39 @@
+[
+  {
+    "kind": "chunks",
+    "chunks": [
+      {
+        "type": "block-start",
+        "index": 0,
+        "blockType": "text"
+      },
+      {
+        "type": "text-delta",
+        "index": 0,
+        "text": "Deterministic handoff received."
+      },
+      {
+        "type": "block-end",
+        "index": 0,
+        "block": {
+          "type": "text",
+          "text": "Deterministic handoff received."
+        }
+      },
+      {
+        "type": "usage",
+        "usage": {
+          "inputTokens": 64,
+          "outputTokens": 6,
+          "totalTokens": 70
+        }
+      },
+      {
+        "type": "finish",
+        "reason": {
+          "kind": "stop"
+        }
+      }
+    ]
+  }
+]
