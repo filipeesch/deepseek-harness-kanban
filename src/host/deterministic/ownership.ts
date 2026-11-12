@@ -5,7 +5,7 @@ import type { DeterministicScope } from './ports.js';
 import { failure } from './ports.js';
 import { scopeKey } from './variables.js';
 import { askWitness, type LifetimeWitness } from './lifetime.js';
-import { ownedProcesses } from './owned-processes.js';
+import { ownedProcesses, terminateOwned } from './owned-processes.js';
 
 export interface OwnershipLease {
   (): Promise<void>;
@@ -29,8 +29,10 @@ async function witnessClean(witness: LifetimeWitness): Promise<boolean> {
     // command deadline escalates. The host reads the same inherited token, so an
     // empty owned set is the proof the guard would have given.
     if (witness.marker !== undefined) {
-      try { if (ownedProcesses(witness.marker).length === 0) return true; }
-      catch { /* An unreadable table cannot prove anything; fail closed below. */ }
+      // A guard can be force-killed before it finishes, so the host completes the
+      // same ownership sweep instead of leaving the tree to the provider's grace.
+      try { await terminateOwned(witness.marker); if (ownedProcesses(witness.marker).length === 0) return true; }
+      catch { /* An unreadable or unkillable set cannot prove anything; fail closed. */ }
     }
   }
   failure('OWNERSHIP_UNCERTAIN', 'Native lifetime witnesses have not confirmed whole-tree cleanup.');

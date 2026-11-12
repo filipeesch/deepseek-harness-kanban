@@ -248,7 +248,7 @@ describe('bounded diagnostics, native policy, and exclusive resource ownership',
     const confine = vi.fn(async () => ({ enforcement: 'partial' })); const policy = createNativeDeterministicPolicy({ sandboxPolicy: { resolve: resolvePolicy }, sandbox: { confine } });
     await expect(policy.execution('/task')).rejects.toMatchObject({ code: 'POLICY_INCOMPLETE' }); expect(resolvePolicy).toHaveBeenCalledWith(); expect(confine).toHaveBeenCalledWith(['bash', '-c', ':'], { mode: 'workspace-write', workspaceRoot: '/task', additionalWritableRoots: ['/extra'] }, undefined);
   });
-  it('proves an owned set empty when a force-killed guard can no longer answer', async () => {
+  it('finishes the ownership sweep when a force-killed guard can no longer answer', async () => {
     const f = await fixture(); const ownership = new NativeExecutionOwnership(join(f.root, 'lease-fallback'));
     const release = await ownership.acquire(scope, 'dead-guard', 'task');
     const marker = 'a'.repeat(32);
@@ -257,13 +257,22 @@ describe('bounded diagnostics, native policy, and exclusive resource ownership',
     const closed = new Promise<void>(resolve => dead.close(() => resolve())); await closed;
     await release.register({ port, token: 'b'.repeat(64), marker });
     const { spawn } = await import('node:child_process');
-    const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore', env: { ...process.env, DSH_DETERMINISTIC_RUN: marker } });
+    const env = { ...process.env, DSH_DETERMINISTIC_RUN: marker };
+    const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore', env });
+    // A process without the token must never be touched by the host sweep.
+    const unrelated = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore', env: { ...process.env } });
     try {
       await expect.poll(() => ownedProcesses(marker).length, { timeout: 5000 }).toBe(1);
-      await expect(release()).rejects.toMatchObject({ code: 'OWNERSHIP_UNCERTAIN' });
-      const exited = new Promise(resolve => child.once('exit', resolve)); child.kill('SIGKILL'); await exited;
       await release();
-    } finally { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }
+      expect(ownedProcesses(marker)).toEqual([]);
+      const exited = child.exitCode !== null || child.signalCode !== null ? Promise.resolve() : new Promise(resolve => child.once('exit', resolve));
+      await exited;
+      expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+      expect(unrelated.exitCode).toBeNull(); expect(unrelated.signalCode).toBeNull();
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      if (unrelated.exitCode === null && unrelated.signalCode === null) unrelated.kill('SIGKILL');
+    }
   });
   it('refuses uncertain crash ownership and same-task replacement while unrelated tasks proceed', async () => {
     const f = await fixture(); const first = new NativeExecutionOwnership(join(f.root, 'owners-fixture')); const release = await first.acquire(scope, 'execution-one', 'task-one');
