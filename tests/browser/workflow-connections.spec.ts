@@ -45,22 +45,22 @@ async function drag(page: Page, from: { x: number; y: number }, to: { x: number;
 /** A client point that actually belongs to a drawn connection, since an SVG group's
  *  bounding box is mostly empty space. */
 async function pointOnEdge(page: Page, connectionId: string): Promise<{ x: number; y: number }> {
-  const point = await page.evaluate(id => {
+  const handle = await page.waitForFunction(id => {
     const group = document.querySelector('[data-connection-id="' + id + '"]');
     if (group === null) return null;
     const path = group.querySelector('.react-flow__edge-interaction') ?? group.querySelector('.kb-flow-edge');
     if (path === null) return null;
     const box = path.getBoundingClientRect();
-    for (let x = Math.ceil(box.left); x <= Math.floor(box.right); x += 2) {
-      for (let y = Math.ceil(box.top); y <= Math.floor(box.bottom); y += 2) {
+    // SVG bounds exclude the stroke and can have zero height or width for straight paths.
+    for (let x = Math.ceil(box.left - 4); x <= Math.floor(box.right + 4); x += 2) {
+      for (let y = Math.ceil(box.top - 4); y <= Math.floor(box.bottom + 4); y += 2) {
         const hit = document.elementFromPoint(x, y);
         if (hit !== null && hit.closest('[data-connection-id]') === group) return { x, y };
       }
     }
     return null;
   }, connectionId);
-  if (point === null) throw new Error('no point on ' + connectionId);
-  return point;
+  return (await handle.jsonValue())!;
 }
 
 async function pressEdge(page: Page, connectionId: string): Promise<void> {
