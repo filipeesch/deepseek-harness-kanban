@@ -142,7 +142,9 @@ async function sweep() {
       let froze = false;
       if (wasStopped === false) { try { process.kill(pid, 'SIGSTOP'); froze = true; } catch (error) { if (error.code === 'ESRCH') continue; } }
       try {
-        if (inspect(pid, needle) !== 'owned') { if (froze) { try { process.kill(pid, 'SIGCONT'); } catch { /* Exited while frozen. */ } } continue; }
+        const state = inspect(pid, needle);
+        if (state === 'uncertain') throw new Error('Owned process membership could not be confirmed.');
+        if (state !== 'owned') { if (froze) { try { process.kill(pid, 'SIGCONT'); } catch { /* Exited while frozen. */ } } continue; }
         try { process.kill(pid, 'SIGKILL'); signalled += 1; } catch (error) { if (error.code !== 'ESRCH') throw error; }
       } catch (error) { if (froze) { try { process.kill(pid, 'SIGCONT'); } catch { /* Exited while frozen. */ } } throw error; }
     }
