@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { automaticPoints } from '../../src/client/workflow-view/routing/automatic.js';
-import { CONNECTION_SAMPLES, buildShape, directShape, type ConnectionShape, type DiagramPoint, type DiagramRect } from '../../src/client/workflow-view/routing/orthogonal.js';
+import { CONNECTION_SAMPLES, buildShape, type ConnectionShape, type DiagramPoint, type DiagramRect } from '../../src/client/workflow-view/routing/orthogonal.js';
 
 /** The drawn shape of an automatic route, as the diagram has always drawn it. */
 function connectionShape(from: DiagramRect, to: DiagramRect, options: { readonly returning: boolean; readonly fanOut: number; readonly fanOutCount: number; readonly clearanceStages?: readonly DiagramRect[] }): ConnectionShape {
@@ -106,13 +106,5 @@ describe('connection geometry', () => {
     expect(horizontal.tipAngle).toBeCloseTo(0, 0);
     const returning = connectionShape({ ...from, x: 500 }, { ...to, x: 0 }, { returning: true, fanOut: 0, fanOutCount: 1 });
     expect(returning.tipAngle).toBeCloseTo(-90, 0);
-    expect(directShape(from, to).tipAngle).toBeCloseTo(Math.atan2(40, 200) * (180 / Math.PI), 0);
-  });
-
-  it('draws a direct fallback path between the same edges', () => {
-    const shape = directShape(from, to);
-    expect(shape.points[0]).toEqual({ x: 200, y: 50 });
-    expect(shape.points[shape.points.length - 1]).toEqual({ x: 400, y: 90 });
-    expect(shape.path.startsWith('M 200 50')).toBe(true);
   });
 });

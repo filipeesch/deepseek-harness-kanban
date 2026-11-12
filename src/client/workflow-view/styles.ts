@@ -91,8 +91,15 @@ export const workflowViewStyles = String.raw`
 .dsh-kanban .kb-flow-shell:focus{outline:none}
 .dsh-kanban .kb-flow-shell:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:-2px}
 .dsh-kanban .kb-condition-popover-head{font-size:12px;line-height:1.35;overflow-wrap:anywhere}
-.dsh-kanban .kb-flow-travel{position:absolute;pointer-events:none;z-index:8;width:190px}
-.dsh-kanban .kb-flow-travel-card{display:flex;flex-direction:column;gap:2px;padding:7px 8px;border-radius:8px;border:1px solid var(--kb-line);background:var(--kb-surface);box-shadow:0 8px 20px #00000024;font-size:12px;line-height:1.35;overflow-wrap:anywhere}
+/* The transit rides the connection the diagram already draws: each particle follows
+   the same SVG path, so the drawing and the movement can never disagree. The path,
+   the duration, the delay, and the diameter arrive as custom properties per particle;
+   the CSS rule owns the timing, so a re-render cannot restart a running transit. */
+.dsh-kanban .kb-flow-transit{position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;z-index:8}
+.dsh-kanban .kb-flow-transit-particle{position:absolute;left:0;top:0;width:var(--kb-transit-size,12px);height:var(--kb-transit-size,12px);border-radius:50%;background:var(--dsw-alias-state-business-primary,CanvasText);box-shadow:0 0 calc(var(--kb-transit-size,12px) * 1.5) color-mix(in srgb,var(--dsw-alias-state-business-primary,CanvasText) 45%,transparent);offset-path:var(--kb-transit-path);offset-distance:0%;offset-rotate:0deg;offset-anchor:center;opacity:0;animation-name:kb-flow-transit-run;animation-duration:var(--kb-transit-duration,450ms);animation-delay:var(--kb-transit-delay,0ms);animation-timing-function:linear;animation-fill-mode:backwards}
+.dsh-kanban .kb-flow-transit-particle.is-core{box-shadow:0 0 calc(var(--kb-transit-size,12px) * 2.1) color-mix(in srgb,var(--dsw-alias-state-business-primary,CanvasText) 60%,transparent)}
+@keyframes kb-flow-transit-run{from{offset-distance:0%;opacity:0}12%{opacity:1}88%{opacity:1}to{offset-distance:100%;opacity:0}}
+@media (prefers-reduced-motion: reduce){.dsh-kanban .kb-flow-transit{display:none}}
 .dsh-kanban .kb-flow-canvas .react-flow__attribution{background:transparent;color:inherit;opacity:.55}
 .dsh-kanban .kb-flow-canvas .react-flow__attribution a{color:inherit}
 `;

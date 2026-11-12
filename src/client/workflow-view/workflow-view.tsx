@@ -23,12 +23,15 @@ import { useWorkflowWrites } from '../workflow-write.js';
 import { connectionLayoutOf } from './edge-model.js';
 import { buildWorkflowScene } from './scene.js';
 import { canRedo, canUndo, redoStep, undoStep } from './history.js';
-import { TravelLayer } from './travel-layer.js';
+import { TransitLayer } from './transit/layer.js';
 import { ViewControls } from './controls/view-controls.js';
 import { useFlowLock } from './use/use-flow-lock.js';
 import { useGridSnap } from './use/use-grid-snap.js';
 import { useStageMeasurements } from './use/use-stage-measurements.js';
-import { useTravel } from './use/use-travel.js';
+import { useArrivals } from './use/use-arrivals.js';
+import { useTransit } from './use/use-transit.js';
+import { supportsPathMotion } from './transit/port.js';
+import { HOST_MOTION_PREFERENCE, useReducedMotion, type MotionPreferencePort } from './use/use-reduced-motion.js';
 import { readWorkflowViewport, writeWorkflowViewport } from '../workflow-preference.js';
 
 export { PLACEMENT_SAVE_DELAY_MS } from './use/use-placement-saver.js';
@@ -82,6 +85,10 @@ export interface WorkflowViewProps {
   onEditStage?: (stageId: string) => void;
   /** Isolated harnesses substitute the canvas; production uses React Flow. */
   canvas?: WorkflowCanvasComponent;
+  /** Isolated harnesses may replace the host's path-motion capability probe. */
+  supportsTransit?: () => boolean;
+  /** Isolated harnesses may replace the host's motion preference. */
+  motionPreference?: MotionPreferencePort;
 }
 
 function applyOptimistic(tasks: readonly Task[], move: OptimisticMove | null): readonly Task[] {
@@ -112,7 +119,7 @@ function applyOptimistic(tasks: readonly Task[], move: OptimisticMove | null): r
  * The workflow diagram presentation of the active board.
  *
  * It owns composition only. The authored layout, the write queue, the optimistic
- * transitions, the connection gestures, and the card travel live in their own
+ * transitions, the connection gestures, and the card transit live in their own
  * modules; every move still runs through the board's move pipeline, and every
  * workflow change is one queued write.
  */
@@ -346,14 +353,35 @@ export function WorkflowView(props: WorkflowViewProps) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [lock.locked, redo, selectedConnectionId, undo]);
 
-  const travel = useTravel({
-    workflow: presented,
-    stateTasks: props.state.tasks,
-    tasks: props.tasks,
-    placements: layout.placements,
-    measured: measurements.measured,
-    connections: layout.connectionLayouts,
+  // The transit is planned from the cards the diagram presents, so it begins when the
+  // card actually moves on screen; the optimistic placement included. A host that
+  // cannot run it, or a reduced-motion preference, settles the arrangement instead.
+  const motionPort = useMemo(() => props.motionPreference ?? HOST_MOTION_PREFERENCE, [props.motionPreference]);
+  // The preference is observed, not sampled: a change while a flight runs settles it
+  // even when nothing else re-renders the diagram.
+  const reducedMotion = useReducedMotion(motionPort);
+  const capabilityRead = props.supportsTransit ?? supportsPathMotion;
+  const settled = reducedMotion || !capabilityRead();
+  const arrivals = useArrivals();
+  const { arrive: arriveAt, settle: settleArrival, retain: retainArrivals, clear: clearArrivals } = arrivals;
+  const transit = useTransit({
+    tasks: diagramTasks,
+    scene,
+    resetKey: props.boardId,
+    reducedMotion,
+    supported: capabilityRead(),
+    onArrive: arriveAt,
   });
+  // A pulse belongs to a card the diagram presents, so a card that leaves the
+  // presented cards takes its pulse with it instead of replaying it on return.
+  const presentedKey = useMemo(() => diagramTasks.map(task => task.id).join('|'), [diagramTasks]);
+  useEffect(() => {
+    retainArrivals(new Set(presentedKey === '' ? [] : presentedKey.split('|')));
+  }, [presentedKey, retainArrivals]);
+  // An arrangement that settles without motion presents no arrival pulse at all.
+  useEffect(() => {
+    if (settled) clearArrivals();
+  }, [settled, clearArrivals]);
 
   const initialColumnId = presented.initialColumnId;
   const stages: CanvasStage[] = scene.nodes.map(node => {
@@ -364,12 +392,11 @@ export function WorkflowView(props: WorkflowViewProps) {
     const authored = presentedRules(presented, edge.from);
     const rule = authored?.find(value => value.to === edge.to);
     const definition = presented.columns.find(column => column.id === edge.from)?.deterministic;
-    const exits = definition ? Object.entries(definition.exits).filter(([, to]) => to === edge.to).map(([name]) => name) : undefined;
     const connection = layout.connectionLayouts[connectionKey(edge.from, edge.to)];
     return {
       id: edge.id, from: edge.from, to: edge.to, kind: edge.kind, returning: edge.returning, fanOut: edge.fanOut, fanOutCount: edge.fanOutCount,
       ...(rule?.when === undefined ? {} : { condition: rule.when }),
-      ...(exits === undefined ? {} : { exitLabels: exits }),
+      ...(definition === undefined ? {} : { deterministic: true }),
       ...(connection?.source === undefined ? {} : { source: connection.source }),
       ...(connection?.target === undefined ? {} : { target: connection.target }),
       ...(connection?.segments === undefined ? {} : { segments: connection.segments }),
@@ -385,6 +412,7 @@ export function WorkflowView(props: WorkflowViewProps) {
       if (task === undefined) return null;
       const column = columnsById.get(task.columnId);
       if (column === undefined) return null;
+      const arrivalToken = arrivals.tokens.get(task.id);
       return <BoardCard
         task={task}
         column={column}
@@ -400,12 +428,14 @@ export function WorkflowView(props: WorkflowViewProps) {
         onToggleSelect={props.card.onToggleSelect}
         onBeginDrag={props.beginDrag}
         shouldSuppressClick={props.shouldSuppressClick}
-        onMoveTask={(_task, target) => props.card.onAdvance(task, target)}
         advancePending={props.card.advancePending.has(task.id)}
         onRun={props.card.onRun}
+        onMoveTask={props.card.onAdvance}
+        onArrivalEnd={settleArrival}
+        {...(arrivalToken === undefined ? {} : { arrivalToken })}
       />;
     },
-  }), [tasksById, columnsById, props.card, presented, props.onOpenTask, props.beginDrag, props.shouldSuppressClick]);
+  }), [tasksById, columnsById, props.card, presented, props.onOpenTask, props.beginDrag, props.shouldSuppressClick, arrivals.tokens, settleArrival]);
 
   const openCondition = useCallback((connectionId: string, anchor: ConditionAnchor) => {
     const connection = connectionsRef.current.find(value => value.id === connectionId);
@@ -453,7 +483,7 @@ export function WorkflowView(props: WorkflowViewProps) {
       cardEnvironment={cardEnvironment}
       drop={{ stageId: props.drag?.overColumnId ?? null, indicatorY: props.drag?.overColumnId === undefined ? null : props.drag.indicatorY }}
       selectedConnectionId={selectedConnectionId}
-      {...(travel.travel.length === 0 ? {} : { overlay: <TravelLayer moves={travel.travel} onFinished={travel.finish} /> })}
+      {...(transit.transits.length === 0 ? {} : { overlay: <TransitLayer transits={transit.transits} onArrived={transit.arrive} /> })}
       controls={viewport => <ViewControls
         locked={lock.locked}
         canUndo={canUndo(layout.history.history)}

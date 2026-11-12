@@ -1,5 +1,5 @@
 import React from 'react';
-import { BaseEdge, EdgeLabelRenderer, useStore, type EdgeProps } from '@xyflow/react';
+import { BaseEdge, useStore, type EdgeProps } from '@xyflow/react';
 import type { DiagramPoint } from './routing/orthogonal.js';
 import { useConnectionHandlers } from './connection-interaction.js';
 
@@ -17,7 +17,8 @@ export interface ConnectionEdgeData {
   readonly returning: boolean;
   /** True when this transition authors a condition. */
   readonly hasCondition: boolean;
-  readonly exitLabels?: readonly string[];
+  /** True when a deterministic stage's named exits author this connection's routing. */
+  readonly deterministic: boolean;
 }
 
 /** The middle of a drawn path, where its mark and its editor sit. */
@@ -47,12 +48,14 @@ export function pathMidpoint(points: readonly DiagramPoint[]): DiagramPoint | un
 }
 
 /**
- * Draws one connection: its path, its arrowhead, the mark of a connection without
- * a condition, and the editor its exit names open. The marks that move the
- * connection are not drawn here; they live in the affordance layer above the
- * stages, so a stage or the arrowhead can never cover them. This component still
- * owns the press that selects the connection and the double press that edits it,
- * because the line remains the press target below the stage content.
+ * Draws one connection: its path, its arrowhead, and the mark of a connection
+ * without a condition. The marks that move the connection are not drawn here; they
+ * live in the affordance layer above the stages, so a stage or the arrowhead can
+ * never cover them. This component still owns the press that selects the connection
+ * and the double press that edits it, because the line remains the press target
+ * below the stage content. A connection whose routing comes from a deterministic
+ * stage's named exits presents no exit name: its double press opens that stage's
+ * editor, and the layout lock still gates that edit.
  */
 export function ConnectionEdgeView({ id, data }: EdgeProps) {
   const edge = data as unknown as ConnectionEdgeData;
@@ -77,14 +80,13 @@ export function ConnectionEdgeView({ id, data }: EdgeProps) {
     onPointerLeave={() => handlers?.onHoverEnd(id)}
   >
     <BaseEdge id={id} path={edge.path} interactionWidth={LINE_HIT_WIDTH} className={'kb-flow-edge ' + (edge.kind === 'implicit' ? 'is-implicit' : 'is-explicit') + (edge.returning ? ' is-returning' : '')} />
-    {middle !== undefined && !edge.hasCondition && edge.kind === 'explicit' && handlers?.locked !== true && <circle
+    {middle !== undefined && !edge.hasCondition && edge.deterministic !== true && edge.kind === 'explicit' && handlers?.locked !== true && <circle
       className="kb-flow-condition-mark"
       cx={middle.x}
       cy={middle.y}
       r={CONDITION_MARK_RADIUS * scale}
       aria-hidden="true"
     />}
-    {middle !== undefined && edge.exitLabels !== undefined && <EdgeLabelRenderer><button type="button" className="kb-flow-exit-label nodrag nopan" style={{ transform: 'translate(-50%, -50%) translate(' + middle.x + 'px,' + (middle.y - 8 * scale) + 'px) scale(' + scale + ')' }} aria-label={'Named exits ' + edge.exitLabels.join(', ')} onClick={event => { event.stopPropagation(); handlers?.onEditCondition(id); }}>{edge.exitLabels.join(', ')}</button></EdgeLabelRenderer>}
     {tip !== undefined && <polygon className="kb-flow-arrow" points="0,0 -10,-4.5 -10,4.5" transform={'translate(' + tip.x + ', ' + tip.y + ') rotate(' + angle + ')'} />}
   </g>;
 }
