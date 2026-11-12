@@ -216,7 +216,6 @@ function CanvasInner(props: WorkflowCanvasProps) {
     onStageResizeEnd: props.onStageResizeEnd,
     onStageResizeCancel: props.onStageResizeCancel,
     ...(props.locked ? {} : { onBeginConnect: gestures.beginCreation }),
-    editDisabled: props.locked,
   }), [props.callbacks, stageDrag.start, props.snap, props.onStageResize, props.onStageResizeEnd, props.onStageResizeCancel, props.locked, gestures.beginCreation]);
 
   const dragState = useMemo(() => ({ stageId: props.drop.stageId, indicatorY: props.drop.indicatorY, candidateStageId: gestures.candidateStageId }), [props.drop.stageId, props.drop.indicatorY, gestures.candidateStageId]);

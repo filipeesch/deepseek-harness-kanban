@@ -36,8 +36,8 @@ export function DrawerStageControl({ id, destinations, currentColumnId, next, st
         {destinations.map(({ column, access }) => <option key={column.id} value={column.id} className={access === 'restricted' ? 'kb-stage-option-restricted' : undefined} aria-label={access === 'restricted' ? column.name + ', requires confirmation' : undefined}>{column.name}</option>)}
       </select>
     </label>
-    {next !== undefined && <button type="button" className="kb-button kb-icon-button kb-stage-advance" aria-label={advanceStageLabel(next)} title={advanceStageLabel(next)} disabled={disabled} onClick={() => onMove(next.column)}><AdvanceStageIcon size={15} /></button>}
-    {staleNext !== undefined && <button type="button" className="kb-button kb-icon-button kb-stage-advance" aria-label={refuseLabel(staleNext)} title={refuseLabel(staleNext)} disabled={disabled} onClick={() => onRefuse?.()}><AdvanceStageIcon size={15} /></button>}
+    {next !== undefined && <button type="button" className="kb-button kb-icon-button kb-stage-advance" aria-label={advanceStageLabel(next)} title={advanceStageLabel(next)} disabled={disabled} onClick={() => onMove(next.column)}><AdvanceStageIcon size={16} /></button>}
+    {staleNext !== undefined && <button type="button" className="kb-button kb-icon-button kb-stage-advance" aria-label={refuseLabel(staleNext)} title={refuseLabel(staleNext)} disabled={disabled} onClick={() => onRefuse?.()}><AdvanceStageIcon size={16} /></button>}
     <span className="kb-sr" id={hintId}>Stages that this workflow does not permit require confirmation before moving.</span>
   </div>;
 }

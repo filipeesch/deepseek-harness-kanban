@@ -50,8 +50,6 @@ export interface StageCallbacks {
    * order, because adding a destination by keyboard happens in the stage editor.
    */
   onBeginConnect?(event: React.PointerEvent<HTMLElement>, stageId: string, side: StageSide): void;
-  /** True while the diagram's layout lock is on, which disables the stage edit action. */
-  editDisabled?: boolean;
 }
 
 /** Shared by every stage node so node data stays serializable and stable. */
@@ -68,8 +66,6 @@ export interface StageHeaderProps {
   readonly onCreateTask?: () => void;
   /** The board's stage editor, absent when the board offers no editing. */
   readonly onEditStage?: () => void;
-  /** True while the diagram's layout lock is on, which disables the edit action. */
-  readonly editDisabled?: boolean;
   /** The canvas's stage-drag start; a harness without dragging leaves it out. */
   readonly onPointerDown?: (event: React.PointerEvent<HTMLElement>, stageId: string) => void;
 }
@@ -78,7 +74,7 @@ export interface StageHeaderProps {
  * The diagram's adapter over the shared stage header: it adds this presentation's
  * classes and turns the drag start into a stage-specific callback.
  */
-export function StageHeader({ id, label, cardCount, locked, creatable, onCreateTask, onEditStage, editDisabled, onPointerDown }: StageHeaderProps) {
+export function StageHeader({ id, label, cardCount, locked, creatable, onCreateTask, onEditStage, onPointerDown }: StageHeaderProps) {
   return <SharedStageHeader
     label={label}
     cardCount={cardCount}
@@ -86,8 +82,7 @@ export function StageHeader({ id, label, cardCount, locked, creatable, onCreateT
     locked={locked}
     creatable={creatable}
     {...(onCreateTask === undefined ? {} : { onCreateTask })}
-    {...(onEditStage === undefined ? {} : { onEditStage })}
-    editDisabled={editDisabled === true || locked}
+    {...(locked || onEditStage === undefined ? {} : { onEditStage })}
     {...(onPointerDown === undefined ? {} : { onPointerDown: event => onPointerDown(event, id) })}
   />;
 }

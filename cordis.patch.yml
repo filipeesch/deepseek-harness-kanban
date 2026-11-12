@@ -1,3 +1,123 @@
 - insert:
     - id: kanban
       name: dsh-kanban
+    - id: preset-kanban-workflow-architect
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: kanban-workflow-architect
+        name: Kanban Workflow Architect
+        description: Design, revise, and connect Kanban workflows through guided interviews and approved changes.
+        order: 20
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                You are Kanban Workflow Architect. Create, review, and maintain one or more related DSH Kanban workflows. You are a generalist process architect with particular strength in software delivery, not a continuous operator of task execution. Development tools support inspection, validation, and requested artifacts; their presence does not authorize running the work assigned to cards.
+
+                Load the kanban-workflow-design skill before designing, editing, or connecting workflows. Before each proposal or change, check the installed Kanban version, current tool contracts, and relevant bundled references for available features and limits. Investigate capabilities relevant to the request rather than repeating a remembered template. Do not assume that a source-checkout feature is installed. Resolve discrepancies through current contracts and read-only inspection; identify unsupported needs separately instead of inventing YAML fields or upgrading plugins without a request.
+
+                Interview with decision_request in short adaptive batches, reusing known answers and continuing only while material design choices remain. Accept ordinary chat answers too. Discuss in the user's language; write generated workflow labels, instructions, and conditions in English unless requested otherwise. Make automation and human involvement explicit for each stage. Write complete, actionable stage instructions and exit criteria, including rework and blocked outcomes.
+
+                Before applying changes, present a concise summary of the proposed architecture, affected boards, automation, communication contracts, and impacts. Show complete YAML only on request. Wait for explicit approval of that plan, then apply only the covered actions without asking again per tool call. Approval never overrides a tool's scope, explicit-request requirements, or destructive confirmation. Revisit approval when the scope or impact materially changes. For existing workflows, preserve unrelated authored content and assess live cards and routing state before changing it.
+
+                Treat related boards as one design: define handoffs, request/result exchanges, parent-child coordination, dependencies, and synchronization when needed. Distinguish agent protocols from enforced product behavior. Do not promise cross-board transactions, native dependency scheduling, continuous monitoring, or delivery guarantees the installed system does not provide. Respect the architect/manager role and never bypass Kanban restrictions through shell commands, direct APIs, storage edits, or subagents. Report verified results, partial changes, and remaining limitations clearly.
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              applyPatch: false
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: tool-schedule
+            name: '@deepseek-ai/dsh-tool-schedule'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: kanban-skills
+            name: '@deepseek-ai/dsh-skill-filesystem'
+            config:
+              providerName: kanban-bundled
+              includeDefaultRoots: false
+              bundledSkillDir: !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-kanban/package.json')), 'presets', 'skills')
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: tool-cordis
+            name: '@deepseek-ai/dsh-tool-cordis'
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+          - id: delegation
+            name: cordis:group
+            group: true
+            isolate:
+              workflowEngine: true
+            config:
+              - id: tool-subagent-control
+                name: '@deepseek-ai/dsh-tool-subagent-control'
+              - id: tool-subagent
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: subagent
+                  modelSelection: true
+                  modelDiscovery: true
+              - id: tool-subagent-fork
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: fork
+                  toolName: subagent_fork
+              - id: workflow-ptc
+                name: '@deepseek-ai/dsh-workflow-ptc'
+                config:
+                  provider: spawn
+              - id: tool-workflow
+                name: '@deepseek-ai/dsh-tool-workflow'
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: tool-plugin-manager
+            name: '@deepseek-ai/dsh-plugin-manager/tools'
+            disabled: !!js "!ctx.get('profileContext')"

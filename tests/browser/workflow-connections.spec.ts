@@ -18,7 +18,7 @@ async function openFlow(page: Page): Promise<void> {
 }
 
 async function unlock(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Unlock layout editing' }).click();
+  await page.getByRole('button', { name: 'Unlock layout editing', exact: true }).click();
 }
 
 function commands(page: Page): Promise<HarnessCommand[]> {
@@ -45,22 +45,22 @@ async function drag(page: Page, from: { x: number; y: number }, to: { x: number;
 /** A client point that actually belongs to a drawn connection, since an SVG group's
  *  bounding box is mostly empty space. */
 async function pointOnEdge(page: Page, connectionId: string): Promise<{ x: number; y: number }> {
-  const point = await page.evaluate(id => {
+  const handle = await page.waitForFunction(id => {
     const group = document.querySelector('[data-connection-id="' + id + '"]');
     if (group === null) return null;
     const path = group.querySelector('.react-flow__edge-interaction') ?? group.querySelector('.kb-flow-edge');
     if (path === null) return null;
     const box = path.getBoundingClientRect();
-    for (let x = Math.ceil(box.left); x <= Math.floor(box.right); x += 2) {
-      for (let y = Math.ceil(box.top); y <= Math.floor(box.bottom); y += 2) {
+    // SVG bounds exclude the stroke and can have zero height or width for straight paths.
+    for (let x = Math.ceil(box.left - 4); x <= Math.floor(box.right + 4); x += 2) {
+      for (let y = Math.ceil(box.top - 4); y <= Math.floor(box.bottom + 4); y += 2) {
         const hit = document.elementFromPoint(x, y);
         if (hit !== null && hit.closest('[data-connection-id]') === group) return { x, y };
       }
     }
     return null;
   }, connectionId);
-  if (point === null) throw new Error('no point on ' + connectionId);
-  return point;
+  return (await handle.jsonValue())!;
 }
 
 async function pressEdge(page: Page, connectionId: string): Promise<void> {
@@ -296,12 +296,12 @@ test('keeps a connection without a condition out of reach while the layout is lo
   await openFlow(page);
   await unlock(page);
   await drawConnection(page, 'explore', 'apply');
-  await page.getByRole('button', { name: 'Lock layout editing' }).click();
+  await page.getByRole('button', { name: 'Lock layout editing', exact: true }).click();
   // Authoring a condition for a connection that has none changes the diagram's structure.
   await expect(page.locator('[data-connection-id="explore->apply:0"] .kb-flow-condition-mark')).toHaveCount(0);
-  // The stage edit action is presented disabled, with the reason in its tooltip.
+  // The locked diagram does not present a stage edit action.
   const header = page.locator('.kb-flow-stage[data-column-id="explore"] .kb-flow-stage-header');
-  await expect(header.getByRole('button', { name: 'Edit stage Explore' })).toBeDisabled();
+  await expect(header.getByRole('button', { name: 'Edit stage Explore' })).toHaveCount(0);
   await header.screenshot({ path: path.join(OUT, 'connections-locked-header.png') });
   await doublePressEdge(page, 'explore->apply:0');
   await expect(page.getByRole('dialog', { name: /^Condition from / })).toHaveCount(0);
@@ -318,7 +318,7 @@ test('keeps an authored condition editable while the layout is locked', async ({
   await first.getByRole('textbox', { name: 'Transition condition' }).fill('before locking');
   await first.getByRole('button', { name: 'Save' }).click();
   await expect(first).toBeHidden();
-  await page.getByRole('button', { name: 'Lock layout editing' }).click();
+  await page.getByRole('button', { name: 'Lock layout editing', exact: true }).click();
   await doublePressEdge(page, 'explore->apply:0');
   const editor = page.getByRole('dialog', { name: /Condition from Explore to Apply/ });
   await expect(editor).toBeVisible();

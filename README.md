@@ -397,6 +397,30 @@ The question strip's footer has a **Dismiss** action on the left. An untouched r
 
 Recording a transition is routing information for the next advance, not a move: it never changes the task's stage or position. There are **no model tools to move or delete cards or administer Hubs**, no plugin checklist or decision ledger, and no plugin terminal or full Git/code-review integration; the workflow surface has a YAML editor. Existing native DSH features are not removed.
 
+## Kanban Workflow Architect preset
+
+The bundle also registers **Kanban Workflow Architect** (`kanban-workflow-architect`)
+without changing your default preset. Select it for a new **ordinary DSH chat** to
+create or revise one or more related boards; board administration is intentionally
+unavailable from task conversations. It includes developer tools, but its role is
+workflow architecture and management, not continuous card execution.
+
+The agent interviews you in short `decision_request` rounds, discusses in your
+language, and writes workflows in English unless asked otherwise. Before applying
+changes it requests approval of a concise architecture and impact summary; complete
+YAML is available on request. It can design handoffs, request/result exchanges, and
+parent-child coordination across boards, while explaining which parts are agent
+protocols rather than native scheduling guarantees.
+
+Its [progressive skill](<presets/skills/kanban-workflow-design/SKILL.md>) ships with
+the plugin and directs the agent to current installed tools and relevant references
+before designing changes. Updating source alone does not update an installation:
+build and update/reconcile the bundle through the normal install flow. New agents
+use the updated preset definition; running agents retain their existing composition.
+A profile override of the declaration replaces its complete configuration and can
+mask later shipped changes. [Maintenance rules](<AGENTS.md#kanban-workflow-architect-preset>)
+keep guidance aligned with product changes without accumulating a second project manual.
+
 ## Development and evidence
 
 ```sh
