@@ -145,7 +145,7 @@ describe('board log', () => {
     const decoded = decodeBoardLog(encodeBoardLog(log));
     expect(decoded.ok).toBe(true);
     if (decoded.ok) expect(headToken(decoded.log)).toBe(headToken(log));
-    expect(decodeBoardLog({ ...encodeBoardLog(log), version: 3 })).toEqual({ ok: false, reason: 'unsupported-version', version: 3 });
+    expect(decodeBoardLog({ ...encodeBoardLog(log), version: 4 })).toEqual({ ok: false, reason: 'unsupported-version', version: 4 });
     expect(decodeBoardLog({ version: 1, snapshot: { text: ' ', seq: 0 }, events: [] }).ok).toBe(false);
     expect(decodeBoardLog({ version: 1, snapshot: { text: BASE, seq: 5 }, events: [{ kind: 'workflow.field-changed', field: 'name', value: 'X', seq: 1, at: AT, v: 1 }] }).ok).toBe(false);
     expect(decodeBoardLog({ version: 1, snapshot: { text: BASE, seq: 0 }, events: [

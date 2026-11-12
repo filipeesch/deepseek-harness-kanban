@@ -30,7 +30,7 @@ Every task SHALL carry an ordered record of the flow facts that happened to it. 
 
 The record SHALL include, as separate entries: the task's creation together with the stage it was created in; every stage entry, naming the origin stage and the destination stage; every next-stage intent recorded on the task; every auto mode change, naming whether auto mode was enabled, disabled, paused with its reason, paused by the agent, or resumed; and the settled outcome of every worktree creation, attachment, and removal, and of every failed context operation, naming the path and branch the operation acted on and the failure reason when it failed.
 
-The record SHALL additionally include the settled outcome of each deterministic execution, distinguishing a completed named result, an executor failure, and an explicit or superseding cancellation. The outcome SHALL identify its execution and source stage and SHALL carry the named exit and redacted message or diagnostic when one exists. A completed script outcome SHALL NOT claim that its destination was entered before that transition settles. A logical deterministic handoff acceptance or failure SHALL be recorded when that fact settles, with its delivery identity and destination reference, rather than by copying raw transcript events. Replaying the same execution outcome or handoff receipt after restart SHALL NOT create another occurrence; a later explicit Play creates a different execution whose settled outcome SHALL be recorded even when its text repeats a previous outcome. These entries SHALL contain no variable values, trust grants, captured code, or polling log stream and SHALL remain installation-local.
+The record SHALL additionally include the settled outcome of each deterministic execution, distinguishing a completed named result, an executor failure, and an explicit or superseding cancellation. The outcome SHALL identify its execution and source stage and SHALL carry the named exit and redacted message or diagnostic when one exists. A settled execution SHALL additionally carry, bounded, the parameter names and values that execution used, so two executions of the same entry can be compared; it SHALL NOT carry a value the execution did not receive. A completed script outcome SHALL NOT claim that its destination was entered before that transition settles. A logical deterministic handoff acceptance or failure SHALL be recorded when that fact settles, with its delivery identity and destination reference, rather than by copying raw transcript events. Replaying the same execution outcome or handoff receipt after restart SHALL NOT create another occurrence; a later explicit Play creates a different execution whose settled outcome SHALL be recorded even when its text repeats a previous outcome. These entries SHALL contain no resolved variable values, trust grants, captured code, or polling log stream and SHALL remain installation-local. Parameter values are task data, not credentials, and SHALL be recorded only on the execution that received them.
 
 #### Scenario: Record the creation of a task
 
@@ -103,11 +103,17 @@ The record SHALL additionally include the settled outcome of each deterministic 
 - **THEN** history retains a settled outcome for each execution
 - **AND** the equal text does not collapse those different occurrences
 
+#### Scenario: Record the parameter values an execution used
+
+- **WHEN** a parameterized execution settles after running with a pipeline and an app value
+- **THEN** its settled outcome carries those names and values
+- **AND** a later execution of the same entry that runs with a different value records its own values
+
 ### Requirement: Only settled facts are recorded
 
 The record SHALL NOT include state that is still in progress or that an existing surface already presents as current state. A phase of an operation that has not settled, a transition awaiting delivery, and the current stage itself SHALL NOT produce an entry. Attaching or closing a conversation, delivering a stage instruction, saving or deleting a note, and editing the task's title or description SHALL NOT produce an entry. Clearing a next-stage intent SHALL NOT produce an entry.
 
-An active deterministic program, a sleeping loop, individual external checks, recovery process attempts, pending trust, and a saved result still awaiting delivery SHALL NOT generate progress or per-poll rows. Its terminal execution outcome and the eventual logical handoff settlement SHALL follow Flow facts recorded. A raw stage-instruction delivery SHALL still add no row merely because its context contains a handoff, and no script history SHALL be inferred from console output. Intermediate state SHALL remain on the current execution surfaces instead.
+An active deterministic program, a sleeping loop, individual external checks, recovery process attempts, pending trust, and a saved result still awaiting delivery SHALL NOT generate progress or per-poll rows. Its terminal execution outcome and the eventual logical handoff settlement SHALL follow Flow facts recorded. A parameter admission refusal SHALL NOT produce an entry, because it is a configuration refusal rather than an execution attempt. Editing an entry's parameter values SHALL NOT produce an entry; the next settled execution records the values it used. A raw stage-instruction delivery SHALL still add no row merely because its context contains a handoff, and no script history SHALL be inferred from console output. Intermediate state SHALL remain on the current execution surfaces instead.
 
 #### Scenario: An operation in progress adds nothing
 
@@ -141,6 +147,12 @@ An active deterministic program, a sleeping loop, individual external checks, re
 - **WHEN** a deterministic script performs repeated checks and sleeps, or an active run is restarted after host loss
 - **THEN** those progress events add no task-history row
 - **AND** only distinct settled execution and logical handoff facts are appended
+
+#### Scenario: A parameter refusal and a repair add nothing
+
+- **WHEN** an admission is refused for a missing parameter and the user later edits that value
+- **THEN** neither the refusal nor the edit adds a task-history entry
+- **AND** the next settled execution records the values it used
 
 ### Requirement: Every occurrence is recorded
 

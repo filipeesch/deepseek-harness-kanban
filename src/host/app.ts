@@ -59,6 +59,7 @@ import { DeterministicSupervisor } from './deterministic-supervisor.js';
 import { createNativeSupervisorPorts } from './deterministic-control.js';
 import { createDeterministicRouter } from './deterministic-routing.js';
 import { deterministicEqual } from '../domain/deterministic-definition.js';
+import { declaredParameterNames, validateParameterValues } from '../domain/deterministic-parameters.js';
 import { ensureLocalStageIdentity } from '../domain/deterministic-state.js';
 import { recordDeterministicHandoff } from '../domain/task-history/record.js';
 
@@ -206,7 +207,7 @@ export class KanbanApp {
    const value=task.deterministic;if(!value||task.stageEntry?.id!==value.entryId)continue;
    const saved=board.workflow.columns.find(column=>column.id===task.columnId)?.deterministic;
    const unavailable=!this.deterministicRuntime;
-   result[task.id]={entryId:value.entryId,executionId:value.executionId,phase:unavailable?'failed':value.phase,startedAt:value.startedAt,attempt:value.attempt,restartCount:value.restartCount,
+   result[task.id]={entryId:value.entryId,executionId:value.executionId,phase:unavailable?'failed':value.phase,startedAt:value.startedAt,attempt:value.attempt,restartCount:value.restartCount,...(value.parameters===undefined?{}:{parameters:{...value.parameters}}),
     ...(unavailable?{error:{code:'DETERMINISTIC_UNAVAILABLE',message:'Mount the native filesystem, sandbox, shell, and function-body TypeScript capabilities to run deterministic steps.'}}:value.error?{error:value.error}:{}),...(value.result?{exit:value.result.exit,message:value.result.message,...(value.result.deliveryStatus?{deliveryStatus:value.result.deliveryStatus}:{})}:{}),...(value.capture?{fingerprint:value.capture.fingerprint}:{}),savedVersionChanged:!saved||!deterministicEqual(saved,value.definition)};
   }return result;
  }
@@ -779,8 +780,8 @@ export class KanbanApp {
   * lane, so a declaration is serialized with every other write and a stale one
   * never lands after the task moved.
   */
- recordTransition(taskId:string,write:{columnId?:string;reason?:string}):Promise<LocatedTask>{
-  return this.command({type:'task.recordTransition',taskId,...(write.columnId===undefined?{}:{columnId:write.columnId}),...(write.reason===undefined?{}:{reason:write.reason})}).then(()=>this.locatedTask(taskId));
+ recordTransition(taskId:string,write:{columnId?:string;reason?:string;parameters?:Record<string,string>}):Promise<LocatedTask>{
+  return this.command({type:'task.recordTransition',taskId,...(write.columnId===undefined?{}:{columnId:write.columnId}),...(write.reason===undefined?{}:{reason:write.reason}),...(write.parameters===undefined?{}:{parameters:write.parameters})}).then(()=>this.locatedTask(taskId));
  }
  private async execute(command:Command):Promise<FullHostSnapshot>{
   invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');
@@ -822,6 +823,7 @@ export class KanbanApp {
    case 'task.deterministicApprove':await this.requireDeterministic().approve(command.taskId,command.executionId,command.fingerprint);break;
    case 'task.deterministicVariable':{const located=this.locatedTask(command.taskId);invariant(located.project.id===command.projectId,'STALE_STAGE','The task project changed before this value could be saved.');await this.ensureDeterministicEntry(command.taskId);const current=this.locatedTask(command.taskId).task;invariant(current.stageEntry?.stageIdentity===command.stageIdentity,'STALE_STAGE','The task moved to another stage before this value could be saved.');await this.requireDeterministic().variable(command.taskId,command.name,command.value??null,command.stageIdentity);break;}
    case 'task.deterministicRetryDelivery':{const task=this.locatedTask(command.taskId).task;invariant(task.deterministic?.entryId===command.entryId&&task.deterministic.executionId===command.executionId,'STALE_EXECUTION','This saved result no longer owns the stage entry.');await this.requireDeterministic().retryDelivery({taskId:task.id,entryId:command.entryId,executionId:command.executionId});break;}
+   case 'task.deterministicParameters':await this.requireDeterministic().parameters(command.taskId,command.entryId,command.values);break;
    case 'task.edit':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).editTask(command.taskId,{...(command.title!==undefined?{title:command.title}:{}),...(command.description!==undefined?{description:command.description}:{})},command.expectedRevision);break;}
    case 'conversation.create':{const created=await this.createConversationNow(command.taskId,{ensureFirst:command.ensureFirst===true});commandReceipt={kind:'conversation',id:created.sessionId,...(created.model===undefined?{}:{model:created.model})};break;}
    case 'conversation.close':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).closeSession(command.taskId,command.sessionId);break;}
@@ -843,7 +845,7 @@ export class KanbanApp {
    // Changing the setting forgets a turn that has not settled yet, so enabling — or
    // resuming a paused task — never advances a turn that ended before the change.
    case 'task.autoMode':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).setAutoMode(command.taskId,command.enabled);this.turnAdvance.forget(command.taskId);break;}
-   case 'task.recordTransition':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).recordTransition(command.taskId,command.columnId,command.reason);break;}
+   case 'task.recordTransition':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).recordTransition(command.taskId,command.columnId,command.reason,command.parameters);break;}
    case 'task.pause':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).pauseTask(command.taskId,command.reason);this.turnAdvance.forget(command.taskId);break;}
    case 'task.resume':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).resumeTask(command.taskId);this.turnAdvance.forget(command.taskId);this.deterministicRuntime?.wake(command.taskId);break;}
    case 'task.runInstruction':await this.runInstruction(command);break;
@@ -964,7 +966,8 @@ export class KanbanApp {
   if(this.disposed)return;if(this.driving){this.driveAgain=true;return;}this.driving=true;
   try{do{this.driveAgain=false;this.pendingTransitions.refresh(this.locator.summaries());for(const taskId of [...this.pendingTransitions.list()]){const located=this.locator.byTask(taskId);const task=located?.task;const pending=task?.pendingTransition;if(!located||!task||!pending||pending.status!=='waiting'||task.operation||this.handoffAdmissions.has(task.id)||(pending.worktreeRequest&&task.worktree?.status!=='ready'))continue;const store=this.hubs.hub(located.hubId);
    try{
-    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');operations.placeTask(d,t.id,pending.columnId,placementFromAnchor(pending.beforeTaskId),nextEnteredAt(),{retainAgentPause:pending.origin!==undefined,at:this.hubs.operationDeps().now()});if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});if(pending.origin===undefined)this.turnAdvance.forget(task.id);
+    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');if(pending.parameters!==undefined){const destination=board.workflow.columns.find(column=>column.id===pending.columnId);const checked=validateParameterValues(declaredParameterNames(destination?.deterministic?.params),pending.parameters);invariant(checked.ok,'INVALID_PARAMETERS',checked.ok?'':checked.message);}
+      operations.placeTask(d,t.id,pending.columnId,placementFromAnchor(pending.beforeTaskId),nextEnteredAt(),{retainAgentPause:pending.origin!==undefined,at:this.hubs.operationDeps().now(),...(pending.parameters===undefined?{}:{parameters:pending.parameters})});if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});if(pending.origin===undefined)this.turnAdvance.forget(task.id);
     if(pending.mode==='run'){
      invariant(pending.sessionId&&pending.text,'INVALID_TARGET','Confirmed execution is missing its target or instruction.');
      await admitStageInstruction(this.stageInstructionDeps(),{taskId:task.id,columnId:pending.columnId,instruction:pending.text,sessionId:pending.sessionId,requestId:pending.id,...(pending.reason===undefined?{}:{transition:{fromColumnId:pending.fromColumnId,reason:pending.reason}})});

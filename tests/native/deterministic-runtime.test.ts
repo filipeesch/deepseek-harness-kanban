@@ -97,6 +97,20 @@ describe('actual native deterministic ABI without profiles or models', () => {
     await new Promise(resolve => setTimeout(resolve, 500)); controller.abort();
     expect(await work).toMatchObject({ kind: 'aborted' });
   });
+
+  it('passes declared parameter values to both languages as structured data', async () => {
+    const exits = { passed: { columnId: 'review', stageIdentity: 'stable-review' } };
+    const typescript = await runtime.capture({ definition: { language: 'typescript', code: 'return { exit: "passed", message: input.params.pipeline + ":" + input.params.app };', directory: 'project', params: [{ name: 'pipeline' }, { name: 'app' }], exits: { passed: 'review' } }, projectDirectory: root, exits });
+    await runtime.trust.approve(scope, typescript.fingerprint);
+    expect(await runtime.execute({ executionId: 'params-typescript', taskId: 'task', capture: typescript, input: { params: { pipeline: 'ci-main', app: 'checkout $(no-exec)' } }, scope, signal: new AbortController().signal }))
+      .toMatchObject({ kind: 'completed', completion: { message: 'ci-main:checkout $(no-exec)' } });
+    const bashCode = `node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const i=JSON.parse(s);process.stdout.write(JSON.stringify({exit:"passed",message:i.params.app}))})'`;
+    const bash = await runtime.capture({ definition: { language: 'bash', code: bashCode, directory: 'project', params: [{ name: 'app' }], exits: { passed: 'review' } }, projectDirectory: root, exits });
+    await runtime.trust.approve(scope, bash.fingerprint);
+    expect(await runtime.execute({ executionId: 'params-bash', taskId: 'task', capture: bash, input: { params: { app: 'checkout' } }, scope, signal: new AbortController().signal }))
+      .toMatchObject({ kind: 'completed', completion: { message: 'checkout' } });
+  });
+
   it('hard-aborts an active native TypeScript busy loop', async () => {
     const controller = new AbortController();
     const result = run('typescript', 'while (true) {}', controller.signal);

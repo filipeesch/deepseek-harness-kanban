@@ -36,6 +36,26 @@ describe('deterministic authoring draft', () => {
     const draft = { ...deterministicDraft(column.deterministic), env: 'TOKEN,TOKEN,BAD=VALUE', exits: [{ name: 'ok', to: 'wait' }] };
     expect(deterministicProblems(draft, targets).map(problem => problem.field)).toEqual(expect.arrayContaining(['env', 'exits']));
   });
+  it('round-trips declared parameters and validates them before a save', () => {
+    const withParameters: Column = { id: 'wait', name: 'Wait', deterministic: { ...column.deterministic!, params: [{ name: 'pipeline', description: 'CI workflow' }, { name: 'app' }] } };
+    const draft = stageDraft(withParameters);
+    expect(draftChanged(draft, withParameters)).toBe(false);
+    expect(draftProblems(draft, targets)).toEqual([]);
+    expect(stagePatch(draft, withParameters)).toEqual({});
+    expect(deterministicDefinition(draft.deterministic!)).toEqual(withParameters.deterministic);
+    const added = { ...draft, deterministic: { ...draft.deterministic!, params: [...draft.deterministic!.params, { name: 'environment', description: '' }] } };
+    expect(deterministicDefinition(added.deterministic!).params).toEqual([{ name: 'pipeline', description: 'CI workflow' }, { name: 'app' }, { name: 'environment' }]);
+    expect(stagePatch(added, withParameters).deterministic?.params).toHaveLength(3);
+  });
+  it('rejects an invalid parameter declaration with an inline problem', () => {
+    const base = deterministicDraft(column.deterministic);
+    for (const params of [
+      [{ name: '', description: '' }],
+      [{ name: 'bad name', description: '' }],
+      [{ name: 'pipeline', description: '' }, { name: 'pipeline', description: '' }],
+      [{ name: 'pipeline', description: 'x'.repeat(201) }],
+    ]) expect(deterministicProblems({ ...base, params }, targets)).toEqual(expect.arrayContaining([expect.objectContaining({ field: 'params' })]));
+  });
   it('blocks stage id edits during directly owned script work', () => {
     const task = { id: 't', columnId: 'wait' } as never;
     expect(stageRenameBlock([task], {}, { t: { phase: 'result-ready' } as never })).toContain('deterministic execution');

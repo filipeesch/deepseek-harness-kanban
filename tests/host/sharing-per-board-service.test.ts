@@ -207,7 +207,7 @@ describe('per-board publishing service', () => {
       await f.layout.appendChanges(supported, [{ kind: 'workflow.field-changed', field: 'name', value: 'Updated independently' }], { expectedHead: second!.head, message: 'm', at: NOW });
       const firstSnapshot = await f.layout.readLog(unsupported); const firstStage = parseWorkflow(firstSnapshot!.log.snapshot.text).columns[0]!;
       const executable = appendEvents(firstSnapshot!.log, [{ kind: 'stage.field-changed', key: firstStage.key!, field: 'deterministic', value: { language: 'bash', code: 'printf example', directory: 'task', exits: { passed: 'plan' } } }], NOW);
-      const compacted = compactBoardLog(executable, 0); expect(compacted.events).toEqual([]); expect(compacted.version).toBe(2);
+      const compacted = compactBoardLog(executable, 0); expect(compacted.events).toEqual([]); expect(compacted.version).toBe(3);
       f.layout.injectRawLog(unsupported, encodeBoardLog(compacted));
       const originalRead = f.layout.readLog.bind(f.layout);
       // Model the legacy v1 reader's version gate against the actual compacted v2 bytes.

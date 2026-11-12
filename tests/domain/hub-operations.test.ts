@@ -126,13 +126,31 @@ describe('Hub operations', () => {
     hub.boards[0]!.workflow.columns.push({ id: 'review', name: 'Review' }, { id: 'done', name: 'Done' });
     hub.boards[0]!.workflow.columns[0]!.allowedTransitions = transitions('review', 'done');
     const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Route', description: '' }, deps);
-    operations.recordTransition(hub, task.id, 'done', ' The review approved the work. ', deps);
+    operations.recordTransition(hub, task.id, 'done', ' The review approved the work. ', undefined, deps);
     expect(task.recordedTransition).toMatchObject({ fromColumnId: 'backlog', columnId: 'done', reason: 'The review approved the work.' });
     expect(task.columnId).toBe('backlog');
-    operations.recordTransition(hub, task.id, 'review', 'Changes are needed.', deps);
+    operations.recordTransition(hub, task.id, 'review', 'Changes are needed.', undefined, deps);
     expect(task.recordedTransition?.columnId).toBe('review');
     expect(task.recordedTransition?.reason).toBe('Changes are needed.');
-    operations.recordTransition(hub, task.id, undefined, undefined, deps);
+    operations.recordTransition(hub, task.id, undefined, undefined, undefined, deps);
+    expect(task.recordedTransition).toBeUndefined();
+  });
+
+  it('records declared parameter values and rejects a set that does not match the destination', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    hub.boards[0]!.workflow.columns.push({ id: 'wait', name: 'Wait', deterministic: { language: 'bash', code: 'echo ok', directory: 'task', params: [{ name: 'pipeline', description: 'CI workflow' }], exits: { ok: 'done' } } }, { id: 'done', name: 'Done' });
+    hub.boards[0]!.workflow.columns[0]!.allowedTransitions = transitions('wait', 'done');
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Monitor', description: '' }, deps);
+    operations.recordTransition(hub, task.id, 'wait', 'Monitor the CI workflow.', { pipeline: 'ci-main' }, deps);
+    expect(task.recordedTransition).toMatchObject({ columnId: 'wait', reason: 'Monitor the CI workflow.', parameters: { pipeline: 'ci-main' } });
+    expect(() => operations.recordTransition(hub, task.id, 'wait', 'Monitor the CI workflow.', { app: 'checkout' }, deps)).toThrowError(/Undeclared parameter: app/);
+    expect(() => operations.recordTransition(hub, task.id, 'wait', 'Monitor the CI workflow.', undefined, deps)).toThrowError(/Missing required parameter: pipeline/);
+    expect(() => operations.recordTransition(hub, task.id, 'wait', 'Monitor the CI workflow.', { pipeline: '' }, deps)).toThrowError(/Missing required parameter: pipeline/);
+    expect(task.recordedTransition).toMatchObject({ parameters: { pipeline: 'ci-main' } });
+    expect(() => operations.recordTransition(hub, task.id, undefined, undefined, { pipeline: 'ci' }, deps)).toThrowError(/Parameters require a destination stage/);
+    expect(task.recordedTransition).toMatchObject({ parameters: { pipeline: 'ci-main' } });
+    expect(() => operations.recordTransition(hub, task.id, 'done', 'Monitor the CI workflow.', {}, deps)).toThrowError(/declares no parameters/);
+    operations.recordTransition(hub, task.id, undefined, undefined, undefined, deps);
     expect(task.recordedTransition).toBeUndefined();
   });
 
@@ -141,10 +159,10 @@ describe('Hub operations', () => {
     hub.boards[0]!.workflow.columns.push({ id: 'review', name: 'Review' }, { id: 'done', name: 'Done' });
     hub.boards[0]!.workflow.columns[0]!.allowedTransitions = transitions('review', 'done');
     const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Route', description: '' }, deps);
-    operations.recordTransition(hub, task.id, 'done', 'The work is complete.', deps);
-    expect(() => operations.recordTransition(hub, task.id, 'review', undefined, deps)).toThrowError(/requires a reason/);
-    expect(() => operations.recordTransition(hub, task.id, 'review', '   ', deps)).toThrowError(/nonempty/);
-    expect(() => operations.recordTransition(hub, task.id, 'review', 'a'.repeat(1001), deps)).toThrowError(/1000 characters or fewer/);
+    operations.recordTransition(hub, task.id, 'done', 'The work is complete.', undefined, deps);
+    expect(() => operations.recordTransition(hub, task.id, 'review', undefined, undefined, deps)).toThrowError(/requires a reason/);
+    expect(() => operations.recordTransition(hub, task.id, 'review', '   ', undefined, deps)).toThrowError(/nonempty/);
+    expect(() => operations.recordTransition(hub, task.id, 'review', 'a'.repeat(1001), undefined, deps)).toThrowError(/1000 characters or fewer/);
     expect(task.recordedTransition).toMatchObject({ columnId: 'done', reason: 'The work is complete.' });
     expect(task.columnId).toBe('backlog');
   });
@@ -153,10 +171,10 @@ describe('Hub operations', () => {
     const hub = sampleHub(); const deps = operationDeps();
     hub.boards[0]!.workflow.columns.push({ id: 'done', name: 'Done' });
     const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Route', description: '' }, deps);
-    expect(() => operations.recordTransition(hub, task.id, 'done', 'Done.', deps)).toThrowError(/does not configure transitions/);
+    expect(() => operations.recordTransition(hub, task.id, 'done', 'Done.', undefined, deps)).toThrowError(/does not configure transitions/);
     hub.boards[0]!.workflow.columns[0]!.allowedTransitions = transitions('done');
-    expect(() => operations.recordTransition(hub, task.id, 'backlog', 'Done.', deps)).toThrowError(/another stage/);
-    expect(() => operations.recordTransition(hub, task.id, 'missing', 'Done.', deps)).toThrowError(/configured transition/);
+    expect(() => operations.recordTransition(hub, task.id, 'backlog', 'Done.', undefined, deps)).toThrowError(/another stage/);
+    expect(() => operations.recordTransition(hub, task.id, 'missing', 'Done.', undefined, deps)).toThrowError(/configured transition/);
     expect(task.recordedTransition).toBeUndefined();
   });
 
@@ -165,7 +183,7 @@ describe('Hub operations', () => {
     hub.boards[0]!.workflow.columns.push({ id: 'done', name: 'Done' });
     hub.boards[0]!.workflow.columns[0]!.allowedTransitions = transitions('done');
     const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Route', description: '' }, deps);
-    operations.recordTransition(hub, task.id, 'done', 'The work is complete.', deps);
+    operations.recordTransition(hub, task.id, 'done', 'The work is complete.', undefined, deps);
     place(hub, task.id, 'backlog', 'end', 1);
     expect(task.recordedTransition).toMatchObject({ columnId: 'done', reason: 'The work is complete.' });
     place(hub, task.id, 'done', 'end', 2);
@@ -281,9 +299,9 @@ describe('task flow facts', () => {
     hub.boards[0]!.workflow.columns.push({ id: 'review', name: 'Review' }, { id: 'done', name: 'Done' });
     hub.boards[0]!.workflow.columns[0]!.allowedTransitions = transitions('review', 'done');
     const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Route', description: '' }, deps);
-    operations.recordTransition(hub, task.id, 'done', 'The work is complete.', deps);
-    operations.recordTransition(hub, task.id, 'review', 'The review needs another pass.', deps);
-    operations.recordTransition(hub, task.id, undefined, undefined, deps);
+    operations.recordTransition(hub, task.id, 'done', 'The work is complete.', undefined, deps);
+    operations.recordTransition(hub, task.id, 'review', 'The review needs another pass.', undefined, deps);
+    operations.recordTransition(hub, task.id, undefined, undefined, undefined, deps);
     const intents = (task.history ?? []).filter(entry => entry.kind === 'intent');
     expect(intents.map(entry => (entry as { columnId: string }).columnId)).toEqual(['done', 'review']);
     expect(intents).toHaveLength(2);

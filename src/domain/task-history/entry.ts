@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AUTO_MODE_HISTORY_ACTIONS, WORKTREE_HISTORY_ACTIONS, type TaskHistoryEntry } from '../../shared/task-history.js';
+import { parameterValuesSchema } from '../deterministic-state.js';
 import { isDomainId } from '../validation.js';
 
 /** The validated shape of one task's flow record. */
@@ -8,7 +9,7 @@ const moment = z.string().datetime({ offset: true });
 const failure = z.strictObject({ code: z.string().min(1), message: z.string(), details: z.record(z.string(), z.unknown()).optional() });
 
 export const taskHistoryEntrySchema = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('deterministic-execution'), at: moment, executionId: identifier, columnId: identifier, outcome: z.enum(['completed', 'stopped', 'failed']), exit: z.string().optional(), message: z.string().optional(), error: failure.optional() }),
+  z.strictObject({ kind: z.literal('deterministic-execution'), at: moment, executionId: identifier, columnId: identifier, outcome: z.enum(['completed', 'stopped', 'failed']), exit: z.string().optional(), message: z.string().optional(), error: failure.optional(), parameters: parameterValuesSchema.optional() }),
   z.strictObject({ kind: z.literal('deterministic-handoff'), at: moment, deliveryId: identifier, executionId: identifier, fromColumnId: identifier, columnId: identifier, outcome: z.enum(['accepted', 'failed']), exit: z.string(), message: z.string(), error: failure.optional() }),
   z.strictObject({ kind: z.literal('created'), at: moment, columnId: identifier }),
   z.strictObject({ kind: z.literal('stage'), at: moment, fromColumnId: identifier, columnId: identifier }),

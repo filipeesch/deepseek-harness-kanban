@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { mkdir, open, readFile, readdir, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DeterministicCapture } from '../../shared/deterministic.js';
+import { PARAMETER_LIMITS } from '../../domain/deterministic-definition.js';
+import { declaredParameterNames } from '../../domain/deterministic-parameters.js';
 import type { CaptureRequest, DeterministicPolicyPort, DeterministicScope, DeterministicTrust } from './ports.js';
 import { failure } from './ports.js';
 import { scopeKey } from './variables.js';
@@ -50,12 +52,14 @@ export class DeterministicCaptureStore {
     const env = [...new Set(definition.env ?? [])].sort();
     if (env.length > 64) failure('INVALID_VARIABLE', 'At most 64 authorized variables are supported.');
     env.forEach(validateVariableName);
+    const params = [...new Set(declaredParameterNames(definition.params))].sort();
+    if (params.length > PARAMETER_LIMITS.count) failure('INVALID_PARAMETERS', 'At most ' + PARAMETER_LIMITS.count + ' parameters are supported.');
     const exits = structuredClone(request.exits);
     if (Object.keys(definition.exits).length === 0 || canonical(Object.keys(definition.exits).sort()) !== canonical(Object.keys(exits).sort())) failure('ROUTES_INVALID', 'Every authored exit must resolve to a stable destination.');
     for (const [name, target] of Object.entries(exits)) {
       if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(name) || !target.columnId || !target.stageIdentity || definition.exits[name] !== target.columnId) failure('ROUTES_INVALID', 'Captured exits must match reviewed authored destinations and stable identities.');
     }
-    const content = { language: definition.language, directory, executionDirectory, source: primary ? { kind: 'file' as const, path: primary.path } : { kind: 'inline' as const }, env, exits };
+    const content = { language: definition.language, directory, executionDirectory, source: primary ? { kind: 'file' as const, path: primary.path } : { kind: 'inline' as const }, env, params, exits };
     const fp = fingerprint(content, code);
     const blob = canonical({ version: 1, content, code, fingerprint: fp });
     const sourceRef = digest(blob);

@@ -6,8 +6,8 @@ import { invariant } from '../../shared/errors.js';
 import { normal, text } from './support.js';
 import { requireOwnTask, requireTask, type TaskScopeSource, type ToolArgs } from './scope.js';
 
-/** The routing write one task accepts: a configured target with its reason, or a clear. */
-export interface TransitionWrite { columnId?: string; reason?: string }
+/** The routing write one task accepts: a configured target with its reason and values, or a clear. */
+export interface TransitionWrite { columnId?: string; reason?: string; parameters?: Record<string, string> }
 
 /**
  * The narrow surface the transition tools need: the task lookup plus the one
@@ -35,11 +35,12 @@ function transitionView(located: LocatedTask) {
       columnId: target.column.id,
       name: target.column.name,
       ...(target.rule.when === undefined ? {} : { when: target.rule.when }),
+      ...(target.column.deterministic?.params === undefined ? {} : { parameters: target.column.deterministic.params.map(parameter => ({ name: parameter.name, ...(parameter.description === undefined ? {} : { description: parameter.description }) })) }),
     })),
     ...(fallback === undefined ? {} : { defaultColumnId: fallback.id }),
     recorded: recorded === undefined
       ? null
-      : { columnId: recorded.columnId, fromColumnId: recorded.fromColumnId, at: recorded.at, ...(recorded.reason === undefined ? {} : { reason: recorded.reason }) },
+      : { columnId: recorded.columnId, fromColumnId: recorded.fromColumnId, at: recorded.at, ...(recorded.reason === undefined ? {} : { reason: recorded.reason }), ...(recorded.parameters === undefined ? {} : { parameters: recorded.parameters }) },
     ...(resolution.kind === 'stale' ? { recordedProblem: staleTransitionMessage(board.workflow, task, resolution.reason) } : {}),
     /** Whether the declared transition moves the task at the end of its next completed turn. */
     armed: resolution.kind === 'resolved' && recorded?.reason !== undefined,
@@ -58,16 +59,20 @@ export function transitionTools(port: TaskRoutingPort): ToolDefinition[] {
       {
         column_id: text('Destination stage ID from list_allowed_transitions. Omit to clear the declaration.'),
         reason: text('Why the task belongs in that stage, in your own words. Required with a target and shown to the next stage; omitted only when clearing.'),
+        parameters: { type: 'object', additionalProperties: true, description: 'Values for the destination stage parameters reported by list_allowed_transitions. Supply exactly the declared names with nonempty string values; a rejection lists the accepted names.' },
       },
       async (args, exec) => {
         // The schema offers no task identifier. A model that sends one anyway is
         // told so instead of silently routing its own task and believing otherwise.
         invariant((args as ToolArgs).task_id === undefined, 'TASK_SCOPE_NOT_ACCEPTED',
           'set_next_transition acts on the task that owns the calling conversation and takes no task_id. Call it from that task conversation.');
+        invariant(args.column_id !== undefined || args.parameters === undefined, 'INVALID_PARAMETERS',
+          'Parameters require a destination stage. Omit parameters to clear the recorded transition.');
         const located = requireOwnTask(port, exec);
         return transitionView(await port.recordTransition(located.task.id, {
           ...(args.column_id === undefined ? {} : { columnId: args.column_id }),
           ...(args.reason === undefined ? {} : { reason: args.reason }),
+          ...(args.parameters === undefined ? {} : { parameters: args.parameters as Record<string, string> }),
         }));
       }),
   ];

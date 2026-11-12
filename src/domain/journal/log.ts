@@ -13,7 +13,7 @@ import { decodeEvent, encodeEvent, EVENT_FORMAT_VERSION, type BoardChange, type 
  * snapshot without losing which stage is which.
  */
 
-export const BOARD_LOG_VERSION = 2;
+export const BOARD_LOG_VERSION = 3;
 /** How many events one log keeps before the tail is folded into the snapshot. */
 export const BOARD_LOG_EVENT_BOUND = 200;
 /** The most events one stored log may carry, so a hostile log cannot exhaust the reader. */
@@ -34,7 +34,7 @@ export interface BoardLogFile {
 
 /** A log that carries one board state and no history. */
 export function createBoardLog(text: string): BoardLogFile {
-  return { version: executableText(text) ? 2 : 1, snapshot: { text, seq: 0 }, events: [] };
+  return { version: executableText(text) ? BOARD_LOG_VERSION : 1, snapshot: { text, seq: 0 }, events: [] };
 }
 
 /** Executable grammar requires an envelope signal even with an empty tail. */
@@ -69,7 +69,10 @@ export function headToken(log: BoardLogFile): string {
 export function appendEvents(log: BoardLogFile, changes: readonly BoardChange[], at: string): BoardLogFile {
   let seq = nextSequence(log);
   const events = changes.map(change => ({ ...change, seq: seq++, at, v: executableChange(change) ? EVENT_FORMAT_VERSION : 1 } as JournalEvent));
-  return { ...log, version: log.version === 2 || executableText(log.snapshot.text) || changes.some(executableChange) ? 2 : 1, events: [...log.events, ...events] };
+  // Preserve a log's envelope when no new executable grammar is added; a new
+  // executable change always raises it to the version this installation writes.
+  const executable = executableText(log.snapshot.text) || changes.some(executableChange);
+  return { ...log, version: executable ? BOARD_LOG_VERSION : log.version, events: [...log.events, ...events] };
 }
 
 /** The events a member at the given cursor has not seen yet. */
@@ -163,7 +166,7 @@ export function decodeBoardLog(raw: unknown): BoardLogDecode {
   if (typeof snapshotValue.text !== 'string' || snapshotValue.text.trim().length === 0) return { ok: false, reason: 'invalid', message: 'A board log snapshot requires workflow text.' };
   if (snapshotValue.text.length > BOARD_LOG_TEXT_LIMIT) return { ok: false, reason: 'invalid', message: 'A board log snapshot exceeds the supported size.' };
   if (typeof snapshotValue.seq !== 'number' || !Number.isInteger(snapshotValue.seq) || snapshotValue.seq < 0) return { ok: false, reason: 'invalid', message: 'A board log snapshot requires a sequence.' };
-  if (version === 1 && executableText(snapshotValue.text)) return { ok: false, reason: 'unsupported-version', version: 2 };
+  if (version === 1 && executableText(snapshotValue.text)) return { ok: false, reason: 'unsupported-version', version: BOARD_LOG_VERSION };
   const rawEvents = value.events === undefined ? [] : value.events;
   if (!Array.isArray(rawEvents)) return { ok: false, reason: 'invalid', message: 'A board log events field must be an array.' };
   if (rawEvents.length > BOARD_LOG_EVENT_LIMIT) return { ok: false, reason: 'invalid', message: 'A board log carries more events than this installation supports.' };
@@ -172,7 +175,7 @@ export function decodeBoardLog(raw: unknown): BoardLogDecode {
   for (const item of rawEvents) {
     const decoded = decodeEvent(item);
     if (!decoded.ok) return decoded;
-    if (version === 1 && (decoded.event.v === 2 || executableChange(decoded.event))) return { ok: false, reason: 'unsupported-version', version: 2 };
+    if (version === 1 && (decoded.event.v === 2 || decoded.event.v === 3 || executableChange(decoded.event))) return { ok: false, reason: 'unsupported-version', version: BOARD_LOG_VERSION };
     // A cursor is only meaningful over an ordered log, so a disorder is refused here.
     if (decoded.event.seq <= previous) return { ok: false, reason: 'invalid', message: 'A board log must carry its events in order, after its snapshot.' };
     previous = decoded.event.seq;
