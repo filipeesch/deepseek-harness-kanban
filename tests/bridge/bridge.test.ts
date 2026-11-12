@@ -69,6 +69,7 @@ function fixture(options: { storage?: KeyValueStorage } = {}) {
       localDrive: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { action: 'roots', discovery: { state: 'empty', locations: [] } } } }),
       questionsFollow: vi.fn((_request: { sessionId: string }, signal?: AbortSignal) => { const feed = new Feed<QuestionFeedFrame>(); questionFeeds.push(feed); signal?.addEventListener('abort', () => feed.dispose(), { once: true }); return feed; }),
       dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
+      saveQuestionDraft: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: null } }),
       follow: vi.fn((signal?: AbortSignal) => { const feed = new Feed<HostSnapshot>(); feeds.push(feed); signal?.addEventListener('abort', () => feed.dispose(), { once: true }); return feed; }),
     },
     $stream<Item>(options: RemoteStreamOptions<Item>) { return new RemoteStream({ generation: generation.observable }, options); },

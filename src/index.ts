@@ -184,7 +184,7 @@ export async function apply(ctx:Context):Promise<void>{
  const report=(error:unknown)=>ctx.logger.warn(error instanceof Error?error.message:String(error));
  const opened=await openKanbanStorage(ctx);
  const storage={close:opened.close};
- let questions:{storage:import('./host/question-storage.js').QuestionStore;close:()=>Promise<void>};
+ let questions:{storage:import('./host/question-storage.js').QuestionStore;drafts:import('./host/question-storage.js').QuestionDraftStore;close:()=>Promise<void>};
  try{questions=await openQuestionStorage(ctx);}catch(error){await storage.close();throw error;}
  const lifetime=new AbortController();
  const history=createSessionHistory(ctx);
@@ -197,7 +197,7 @@ export async function apply(ctx:Context):Promise<void>{
  try{sharing=await openHubSharing(ctx,hubs,{report});}catch(error){await schedules.close();await hubs.close();await questions.close();await storage.close();throw error;}
  const teamFiles=new TeamFiles({store:hubId=>sharing.service.fileStoreFor(hubId),exclusive:(hubId,operation)=>sharing.service.exclusive(hubId,operation)});
  const sessionModels=createSessionModelPort(ctx);
- const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,models:sessionModels,report,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
+ const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,models:sessionModels,report,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
  const profile=ctx.get('profileContext') as {readonly dir:string}|undefined;
  if(profile&&isAbsolute(profile.dir)){
   // Optional child injection grants access without making conventional boards

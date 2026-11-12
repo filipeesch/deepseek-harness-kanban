@@ -5,11 +5,12 @@ import type { KanbanApp } from '../../src/host/app.js';
 import { QuestionIndex } from '../../src/questions/indexer.js';
 import { call, end, result } from '../questions/fixtures.js';
 
-function harness() {
+function harness(drafts: Record<string, unknown> = {}) {
   const questions = new QuestionIndex();
   const app = {
     questions,
     rounds: async (sessionId: string) => [...questions.getRounds(sessionId)],
+    questionDrafts: async () => structuredClone(drafts),
   } as unknown as KanbanApp;
   return { questions, controller: new KanbanController(new Context(), app) };
 }
@@ -39,6 +40,57 @@ describe('conversation-scoped question feed', () => {
       expect(update.kind).toBe('update');
       expect(update.rounds.map(round => round.sessionId)).toEqual(['a']);
       expect(update.rounds[0]!.pages[0]!.callId).toBe('mine');
+    } finally {
+      abort.abort();
+      await frames.return(undefined);
+    }
+  });
+
+  it('carries stored drafts on the baseline only', async () => {
+    const stored = {
+      'question-round:a:4': {
+        answers: { one: { choices: [], text: 'Kept answer.', other: '', notes: '' } },
+        generalNotes: '',
+        active: { kind: 'page', callId: 'one' },
+        updatedAt: '2026-11-12T10:00:00.000Z',
+      },
+    };
+    const { questions, controller } = harness(stored);
+    questions.apply('a', call(1, 4, 'one'));
+    questions.apply('a', result(2, 4, 'one'));
+    const abort = new AbortController();
+    const frames = controller.questionsFollow({ sessionId: 'a' }, abort.signal);
+    try {
+      const baseline = await next(frames);
+      expect(baseline.kind).toBe('baseline');
+      expect(baseline.drafts).toEqual(stored);
+      questions.apply('a', end(3, 4));
+      const update = await next(frames);
+      expect(update.kind).toBe('update');
+      expect(update.drafts).toBeUndefined();
+    } finally {
+      abort.abort();
+      await frames.return(undefined);
+    }
+  });
+
+  it('still yields the rounds baseline when the draft read fails', async () => {
+    const questions = new QuestionIndex();
+    const app = {
+      questions,
+      rounds: async (sessionId: string) => [...questions.getRounds(sessionId)],
+      questionDrafts: async () => { throw new Error('quarantine'); },
+    } as unknown as KanbanApp;
+    questions.apply('a', call(1, 4, 'one'));
+    questions.apply('a', result(2, 4, 'one'));
+    const controller = new KanbanController(new Context(), app);
+    const abort = new AbortController();
+    const frames = controller.questionsFollow({ sessionId: 'a' }, abort.signal);
+    try {
+      const baseline = await next(frames);
+      expect(baseline.kind).toBe('baseline');
+      expect(baseline.drafts).toBeUndefined();
+      expect(baseline.rounds).toHaveLength(1);
     } finally {
       abort.abort();
       await frames.return(undefined);

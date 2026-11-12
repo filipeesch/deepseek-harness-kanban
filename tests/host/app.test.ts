@@ -353,7 +353,7 @@ describe('responsive host reads', () => {
    {kind:'call' as const,seq:1,turn:1,callId:'c1',name:'decision_request'},
    {kind:'native-page' as const,seq:2,turn:1,callId:'c1',page:{question:'Which approach?',type:'freetext' as const}},
   ]};
-  const questionStore={load:(sessionId:string)=>sessionId===id?record:undefined,save:async()=>{}};
+  const questionStore={load:(sessionId:string)=>sessionId===id?record:undefined,save:async()=>{},remove:async()=>false};
   const app=new KanbanApp(f.hubs,f.sessions,f.git,{questionStore,history:async()=>{await historyGate;return [];}},f.workspaces);
   await app.initialize();
   expect(app.questions.pending(id)).toBe(true);
@@ -370,7 +370,7 @@ describe('responsive host reads', () => {
   const f=await setup();const t=await task(f);const id=t.sessionIds[0]!;
   let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
   const saved:string[]=[];
-  const questionStore={load:()=>undefined,save:async(sessionId:string)=>{saved.push(sessionId);}};
+  const questionStore={load:()=>undefined,save:async(sessionId:string)=>{saved.push(sessionId);},remove:async()=>false};
   const app=new KanbanApp(f.hubs,f.sessions,f.git,{questionStore,history:async()=>{await gate;return [call(1,1,'c1'),result(2,1,'c1')];}},f.workspaces);
   await app.initialize();
   let closed=false;const closing=app.close().then(()=>{closed=true;});
@@ -389,7 +389,7 @@ describe('responsive host reads', () => {
    {kind:'call' as const,seq:1,turn:1,callId:'c1',name:'decision_request'},
    {kind:'native-page' as const,seq:2,turn:1,callId:'c1',page:{question:'Which approach?',type:'freetext' as const}},
   ]};
-  const questionStore={load:(sessionId:string)=>sessionId===id?record:undefined,save:async()=>{}};
+  const questionStore={load:(sessionId:string)=>sessionId===id?record:undefined,save:async()=>{},remove:async()=>false};
   const app=new KanbanApp(f.hubs,f.sessions,f.git,{questionStore,history:async()=>{await historyGate;return [];}},f.workspaces);
   await app.initialize();
   await f.store.setAutoMode(t.id,true);

@@ -8,7 +8,7 @@ import { DirectoryPickerProvider } from '../../src/client/services.js';
 import { AgentPresetProvider } from '../../src/client/agent-preset-context.js';
 import type { AgentPresetPortSource } from '../../src/client/agent-preset-port.js';
 import { QuestionForm } from '../../src/questions/QuestionForm.js';
-import type { BoardState, ClientApi, Command, HubSharingView, QuestionRound, RoundPage } from '../../src/shared/types.js';
+import type { BoardState, ClientApi, Command, HubSharingView, QuestionRound, RoundPage, StoredQuestionDraft } from '../../src/shared/types.js';
 import { createHarnessApi, workflowYaml, type TestSnapshot } from './fake-api.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import { themeFixture } from './theme-fixture.js';
@@ -258,8 +258,14 @@ const secondPage: RoundPage = { callId: 'call-2', sequence: 1, page: { question:
 function QuestionScenario() {
   const [value, setValue] = useState<QuestionRound>(() => ({ ...round, complete: questionCase !== 'waiting' && questionCase !== 'new-page' }));
   const [hidden, setHidden] = useState(questionCase === 'hidden');
+  const storedDraft: StoredQuestionDraft | undefined = questionCase === 'draft' ? {
+    answers: { 'call-1': { choices: ['Local'], text: '', other: '', notes: 'Restored from the host.' } },
+    generalNotes: 'Restored Additional Notes.',
+    active: { kind: 'page', callId: 'call-1' },
+    updatedAt: '2026-11-12T10:00:00.000Z',
+  } : undefined;
   return <div style={{ padding: 20, width: 380 }}>
-    <QuestionForm round={value} hidden={hidden} onSubmit={() => { if (questionCase === 'submit') setHidden(true); }} onDismiss={() => {}} />
+    <QuestionForm round={value} hidden={hidden} {...(storedDraft === undefined ? {} : { storedDraft })} onSubmit={() => { if (questionCase === 'submit') setHidden(true); }} onDismiss={() => {}} />
     {questionCase === 'new-page' && <button type="button" onClick={() => setValue(previous => ({ ...previous, pages: [...previous.pages, secondPage] }))}>Add page</button>}
   </div>;
 }

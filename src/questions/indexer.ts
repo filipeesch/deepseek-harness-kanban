@@ -191,6 +191,19 @@ export class QuestionIndex {
     this.rebuild(sessionId);
   }
 
+  /** Drop every in-memory trace of one conversation whose task was deleted. */
+  forget(sessionId: string): void {
+    if (this.disposed || !id(sessionId)) return;
+    let changed = false;
+    if (this.events.delete(sessionId)) changed = true;
+    if (this.dismissed.delete(sessionId)) changed = true;
+    if (this.rounds.delete(sessionId)) changed = true;
+    if (this.revisions.delete(sessionId)) changed = true;
+    if (!changed) return;
+    this.allRounds = freeze([...this.rounds].sort(([a], [b]) => a.localeCompare(b)).flatMap(([, rounds]) => [...rounds]));
+    this.emit();
+  }
+
   /** Permanently hide every supplied round in one conversation. Returns how many turns were newly dismissed. */
   dismiss(sessionId: string, roundIds: readonly string[]): number {
     if (this.disposed || !id(sessionId) || !Array.isArray(roundIds)) return 0;

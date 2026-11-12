@@ -45,6 +45,7 @@ function fixture() {
       localDrive: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { action: 'roots', discovery: { state: 'empty', locations: [] } } } }),
       questionsFollow: vi.fn(() => { throw new Error('Question feed is not used in this test'); }) as unknown as BridgeRemote['kanban']['questionsFollow'],
       dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
+      saveQuestionDraft: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: null } }),
       follow: (signal?: AbortSignal) => { const feed = new Feed(); feeds.push(feed); signal?.addEventListener('abort', () => feed.dispose(), { once: true }); return feed; },
     },
     $stream<Item>(options: RemoteStreamOptions<Item>) { return new RemoteStream({ generation: { getSnapshot: () => ({ id: 1, host: { home: '/home' } }), subscribe: () => () => {} } }, options); },
