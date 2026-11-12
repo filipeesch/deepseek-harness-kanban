@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, writeFile, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, writeFile, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { CredentialRecord } from '@deepseek-ai/dsh-credentials';
@@ -7,6 +7,11 @@ import type { PtcRunResult, PtcRunSpec } from '@deepseek-ai/dsh-ptc-runtime';
 import type { ShellExecSpec, ShellRunResult } from '@deepseek-ai/dsh-shell';
 import type { CredentialStore } from '../../src/host/sharing/credentials.js';
 import { createDeterministicRuntime, type DeterministicPolicyPort, type NativePtcPort, type NativeShellPort } from '../../src/host/deterministic/index.js';
+import { createBashRetry } from '../../src/host/deterministic/retry.js';
+import { executeCapturedProgram } from '../../src/host/deterministic/executor.js';
+import type { NativeLifetime } from '../../src/host/deterministic/lifetime.js';
+import type { ExecutionOutcome, ExecuteRequest } from '../../src/host/deterministic/ports.js';
+import type { DeterministicCapture } from '../../src/shared/deterministic.js';
 import { NativeExecutionOwnership } from '../../src/host/deterministic/ownership.js';
 import { createNativeDeterministicPolicy } from '../../src/host/deterministic/native-policy.js';
 import { createServer } from 'node:net';
@@ -44,7 +49,26 @@ function shell(run = async (_spec: ShellExecSpec) => shellResult()): NativeShell
 function ptc(run: (spec: PtcRunSpec) => Promise<PtcRunResult>): NativePtcPort {
   return { language: 'typescript', isolation: 'process', programFormat: 'function-body', retainsState: false, sandboxMode: undefined, resolve: vi.fn(request => ({ ...request, cwd: request.cwd!, timeoutMs: request.timeoutMs ?? null })), run: vi.fn(run) };
 }
-async function fixture(options: { shell?: NativeShellPort; ptc?: NativePtcPort } = {}) {
+/** A shell whose result is returned untouched, for guard-failure cases. */
+function rawShell(run: () => ShellRunResult | Promise<ShellRunResult>): NativeShellPort {
+  return {
+    sandboxMode: undefined,
+    resolve: vi.fn(request => ({ ...request, timeoutMs: request.timeoutMs ?? 10, onExpiry: request.onExpiry ?? 'kill', stdoutMaxBytes: request.stdoutMaxBytes ?? 1024, sandboxPolicy: request.sandboxPolicy })),
+    execute: vi.fn(async () => {
+      const result = Promise.resolve().then(run);
+      return { status: 'running' as const, exitCode: null, signal: null, done: result.then(() => {}, () => {}), observed: { stdout: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) }, stderr: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) } }, readOutput: () => ({ delta: '', lossy: false }), kill: vi.fn(() => true), result: () => result };
+    }),
+  };
+}
+/** A guard that stopped reporting without a result envelope. */
+function guardFailure(patch: Partial<ShellRunResult> = {}): ShellRunResult {
+  return shellResult({ exitCode: 125, stdout: { text: '', truncated: false }, stderr: { text: '', truncated: false }, ...patch });
+}
+/** A decoded guard result: the envelope the guard writes around the command's own output. */
+function envelope(stdout: string, stderr = ''): ShellRunResult {
+  return shellResult({ stdout: { text: JSON.stringify({ stdout, stderr, overflow: false }), truncated: false }, stderr: { text: '', truncated: false } });
+}
+async function fixture(options: { shell?: NativeShellPort; ptc?: NativePtcPort; retry?: { attempts?: number; delaysMs?: readonly number[] } } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'kanban-runtime-')); roots.push(root);
   const project = join(root, 'project'); const task = join(root, 'task'); await mkdir(project); await mkdir(task);
   const policy: DeterministicPolicyPort = {
@@ -54,7 +78,7 @@ async function fixture(options: { shell?: NativeShellPort; ptc?: NativePtcPort }
   };
   const credential = credentials();
   const context = { credentials: credential.store, shell: options.shell ?? shell(), ptcRuntime: options.ptc };
-  const runtime = createDeterministicRuntime({ context, privateDirectory: join(root, 'private'), policy });
+  const runtime = createDeterministicRuntime({ context, privateDirectory: join(root, 'private'), policy, ...(options.retry === undefined ? {} : { retry: options.retry }) });
   const capture = (language: 'bash' | 'typescript' = 'bash', changes: Record<string, unknown> = {}) => runtime.capture({ definition: { language, code: 'return {exit:"passed",message:"ready"};', directory: 'task', exits: { passed: 'review' }, ...changes }, projectDirectory: project, taskDirectory: task, exits });
   return { root, project, task, policy, runtime, capture, context, credential };
 }
@@ -281,3 +305,221 @@ describe('bounded diagnostics, native policy, and exclusive resource ownership',
     const releaseOther = await restarted.acquire(scope, 'execution-other', 'task-other'); await releaseOther(); await release(); await restarted.reclaim('execution-one');
   });
 });
+
+describe('guarded Bash failure diagnostics and bounded retry', () => {
+  function failed(outcome: ExecutionOutcome): { code: string; message: string; details?: Record<string, unknown> } {
+    if (outcome.kind !== 'failed') throw new Error('expected a settled failure, got ' + outcome.kind);
+    return outcome.diagnostic;
+  }
+  async function run(f: Awaited<ReturnType<typeof fixture>>, language: 'bash' | 'typescript' = 'bash') {
+    const capture = await f.capture(language); await f.runtime.trust.approve(scope, capture.fingerprint);
+    return f.runtime.execute({ capture, input: {}, scope, signal: new AbortController().signal });
+  }
+
+  it('repeats a guard that never admitted the command and continues the same execution', async () => {
+    let calls = 0;
+    const native = rawShell(() => (++calls < 3 ? guardFailure() : envelope('{"exit":"passed","message":"recovered"}', 'note')));
+    const f = await fixture({ shell: native, retry: { delaysMs: [0, 0] } });
+    expect(await run(f)).toMatchObject({ kind: 'completed', completion: { exit: 'passed', message: 'recovered' }, diagnostics: ['note'] });
+    expect(vi.mocked(native.execute)).toHaveBeenCalledTimes(3);
+  });
+
+  it('settles one failure that carries every attempt after the retries are exhausted', async () => {
+    const native = rawShell(() => guardFailure());
+    const f = await fixture({ shell: native, retry: { delaysMs: [0, 0] } });
+    const outcome = await run(f);
+    expect(outcome).toMatchObject({ kind: 'failed', diagnostic: { code: 'BASH_PROTOCOL', details: { origin: 'infrastructure', guard: { admission: 'not-admitted', exitCode: 125, signal: null } } } });
+    const details = failed(outcome).details as { attempts?: unknown[] };
+    expect(details?.attempts).toHaveLength(3);
+    expect(vi.mocked(native.execute)).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    ['an unproven process tree', guardFailure({ stderr: { text: 'NATIVE_LIFETIME_UNCLEAN: Owned processes survived cleanup.\n', truncated: false } }), 'started', /could not prove/],
+    ['an unavailable guard runtime', guardFailure({ stderr: { text: 'NATIVE_LIFETIME_UNAVAILABLE: install Node >=24.9\n', truncated: false } }), 'not-admitted', /unavailable/],
+    ['a killed guard', guardFailure({ exitCode: null, signal: 'SIGKILL' }), 'unknown', /terminated by SIGKILL/],
+    ['an unknown guard exit', guardFailure({ exitCode: 1, stderr: { text: 'node:internal failure\n', truncated: false } }), 'unknown', /did not return a valid result/],
+    ['whitespace-only stderr', guardFailure({ stderr: { text: ' \n', truncated: false } }), 'unknown', /did not return a valid result/],
+    ['a lossy empty capture', guardFailure({ stderr: { text: '', truncated: true } }), 'unknown', /did not return a valid result/],
+  ] as const)('does not repeat %s', async (_label, result, admission, message) => {
+    const native = rawShell(() => result);
+    const f = await fixture({ shell: native, retry: { delaysMs: [0, 0] } });
+    const outcome = await run(f);
+    expect(outcome).toMatchObject({ kind: 'failed', diagnostic: { code: 'BASH_PROTOCOL', details: { guard: { admission } } } });
+    expect(failed(outcome).message).toMatch(message);
+    expect(vi.mocked(native.execute)).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a nonfinite retry policy bounded', async () => {
+    expect(createBashRetry({ attempts: Number.NaN }).attempts).toBe(3);
+    expect(createBashRetry({ attempts: Number.POSITIVE_INFINITY }).attempts).toBe(3);
+    expect(createBashRetry({ attempts: 0 }).attempts).toBe(1);
+    const retry = createBashRetry({ delaysMs: [Number.NaN] });
+    const started = Date.now();
+    await retry.wait(1, new AbortController().signal);
+    expect(Date.now() - started).toBeLessThan(50);
+  });
+
+  it('abandons the wait as soon as the execution is stopped', async () => {
+    const retry = createBashRetry({ delaysMs: [60_000] });
+    const controller = new AbortController();
+    const waiting = retry.wait(1, controller.signal);
+    controller.abort(new Error('stopped by the user'));
+    await expect(waiting).rejects.toThrow('stopped by the user');
+    await expect(retry.wait(1, controller.signal)).rejects.toThrow('stopped by the user');
+  });
+
+  it('starts no further attempt while native cleanup is still pending', async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const shellPort = rawShell(() => { calls += 1; return guardFailure(); });
+    const stop = () => new Promise<void>(resolve => setTimeout(resolve, 300));
+    const lifetime = { host: { port: 1, token: 'x' }, shell: (command: string) => command, typescriptPrelude: () => '', stop, close: async () => { await stop(); } } as unknown as NativeLifetime;
+    const capture: DeterministicCapture = { sourceRef: 'ref', fingerprint: 'fp', language: 'bash', directory: 'project', executionDirectory: '/project', source: { kind: 'inline' }, env: [], params: [], exits: { passed: { columnId: 'review', stageIdentity: 'review-key' } } };
+    const request: ExecuteRequest = { capture, input: {}, scope, signal: controller.signal };
+    const running = executeCapturedProgram({ request, code: 'printf ready', policy: { mode: 'danger-full-access', workspaceRoot: '/project' }, shell: shellPort, variables: { resolve: async () => ({}), status: async () => [], set: async () => undefined, remove: async () => undefined }, lifetime, retry: createBashRetry({ delaysMs: [50] }) });
+    await expect.poll(() => calls, { timeout: 5000 }).toBe(1);
+    controller.abort(new Error('stopped by the user'));
+    expect(await running).toEqual({ kind: 'aborted' });
+    expect(calls).toBe(1);
+  });
+
+  it('reports the guard cause when a program does not handle the rejection', async () => {
+    const bash = rawShell(() => guardFailure({ stderr: { text: 'NATIVE_LIFETIME_UNCLEAN: unknown\n', truncated: false } }));
+    const native = ptc(async spec => {
+      await expect(binding(spec, 'tools', 'bash', { command: 'gh api user' })).rejects.toMatchObject({ code: 'BASH_PROTOCOL' });
+      return { error: { kind: 'exception', message: 'Error: The isolated Bash guard did not return a valid result.\n    at bindingFailure (/tmp/bootstrap.ts:246:61)' }, logs: [] };
+    });
+    const f = await fixture({ shell: bash, ptc: native, retry: { delaysMs: [0, 0] } });
+    const outcome = await run(f, 'typescript');
+    expect(outcome).toMatchObject({ kind: 'failed', diagnostic: { code: 'BASH_PROTOCOL', details: { origin: 'infrastructure', cause: { code: 'TYPESCRIPT_EXCEPTION' } } } });
+    const message = failed(outcome).message;
+    expect(message).toContain('process tree');
+    expect(message).not.toContain('bindingFailure');
+    expect(message).not.toContain('    at ');
+  });
+
+  it('does not turn a handled rejection into a failure', async () => {
+    const bash = rawShell(() => guardFailure({ stderr: { text: 'NATIVE_LIFETIME_UNCLEAN: unknown\n', truncated: false } }));
+    const native = ptc(async spec => {
+      await expect(binding(spec, 'tools', 'bash', { command: 'gh api user' })).rejects.toMatchObject({ code: 'BASH_PROTOCOL' });
+      return { value: { exit: 'passed', message: 'handled the guard failure' }, logs: [] };
+    });
+    const f = await fixture({ shell: bash, ptc: native, retry: { delaysMs: [0, 0] } });
+    expect(await run(f, 'typescript')).toMatchObject({ kind: 'completed', completion: { message: 'handled the guard failure' } });
+  });
+
+  it('redacts a secret that a guard wrote to its diagnostic stream', async () => {
+    const native = rawShell(() => guardFailure({ stderr: { text: 'NATIVE_LIFETIME_UNCLEAN: token synthetic-secret rejected\n', truncated: false } }));
+    const f = await fixture({ shell: native, retry: { delaysMs: [0, 0] } });
+    await f.runtime.variables.set(scope, 'CI_TOKEN', 'synthetic-secret');
+    const capture = await f.capture('bash', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(scope, capture.fingerprint);
+    const outcome = await f.runtime.execute({ capture, input: {}, scope, signal: new AbortController().signal });
+    expect(JSON.stringify(outcome)).not.toContain('synthetic-secret');
+    expect((failed(outcome).details as { guard?: { stderrTail?: string } }).guard?.stderrTail).toContain('[REDACTED]');
+  });
+
+  it('redacts a secret that crosses the retained window boundary', async () => {
+    // The secret is longer than the retained window, so a bound-before-redact
+    // implementation would persist a recognizable suffix of it.
+    const secret = 'A'.repeat(800) + 'SECRET-TAIL-MARKER';
+    const native = rawShell(() => guardFailure({ stderr: { text: secret + 'y'.repeat(100), truncated: false } }));
+    const f = await fixture({ shell: native, retry: { delaysMs: [0, 0] } });
+    await f.runtime.variables.set(scope, 'CI_TOKEN', secret);
+    const capture = await f.capture('bash', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(scope, capture.fingerprint);
+    const outcome = await f.runtime.execute({ capture, input: {}, scope, signal: new AbortController().signal });
+    const encoded = JSON.stringify(outcome);
+    expect(encoded).not.toContain('SECRET-TAIL-MARKER');
+    const tail = (failed(outcome).details as { guard?: { stderrTail?: string } }).guard?.stderrTail ?? '';
+    expect(tail).toContain('[REDACTED]');
+    expect(tail).not.toContain('SECRET-TAIL-MARKER');
+  });
+
+  it('redacts a JSON-escaped secret carried by the guard envelope', async () => {
+    const secret = 'synthetic"secret';
+    const envelopeText = JSON.stringify({ stdout: '', stderr: 'the value ' + secret + ' failed', overflow: true });
+    const native = rawShell(() => shellResult({ stdout: { text: envelopeText, truncated: false }, stderr: { text: '', truncated: false } }));
+    const f = await fixture({ shell: native, retry: { delaysMs: [0, 0] } });
+    await f.runtime.variables.set(scope, 'CI_TOKEN', secret);
+    const capture = await f.capture('bash', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(scope, capture.fingerprint);
+    const outcome = await f.runtime.execute({ capture, input: {}, scope, signal: new AbortController().signal });
+    const encoded = JSON.stringify(outcome);
+    expect(encoded).not.toContain('synthetic');
+    expect(encoded).not.toContain('synthetic\\"secret');
+    const head = (failed(outcome).details as { guard?: { stdoutHead?: string } }).guard?.stdoutHead ?? '';
+    expect(JSON.parse(head)).toMatchObject({ stderr: 'the value [REDACTED] failed' });
+  });
+
+  it('keeps an uncaught environment authorization rejection a configuration failure', async () => {
+    const native = ptc(async spec => {
+      await expect(binding(spec, 'authorizedEnvironment', 'get', 'OTHER')).rejects.toMatchObject({ code: 'VARIABLE_UNAUTHORIZED' });
+      return { error: { kind: 'exception', message: 'Error: the environment read was refused' }, logs: [] };
+    });
+    const f = await fixture({ ptc: native });
+    const outcome = await run(f, 'typescript');
+    expect(outcome).toMatchObject({ kind: 'failed', diagnostic: { code: 'VARIABLE_UNAUTHORIZED', details: { origin: 'configuration', cause: { code: 'TYPESCRIPT_EXCEPTION' } } } });
+  });
+
+  it('classifies transport truncation as infrastructure, not as a completion defect', async () => {
+    const native = rawShell(() => shellResult({ stdout: { text: '', truncated: true } }));
+    const f = await fixture({ shell: native, retry: { delaysMs: [0, 0] } });
+    const outcome = await run(f);
+    expect(failed(outcome).code).toBe('OUTPUT_TRANSPORT_LIMIT');
+    expect((failed(outcome).details as { origin?: string }).origin).toBe('infrastructure');
+    expect(vi.mocked(native.execute)).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the earlier diagnostic when native cleanup cannot confirm quiescence', async () => {
+    const entered = deferred(); const release = deferred();
+    const native = ptc(async () => { entered.resolve(); await release.promise; return { error: { kind: 'exception', message: 'program failed' }, logs: [] }; });
+    const f = await fixture({ ptc: native });
+    const capture = await f.capture('typescript'); await f.runtime.trust.approve(scope, capture.fingerprint);
+    const running = f.runtime.execute({ capture, input: {}, scope, signal: new AbortController().signal });
+    await entered.promise;
+    const owners = join(f.root, 'private', 'owners');
+    const [name] = await readdir(owners);
+    await writeFile(join(owners, name!), JSON.stringify({ execution: 'replaced', nonce: 'corrupted', guards: [] }));
+    release.resolve();
+    const outcome = await running;
+    expect(outcome).toMatchObject({ kind: 'failed', diagnostic: { code: 'OWNERSHIP_UNCERTAIN', details: { origin: 'infrastructure', cause: { code: 'TYPESCRIPT_EXCEPTION', message: 'program failed', details: { origin: 'script' } } } } });
+    expect(failed(outcome).message).toContain('quiescence');
+  });
+
+  it('records a stop as the cause when cleanup cannot be confirmed', async () => {
+    const entered = deferred(); const aborted = deferred();
+    const native = ptc(async spec => { entered.resolve(); await new Promise<void>(resolve => spec.signal!.addEventListener('abort', () => resolve())); aborted.resolve(); return { error: { kind: 'abort', message: 'stopped' }, logs: [] }; });
+    const f = await fixture({ ptc: native });
+    const capture = await f.capture('typescript'); await f.runtime.trust.approve(scope, capture.fingerprint);
+    const controller = new AbortController();
+    const running = f.runtime.execute({ capture, input: {}, scope, signal: controller.signal });
+    await entered.promise;
+    const owners = join(f.root, 'private', 'owners');
+    const [name] = await readdir(owners);
+    await writeFile(join(owners, name!), JSON.stringify({ execution: 'replaced', nonce: 'corrupted', guards: [] }));
+    controller.abort(new Error('stopped by the user'));
+    await aborted.promise;
+    const outcome = await running;
+    expect(outcome).toMatchObject({ kind: 'failed', diagnostic: { code: 'OWNERSHIP_UNCERTAIN', details: { origin: 'infrastructure', cause: { code: 'EXECUTION_ABORTED' } } } });
+  });
+
+  it('reports only the attempts of the call that settled the failure', async () => {
+    let calls = 0;
+    const bash = rawShell(() => {
+      calls += 1;
+      if (calls === 1) return guardFailure();
+      if (calls === 2) return envelope('{"exit":"passed","message":"first call recovered"}');
+      return guardFailure();
+    });
+    const native = ptc(async spec => {
+      await expect(binding(spec, 'tools', 'bash', { command: 'first' })).resolves.toBeDefined();
+      await expect(binding(spec, 'tools', 'bash', { command: 'second' })).rejects.toMatchObject({ code: 'BASH_PROTOCOL' });
+      return { error: { kind: 'exception', message: 'Error: the guard left no result' }, logs: [] };
+    });
+    const f = await fixture({ shell: bash, ptc: native, retry: { delaysMs: [0, 0] } });
+    const outcome = await run(f, 'typescript');
+    expect(failed(outcome).code).toBe('BASH_PROTOCOL');
+    expect((failed(outcome).details as { attempts?: unknown[] }).attempts).toHaveLength(3);
+  });
+});
+
+
