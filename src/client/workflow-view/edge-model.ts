@@ -55,6 +55,19 @@ export function authoredOffsetAt(segments: readonly ConnectionSegmentOffset[], a
   return segments.filter(segment => segment.axis === axis)[order]?.offset ?? 0;
 }
 
+/**
+ * The automatic coordinate of one drawn line, before its own authored displacement.
+ * The drawn line already carries that displacement, so the baseline is the drawn
+ * coordinate minus the offset this gesture would replace. A displacement on the
+ * other axis can move the route's corridor and therefore its floor, which is why
+ * the baseline comes from the drawn route instead of one rebuilt without offsets.
+ */
+export function baselineCoordinateOf(route: ConnectionRoute, axis: 'x' | 'y', order: number, segments: readonly ConnectionSegmentOffset[] | undefined): number | undefined {
+  const line = route.lines.filter(value => value.axis === axis)[order];
+  if (line === undefined) return undefined;
+  return line.coordinate - authoredOffsetAt(segments ?? [], axis, order);
+}
+
 /** Replace the displacement of one axis at one position, keeping the others in order. */
 export function withOffset(segments: readonly ConnectionSegmentOffset[], axis: 'x' | 'y', order: number, offset: number): ConnectionSegmentOffset[] {
   const result = segments.map(segment => ({ axis: segment.axis, offset: segment.offset }));
@@ -89,15 +102,11 @@ export function connectionLayoutOf(connection: LiveConnectionDescriptor, overrid
   };
 }
 
-/** The lowest stage bottom the diagram currently shows; a returning route clears it. */
-export function lowestStageBottom(stages: readonly LiveStageRect[]): number {
-  return stages.reduce((bottom, stage) => Math.max(bottom, stage.y + stage.height), 0);
-}
-
 /**
- * The route of one connection as the live diagram should draw it. The clearance
- * every connection shares is computed here, so the drawing, the travel path, and
- * the drag baseline can never disagree about where a segment sits.
+ * The route of one connection as the live diagram should draw it. The stages are
+ * supplied here, so the router can clear the stages the connection's own corridor
+ * crosses and no others; the drawing, the travel path, and the drag baseline can
+ * never disagree about where a segment sits.
  */
 export function connectionRouteFor(stages: readonly LiveStageRect[], connection: LiveConnectionDescriptor, withOffsets: boolean): ConnectionRoute | null {
   const from = stages.find(stage => stage.id === connection.from);
@@ -109,7 +118,7 @@ export function connectionRouteFor(stages: readonly LiveStageRect[], connection:
     returning: connection.returning,
     fanOut: connection.fanOut,
     fanOutCount: connection.fanOutCount,
-    clearance: lowestStageBottom(stages),
+    clearanceStages: stages.map(rectOf),
     ...(connection.source === undefined ? {} : { source: connection.source }),
     ...(connection.target === undefined ? {} : { target: connection.target }),
     ...(!withOffsets || connection.segments === undefined ? {} : { segments: connection.segments }),

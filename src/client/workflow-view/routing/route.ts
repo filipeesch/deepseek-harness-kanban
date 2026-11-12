@@ -1,5 +1,6 @@
 import type { ConnectionAnchor, ConnectionSegmentOffset } from '../../../shared/types.js';
 import { automaticPoints, DETOUR_DEPTH } from './automatic.js';
+import { corridorOfPoints } from './clearance.js';
 import { anchorPoint, automaticSourcePoint, automaticTargetPoint, returningArrivalPoint, returningDeparturePoint } from './ports.js';
 import { buildShape, normalizePolyline, type ConnectionShape, type DiagramPoint, type DiagramRect } from './orthogonal.js';
 
@@ -29,8 +30,8 @@ export interface ConnectionRouteInput {
   readonly returning: boolean;
   readonly fanOut: number;
   readonly fanOutCount: number;
-  /** The lowest stage bottom a returning connection must stay below. */
-  readonly clearance?: number;
+  /** The stage rectangles a returning connection may have to clear below. */
+  readonly clearanceStages?: readonly DiagramRect[];
   readonly source?: ConnectionAnchor;
   readonly target?: ConnectionAnchor;
   readonly segments?: readonly ConnectionSegmentOffset[];
@@ -173,7 +174,21 @@ function applyOffsets(points: readonly DiagramPoint[], offsets: readonly Connect
  */
 export function connectionRoute(input: ConnectionRouteInput): ConnectionRoute {
   const automatic = input.source === undefined && input.target === undefined;
-  const points = normalizePolyline(automatic ? automaticPoints(input.from, input.to, input) : anchoredPoints(input));
-  const shifted = applyOffsets(points, input.segments);
+  let points = normalizePolyline(automatic ? automaticPoints(input.from, input.to, input) : anchoredPoints(input));
+  let shifted = applyOffsets(points, input.segments);
+  // A horizontal displacement moves the route's legs, so the corridor that
+  // clearance follows must be the drawn one, not the automatic one. Rebuilding
+  // with that corridor is a fixed point after at most a couple of passes: a new
+  // floor moves the horizontal runs, never the displaced legs.
+  if (automatic && (input.segments?.some(segment => segment.axis === 'x') ?? false)) {
+    let corridor = corridorOfPoints(shifted);
+    for (let pass = 0; pass < 3; pass += 1) {
+      points = normalizePolyline(automaticPoints(input.from, input.to, { ...input, corridor }));
+      shifted = applyOffsets(points, input.segments);
+      const next = corridorOfPoints(shifted);
+      if (next.minX === corridor.minX && next.maxX === corridor.maxX) break;
+      corridor = next;
+    }
+  }
   return { points: shifted, shape: buildShape(shifted), lines: freeLines(shifted) };
 }

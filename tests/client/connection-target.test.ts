@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decideCreationDrop, decideEndDrop } from '../../src/client/workflow-view/connection-target.js';
+import { candidateStageFor, decideCreationDrop, decideEndDrop } from '../../src/client/workflow-view/connection-target.js';
 import { boardConnectionDropResolver } from '../../src/client/workflow-view/connection-drop.js';
 
 describe('connection drop decision', () => {
@@ -20,6 +20,19 @@ describe('connection drop decision', () => {
   it('refuses a release that would author a self transition', () => {
     expect(decideEndDrop({ end: 'target', from: 'a', to: 'b', stageUnder: 'a' })).toEqual({ kind: 'none' });
     expect(decideEndDrop({ end: 'source', from: 'a', to: 'b', stageUnder: 'b' })).toEqual({ kind: 'none' });
+  });
+
+  it('marks the stage a release would re-point or re-own', () => {
+    expect(candidateStageFor({ end: 'target', from: 'a', to: 'b', stageUnder: 'c' })).toBe('c');
+    expect(candidateStageFor({ end: 'source', from: 'a', to: 'b', stageUnder: 'c' })).toBe('c');
+  });
+
+  it('marks no stage when the release would re-anchor or change nothing', () => {
+    expect(candidateStageFor({ end: 'target', from: 'a', to: 'b', stageUnder: 'b' })).toBeNull();
+    expect(candidateStageFor({ end: 'source', from: 'a', to: 'b', stageUnder: 'a' })).toBeNull();
+    expect(candidateStageFor({ end: 'target', from: 'a', to: 'b', stageUnder: 'a' })).toBeNull();
+    expect(candidateStageFor({ end: 'source', from: 'a', to: 'b', stageUnder: 'b' })).toBeNull();
+    expect(candidateStageFor({ end: 'target', from: 'a', to: 'b', stageUnder: null })).toBeNull();
   });
 
   it('creates only over another stage', () => {

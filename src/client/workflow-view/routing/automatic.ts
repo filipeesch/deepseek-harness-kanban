@@ -1,3 +1,4 @@
+import { corridorClearance, corridorOf, type RouteCorridor } from './clearance.js';
 import { automaticSourcePoint, automaticTargetPoint, returningArrivalPoint, returningDeparturePoint } from './ports.js';
 import type { DiagramPoint, DiagramRect } from './orthogonal.js';
 
@@ -11,8 +12,14 @@ export interface AutomaticRouteOptions {
   readonly returning: boolean;
   readonly fanOut: number;
   readonly fanOutCount: number;
-  /** The lowest stage bottom the connection must stay below. */
-  readonly clearance?: number;
+  /** The stage rectangles the route may have to clear below; only its own corridor counts. */
+  readonly clearanceStages?: readonly DiagramRect[];
+  /**
+   * The corridor a displaced route really occupies. A horizontal displacement can
+   * move the route's legs, so the caller may supply the drawn extent instead of
+   * the automatic one; the floor then follows the drawn route.
+   */
+  readonly corridor?: RouteCorridor;
 }
 
 function rangesOverlap(from: DiagramRect, to: DiagramRect): { readonly x: boolean; readonly y: boolean } {
@@ -36,15 +43,24 @@ function sideGutter(from: DiagramRect, to: DiagramRect, start: DiagramPoint): nu
   return Math.abs(start.x - left) <= Math.abs(start.x - right) ? left : right;
 }
 
+/** The depth a route needs below the stages its own corridor crosses. */
+function corridorFloor(stages: readonly DiagramRect[], start: DiagramPoint, end: DiagramPoint, corridor: RouteCorridor | undefined, wider: readonly number[] = []): number {
+  const extent = corridor ?? corridorOf(start.x, end.x, ...wider);
+  return Math.max(start.y, end.y, corridorClearance(stages, extent)) + RETURNING_DEPTH;
+}
+
 /**
- * Both edges leave and enter through the bottom, below every stage. When the
- * target sits below the source, the direct legs would run through it, so the
- * route steps aside before it descends and comes back below the target.
+ * Both edges leave and enter through the bottom, below the stages their own
+ * corridor crosses. When the target sits below the source, the direct legs would
+ * run through it, so the route steps aside before it descends and comes back
+ * below the target. The corridor widens by that gutter, so the detour clears the
+ * stages the longer run passes too.
  */
 function bottomPoints(from: DiagramRect, to: DiagramRect, options: AutomaticRouteOptions): DiagramPoint[] {
   const start = returningDeparturePoint(from, options.fanOut, options.fanOutCount);
   const end = returningArrivalPoint(to);
-  const floor = Math.max(start.y, end.y, options.clearance ?? 0) + RETURNING_DEPTH;
+  const stages = options.clearanceStages ?? [];
+  const floor = corridorFloor(stages, start, end, options.corridor);
   const blocksTarget = verticalCrosses(start.x, start.y, floor, to);
   const blocksSource = verticalCrosses(end.x, end.y, floor, from);
   if (blocksTarget || blocksSource) {
@@ -54,9 +70,10 @@ function bottomPoints(from: DiagramRect, to: DiagramRect, options: AutomaticRout
     const targetBelow = to.y > from.y;
     const mid = targetBelow ? (from.y + from.height + to.y) / 2 : (to.y + to.height + from.y) / 2;
     const gutter = sideGutter(from, to, start);
+    const detourFloor = corridorFloor(stages, start, end, options.corridor, [gutter]);
     return targetBelow
-      ? [start, { x: start.x, y: mid }, { x: gutter, y: mid }, { x: gutter, y: floor }, { x: end.x, y: floor }, end]
-      : [start, { x: start.x, y: floor }, { x: gutter, y: floor }, { x: gutter, y: mid }, { x: end.x, y: mid }, end];
+      ? [start, { x: start.x, y: mid }, { x: gutter, y: mid }, { x: gutter, y: detourFloor }, { x: end.x, y: detourFloor }, end]
+      : [start, { x: start.x, y: detourFloor }, { x: gutter, y: detourFloor }, { x: gutter, y: mid }, { x: end.x, y: mid }, end];
   }
   return [start, { x: start.x, y: floor }, { x: end.x, y: floor }, end];
 }
@@ -70,8 +87,8 @@ function sidePoints(start: DiagramPoint, end: DiagramPoint): DiagramPoint[] {
 /**
  * The route of a connection whose ends are not authored: a forward connection
  * leaves the source's right edge and enters the target's left edge, a returning
- * connection runs below every stage, and a pair that was rearranged so the
- * target sits before the source is routed around the outside.
+ * connection runs below the stages its corridor crosses, and a pair that was
+ * rearranged so the target sits before the source is routed around the outside.
  */
 export function automaticPoints(from: DiagramRect, to: DiagramRect, options: AutomaticRouteOptions): DiagramPoint[] {
   if (options.returning) return bottomPoints(from, to, options);

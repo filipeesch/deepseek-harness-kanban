@@ -73,6 +73,28 @@ describe('connection drag gesture', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it('reports a press that never moved when the owner gives it a meaning', () => {
+    const fake = ports();
+    const onPress = vi.fn();
+    const onCancel = vi.fn();
+    beginConnectionDrag({ start, events: fake.events, keys: fake.keyEvents, onMove: vi.fn(), onCommit: vi.fn(), onPress, onCancel });
+    fake.move(101, 101);
+    fake.up();
+    expect(onPress).toHaveBeenCalledTimes(1);
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(fake.pointerListeners()).toBe(0);
+  });
+
+  it('cancels a press that never moved instead of reporting it', () => {
+    const fake = ports();
+    const onPress = vi.fn();
+    const onCancel = vi.fn();
+    beginConnectionDrag({ start, events: fake.events, keys: fake.keyEvents, onMove: vi.fn(), onCommit: vi.fn(), onPress, onCancel });
+    fake.press('Escape');
+    expect(onPress).not.toHaveBeenCalled();
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
   it('cancels with Escape', () => {
     const fake = ports();
     const onCommit = vi.fn();

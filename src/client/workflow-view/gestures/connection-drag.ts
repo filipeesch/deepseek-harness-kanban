@@ -17,16 +17,22 @@ export interface ConnectionDragInput {
   readonly onMove: (pointer: PointerPosition) => void;
   /** Called once, only when the pointer actually moved. */
   readonly onCommit: () => void;
-  /** Called when the press never moved, or when it was cancelled. */
+  /**
+   * Called when the press ends without ever passing the threshold. An owner that
+   * omits it receives onCancel instead, so a press keeps changing nothing.
+   */
+  readonly onPress?: () => void;
+  /** Called when the press was cancelled, or when a no-move press has no owner. */
   readonly onCancel: () => void;
   readonly threshold?: number;
 }
 
 /**
  * One connection adjustment gesture. A press that never passes the threshold
- * commits nothing; a completed gesture commits exactly once; Escape and
- * pointercancel revert. The owner keeps its guard from the returned handle, so a
- * finished gesture can never block the next one.
+ * reports onPress, or onCancel when the owner has no press meaning; a completed
+ * gesture commits exactly once; Escape and pointercancel revert. The owner keeps
+ * its guard from the returned handle, so a finished gesture can never block the
+ * next one.
  */
 export function beginConnectionDrag(input: ConnectionDragInput): GestureHandle {
   let active = false;
@@ -45,8 +51,11 @@ export function beginConnectionDrag(input: ConnectionDragInput): GestureHandle {
   const finish = (commit: boolean) => {
     if (disposed) return;
     cleanup();
-    if (commit && active) input.onCommit();
-    else input.onCancel();
+    if (active) {
+      if (commit) input.onCommit(); else input.onCancel();
+      return;
+    }
+    if (commit && input.onPress !== undefined) input.onPress(); else input.onCancel();
   };
 
   const move = (event: PointerPosition) => {
