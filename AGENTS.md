@@ -11,6 +11,33 @@
 - Hide a pre-existing worktree workspace once, at its first binding. Never hide workspaces retroactively and never re-hide one after a reader reveals hidden workspaces; startup reconciliation only repairs workspaces.
 - Use the positional workspace API and keep workspaces visible on hosts without visibility support. A failed hide is reported and never blocks conversation creation.
 
+## Kanban workflow architect preset
+
+- Ship the `kanban-workflow-architect` preset with this bundle. Keep its stable
+  role, interview, approval, language, and safety rules in `cordis.patch.yml`;
+  put task-specific guidance in `presets/skills/kanban-workflow-design/` and load
+  technical references only when needed. Do not turn the persona into a manual.
+- Review the preset and its references whenever a change affects workflow YAML,
+  product tools or their scopes, stage execution, automatic advance, task
+  communication, board sharing, or preset composition. Check both newly enabled
+  capabilities and removed or changed behavior against the implementation and
+  installed DSH contracts; a source-only feature is not a deployed capability.
+- Update the smallest relevant section in the same change. Replace obsolete
+  guidance rather than appending exceptions or a change history. Keep each fact
+  in one authoritative place; link to a reference instead of copying tool schemas,
+  API signatures, project setup instructions, or general repository documentation.
+  Explain actionable semantics and limits, not implementation trivia.
+- Preserve the architect/manager boundary and existing tool authorization rules.
+  Parent/child and cross-board protocols are agent conventions, not native
+  dependency scheduling, permission grants, or a cross-board transaction.
+- Validate the bundle declaration, packaged skill paths and links, YAML examples
+  against the current parser, and preset mounting in an isolated DSH composition.
+  Keep the persona under 4,000 characters and each skill/reference under 7,000
+  characters, leaving room for tool-result wrappers below the 8,192-character
+  pruning threshold. These are ceilings, not targets; remove repetition before
+  adding text. Never use real-model traffic or the owner's profile for acceptance
+  checks.
+
 ## Releases
 
 - Document installation from the repository URL:
