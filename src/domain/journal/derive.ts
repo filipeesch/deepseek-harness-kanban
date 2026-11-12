@@ -3,7 +3,6 @@ import { invalidWorkflow } from '../yaml-fields.js';
 import { applyEvents } from './conflict.js';
 import { canonicalWorkflow } from '../schema-parts.js';
 import { canonicalDeterministic } from '../deterministic-definition.js';
-import { randomUUID } from 'node:crypto';
 import type { ConnectionLayout, TransitionRule, Workflow } from '../../shared/types.js';
 import { connectionKey } from '../connection-anchor.js';
 import { transitionRule } from '../transition-rule.js';
@@ -91,7 +90,7 @@ export function deriveChanges(previous: BoardVersion | null, local: BoardVersion
   const after = assignStageIdentities({
     workflow: authored,
     previous: stageIdentitySeeds(before),
-    allocate: options.allocate ?? (() => randomUUID()),
+    allocate: options.allocate ?? localAllocator(),
   });
 
   const replacement = (): BoardChange[] => {
@@ -191,5 +190,57 @@ export function deriveChanges(previous: BoardVersion | null, local: BoardVersion
     const result = applyEvents(previous.text, changes.map((change, seq) => ({ ...change, seq, at: 'derive', v: 2 })));
     if (!result.ok || canonicalWorkflow(seedStageIdentities(parseWorkflow(result.text))) !== canonicalWorkflow(after)) return replacement();
   } catch { return replacement(); }
+  return changes;
+}
+
+/** A deterministic identity sequence, so derivation never depends on a host service. */
+function localAllocator(): () => string {
+  let next = 0;
+  return () => 'stage-' + (++next);
+}
+
+/** The published version of one board as derivation sees it. */
+export interface BoardMirror {
+  readonly workflow: string | null;
+  readonly name: string | null;
+  readonly projectKeys: readonly string[] | null;
+  readonly rank: string | null;
+}
+
+/** The local board as derivation sees it. */
+export interface BoardLocal {
+  readonly workflow: string;
+  readonly name: string;
+  readonly projectKeys: readonly string[] | null;
+  readonly rank: string | null;
+}
+
+/** Two project scopes are the same when both allow every project or they name the same keys. */
+export function sameScope(left: readonly string[] | null | undefined, right: readonly string[] | null | undefined): boolean {
+  const a = left ?? null;
+  const b = right ?? null;
+  if (a === null || b === null) return a === b;
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+/**
+ * Derive everything one board's publish carries: its workflow events beside the
+ * events that state its name, project scope, and position. A board with no published
+ * version is published whole, and its first event establishes the workflow.
+ */
+export function deriveBoardChanges(mirror: BoardMirror | null, local: BoardLocal, options: DeriveOptions = {}): BoardChange[] {
+  if (mirror === null || mirror.workflow === null) {
+    const genesis: BoardChange[] = [{ kind: 'workflow.replaced', text: local.workflow }];
+    if (local.name.trim().length > 0) genesis.push({ kind: 'board.renamed', name: local.name });
+    genesis.push({ kind: 'board.scope-changed', projectKeys: local.projectKeys === null ? null : [...local.projectKeys] });
+    if (local.rank !== null) genesis.push({ kind: 'board.rank-changed', rank: local.rank });
+    return genesis;
+  }
+  const changes = deriveChanges({ text: mirror.workflow }, { text: local.workflow }, options);
+  if (mirror.name !== local.name) changes.push({ kind: 'board.renamed', name: local.name });
+  if (!sameScope(mirror.projectKeys, local.projectKeys)) {
+    changes.push({ kind: 'board.scope-changed', projectKeys: local.projectKeys === null ? null : [...local.projectKeys] });
+  }
+  if (local.rank !== null && mirror.rank !== local.rank) changes.push({ kind: 'board.rank-changed', rank: local.rank });
   return changes;
 }

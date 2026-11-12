@@ -1,53 +1,23 @@
-import React, { useEffect, useState } from 'react';
-import type { ClientApi, HubSharingView, HubState, Problem, SharingAuthView, SharingCommand, SharingStorage } from '../../../shared/types.js';
-import { asProblem } from '../../ui.js';
-import { GitStoragePanel } from './git-panel.js';
-import { GoogleDriveStoragePanel } from './google-drive-panel.js';
-import { GoogleDriveLocalStoragePanel } from './google-drive-local-panel.js';
-import { LocalFolderStoragePanel } from './local-folder-panel.js';
-import { Blockers, ErrorBlock, type Act } from './shared.js';
-import { STORAGE_META, StorageCards } from './storage-cards.js';
+import React from 'react';
+import type { ClientApi, HubSharingView, HubState, SharingAuthView } from '../../../shared/types.js';
+import { useSharingActions } from '../../sharing/actions.js';
+import { ErrorNotice, type RunCommand } from '../../ui.js';
+import { ChangesArea } from './changes-area.js';
+import { ConnectionArea } from './connection-area.js';
 
-/** One connection surface per storage, so the selector never branches on the storage id. */
-const STORAGE_PANELS: Record<SharingStorage, React.ComponentType<{ hub: HubState; sharing?: HubSharingView; auth?: SharingAuthView; act: Act; pending: string | null; api?: ClientApi }>> = {
-  git: GitStoragePanel,
-  'google-drive': GoogleDriveStoragePanel,
-  'google-drive-local': GoogleDriveLocalStoragePanel,
-  'local-folder': LocalFolderStoragePanel,
-};
-
-/** The Team Settings surface: one card per storage over per-storage panels. */
-export function TeamSettings({ hub, sharing, auth, api }: { hub: HubState; sharing?: HubSharingView; auth?: SharingAuthView; api?: ClientApi }) {
-  const [storage, setStorage] = useState<SharingStorage>(sharing?.provider ?? 'git');
-  const [pending, setPending] = useState<string | null>(null);
-  const [error, setError] = useState<Problem | null>(null);
-  useEffect(() => { setStorage(sharing?.provider ?? 'git'); }, [sharing?.provider]);
-  useEffect(() => { setError(null); }, [sharing?.status, auth?.status]);
-
-  const act: Act = async (label, command) => {
-    if (!api) { setError({ code: 'SHARING_UNAVAILABLE', message: 'Team settings are unavailable in this view.' }); return false; }
-    setPending(label); setError(null);
-    try { await api.sharing(command as SharingCommand); return true; }
-    catch (failure) { setError(asProblem(failure)); return false; }
-    finally { setPending(null); }
-  };
-
-  const bound = sharing !== undefined;
-  const errorBlockers = error !== null && Array.isArray(error.details?.blockers) ? (error.details.blockers as Array<{ code: string; message: string }>) : [];
-  const Panel = STORAGE_PANELS[storage];
+/**
+ * The Team Settings surface, in two areas: where this Hub publishes, and what changed
+ * since the team configuration was last applied. Connection details appear once.
+ */
+export function TeamSettings({ hub, sharing, auth, api, run }: { hub: HubState; sharing?: HubSharingView; auth?: SharingAuthView; api?: ClientApi; run?: RunCommand }) {
+  const actions = useSharingActions(api);
+  const unavailable = sharing?.blockers.some(blocker => blocker.code === 'SHARING_DOCUMENT_VERSION_UNSUPPORTED') === true;
   return <div className="kb-form" aria-label="Team settings">
     <h3>Team Settings</h3>
-    <p className="kb-hint">Choose where this Hub's boards and workflows are shared. Projects, tasks, notes, and Hub names stay on this machine.</p>
-    <StorageCards value={storage} onChange={setStorage} locked={bound} busy={pending !== null} />
-    {bound && <p className="kb-hint">This Hub is connected to {STORAGE_META[sharing.provider].label}. Disconnect to switch storage.</p>}
-    {bound && (sharing.supportsFiles
-      ? <p className="kb-hint">Team files are the documents the agent tools search, read, create, edit, and delete. They live in <code>team-files/</code> in this storage, and a deleted file moves to <code>team-files/.trash/</code>.</p>
-      : <p className="kb-hint">Team files are unavailable with {sharing.providerLabel}. Connect a Git repository, a local folder, or a Google Drive Local folder to use them.</p>)}
-    {/* The remedy belongs to the panel: it is shown for the stored failure and for
-        the failure the action just reported. */}
-    {(sharing?.error?.code === 'SHARING_DOCUMENT_VERSION_UNSUPPORTED' || error?.code === 'SHARING_DOCUMENT_VERSION_UNSUPPORTED') && <p className="kb-error" role="alert"><strong>Update the plugin</strong><span>This Hub's team configuration was written by a newer plugin version. Reading and publishing stay blocked until the plugin is updated.</span></p>}
-    <Panel hub={hub} sharing={sharing} auth={auth} act={act} pending={pending} api={api} />
-    {errorBlockers.length > 0 && <Blockers blockers={errorBlockers} />}
-    <ErrorBlock error={error} />
+    <p className="kb-hint">Projects, tasks, notes, and Hub names stay on this machine.</p>
+    {unavailable && <p className="kb-error" role="alert"><strong>Update the plugin</strong><span>This team storage was written by a newer plugin version. Reading and publishing stay blocked until the plugin is updated.</span></p>}
+    <ConnectionArea hub={hub} sharing={sharing} auth={auth} api={api} act={actions.run} pending={actions.pending} />
+    {sharing !== undefined && <ChangesArea hub={hub} sharing={sharing} act={actions.run} pending={actions.pending} {...(api === undefined ? {} : { api })} {...(run === undefined ? {} : { run })} />}
+    {actions.error && <ErrorNotice problem={actions.error} />}
   </div>;
 }

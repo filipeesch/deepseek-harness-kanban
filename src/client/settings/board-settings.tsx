@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Board, BoardState, ClientApi, HubSharingView, HubState } from '../../shared/types.js';
-import { canShareFromEditor } from '../sharing/status.js';
+import { useSharingActions } from '../sharing/actions.js';
+import { canPublishBoard } from '../sharing/status.js';
 import type { RunCommand } from '../ui.js';
 import { WorkflowEditor } from '../workflow-editor.js';
 import { BoardDeletionControl } from './board/board-deletion-control.js';
@@ -31,7 +32,11 @@ export function BoardSettings({ state, hub, board, run, api, sharing, onDeleted,
   setWorkflowDraft: React.Dispatch<React.SetStateAction<{ yaml: string; revision: number } | null>>;
 }) {
   if (!hub) return null;
-  const onShare = api !== undefined && canShareFromEditor(sharing, board.id) ? async () => { await api.sharing({ type: 'sharing.publish', hubId: hub.id }); } : undefined;
+  const share = useSharingActions(api);
+  const onShare = api !== undefined && canPublishBoard(sharing, board.id) ? async () => {
+    const failure = await share.run('publish-board', { type: 'sharing.publishBoard', hubId: hub.id, boardId: board.id });
+    if (failure !== null) throw failure;
+  } : undefined;
   return <div className="kb-form">
     <BoardIdentityForm hub={hub} board={board} run={run} />
     <BoardProjectScopeForm state={state} hub={hub} board={board} run={run} />

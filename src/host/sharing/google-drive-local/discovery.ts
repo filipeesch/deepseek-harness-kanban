@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { SHARED_MANIFEST_FILE } from '../../../domain/sharing/manifest.js';
+import { SHARED_BOARD_DIRECTORY, SHARED_BOARD_EXTENSION, SHARED_LAYOUT_FILE } from '../../../domain/sharing/layout.js';
 import { KanbanError } from '../../../shared/errors.js';
 import type { DriveBrowseView, DriveFolderEntry, DriveDiscoveryView, DriveLocationView } from '../../../shared/types.js';
 import { folderIdentity, isWithinPath } from '../local-folder-path.js';
@@ -138,10 +138,23 @@ export class GoogleDriveLocalDiscovery {
       path: located.path,
       parent: atRoot ? null : this.paths.dirname(located.path),
       entries: folderEntries,
-      hasDocument: listing.entries.some(entry => !entry.directory && entry.name === SHARED_MANIFEST_FILE),
+      hasDocument: await this.hasPublishedLayout(located.path, listing.entries),
       truncated: listing.truncated || folders.length > shown.length,
       shown: folderEntries.length,
     };
+  }
+
+  /**
+   * Whether one folder already holds a published layout: the stamp, or a board log
+   * inside the layout's own directory. Browsing never reads a file.
+   */
+  private async hasPublishedLayout(folderPath: string, entries: readonly { name: string; directory: boolean }[]): Promise<boolean> {
+    if (entries.some(entry => !entry.directory && entry.name === SHARED_LAYOUT_FILE)) return true;
+    if (!entries.some(entry => entry.directory && entry.name === SHARED_BOARD_DIRECTORY)) return false;
+    try {
+      const listing = await this.options.fs.list(this.paths.join(folderPath, SHARED_BOARD_DIRECTORY), 2);
+      return listing.entries.some(entry => !entry.directory && entry.name.endsWith(SHARED_BOARD_EXTENSION));
+    } catch { return false; }
   }
 
   private async projectMount(mount: DriveMount): Promise<DriveLocationView> {

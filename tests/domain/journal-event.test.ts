@@ -20,6 +20,11 @@ describe('journal event codec', () => {
       { kind: 'group.removed', id: 'g', ...base },
       { kind: 'connection.set', layout: { from: 'a', to: 'b', source: { side: 'right', at: 2 } }, ...base },
       { kind: 'connection.removed', from: 'a', to: 'b', ...base },
+      { kind: 'board.renamed', name: 'Delivery', ...base },
+      { kind: 'board.scope-changed', projectKeys: ['app', 'ops'], ...base },
+      { kind: 'board.scope-changed', projectKeys: null, ...base },
+      { kind: 'board.rank-changed', rank: 'i5', ...base },
+      { kind: 'board.removed', ...base },
     ];
     expect(new Set(events.map(event => event.kind))).toEqual(new Set(EVENT_KINDS));
     for (const event of events) {
@@ -49,6 +54,13 @@ describe('journal event codec', () => {
 
   it('reports an unknown event kind instead of skipping it', () => {
     expect(decodeEvent({ ...base, kind: 'stage.teleported', key: 's1' })).toEqual({ ok: false, reason: 'unknown-kind', kind: 'stage.teleported' });
+  });
+
+  it('rejects an identity event with an invalid value', () => {
+    expect(decodeEvent({ ...base, kind: 'board.renamed', name: '   ' }).ok).toBe(false);
+    expect(decodeEvent({ ...base, kind: 'board.scope-changed', projectKeys: ['../escape'] }).ok).toBe(false);
+    expect(decodeEvent({ ...base, kind: 'board.rank-changed', rank: 'ABCDEF' }).ok).toBe(false);
+    expect(decodeEvent({ ...base, kind: 'board.removed', extra: true }).ok).toBe(false);
   });
 
   it('rejects a malformed event', () => {

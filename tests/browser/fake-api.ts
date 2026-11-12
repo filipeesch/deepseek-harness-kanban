@@ -242,11 +242,11 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
     const folder = pathValue.slice(pathValue.lastIndexOf('/') + 1);
     return {
       status, provider: 'google-drive-local', providerLabel: 'Google Drive Local', supportsFiles: true, address: 'member@example.test / ' + folder,
-      syncMode: 'continuous', intervalMinutes: 1, lastSyncedAt: '2026-10-21T00:05:00Z',
-      drafts: 0, pending: 0, updates: 0, conflicts: 0, orderChanged: false, syncing: false,
-      boards: [{ boardId: 'board', key: 'harness-board', name: 'Harness board', state: 'in-sync', bound: true, pending: false }],
-      incoming: [], removed: [], blockers: [], removing: [],
-      ...(status === 'preview' ? { preview: { publishedBoards: 1, localBoards: 1 }, boards: [{ boardId: 'board', key: 'harness-board', name: 'Harness board', state: 'updates-available' as const, bound: true, pending: true }] } : {}),
+      intervalMinutes: 1, lastSyncedAt: '2026-10-21T00:05:00Z',
+      drafts: 0, updates: 0, conflicts: 0, syncing: false,
+      boards: [{ boardId: 'board', key: 'harness-board', name: 'Harness board', state: 'in-sync', bound: true, draft: false }],
+      incoming: [], pendingRemovals: [], removed: [], blockers: [],
+      ...(status === 'preview' ? { preview: { publishedBoards: 1, localBoards: 1 }, boards: [{ boardId: 'board', key: 'harness-board', name: 'Harness board', state: 'draft' as const, bound: true, draft: true }] } : {}),
     };
   }
   if (options.persist) { try { const stored = sessionStorage.getItem('dsh-kanban.harness'); if (stored) value = withLegacy(JSON.parse(stored) as KanbanSnapshot); } catch { /* storage is optional */ } }

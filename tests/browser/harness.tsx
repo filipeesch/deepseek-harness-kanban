@@ -48,46 +48,44 @@ const harness = createHarnessApi({ ...(scenario === 'deterministic' ? { determin
 
 function harnessSharing(kind: string): HubSharingView {
   const view: HubSharingView = {
-    status: 'published', provider: 'git', providerLabel: 'Git repository', supportsFiles: true, repository: 'https://example.test/team.git', address: 'https://example.test/team.git', syncMode: 'explicit', intervalMinutes: 5, lastCheckedAt: '2026-10-21T00:05:00Z',
-    drafts: 0, pending: 0, updates: 0, conflicts: 0, orderChanged: false, syncing: false,
-    boards: [{ boardId: 'board', key: 'harness-board', name: 'Harness board', state: 'in-sync', bound: true, pending: false }],
-    incoming: [], removed: [], blockers: [], removing: [],
+    status: 'published', provider: 'git', providerLabel: 'Git repository', supportsFiles: true, address: 'https://example.test/team.git', intervalMinutes: 5, lastCheckedAt: '2026-10-21T00:05:00Z',
+    drafts: 0, updates: 0, conflicts: 0, syncing: false,
+    boards: [{ boardId: 'board', key: 'harness-board', name: 'Harness board', state: 'in-sync', bound: true, draft: false }],
+    incoming: [], pendingRemovals: [], removed: [], blockers: [],
   };
-  if (kind === 'draft') return { ...view, drafts: 1, boards: [{ ...view.boards[0]!, state: 'draft' }] };
-  if (kind === 'updates') return { ...view, status: 'updates-available', updates: 2, boards: [{ ...view.boards[0]!, state: 'updates-available', pending: true }], incoming: [{ key: 'team-board', name: 'Team board' }] };
-  if (kind === 'update-required') return { ...view, status: 'needs-review', conflicts: 1, boards: [{ ...view.boards[0]!, state: 'update-required' }] };
-  if (kind === 'review') return { ...view, status: 'needs-review', conflicts: 1, boards: [{ ...view.boards[0]!, state: 'needs-review', detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }] };
+  const draftBoard = { ...view.boards[0]!, state: 'draft' as const, draft: true, detail: { changes: [{ kind: 'stage.field-changed' as const, stage: 'explore', field: 'name' }, { kind: 'board.renamed' as const, name: 'Renamed board' }] } };
+  if (kind === 'draft') return { ...view, drafts: 1, boards: [draftBoard] };
+  if (kind === 'updates') return { ...view, status: 'updates-available', updates: 1, boards: [{ ...view.boards[0]!, state: 'updates-available', updates: 2, detail: { changes: [{ kind: 'stage.id-changed', from: 'explore', to: 'discover' }] } }], incoming: [{ key: 'team-board', name: 'Team board' }] };
+  if (kind === 'update-required') return { ...view, status: 'needs-review', conflicts: 1, blockers: [{ code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED', message: 'The team configuration was written by a newer plugin version. Update the plugin to read or publish it.' }], boards: [{ ...view.boards[0]!, state: 'update-required' }] };
+  if (kind === 'review') return { ...view, status: 'needs-review', conflicts: 1, boards: [{ ...view.boards[0]!, state: 'needs-review', detail: { changes: [{ kind: 'stage.id-changed', from: 'explore', to: 'discover' }], local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }] };
   if (kind === 'orphan') return { ...view, boards: [{ ...view.boards[0]!, state: 'orphan' }] };
-  if (kind === 'pending-orphan') return { ...view, status: 'updates-available', updates: 1, boards: [{ ...view.boards[0]!, state: 'orphan', pending: true }] };
-  if (kind === 'collision') return { ...view, status: 'needs-review', conflicts: 1, boards: [{ boardId: 'board', name: 'Harness board', state: 'needs-review', bound: false, pending: false }] };
-  if (kind === 'mixed') return { ...view, status: 'updates-available', updates: 1, drafts: 1, boards: [{ ...view.boards[0]!, state: 'draft' }] };
-  if (kind === 'removal') return { ...view, status: 'updates-available', updates: 1, removing: [{ boardId: 'old-board', name: 'Old board' }] };
+  if (kind === 'pending-orphan') return { ...view, status: 'updates-available', updates: 1, boards: [{ ...view.boards[0]!, state: 'orphan', updates: 1 }] };
+  if (kind === 'collision') return { ...view, status: 'needs-review', conflicts: 1, boards: [{ boardId: 'board', name: 'Harness board', state: 'needs-review', bound: false, draft: false }] };
+  if (kind === 'mixed') return { ...view, status: 'updates-available', updates: 1, drafts: 1, boards: [draftBoard], incoming: [{ key: 'team-board', name: 'Team board' }] };
   if (kind === 'removed') return { ...view, removed: [{ boardId: 'old-board', key: 'old-board', name: 'Old board' }] };
   if (kind === 'unavailable') return { ...view, status: 'unavailable', error: { code: 'SHARING_UNREACHABLE', message: 'The team repository could not be reached.' } };
-  if (kind === 'preview') return { ...view, status: 'preview', updates: 1, drafts: 1, boards: [{ ...view.boards[0]!, state: 'updates-available', pending: true, detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }], preview: { publishedBoards: 2, localBoards: 1 } };
+  if (kind === 'preview') return { ...view, status: 'preview', preview: { publishedBoards: 2, localBoards: 1 }, previewBoards: [{ key: 'harness-board', name: 'Harness board' }, { key: 'team-board', name: 'Team board' }], boards: [{ ...view.boards[0]!, state: 'draft', draft: true }], incoming: [{ key: 'team-board', name: 'Team board' }] };
   if (kind.startsWith('drive-local')) {
-    const local = { ...view, provider: 'google-drive-local' as const, providerLabel: 'Google Drive Local', address: 'member@example.test / Projetos', syncMode: 'continuous' as const, intervalMinutes: 1, pending: 0, lastSyncedAt: '2026-10-21T00:05:00Z' };
+    const local = { ...view, provider: 'google-drive-local' as const, providerLabel: 'Google Drive Local', address: 'member@example.test / Projetos', intervalMinutes: 1, lastSyncedAt: '2026-10-21T00:05:00Z' };
     if (kind === 'drive-local-unavailable') return { ...local, status: 'unavailable', error: { code: 'SHARING_DRIVE_MOUNT_UNAVAILABLE', message: 'The Google Drive location is no longer mounted on this machine.' } };
-    if (kind === 'drive-local-review') return { ...local, status: 'needs-review', conflicts: 1, blockers: [{ code: 'SHARING_CONFLICT_COPY', message: 'Another copy of the team document is in this folder: kanban-hub (1).yaml. Review the copies before synchronizing.' }], boards: [{ ...local.boards[0]!, state: 'needs-review' }] };
+    if (kind === 'drive-local-review') return { ...local, status: 'needs-review', conflicts: 1, blockers: [{ code: 'SHARING_CONFLICT_COPY', message: 'Another copy of the team configuration is in this folder: kanban-hub (1).yaml. Review the copies before synchronizing.' }], boards: [{ ...local.boards[0]!, state: 'needs-review' }] };
     return local;
   }
   if (kind.startsWith('drive')) {
-    const drive = { ...view, provider: 'google-drive' as const, providerLabel: 'Google Drive', supportsFiles: false, address: 'Team drive / Hub', syncMode: 'continuous' as const, authorization: 'connected' as const, pending: 0, lastSyncedAt: '2026-10-21T00:05:00Z' };
-    if (kind === 'drive-preview') return { ...drive, status: 'preview', updates: 1, drafts: 1, boards: [{ ...drive.boards[0]!, state: 'updates-available', pending: true, detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }], preview: { publishedBoards: 2, localBoards: 1 } };
-    if (kind === 'drive-review') return { ...drive, status: 'needs-review', conflicts: 1, boards: [{ ...drive.boards[0]!, state: 'needs-review', detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }] };
+    const drive = { ...view, provider: 'google-drive' as const, providerLabel: 'Google Drive', supportsFiles: false, address: 'Team drive / Hub', authorization: 'connected' as const, lastSyncedAt: '2026-10-21T00:05:00Z' };
+    if (kind === 'drive-preview') return { ...drive, status: 'preview', preview: { publishedBoards: 2, localBoards: 1 }, previewBoards: [{ key: 'harness-board', name: 'Harness board' }, { key: 'team-board', name: 'Team board' }], boards: [{ ...drive.boards[0]!, state: 'draft', draft: true }], incoming: [{ key: 'team-board', name: 'Team board' }] };
+    if (kind === 'drive-review') return { ...drive, status: 'needs-review', conflicts: 1, boards: [{ ...drive.boards[0]!, state: 'needs-review', detail: { changes: [{ kind: 'stage.id-changed', from: 'explore', to: 'discover' }], local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }] };
     return drive;
   }
   if (kind.startsWith('folder')) {
-    const { repository: _repository, ...base } = view;
-    const folder = { ...base, provider: 'local-folder' as const, providerLabel: 'Local folder', address: '~/.dsh-kanban/hub', syncMode: 'continuous' as const, intervalMinutes: 1, pending: 0, lastSyncedAt: '2026-10-21T00:05:00Z' };
-    if (kind === 'folder-preview') return { ...folder, status: 'preview', updates: 1, drafts: 1, boards: [{ ...folder.boards[0]!, state: 'updates-available', pending: true, detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }], preview: { publishedBoards: 2, localBoards: 1 } };
-    if (kind === 'folder-review') return { ...folder, status: 'needs-review', blockers: [{ code: 'SHARING_CONFLICT_COPY', message: 'Another copy of the team document is in this folder: kanban-hub (1).yaml. Review the copies before synchronizing.' }] };
+    const folder = { ...view, provider: 'local-folder' as const, providerLabel: 'Local folder', address: '~/.dsh-kanban/hub', intervalMinutes: 1, lastSyncedAt: '2026-10-21T00:05:00Z' };
+    if (kind === 'folder-preview') return { ...folder, status: 'preview', preview: { publishedBoards: 2, localBoards: 1 }, previewBoards: [{ key: 'harness-board', name: 'Harness board' }, { key: 'team-board', name: 'Team board' }], boards: [{ ...folder.boards[0]!, state: 'draft', draft: true }], incoming: [{ key: 'team-board', name: 'Team board' }] };
+    if (kind === 'folder-review') return { ...folder, status: 'needs-review', blockers: [{ code: 'SHARING_CONFLICT_COPY', message: 'Another copy of the team configuration is in this folder: kanban-hub (1).yaml. Review the copies before synchronizing.' }] };
     return folder;
   }
-  if (kind === 'unavailable-conflict') return { ...view, status: 'unavailable', conflicts: 1, error: { code: 'SHARING_UNREACHABLE', message: 'The team repository could not be reached.' }, boards: [{ ...view.boards[0]!, state: 'needs-review', detail: { local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }] };
+  if (kind === 'unavailable-conflict') return { ...view, status: 'unavailable', conflicts: 1, error: { code: 'SHARING_UNREACHABLE', message: 'The team repository could not be reached.' }, boards: [{ ...view.boards[0]!, state: 'needs-review', detail: { changes: [], local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }] };
   if (kind === 'unavailable-folder-review') {
-    const { repository: _repository, ...base } = view;
-    return { ...base, provider: 'local-folder' as const, providerLabel: 'Local folder', address: '~/.dsh-kanban/hub', syncMode: 'continuous' as const, intervalMinutes: 1, status: 'unavailable', error: { code: 'SHARING_FOLDER_MISSING', message: 'The selected folder is not accessible.' }, blockers: [{ code: 'SHARING_CONFLICT_COPY', message: 'Another copy of the team document is in this folder: kanban-hub (1).yaml. Review the copies before synchronizing.' }] };
+    return { ...view, provider: 'local-folder' as const, providerLabel: 'Local folder', address: '~/.dsh-kanban/hub', intervalMinutes: 1, status: 'unavailable', error: { code: 'SHARING_FOLDER_MISSING', message: 'The selected folder is not accessible.' }, blockers: [{ code: 'SHARING_CONFLICT_COPY', message: 'Another copy of the team configuration is in this folder: kanban-hub (1).yaml. Review the copies before synchronizing.' }] };
   }
   if (kind === 'refuse-error') return { ...view, status: 'updates-available', updates: 1 };
   return view;

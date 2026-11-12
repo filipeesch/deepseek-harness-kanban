@@ -7,7 +7,7 @@ import { GitTeamFileStore } from './git-team-file-store.js';
 import type { TeamFileStore } from './team-file-store.js';
 import type { SharingBinding, SharingProviderDescriptor } from './provider.js';
 
-export { SHARED_MANIFEST_FILE } from '../../domain/sharing/manifest.js';
+export { SHARED_LAYOUT_FILE } from '../../domain/sharing/layout.js';
 export { sharingRoot } from './root.js';
 export type { SharingCommandRunner } from './command-runner.js';
 
@@ -21,7 +21,6 @@ export function createGitProviderDescriptor(options: { root: string; runner?: Sh
   return {
     id: 'git',
     label: 'Git repository',
-    syncMode: 'explicit',
     defaultIntervalMinutes: 5,
     requiresAuthorization: false,
     normalizeSettings(settings) {

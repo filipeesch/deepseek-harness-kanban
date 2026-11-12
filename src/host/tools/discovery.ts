@@ -11,7 +11,7 @@ function sharingSummary(view:HubSharingView|undefined,boardId:string){
  const board=view?.boards.find(entry=>entry.boardId===boardId);
  return {
   status:view?.status??'not-published',
-  ...(view===undefined?{}:{syncMode:view.syncMode,updates:view.updates,conflicts:view.conflicts,blockers:view.blockers}),
+  ...(view===undefined?{}:{updates:view.updates,conflicts:view.conflicts,blockers:view.blockers}),
   bound:board?.bound===true,
   ...(board===undefined?{}:{boardState:board.state}),
  };

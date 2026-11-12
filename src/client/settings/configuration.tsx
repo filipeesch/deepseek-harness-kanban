@@ -31,7 +31,7 @@ export function Configuration({ state, hub, board, hubCount, settings, settingsR
     { id: 'Projects', render: () => projectView ? <ProjectsSection projects={projectView.projects} tasks={hub?.tasks ?? projectView.tasks} revision={projectView.revision} run={run} api={api} hubId={hub?.id} conversationAttention={conversationAttention} /> : <p className="kb-hint">No Hub is selected.</p> },
     { id: 'Schedules', render: () => hub ? <SchedulesSettings hub={hub} runtime={scheduleRuntime} {...(api === undefined ? {} : { api })} run={run} {...(onOpenSession === undefined ? {} : { onOpenSession })} /> : <p className="kb-hint">No Hub is selected.</p> },
     ...(state && board ? [{ id: 'Board', render: () => <BoardSettings state={state} hub={hub} board={board} run={run} api={api} sharing={sharing} onDeleted={onBoardDeleted} workflowDraft={workflowDraft} setWorkflowDraft={setWorkflowDraft} /> }] : []),
-    { id: 'Team Settings', render: () => hub ? <TeamSettings key={hub.id} hub={hub} sharing={sharing} auth={sharingAuth} api={api} /> : <p className="kb-hint">No Hub is selected.</p> },
+    { id: 'Team Settings', render: () => hub ? <TeamSettings key={hub.id} hub={hub} sharing={sharing} auth={sharingAuth} api={api} run={run} /> : <p className="kb-hint">No Hub is selected.</p> },
   ];
   const selected = sections.some(value => value.id === section) ? section : 'General';
   const current = sections.find(value => value.id === selected) ?? sections[0]!;

@@ -9,7 +9,9 @@ import { createGitProviderDescriptor } from '../../src/host/sharing/git-store.js
 import { createGoogleDriveProviderDescriptor } from '../../src/host/sharing/google-drive-store.js';
 import { createLocalFolderProviderDescriptor } from '../../src/host/sharing/local-folder-store.js';
 import { MemoryLayoutStore } from '../support/memory-layout-store.js';
-import type { SharedHubManifest } from '../../src/domain/sharing/manifest.js';
+import type { AppendOptions, BoardLogSnapshot } from '../../src/host/sharing/ports.js';
+import type { BoardChange } from '../../src/domain/journal/event.js';
+import type { BoardLog } from '../../src/domain/journal/log.js';
 import type { HubSharingRecord, HubSharingStore } from '../../src/host/sharing/state.js';
 import { TeamFiles } from '../../src/host/team-files/service.js';
 import { DirectoryTeamFileStore, TeamFileDirectory } from '../../src/host/sharing/team-file-directory.js';
@@ -48,7 +50,6 @@ function descriptionOf(binding: SharingBinding, supportsFiles: boolean): Provide
     id: binding.provider,
     label: binding.provider === 'google-drive' ? 'Google Drive' : 'Local folder',
     address: binding.settings.path ?? binding.settings.folderId ?? '',
-    syncMode: 'explicit',
     defaultIntervalMinutes: 1,
     requiresAuthorization: false,
     supportsFiles,
@@ -179,10 +180,14 @@ describe('team files on a bound Hub', () => {
     const log: string[] = [];
 
     class RecordingLayout extends MemoryLayoutStore {
-      constructor() { super(); }
-      override async writeManifest(manifest: SharedHubManifest, options: { expectedToken: string | null; message: string }): Promise<{ token: string }> {
+      constructor() { super({ version: 4 }); }
+      override async appendChanges(key: string, changes: readonly BoardChange[], options: AppendOptions): Promise<BoardLogSnapshot> {
         log.push('publish');
-        return super.writeManifest(manifest, options);
+        return super.appendChanges(key, changes, options);
+      }
+      override async createLog(key: string, logValue: BoardLog): Promise<BoardLogSnapshot> {
+        log.push('publish');
+        return super.createLog(key, logValue);
       }
     }
 
@@ -217,7 +222,7 @@ describe('team files on a bound Hub', () => {
 
     const write = files.create(repository.hubId, { path: 'docs/order.md', content: 'x' });
     await new Promise(resolve => setTimeout(resolve, 20));
-    const publish = service.publishManifest(repository.hubId);
+    const publish = service.publishBoard(repository.hubId, board.id);
     await new Promise(resolve => setTimeout(resolve, 20));
     expect(log).toEqual([]);
     release();

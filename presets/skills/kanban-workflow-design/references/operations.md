@@ -27,7 +27,7 @@ Delete only an explicitly confirmed empty board, with local/team scope when boun
 
 ## Local success versus publishing
 
-Bound-Hub writes can publish automatically: disclose team impact before approval. Inspect `sharing`: local success may mean blocked/failed publishing, preview/unbound local state, or pending sync, not “published.”
+A bound Hub publishes only when the user asks: local success never means “published.” Inspect `sharing` for the board's state — a draft still to publish, team changes still to get, a review that blocks both, or an unavailable storage — before reporting team impact.
 
 Publishing failure keeps local data. Inspect before retrying; replaying creation/edits can duplicate or conflict. Other boards' drafts are not atomic parts of this operation. Report partial application/publication per board. Sharing carries workflows, not local tasks or coordinator/child IDs.
 

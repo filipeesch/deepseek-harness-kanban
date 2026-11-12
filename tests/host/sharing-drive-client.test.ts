@@ -69,22 +69,21 @@ describe('Google Drive client', () => {
       captured = { headers: init?.headers as Record<string, string>, body: String(init?.body ?? '') };
       return json({ id: 'file-1', name: 'kanban-hub.yaml', headRevisionId: 'r1' });
     }) as unknown as typeof fetch;
-    await client(fetchImpl).createDocument('folder-1', 'version: 1\nboards: []\n');
+    await client(fetchImpl).createLayoutStamp('folder-1', 'version: 4\n');
     expect(captured?.headers['content-type']).toMatch(/^multipart\/related; boundary=/);
     expect(captured?.body).toContain('"name":"kanban-hub.yaml"');
-    expect(captured?.body).toContain('version: 1');
+    expect(captured?.body).toContain('version: 4');
   });
 
-  it('uses the change feed and start-page-token endpoints', async () => {
+  it('finds a board log under the Drive files endpoint', async () => {
     const calls: string[] = [];
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
       calls.push(String(input));
-      return String(input).includes('startPageToken') ? json({ startPageToken: 'cursor-1' }) : json({ changes: [{ fileId: 'file-1', file: { id: 'file-1', headRevisionId: 'r2' } }], newStartPageToken: 'cursor-2' });
+      return json({ files: [{ id: 'file-1', name: 'kanban-board-delivery.jsonl', mimeType: 'text/yaml', headRevisionId: 'r1' }] });
     }) as unknown as typeof fetch;
     const drive = client(fetchImpl);
-    expect(await drive.getStartPageToken('drive-1')).toBe('cursor-1');
-    expect(await drive.listChanges('cursor-1', 'drive-1')).toMatchObject({ changes: [{ fileId: 'file-1' }], newStartPageToken: 'cursor-2' });
-    expect(calls[1]).toContain('driveId=drive-1');
-    expect(calls[1]).toContain('includeItemsFromAllDrives=true');
+    expect(await drive.findFile('folder-1', 'kanban-board-delivery.jsonl')).toMatchObject({ id: 'file-1' });
+    expect(calls[0]).toContain('/drive/v3/files?');
+    expect(calls[0]).not.toContain('www.googleapis.com/files?');
   });
 });
