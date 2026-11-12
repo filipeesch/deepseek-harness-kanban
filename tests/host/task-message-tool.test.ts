@@ -50,7 +50,11 @@ describe('send_task_message tool', () => {
     expect(schema.properties.task_id).toMatchObject({ type: 'string' });
     expect(schema.properties.message).toMatchObject({ type: 'string' });
     expect(definition.description).toContain('explicitly requests');
+    expect(definition.description).toContain("stage instruction");
+    expect(definition.description).toContain('request a stage transition');
     expect(definition.description).toContain('reply');
+    expect(schema.properties.message).toMatchObject({ description: expect.stringContaining('stage instruction') });
+    expect(definition.description).toContain('transition outcome');
   });
 
   it('requires an owning native conversation', async () => {

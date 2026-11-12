@@ -3,7 +3,7 @@ import { admitTurnAdvance, type AdvanceAdmissionDeps } from '../../src/host/adva
 import type { LocatedTask } from '../../src/host/hub-repository.js';
 import { resolveAutoAdvance, type AutoAdvancePlan } from '../../src/domain/auto-advance.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
-import { NO_PENDING_USER_WORK, type Board, type HubState, type HubTask, type PendingUserWork, type Project } from '../../src/shared/types.js';
+import { NO_PENDING_USER_WORK, type Board, type Column, type HubState, type HubTask, type PendingUserWork, type Project } from '../../src/shared/types.js';
 import { transitions } from '../support/transition-rules.js';
 
 const now = '2026-01-01T00:00:00.000Z';
@@ -22,6 +22,15 @@ function board(): Board {
 function routedBoard(): Board {
   const value = board();
   value.workflow.columns[0] = { ...value.workflow.columns[0]!, allowedTransitions: transitions('done', 'plan') };
+  return value;
+}
+/** The same stages with the initial stage turned deterministic, as a workflow edit can do. */
+function deterministicBoard(): Board {
+  const value = board();
+  value.workflow.columns[0] = {
+    ...value.workflow.columns[0]!,
+    deterministic: { language: 'bash', code: 'echo ready', exits: {} } as unknown as Column['deterministic'],
+  };
   return value;
 }
 const project: Project = { id: 'project', projectKey: 'project', name: 'Project', projectPath: '/repo' };
@@ -109,6 +118,18 @@ describe('turn-end advance admission', () => {
     expect(f.dispatched).toHaveLength(0);
   });
 
+  it('skips an auto turn whose stage turned deterministic instead of pausing', async () => {
+    // A workflow edit between the settle read and this admission can make the
+    // entry deterministic; the deterministic supervisor owns routing then, so the
+    // admission drops the turn silently and records no failure.
+    const deterministic = deterministicBoard();
+    const f = fixture({}, { board: deterministic });
+    await admitAuto(f.deps, 'task', resolveAutoAdvance(deterministic.workflow, 'backlog'));
+    expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
+    expect(f.dispatched).toHaveLength(0);
+    expect(f.reported).toHaveLength(0);
+  });
+
   it('does not admit when a capture could not be re-resolved, and fails loud for a changed destination', async () => {
     const f = fixture();
     const changed = { ...plan(), destination: board().workflow.columns.find(column => column.id === 'done') };
@@ -171,6 +192,28 @@ describe('turn-end advance admission', () => {
       return NO_PENDING_USER_WORK;
     };
     await expect(admitAuto(f.deps, 'task', plan())).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+    expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
+    expect(f.dispatched).toHaveLength(0);
+  });
+
+  it('holds a declared advance while the task owes the user', async () => {
+    const f = fixture({}, { board: routedBoard(), task: task({ autoMode: undefined, recordedTransition: declared('plan') }) });
+    f.pending.push(pendingUserWork(['decision-question']));
+    await admitDeclared(f.deps, 'task', routedPlan('plan'));
+    expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
+    expect(f.dispatched).toHaveLength(0);
+    expect(f.state.hub.tasks[0]!.recordedTransition).toEqual(declared('plan'));
+  });
+
+  it('refuses to commit when the entry turned deterministic before the transaction', async () => {
+    const f = fixture();
+    const pending = f.deps.pending;
+    f.deps.pending = async value => {
+      const result = await pending(value);
+      f.state.hub.boards[0] = deterministicBoard();
+      return result;
+    };
+    await expect(admitAuto(f.deps, 'task', plan())).rejects.toMatchObject({ code: 'INVALID_TARGET' });
     expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
     expect(f.dispatched).toHaveLength(0);
   });
