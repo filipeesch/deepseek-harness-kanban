@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
+import { buildGuard } from '../support/guard-artifact.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
 
@@ -52,12 +53,14 @@ describe.skipIf(process.platform !== 'darwin')('raw native abrupt-host-loss owne
     await symlink(fileURLToPath(new URL('../../node_modules', import.meta.url)), join(root, 'node_modules'), 'dir');
     const bundledHost = join(root, 'host.mjs');
     await build({ entryPoints: [hostFixture], outfile: bundledHost, bundle: true, packages: 'external', platform: 'node', format: 'esm', target: 'node24', logLevel: 'silent' });
+    await buildGuard(join(root, 'guard.mjs'));
     const env = { PATH: process.env.PATH, HOME: home, DSH_HOME: join(home, '.dsh'), TMPDIR: root };
     const unrelated = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { cwd: root, env, stdio: 'ignore' });
     const host = spawn(process.execPath, [bundledHost, kind, root], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let worker: number | undefined;
     let workerIdentity: string | undefined;
     const descendants: Array<{pid:number; identity:string|undefined}> = [];
+    let guardPids: number[] = [];
     try {
       const started = await ready(host);
       // The guard answers for the token it actually put in its children's
@@ -65,10 +68,15 @@ describe.skipIf(process.platform !== 'darwin')('raw native abrupt-host-loss owne
       // sweep read the wrong set and report a false clean.
       if (started.marker !== undefined) {
         const owners = join(root, 'private', 'owners');
-        const records = await Promise.all((await readdir(owners)).filter(name => name.endsWith('.json')).map(async name => JSON.parse(await readFile(join(owners, name), 'utf8')) as { guards?: Array<{ marker?: string }> }));
+        const records = await Promise.all((await readdir(owners)).filter(name => name.endsWith('.json')).map(async name => JSON.parse(await readFile(join(owners, name), 'utf8')) as { guards?: Array<{ marker?: string; pid?: number }> }));
         const markers = records.flatMap(record => (record.guards ?? []).map(guard => guard.marker));
         expect(markers.length).toBeGreaterThan(0);
         for (const marker of markers) expect(marker).toBe(started.marker);
+        // The witness records the guard's own pid so a sweep never treats it as owned.
+        const pids = records.flatMap(record => (record.guards ?? []).map(guard => guard.pid));
+        expect(pids.length).toBeGreaterThan(0);
+        for (const pid of pids) expect(Number.isSafeInteger(pid) && (pid as number) > 0).toBe(true);
+        guardPids = pids as number[];
       }
       worker = started.pid;
       descendants.push(...(started.descendants ?? []).map(pid => ({pid, identity:identity(pid)})));
@@ -86,6 +94,8 @@ describe.skipIf(process.platform !== 'darwin')('raw native abrupt-host-loss owne
         await new NativeExecutionOwnership(join(root, 'private')).reclaim('test-execution');
         expect(await readdir(join(root, 'private/owners'))).toEqual([]);
         for (const child of descendants) expect(identity(child.pid)).not.toBe(child.identity);
+        // A registered guard must not outlive a lost host as an unreachable orphan.
+        if (kind === 'guarded-bash') for (const pid of guardPids) await expect.poll(() => identity(pid), { timeout: 15000 }).toBeUndefined();
       }
       expect(identity(unrelated.pid!)).toBeDefined();
     } finally {
@@ -106,6 +116,7 @@ describe.skipIf(process.platform !== 'darwin')('raw native abrupt-host-loss owne
     await symlink(fileURLToPath(new URL('../../node_modules', import.meta.url)), join(root, 'node_modules'), 'dir');
     const bundledHost = join(root, 'host.mjs');
     await build({ entryPoints: [hostFixture], outfile: bundledHost, bundle: true, packages: 'external', platform: 'node', format: 'esm', target: 'node24', logLevel: 'silent' });
+    await buildGuard(join(root, 'guard.mjs'));
     const env = { PATH: process.env.PATH, HOME: home, DSH_HOME: join(home, '.dsh'), TMPDIR: root };
     const unrelated = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { cwd: root, env, stdio: 'ignore' });
     const host = spawn(process.execPath, [bundledHost, kind, root, 'stop'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });

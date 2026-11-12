@@ -14,13 +14,17 @@ export interface GuardText {
 /** What one guarded Bash call produced: the command's output, or why there is none. */
 export type GuardOutcome =
   | { kind: 'command'; stdout: string; stderr: string }
-  | { kind: 'failure'; code: 'BASH_PROTOCOL' | 'OUTPUT_LIMIT' | 'OUTPUT_TRANSPORT_LIMIT'; message: string; facts: GuardFacts; retryable: boolean };
+  | { kind: 'failure'; code: 'BASH_PROTOCOL' | 'OUTPUT_LIMIT' | 'OUTPUT_TRANSPORT_LIMIT' | 'GUARD_UNAVAILABLE'; message: string; facts: GuardFacts; retryable: boolean };
 
-/** The guard printed one of these instead of a result envelope. */
-const GUARD_DIAGNOSTICS: ReadonlyArray<{ marker: string; admission: GuardAdmission; message: string }> = [
-  { marker: 'NATIVE_LIFETIME_UNCLEAN:', admission: 'started', message: 'The isolated Bash guard could not prove that the command process tree was stopped.' },
-  { marker: 'NATIVE_LIFETIME_UNAVAILABLE:', admission: 'not-admitted', message: 'The isolated Bash guard is unavailable in the execution world.' },
-  { marker: 'NATIVE_LIFETIME_UNSUPPORTED:', admission: 'not-admitted', message: 'The isolated Bash guard does not support this platform.' },
+/**
+ * The guard printed one of these instead of a result envelope. An unproven tree means
+ * the command ran, so it is an infrastructure failure; a guard that cannot start at all
+ * is a configuration failure, because the execution could not be attempted as configured.
+ */
+const GUARD_DIAGNOSTICS: ReadonlyArray<{ marker: string; admission: GuardAdmission; code: 'BASH_PROTOCOL' | 'GUARD_UNAVAILABLE'; message: string }> = [
+  { marker: 'NATIVE_LIFETIME_UNCLEAN:', admission: 'started', code: 'BASH_PROTOCOL', message: 'The isolated Bash guard could not prove that the command process tree was stopped.' },
+  { marker: 'NATIVE_LIFETIME_UNAVAILABLE:', admission: 'not-admitted', code: 'GUARD_UNAVAILABLE', message: 'The isolated Bash guard is unavailable in the execution world.' },
+  { marker: 'NATIVE_LIFETIME_UNSUPPORTED:', admission: 'not-admitted', code: 'GUARD_UNAVAILABLE', message: 'The isolated Bash guard does not support this platform.' },
 ];
 
 /**
@@ -45,8 +49,19 @@ export function guardFacts(result: ShellRunResult, elapsedMs: number, admission:
   };
 }
 
-function failure(code: 'BASH_PROTOCOL' | 'OUTPUT_LIMIT' | 'OUTPUT_TRANSPORT_LIMIT', message: string, facts: GuardFacts, retryable: boolean): GuardOutcome {
+function failure(code: 'BASH_PROTOCOL' | 'OUTPUT_LIMIT' | 'OUTPUT_TRANSPORT_LIMIT' | 'GUARD_UNAVAILABLE', message: string, facts: GuardFacts, retryable: boolean): GuardOutcome {
   return { kind: 'failure', code, message, facts, retryable };
+}
+
+/**
+ * The guard's own words after its diagnostic marker, bounded and redacted. The fixed
+ * sentence explains the class of failure; this explains this particular one, so an
+ * operator does not have to reproduce it.
+ */
+function diagnosticReason(stderr: string, marker: string, text: GuardText): string {
+  const index = stderr.indexOf(marker);
+  if (index < 0) return '';
+  return text.head(stderr.slice(index + marker.length).split('\n', 1)[0]!.trim(), 160);
 }
 
 /**
@@ -75,10 +90,18 @@ export function readGuardOutcome(result: ShellRunResult, elapsedMs: number, text
   let envelope: unknown;
   try { envelope = JSON.parse(result.stdout.text); }
   catch {
-    const message = diagnostic?.message ?? terminated ?? (admission === 'not-admitted'
+    if (diagnostic !== undefined) {
+      const reason = diagnosticReason(stderr, diagnostic.marker, text);
+      return failure(diagnostic.code, reason.length > 0 ? diagnostic.message + ' ' + reason : diagnostic.message, facts, false);
+    }
+    if (terminated !== undefined) return failure('BASH_PROTOCOL', terminated, facts, false);
+    // A shell that cannot find the guard exited before the guard could report; no
+    // command ran, and repeating the call cannot make the artifact appear.
+    if (result.exitCode === 126 || result.exitCode === 127) return failure('GUARD_UNAVAILABLE', 'The native execution world could not start the isolated Bash guard (exit ' + result.exitCode + ').', facts, false);
+    const message = admission === 'not-admitted'
       ? 'The isolated Bash guard returned no result and no diagnostic output (exit status 125).'
-      : 'The isolated Bash guard did not return a valid result' + (result.exitCode === null ? '' : ' (exit ' + result.exitCode + ')') + '.');
-    return failure('BASH_PROTOCOL', message, facts, neverStarted(result) && diagnostic === undefined);
+      : 'The isolated Bash guard did not return a valid result' + (result.exitCode === null ? '' : ' (exit ' + result.exitCode + ')') + '.';
+    return failure('BASH_PROTOCOL', message, facts, neverStarted(result));
   }
   if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) return failure('BASH_PROTOCOL', 'The isolated Bash guard returned an invalid result.', facts, false);
   const value = envelope as Record<string, unknown>;

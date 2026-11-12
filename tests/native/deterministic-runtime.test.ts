@@ -12,6 +12,7 @@ import { mkdtemp, mkdir, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDeterministicRuntime, type DeterministicRuntime } from '../../src/host/deterministic/index.js';
+import { guardArtifact } from '../support/guard-artifact.js';
 
 let root: string;
 let ctx: Context;
@@ -31,7 +32,7 @@ beforeEach(async () => {
   await ctx.plugin(SandboxPolicy, { mode: 'danger-full-access', workspaceRoot: root });
   await ctx.plugin(NodeRuntime, { timeoutMs: 1, maxTimeoutMs: 600000, graceMs: 50 });
   await ctx.plugin(LocalBashExecutor, { cwd: root, timeoutMs: 1, maxTimeoutMs: 600000, graceMs: 50, maxOutputBytes: 1 });
-  runtime = createDeterministicRuntime({ context: ctx, privateDirectory: join(root, 'private') });
+  runtime = createDeterministicRuntime({ context: ctx, privateDirectory: join(root, 'private'), guardPath: await guardArtifact() });
 });
 afterEach(async () => {
   try { await ctx.fiber.dispose(); await rm(root, { recursive: true, force: true }); }
