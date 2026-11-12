@@ -56,6 +56,15 @@ describe('transition tools', () => {
     ]);
   });
 
+  it('names the peer request as one trigger and keeps the stage rules', async () => {
+    const f = await setup();
+    const description = f.named('set_next_transition').description;
+    expect(description).toContain('message from another task');
+    expect(description).toContain('current stage configures');
+    expect(description).toContain('deterministic entry');
+    expect(description).toContain('never moves the task');
+  });
+
   it('declares, replaces, and clears the transition without moving the task', async () => {
     const f = await setup();
     const set = f.named('set_next_transition');
