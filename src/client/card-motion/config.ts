@@ -10,8 +10,11 @@ export interface CardMotionConfig {
   readonly stackingIndex: number;
 }
 
+/** More cards than this moving in one change settle immediately, in either presentation. */
+export const MOTION_BATCH_LIMIT = 8;
+
 export const CARD_MOTION: CardMotionConfig = {
   timing: { glideMs: 200, fadeMs: 100, easing: 'ease-out' },
-  batchLimit: 8,
+  batchLimit: MOTION_BATCH_LIMIT,
   stackingIndex: 3,
 };

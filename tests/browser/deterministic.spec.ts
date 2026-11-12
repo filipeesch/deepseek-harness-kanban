@@ -103,14 +103,45 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await mkdir(OUT, { recursive: true }); await page.screenshot({ path: path.join(OUT, 'deterministic-handoff-' + colorScheme + '.png') });
   });
 }
-test('groups deterministic exit names on one graph edge without a legacy condition editor', async ({ page }) => {
+test('draws one edge for the deterministic exits without an exit label', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=deterministic&theme=host');
   await page.getByRole('button', { name: 'Workflow', exact: true }).click();
   await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-ready', 'true');
-  await expect(page.getByRole('button', { name: 'Named exits passed, cached', exact: true })).toHaveCount(1);
-  await page.getByRole('button', { name: 'Named exits passed, cached', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Named exits passed, cached', exact: true })).toHaveCount(0);
+  // Exit names live in the stage editor, so the arrow carries no label and no
+  // condition mark either.
+  const group = page.locator('.kb-flow-edge-group[data-connection-id^="explore->propose"]');
+  await expect(group).toHaveCount(1);
+  await expect(group.locator('.kb-flow-condition-mark')).toHaveCount(0);
+  await expect(group.locator('button')).toHaveCount(0);
+  // Nothing the diagram publishes still announces the retired exit label.
+  const announced = await page.evaluate(() => [...document.querySelectorAll('.kb-flow-shell [aria-label], .kb-flow-shell [title]')]
+    .map(element => (element.getAttribute('aria-label') ?? '') + ' ' + (element.getAttribute('title') ?? ''))
+    .filter(name => /named exits|exit name/i.test(name)));
+  expect(announced).toEqual([]);
+});
+
+test('opens the deterministic stage editor from its connection, only while unlocked', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=deterministic&theme=host');
+  await page.getByRole('button', { name: 'Workflow', exact: true }).click();
+  await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-ready', 'true');
+  const edge = page.locator('.kb-flow-edge-group[data-connection-id^="explore->propose"]');
+  await expect(edge).toHaveCount(1);
+  // The double press is delivered to the connection itself here, so this test covers the
+  // surface's contract; the line's own hit target is covered by the connection tests.
+  await edge.dispatchEvent('dblclick');
+  await page.waitForTimeout(200);
+  // The layout lock gates the edit: a locked diagram opens nothing, presents no
+  // condition editor, and stores nothing.
+  await expect(page.getByRole('dialog', { name: 'Edit stage' })).toHaveCount(0);
+  await expect(page.locator('.kb-condition-popover')).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as { __harnessCommands(): Array<{ type: string }> }).__harnessCommands())).toEqual([]);
+  await page.getByRole('button', { name: 'Unlock layout editing', exact: true }).click();
+  await edge.dispatchEvent('dblclick');
   await expect(page.getByRole('dialog', { name: 'Edit stage' })).toBeVisible();
   await expect(page.getByLabel('Execution mode')).toHaveValue('deterministic');
+  // The routing is edited in the stage editor, never through a condition.
+  await expect(page.locator('.kb-condition-popover')).toHaveCount(0);
 });
 test('visual deterministic configuration keeps named exits and no prompt/countdown coexistence', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=deterministic&theme=host');
