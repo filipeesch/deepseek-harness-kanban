@@ -220,7 +220,7 @@ const server = net.createServer(socket => {
     try {
       await quiesce(); reply({ clean: true });
       socket.once('close', () => exit(0)); socket.end();
-    } catch { reply({ clean: false }); socket.end(); }
+    } catch (error) { reply({ clean: false, reason: error && error.message ? String(error.message).slice(0, 300) : 'unknown' }); socket.end(); }
   });
 });
 let host;

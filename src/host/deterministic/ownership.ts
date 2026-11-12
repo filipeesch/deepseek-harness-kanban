@@ -19,7 +19,11 @@ interface OwnerRecord { execution: string; nonce: string; host?: LifetimeWitness
  * deadline escalates; an empty owned set is still proof that nothing it owned runs.
  */
 async function witnessClean(witness: LifetimeWitness): Promise<boolean> {
-  try { if ((await askWitness(witness, 'reclaim')).clean === true) return true; }
+  try {
+    const outcome = await askWitness(witness, 'reclaim');
+    if (outcome.clean === true) return true;
+    if (typeof outcome.reason === 'string' && outcome.reason.length > 0) failure('OWNERSHIP_UNCERTAIN', 'Native lifetime witness reported: ' + outcome.reason);
+  }
   catch {
     // A guard can be force-killed before it answers, for example when a native
     // command deadline escalates. The host reads the same inherited token, so an
