@@ -166,7 +166,7 @@ test('creates from the initial stage while the layout is locked without touching
   await page.emulateMedia({ colorScheme: 'light' });
   await openFlow(page);
   // Locked is the resting state of the diagram, which is where the action must work.
-  await expect(page.getByRole('button', { name: 'Unlock layout editing' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Unlock layout editing', exact: true })).toBeVisible();
   await page.locator('.kb-flow-stage-create').first().click();
   const dialog = page.getByRole('dialog', { name: 'New task' });
   await expect(dialog).toBeVisible();
@@ -186,8 +186,8 @@ test('pressing the action with layout editing unlocked moves nothing and answers
   await openFlow(page);
   // The locked diagram already proves the action works; this covers the other half,
   // where the real canvas is listening for a drag and could steal the press.
-  await page.getByRole('button', { name: 'Unlock layout editing' }).click();
-  await expect(page.getByRole('button', { name: 'Lock layout editing' })).toBeVisible();
+  await page.getByRole('button', { name: 'Unlock layout editing', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Lock layout editing', exact: true })).toBeVisible();
   const stage = page.locator('.kb-flow-stage[data-column-id="explore"]');
   const action = page.locator('.kb-flow-stage-create').first();
   const before = await stage.boundingBox();

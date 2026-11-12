@@ -18,7 +18,7 @@ async function openFlow(page: Page): Promise<void> {
 }
 
 async function unlock(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Unlock layout editing' }).click();
+  await page.getByRole('button', { name: 'Unlock layout editing', exact: true }).click();
 }
 
 function commands(page: Page): Promise<HarnessCommand[]> {
@@ -518,7 +518,7 @@ test('starts locked again after a reload', async ({ page }) => {
   await expect(page.locator('.kb-flow-resize')).toHaveCount(3);
   await page.reload();
   await page.waitForFunction(() => (window as unknown as { __harnessReady?: boolean }).__harnessReady === true);
-  await expect(page.getByRole('button', { name: 'Unlock layout editing' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Unlock layout editing', exact: true })).toBeVisible();
   await expect(page.locator('.kb-flow-resize')).toHaveCount(0);
 });
 
