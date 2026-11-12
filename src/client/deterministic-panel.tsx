@@ -17,6 +17,8 @@ export function ScriptPanel({ task, column, projectName, api, run }: { task: Tas
     {summary && !column?.deterministic && <p className="kb-hint">The saved stage is no longer deterministic. This owned entry retains its captured version. Configure a script or change stage before Play.</p>}
     {summary?.deliveryStatus === 'failed' && <p className="kb-hint">This result was saved but its delivery failed. Retry delivery keeps the saved result and its identities; Run again starts a new execution.</p>}
     {summary?.error && <p className="kb-problem" role="alert">{summary.error.message.slice(0, 4096)}</p>}
+    {summary?.error?.code === 'PARAMETERS_REQUIRED' && <p className="kb-hint">Edit this entry's parameters, then press Play.</p>}
+    {summary?.parameters && Object.keys(summary.parameters).length > 0 && <p className="kb-hint">Parameters: {Object.entries(summary.parameters).map(([name, value]) => name + '=' + value).join(', ').slice(0, 4096)}</p>}
     {summary?.exit && <p className="kb-hint">Exit {summary.exit}: {summary.message?.slice(0, 4096)}</p>}
     {reviewing && <ScriptReviewDialog key={task.id + ':' + task.projectId + ':' + task.stageEntry?.id} task={task} column={column} projectName={projectName} summary={summary} api={api} run={run} onClose={() => setReviewing(false)} />}
   </div>;

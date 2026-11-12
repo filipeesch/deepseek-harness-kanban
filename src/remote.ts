@@ -5,7 +5,7 @@ import type { TypertContribution } from '@deepseek-ai/dsh-typert-registry';
 import { KanbanStateSchema } from './domain/hub-schema.js';
 import { problem } from './domain/schema-parts.js';
 import { newTaskSchema } from './shared/task-creation.js';
-import type { Command, DriveBrowseView, DriveDiscoveryView, HostSnapshot, HubSharingView, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, ModelCatalog, SharingAuthView, SharingChangeSummary, SharingCommand, SnapshotRequest, WorktreeDefaults } from './shared/types.js';
+import type { Command, DriveBrowseView, DriveDiscoveryView, HostSnapshot, HubSharingView, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionDraftContent, QuestionFeedFrame, QuestionRound, ModelCatalog, SharingAuthView, SharingChangeSummary, SharingCommand, SnapshotRequest, StoredQuestionDraft, WorktreeDefaults } from './shared/types.js';
 import { SHARING_STORAGES } from './shared/types.js';
 import type { DeterministicReview, DeterministicSummary } from './shared/deterministic.js';
 import { DETERMINISTIC_PHASES } from './shared/deterministic.js';
@@ -67,6 +67,7 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('task.deterministicApprove'),taskId:id,executionId:id,fingerprint:z.string().min(1).max(256)}).strict(),
  z.object({type:z.literal('task.deterministicVariable'),taskId:id,projectId:id,stageIdentity:id,name:z.string().min(1).max(200),value:z.string().max(65536).optional()}).strict(),
   z.object({type:z.literal('task.deterministicRetryDelivery'),taskId:id,entryId:id,executionId:id}).strict(),
+  z.object({type:z.literal('task.deterministicParameters'),taskId:id,entryId:id,values:z.record(z.string().min(1).max(64),z.string().min(1).max(4096)).refine(values=>Object.keys(values).length<=32,'At most 32 parameters are supported.')}).strict(),
  z.object({type:z.literal('task.autoMode'),hubId,taskId:id,enabled:z.boolean()}).strict(),
  z.object({type:z.literal('task.pause'),hubId,taskId:id,reason:z.string()}).strict(),
  z.object({type:z.literal('task.resume'),hubId,taskId:id}).strict(),
@@ -91,7 +92,12 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
 ]);
 export const QuestionPageSchema=z.object({question:z.string(),type:z.enum(['exclusive','non_exclusive','freetext']),context:z.string().optional(),options:z.array(z.object({title:z.string(),description:z.string()}).strict()).optional(),weight:z.enum(['critical','medium','easy']).optional(),model_lean:z.string().optional(),model_lean_reason:z.string().optional(),answers_affect_followup:z.boolean().optional()}).strict();
 export const QuestionRoundSchema=z.object({id:z.string(),sessionId:z.string(),turnId:z.string(),pages:z.array(z.object({callId:z.string(),sequence:z.number(),page:QuestionPageSchema}).strict()),complete:z.boolean(),answered:z.boolean()}).strict();
-export const QuestionFeedFrameSchema:z.ZodType<QuestionFeedFrame>=z.object({kind:z.enum(['baseline','update']),rounds:z.array(QuestionRoundSchema)}).strict();
+const questionAnswerSchema=z.object({choices:z.array(z.string().max(512)).max(64),text:z.string().max(65536),other:z.string().max(65536),notes:z.string().max(65536)}).strict();
+const questionDraftSlideSchema=z.discriminatedUnion('kind',[z.object({kind:z.literal('page'),callId:id}).strict(),z.object({kind:z.literal('notes')}).strict()]);
+const questionDraftContentSchema=z.object({answers:z.record(id,questionAnswerSchema).refine(answers=>Object.keys(answers).length<=64,'A draft cannot hold more than 64 answers.'),generalNotes:z.string().max(65536),active:questionDraftSlideSchema.nullable()}).strict();
+export const QuestionDraftContentSchema:z.ZodType<QuestionDraftContent>=questionDraftContentSchema;
+export const StoredQuestionDraftSchema:z.ZodType<StoredQuestionDraft>=questionDraftContentSchema.extend({updatedAt:z.string().min(1).max(64)}).strict();
+export const QuestionFeedFrameSchema:z.ZodType<QuestionFeedFrame>=z.object({kind:z.enum(['baseline','update']),rounds:z.array(QuestionRoundSchema),drafts:z.record(id,StoredQuestionDraftSchema).optional()}).strict();
 const SettledTurnSchema=z.object({seq:z.number().int().nonnegative(),outcome:z.enum(['ok','error'])}).strict();
 const BackgroundActivitySchema=z.object({kind:z.enum(['job','schedule']),label:z.string()}).strict();
 const PendingUserWorkSchema=z.object({kinds:z.array(z.enum(['decision-question','native-question','approval','queued-prompt'])),queuedPrompts:z.number().int().nonnegative()}).strict();
@@ -135,8 +141,8 @@ export const LocalDriveResultSchema:z.ZodType<LocalDriveResult>=z.discriminatedU
  z.object({action:z.literal('list'),page:DriveBrowseViewSchema}).strict(),
 ]);
 export const SnapshotRequestSchema:z.ZodType<SnapshotRequest>=z.object({refreshSessionIds:z.array(id).optional(),priorityTaskIds:z.array(id).optional(),refreshAuth:z.boolean().optional()}).strict();
-export const DeterministicSummarySchema:z.ZodType<DeterministicSummary>=z.object({entryId:id,executionId:id,phase:z.enum(DETERMINISTIC_PHASES),startedAt:z.string(),attempt:z.number().int().nonnegative(),restartCount:z.number().int().nonnegative(),deliveryStatus:z.enum(['pending','accepted','failed']).optional(),error:ProblemSchema.optional(),exit:z.string().optional(),message:z.string().optional(),savedVersionChanged:z.boolean().optional(),fingerprint:z.string().optional()}).strict();
-export const DeterministicReviewSchema:z.ZodType<DeterministicReview>=z.object({executionId:id,fingerprint:z.string(),code:z.string(),language:z.enum(['bash','typescript']),directory:z.enum(['task','project']),exits:z.record(z.string(),id),env:z.array(z.string()),variables:z.array(z.object({name:z.string(),configured:z.boolean()}).strict()),source:z.object({kind:z.enum(['inline','file']),path:z.string().optional()}).strict().optional(),executionDirectory:z.string().optional()}).strict();
+export const DeterministicSummarySchema:z.ZodType<DeterministicSummary>=z.object({entryId:id,executionId:id,phase:z.enum(DETERMINISTIC_PHASES),startedAt:z.string(),attempt:z.number().int().nonnegative(),restartCount:z.number().int().nonnegative(),deliveryStatus:z.enum(['pending','accepted','failed']).optional(),error:ProblemSchema.optional(),exit:z.string().optional(),message:z.string().optional(),savedVersionChanged:z.boolean().optional(),fingerprint:z.string().optional(),parameters:z.record(z.string().min(1).max(64),z.string().min(1).max(4096)).optional()}).strict();
+export const DeterministicReviewSchema:z.ZodType<DeterministicReview>=z.object({executionId:id,fingerprint:z.string(),code:z.string(),language:z.enum(['bash','typescript']),directory:z.enum(['task','project']),exits:z.record(z.string(),id),env:z.array(z.string()),params:z.array(z.object({name:z.string(),description:z.string().optional()}).strict()),variables:z.array(z.object({name:z.string(),configured:z.boolean()}).strict()),source:z.object({kind:z.enum(['inline','file']),path:z.string().optional()}).strict().optional(),executionDirectory:z.string().optional()}).strict();
 export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note','schedule']),id,model:z.object({requested:modelSelection,applied:z.boolean(),reason:z.enum(['unavailable','unsupported','failed']).optional(),inUse:modelSelection.optional()}).strict().optional()}).strict().optional(),state:KanbanStateSchema.optional(),stateRevision:z.number().int().nonnegative(),conversations:z.record(z.string(),ConversationFactsSchema),sharing:z.record(z.string(),HubSharingViewSchema),sharingAuth:SharingAuthViewSchema.optional(),scheduleRuntime:z.record(z.string(),z.record(z.string(),scheduleRuntimeView)).optional(),deterministic:z.record(z.string(),DeterministicSummarySchema).optional(),retainedCheckouts:z.array(z.object({path:z.string(),projectId:id,taskTitle:z.string(),reason:z.enum(['folder','unresolved'])}).strict()).optional(),sequence:z.number().int().nonnegative()}).strict();
 export const SharingCommandSchema:z.ZodType<SharingCommand>=z.discriminatedUnion('type',[
  z.object({type:z.literal('sharing.connect'),hubId:id,provider:sharingStorage.optional(),settings:z.record(z.string(),z.string()).optional(),repository:z.string().min(1).max(2048).optional(),intervalMinutes:z.number().int().min(0).max(1440).optional()}).strict(),
@@ -173,6 +179,7 @@ const contribution=createTypertContribution({package:PACKAGE_NAME,methods:{
  'kanban/detectProject':{...base,parameters:[parameter('request',z.object({path:z.string().min(1)}).strict(),'ProjectPathLookup')],result:codec('ProjectLocationOutcome',()=>outcome(projectLocation))},
  'kanban/localDrive':{...base,parameters:[parameter('request',LocalDriveRequestSchema,'LocalDriveRequest')],result:codec('LocalDriveOutcome',()=>outcome(LocalDriveResultSchema))},
  'kanban/dismissQuestions':{...base,parameters:[parameter('request',z.object({sessionId:id,roundId:id}).strict(),'QuestionDismissal')],result:codec('QuestionDismissalOutcome',()=>outcome(z.array(QuestionRoundSchema)))},
+ 'kanban/saveQuestionDraft':{...base,parameters:[parameter('request',z.object({sessionId:id,roundId:id,draft:QuestionDraftContentSchema.nullable()}).strict(),'QuestionDraftWrite')],result:codec('QuestionDraftOutcome',()=>outcome(StoredQuestionDraftSchema.nullable()))},
  'kanban/deterministicReview':{...base,parameters:[parameter('request',z.object({taskId:id}).strict(),'TaskLookup')],result:codec('DeterministicReviewOutcome',()=>outcome(DeterministicReviewSchema))},
  'kanban/modelCatalog':{...base,parameters:[parameter('request',z.object({refresh:z.boolean().optional()}).strict(),'ModelCatalogLookup')],result:codec('ModelCatalogOutcome',()=>outcome(ModelCatalogSchema))},
  'kanban/questionsFollow':{...base,mode:'stream',parameters:[parameter('request',z.object({sessionId:id}).strict(),'SessionLookup')],cancellation:{parameter:'signal'},result:codec('QuestionFeedFrame',()=>QuestionFeedFrameSchema)},
@@ -189,6 +196,7 @@ export interface KanbanRemote {
  detectProject(request:{path:string}):Promise<RemoteResult<Outcome<ProjectLocation>>>;
  localDrive(request:LocalDriveRequest):Promise<RemoteResult<Outcome<LocalDriveResult>>>;
  dismissQuestions(request:{sessionId:string;roundId:string}):Promise<RemoteResult<Outcome<QuestionRound[]>>>;
+ saveQuestionDraft(request:{sessionId:string;roundId:string;draft:QuestionDraftContent|null}):Promise<RemoteResult<Outcome<StoredQuestionDraft|null>>>;
  deterministicReview(request:{taskId:string}):Promise<RemoteResult<Outcome<DeterministicReview>>>;
  modelCatalog(request:{refresh?:boolean}):Promise<RemoteResult<Outcome<ModelCatalog>>>;
  questionsFollow(request:{sessionId:string},signal?:AbortSignal):RemoteStreamHandle<QuestionFeedFrame,never>;
@@ -199,7 +207,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
  interface TypertRemoteMap {
   'kanban/deterministicReview':KanbanRemote['deterministicReview'];
   'kanban/snapshot':KanbanRemote['snapshot']; 'kanban/command':KanbanRemote['command']; 'kanban/sharing':KanbanRemote['sharing'];
-  'kanban/branches':KanbanRemote['branches']; 'kanban/worktreeDefault':KanbanRemote['worktreeDefault']; 'kanban/detectProject':KanbanRemote['detectProject']; 'kanban/localDrive':KanbanRemote['localDrive']; 'kanban/dismissQuestions':KanbanRemote['dismissQuestions']; 'kanban/modelCatalog':KanbanRemote['modelCatalog']; 'kanban/questionsFollow':KanbanRemote['questionsFollow']; 'kanban/follow':KanbanRemote['follow'];
+  'kanban/branches':KanbanRemote['branches']; 'kanban/worktreeDefault':KanbanRemote['worktreeDefault']; 'kanban/detectProject':KanbanRemote['detectProject']; 'kanban/localDrive':KanbanRemote['localDrive']; 'kanban/dismissQuestions':KanbanRemote['dismissQuestions']; 'kanban/saveQuestionDraft':KanbanRemote['saveQuestionDraft']; 'kanban/modelCatalog':KanbanRemote['modelCatalog']; 'kanban/questionsFollow':KanbanRemote['questionsFollow']; 'kanban/follow':KanbanRemote['follow'];
  }
 }
 export default TYPERT_REMOTE;

@@ -117,13 +117,6 @@ export function buildShape(points: readonly DiagramPoint[]): ConnectionShape {
   return { path: segmentPath(segments), points: sampleSegments(segments, CONNECTION_SAMPLES), tipAngle: tipAngleOf(points) };
 }
 
-/** The straight fallback when the diagram draws no connection between two stages. */
-export function directShape(from: DiagramRect, to: DiagramRect): ConnectionShape {
-  const start = { x: from.x + from.width, y: from.y + from.height / 2 };
-  const end = { x: to.x, y: to.y + to.height / 2 };
-  return buildShape([start, end]);
-}
-
 /** Drop repeated points and the corners that add nothing, so every segment alternates axis. */
 export function normalizePolyline(points: readonly DiagramPoint[]): DiagramPoint[] {
   const collapsed: DiagramPoint[] = [];

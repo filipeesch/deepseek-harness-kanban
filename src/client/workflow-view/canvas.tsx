@@ -4,18 +4,19 @@ import {
   useReactFlow, type Edge, type EdgeTypes, type NodeChange, type NodeTypes,
 } from '@xyflow/react';
 import flowStyles from '@xyflow/react/dist/style.css';
-import { sameAnchor } from '../../domain/connection-anchor.js';
 import { ConnectionEdgeView, pathMidpoint } from './connection-edge.js';
 import { DiagramMinimap } from './controls/minimap.js';
 import { StageCallbacksContext, StageDragContext, StageNodeView, type StageCallbacks } from './stage-node.js';
 import { CardEnvironmentContext } from './card-environment.js';
-import type { GestureHandle, PointerEventsPort } from './gestures/stage-drag.js';
+import type { PointerEventsPort } from './gestures/stage-drag.js';
 import { FLOW_ZOOM, clampZoom, markScale, nextZoom, zoomAroundPoint, type Viewport } from './gestures/viewport-policy.js';
 import { edgeModel, type LiveStageRect } from './edge-model.js';
-import type { DiagramPoint } from './routing/orthogonal.js';
+import { affordanceScale } from './affordance-geometry.js';
 import { ConnectionHandlersContext, type ConnectionHandlers } from './connection-interaction.js';
 import { boardConnectionDropResolver, type ConnectionDropResolver } from './connection-drop.js';
+import { ConnectionAffordances } from './connection-affordances.js';
 import { useConnectionGestures } from './use/use-connection-gestures.js';
+import { useConnectionHover } from './use/use-connection-hover.js';
 import { useStageDrag } from './use/use-stage-drag.js';
 import { stageSignature, toNode, type CanvasStage, type StageFlowNode } from './canvas-stage.js';
 import type { CanvasConnection, CanvasDropState, CanvasViewportActions, CanvasViewRequest, ConnectionEdit } from './canvas-types.js';
@@ -74,18 +75,6 @@ export type WorkflowCanvasComponent = React.ComponentType<WorkflowCanvasProps>;
 
 const nodeTypes = { stage: StageNodeView } as unknown as NodeTypes;
 const edgeTypes = { connection: ConnectionEdgeView } as unknown as EdgeTypes;
-
-function rectOf(stage: LiveStageRect) {
-  return { x: stage.x, y: stage.y, width: stage.width, height: stage.height };
-}
-
-/** The line drawn while a connection is being created, from its stage to the pointer. */
-function CreationPreview({ from, to }: { readonly from: DiagramPoint; readonly to: DiagramPoint }) {
-  return <g className="kb-flow-creation" aria-hidden="true">
-    <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} />
-    <circle cx={to.x} cy={to.y} r={4} />
-  </g>;
-}
 
 function CanvasInner(props: WorkflowCanvasProps) {
   const instance = useReactFlow();
@@ -146,6 +135,9 @@ function CanvasInner(props: WorkflowCanvasProps) {
   const resolveStage = useCallback((client: { readonly clientX: number; readonly clientY: number }) => resolver.current.resolve(client), []);
   const stageLabel = useCallback((stageId: string) => nodesRef.current.find(node => node.id === stageId)?.data.label ?? stageId, []);
 
+  const hover = useConnectionHover();
+  const stageHover = useConnectionHover();
+
   const gestures = useConnectionGestures({
     locked: props.locked,
     snap: props.snap,
@@ -155,20 +147,23 @@ function CanvasInner(props: WorkflowCanvasProps) {
     flowPoint,
     resolveStage,
     onConnectionEdit: props.onConnectionEdit,
+    onSelect: props.onSelectConnection,
     onCreate: props.onCreateConnection,
     onRepoint: props.onRepointConnection,
     onReown: props.onReownConnection,
   });
 
-  const edges = useMemo<Edge[]>(() => edgeModel(liveStages, props.connections.map(gestures.present)).map(edge => ({
+  const liveEdges = useMemo(() => edgeModel(liveStages, props.connections.map(gestures.present)), [liveStages, props.connections, gestures]);
+
+  const edges = useMemo<Edge[]>(() => liveEdges.map(edge => ({
     id: edge.id,
     source: edge.from,
     target: edge.to,
     type: 'connection',
-    data: { path: edge.path, points: edge.points, tipAngle: edge.tipAngle, kind: edge.kind, returning: edge.returning, lines: edge.lines, hasCondition: edge.condition !== undefined || edge.exitLabels !== undefined, exitLabels: edge.exitLabels },
+    data: { path: edge.path, points: edge.points, tipAngle: edge.tipAngle, kind: edge.kind, returning: edge.returning, hasCondition: edge.condition !== undefined, deterministic: edge.deterministic === true },
     selectable: false,
     focusable: false,
-  })), [liveStages, props.connections, gestures]);
+  })), [liveEdges]);
 
   /** Where the editor for one connection should sit: the middle of the arrow it edits. */
   const openCondition = useCallback((connectionId: string) => {
@@ -184,13 +179,19 @@ function CanvasInner(props: WorkflowCanvasProps) {
     selectedId: props.selectedConnectionId,
     onSelect: connectionId => props.onSelectConnection(connectionId),
     onEditCondition: openCondition,
-  }), [gestures.handlers, openCondition, props.onSelectConnection, props.selectedConnectionId]);
+    hoveredId: hover.hoveredId,
+    onHover: hover.enter,
+    onHoverEnd: hover.leave,
+  }), [gestures.handlers, hover.enter, hover.hoveredId, hover.leave, openCondition, props.onSelectConnection, props.selectedConnectionId]);
 
   // The card's attention marks counter-scale against the published zoom. Writing one
   // custom property keeps the diagram out of the card's contract and avoids a card
   // re-render on every zoom step.
   const publishMarkScale = useCallback((zoom: number) => {
     wrapper.current?.style.setProperty('--kb-mark-scale', String(markScale(zoom)));
+    // The stage highlights read this to keep a constant screen thickness, which the
+    // clamped card-mark scale cannot express above 100%.
+    wrapper.current?.style.setProperty('--kb-affordance-scale', String(affordanceScale(zoom)));
   }, []);
 
   const zoomBy = useCallback((direction: 'in' | 'out') => {
@@ -215,8 +216,9 @@ function CanvasInner(props: WorkflowCanvasProps) {
     onStageResize: props.onStageResize,
     onStageResizeEnd: props.onStageResizeEnd,
     onStageResizeCancel: props.onStageResizeCancel,
-    ...(props.locked ? {} : { onBeginConnect: gestures.beginCreation }),
-  }), [props.callbacks, stageDrag.start, props.snap, props.onStageResize, props.onStageResizeEnd, props.onStageResizeCancel, props.locked, gestures.beginCreation]);
+    onStageHover: stageHover.enter,
+    onStageHoverEnd: stageHover.leave,
+  }), [props.callbacks, stageDrag.start, props.snap, props.onStageResize, props.onStageResizeEnd, props.onStageResizeCancel, stageHover.enter, stageHover.leave]);
 
   const dragState = useMemo(() => ({ stageId: props.drop.stageId, indicatorY: props.drop.indicatorY, candidateStageId: gestures.candidateStageId }), [props.drop.stageId, props.drop.indicatorY, gestures.candidateStageId]);
 
@@ -224,7 +226,7 @@ function CanvasInner(props: WorkflowCanvasProps) {
   // never survives a press somewhere else in the diagram.
   const clearSelectionOutside = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const target = event.target as Element | null;
-    if (target !== null && target.closest('[data-connection-id]') !== null) return;
+    if (target !== null && target.closest('[data-connection-id], [data-connection-mark]') !== null) return;
     props.onSelectConnection(null);
   }, [props.onSelectConnection]);
 
@@ -263,7 +265,16 @@ function CanvasInner(props: WorkflowCanvasProps) {
               {props.controls !== undefined && <Panel position="bottom-left">{props.controls(viewport)}</Panel>}
               <DiagramMinimap />
               {props.overlay !== undefined && <ViewportPortal>{props.overlay}</ViewportPortal>}
-              {gestures.creation !== null && <ViewportPortal><CreationPreview from={gestures.creation.from} to={gestures.creation.to} /></ViewportPortal>}
+              <ViewportPortal><ConnectionAffordances
+                edges={liveEdges}
+                creation={gestures.creation}
+                stages={liveStages}
+                hoveredStageId={stageHover.hoveredId}
+                locked={props.locked}
+                onStageEnter={stageHover.enter}
+                onStageLeave={stageHover.leave}
+                onBeginConnect={gestures.beginCreation}
+              /></ViewportPortal>
             </ReactFlow>
           </StageDragContext.Provider>
         </ConnectionHandlersContext.Provider>

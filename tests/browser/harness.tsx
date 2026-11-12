@@ -8,7 +8,7 @@ import { DirectoryPickerProvider } from '../../src/client/services.js';
 import { AgentPresetProvider } from '../../src/client/agent-preset-context.js';
 import type { AgentPresetPortSource } from '../../src/client/agent-preset-port.js';
 import { QuestionForm } from '../../src/questions/QuestionForm.js';
-import type { BoardState, ClientApi, Command, HubSharingView, QuestionRound, RoundPage } from '../../src/shared/types.js';
+import type { BoardState, ClientApi, Command, HubSharingView, QuestionRound, RoundPage, StoredQuestionDraft } from '../../src/shared/types.js';
 import { createHarnessApi, workflowYaml, type TestSnapshot } from './fake-api.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import { themeFixture } from './theme-fixture.js';
@@ -18,7 +18,7 @@ import type { NativeSlotSource } from '../../src/client/native-slot-host.js';
 
 const scenario = new URLSearchParams(window.location.search).get('scenario') ?? 'board';
 const sharingCase = new URLSearchParams(window.location.search).get('sharing');
-const flowScenario = scenario === 'flow' || scenario === 'flow-anchored' || scenario === 'flow-orphan' || scenario === 'flow-offgrid' || scenario === 'flow-restricted' || scenario === 'flow-restricted-next' || scenario === 'flow-presence' || scenario === 'flow-refused';
+const flowScenario = scenario === 'flow' || scenario === 'flow-anchored' || scenario === 'flow-orphan' || scenario === 'flow-offgrid' || scenario === 'flow-placed' || scenario === 'flow-restricted' || scenario === 'flow-restricted-next' || scenario === 'flow-presence' || scenario === 'flow-refused';
 const query = new URLSearchParams(window.location.search);
 const themed = query.get('theme') === 'host';
 const refuse = query.get('refuse');
@@ -43,7 +43,7 @@ const boardModel = scenario === 'board-model'
       fallback: { requested: { provider: 'deepseek', model: 'reason', reasoningEffort: 'high' }, applied: false as const, reason: 'unavailable' as const, inUse: { provider: 'deepseek', model: 'chat' } },
     }
     : undefined;
-const harness = createHarnessApi({ ...(scenario === 'deterministic' ? { deterministic: (query.get('phase') ?? 'active') as import('../../src/shared/deterministic.js').DeterministicPhase, ...(query.get('delivery') === 'failed' ? { deterministicDelivery: 'failed' as const } : {}) } : {}), idle: scenario === 'stage-idle', history: scenario === 'history' ? 'short' : scenario === 'history-long' ? 'long' : undefined, ...(boardModel === undefined ? {} : { boardModel }), ...(scenario === 'schedules' ? { schedules: scheduleFixtures, scheduleRuntime: scheduleRuntimeFixture } : {}), recorded: scenario === 'routed', staleRoute: scenario === 'stale-route', attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs' || scenario === 'project-relocation' || scenario === 'flow-presence' || scenario === 'presence',
+const harness = createHarnessApi({ ...(scenario === 'deterministic' ? { deterministic: (query.get('phase') ?? 'active') as import('../../src/shared/deterministic.js').DeterministicPhase, ...(query.get('delivery') === 'failed' ? { deterministicDelivery: 'failed' as const } : {}), ...(query.get('refusal') === 'parameters' ? { deterministicRefusal: true } : {}) } : {}), idle: scenario === 'stage-idle', history: scenario === 'history' ? 'short' : scenario === 'history-long' ? 'long' : undefined, ...(boardModel === undefined ? {} : { boardModel }), ...(scenario === 'schedules' ? { schedules: scheduleFixtures, scheduleRuntime: scheduleRuntimeFixture } : {}), recorded: scenario === 'routed', staleRoute: scenario === 'stale-route', attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs' || scenario === 'project-relocation' || scenario === 'flow-presence' || scenario === 'presence',
   presence: scenario === 'presence', hubs: scenario === 'hubs' ? 2 : 1, initialInstruction: scenario === 'create', restricted: scenario === 'move' || scenario === 'prepare-restricted' || scenario === 'flow-restricted', ...(scenario === 'restricted-next' || scenario === 'flow-restricted-next' ? { restrictedNext: true } : {}), persist: scenario === 'board' || scenario === 'relocation-board', pending: scenario === 'appearance', auto: scenario === 'auto' || scenario === 'agent-pause', declared: scenario === 'declared' || scenario === 'declared-failed', declaredFailed: scenario === 'declared-failed', ...(scenario === 'agent-pause' ? { agentPause: true } : {}), detect: scenario === 'project-editor' || scenario === 'project-relocation' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, ...(driveCase === null ? {} : { drive: driveCase }), shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', folderRefusal: refuse === 'folder', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}), ...(scenario === 'retained' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo', reason: 'unresolved' as const }] } : scenario === 'retained-many' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo', reason: 'unresolved' as const }, { path: '/worktrees/plain', projectId: 'p', taskTitle: 'Plain task', reason: 'folder' as const }] } : {}), ...(scenario === 'relocation-list' ? { relocation: ['waiting', 'failed', 'waiting'] as Array<'waiting' | 'failed' | null> } : scenario === 'relocation-board' ? { relocation: ['waiting', 'failed'] as Array<'waiting' | 'failed' | null> } : {}), ...(scenario === 'relocation-list' ? { extraProject: true } : {}), ...(scenario === 'flow-refused' ? { stageUpdateFailure: true } : {}) });
 
 function harnessSharing(kind: string): HubSharingView {
@@ -103,7 +103,12 @@ if (flowScenario) {
     // The off-grid scenario stores a placement that is not on the snapping lattice.
     const positioned = scenario === 'flow-offgrid'
       ? board.workflowYaml.replace('  - id: explore', '  - id: explore' + String.fromCharCode(10) + '    position: {x: 13, y: 7}')
-      : board.workflowYaml;
+      : scenario === 'flow-placed'
+        ? board.workflowYaml
+          .replace('  - id: explore', '  - id: explore' + String.fromCharCode(10) + '    position: {x: 0, y: 0}')
+          .replace('  - id: propose', '  - id: propose' + String.fromCharCode(10) + '    position: {x: 400, y: 200}')
+          .replace('  - id: apply', '  - id: apply' + String.fromCharCode(10) + '    position: {x: 800, y: 300}')
+        : board.workflowYaml;
     board.workflowYaml = 'default_view: workflow' + String.fromCharCode(10) + positioned + anchored;
     board.workflow = parseWorkflow(board.workflowYaml);
   });
@@ -256,8 +261,14 @@ const secondPage: RoundPage = { callId: 'call-2', sequence: 1, page: { question:
 function QuestionScenario() {
   const [value, setValue] = useState<QuestionRound>(() => ({ ...round, complete: questionCase !== 'waiting' && questionCase !== 'new-page' }));
   const [hidden, setHidden] = useState(questionCase === 'hidden');
+  const storedDraft: StoredQuestionDraft | undefined = questionCase === 'draft' ? {
+    answers: { 'call-1': { choices: ['Local'], text: '', other: '', notes: 'Restored from the host.' } },
+    generalNotes: 'Restored Additional Notes.',
+    active: { kind: 'page', callId: 'call-1' },
+    updatedAt: '2026-11-12T10:00:00.000Z',
+  } : undefined;
   return <div style={{ padding: 20, width: 380 }}>
-    <QuestionForm round={value} hidden={hidden} onSubmit={() => { if (questionCase === 'submit') setHidden(true); }} onDismiss={() => {}} />
+    <QuestionForm round={value} hidden={hidden} {...(storedDraft === undefined ? {} : { storedDraft })} onSubmit={() => { if (questionCase === 'submit') setHidden(true); }} onDismiss={() => {}} />
     {questionCase === 'new-page' && <button type="button" onClick={() => setValue(previous => ({ ...previous, pages: [...previous.pages, secondPage] }))}>Add page</button>}
   </div>;
 }

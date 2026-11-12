@@ -29,6 +29,19 @@ export function decideEndDrop(input: { readonly end: ConnectionEnd; readonly fro
   return { kind: 'reown', toSource: stageUnder };
 }
 
+/**
+ * The stage a release of one connection end would act on: the new destination for
+ * a target end, the new owner for a source end, and null when the release would
+ * keep the end on its own stage or change nothing. The gesture marks exactly this
+ * stage as the candidate before the release.
+ */
+export function candidateStageFor(input: { readonly end: ConnectionEnd; readonly from: string; readonly to: string; readonly stageUnder: string | null }): string | null {
+  const decision = decideEndDrop(input);
+  if (decision.kind === 'repoint') return decision.to;
+  if (decision.kind === 'reown') return decision.toSource;
+  return null;
+}
+
 /** What releasing a newly drawn connection means, given the stage under the pointer. */
 export function decideCreationDrop(input: { readonly sourceId: string; readonly stageUnder: string | null }): ConnectionDrop {
   if (input.stageUnder === null || input.stageUnder === input.sourceId) return { kind: 'none' };

@@ -3,9 +3,12 @@
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { chromium } from 'playwright';
 import { expect, it, onTestFinished } from 'vitest';
 import { SessionId } from '@deepseek-ai/dsh-session';
+import './kanban-e2e-setup.ts';
 import { launchWebScaffold } from './scaffold.ts';
+import { newEnglishPage } from './support.ts';
 
 const ROOT = process.env.KANBAN_ROOT!;
 function unwrap(result: any): any {
@@ -72,6 +75,7 @@ it('runs local Bash/TypeScript loops, repairs via Play, reloads captures, and ha
   const workflow = [
     'name: Deterministic native lane', 'initial_column: wait_bash', 'columns:',
     '  - id: wait_bash', '    label: Wait Bash', '    deterministic:', '      language: bash', '      directory: task', '      file: wait-ci.sh',
+    '      params:', '        - name: pipeline', '          description: Local CI pipeline identifier.',
     '      exits: { passed: wait_ts, rejected: fix, error: repair }',
     '  - id: wait_ts', '    label: Wait TypeScript', '    deterministic:', '      language: typescript', '      directory: task', '      file: wait-review.ts',
     '      exits: { passed: review, rejected: fix, error: repair }',
@@ -82,6 +86,12 @@ it('runs local Bash/TypeScript loops, repairs via Play, reloads captures, and ha
   await command({ type: 'task.create', hubId, boardId, projectId, title: 'Local deterministic check', description: '', autoMode: false });
   const taskId = (await task()).id;
   expect((await task()).sessionIds).toEqual([]);
+  // A parameterized initial stage refuses the value-less entry in place.
+  await expect.poll(async () => (await summary())?.phase).toBe('failed');
+  expect((await summary())?.error?.code).toBe('PARAMETERS_REQUIRED');
+  const firstEntry = (await task()).stageEntry.id;
+  await command({ type: 'task.deterministicParameters', taskId, entryId: firstEntry, values: { pipeline: 'local-ci' } });
+  await command({ type: 'task.deterministicPlay', taskId });
   await approve();
   await expect.poll(async () => (await observe('.fake-ci-observations')).filter(value => value === 'pending').length).toBeGreaterThanOrEqual(2);
   const firstExecution = await summary();
@@ -102,6 +112,11 @@ it('runs local Bash/TypeScript loops, repairs via Play, reloads captures, and ha
   expect(failures).toHaveLength(1);
   await writeFile(join(scaffold.workspaceCwd, 'wait-ci.sh'), originalBash);
   await command({ type: 'task.move', hubId, taskId, columnId: 'wait_bash' });
+  await expect.poll(async () => (await summary())?.phase).toBe('failed');
+  expect((await summary())?.error?.code).toBe('PARAMETERS_REQUIRED');
+  const reentry = (await task()).stageEntry.id;
+  await command({ type: 'task.deterministicParameters', taskId, entryId: reentry, values: { pipeline: 'local-ci' } });
+  await command({ type: 'task.deterministicPlay', taskId });
   await expect.poll(async () => (await summary())?.phase).toBe('active');
   await writeFile(join(scaffold.workspaceCwd, '.fake-ci-state'), 'passed');
   await expect.poll(async () => (await task()).columnId).toBe('wait_ts');
@@ -158,7 +173,7 @@ it('runs local Bash/TypeScript loops, repairs via Play, reloads captures, and ha
   await writeFile(join(ROOT, '.verification/deterministic-e2e-report.json'), JSON.stringify({
     status: 'passed', nativeBundleActivated: true, bashLoop: true, typeScriptLoop: true,
     stoppedAcrossReload: true, activeRestartPreservedStart: true, changedPrimaryIgnored: true, interruptedNativeAdmissionRecovered: true,
-    errorRoute: true, playInPlace: true, scriptChainWithoutConversation: true, downstreamReplayTurns: 1, handoffContexts: 1,
+    errorRoute: true, playInPlace: true, parameterRefusalRepairedInPlace: true, scriptChainWithoutConversation: true, downstreamReplayTurns: 1, handoffContexts: 1,
     boundary: 'Native profile/plugin reload; abrupt process loss is separately verified by deterministic-ownership.test.ts.',
   }, null, 2) + '\n');
 });
@@ -210,4 +225,56 @@ it('recovers an entry before source capture and a held terminal result without r
   catch (error) { throw new Error('Held result did not resume: ' + JSON.stringify({ task: await task(), execution: (await snapshot()).deterministic?.[taskId] }), { cause: error }); }
   expect((await task()).sessionIds).toEqual([]);
   expect((await readFile(join(scaffold.workspaceCwd, '.recovery-runs'), 'utf8')).trim()).toBe('run');
+});
+
+it('draws the deterministic routing without an exit label and opens its stage editor only while unlocked', { timeout: 120000 }, async () => {
+  const scaffold = await launchWebScaffold({ profile: { packages: [{ dir: ROOT, enabled: true }] } });
+  const browserPromise = chromium.launch();
+  onTestFinished(async () => { try { await (await browserPromise).close(); } finally { await scaffold.close(); } });
+  const browser = await browserPromise;
+  const page = await newEnglishPage(browser);
+  const controller = () => scaffold.ctx.get('kanbanController') as any;
+  const snapshot = async () => unwrap(await controller().snapshot({}));
+  const command = async (value: any) => unwrap(await controller().command(value));
+  const state = await snapshot();
+  const hubId = state.state.hubs[0].id;
+  const boardId = state.state.hubs[0].boards[0].id;
+  await command({ type: 'project.save', hubId, project: { name: 'Deterministic arrows', projectPath: scaffold.workspaceCwd, projectKey: 'det-arrows' } });
+  const workflow = [
+    'name: Deterministic arrows',
+    'initial_column: start',
+    'columns:',
+    '  - id: start',
+    '    label: Start',
+    '    deterministic:',
+    '      language: typescript',
+    '      code: "return { exit: \'done\', message: \'ok\' };"',
+    '      exits: { done: finish }',
+    '  - id: finish',
+    '    label: Finish',
+    '',
+  ].join('\n');
+  await command({ type: 'board.workflow.save', hubId, boardId, yaml: workflow });
+  await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' });
+  await page.getByRole('button', { name: 'Kanban', exact: true }).click();
+  await page.getByRole('button', { name: 'Workflow', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('.kb-flow-canvas')?.getAttribute('data-ready') === 'true');
+  await page.waitForTimeout(300);
+  const group = page.locator('.kb-flow-edge-group[data-connection-id^="start->finish"]');
+  await expect(group).toHaveCount(1);
+  // The names live in the stage editor: no label, no condition mark, no control.
+  await expect(group.locator('.kb-flow-exit-label')).toHaveCount(0);
+  await expect(group.locator('button')).toHaveCount(0);
+  await expect(group.locator('.kb-flow-condition-mark')).toHaveCount(0);
+  // The unobscured diagram: one arrow, no label, no mark.
+  await mkdir(join(ROOT, '.verification'), { recursive: true });
+  await page.screenshot({ path: join(ROOT, '.verification', 'e2e-deterministic-arrow.png') });
+  // A locked diagram stores nothing and opens nothing.
+  await group.dispatchEvent('dblclick');
+  await page.waitForTimeout(250);
+  await expect(page.getByRole('dialog', { name: 'Edit stage' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Unlock layout editing', exact: true }).click();
+  await group.dispatchEvent('dblclick');
+  await expect(page.getByRole('dialog', { name: 'Edit stage' })).toBeVisible();
+  expect(await page.getByLabel('Execution mode').inputValue()).toBe('deterministic');
 });

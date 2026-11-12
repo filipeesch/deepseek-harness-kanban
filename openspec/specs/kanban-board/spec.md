@@ -32,7 +32,7 @@ A stage's stable identity SHALL be a value distinct from the stage identifier, S
 
 This version SHALL NOT implement WIP limits and SHALL NOT introduce reusable workflow templates.
 
-A stage SHALL additionally support the deterministic configuration defined by `deterministic-steps`. A deterministic stage SHALL NOT author a nonempty entry instruction or an allowed transitions list. Its named exit mappings SHALL be its configured destinations for workflow access and graph presentation; several exits MAY resolve to the same destination, which SHALL be presented once as a destination without collapsing the exit names. A deterministic stage SHALL NOT obtain a default route from the first exit or from workflow order. Exit names SHALL NOT be executable interpretations of a legacy transition condition, and legacy conditions SHALL retain their documentary meaning. A script SHALL NOT supply or override a destination stage identifier.
+A stage SHALL additionally support the deterministic configuration defined by `deterministic-steps`. A deterministic stage SHALL NOT author a nonempty entry instruction or an allowed transitions list. Its named exit mappings SHALL be its configured destinations for workflow access and graph presentation; several exits MAY resolve to the same destination, which SHALL be presented as one connection to that destination. The exit names SHALL NOT be presented on the diagram's connections; each exit name and the destination it resolves to SHALL remain presented and editable in the stage editor. A deterministic stage SHALL NOT obtain a default route from the first exit or from workflow order. Exit names SHALL NOT be executable interpretations of a legacy transition condition, and legacy conditions SHALL retain their documentary meaning. A script SHALL NOT supply or override a destination stage identifier.
 
 #### Scenario: Render a configured column group
 
@@ -130,6 +130,13 @@ A stage SHALL additionally support the deterministic configuration defined by `d
 - **THEN** the deterministic configuration is validated by the same workflow semantics as the host
 - **AND** its exits determine its configured destinations without selecting a default exit
 - **AND** the other stage retains its conditions and permitted targets unchanged
+
+#### Scenario: Draw one connection for several exits without naming it on the path
+
+- **WHEN** a deterministic stage maps two exit names to the same other stage
+- **THEN** the diagram draws one connection to that destination
+- **AND** that connection presents no exit name
+- **AND** the stage editor presents both exit names and the destination they share
 
 ### Requirement: Top-level task creation
 The active board SHALL provide the New task action in each of its presentations: at the top of its workflow's configured initial column in the column board, and in the header of that stage in the workflow diagram as defined by `workflow-view` Task creation in the initial stage. The two presentations SHALL open one shared creation experience, and neither SHALL build creation inputs, enablement, or receipt handling of its own. It SHALL collect a title, description, and project, an Auto mode option that is off by default, and, only when the initial stage has an entry instruction, a Start execution now option that is on by default. The project input SHALL offer only the projects of the active Hub that the active board allows, as defined by Board project scope configuration; a project that the board does not allow SHALL NOT be offered and SHALL NOT be accepted. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. A board that allows no project SHALL present no selectable project and SHALL explain that the board accepts no new task, and saving SHALL be unavailable. Saving a new task SHALL place it in the active board's configured initial stage whichever presentation opened it, and SHALL record the selected auto-mode value. The board SHALL NOT offer any other stage as a creation target. When the initial stage has an entry instruction and the Start execution now option remains enabled, saving SHALL start the automatic first execution defined by Automatic first execution on task creation. Otherwise, saving SHALL NOT create a native DSH conversation, a workspace, or an agent execution. The board header SHALL NOT provide a separate New task action.

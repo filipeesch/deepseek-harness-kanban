@@ -44,7 +44,7 @@ function harness(initial = fixture()) {
     },
     capture: {
       async capture(request) { captures.push({ ...request, located: structuredClone(request.located), control: structuredClone(request.control) }); await captureHook?.(request); const definition = request.control.definition; const ref = 'blob-' + ++sequence; blobs.set(ref, definition.code ?? 'external captured bytes');
-        const capture: DeterministicCapture = { sourceRef: ref, fingerprint: ref, language: definition.language, directory: definition.directory, executionDirectory: '/project', source: { kind: definition.file ? 'file' : 'inline', ...(definition.file ? { path: definition.file } : {}) }, env: [...(definition.env ?? [])], exits: Object.fromEntries(Object.entries(definition.exits).map(([exit, columnId]) => [exit, { columnId, stageIdentity: columnId + '-key' }])) }; return capture; },
+        const capture: DeterministicCapture = { sourceRef: ref, fingerprint: ref, language: definition.language, directory: definition.directory, executionDirectory: '/project', source: { kind: definition.file ? 'file' : 'inline', ...(definition.file ? { path: definition.file } : {}) }, env: [...(definition.env ?? [])], params: (definition.params ?? []).map(parameter => parameter.name), exits: Object.fromEntries(Object.entries(definition.exits).map(([exit, columnId]) => [exit, { columnId, stageIdentity: columnId + '-key' }])) }; return capture; },
       async load(capture) { const code = blobs.get(capture.sourceRef); if (code === undefined) throw new KanbanError('CAPTURE_CORRUPT', 'Captured source is missing or corrupt.'); return code; },
     },
     runtime: { async reclaim(request) { reclaims.push(request.control.executionId); await reclaimHook?.(); }, async execute(request) { calls.push(request); expect(state.tasks.find(task => task.id === request.located.task.id)?.deterministic).toMatchObject({ phase: 'active', attemptId: request.control.attemptId }); return execute(request); } },
@@ -70,7 +70,7 @@ describe('deterministic supervisor native composition and preview', () => {
   it('adapts native task/run ownership, target snapshots, trust scope and structured outcomes', async () => {
     const h = harness(); const scopeCalls: unknown[] = []; let executed: Parameters<DeterministicRuntime['execute']>[0] | undefined;
     await h.edit(value => { value.task.deterministic!.targets = { passed: { columnId: 'review-before-rename', stageIdentity: 'review-key' } }; });
-    const capture: DeterministicCapture = { sourceRef: 'native-blob', fingerprint: 'native-fingerprint', language: 'typescript', directory: 'task', executionDirectory: '/project', source: { kind: 'inline' }, env: [], exits: {} };
+    const capture: DeterministicCapture = { sourceRef: 'native-blob', fingerprint: 'native-fingerprint', language: 'typescript', directory: 'task', executionDirectory: '/project', source: { kind: 'inline' }, env: [], params: [], exits: {} };
     const native: DeterministicRuntime = { async capture(request) { expect(request.exits).toEqual(h.control().targets); return { ...capture, exits: request.exits }; }, loadCapture: async () => 'return input', collectSources: async () => undefined, verify: async () => undefined, reclaim: async () => undefined,
       execute: async request => { executed = request; return { kind: 'completed', completion: { exit: 'passed', message: 'native success' }, diagnostics: [] }; },
       trust: { async isApproved(scope) { scopeCalls.push(scope); return true; }, approve: async () => undefined, reject: async () => undefined },
@@ -248,4 +248,117 @@ describe('deterministic supervisor restart, result delivery and errors', () => {
   it('preserves explicit delivery failure across restart and retries only delivery on request', async () => { const h = harness(); h.route(async () => ({ status: 'failed', error: { code: 'TARGET_REMOVED', message: 'Captured stable target was removed.' } })); const s = h.supervisor(); s.start(); await s.settle(); const delivery = h.control().result!.deliveryId; s.dispose(); const restored = h.supervisor(); restored.start(); await restored.settle(); expect(h.routes).toHaveLength(1); expect(h.calls).toHaveLength(1); h.route(async () => ({ status: 'accepted' })); await restored.retryDelivery(identity); await restored.settle(); expect(h.routes).toHaveLength(2); expect(h.control().result!.deliveryId).toBe(delivery); expect(h.calls).toHaveLength(1); await h.close(); });
   it('keeps captured exact stable routes after the saved workflow mapping changes', async () => { const h = harness(); const gate = deferred<unknown>(); h.execute(async () => gate.promise); const s = h.supervisor(); s.start(); await flush(); await h.edit(value => { value.board.workflow.columns[0]!.deterministic!.exits.passed = 'new-target'; value.board.workflow.columns[1]!.id = 'renamed-review'; }); gate.resolve({ exit: 'passed', message: 'ok' }); await s.settle(); expect(h.routes[0]!.result.target).toEqual({ columnId: 'review', stageIdentity: 'review-key' }); await h.close(); });
   it('drains scripts before irreversible context changes and clears task-owned auxiliary sources only afterward', async () => { const h = harness(); const gate = deferred<unknown>(); const removed: string[] = []; h.execute(request => { request.signal.addEventListener('abort', () => gate.resolve({ exit: 'passed', message: 'late' })); return gate.promise; }); h.ports.capture.removeTask = async id => { expect(h.control().phase).toBe('stopped'); removed.push(id); }; const s = h.supervisor(); s.start(); await flush(); await s.removeTask('task'); expect(removed).toEqual(['task']); expect(h.routes).toHaveLength(0); await h.close(); });
+});
+
+describe('deterministic stage parameters', () => {
+  async function declare(h: ReturnType<typeof harness>, params: Array<{ name: string; description?: string }>): Promise<void> {
+    await h.edit(value => {
+      value.board.workflow.columns[0]!.deterministic!.params = structuredClone(params);
+      value.task.deterministic!.definition.params = structuredClone(params);
+    });
+  }
+
+  it('settles a missing parameter as a configuration refusal without running, routing, or recording', async () => {
+    const h = harness();
+    await declare(h, [{ name: 'pipeline', description: 'CI workflow' }]);
+    await h.edit(value => { value.task.deterministic!.definition.exits.error = 'review'; });
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.control().phase).toBe('failed');
+    expect(h.control().error).toMatchObject({ code: 'PARAMETERS_REQUIRED' });
+    expect(h.control().error?.message).toContain('pipeline');
+    expect(h.calls).toHaveLength(0);
+    expect(h.routes).toHaveLength(0);
+    expect(h.task.history).toBeUndefined();
+    await h.close();
+  });
+
+  it('fails in place without an error route', async () => {
+    const h = harness();
+    await declare(h, [{ name: 'pipeline' }]);
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.control().phase).toBe('failed');
+    expect(h.control().error?.code).toBe('PARAMETERS_REQUIRED');
+    expect(h.routes).toHaveLength(0);
+    expect(h.task.history).toBeUndefined();
+    await h.close();
+  });
+
+  it('passes only declared values to the program and records the values used', async () => {
+    const h = harness();
+    await declare(h, [{ name: 'pipeline' }, { name: 'app' }]);
+    await h.edit(value => { value.task.deterministic!.parameters = { pipeline: 'ci-main', app: 'checkout', extra: 'ignored' }; });
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.calls[0]!.input.params).toEqual({ pipeline: 'ci-main', app: 'checkout' });
+    const row = h.task.history?.find(value => value.kind === 'deterministic-execution');
+    expect(row).toMatchObject({ outcome: 'completed', parameters: { pipeline: 'ci-main', app: 'checkout' } });
+    expect(JSON.stringify(row)).not.toContain('ignored');
+    await h.close();
+  });
+
+  it('revalidates a changed declaration on Play and repairs the entry before starting', async () => {
+    const h = harness();
+    await declare(h, [{ name: 'pipeline' }]);
+    await h.edit(value => { value.task.deterministic!.parameters = { pipeline: 'ci-main' }; });
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.calls).toHaveLength(1);
+    await h.edit(value => {
+      value.board.workflow.columns[0]!.deterministic!.params = [{ name: 'pipeline' }, { name: 'app' }];
+      value.task.deterministic!.definition.params = [{ name: 'pipeline' }, { name: 'app' }];
+    });
+    await s.play('task', 'entry'); await s.settle();
+    expect(h.calls).toHaveLength(1);
+    expect(h.control().error).toMatchObject({ code: 'PARAMETERS_REQUIRED' });
+    expect(h.control().error?.message).toContain('app');
+    await expect(s.parameters('task', 'entry', { pipeline: 'ci-main' })).rejects.toMatchObject({ code: 'INVALID_PARAMETERS' });
+    await expect(s.parameters('task', 'entry', { pipeline: 'ci-main', app: 'checkout', extra: 'x' })).rejects.toMatchObject({ code: 'INVALID_PARAMETERS' });
+    await s.parameters('task', 'entry', { pipeline: 'ci-main', app: 'checkout' });
+    expect(h.control().parameters).toEqual({ pipeline: 'ci-main', app: 'checkout' });
+    await s.play('task', 'entry'); await s.settle();
+    expect(h.calls).toHaveLength(2);
+    expect(h.calls[1]!.input.params).toEqual({ pipeline: 'ci-main', app: 'checkout' });
+    await h.close();
+  });
+
+  it('rejects repair for an active, stale, or undeclared entry', async () => {
+    const h = harness();
+    await declare(h, [{ name: 'pipeline' }]);
+    await h.edit(value => { value.task.deterministic!.parameters = { pipeline: 'ci' }; });
+    const gate = deferred<unknown>();
+    h.execute(async () => gate.promise);
+    const s = h.supervisor(); s.start(); await flush();
+    expect(h.control().phase).toBe('active');
+    await expect(s.parameters('task', 'entry', { pipeline: 'ci' })).rejects.toMatchObject({ code: 'EXECUTION_ACTIVE' });
+    gate.resolve({ exit: 'passed', message: 'done' }); await s.settle();
+    await expect(s.parameters('task', 'other-entry', { pipeline: 'ci' })).rejects.toMatchObject({ code: 'STALE_EXECUTION' });
+    await h.edit(value => { delete value.board.workflow.columns[0]!.deterministic; });
+    await expect(s.parameters('task', 'entry', { pipeline: 'ci' })).rejects.toMatchObject({ code: 'DETERMINISTIC_CONFIGURATION_REQUIRED' });
+    expect(h.control().parameters).toEqual({ pipeline: 'ci' });
+    await h.close();
+  });
+
+  it('recovers with the entry values instead of the saved declaration', async () => {
+    const h = harness();
+    await declare(h, [{ name: 'pipeline' }]);
+    await h.edit(value => { value.task.deterministic!.parameters = { pipeline: 'ci-main' }; });
+    const gate = deferred<unknown>();
+    h.execute(request => { request.signal.addEventListener('abort', () => gate.reject(new Error('shutdown'))); return gate.promise; });
+    const s = h.supervisor(); s.start(); await flush();
+    s.dispose(); await s.settle();
+    await h.edit(value => { value.board.workflow.columns[0]!.deterministic!.params = [{ name: 'pipeline' }, { name: 'app' }]; });
+    h.execute(async () => ({ exit: 'passed', message: 'recovered' }));
+    const restored = h.supervisor(); restored.start(); await restored.settle();
+    expect(h.calls).toHaveLength(2);
+    expect(h.calls[1]!.input.params).toEqual({ pipeline: 'ci-main' });
+    await h.close();
+  });
+
+  it('reviews the captured parameter declaration', async () => {
+    const h = harness();
+    h.approved(false);
+    await declare(h, [{ name: 'pipeline', description: 'CI workflow' }]);
+    const s = h.supervisor(); s.start(); await s.settle();
+    const review = await s.review('task');
+    expect(review.params).toEqual([{ name: 'pipeline', description: 'CI workflow' }]);
+    await h.close();
+  });
 });

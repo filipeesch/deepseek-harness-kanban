@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { Column, Task } from '../shared/types.js';
 import type { DeterministicSummary } from '../shared/deterministic.js';
 import { useDeterministicEnvironment, useScriptSummary } from './deterministic-context.js';
 import { ownedScript } from './deterministic-view.js';
+import { ScriptParametersDialog } from './deterministic-parameters.js';
 import { ErrorNotice, useAction, type RunCommand } from './ui.js';
 import { PlayIcon } from './icons.js';
 
@@ -11,7 +12,10 @@ export function ScriptActions({ task, column, summary, run, compact = false, onR
   task: Task; column: Column | undefined; summary?: DeterministicSummary; run: RunCommand; compact?: boolean; onReview?: () => void;
 }) {
   const action = useAction(run);
+  const [editingParameters, setEditingParameters] = useState(false);
   const owned = ownedScript(task, summary);
+  const declared = column?.deterministic?.params ?? [];
+  const editableParameters = owned !== undefined && declared.length > 0 && !['active', 'stopping'].includes(owned.phase);
   if (!owned && !column?.deterministic) return null;
   const stoppable = owned !== undefined && ['capture-pending', 'awaiting-trust', 'active'].includes(owned.phase);
   const stopping = owned?.phase === 'stopping';
@@ -29,7 +33,9 @@ export function ScriptActions({ task, column, summary, run, compact = false, onR
       {busy ? '…' : stoppable ? compact ? <span aria-hidden="true">■</span> : 'Stop' : compact ? <PlayIcon size={15} /> : deliveryFailed ? 'Run again' : 'Play'}
     </button>
     {deliveryFailed && <button type="button" className={className} aria-label="Retry delivery — deterministic result" title={action.error?.message ?? 'Deliver the saved result again without running the script.'} aria-busy={busy || undefined} disabled={busy} onClick={() => void action.execute({ type: 'task.deterministicRetryDelivery', taskId: task.id, entryId: owned!.entryId, executionId: owned!.executionId })}>{compact ? <span aria-hidden="true">↻</span> : 'Retry delivery'}</button>}
+    {editableParameters && <button type="button" className={className} aria-label="Edit deterministic script parameters" title="Edit the values this stage entry passes to the script" disabled={busy} onClick={() => setEditingParameters(true)}>{compact ? <span aria-hidden="true">⚙</span> : 'Edit parameters'}</button>}
     {onReview && <button type="button" className={className} onClick={onReview} aria-label="Review deterministic script and local settings">{compact ? '⋯' : 'Review / local settings'}</button>}
+    {editingParameters && owned && <ScriptParametersDialog key={owned.entryId} task={task} column={column} summary={owned} run={run} onClose={() => setEditingParameters(false)} />}
     {!compact && <ErrorNotice problem={action.error} />}
     {compact && action.error && <span className="kb-sr" role="alert">{action.error.message}</span>}
   </div>;

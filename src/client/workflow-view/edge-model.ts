@@ -28,8 +28,8 @@ export interface LiveConnectionDescriptor {
   readonly segments?: readonly ConnectionSegmentOffset[];
   /** The condition this transition authors; absent means it authors none. */
   readonly condition?: string;
-  /** Deterministic exit names sharing this exact destination. */
-  readonly exitLabels?: readonly string[];
+  /** This connection's routing is authored by a deterministic stage's named exits. */
+  readonly deterministic?: boolean;
 }
 
 export interface LiveEdge extends ConnectionShape {
@@ -40,8 +40,8 @@ export interface LiveEdge extends ConnectionShape {
   readonly returning: boolean;
   /** The condition this transition authors; absent means it authors none. */
   readonly condition?: string;
-  /** Deterministic exit names sharing this exact destination. */
-  readonly exitLabels?: readonly string[];
+  /** This connection's routing is authored by a deterministic stage's named exits. */
+  readonly deterministic?: boolean;
   /** The adjustable segments of the drawn path, in path order. */
   readonly lines: readonly RouteLine[];
 }
@@ -53,6 +53,19 @@ function rectOf(stage: LiveStageRect): DiagramRect {
 /** The displacement the authored layout already applies to one axis at one position. */
 export function authoredOffsetAt(segments: readonly ConnectionSegmentOffset[], axis: 'x' | 'y', order: number): number {
   return segments.filter(segment => segment.axis === axis)[order]?.offset ?? 0;
+}
+
+/**
+ * The automatic coordinate of one drawn line, before its own authored displacement.
+ * The drawn line already carries that displacement, so the baseline is the drawn
+ * coordinate minus the offset this gesture would replace. A displacement on the
+ * other axis can move the route's corridor and therefore its floor, which is why
+ * the baseline comes from the drawn route instead of one rebuilt without offsets.
+ */
+export function baselineCoordinateOf(route: ConnectionRoute, axis: 'x' | 'y', order: number, segments: readonly ConnectionSegmentOffset[] | undefined): number | undefined {
+  const line = route.lines.filter(value => value.axis === axis)[order];
+  if (line === undefined) return undefined;
+  return line.coordinate - authoredOffsetAt(segments ?? [], axis, order);
 }
 
 /** Replace the displacement of one axis at one position, keeping the others in order. */
@@ -89,15 +102,11 @@ export function connectionLayoutOf(connection: LiveConnectionDescriptor, overrid
   };
 }
 
-/** The lowest stage bottom the diagram currently shows; a returning route clears it. */
-export function lowestStageBottom(stages: readonly LiveStageRect[]): number {
-  return stages.reduce((bottom, stage) => Math.max(bottom, stage.y + stage.height), 0);
-}
-
 /**
- * The route of one connection as the live diagram should draw it. The clearance
- * every connection shares is computed here, so the drawing, the travel path, and
- * the drag baseline can never disagree about where a segment sits.
+ * The route of one connection as the live diagram should draw it. The stages are
+ * supplied here, so the router can clear the stages the connection's own corridor
+ * crosses and no others; the drawing, the travel path, and the drag baseline can
+ * never disagree about where a segment sits.
  */
 export function connectionRouteFor(stages: readonly LiveStageRect[], connection: LiveConnectionDescriptor, withOffsets: boolean): ConnectionRoute | null {
   const from = stages.find(stage => stage.id === connection.from);
@@ -109,7 +118,7 @@ export function connectionRouteFor(stages: readonly LiveStageRect[], connection:
     returning: connection.returning,
     fanOut: connection.fanOut,
     fanOutCount: connection.fanOutCount,
-    clearance: lowestStageBottom(stages),
+    clearanceStages: stages.map(rectOf),
     ...(connection.source === undefined ? {} : { source: connection.source }),
     ...(connection.target === undefined ? {} : { target: connection.target }),
     ...(!withOffsets || connection.segments === undefined ? {} : { segments: connection.segments }),
@@ -120,14 +129,14 @@ export function connectionRouteFor(stages: readonly LiveStageRect[], connection:
  * The edges the diagram draws for the rectangles it currently shows. Every edge
  * is derived from the live positions and sizes through the shared router, so a
  * stage being dragged or resized carries its connections with it and the drawn
- * path is the path a card travels.
+ * path is the path a transit follows.
  */
 export function edgeModel(stages: readonly LiveStageRect[], connections: readonly LiveConnectionDescriptor[]): LiveEdge[] {
   const edges: LiveEdge[] = [];
   for (const connection of connections) {
     const route = connectionRouteFor(stages, connection, true);
     if (route === null) continue;
-    edges.push({ id: connection.id, from: connection.from, to: connection.to, kind: connection.kind, returning: connection.returning, path: route.shape.path, points: route.shape.points, tipAngle: route.shape.tipAngle, lines: route.lines, ...(connection.condition === undefined ? {} : { condition: connection.condition }), ...(connection.exitLabels === undefined ? {} : { exitLabels: connection.exitLabels }) });
+    edges.push({ id: connection.id, from: connection.from, to: connection.to, kind: connection.kind, returning: connection.returning, path: route.shape.path, points: route.shape.points, tipAngle: route.shape.tipAngle, lines: route.lines, ...(connection.condition === undefined ? {} : { condition: connection.condition }), ...(connection.deterministic === undefined ? {} : { deterministic: connection.deterministic }) });
   }
   return edges;
 }

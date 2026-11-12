@@ -1,26 +1,30 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
-import type { QuestionAnswer, QuestionPage, QuestionRound } from '../shared/types.js';
+import type { QuestionDraftContent, QuestionDraftSlide, QuestionPage, QuestionRound, StoredQuestionDraft } from '../shared/types.js';
 import { OTHER_CHOICE, answerFor, emptyAnswer, formatAnswers, isAnswerValid } from './validation.js';
 import { canSubmit, submitState } from './submission.js';
+import { activeSlide, draftAnswer, hasContent, restoreDraft } from './draft.js';
+import { useQuestionDraft } from './use-question-draft.js';
 import { questionCss } from './styles.js';
 
 export interface QuestionFormProps {
   round: QuestionRound;
   hidden?: boolean;
+  /** The durably stored draft this round was restored with. */
+  storedDraft?: StoredQuestionDraft;
+  /** Receives the durable projection after every change worth persisting. */
+  onDraftChange?(draft: QuestionDraftContent): void;
   onSubmit(text: string): void | Promise<void>;
   onDismiss?(): void | Promise<void>;
   /** Called after the hidden form releases focus, so the host can return it to the composer. */
   onHide?(): void;
 }
 
-type ActiveSlide = { kind: 'page'; callId: string } | { kind: 'notes' };
+type ActiveSlide = QuestionDraftSlide;
 type Submission = 'idle' | 'submitting' | 'failed';
-interface Draft {
+/** Transient state of the mounted strip; none of it survives a remount. */
+interface Surface {
   roundId: string;
-  active: ActiveSlide | null;
-  answers: Record<string, QuestionAnswer>;
-  generalNotes: string;
   collapsed: boolean;
   submission: Submission;
   error: string | null;
@@ -35,8 +39,8 @@ const WEIGHT_LABELS: Record<NonNullable<QuestionPage['weight']>, string> = {
   easy: 'Easy to revisit',
 };
 
-function newDraft(roundId: string): Draft {
-  return { roundId, active: null, answers: Object.create(null) as Record<string, QuestionAnswer>, generalNotes: '', collapsed: false, submission: 'idle', error: null, confirmingDismiss: false, dismissing: false, dismissError: null };
+function newSurface(roundId: string): Surface {
+  return { roundId, collapsed: false, submission: 'idle', error: null, confirmingDismiss: false, dismissing: false, dismissError: null };
 }
 function Markdown({ text }: { text: string }) {
   return <ReactMarkdown skipHtml disallowedElements={['img']}>{text}</ReactMarkdown>;
@@ -62,11 +66,11 @@ function Chevron({ up }: { up: boolean }) {
 }
 
 /** The fixed question strip docked above the composer: pages first, Additional Notes last. */
-export function QuestionForm({ round, hidden = false, onSubmit, onDismiss, onHide }: QuestionFormProps) {
+export function QuestionForm({ round, hidden = false, storedDraft, onDraftChange, onSubmit, onDismiss, onHide }: QuestionFormProps) {
   const prefix = useId();
   const bodyId = prefix + '-body';
   const headingId = prefix + '-heading';
-  const [draft, setDraft] = useState<Draft>(() => newDraft(round.id));
+  const [surface, setSurface] = useState<Surface>(() => newSurface(round.id));
   const [focused, setFocused] = useState<Record<string, string>>({});
   const headingRef = useRef<HTMLDivElement>(null);
   const keepAnsweringRef = useRef<HTMLButtonElement>(null);
@@ -77,17 +81,21 @@ export function QuestionForm({ round, hidden = false, onSubmit, onDismiss, onHid
   const seenPages = useRef<Set<string>>(new Set());
   const onHideRef = useRef(onHide);
   useEffect(() => { onHideRef.current = onHide; }, [onHide]);
-  useEffect(() => { setDraft(previous => previous.roundId === round.id ? previous : newDraft(round.id)); }, [round.id]);
+  const draft = useQuestionDraft({ round, ...(storedDraft === undefined ? {} : { stored: storedDraft }), ...(onDraftChange === undefined ? {} : { onChange: onDraftChange }) });
+  useEffect(() => { setSurface(previous => previous.roundId === round.id ? previous : newSurface(round.id)); }, [round.id]);
   useEffect(() => { seenPages.current = new Set(); sending.current = false; }, [round.id]);
-  const current = draft.roundId === round.id ? draft : newDraft(round.id);
+  const current = surface.roundId === round.id ? surface : newSurface(round.id);
+  // A round swapped in place must never render the previous round's answers before
+  // its reset effect runs; the hook reseeds on the same identity change.
+  const value = draft.draft.roundId === round.id ? draft.draft : restoreDraft(round.id, storedDraft);
   const slides: ActiveSlide[] = [...round.pages.map(page => ({ kind: 'page' as const, callId: page.callId })), { kind: 'notes' as const }];
-  const active = current.active !== null && slides.some(slide => sameSlide(slide, current.active!)) ? current.active : slides[0]!;
+  const active = activeSlide(round, value);
   const index = slides.findIndex(slide => sameSlide(slide, active));
   const entry = active.kind === 'page' ? round.pages.find(page => page.callId === active.callId) : undefined;
-  const answer = entry ? answerFor(current.answers, entry.callId) ?? emptyAnswer() : emptyAnswer();
+  const answer = entry ? draftAnswer(value, entry.callId) : emptyAnswer();
   const disabled = round.answered || current.submission === 'submitting' || current.dismissing;
-  const hasDraft = Object.values(current.answers).some(answer => answer.choices.length > 0 || answer.text.trim().length > 0 || answer.other.trim().length > 0 || answer.notes.trim().length > 0) || current.generalNotes.trim().length > 0;
-  const answersValid = round.pages.length > 0 && round.pages.every(page => isAnswerValid(page.page, answerFor(current.answers, page.callId)));
+  const hasDraft = hasContent(value);
+  const answersValid = round.pages.length > 0 && round.pages.every(page => isAnswerValid(page.page, answerFor(value.answers, page.callId)));
   const state = submitState({ complete: round.complete, answersValid, busy: current.submission === 'submitting', error: current.error });
   const canSubmitNow = canSubmit(state);
   const canAdvance = entry !== undefined && !disabled && isAnswerValid(entry.page, answer);
@@ -109,6 +117,13 @@ export function QuestionForm({ round, hidden = false, onSubmit, onDismiss, onHid
     if (active.kind === 'page') seenPages.current.add(active.callId);
   }, [activeKey, round.pages]);
   useEffect(() => {
+    // A restored draft resumes after the pages the user already reached, so pages up
+    // to the restored slide count as seen and only later arrivals are announced.
+    if (value.active === null) return;
+    const target = slides.findIndex(slide => sameSlide(slide, value.active!));
+    for (const slide of target < 0 ? [] : slides.slice(0, target + 1)) if (slide.kind === 'page') seenPages.current.add(slide.callId);
+  }, [round.id]);
+  useEffect(() => {
     if (firstSlide.current) { firstSlide.current = false; return; }
     headingRef.current?.focus();
   }, [activeKey]);
@@ -119,49 +134,46 @@ export function QuestionForm({ round, hidden = false, onSubmit, onDismiss, onHid
     wasConfirming.current = current.confirmingDismiss;
   }, [current.confirmingDismiss, current.dismissError]);
 
-  function updateDraft(update: (previous: Draft) => Draft) {
-    setDraft(previous => update(previous.roundId === round.id ? previous : newDraft(round.id)));
+  function updateSurface(update: (previous: Surface) => Surface) {
+    setSurface(previous => update(previous.roundId === round.id ? previous : newSurface(round.id)));
   }
-  function updateAnswer(update: (previous: QuestionAnswer) => QuestionAnswer) {
-    if (!entry) return;
-    updateDraft(previous => ({ ...previous, error: null, active: { kind: 'page', callId: entry.callId },
-      answers: { ...previous.answers, [entry.callId]: update(answerFor(previous.answers, entry.callId) ?? emptyAnswer()) } }));
+  function changeAnswer(apply: () => void) {
+    updateSurface(previous => ({ ...previous, error: null }));
+    apply();
   }
-  function focusOption(value: string) {
+  function focusOption(option: string) {
     if (!entry) return;
-    setFocused(previous => ({ ...previous, [entry.callId]: value }));
+    setFocused(previous => ({ ...previous, [entry.callId]: option }));
   }
   function choose(value: string, checked: boolean) {
     if (!entry) return;
     focusOption(value);
-    updateAnswer(previous => ({ ...previous,
-      choices: entry.page.type === 'exclusive' ? [value] : checked ? [...previous.choices.filter(choice => choice !== value), value] : previous.choices.filter(choice => choice !== value),
-    }));
+    changeAnswer(() => draft.choose(entry.page, entry.callId, value, checked));
   }
   function goTo(target: ActiveSlide | undefined) {
     if (!target) return;
-    updateDraft(previous => ({ ...previous, active: target }));
+    draft.goTo(target);
   }
   function next() { if (canAdvance) goTo(slides[index + 1]); }
   function back() { goTo(slides[index - 1]); }
-  function toggle() { updateDraft(previous => ({ ...previous, collapsed: !previous.collapsed })); }
+  function toggle() { updateSurface(previous => ({ ...previous, collapsed: !previous.collapsed })); }
   function requestDismiss() {
     if (!onDismiss || disabled) return;
-    if (hasDraft && !current.confirmingDismiss) { updateDraft(previous => ({ ...previous, collapsed: false, confirmingDismiss: true, dismissError: null })); return; }
+    if (hasDraft && !current.confirmingDismiss) { updateSurface(previous => ({ ...previous, collapsed: false, confirmingDismiss: true, dismissError: null })); return; }
     void dismiss();
   }
   function cancelDismiss() {
     if (current.dismissing) return;
-    updateDraft(previous => ({ ...previous, confirmingDismiss: false, dismissError: null }));
+    updateSurface(previous => ({ ...previous, confirmingDismiss: false, dismissError: null }));
   }
   async function dismiss(): Promise<void> {
     if (!onDismiss || disabled || current.dismissing) return;
-    updateDraft(previous => ({ ...previous, dismissing: true, dismissError: null }));
+    updateSurface(previous => ({ ...previous, dismissing: true, dismissError: null }));
     try {
       await onDismiss();
-      setDraft(previous => previous.roundId === round.id ? { ...previous, dismissing: false } : previous);
+      setSurface(previous => previous.roundId === round.id ? { ...previous, dismissing: false } : previous);
     } catch (error) {
-      setDraft(previous => previous.roundId === round.id ? {
+      setSurface(previous => previous.roundId === round.id ? {
         ...previous, dismissing: false, confirmingDismiss: hasDraft,
         dismissError: errorMessage(error),
       } : previous);
@@ -169,16 +181,15 @@ export function QuestionForm({ round, hidden = false, onSubmit, onDismiss, onHid
   }
   async function send(): Promise<void> {
     if (active.kind !== 'notes' || !canSubmitNow || sending.current) return;
-    const roundId = round.id;
     sending.current = true;
-    updateDraft(previous => ({ ...previous, submission: 'submitting', error: null }));
+    updateSurface(previous => ({ ...previous, submission: 'submitting', error: null }));
     try {
-      const text = formatAnswers(round, current.answers, current.generalNotes);
+      const text = formatAnswers(round, value.answers, value.generalNotes);
       await onSubmit(text);
       // The dock hides this form as soon as the submission is recorded; the feed
       // confirms the answer instead of a local "submitted" status.
     } catch (error) {
-      setDraft(previous => previous.roundId === roundId ? { ...previous, submission: 'failed', error: errorMessage(error) } : previous);
+      setSurface(previous => previous.roundId === round.id ? { ...previous, submission: 'failed', error: errorMessage(error) } : previous);
     } finally {
       sending.current = false;
     }
@@ -209,7 +220,7 @@ export function QuestionForm({ round, hidden = false, onSubmit, onDismiss, onHid
             {entry.page.model_lean && <p className="kq-lean">I lean toward <strong>{entry.page.model_lean}</strong>{entry.page.model_lean_reason ? ' — ' + entry.page.model_lean_reason : ''}</p>}
             {entry.page.type === 'freetext'
               ? <label className="kq-field">Your answer
-                <textarea className="kq-input" aria-label="Your answer" value={answer.text} disabled={disabled} onChange={event => updateAnswer(previous => ({ ...previous, text: event.target.value }))} />
+                <textarea className="kq-input" aria-label="Your answer" value={answer.text} disabled={disabled} onChange={event => changeAnswer(() => draft.setText(entry.callId, 'text', event.target.value))} />
               </label>
               : <>
                 <fieldset className="kq-options" disabled={disabled}>
@@ -233,20 +244,20 @@ export function QuestionForm({ round, hidden = false, onSubmit, onDismiss, onHid
                 </fieldset>
                 <div className="kq-desc" data-other={otherActive}>
                   {otherActive
-                    ? <textarea className="kq-input" data-fill="true" aria-label="Other answer" value={answer.other} disabled={disabled} onChange={event => updateAnswer(previous => ({ ...previous, other: event.target.value }))} />
+                    ? <textarea className="kq-input" data-fill="true" aria-label="Other answer" value={answer.other} disabled={disabled} onChange={event => changeAnswer(() => draft.setText(entry.callId, 'other', event.target.value))} />
                     : optionFocus
                       ? <div className="kq-desc-body"><Markdown text={descriptionFor(entry.page, optionFocus)} /></div>
                       : <p className="kq-desc-empty">Select an option to see details.</p>}
                 </div>
               </>}
             <label className="kq-field">Notes for this answer
-              <textarea className="kq-input" aria-label="Notes for this answer" value={answer.notes} disabled={disabled} onChange={event => updateAnswer(previous => ({ ...previous, notes: event.target.value }))} />
+              <textarea className="kq-input" aria-label="Notes for this answer" value={answer.notes} disabled={disabled} onChange={event => changeAnswer(() => draft.setText(entry.callId, 'notes', event.target.value))} />
             </label>
             {entry.page.answers_affect_followup && <p className="kq-hint">Your answer here will shape follow-up questions.</p>}
           </section> : <section className="kq-slide" aria-labelledby={headingId}>
             <div ref={headingRef} id={headingId} role="heading" aria-level={3} tabIndex={-1} className="kq-question">Additional Notes</div>
             {round.pages.length === 0 && <p className="kq-hint">Waiting for question pages.</p>}
-            <textarea className="kq-input" aria-label="Additional Notes" placeholder="Anything else the agent should know?" value={current.generalNotes} disabled={disabled} onChange={event => updateDraft(previous => ({ ...previous, generalNotes: event.target.value }))} />
+            <textarea className="kq-input" aria-label="Additional Notes" placeholder="Anything else the agent should know?" value={value.generalNotes} disabled={disabled} onChange={event => changeAnswer(() => draft.setGeneralNotes(event.target.value))} />
             {newPage && <div className="kq-new-page" role="status">
               <span>New question received.</span>
               <button type="button" className="kq-secondary" onClick={() => goTo({ kind: 'page', callId: newPage.callId })}>Answer new question</button>

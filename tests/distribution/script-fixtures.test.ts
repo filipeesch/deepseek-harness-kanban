@@ -44,18 +44,18 @@ describe('documented deterministic examples', () => {
     await copyFile(join(fixture, file), join(root, file));
     const scope = { hubId: 'fixture-hub', boardId: 'fixture-board', projectId: 'fixture-project', stageIdentity: 'fixture-stage' };
     const exits = { passed: { columnId: 'review', stageIdentity: 'review-key' }, rejected: { columnId: 'fix', stageIdentity: 'fix-key' }, error: { columnId: 'repair', stageIdentity: 'repair-key' } };
-    const capture = await runtime.capture({ definition: { language, file, directory: 'task', exits: { passed: 'review', rejected: 'fix', error: 'repair' } },
+    const capture = await runtime.capture({ definition: { language, file, directory: 'task', params: [{ name: 'pipeline' }], exits: { passed: 'review', rejected: 'fix', error: 'repair' } },
       exits, projectDirectory: root, taskDirectory: root });
     await runtime.trust.approve(scope, capture.fingerprint);
     for (const state of ['passed', 'rejected']) {
       await writeFile(join(root, '.fake-ci-state'), state);
       const result = await runtime.execute({ executionId: language + '-' + state, taskId: language, scope, capture,
-        input: { startedAt: new Date().toISOString() }, signal: new AbortController().signal });
+        input: { startedAt: new Date().toISOString(), params: { pipeline: 'local-ci' } }, signal: new AbortController().signal });
       expect(result).toMatchObject({ kind: 'completed', completion: { exit: state, message: state === 'passed' ? 'Local CI passed.' : 'Local CI rejected the change.' } });
     }
     await writeFile(join(root, '.fake-ci-state'), 'broken');
     const failed = await runtime.execute({ executionId: language + '-broken', taskId: language, scope, capture,
-      input: { startedAt: new Date().toISOString() }, signal: new AbortController().signal });
+      input: { startedAt: new Date().toISOString(), params: { pipeline: 'local-ci' } }, signal: new AbortController().signal });
     expect(failed.kind).toBe('failed');
   });
 });

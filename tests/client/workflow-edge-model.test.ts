@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { authoredOffsetAt, edgeModel, withOffset, type LiveConnectionDescriptor, type LiveStageRect } from '../../src/client/workflow-view/edge-model.js';
+import { authoredOffsetAt, baselineCoordinateOf, edgeModel, withOffset, type LiveConnectionDescriptor, type LiveStageRect } from '../../src/client/workflow-view/edge-model.js';
+import { connectionRoute } from '../../src/client/workflow-view/routing/route.js';
 import { buildWorkflowScene } from '../../src/client/workflow-view/scene.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import type { ConnectionLayout } from '../../src/shared/types.js';
@@ -86,11 +87,87 @@ describe('connection layout editing', () => {
     expect(authoredOffsetAt([{ axis: 'x', offset: 8 }], 'x', 3)).toBe(0);
   });
 
+  it('starts a segment drag from the drawn line when the other axis moves the floor', () => {
+    const source = { x: 0, y: 0, width: 200, height: 100 };
+    const target = { x: 0, y: 300, width: 200, height: 100 };
+    const third = { x: -50, y: 600, width: 30, height: 100 };
+    const segments = [{ axis: 'x' as const, offset: 372 }];
+    const input = { from: source, to: target, returning: true, fanOut: 0, fanOutCount: 1, clearanceStages: [source, target, third], segments };
+    const drawn = connectionRoute(input);
+    // The x displacement widened the corridor, so the drawn floor is 472, not the
+    // automatic 772. The lower horizontal line is the second line of its axis.
+    expect(drawn.lines.filter(line => line.axis === 'y').map(line => line.coordinate)).toEqual([200, 472]);
+    const baseline = baselineCoordinateOf(drawn, 'y', 1, segments)!;
+    expect(baseline).toBe(472);
+    // Dragging the drawn line down eight units stores offset eight and keeps the
+    // preview eight units below the drawn line instead of jumping a whole floor.
+    const preview = connectionRoute({ ...input, segments: withOffset(segments, 'y', 1, 480 - baseline) });
+    expect(preview.lines.filter(line => line.axis === 'y')[1]!.coordinate).toBe(480);
+  });
+
   it('replaces one displacement and pads the earlier positions of that axis', () => {
     expect(withOffset([], 'x', 0, 12)).toEqual([{ axis: 'x', offset: 12 }]);
     // A second x line needs the first one kept unshifted, so the array carries it.
     expect(withOffset([], 'x', 1, 20)).toEqual([{ axis: 'x', offset: 0 }, { axis: 'x', offset: 20 }]);
     expect(withOffset([{ axis: 'x', offset: 8 }, { axis: 'y', offset: 2 }], 'x', 0, -8)).toEqual([{ axis: 'x', offset: -8 }, { axis: 'y', offset: 2 }]);
     expect(withOffset([{ axis: 'x', offset: 8 }], 'x', 0, 0)).toEqual([{ axis: 'x', offset: 0 }]);
+  });
+});
+describe('corridor clearance across live and committed geometry', () => {
+  const yaml = [
+    'name: Flow',
+    'columns:',
+    '  - id: one',
+    '    label: One',
+    '    allowed_transitions: [two]',
+    '  - id: two',
+    '    label: Two',
+    '    allowed_transitions: [three]',
+    '  - id: three',
+    '    label: Three',
+    '    allowed_transitions: [one]',
+    '  - id: four',
+    '    label: Four',
+    '    allowed_transitions: []',
+  ].join(String.fromCharCode(10));
+  const workflow = parseWorkflow(yaml);
+  const placements = new Map([
+    ['one', { x: 0, y: 0 }],
+    ['two', { x: 400, y: 0 }],
+    ['three', { x: 800, y: 0 }],
+    ['four', { x: 1600, y: 0 }],
+  ]);
+  const rects: readonly LiveStageRect[] = [
+    { id: 'one', x: 0, y: 0, width: 264, height: 140 },
+    { id: 'two', x: 400, y: 0, width: 264, height: 140 },
+    { id: 'three', x: 800, y: 0, width: 264, height: 140 },
+    { id: 'four', x: 1600, y: 0, width: 264, height: 140 },
+  ];
+  const returning: LiveConnectionDescriptor = { id: 'three->one:0', from: 'three', to: 'one', kind: 'explicit', returning: true, fanOut: 0, fanOutCount: 1 };
+
+  function pointsOf(map: typeof placements): readonly { readonly x: number; readonly y: number }[] {
+    const scene = buildWorkflowScene({ workflow, tasks: [], placements: map });
+    const edge = scene.edges.find(value => value.from === 'three' && value.to === 'one');
+    if (edge === undefined) throw new Error('the returning connection is missing');
+    return edge.shape.points;
+  }
+
+  it('draws the same returning path for the committed scene and the live surface', () => {
+    const live = edgeModel(rects, [returning]);
+    expect(pointsOf(placements)).toEqual(live[0]!.points);
+  });
+
+  it('leaves the returning path alone when a stage outside its corridor moves', () => {
+    const moved = new Map(placements);
+    moved.set('four', { x: 1600, y: 2000 });
+    expect(pointsOf(moved)).toEqual(pointsOf(placements));
+  });
+
+  it('leaves the returning path alone when a stage outside its corridor resizes', () => {
+    const sizes = new Map([['four', { width: 600, height: 900 }]]);
+    const plain = buildWorkflowScene({ workflow, tasks: [], placements });
+    const taller = buildWorkflowScene({ workflow, tasks: [], placements, sizes });
+    const shape = (scene: typeof plain) => scene.edges.find(value => value.from === 'three' && value.to === 'one')!.shape.points;
+    expect(shape(taller)).toEqual(shape(plain));
   });
 });

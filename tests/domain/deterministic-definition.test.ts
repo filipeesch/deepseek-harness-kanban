@@ -7,7 +7,7 @@ import { resolveAutoAdvance } from '../../src/domain/auto-advance.js';
 import { workflowGraph } from '../../src/domain/workflow-graph.js';
 import { updateStage } from '../../src/domain/stage-update.js';
 
-const definition = { language: 'typescript', code: 'await Promise.resolve();\nreturn {exit: "ok", message: "Ready"};\n', exits: { ok: 'done', passed: 'done', error: 'repair' } };
+const definition = { language: 'typescript' as const, directory: 'task' as const, code: 'await Promise.resolve();\nreturn {exit: "ok", message: "Ready"};\n', exits: { ok: 'done', passed: 'done', error: 'repair' } };
 const text = (value: unknown = definition) => 'name: Flow\ncolumns:\n  - id: wait\n    label: Wait\n    deterministic: ' + JSON.stringify(value) + '\n  - id: done\n    label: Done\n  - id: repair\n    label: Repair\n';
 
 describe('deterministic definition codec', () => {
@@ -41,6 +41,40 @@ describe('deterministic definition codec', () => {
     expect(deterministicEqual(a, { ...b, code: b.code + ' ' })).toBe(false);
     const left = parseWorkflow(text(a)); const right = parseWorkflow(text(b));
     expect(canonicalWorkflow(left)).toBe(canonicalWorkflow(right));
+  });
+  it('declares required parameters and rejects an invalid declaration', () => {
+    const params = [{ name: 'pipeline', description: 'CI workflow' }, { name: 'app' }];
+    const stage = parseWorkflow(text({ ...definition, params })).columns[0]!;
+    expect(stage.deterministic?.params).toEqual(params);
+    expect(workflowSchema.safeParse(parseWorkflow(text({ ...definition, params }))).success).toBe(true);
+    const invalid = [
+      [{ name: 'pipeline' }, { name: 'pipeline' }],
+      [{ name: 'bad name' }],
+      [{ name: 'pipeline', description: '' }],
+      [{ name: 'pipeline', description: 'x'.repeat(201) }],
+      Array.from({ length: 33 }, (_, index) => ({ name: 'p' + index })),
+    ];
+    for (const value of invalid) expect(() => parseWorkflow(text({ ...definition, params: value }))).toThrow();
+  });
+  it('treats a change to a declared name as an authored change but not a value', () => {
+    const declared = { ...definition, params: [{ name: 'pipeline' }] };
+    expect(deterministicEqual(declared, { ...declared, params: [{ name: 'pipeline' }] })).toBe(true);
+    expect(deterministicEqual(declared, { ...declared, params: [{ name: 'pipeline', description: 'CI' }] })).toBe(false);
+    expect(deterministicEqual(declared, { ...declared, params: [{ name: 'app' }] })).toBe(false);
+  });
+  it('allows a parameterized stage as the initial stage and as an exit destination', () => {
+    const yaml = ['initial_column: wait', 'columns:', '  - id: wait', '    label: Wait', '    deterministic: ' + JSON.stringify({ ...definition, params: [{ name: 'pipeline' }] }), '  - id: done', '    label: Done', '  - id: repair', '    label: Repair', ''].join(String.fromCharCode(10));
+    const workflow = parseWorkflow(yaml);
+    expect(workflow.initialColumnId).toBe('wait');
+    expect(workflow.columns[0]?.deterministic?.exits.ok).toBe('done');
+  });
+  it('updates a parameter declaration without touching the primary program', () => {
+    const source = ['name: Flow', 'columns:', '  - id: wait', '    label: Wait', '    deterministic:', '      language: typescript', '      code: "echo exact"', '      params: [{name: pipeline}]', '      exits: {ok: done, passed: done, error: repair}', '  - {id: done, label: Done}', '  - {id: repair, label: Repair}', ''].join(String.fromCharCode(10));
+    const before = parseWorkflow(source).columns[0]!.deterministic!;
+    const result = updateStage({ text: source, stageId: 'wait', patch: { deterministic: { ...before, params: [{ name: 'pipeline', description: 'CI workflow' }, { name: 'app' }] } } }).text;
+    expect(parseWorkflow(result).columns[0]?.deterministic?.params).toEqual([{ name: 'pipeline', description: 'CI workflow' }, { name: 'app' }]);
+    expect(parseWorkflow(result).columns[0]?.deterministic?.code).toBe('echo exact');
+    expect(result).toContain('exits: {ok: done, passed: done, error: repair}');
   });
 });
 

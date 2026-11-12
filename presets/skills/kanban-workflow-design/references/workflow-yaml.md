@@ -21,6 +21,8 @@ Unknown fields are rejected: no WIP limits, stage `auto_mode`, agent/preset/engi
 - **Nonempty:** configured destinations in authored order; the first is default when no route is declared, regardless of conditions. Avoid self-targets: accepted as same-stage reorders, they are not routing targets and stop default progression when first.
 - **`[]`:** no permitted destinations/default advance; humans can still confirm restricted moves. This is terminal policy, not “wait until dependency.”
 
+A deterministic stage may declare required `params` (name + optional description). The declaring transition must supply every value; a missing, unknown, or empty value is rejected with accepted names. A value-less entry fails in place, not via its error exit; the user repairs it in the script panel.
+
 No cross-board YAML transitions exist. Handoffs create separate tasks using an authorized [coordination protocol](coordination.md), not a cross-board move.
 
 ## Entry instructions and gates

@@ -30,6 +30,16 @@ describe('deterministic journal configuration', () => {
     const added = deterministic().replace('  - {id: repair', '  - {id: added, key: added-key, label: Added, deterministic: {language: bash, file: poll.sh, exits: {ok: done}}}\n  - {id: repair');
     roundTrip(deterministic(), added);
   });
+  it('carries declared parameter names and descriptions without values', () => {
+    const declared = { ...definition, params: [{ name: 'pipeline', description: 'CI workflow' }, { name: 'app' }] };
+    const result = roundTrip(BASE, deterministic(declared));
+    expect(parseWorkflow(result.text).columns[0]?.deterministic?.params).toEqual(declared.params);
+    const encoded = JSON.stringify(encodeBoardLog(result.log));
+    expect(encoded).toContain('pipeline');
+    expect(encoded).toContain('CI workflow');
+    expect(encoded).not.toContain('ci-main');
+    expect(encoded).not.toContain('sourceRef');
+  });
   it('keeps code bytes and unrelated comments and quoting in block and flow materializers', () => {
     const block = roundTrip(BASE, deterministic());
     expect(block.text).toContain('# root stays'); expect(block.text).toContain('label: "Wait" # label stays');

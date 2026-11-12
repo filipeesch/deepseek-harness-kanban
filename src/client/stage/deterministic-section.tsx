@@ -18,6 +18,15 @@ export function DeterministicSection({ draft, choices, disabled, problem, onChan
     <label className="kb-field">Execution directory<select className="kb-input" aria-label="Execution directory" value={draft.directory} onChange={event => field('directory', event.target.value as DeterministicDraft['directory'])}><option value="task">Task directory</option><option value="project">Base project directory</option></select></label>
     <label className="kb-field">Authorized variable names<input className="kb-input" aria-label="Authorized variable names" placeholder="CI_TOKEN, REVIEW_TOKEN" value={draft.env} onChange={event => field('env', event.target.value)} /></label>
     <p className="kb-hint">Names only. Configure local values for each task project and stable stage in the task's script settings.</p>{issue('env')}
+    <fieldset className="kb-fieldset"><legend>Required parameters</legend>
+      {draft.params.map((parameter, index) => <div className="kb-script-route" key={index}>
+        <input className="kb-input" aria-label={'Parameter name ' + (index + 1)} placeholder="pipeline" value={parameter.name} onChange={event => field('params', draft.params.map((item, i) => i === index ? { ...item, name: event.target.value } : item))} />
+        <input className="kb-input" aria-label={'Parameter description ' + (index + 1)} placeholder="Optional description for the origin stage" value={parameter.description} onChange={event => field('params', draft.params.map((item, i) => i === index ? { ...item, description: event.target.value } : item))} />
+        <button type="button" className="kb-button" aria-label={'Remove parameter ' + (index + 1)} onClick={() => field('params', draft.params.filter((_, i) => i !== index))}>Remove</button>
+      </div>)}
+      <button type="button" className="kb-button" onClick={() => field('params', [...draft.params, { name: '', description: '' }])}>Add parameter</button>{issue('params')}
+      <p className="kb-hint">Every declared name is required. A value comes from the transition that creates the entry, or from the card's parameter editor; values are never stored in workflow text.</p>
+    </fieldset>
     <fieldset className="kb-fieldset"><legend>Named exits</legend>
       {draft.exits.map((route, index) => <div className="kb-script-route" key={index}>
         <input className="kb-input" aria-label={'Exit name ' + (index + 1)} value={route.name} onChange={event => field('exits', draft.exits.map((item, i) => i === index ? { ...item, name: event.target.value } : item))} />

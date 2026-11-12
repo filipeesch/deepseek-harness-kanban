@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Column, Workflow } from '../../src/shared/types.js';
-import { advanceArmed, declaredTransitionReason, recordedTransition, resolveAdvanceRoute, resolveNextStageRoute, routeDestination } from '../../src/domain/transition-route.js';
+import { advanceArmed, advanceArmedFor, declaredTransitionReason, recordedTransition, resolveAdvanceRoute, resolveNextStageRoute, routeDestination } from '../../src/domain/transition-route.js';
 import { transitions } from '../support/transition-rules.js';
 
 const column = (id: string, extra: Partial<Column> = {}): Column => ({ id, name: id.toUpperCase(), ...extra });
@@ -115,6 +115,30 @@ describe('advance arming', () => {
 
   it('does not arm a recording that no longer resolves', () => {
     expect(advanceArmed(workflow(), { columnId: 'review', recordedTransition: recorded('review', 'gone', 'Review failed.') })).toBe(false);
+  });
+
+  it('arms each origin only for its own condition', () => {
+    expect(advanceArmedFor('auto', workflow(), { columnId: 'review', autoMode: { enabled: true } })).toBe(true);
+    expect(advanceArmedFor('auto', workflow(), { columnId: 'review', recordedTransition: recorded('review', 'done', 'Approved.') })).toBe(false);
+    expect(advanceArmedFor('agent', workflow(), { columnId: 'review', recordedTransition: recorded('review', 'done', 'Approved.') })).toBe(true);
+    expect(advanceArmedFor('agent', workflow(), { columnId: 'review', autoMode: { enabled: true } })).toBe(false);
+  });
+
+  it('keeps both origins unarmed inside a deterministic stage', () => {
+    const wf = flow(
+      column('wait', { deterministic: { language: 'bash', code: 'echo ready', exits: {} } as unknown as Column['deterministic'] }),
+      column('done'),
+    );
+    expect(advanceArmedFor('auto', wf, { columnId: 'wait', autoMode: { enabled: true } })).toBe(false);
+    expect(advanceArmedFor('agent', wf, { columnId: 'wait', recordedTransition: recorded('wait', 'done', 'Ready.') })).toBe(false);
+  });
+
+  it('keeps the agent origin unarmed for a recording made in another stage', () => {
+    expect(advanceArmedFor('agent', workflow(), { columnId: 'backlog', recordedTransition: recorded('review', 'done', 'Approved.') })).toBe(false);
+  });
+
+  it('keeps the agent origin unarmed for a recording stored without a reason', () => {
+    expect(advanceArmedFor('agent', workflow(), { columnId: 'review', recordedTransition: recorded('review', 'done') })).toBe(false);
   });
 
   it('resolves the declared reason for the delivery', () => {

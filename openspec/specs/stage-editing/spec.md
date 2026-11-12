@@ -61,7 +61,7 @@ The stage edit action SHALL open one modal editor for a single stage. The editor
 
 The save action SHALL be unavailable while the draft holds no change and while a save is in flight. The editor SHALL validate its draft before sending it and SHALL present every validation problem inside the editor next to the field it concerns. When a save is rejected, the editor SHALL remain open with the draft intact and SHALL present the problem inline rather than as a board-level notice. After a successful save the editor SHALL close and the board SHALL present the stored stage.
 
-The deterministic form SHALL edit Bash or TypeScript, exactly one inline code or external file source, the task-or-base-project directory choice, named output routes, and authorized local variable names as defined by `deterministic-steps`. The inline program SHALL be editable as multiline code. The form SHALL make instruction and deterministic execution mutually exclusive and SHALL reject a conflicting configuration rather than silently running both. It SHALL distinguish the saved authored configuration from the captured version of any existing execution: saving SHALL NOT grant trust, start code, replace an active snapshot, or restart a task. Local variable values SHALL be managed for the selected project and stable stage through the native credential mechanism, not serialized into shared workflow text; a read surface SHALL report configured or missing state without returning stored values to the browser.
+The deterministic form SHALL edit Bash or TypeScript, exactly one inline code or external file source, the task-or-base-project directory choice, named output routes, authorized local variable names as defined by `deterministic-steps`, and the declared parameters, each with a required name and an optional description. The parameter declaration SHALL be edited independently of any entry's values: the form SHALL NOT present, accept, or store an entry's parameter values. The inline program SHALL be editable as multiline code. The form SHALL make instruction and deterministic execution mutually exclusive and SHALL reject a conflicting configuration rather than silently running both. It SHALL distinguish the saved authored configuration from the captured version of any existing execution: saving SHALL NOT grant trust, start code, replace an active snapshot, or restart a task. Local variable values SHALL be managed for the selected project and stable stage through the native credential mechanism, not serialized into shared workflow text; a read surface SHALL report configured or missing state without returning stored values to the browser.
 
 #### Scenario: Open the editor with the stored stage
 
@@ -102,6 +102,19 @@ The deterministic form SHALL edit Bash or TypeScript, exactly one inline code or
 - **WHEN** a draft supplies deterministic execution together with a nonempty agent instruction or a separate allowed-transition list
 - **THEN** save is rejected with an inline field diagnostic
 - **AND** no conflicting execution definition is stored
+
+#### Scenario: Declare a parameter in the deterministic form
+
+- **WHEN** the user adds a parameter name with a description to a deterministic draft and saves
+- **THEN** that name and description are stored in the stage's deterministic configuration
+- **AND** no parameter value is stored by the editor
+- **AND** an existing run keeps its captured declaration until explicit Play
+
+#### Scenario: Reject an invalid parameter declaration
+
+- **WHEN** a draft repeats a parameter name, uses an unsafe name, or supplies an empty description
+- **THEN** the editor presents the problem inline next to the parameter field
+- **AND** save does not store a partial or conflicting declaration
 
 ### Requirement: Stage display name editing
 

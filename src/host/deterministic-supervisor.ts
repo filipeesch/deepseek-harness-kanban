@@ -1,14 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import type { DeterministicCapture, DeterministicControl, DeterministicResult, DeterministicReview, StepCompletion } from '../shared/deterministic.js';
+import type { DeterministicCapture, DeterministicControl, DeterministicInput, DeterministicResult, DeterministicReview, StepCompletion } from '../shared/deterministic.js';
 import type { HubTask, Problem } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
 import type { LocatedTask } from './hub-repository.js';
 import { captureDeterministicTargets } from '../domain/deterministic-state.js';
+import { declaredParameterNames, declaredParameterValues, missingParameterNames, validateParameterValues } from '../domain/deterministic-parameters.js';
 import { recordDeterministicExecution, recordDeterministicHandoff } from '../domain/task-history/record.js';
+import { buildDeterministicInput } from './deterministic/input.js';
 
 export interface DeterministicIdentity { taskId: string; entryId: string; executionId: string; attemptId?: string }
 export interface SupervisorRequest { located: LocatedTask; control: DeterministicControl; signal: AbortSignal; preview?: boolean }
-export interface SupervisorExecution extends SupervisorRequest { capture: DeterministicCapture; code: string; variables: Readonly<Record<string, string>>; input: Readonly<Record<string, unknown>> }
+export interface SupervisorExecution extends SupervisorRequest { capture: DeterministicCapture; code: string; variables: Readonly<Record<string, string>>; input: DeterministicInput }
 export interface SupervisorRoute extends SupervisorRequest { capture: DeterministicCapture; result: DeterministicResult }
 export type SupervisorRouteOutcome = { status: 'held' } | { status: 'accepted' } | { status: 'failed'; error: Problem };
 
@@ -63,6 +65,13 @@ function current(located: LocatedTask | undefined, expected: DeterministicContro
   return task?.stageEntry?.id === expected.entryId && task.stageEntry.stageIdentity === expected.stageIdentity
     && task.deterministic?.entryId === expected.entryId && task.deterministic.executionId === expected.executionId
     && task.deterministic.attemptId === expected.attemptId;
+}
+/** The bounded values a settled execution actually used, never a stored undeclared name. */
+function historyParameters(control: Pick<DeterministicControl, 'parameters' | 'capture' | 'attempt'>): { parameters?: Record<string, string> } {
+  // A superseded entry that never reached an attempt did not use its values.
+  if (control.attempt === 0 || control.parameters === undefined) return {};
+  const used = declaredParameterValues(control.capture?.params ?? Object.keys(control.parameters), control.parameters);
+  return Object.keys(used).length === 0 ? {} : { parameters: used };
 }
 function safeText(value: string, secrets: Readonly<Record<string, string>>, limit: number): string {
   let text = value;
@@ -168,7 +177,7 @@ export class DeterministicSupervisor {
     await this.ports.transact(identity.taskId, (task, located) => {
       if (current(located, expected) && task.deterministic?.phase === 'stopping') {
         task.deterministic.phase = 'stopped';
-        recordDeterministicExecution(task, { at: this.now(), executionId: expected.executionId, columnId: task.columnId, outcome: 'stopped' });
+        recordDeterministicExecution(task, { at: this.now(), executionId: expected.executionId, columnId: task.columnId, outcome: 'stopped', ...historyParameters(expected) });
       }
     });
     this.ports.notify?.();
@@ -187,8 +196,8 @@ export class DeterministicSupervisor {
       const definition = column?.deterministic;
       if (!definition || !column) throw new KanbanError('DETERMINISTIC_CONFIGURATION_REQUIRED', 'Configure a deterministic script or change stages before pressing Play.');
       const superseded = task.deterministic;
-      if (superseded && !superseded.result && !['stopped', 'failed'].includes(superseded.phase)) recordDeterministicExecution(task, { at: this.now(), executionId: superseded.executionId, columnId: task.columnId, outcome: 'stopped' });
-      task.deterministic = { entryId, executionId: this.id(), stageIdentity: task.stageEntry.stageIdentity, definition: structuredClone(definition), targets: captureDeterministicTargets(located.board, column, this.id), phase: 'capture-pending', startedAt: this.now(), attempt: 0, restartCount: 0 };
+      if (superseded && !superseded.result && !['stopped', 'failed'].includes(superseded.phase)) recordDeterministicExecution(task, { at: this.now(), executionId: superseded.executionId, columnId: task.columnId, outcome: 'stopped', ...historyParameters(superseded) });
+      task.deterministic = { entryId, executionId: this.id(), stageIdentity: task.stageEntry.stageIdentity, definition: structuredClone(definition), targets: captureDeterministicTargets(located.board, column, this.id), ...(superseded?.parameters === undefined ? {} : { parameters: { ...superseded.parameters } }), phase: 'capture-pending', startedAt: this.now(), attempt: 0, restartCount: 0 };
     });
     // Reconciliation aborts a predecessor, but launches only after its full drain.
     this.reconcile(taskId);
@@ -268,7 +277,7 @@ export class DeterministicSupervisor {
     const variables = await this.ports.variable.status?.(request) ?? control.capture.env.map(name => ({ name, configured: false }));
     if (!current(this.ports.locate(taskId), control)) throw new KanbanError('STALE_EXECUTION', 'The executable review was replaced.');
     return { executionId: control.executionId, fingerprint: control.capture.fingerprint, code, language: control.capture.language, directory: control.capture.directory,
-      exits: Object.fromEntries(Object.entries(control.capture.exits).map(([exit, target]) => [exit, target.columnId])), env: [...control.capture.env], variables,
+      exits: Object.fromEntries(Object.entries(control.capture.exits).map(([exit, target]) => [exit, target.columnId])), env: [...control.capture.env], params: structuredClone(control.definition.params ?? []), variables,
       source: control.capture.source, executionDirectory: control.capture.executionDirectory };
   }
 
@@ -291,6 +300,25 @@ export class DeterministicSupervisor {
     // the user reviewed into whichever scope happens to be current now.
     if (expectedStageIdentity !== undefined && expectedStageIdentity !== stageIdentity) throw new KanbanError('STALE_STAGE', 'The task moved to another stage before this value could be saved.');
     await this.ports.variable.set(located, stageIdentity, name, value);
+  }
+
+  /**
+   * Replace the values bound to the current entry. No trust, no code, no history:
+   * a later Play admits a new execution with the saved values.
+   */
+  async parameters(taskId: string, entryId: string, values: unknown): Promise<void> {
+    const located = this.ports.locate(taskId); const control = located?.task.deterministic;
+    if (!located || !control || !current(located, control) || control.entryId !== entryId || located.task.stageEntry?.id !== entryId) throw new KanbanError('STALE_EXECUTION', 'This entry no longer owns the stage entry.');
+    if (['active', 'stopping'].includes(control.phase)) throw new KanbanError('EXECUTION_ACTIVE', 'Stop the execution before editing its parameters.');
+    const column = located.board.workflow.columns.find(value => value.id === located.task.columnId);
+    if (column?.deterministic === undefined) throw new KanbanError('DETERMINISTIC_CONFIGURATION_REQUIRED', 'Configure a deterministic script or change stages before editing parameters.');
+    const checked = validateParameterValues(declaredParameterNames(column.deterministic.params), values);
+    if (!checked.ok) throw new KanbanError('INVALID_PARAMETERS', checked.message);
+    await this.ports.transact(taskId, (task, value) => {
+      if (!current(value, control) || value.task.stageEntry?.id !== entryId || task.deterministic === undefined) throw new KanbanError('STALE_EXECUTION', 'The entry was replaced before its values could be saved.');
+      task.deterministic.parameters = { ...checked.values };
+    });
+    this.ports.notify?.();
   }
 
   /** Explicit delivery retry retains its result/delivery identity and never runs source code. */
@@ -322,7 +350,7 @@ export class DeterministicSupervisor {
     if (!latest || latest.task.columnId !== located.task.columnId || latest.task.stageEntry?.id !== located.task.stageEntry?.id
       || JSON.stringify(currentColumn?.deterministic) !== JSON.stringify(control.definition)) throw new KanbanError('STALE_EXECUTION', 'The saved executable changed during preview.');
     return { executionId: 'preview', fingerprint: capture.fingerprint, code, language: capture.language, directory: capture.directory,
-      exits: Object.fromEntries(Object.entries(capture.exits).map(([exit, target]) => [exit, target.columnId])), env: [...capture.env], variables, source: capture.source, executionDirectory: capture.executionDirectory };
+      exits: Object.fromEntries(Object.entries(capture.exits).map(([exit, target]) => [exit, target.columnId])), env: [...capture.env], params: structuredClone(control.definition.params ?? []), variables, source: capture.source, executionDirectory: capture.executionDirectory };
   }
 
   private require(identity: DeterministicIdentity): DeterministicControl {
@@ -348,7 +376,7 @@ export class DeterministicSupervisor {
       await this.persist(taskId, (task, value) => {
         if (current(value, owner.control) && task.deterministic?.phase === 'stopping') {
           task.deterministic.phase = 'stopped';
-          recordDeterministicExecution(task, { at: this.now(), executionId: owner.control.executionId, columnId: task.columnId, outcome: 'stopped' });
+          recordDeterministicExecution(task, { at: this.now(), executionId: owner.control.executionId, columnId: task.columnId, outcome: 'stopped', ...historyParameters(owner.control) });
         }
       });
       return;
@@ -382,6 +410,10 @@ export class DeterministicSupervisor {
       located = this.valid(taskId, owner); if (!located) return;
       const capture = owner.control.capture;
       if (!capture) throw new KanbanError('CAPTURE_MISSING', 'The immutable executable capture is missing; use Play to capture a new version.');
+      // Parameters are an entry property, so their completeness is evaluated before
+      // the code review gate: both gaps can then be reported at once.
+      const missing = missingParameterNames(capture.params, owner.control.parameters);
+      if (missing.length > 0) throw new KanbanError('PARAMETERS_REQUIRED', 'Missing required parameter' + (missing.length === 1 ? '' : 's') + ': ' + missing.join(', ') + '. Declare them on the transition into this stage or edit the entry parameters.');
       trusted = await this.ports.trust.isApproved({ located, control: structuredClone(owner.control), capture, signal: owner.abort.signal });
       if (!this.valid(taskId, owner)) return;
       if (!trusted) {
@@ -417,7 +449,7 @@ export class DeterministicSupervisor {
       delete owner.pendingAttemptId;
       located = this.valid(taskId, owner); if (!located) return;
       const raw = await this.ports.runtime.execute({ located, control: structuredClone(owner.control), capture, code, variables: secrets, signal: owner.abort.signal,
-        input: this.input(located, owner.control, capture) });
+        input: buildDeterministicInput(located, owner.control, capture) });
       if (!this.valid(taskId, owner)) return;
       output = completion(raw);
       if (!Object.hasOwn(capture.exits, output.exit)) throw new KanbanError('UNMAPPED_EXIT', 'The program returned an exit that is not mapped in its approved capture.');
@@ -431,12 +463,18 @@ export class DeterministicSupervisor {
         await this.persist(taskId, (task, value) => { if (current(value, owner.control) && !['stopping', 'stopped'].includes(task.deterministic!.phase)) task.deterministic!.phase = 'awaiting-trust'; });
         return;
       }
+      // A configuration refusal is not an execution attempt: it never follows the
+      // error route, adds no history row, and leaves the entry repairable.
+      if (diagnostic.code === 'PARAMETERS_REQUIRED') {
+        await this.persist(taskId, (task, value) => { if (current(value, owner.control) && !['stopping', 'stopped'].includes(task.deterministic!.phase)) { task.deterministic!.phase = 'failed'; task.deterministic!.error = diagnostic; } });
+        return;
+      }
       if (trusted && !['OWNERSHIP_UNCERTAIN', 'OWNERSHIP_CONFLICT', 'EXECUTION_OWNERSHIP_UNCERTAIN'].includes(diagnostic.code) && owner.control.capture && Object.hasOwn(owner.control.capture.exits, 'error')) {
         output = { exit: 'error', message: diagnostic.message }; synthetic = diagnostic;
       } else await this.persist(taskId, (task, value) => {
         if (current(value, owner.control) && !['stopping', 'stopped'].includes(task.deterministic!.phase)) {
           task.deterministic!.phase = 'failed'; task.deterministic!.error = diagnostic;
-          recordDeterministicExecution(task, { at: this.now(), executionId: owner.control.executionId, columnId: task.columnId, outcome: 'failed', error: diagnostic });
+          recordDeterministicExecution(task, { at: this.now(), executionId: owner.control.executionId, columnId: task.columnId, outcome: 'failed', error: diagnostic, ...historyParameters(owner.control) });
         }
       });
     }
@@ -453,7 +491,7 @@ export class DeterministicSupervisor {
       if (!current(value, owner.control) || !['active', 'awaiting-trust'].includes(task.deterministic!.phase) || task.deterministic!.result) return;
       task.deterministic!.result = result; task.deterministic!.phase = 'result-ready';
       if (error) task.deterministic!.error = error;
-      recordDeterministicExecution(task, { at: result.at, executionId: owner.control.executionId, columnId: task.columnId, outcome: error ? 'failed' : 'completed', exit: result.exit, message: result.message, ...(error ? { error } : {}) });
+      recordDeterministicExecution(task, { at: result.at, executionId: owner.control.executionId, columnId: task.columnId, outcome: error ? 'failed' : 'completed', exit: result.exit, message: result.message, ...(error ? { error } : {}), ...historyParameters(owner.control) });
     });
   }
 
@@ -480,13 +518,4 @@ export class DeterministicSupervisor {
     });
   }
 
-  private input(located: LocatedTask, control: DeterministicControl, capture: DeterministicCapture): Readonly<Record<string, unknown>> {
-    const task = located.task;
-    return { task: { id: task.id, title: task.title, description: task.description }, hub: { id: located.hubId }, board: { id: located.board.id },
-      stage: { id: task.columnId, identity: control.stageIdentity }, project: { id: located.project.id, directory: located.project.projectPath },
-      directory: capture.executionDirectory, worktree: task.worktree ? { path: task.worktree.path, branch: task.worktree.branch } : null,
-      entryId: control.entryId, enteredAt: task.stageEntry?.enteredAt, executionId: control.executionId, startedAt: control.startedAt,
-      attemptId: control.attemptId, attempt: control.attempt, restartCount: control.restartCount,
-      ...(task.deterministicHandoff?.entryId === control.entryId ? { handoff: structuredClone(task.deterministicHandoff) } : {}) };
-  }
 }

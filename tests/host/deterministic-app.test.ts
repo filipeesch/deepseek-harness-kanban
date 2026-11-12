@@ -33,7 +33,7 @@ class FakeNativeRuntime implements DeterministicRuntime {
     const sourceRef = 'private-source-' + (++this.sequence);
     this.sources.set(sourceRef, code);
     return { sourceRef, fingerprint: createHash('sha256').update(JSON.stringify({ code, definition: request.definition, executionDirectory, exits: request.exits })).digest('hex'), language: request.definition.language, directory: request.definition.directory, executionDirectory,
-      source: request.definition.file === undefined ? { kind: 'inline' } : { kind: 'file', path: request.definition.file }, env: [...(request.definition.env ?? [])], exits: structuredClone(request.exits) };
+      source: request.definition.file === undefined ? { kind: 'inline' } : { kind: 'file', path: request.definition.file }, env: [...(request.definition.env ?? [])], params: (request.definition.params ?? []).map(parameter => parameter.name), exits: structuredClone(request.exits) };
   });
   loadCapture = vi.fn(async (capture: DeterministicCapture) => { const source = this.sources.get(capture.sourceRef); if (source === undefined) throw new Error('Missing immutable source.'); return source; });
   collectSources = vi.fn(async (_references: readonly string[]) => {});
@@ -61,8 +61,8 @@ class FakeNativeRuntime implements DeterministicRuntime {
 }
 const POLL = { timeout: 2500, interval: 5 };
 const SOURCE = 'return { exit: "manual", message: "Synthetic CI passed" };';
-function flow(options: { source?: string; file?: string; env?: string[]; mode?: 'script' | 'agent' | 'manual'; target?: string } = {}): string {
-  const definition = { language: 'typescript', ...(options.file === undefined ? { code: options.source ?? SOURCE } : { file: options.file }), directory: 'task', ...(options.env === undefined ? {} : { env: options.env }), exits: options.target === undefined ? { manual: 'manual', script: 'next_script', agent: 'agent', error: 'repair' } : { manual: options.target, error: 'repair' } };
+function flow(options: { source?: string; file?: string; env?: string[]; mode?: 'script' | 'agent' | 'manual'; target?: string; params?: Array<{ name: string; description?: string }> } = {}): string {
+  const definition = { language: 'typescript', ...(options.file === undefined ? { code: options.source ?? SOURCE } : { file: options.file }), directory: 'task', ...(options.params === undefined ? {} : { params: options.params }), ...(options.env === undefined ? {} : { env: options.env }), exits: options.target === undefined ? { manual: 'manual', script: 'next_script', agent: 'agent', error: 'repair' } : { manual: options.target, error: 'repair' } };
   const behavior = options.mode === 'agent' ? '    on_enter_prompt: A newly saved agent instruction.\n' : options.mode === 'manual' ? '' : '    deterministic: ' + JSON.stringify(definition) + '\n';
   return 'name: Deterministic fixture\ninitial_column: wait\ncolumns:\n  - id: wait\n    label: Wait for synthetic CI\n' + behavior
     + '  - {id: manual, label: Manual review}\n  - {id: next_script, label: Next script, deterministic: {language: bash, code: "echo second", exits: {done: done}}}\n  - {id: agent, label: Agent review, on_enter_prompt: Analyze the incoming result.}\n  - {id: repair, label: Repair}\n  - {id: done, label: Done}\n  - {id: forbidden, label: Outside declared routes}\n';
@@ -101,6 +101,31 @@ describe('deterministic execution through the real app and durable repository', 
     await attempt(f.runtime);
     expect(f.runtime.trust.approve).toHaveBeenCalledOnce(); expect(f.store.requireTask(task.id).autoMode?.enabled).not.toBe(true);
     expect(f.store.requireTask(task.id).sessionIds).toEqual([]);
+  });
+
+  it('refuses a missing parameter in place and starts after the entry values are repaired', async () => {
+    const f = await setup({ yaml: flow({ params: [{ name: 'pipeline', description: 'CI workflow' }] }) });
+    const task = await create(f);
+    await expect.poll(() => f.store.requireTask(task.id).deterministic?.phase, POLL).toBe('failed');
+    expect(f.store.requireTask(task.id).deterministic?.error?.code).toBe('PARAMETERS_REQUIRED');
+    expect(f.runtime.runs).toEqual([]);
+    expect(f.sessions.dirs.size).toBe(0);
+    const blocked = await f.app.snapshot();
+    expect(SnapshotSchema.safeParse(blocked).success).toBe(true);
+    expect(blocked.deterministic?.[task.id]).toMatchObject({ phase: 'failed', error: { code: 'PARAMETERS_REQUIRED' } });
+    expect(blocked.deterministic?.[task.id]?.parameters).toBeUndefined();
+    const review = await f.app.deterministicReview(task.id);
+    expect(review.params).toEqual([{ name: 'pipeline', description: 'CI workflow' }]);
+    const entryId = f.store.requireTask(task.id).stageEntry!.id;
+    await f.app.command({ type: 'task.deterministicParameters', taskId: task.id, entryId, values: { pipeline: 'ci-main' } });
+    expect((await f.app.snapshot()).deterministic?.[task.id]?.parameters).toEqual({ pipeline: 'ci-main' });
+    await f.app.command({ type: 'task.deterministicPlay', taskId: task.id });
+    const run = await attempt(f.runtime);
+    expect(run.request.input).toMatchObject({ params: { pipeline: 'ci-main' } });
+    complete(run, 'manual');
+    await expect.poll(() => f.store.requireTask(task.id).columnId, POLL).toBe('manual');
+    expect(f.store.requireTask(task.id).history?.find(entry => entry.kind === 'deterministic-execution')).toMatchObject({ parameters: { pipeline: 'ci-main' } });
+    expect(f.sessions.dirs.size).toBe(0);
   });
 
   it('keeps primary file bytes, captures, and variables private while publishing safe activity and redacted results', async () => {

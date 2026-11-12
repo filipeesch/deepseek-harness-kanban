@@ -13,13 +13,19 @@ export interface ConnectionHandlers {
   readonly locked: boolean;
   /** The connection the diagram presents as selected. */
   readonly selectedId: string | null;
+  /** The connection the diagram presents as pointed at. */
+  readonly hoveredId: string | null;
   /** Select one connection, or clear the selection. */
   onSelect(connectionId: string): void;
+  /** The pointer entered a connection's line or one of its marks. */
+  onHover(connectionId: string): void;
+  /** The pointer left a connection's line or one of its marks. */
+  onHoverEnd(connectionId: string): void;
   /** Open the editor for one connection's condition, anchored at that connection. */
   onEditCondition(connectionId: string): void;
-  onAnchorPointerDown(event: React.PointerEvent<SVGElement>, connectionId: string, end: ConnectionEnd): void;
-  onSegmentPointerDown(event: React.PointerEvent<SVGElement>, connectionId: string, lineIndex: number): void;
-  onAnchorKeyDown(event: React.KeyboardEvent<SVGElement>, connectionId: string, end: ConnectionEnd): void;
+  onAnchorPointerDown(event: React.PointerEvent<Element>, connectionId: string, end: ConnectionEnd): void;
+  onSegmentPointerDown(event: React.PointerEvent<Element>, connectionId: string, lineIndex: number): void;
+  onAnchorKeyDown(event: React.KeyboardEvent<Element>, connectionId: string, end: ConnectionEnd): void;
   onAnchorBlur(connectionId: string, end: ConnectionEnd): void;
   /** The accessible name of one connection end, including its current anchor. */
   describe(connectionId: string, end: ConnectionEnd): string;

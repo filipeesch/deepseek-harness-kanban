@@ -4,15 +4,24 @@ import { sameAnchor, sameConnectionLayout } from '../../../domain/connection-anc
 import { beginConnectionDrag, type KeyboardEventsPort } from '../gestures/connection-drag.js';
 import { noSnap, segmentOffset, type SnapPolicy } from '../gestures/grid-snap.js';
 import type { GestureHandle, PointerEventsPort } from '../gestures/stage-drag.js';
-import type { DiagramPoint } from '../routing/orthogonal.js';
-import { anchorPoint, automaticSourcePoint, nearestAnchor } from '../routing/ports.js';
-import { authoredOffsetAt, connectionLayoutOf, connectionRouteFor, withOffset, type ConnectionLayoutOverride, type LiveStageRect } from '../edge-model.js';
-import { decideCreationDrop, decideEndDrop } from '../connection-target.js';
+import type { ConnectionShape, DiagramPoint } from '../routing/orthogonal.js';
+import { anchorPoint, nearestAnchor } from '../routing/ports.js';
+import { creationCandidateFor, creationPreviewRoute } from '../creation-preview.js';
+import { authoredOffsetAt, baselineCoordinateOf, connectionLayoutOf, connectionRouteFor, withOffset, type ConnectionLayoutOverride, type LiveStageRect } from '../edge-model.js';
+import { candidateStageFor, decideEndDrop } from '../connection-target.js';
 import { stepAnchor, type ConnectionEnd, type ConnectionHandlers } from '../connection-interaction.js';
 import type { CanvasConnection, ConnectionEdit } from '../canvas-types.js';
 
 /** The connection layout a gesture previews before it is committed. */
 type ConnectionPreview = ConnectionLayoutOverride;
+
+/** The line a creation drag presents, and the route it would author over a candidate. */
+export interface CreationState {
+  readonly from: DiagramPoint;
+  readonly to: DiagramPoint;
+  /** The route the release would author; absent while the pointer is over no stage. */
+  readonly route?: ConnectionShape;
+}
 
 function rectOf(stage: LiveStageRect) {
   return { x: stage.x, y: stage.y, width: stage.width, height: stage.height };
@@ -35,6 +44,8 @@ export interface ConnectionGestureInput {
   /** The stage under a client coordinate, through the diagram's own hit test. */
   readonly resolveStage: (client: { readonly clientX: number; readonly clientY: number }) => string | null;
   readonly onConnectionEdit: (edit: ConnectionEdit) => void;
+  /** Select one connection, used when a press on a mark never moves. */
+  readonly onSelect: (connectionId: string) => void;
   readonly onCreate: (sourceId: string, to: string, side: StageSide) => void;
   readonly onRepoint: (sourceId: string, from: string, to: string) => void;
   readonly onReown: (fromSource: string, to: string, toSource: string) => void;
@@ -43,13 +54,13 @@ export interface ConnectionGestureInput {
 export interface ConnectionGestures {
   /** The connection as this gesture should draw it, with its preview applied. */
   present(connection: CanvasConnection): CanvasConnection;
-  readonly handlers: Omit<ConnectionHandlers, 'selectedId' | 'onSelect' | 'onEditCondition'>;
+  readonly handlers: Omit<ConnectionHandlers, 'selectedId' | 'onSelect' | 'onEditCondition' | 'hoveredId' | 'onHover' | 'onHoverEnd'>;
   /** Start drawing a new connection from one side of one stage. */
-  beginCreation(event: React.PointerEvent<HTMLElement>, stageId: string, side: StageSide): void;
-  /** The stage a creation drag would land on. */
+  beginCreation(event: React.PointerEvent<Element>, stageId: string, side: StageSide): void;
+  /** The stage a connection gesture would act on. */
   readonly candidateStageId: string | null;
   /** The line being drawn, from its source stage to the pointer. */
-  readonly creation: { readonly from: DiagramPoint; readonly to: DiagramPoint } | null;
+  readonly creation: CreationState | null;
 }
 
 /**
@@ -62,7 +73,7 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
   const inputRef = useRef(input); inputRef.current = input;
   const [preview, setPreview] = useState<Record<string, ConnectionPreview>>({});
   const previewRef = useRef(preview); previewRef.current = preview;
-  const [creation, setCreation] = useState<{ from: DiagramPoint; to: DiagramPoint } | null>(null);
+  const [creation, setCreation] = useState<CreationState | null>(null);
   const [candidateStageId, setCandidateStageId] = useState<string | null>(null);
   const drag = useRef<GestureHandle | null>(null);
   const keyboardSession = useRef<{ connectionId: string; end: ConnectionEnd } | null>(null);
@@ -103,7 +114,7 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
     });
   }, []);
 
-  /** The route the diagram draws, including the clearance every connection shares. */
+  /** The route the diagram draws, including the clearance its own corridor needs. */
   const routeOf = useCallback((connection: CanvasConnection, withOffsets: boolean) => connectionRouteFor(inputRef.current.stages, connection, withOffsets), []);
 
   const currentAnchor = useCallback((connectionId: string, end: ConnectionEnd): ConnectionAnchor | undefined => {
@@ -123,7 +134,12 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
     return point === undefined ? undefined : nearestAnchor(rectOf(stage), point);
   }, [connectionOf, routeOf, stageOf]);
 
-  const startAnchorDrag = useCallback((event: React.PointerEvent<SVGElement>, connectionId: string, end: ConnectionEnd) => {
+  /** The stage a release of one end would re-point or re-own, or null when it would change nothing. */
+  const candidateUnder = useCallback((end: ConnectionEnd, connection: CanvasConnection, position: { readonly clientX: number; readonly clientY: number }): string | null => {
+    return candidateStageFor({ end, from: connection.from, to: connection.to, stageUnder: inputRef.current.resolveStage(position) });
+  }, []);
+
+  const startAnchorDrag = useCallback((event: React.PointerEvent<Element>, connectionId: string, end: ConnectionEnd) => {
     const current = inputRef.current;
     if (current.locked || event.button !== 0 || drag.current !== null) return;
     const connection = connectionOf(connectionId);
@@ -141,6 +157,7 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
       keys: document as unknown as KeyboardEventsPort,
       onMove: position => {
         pointer = position;
+        setCandidateStageId(candidateUnder(end, connection, position));
         const next = nearestAnchor(rect, current.flowPoint(position));
         if (sameAnchor(next, anchor)) return;
         anchor = next;
@@ -148,6 +165,7 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
       },
       onCommit: () => {
         drag.current = null;
+        setCandidateStageId(null);
         // A release over another stage changes the destination instead of the anchor;
         // the layout preview belongs to the gesture that did not happen.
         const decision = decideEndDrop({ end, from: connection.from, to: connection.to, stageUnder: current.resolveStage(pointer) });
@@ -156,19 +174,29 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
         if (decision.kind === 'none') { clearPreview(connectionId); return; }
         commitPreview(connectionId);
       },
+      onPress: () => {
+        drag.current = null;
+        setCandidateStageId(null);
+        clearPreview(connectionId);
+        current.onSelect(connectionId);
+      },
       onCancel: () => {
         drag.current = null;
+        setCandidateStageId(null);
         clearPreview(connectionId);
       },
     });
-  }, [clearPreview, commitPreview, connectionOf, stageOf]);
+  }, [candidateUnder, clearPreview, commitPreview, connectionOf, stageOf]);
 
-  const startSegmentDrag = useCallback((event: React.PointerEvent<SVGElement>, connectionId: string, lineIndex: number) => {
+  const startSegmentDrag = useCallback((event: React.PointerEvent<Element>, connectionId: string, lineIndex: number) => {
     const current = inputRef.current;
     if (current.locked || event.button !== 0 || drag.current !== null) return;
     const connection = connectionOf(connectionId);
     if (connection === undefined) return;
-    const route = routeOf(connection, false);
+    // The drawn route, not one rebuilt without offsets: a displacement on the other
+    // axis can move the corridor and the floor, and the drag must start from where
+    // the line really is.
+    const route = routeOf(connection, true);
     const line = route?.lines.find(value => value.index === lineIndex);
     if (route === null || line === undefined) return;
     const order = route.lines.filter(value => value.axis === line.axis).findIndex(value => value.index === line.index);
@@ -177,6 +205,8 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
     // The displacement the authored layout already applies to this line: a gesture
     // that returns the segment to it changes nothing.
     const authored = authoredOffsetAt(base, line.axis, order);
+    const baseline = baselineCoordinateOf(route, line.axis, order, base);
+    if (baseline === undefined) return;
     let changed = false;
     event.preventDefault();
     event.stopPropagation();
@@ -188,7 +218,7 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
       onMove: pointer => {
         const flow = current.flowPoint(pointer);
         const coordinate = line.axis === 'x' ? flow.x : flow.y;
-        const offset = segmentOffset(free ? noSnap : current.snap, coordinate, line.coordinate);
+        const offset = segmentOffset(free ? noSnap : current.snap, coordinate, baseline);
         changed = offset !== authored;
         setPreview(values => {
           const previous = values[connectionId] ?? {};
@@ -199,6 +229,11 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
         drag.current = null;
         if (changed) commitPreview(connectionId); else clearPreview(connectionId);
       },
+      onPress: () => {
+        drag.current = null;
+        clearPreview(connectionId);
+        current.onSelect(connectionId);
+      },
       onCancel: () => {
         drag.current = null;
         clearPreview(connectionId);
@@ -206,7 +241,7 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
     });
   }, [clearPreview, commitPreview, connectionOf, routeOf]);
 
-  const beginCreation = useCallback((event: React.PointerEvent<HTMLElement>, stageId: string, side: StageSide) => {
+  const beginCreation = useCallback((event: React.PointerEvent<Element>, stageId: string, side: StageSide) => {
     const current = inputRef.current;
     if (current.locked || event.button !== 0 || drag.current !== null) return;
     const stage = stageOf(stageId);
@@ -225,16 +260,22 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
       keys: document as unknown as KeyboardEventsPort,
       onMove: position => {
         pointer = position;
-        setCreation({ from, to: current.flowPoint(position) });
-        const stageUnder = current.resolveStage(position);
-        setCandidateStageId(stageUnder === stageId ? null : stageUnder);
+        const to = current.flowPoint(position);
+        const candidate = creationCandidateFor({ sourceId: stageId, stageUnder: current.resolveStage(position), connections: current.connections });
+        setCandidateStageId(candidate);
+        // Over a candidate the gesture presents the route the release would author,
+        // so the user sees the arrow instead of only the pointer line.
+        const route = candidate === null ? null : creationPreviewRoute({
+          stages: current.stages, connections: current.connections, sourceId: stageId, targetId: candidate, side,
+        });
+        setCreation(route === null ? { from, to } : { from, to, route });
       },
       onCommit: () => {
         drag.current = null;
         setCreation(null);
         setCandidateStageId(null);
-        const decision = decideCreationDrop({ sourceId: stageId, stageUnder: current.resolveStage(pointer) });
-        if (decision.kind === 'create') current.onCreate(stageId, decision.to, side);
+        const target = creationCandidateFor({ sourceId: stageId, stageUnder: current.resolveStage(pointer), connections: current.connections });
+        if (target !== null) current.onCreate(stageId, target, side);
       },
       onCancel: () => {
         drag.current = null;
@@ -244,7 +285,7 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
     });
   }, [stageOf]);
 
-  const anchorKeyDown = useCallback((event: React.KeyboardEvent<SVGElement>, connectionId: string, end: ConnectionEnd) => {
+  const anchorKeyDown = useCallback((event: React.KeyboardEvent<Element>, connectionId: string, end: ConnectionEnd) => {
     if (inputRef.current.locked) return;
     if (event.key === 'Enter') {
       if (previewRef.current[connectionId] === undefined) return;
@@ -286,7 +327,7 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
     return anchor === undefined ? name : name + ' at ' + anchor.side + ' ' + anchor.at;
   }, [connectionOf, currentAnchor]);
 
-  const handlers = useMemo<Omit<ConnectionHandlers, 'selectedId' | 'onSelect' | 'onEditCondition'>>(() => ({
+  const handlers = useMemo<Omit<ConnectionHandlers, 'selectedId' | 'onSelect' | 'onEditCondition' | 'hoveredId' | 'onHover' | 'onHoverEnd'>>(() => ({
     locked: input.locked,
     onAnchorPointerDown: startAnchorDrag,
     onSegmentPointerDown: startSegmentDrag,

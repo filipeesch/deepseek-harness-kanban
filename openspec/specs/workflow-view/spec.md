@@ -52,7 +52,9 @@ The workflow view SHALL present the active board's workflow as a diagram of stag
 
 The diagram SHALL derive a stage's outgoing connections from its configured transitions only. Each configured transition target SHALL be drawn as a solid connection from the source stage to that target. A stage that does not configure transitions SHALL have exactly one dashed connection to the next stage in workflow order, presenting the default path while any other stage remains allowed. A stage whose configured transitions are empty SHALL have no outgoing connection. A configured target equal to the stage itself SHALL NOT be drawn as a connection.
 
-A connection SHALL be drawn as an orthogonal path with rounded corners and an arrowhead at its target. A connection whose ends are not authored SHALL leave its source's right edge and enter its target's left edge when the target follows the source in workflow order and sits to its right. When stages are rearranged so those edges would cross a stage region, the automatic route SHALL step around the outside instead, below the stages or through a side gutter for two stages that share a column. A connection whose target precedes its source in workflow order SHALL leave and enter through the bottom edges. When a stage has more than one outgoing connection and their ends are not authored, each connection SHALL leave from a distinct point of the stage boundary so the separate paths are visible. A connection whose end is authored SHALL leave or enter through the side that end names, perpendicular to that side. An automatic connection SHALL NOT pass through the interior of its own source or target stage when the two stages do not overlap, and a connection whose target precedes its source in workflow order SHALL be routed outside both stage regions. When stages are arranged so a path passes over a third stage region, both the automatic and the adjusted route MAY cross it. Each connection SHALL mark its contact with the stage boundary at both ends. The drawn path, its departure points, its clearance, and its contact marks SHALL follow a stage's position and size while that stage is moved or resized, without waiting for the change to be stored.
+A connection SHALL be drawn as an orthogonal path with rounded corners and an arrowhead at its target. A connection whose ends are not authored SHALL leave its source's right edge and enter its target's left edge when the target follows the source in workflow order and sits to its right. When stages are rearranged so those edges would cross a stage region, the automatic route SHALL step around the outside instead, below the stages or through a side gutter for two stages that share a column. A connection whose target precedes its source in workflow order SHALL leave and enter through the bottom edges. When a stage has more than one outgoing connection and their ends are not authored, each connection SHALL leave from a distinct point of the stage boundary so the separate paths are visible. A connection whose end is authored SHALL leave or enter through the side that end names, perpendicular to that side. An automatic connection SHALL NOT pass through the interior of its own source or target stage when the two stages do not overlap, and a connection whose target precedes its source in workflow order SHALL be routed outside both stage regions. When stages are arranged so a path passes over a third stage region, both the automatic and the adjusted route MAY cross it.
+
+A connection's clearance corridor SHALL be the region its own drawn route occupies: the departure leg at its source, the arrival leg at its target, and the run that joins them. A route that must clear stage regions SHALL be cleared only against the stages that corridor crosses. Moving, resizing, or adding a stage that the corridor does not cross SHALL NOT change that connection's drawn path, its clearance, or the displacements the user authored for it. Each connection SHALL mark its contact with the stage boundary at both ends. The drawn path, its departure points, its clearance, and its contact marks SHALL follow the position and size of the stage at each end and of the stages the corridor crosses, while one of those stages is moved or resized, without waiting for the change to be stored.
 
 #### Scenario: Draw configured transitions
 
@@ -80,8 +82,8 @@ A connection SHALL be drawn as an orthogonal path with rounded corners and an ar
 #### Scenario: Draw a returning connection
 
 - **WHEN** a stage configures a target that precedes it in workflow order and neither end is authored
-- **THEN** the diagram draws the connection routed below the stage column, entering the target's bottom edge
-- **AND** the connection does not cross a stage region
+- **THEN** the diagram draws the connection routed below the stages its corridor crosses, entering the target's bottom edge
+- **AND** the connection does not cross a stage region it passes
 
 #### Scenario: Draw an orthogonal path
 
@@ -93,7 +95,7 @@ A connection SHALL be drawn as an orthogonal path with rounded corners and an ar
 
 - **WHEN** the user points at a connection
 - **THEN** a mark appears at the connection's contact with each end of the stage boundary
-- **AND** the marks are absent while the connection is not pointed at
+- **AND** the marks are absent while the connection is neither pointed at nor selected
 
 #### Scenario: Leave through the authored side
 
@@ -112,6 +114,18 @@ A connection SHALL be drawn as an orthogonal path with rounded corners and an ar
 - **WHEN** a stage configures a target that precedes it in workflow order and the two stages overlap horizontally
 - **THEN** the automatic route avoids the interior of both stages
 - **AND** it does not pass through either stage region
+
+#### Scenario: Clear every stage the corridor crosses
+
+- **WHEN** a returning connection's run passes under a third stage
+- **THEN** the route clears that stage's bottom
+- **AND** the connection does not cross that stage region
+
+#### Scenario: Keep a connection when an unrelated stage moves
+
+- **WHEN** the user moves, resizes, or adds a stage that a connection's corridor does not cross
+- **THEN** that connection's drawn path, clearance, and authored displacements are unchanged
+- **AND** no stored connection layout changes
 
 #### Scenario: Follow a moved stage
 
@@ -191,50 +205,77 @@ Dragging a stage region SHALL place that stage at the position the drag settles 
 
 ### Requirement: Card movement along the diagram
 
-While the workflow view is open, a task whose stage changes SHALL be presented moving from its source stage region to its destination stage region. When the diagram draws a connection between the two stages, the movement SHALL follow the drawn path of that connection, including a route the user adjusted; otherwise the movement SHALL take the direct path between the two stage regions. The movement SHALL begin and end with a short fade. A same-stage reorder SHALL NOT animate a travel between stage regions. The task's state SHALL reflect its new stage immediately and SHALL NOT wait for the movement. More than eight tasks moving in one change SHALL settle immediately without travel, and the reduced-motion preference SHALL settle every movement immediately without travel or fade.
+While the workflow view is open, a task whose stage changes SHALL be presented by an energy transit along the connection the diagram draws between the two stages: one transit per moved task, presented as a bright core with a halo and a short trail. The transit SHALL follow the drawn path of that connection, including a route the user adjusted or one whose ends the user anchored, and SHALL run at a constant speed whose duration follows that path's length within a bounded range. The transit SHALL begin where the connection leaves the source stage and SHALL end where it reaches the destination stage.
+
+The task's card SHALL NOT be duplicated to present the movement. The task's state SHALL reflect its new stage immediately and SHALL NOT wait for the transit, and no second representation of that card SHALL be presented while a transit runs. When the transit reaches the destination, the destination card SHALL present one brief arrival pulse, and no other card SHALL present one.
+
+A stage change between two stages the diagram draws no connection for SHALL present no transit: the card SHALL still be presented in the destination, with its arrival pulse, and the diagram SHALL NOT draw a temporary connection for that movement. A same-stage reorder SHALL NOT present a transit. More than eight tasks moving in one change SHALL settle immediately without transit and without pulse, and the reduced-motion preference SHALL settle every movement immediately without transit and without pulse, keeping every card's content and activation unchanged.
+
+A running transit SHALL continue without restarting when the presented view re-renders, and exactly one transit SHALL be presented for one stage change. A transit SHALL NOT intercept pointer input, SHALL NOT enter the diagram's focus order, SHALL NOT extend the diagram's or the board's scrollable area, and SHALL leave no interactive remnant once it completes. A card SHALL remain activatable, focusable, and draggable while a transit runs. Presenting a transit SHALL NOT send a command and SHALL NOT change board data.
 
 #### Scenario: Travel along a connection
 
 - **WHEN** a task moves from a stage to a stage that the diagram connects
-- **THEN** the card is presented travelling along that connection
-- **AND** the task is already presented in the destination stage
+- **THEN** a transit is presented travelling along that connection
+- **AND** the card is presented in the destination when the transit begins
+- **AND** no second representation of that card is presented
+
+#### Scenario: Transit along a dashed connection
+
+- **WHEN** a task moves along the dashed connection a stage that authors no transitions receives
+- **THEN** the transit follows that dashed path
 
 #### Scenario: Travel along an adjusted connection
 
 - **WHEN** a task moves along a connection whose route the user adjusted or whose ends the user anchored
-- **THEN** the card travels along the path the diagram draws for that connection
-- **AND** it does not travel along the unadjusted route
+- **THEN** the transit follows the path the diagram draws for that connection
+- **AND** it does not follow the unadjusted route
+
+#### Scenario: Present the arrival pulse
+
+- **WHEN** a transit reaches its destination stage
+- **THEN** the destination card presents one brief pulse
+- **AND** no other card presents one
 
 #### Scenario: Travel without a connection
 
-- **WHEN** a task moves to a stage that the diagram does not connect to its source
-- **THEN** the card is presented travelling directly between the two stage regions
+- **WHEN** a task moves between two stages the diagram draws no connection for
+- **THEN** no transit is presented
+- **AND** the diagram draws no temporary connection for that movement
+- **AND** the card is presented in the destination with its arrival pulse
 
 #### Scenario: Reorder within a stage
 
 - **WHEN** a task changes position inside its stage
-- **THEN** no travel between stage regions is presented
+- **THEN** no transit is presented
 
 #### Scenario: Settle a large batch
 
 - **WHEN** one change moves more than eight tasks between stages
-- **THEN** no travel is presented for those tasks
+- **THEN** no transit and no arrival pulse are presented for those tasks
 
 #### Scenario: Reduced motion
 
 - **WHEN** the user prefers reduced motion
-- **THEN** a stage change is presented without travel and without fade
-- **AND** the task's content and activation are unchanged
+- **THEN** a stage change is presented without transit and without pulse
+- **AND** the card's content and activation are unchanged
+
+#### Scenario: Keep one transit through a re-render
+
+- **WHEN** the presented view re-renders while a transit is running
+- **THEN** that transit continues without restarting
+- **AND** exactly one transit is presented for that stage change
 
 #### Scenario: Keep interaction available during travel
 
-- **WHEN** the user activates or focuses a card while cards are travelling
+- **WHEN** the user activates or focuses a card while a transit is running
 - **THEN** the card responds with its normal focus and activation behavior
+- **AND** the transit does not intercept the pointer
 
 #### Scenario: Movement changes no board data
 
-- **WHEN** the diagram presents a card movement
-- **THEN** no command is sent and no board data changes because of the movement
+- **WHEN** the diagram presents a transit
+- **THEN** no command is sent and no board data changes because of the transit
 
 ### Requirement: Card drag between stages in the diagram
 
@@ -692,13 +733,33 @@ Each connection's layout SHALL be stored in the board's workflow configuration a
 
 ### Requirement: Connection re-anchoring and route adjustment
 
-While the layout lock is off, the diagram SHALL let the user move either end of a drawn connection, including the dashed connection derived from a stage without configured transitions. Pointing at a connection SHALL reveal a handle at each end and a handle on each adjustable segment; while the layout lock is on, pointing at a connection SHALL reveal the same marks without making them operable. Dragging an end handle and releasing it inside that end's own stage SHALL move the end to the anchor point nearest the pointer and SHALL store the layout. Releasing an end handle over a different stage SHALL change that connection's destination instead, as defined by Re-pointing a connection. Moving the pointer SHALL NOT store the workflow. A press that never moves SHALL change nothing and SHALL store nothing. Dragging a segment handle SHALL move that segment perpendicular to itself, SHALL settle the segment's line on the nearest lattice point while snapping is on, and SHALL store the layout on release. A cancelled gesture SHALL leave the connection as it was. An adjustment SHALL change no stage, no card, no transition, and no other connection; only the end-drag release defined by Re-pointing a connection changes a transition.
+While the layout lock is off, the diagram SHALL let the user move either end of a drawn connection, including the dashed connection derived from a stage without configured transitions. Pointing at a connection SHALL reveal a handle at each end and a handle on each adjustable segment. Those marks SHALL be presented above the stage regions, so a handle that sits on a stage boundary or under the arrowhead is still presented and still receives a press. Each handle SHALL present a pointer target of at least 24 screen pixels across at every zoom level the diagram allows. While the layout lock is on, pointing at a connection SHALL reveal the same marks without making them operable.
+
+Pressing a handle and dragging SHALL start that adjustment in one step. A press on a handle that never moves SHALL select the connection and SHALL NOT adjust it. A selected connection SHALL keep its marks presented and operable while the selection lasts, and a press on a stage or on the empty surface SHALL clear the selection and its marks. Dragging an end handle and releasing it inside that end's own stage SHALL move the end to the anchor point nearest the pointer and SHALL store the layout. While an end handle is dragged over a stage that end does not belong to, the diagram SHALL mark that stage as the candidate destination, with the same presentation the creation gesture uses for its candidate. Releasing an end handle over a different stage SHALL change that connection's destination instead, as defined by Re-pointing a connection. Moving the pointer SHALL NOT store the workflow. A press that never moves SHALL change nothing and SHALL store nothing. Dragging a segment handle SHALL move that segment perpendicular to itself, SHALL settle the segment's line on the nearest lattice point while snapping is on, and SHALL store the layout on release. A cancelled gesture SHALL leave the connection as it was. An adjustment SHALL change no stage, no card, no transition, and no other connection; only the end-drag release defined by Re-pointing a connection changes a transition.
 
 #### Scenario: Reveal the handles on hover
 
 - **WHEN** the user points at a connection
 - **THEN** the diagram marks each end of that connection and each adjustable segment
-- **AND** the marks are absent while the connection is not pointed at
+- **AND** the marks are absent while the connection is neither pointed at nor selected
+
+#### Scenario: Present every handle above the stage regions
+
+- **WHEN** the user points at a connection whose end handle sits on a stage boundary or under its arrowhead
+- **THEN** the handle is presented above the stage region and the arrowhead
+- **AND** pressing it starts the adjustment instead of selecting or activating anything below it
+
+#### Scenario: Keep every handle target reachable
+
+- **WHEN** the user presses a handle at any zoom level the diagram allows
+- **THEN** the pressed point lies inside that handle's pointer target
+- **AND** the target measures at least 24 screen pixels across
+
+#### Scenario: Keep the marks of a selected connection
+
+- **WHEN** the user selects a connection and then moves the pointer away from it
+- **THEN** the connection's marks stay presented and operable
+- **AND** a press on a stage or the empty surface clears the selection and the marks
 
 #### Scenario: Re-anchor the source end
 
@@ -728,8 +789,15 @@ While the layout lock is off, the diagram SHALL let the user move either end of 
 #### Scenario: Press without moving
 
 - **WHEN** the user presses a handle and releases it without moving
-- **THEN** the connection is unchanged
+- **THEN** the connection's layout is unchanged
+- **AND** the connection is selected
 - **AND** no history entry is added and nothing is stored
+
+#### Scenario: Mark the candidate destination
+
+- **WHEN** the user drags a connection's end handle over a stage that end does not belong to
+- **THEN** the diagram marks that stage as the candidate destination before the pointer is released
+- **AND** moving the pointer off that stage clears the mark
 
 #### Scenario: Adjust a dashed connection
 
@@ -973,7 +1041,7 @@ The action SHALL NOT be a layout edit, but SHALL be absent while the layout lock
 
 ### Requirement: Authoring a connection from the diagram
 
-While the layout lock is off, pointing at a stage SHALL reveal a connection port on each of the four sides of that stage's boundary, and pressing any of them and dragging SHALL present the connection being drawn, leaving from the side that port names, together with the stage under the pointer as its candidate destination. Releasing over another stage SHALL author a transition from the pointed stage to that stage; when the side it was drawn from is not the one the automatic route would use, that side SHALL be authored as the connection's departure, and otherwise the automatic route SHALL be kept. Releasing over no stage, over the pointed stage itself, or over a stage the pointed stage already permits SHALL change nothing and SHALL store nothing. Escape and a cancelled pointer SHALL leave the workflow as it was.
+While the layout lock is off, pointing at a stage SHALL reveal a connection port on each of the four sides of that stage's boundary, and each port SHALL present a pointer target of at least 24 screen pixels across at every zoom level the diagram allows. Pressing any of them and dragging SHALL present the connection being drawn, leaving from the side that port names, together with the stage under the pointer as its candidate destination. While the pointer is over no stage, the connection being drawn SHALL be presented as a line from its port to the pointer. While the pointer is over a candidate destination, the diagram SHALL present the route that the created connection would be drawn with, including its arrowhead, instead of that line. Releasing over another stage SHALL author a transition from the pointed stage to that stage; when the side it was drawn from is not the one the automatic route would use, that side SHALL be authored as the connection's departure, and otherwise the automatic route SHALL be kept. Releasing over no stage, over the pointed stage itself, or over a stage the pointed stage already permits SHALL change nothing and SHALL store nothing. Escape and a cancelled pointer SHALL leave the workflow as it was.
 
 The authored destination set SHALL depend on what the source stage authors before the gesture: a stage that authors no transitions, and a stage that authors an empty list, SHALL afterwards author exactly the drawn destination; a stage that authors a non-empty list SHALL afterwards author its existing destinations with their conditions plus the drawn destination, in authored order. Creating a connection SHALL NOT present a condition editor, SHALL NOT open a task, and SHALL NOT move, resize, or select a stage or a card.
 
@@ -983,6 +1051,19 @@ The port SHALL be operable by pointer only. The diagram's keyboard order SHALL r
 
 - **WHEN** the layout is unlocked and the user points at a stage
 - **THEN** the stage presents one connection port on each of its four sides
+- **AND** each port's pointer target measures at least 24 screen pixels across
+
+#### Scenario: Present the line being drawn
+
+- **WHEN** the user presses a connection port and drags the pointer without releasing it
+- **THEN** the diagram presents the line being drawn from that port to the pointer
+- **AND** the line remains presented until the gesture ends
+
+#### Scenario: Preview the route over a candidate destination
+
+- **WHEN** the pointer of a creation drag is over a stage that would receive the connection
+- **THEN** the diagram presents the route the created connection would be drawn with, including its arrowhead
+- **AND** the candidate stage is presented as the destination of that preview
 
 #### Scenario: Draw a connection from another side
 
@@ -1042,7 +1123,7 @@ The port SHALL be operable by pointer only. The diagram's keyboard order SHALL r
 
 ### Requirement: Condition mark on a connection without a condition
 
-Every connection the workflow authors as a transition and that authors no condition SHALL present a mark on its path distinguishing it from a connection that authors a condition. The mark SHALL be absent from a connection that authors a condition and from the dashed connection a stage that authors no transitions receives, which the diagram already distinguishes as a default path. The mark SHALL be presented only while the layout lock is off, because authoring the condition it stands for is a structural edit. The mark SHALL be removed when a condition is stored for that connection. The mark SHALL keep a readable size while the diagram zooms and SHALL follow its connection while a stage is moved or resized. The mark SHALL NOT be a control, SHALL NOT enter the diagram's keyboard order, and SHALL NOT change board data when pressed.
+Every connection the workflow authors as a transition and that authors no condition SHALL present a mark on its path distinguishing it from a connection that authors a condition. The mark SHALL be absent from a connection that authors a condition, from the dashed connection a stage that authors no transitions receives, and from a connection whose source stage is deterministic, because that connection's routing is authored by the stage's named exits rather than by a condition; the diagram already distinguishes the latter two as paths it never invites the user to condition. The mark SHALL be presented only while the layout lock is off, because authoring the condition it stands for is a structural edit. The mark SHALL be removed when a condition is stored for that connection. The mark SHALL keep a readable size while the diagram zooms and SHALL follow its connection while a stage is moved or resized. The mark SHALL NOT be a control, SHALL NOT enter the diagram's keyboard order, and SHALL NOT change board data when pressed.
 
 The accessible name of each connection end SHALL say whether that connection authors a condition, so the absence of a condition is available to assistive technology without the mark.
 
@@ -1077,6 +1158,12 @@ The accessible name of each connection end SHALL say whether that connection aut
 - **WHEN** the user moves or resizes a stage whose connections carry the mark
 - **THEN** each mark stays on its connection's path
 - **AND** it keeps a readable size
+
+#### Scenario: Do not mark a deterministic connection
+
+- **WHEN** a deterministic stage maps an exit to another stage
+- **THEN** the connection drawn to that destination presents no mark
+- **AND** the stage editor presents that exit and the destination it resolves to
 
 ### Requirement: Editing a connection's condition
 
@@ -1140,6 +1227,23 @@ The editor SHALL take focus while it is open and SHALL return focus to the diagr
 
 - **WHEN** the user dismisses the editor
 - **THEN** focus returns to the diagram
+
+### Requirement: Editing the routing of a deterministic connection
+
+A connection whose source stage is deterministic SHALL NOT open the condition editor, because the routing that connection stands for is authored by that stage's named exits and no condition applies to it. Double-clicking that connection SHALL open the deterministic stage's editor while the layout lock is off, and SHALL open nothing while the layout lock is on. The stage editor SHALL remain the surface that presents and edits every named exit and the destination it resolves to, including when several exits resolve to one destination.
+
+#### Scenario: Open a deterministic stage's editor from its connection
+
+- **WHEN** the layout lock is off and the user double-clicks a connection whose source stage is deterministic
+- **THEN** the stage editor opens for that stage
+- **AND** no condition editor is presented
+
+#### Scenario: Open nothing while the layout is locked
+
+- **WHEN** the layout lock is on and the user double-clicks a connection whose source stage is deterministic
+- **THEN** no editor opens
+- **AND** no change is stored
+
 
 ### Requirement: Re-pointing a connection
 

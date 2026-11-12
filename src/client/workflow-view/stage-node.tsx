@@ -1,15 +1,12 @@
 import React, { createContext, useContext, useEffect, useRef } from 'react';
 import { Handle, Position, useStore } from '@xyflow/react';
-import type { StageSide, StageSize } from '../../shared/types.js';
+import type { StageSize } from '../../shared/types.js';
 import { EMPTY_STAGE_COPY } from '../board-copy.js';
 import { StageHeader as SharedStageHeader } from '../stage/stage-header.js';
 import { useCardEnvironment } from './card-environment.js';
 import { beginStageResize } from './gestures/stage-resize.js';
 import type { GestureHandle, PointerEventsPort } from './gestures/stage-drag.js';
 import type { SnapPolicy } from './gestures/grid-snap.js';
-
-/** The sides a connection can be drawn from, in the order the ports are presented. */
-export const CONNECTION_SIDES: readonly StageSide[] = ['top', 'right', 'bottom', 'left'];
 
 export type StageNodeModel = {
   readonly id: string;
@@ -45,11 +42,12 @@ export interface StageCallbacks {
   /** Opens the board's stage editor; the board owns that dialog. */
   onEditStage?(stageId: string): void;
   /**
-   * Starts drawing a new connection from one side of this stage. Present while the
-   * layout is unlocked; the ports are a pointer affordance and stay out of the keyboard
-   * order, because adding a destination by keyboard happens in the stage editor.
+   * The pointer entered or left this stage. The connection ports that start a new
+   * connection are drawn in the affordance layer above the stages, so the layer
+   * needs to know which stage the pointer is on without hover reaching the DOM.
    */
-  onBeginConnect?(event: React.PointerEvent<HTMLElement>, stageId: string, side: StageSide): void;
+  onStageHover?(stageId: string): void;
+  onStageHoverEnd?(stageId: string): void;
 }
 
 /** Shared by every stage node so node data stays serializable and stable. */
@@ -145,6 +143,8 @@ export function StageNodeView({ id, data }: { id: string; data: StageNodeModel }
     data-column-id={id}
     data-drop={drop ? 'true' : undefined}
     data-connect-candidate={candidate ? 'true' : undefined}
+    onPointerEnter={() => callbacks?.onStageHover?.(id)}
+    onPointerLeave={() => callbacks?.onStageHoverEnd?.(id)}
   >
     <StageHeader
       id={id}
@@ -161,15 +161,7 @@ export function StageNodeView({ id, data }: { id: string; data: StageNodeModel }
       {data.cardIds.length === 0 && <p className="kb-empty-column">{EMPTY_STAGE_COPY}</p>}
       {drop && drag.indicatorY !== null && <div className="kb-drop-indicator" style={{ top: drag.indicatorY / (zoom === 0 ? 1 : zoom) }} aria-hidden="true" />}
     </div>
-    {/* One port per side, so a connection can be drawn from wherever it should leave. */}
-    {!data.locked && callbacks?.onBeginConnect !== undefined && CONNECTION_SIDES.map(side => <div
-      key={side}
-      className="kb-flow-port nodrag nopan"
-      data-side={side}
-      aria-hidden="true"
-      title={'Draw a connection from the ' + side + ' side'}
-      onPointerDown={event => callbacks?.onBeginConnect?.(event, id, side)}
-    />)}
+
     {/* Position anchors for the drawn connections; they are not interactive. */}
     <Handle type="target" position={Position.Left} isConnectable={false} />
     <Handle type="source" position={Position.Right} isConnectable={false} />

@@ -66,7 +66,20 @@ it('quick-creates a real worktree and dismisses a seeded question round durably'
   await page.getByLabel('Sessions', { exact: true }).getByText('Question fixture', { exact: true }).click();
   const form = page.getByRole('form', { name: 'Questions from the agent' });
   await form.waitFor({ state: 'visible' });
+  // The draft is durable per conversation: typing is stored and a reload restores it.
+  const answer = page.getByRole('textbox', { name: 'Your answer' });
+  await answer.fill('Keep this durable answer.');
+  // Let the debounced write land before navigating away.
+  await page.waitForTimeout(600);
+  await page.reload({ waitUntil: 'load' });
+  await page.getByLabel('Sessions', { exact: true }).getByText('Question fixture', { exact: true }).click();
+  await form.waitFor({ state: 'visible' });
+  await expect.poll(async () => page.getByRole('textbox', { name: 'Your answer' }).inputValue()).toBe('Keep this durable answer.');
+  await mkdir(join(KANBAN_ROOT, '.verification'), { recursive: true });
+  await page.screenshot({ path: join(KANBAN_ROOT, '.verification', 'e2e-question-draft-restored.png') });
+  // A dismissed round discards its draft and stays gone after reload.
   await form.getByRole('button', { name: 'Dismiss' }).click();
+  await form.getByRole('button', { name: 'Dismiss questions' }).click();
   await form.waitFor({ state: 'hidden' });
   await page.reload({ waitUntil: 'load' });
   await page.getByLabel('Sessions', { exact: true }).getByText('Question fixture', { exact: true }).click();

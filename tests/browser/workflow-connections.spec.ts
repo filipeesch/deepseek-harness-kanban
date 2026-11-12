@@ -17,6 +17,16 @@ async function openFlow(page: Page): Promise<void> {
   await page.waitForTimeout(300);
 }
 
+/** The flow with stored stage placements, so a structural edit cannot re-lay it out. */
+async function openPlacedFlow(page: Page): Promise<void> {
+  await page.setViewportSize({ width: 1400, height: 950 });
+  await page.goto(HARNESS + '?scenario=flow-placed&theme=host');
+  await page.waitForFunction(() => (window as unknown as { __harnessReady?: boolean }).__harnessReady === true);
+  await expect(page.getByRole('region', { name: 'Workflow diagram' })).toBeVisible();
+  await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-ready', 'true');
+  await page.waitForTimeout(300);
+}
+
 async function unlock(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Unlock layout editing', exact: true }).click();
 }
@@ -44,7 +54,7 @@ async function drag(page: Page, from: { x: number; y: number }, to: { x: number;
 
 /** A client point that actually belongs to a drawn connection, since an SVG group's
  *  bounding box is mostly empty space. */
-async function pointOnEdge(page: Page, connectionId: string): Promise<{ x: number; y: number }> {
+async function edgePoint(page: Page, connectionId: string): Promise<{ x: number; y: number } | null> {
   const handle = await page.waitForFunction(id => {
     const group = document.querySelector('[data-connection-id="' + id + '"]');
     if (group === null) return null;
@@ -60,7 +70,21 @@ async function pointOnEdge(page: Page, connectionId: string): Promise<{ x: numbe
     }
     return null;
   }, connectionId);
-  return (await handle.jsonValue())!;
+  return (await handle.jsonValue()) as { x: number; y: number } | null;
+}
+
+/**
+ * A client point on the line itself. Pointing at the line reveals its marks, so a
+ * second pass picks a point the affordance layer does not cover; otherwise a press
+ * there would land on a handle or a grip instead of the line.
+ */
+async function pointOnEdge(page: Page, connectionId: string): Promise<{ x: number; y: number }> {
+  const first = await edgePoint(page, connectionId);
+  if (first === null) throw new Error('the connection has no reachable point');
+  await page.mouse.move(first.x, first.y);
+  await page.waitForTimeout(90);
+  const clear = await edgePoint(page, connectionId);
+  return clear ?? first;
 }
 
 async function pressEdge(page: Page, connectionId: string): Promise<void> {
@@ -82,28 +106,39 @@ async function hoverEdge(page: Page, connectionId: string): Promise<void> {
 }
 
 /**
- * Where to press a connection end. A stage box paints above the edges layer, so an
- * end sitting on its stage's boundary has to be pressed just outside that box.
+ * Where to press a connection end: the centre of its handle. The handle lives in
+ * the affordance layer above the stages, so no part of it is covered by the stage
+ * boundary or by the arrowhead.
  */
 async function endPressPoint(page: Page, connectionId: string, end: 'source' | 'target'): Promise<{ x: number; y: number }> {
   await hoverEdge(page, connectionId);
-  const [from, to] = connectionId.split('->');
-  const stageId = end === 'target' ? (to ?? '').split(':')[0]! : from!;
-  const stage = (await page.locator('.kb-flow-stage[data-column-id="' + stageId + '"]').boundingBox())!;
-  const circle = (await page.locator('[data-connection-id="' + connectionId + '"] .kb-flow-contact[data-end="' + end + '"]').boundingBox())!;
-  const centre = { x: circle.x + circle.width / 2, y: circle.y + circle.height / 2 };
-  // Step off the stage box, and off the arrowhead, which the target end sits inside;
-  // both stay within the invisible hit circle the handle draws.
-  const dx = centre.x <= stage.x + 2 ? -3 : centre.x >= stage.x + stage.width - 2 ? 3 : 0;
-  const dy = dx !== 0 ? 6 : centre.y <= stage.y + 2 ? -6 : 6;
-  return { x: centre.x + dx, y: centre.y + dy };
+  const box = (await page.locator('[data-connection-mark="' + connectionId + '"] .kb-flow-handle[data-end="' + end + '"]').boundingBox())!;
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+/** A client point on the diagram that no stage, control, or minimap owns. */
+async function emptyCanvasPoint(page: Page): Promise<{ x: number; y: number }> {
+  const canvas = (await page.locator('.kb-flow-canvas').boundingBox())!;
+  const point = await page.evaluate(area => {
+    for (let x = area.x + 40; x <= area.x + area.width - 40; x += 20) {
+      for (let y = area.y + 40; y <= area.y + area.height - 40; y += 20) {
+        const element = document.elementFromPoint(x, y);
+        if (element === null) continue;
+        if (element.closest('[data-column-id], .react-flow__minimap, .kb-flow-controls, .react-flow__panel') !== null) continue;
+        return { x, y };
+      }
+    }
+    return null;
+  }, canvas);
+  if (point === null) throw new Error('the diagram has no empty point');
+  return point;
 }
 
 /** Draw a connection from one stage's port onto another stage. */
 async function drawConnection(page: Page, from: string, to: string): Promise<void> {
   const stage = page.locator('.kb-flow-stage[data-column-id="' + from + '"]');
   await stage.hover();
-  const port = await stage.locator('.kb-flow-port[data-side="right"]').boundingBox();
+  const port = await page.locator('.kb-flow-port[data-side="right"]').boundingBox();
   if (port === null) throw new Error('stage ' + from + ' presents no right-hand connection port');
   await drag(page, { x: port.x + port.width / 2, y: port.y + port.height / 2 }, await stageCentre(page, to));
 }
@@ -134,9 +169,10 @@ test('draws nothing onto the same stage', async ({ page }) => {
   await unlock(page);
   const stage = page.locator('.kb-flow-stage[data-column-id="explore"]');
   await stage.hover();
-  const port = await stage.locator('.kb-flow-port[data-side="right"]').boundingBox();
+  const port = await page.locator('.kb-flow-port[data-side="right"]').boundingBox();
   if (port === null) throw new Error('no right-hand port');
-  await drag(page, { x: port.x + port.width / 2, y: port.y + port.height / 2 }, { x: port.x + port.width / 2, y: port.y + port.height / 2 + 60 });
+  // Release inside the stage the port belongs to, which is the same-stage drop.
+  await drag(page, { x: port.x + port.width / 2, y: port.y + port.height / 2 }, await stageCentre(page, 'explore'));
   expect(await commands(page)).toEqual([]);
 });
 
@@ -206,7 +242,7 @@ test('cancels a drawn connection with Escape', async ({ page }) => {
   await unlock(page);
   const stage = page.locator('.kb-flow-stage[data-column-id="explore"]');
   await stage.hover();
-  const port = await stage.locator('.kb-flow-port[data-side="right"]').boundingBox();
+  const port = await page.locator('.kb-flow-port[data-side="right"]').boundingBox();
   if (port === null) throw new Error('no right-hand port');
   const to = await stageCentre(page, 'apply');
   await page.mouse.move(port.x + port.width / 2, port.y + port.height / 2);
@@ -237,7 +273,7 @@ test('authors the default path when its condition is saved and names the conditi
   await openFlow(page);
   await unlock(page);
   const dashed = page.locator('[data-connection-id="propose->apply:0"]');
-  await expect(dashed.locator('.kb-flow-contact[data-end="source"]')).toHaveAttribute('aria-label', /without a condition/);
+  await expect(page.locator('[data-connection-mark="propose->apply:0"] .kb-flow-handle[data-end="source"]')).toHaveAttribute('aria-label', /without a condition/);
   await doublePressEdge(page, 'propose->apply:0');
   const editor = page.getByRole('dialog', { name: /Condition from Propose to Apply/ });
   await expect(editor).toBeVisible();
@@ -246,7 +282,7 @@ test('authors the default path when its condition is saved and names the conditi
   await expect(editor).toBeHidden();
   const updates = (await commands(page)).filter(command => command.type === 'board.stage.update');
   expect(updates.at(-1)?.patch).toMatchObject({ transitionCondition: { to: 'apply', when: 'after the proposal' } });
-  await expect(page.locator('[data-connection-id^="propose->apply"] .kb-flow-contact[data-end="source"]')).toHaveAttribute('aria-label', /with a condition/);
+  await expect(page.locator('[data-connection-mark^="propose->apply"] .kb-flow-handle[data-end="source"]')).toHaveAttribute('aria-label', /with a condition/);
 });
 
 test('keeps the condition editor open when the store refuses the write', async ({ page }) => {
@@ -336,18 +372,17 @@ test('presents a connection port on each of the four sides', async ({ page }) =>
   await unlock(page);
   // The shortest stage keeps all four ports inside one crop.
   const stage = page.locator('.kb-flow-stage[data-column-id="propose"]');
-  // Zoom on the stage first, so the ports are legible in the evidence as well as present.
-  const box = await stage.boundingBox();
-  if (box !== null) {
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    for (let step = 0; step < 5; step += 1) { await page.mouse.wheel(0, -160); await page.waitForTimeout(80); }
-  }
+  // Fit the whole diagram first: a zoomed stage can push its top port outside the
+  // canvas viewport, and the evidence must show all four ports.
+  await page.getByRole('button', { name: 'Fit to view' }).click({ force: true });
+  await page.waitForTimeout(300);
   await stage.hover();
   for (const side of ['top', 'right', 'bottom', 'left']) {
-    await expect(stage.locator('.kb-flow-port[data-side="' + side + '"]')).toHaveCount(1);
+    await expect(page.locator('.kb-flow-port[data-side="' + side + '"]')).toHaveCount(1);
   }
   await shoot(page, 'connections-four-ports.png');
-  await stage.screenshot({ path: path.join(OUT, 'connections-four-ports-closeup.png') });
+  const crop = (await stage.boundingBox())!;
+  await page.screenshot({ path: path.join(OUT, 'connections-four-ports-closeup.png'), clip: { x: crop.x - 40, y: crop.y - 40, width: crop.width + 80, height: crop.height + 80 } });
 });
 
 test('draws a connection that leaves from the side it was drawn from', async ({ page }) => {
@@ -355,7 +390,7 @@ test('draws a connection that leaves from the side it was drawn from', async ({ 
   await unlock(page);
   const source = page.locator('.kb-flow-stage[data-column-id="explore"]');
   await source.hover();
-  const port = await source.locator('.kb-flow-port[data-side="bottom"]').boundingBox();
+  const port = await page.locator('.kb-flow-port[data-side="bottom"]').boundingBox();
   if (port === null) throw new Error('no bottom port');
   await drag(page, { x: port.x + port.width / 2, y: port.y + port.height / 2 }, await stageCentre(page, 'apply'));
   const saves = (await commands(page)).filter(command => command.type === 'board.workflow.save');
@@ -363,4 +398,88 @@ test('draws a connection that leaves from the side it was drawn from', async ({ 
   expect(saves[0]?.yaml).toContain('source: {side: bottom, at: 2}');
   await expect(page.locator('[data-connection-id^="explore->apply"]')).toHaveCount(1);
   await shoot(page, 'connections-bottom-port.png');
+});
+
+test('presents the line being drawn and the route over a candidate destination', async ({ page }) => {
+  await openPlacedFlow(page);
+  await unlock(page);
+  const stage = page.locator('.kb-flow-stage[data-column-id="explore"]');
+  await stage.hover();
+  const port = (await page.locator('.kb-flow-port[data-side="right"]').boundingBox())!;
+  const empty = await emptyCanvasPoint(page);
+  const to = await stageCentre(page, 'apply');
+  await page.mouse.move(port.x + port.width / 2, port.y + port.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(empty.x, empty.y, { steps: 6 });
+  // Away from every stage the gesture presents the pointer line, and it stays
+  // presented while the drag runs.
+  await expect(page.locator('.kb-flow-creation-line')).toHaveCount(1);
+  await expect(page.locator('.kb-flow-creation-route')).toHaveCount(0);
+  await shoot(page, 'creation-line.png');
+  await page.mouse.move(to.x, to.y, { steps: 8 });
+  // Over a candidate the gesture presents the route the release would author,
+  // including its arrowhead, and marks the destination stage.
+  await expect(page.locator('.kb-flow-creation-route')).toHaveCount(1);
+  await expect(page.locator('.kb-flow-creation-line')).toHaveCount(0);
+  await expect(page.locator('.kb-flow-creation-arrow')).toHaveCount(1);
+  await expect(page.locator('.kb-flow-stage[data-column-id="apply"][data-connect-candidate="true"]')).toHaveCount(1);
+  await shoot(page, 'creation-route-preview.png');
+  const previewPath = await page.locator('.kb-flow-creation-route').getAttribute('d');
+  await page.mouse.up();
+  await expect(page.locator('.kb-flow-edge-group')).toHaveCount(2);
+  await expect(page.locator('.kb-flow-stage[data-connect-candidate="true"]')).toHaveCount(0);
+  // The preview is the route the release authors, not an approximation of a single
+  // destination: the drawn edge settles on exactly the previewed path.
+  const createdPath = await page.locator('.kb-flow-edge-group[data-connection-id="explore->apply:0"] .kb-flow-edge').getAttribute('d');
+  expect(createdPath).toBe(previewPath);
+});
+
+test('presents no destination for a stage that already authors it', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  await drawConnection(page, 'explore', 'apply');
+  const before = (await commands(page)).length;
+  const stage = page.locator('.kb-flow-stage[data-column-id="explore"]');
+  await stage.hover();
+  const port = (await page.locator('.kb-flow-port[data-side="bottom"]').boundingBox())!;
+  const to = await stageCentre(page, 'apply');
+  await page.mouse.move(port.x + port.width / 2, port.y + port.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 8 });
+  // The source already authors Apply, so the release would author nothing: the
+  // gesture keeps the plain pointer line and marks no candidate.
+  await expect(page.locator('.kb-flow-creation-route')).toHaveCount(0);
+  await expect(page.locator('.kb-flow-creation-line')).toHaveCount(1);
+  await expect(page.locator('.kb-flow-stage[data-connect-candidate="true"]')).toHaveCount(0);
+  await page.mouse.up();
+  await page.waitForTimeout(250);
+  expect((await commands(page)).length).toBe(before);
+});
+
+test('offers a connection port with a reachable 24-pixel target on every side', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  const stage = page.locator('.kb-flow-stage[data-column-id="propose"]');
+  await stage.hover();
+  for (const side of ['top', 'right', 'bottom', 'left']) {
+    const port = page.locator('.kb-flow-port[data-side="' + side + '"]');
+    const box = (await port.boundingBox())!;
+    expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(23.5);
+    const hit = await page.evaluate(point => document.elementFromPoint(point.x, point.y)?.closest('.kb-flow-port') !== null, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
+    expect(hit).toBe(true);
+  }
+});
+
+test('keeps a card pressable while a stage reveals its connection ports', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  const stage = page.locator('.kb-flow-stage[data-column-id="propose"]');
+  await stage.hover();
+  await expect(page.locator('.kb-flow-port[data-side="right"]')).toBeVisible();
+  const card = stage.locator('.kb-card').first();
+  const box = (await card.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.locator('.kb-drawer')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.kb-drawer')).toHaveCount(0);
 });

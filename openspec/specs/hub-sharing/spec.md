@@ -1319,6 +1319,12 @@ Each board log SHALL negotiate its own event versions independently of every oth
 - **THEN** it reads the published board logs
 - **AND** every board is presented with its name, project scope, and position
 
+#### Scenario: Publish executable configuration only in the current layout
+
+- **WHEN** a published workflow contains deterministic stage configuration
+- **THEN** that workflow is carried only inside a layout that declares the current format version
+- **AND** a plugin that supports only an earlier layout refuses the whole layout instead of reading the deterministic stage as a conventional stage
+
 #### Scenario: Refuse an older layout
 
 - **WHEN** the installation reads a layout stamp that declares an older format version

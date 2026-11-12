@@ -6,7 +6,7 @@ import { invalidWorkflow } from './yaml-fields.js';
 /** Change only differing executable fields, keeping untouched script/file quoting and comments. */
 export function updateDeterministicFields(text: string, stageId: string, before: DeterministicDefinition, after: DeterministicDefinition): string {
   let value = text;
-  for (const field of ['language', 'code', 'file', 'directory', 'env'] as const) {
+  for (const field of ['language', 'code', 'file', 'directory', 'env', 'params'] as const) {
     const previous = before[field];
     const next = after[field];
     if (JSON.stringify(previous) === JSON.stringify(next)) continue;

@@ -25,6 +25,10 @@ export interface BoardCardProps {
   onMoveTask?: (task: Task, column: Column) => Promise<unknown> | void;
   advancePending?: boolean;
   onRun?: (input: AutoRunInput) => void;
+  /** Restarts the card's arrival pulse; present once the card has arrived in a stage. */
+  arrivalToken?: number;
+  /** Clears the arrival pulse once the card presented that exact token. */
+  onArrivalEnd?: (taskId: string, token: number) => void;
 }
 
 /**
@@ -36,6 +40,7 @@ export interface BoardCardProps {
 export const BoardCard = memo(function BoardCard({
   task, column, projectName, attention, workflow, selectionMode, selected, autoRun, autoModePending,
   onToggleAutoMode, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick, onMoveTask, advancePending = false, onRun,
+  arrivalToken, onArrivalEnd,
 }: BoardCardProps) {
   const scriptOwned = ownedScript(task, useScriptSummary(task.id)) !== undefined;
   return <TaskCard
@@ -57,5 +62,7 @@ export const BoardCard = memo(function BoardCard({
     {...(onMoveTask === undefined ? {} : { onMove: (column: Column) => onMoveTask(task, column) })}
     advancePending={advancePending}
     {...(onRun === undefined ? {} : { onRun })}
+    {...(arrivalToken === undefined ? {} : { arrivalToken })}
+    {...(onArrivalEnd === undefined ? {} : { onArrivalEnd })}
   />;
 });
