@@ -13,11 +13,11 @@ async function shoot(page: Page, name: string): Promise<void> {
 }
 
 interface HarnessCommand { type: string; yaml?: string; columnId?: string; [key: string]: unknown }
-type HarnessWindow = { __harness: { commands(): HarnessCommand[] }; __travelSeen?: boolean };
+type HarnessWindow = { __harness: { commands(): HarnessCommand[] }; __transitSeen?: boolean; __arrivalSeen?: boolean };
 
-async function openFlow(page: Page): Promise<void> {
+async function openFlow(page: Page, query = 'scenario=flow'): Promise<void> {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.goto(HARNESS + '?scenario=flow');
+  await page.goto(HARNESS + '?' + query);
   await page.waitForFunction(() => (window as unknown as { __harnessReady?: boolean }).__harnessReady === true);
   await expect(page.getByRole('region', { name: 'Workflow diagram' })).toBeVisible();
   // The first paint fits the diagram before it is revealed; wait for that to settle
@@ -94,6 +94,12 @@ function translateYOf(style: string | null): number {
   return match === null ? 0 : Number(match[2]);
 }
 
+/** Accepts the restricted-move confirmation the diagram asks for. */
+async function confirmOverride(page: Page): Promise<void> {
+  const dialog = page.locator('.kb-transition-dialog');
+  if (await dialog.isVisible().catch(() => false)) await dialog.getByRole('button', { name: 'Move anyway' }).click();
+}
+
 async function dropCard(page: Page, title: string, stageLabel: string): Promise<void> {
   // The title is the card's drag surface; the activity controls are not.
   const card = page.locator('.kb-card', { hasText: title }).first().locator('.kb-card-open');
@@ -106,13 +112,17 @@ async function dropCard(page: Page, title: string, stageLabel: string): Promise<
   await page.mouse.up();
 }
 
-async function watchTravel(page: Page): Promise<void> {
+/** Records whether a transit and an arrival pulse were ever presented. */
+async function watchMotion(page: Page): Promise<void> {
   await page.evaluate(() => {
     const scope = window as unknown as HarnessWindow;
-    scope.__travelSeen = false;
-    new MutationObserver(() => {
-      if (document.querySelector('.kb-flow-travel-card') !== null) scope.__travelSeen = true;
-    }).observe(document.body, { childList: true, subtree: true });
+    scope.__transitSeen = false;
+    scope.__arrivalSeen = false;
+    const note = () => {
+      if (document.querySelector('.kb-flow-transit') !== null) scope.__transitSeen = true;
+      if (document.querySelector('.kb-card-arrival') !== null) scope.__arrivalSeen = true;
+    };
+    new MutationObserver(note).observe(document.body, { childList: true, subtree: true });
   });
 }
 
@@ -260,29 +270,201 @@ test('organizes every stage placement', async ({ page }) => {
   expect((saves[0]?.yaml ?? '').match(/position:/g)?.length).toBe(3);
 });
 
-test('drags a card between stages, travels it, and opens the drawer', async ({ page }) => {
+test('drags a card between stages, presents a transit, and opens the drawer', async ({ page }) => {
   await openFlow(page);
-  await watchTravel(page);
-  await dropCard(page, 'Long column task 0', 'Apply');
+  await watchMotion(page);
+  await dropCard(page, 'Long column task 0', 'Propose');
   await expect.poll(async () => (await commands(page)).filter(command => command.type === 'task.move').length).toBe(1);
   const moves = (await commands(page)).filter(command => command.type === 'task.move');
-  expect(moves[0]?.columnId).toBe('apply');
-  await expect.poll(() => page.evaluate(() => (window as unknown as HarnessWindow).__travelSeen === true)).toBe(true);
-  await expect(page.locator('.kb-flow-stage', { hasText: 'Apply' }).locator('.kb-card', { hasText: 'Long column task 0' })).toBeVisible();
+  expect(moves[0]?.columnId).toBe('propose');
+  await expect.poll(() => page.evaluate(() => (window as unknown as HarnessWindow).__transitSeen === true)).toBe(true);
+  await expect(page.locator('.kb-flow-stage', { hasText: 'Propose' }).locator('.kb-card', { hasText: 'Long column task 0' })).toBeVisible();
+  // The card is presented once, in the destination, and the transit is its only other trace.
+  await expect(page.locator('[data-task-id]', { hasText: 'Long column task 0' })).toHaveCount(1);
+  await expect(page.locator('.kb-flow-travel-card')).toHaveCount(0);
   // A click right after a drop is suppressed so a drag never opens a card; wait it out.
   await page.waitForTimeout(250);
-  await page.locator('.kb-flow-stage', { hasText: 'Apply' }).getByRole('button', { name: 'Open task Long column task 0' }).click();
+  await page.locator('.kb-flow-stage', { hasText: 'Propose' }).getByRole('button', { name: 'Open task Long column task 0' }).click();
   await expect(page.getByRole('heading', { name: 'Long column task 0', level: 2 })).toBeVisible();
 });
 
-test('settles a stage change without travel under reduced motion', async ({ page }) => {
+test('settles a stage change without transit or pulse under reduced motion', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openFlow(page);
-  await watchTravel(page);
+  await watchMotion(page);
   await dropCard(page, 'Long column task 1', 'Propose');
   await expect.poll(async () => (await commands(page)).filter(command => command.type === 'task.move').length).toBe(1);
-  await page.waitForTimeout(700);
-  expect(await page.evaluate(() => (window as unknown as HarnessWindow).__travelSeen === true)).toBe(false);
+  await page.waitForTimeout(800);
+  expect(await page.evaluate(() => (window as unknown as HarnessWindow).__transitSeen === true)).toBe(false);
+  expect(await page.evaluate(() => (window as unknown as HarnessWindow).__arrivalSeen === true)).toBe(false);
+});
+
+test('presents the transit on a solid authored connection', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto(HARNESS + '?scenario=flow-restricted&theme=host');
+  await page.waitForFunction(() => (window as unknown as { __harnessReady?: boolean }).__harnessReady === true);
+  await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-ready', 'true');
+  await page.waitForTimeout(250);
+  await expect(page.locator('.kb-flow-edge.is-explicit')).toHaveCount(1);
+  // Freeze the particles so the transit can be photographed mid-flight.
+  await page.addStyleTag({ content: '.kb-flow-transit-particle{animation-play-state:paused !important}' });
+  await watchMotion(page);
+  await dropCard(page, 'Long column task 0', 'Propose');
+  await expect.poll(async () => (await commands(page)).filter(command => command.type === 'task.move').length).toBe(1);
+  await page.waitForFunction(() => (window as unknown as HarnessWindow).__transitSeen === true);
+  const transit = page.locator('.kb-flow-transit');
+  await expect(transit).toHaveCount(1);
+  await expect(transit).toHaveAttribute('data-transit-from', 'explore');
+  await expect(transit).toHaveAttribute('data-transit-to', 'propose');
+  // Halfway along the drawn path, where the particle and its trail are apart.
+  const positioned = await page.evaluate(() => {
+    const particles = [...document.querySelectorAll<HTMLElement>('.kb-flow-transit-particle')];
+    let placed = 0;
+    for (const particle of particles) {
+      const animation = particle.getAnimations()[0];
+      if (animation === undefined) continue;
+      const duration = Number(animation.effect?.getTiming().duration ?? 0);
+      animation.currentTime = duration * 0.55;
+      placed += 1;
+    }
+    return placed;
+  });
+  expect(positioned).toBeGreaterThan(1);
+  await shoot(page, 'workflow-transit-light.png');
+  const box = await page.locator('.kb-flow-transit-particle.is-core').boundingBox();
+  expect(box).not.toBeNull();
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('');
+  await shoot(page, 'workflow-transit-dark.png');
+  // A working zoom, where a card's text is legible and the particle must not dwarf it.
+  await page.mouse.move(640, 450);
+  await page.mouse.wheel(0, -240);
+  await page.waitForTimeout(150);
+  await shoot(page, 'workflow-transit-zoom.png');
+});
+
+test('presents only the arrival pulse, and no transit, without a drawn connection', async ({ page }) => {
+  await openFlow(page, 'scenario=flow&theme=host');
+  const before = await commands(page);
+  // Freeze the pulse so the documented arrival signal can be photographed and measured.
+  await page.addStyleTag({ content: '.kb-card-arrival{animation-play-state:paused !important}' });
+  await watchMotion(page);
+  await dropCard(page, 'Long column task 0', 'Apply');
+  await confirmOverride(page);
+  await expect.poll(async () => (await commands(page)).filter(command => command.type === 'task.move').length).toBe(1);
+  await page.waitForFunction(() => (window as unknown as HarnessWindow).__arrivalSeen === true);
+  await page.waitForTimeout(600);
+  expect(await page.evaluate(() => (window as unknown as HarnessWindow).__transitSeen === true)).toBe(false);
+  const pulse = page.locator('.kb-flow-stage', { hasText: 'Apply' }).locator('.kb-card-arrival');
+  await expect(pulse).toHaveCount(1);
+  const card = page.locator('.kb-flow-stage', { hasText: 'Apply' }).locator('.kb-card', { hasText: 'Long column task 0' });
+  await expect(card).toBeVisible();
+  const duringPulse = (await card.boundingBox())!;
+  const extents = () => page.evaluate(() => ({
+    documentWidth: document.documentElement.scrollWidth,
+    documentHeight: document.documentElement.scrollHeight,
+    shellWidth: document.querySelector('.kb-flow-shell')?.scrollWidth ?? 0,
+    shellHeight: document.querySelector('.kb-flow-shell')?.scrollHeight ?? 0,
+    canvasWidth: document.querySelector('.kb-flow-canvas')?.scrollWidth ?? 0,
+    canvasHeight: document.querySelector('.kb-flow-canvas')?.scrollHeight ?? 0,
+  }));
+  const canvasDuring = await extents();
+  await page.evaluate(() => {
+    for (const element of document.querySelectorAll<HTMLElement>('.kb-card-arrival')) {
+      const animation = element.getAnimations()[0];
+      if (animation !== undefined) animation.currentTime = 150;
+    }
+  });
+  await shoot(page, 'workflow-arrival-pulse.png');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('');
+  await shoot(page, 'workflow-arrival-pulse-dark.png');
+  // The pulse is a painting over the card, so its presence changes neither the card's
+  // box nor any scrollable area, and it sends nothing.
+  await page.evaluate(() => { for (const element of document.querySelectorAll('style')) if (element.textContent?.includes('kb-card-arrival{animation-play-state:paused')) element.remove(); });
+  await expect(pulse).toHaveCount(0, { timeout: 5000 });
+  const withoutPulse = (await card.boundingBox())!;
+  expect(duringPulse.width).toBeCloseTo(withoutPulse.width, 1);
+  expect(duringPulse.height).toBeCloseTo(withoutPulse.height, 1);
+  expect(await extents()).toEqual(canvasDuring);
+  expect((await commands(page)).length).toBe(before.length + 1);
+  expect((await commands(page))[before.length]!.type).toBe('task.move');
+});
+
+test('keeps one transit through a re-render of the view', async ({ page }) => {
+  await openFlow(page);
+  // Freeze the particles so the transit cannot finish while the view re-renders.
+  await page.addStyleTag({ content: '.kb-flow-transit-particle{animation-play-state:paused !important}' });
+  await dropCard(page, 'Long column task 0', 'Propose');
+  await expect.poll(async () => (await commands(page)).filter(command => command.type === 'task.move').length).toBe(1);
+  await page.waitForFunction(() => document.querySelector('.kb-flow-transit') !== null);
+  // Advance the frozen flight, so a restart would visibly rewind it.
+  await page.evaluate(() => {
+    for (const particle of document.querySelectorAll<HTMLElement>('.kb-flow-transit-particle')) {
+      const animation = particle.getAnimations()[0];
+      if (animation !== undefined) animation.currentTime = 140;
+    }
+  });
+  await page.evaluate(() => {
+    const scope = window as unknown as { __transitProbe?: { node: Element; animation: Animation | null; time: number } };
+    const node = document.querySelector('.kb-flow-transit')!;
+    const particle = node.querySelector('.kb-flow-transit-particle');
+    const animation = particle === null ? null : particle.getAnimations()[0] ?? null;
+    scope.__transitProbe = { node, animation, time: Number(animation?.currentTime ?? 0) };
+  });
+  // The card keeps working while the flight is held active.
+  const interaction = await page.evaluate(() => {
+    const card = document.querySelector<HTMLElement>('[data-task-id]')!;
+    // The card's own activation control is its keyboard entry point.
+    const open = card.querySelector<HTMLElement>('.kb-card-open')!;
+    open.focus();
+    const box = card.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+    return { focused: document.activeElement === open, hitIsCard: hit !== null && hit.closest('[data-task-id]') === card };
+  });
+  expect(interaction.focused).toBe(true);
+  expect(interaction.hitIsCard).toBe(true);
+  // A view re-render: the layout lock changes state but no board card and no stage change.
+  await page.getByRole('button', { name: 'Unlock layout editing', exact: true }).click();
+  await page.waitForTimeout(150);
+  const after = await page.evaluate(() => {
+    const scope = window as unknown as { __transitProbe: { node: Element; animation: Animation | null; time: number } };
+    const node = document.querySelector('.kb-flow-transit');
+    const particle = node === null ? null : node.querySelector('.kb-flow-transit-particle');
+    const animation = particle === null ? null : particle.getAnimations()[0] ?? null;
+    return {
+      count: document.querySelectorAll('.kb-flow-transit').length,
+      sameNode: node === scope.__transitProbe.node,
+      sameAnimation: animation === scope.__transitProbe.animation,
+      animations: particle === null ? 0 : particle.getAnimations().length,
+      time: Number(animation?.currentTime ?? 0),
+      before: scope.__transitProbe.time,
+    };
+  });
+  expect(after.count).toBe(1);
+  expect(after.sameNode).toBe(true);
+  expect(after.sameAnimation).toBe(true);
+  expect(after.animations).toBe(1);
+  // The flight continued from where it was: it was never cancelled and replayed.
+  expect(after.time).toBeGreaterThanOrEqual(after.before);
+});
+
+test('settles a running transit when the motion preference changes mid-flight', async ({ page }) => {
+  await openFlow(page);
+  // Freeze the particles: only the preference change can settle this flight.
+  await page.addStyleTag({ content: '.kb-flow-transit-particle{animation-play-state:paused !important}' });
+  await dropCard(page, 'Long column task 0', 'Propose');
+  await expect.poll(async () => (await commands(page)).filter(command => command.type === 'task.move').length).toBe(1);
+  await page.waitForFunction(() => document.querySelector('.kb-flow-transit') !== null);
+  await expect(page.locator('.kb-flow-transit')).toHaveCount(1);
+  // The host preference changes with no board update and no other render.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect.poll(() => page.locator('.kb-flow-transit').count(), { timeout: 5000 }).toBe(0);
+  // Restoring the preference does not replay the settled flight.
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.waitForTimeout(400);
+  expect(await page.locator('.kb-flow-transit').count()).toBe(0);
 });
 
 test('keeps the diagram keyboard reachable', async ({ page }) => {

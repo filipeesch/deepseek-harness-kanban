@@ -37,6 +37,10 @@ export interface TaskCardProps {
   advancePending?: boolean;
   /** Prepares the first execution before the card's run action sends anything. */
   onRun?: (input: AutoRunInput) => void;
+  /** Changes when a transit reached this card, so its arrival pulse replays. */
+  arrivalToken?: number;
+  /** Clears the arrival pulse once the card presented that exact token. */
+  onArrivalEnd?: (taskId: string, token: number) => void;
 }
 
 function CardContext({ taskId, title, projectName, attention, selectionMode, selected, onToggleSelect, onActivate }: {
@@ -82,7 +86,7 @@ function CardStatus({ entries }: { entries: readonly CardStatusEntry[] }) {
 }
 
 /** One task card; every board concern arrives through props. */
-export function TaskCard({ task, column, projectName, attention, selectionMode, selected, autoRun, autoMode, autoModePending, onToggleAutoMode, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick, next, onMove, advancePending = false, onRun }: TaskCardProps) {
+export function TaskCard({ task, column, projectName, attention, selectionMode, selected, autoRun, autoMode, autoModePending, onToggleAutoMode, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick, next, onMove, advancePending = false, onRun, arrivalToken, onArrivalEnd }: TaskCardProps) {
   const openButton = useRef<HTMLButtonElement>(null);
   const script = ownedScript(task, useScriptSummary(task.id));
   const activeScript = scriptActive(script);
@@ -119,5 +123,6 @@ export function TaskCard({ task, column, projectName, attention, selectionMode, 
     <CardContext taskId={task.id} title={task.title} projectName={projectName} attention={attention} selectionMode={selectionMode} selected={selected} onToggleSelect={onToggleSelect} onActivate={activate} />
     <CardActivity attention={attention} label={task.title} controls={controls} script={script ? scriptLabel(script) : undefined} />
     <CardStatus entries={[...cardStatusEntries(task, runFailure, autoMode.status, autoMode.secondaryStatuses), ...(script?.error ? [{ key: 'script-error', tone: 'danger' as const, label: script.error.message.slice(0, 512), alert: true }] : [])]} />
+    {arrivalToken !== undefined && <span key={arrivalToken} className="kb-card-arrival" aria-hidden="true" onAnimationEnd={() => onArrivalEnd?.(task.id, arrivalToken)} />}
   </article>;
 }
