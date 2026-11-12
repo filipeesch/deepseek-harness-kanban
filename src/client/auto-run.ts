@@ -1,4 +1,5 @@
 import type { KanbanSnapshot, Command, Problem } from '../shared/types.js';
+import type { DeterministicSummary } from '../shared/deterministic.js';
 import { asProblem } from './problem.js';
 
 /** The product-fixed window between an instructed move and its automatic send. */
@@ -38,6 +39,7 @@ export interface AutoRunTask {
   id: string;
   columnId: string;
   instructionPending?: { columnId: string; enteredAt: number };
+  stageEntry?: { id: string };
 }
 
 export type AutoRunCommand = (command: Command) => Promise<KanbanSnapshot>;
@@ -137,10 +139,10 @@ export class AutoRunController {
   };
 
   /** Drop windows whose persisted entry no longer matches the board. */
-  reconcile = (tasks: readonly AutoRunTask[]): void => {
+  reconcile = (tasks: readonly AutoRunTask[], scripts: Readonly<Record<string, DeterministicSummary>> = {}): void => {
     for (const entry of Object.values(this.entries)) {
       const task = tasks.find(value => value.id === entry.taskId);
-      if (!task || task.instructionPending?.columnId !== entry.columnId || task.instructionPending.enteredAt !== entry.enteredAt) this.cancel(entry.taskId);
+      if ((scripts[entry.taskId] !== undefined && task?.stageEntry?.id === scripts[entry.taskId]?.entryId) || !task || task.instructionPending?.columnId !== entry.columnId || task.instructionPending.enteredAt !== entry.enteredAt) this.cancel(entry.taskId);
     }
   };
 

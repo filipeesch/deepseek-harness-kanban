@@ -140,6 +140,7 @@ export function useTransitionActions(input: TransitionActionInput): TransitionAc
   const run = useCallback((changes: readonly TransitionChange[], layout: LayoutDelta | null): void => {
     const current = inputRef.current;
     if (changes.length === 0) return;
+    if (changes.some(change => current.workflow().columns.find(column => column.id === change.stageId)?.deterministic)) { current.onError({ code: 'DETERMINISTIC_EXIT_EDIT', message: 'Edit named exits in the deterministic stage editor. A script cannot author a separate allowed-transition list.' }); return; }
     // A layout delta that changes nothing is not a step of its own.
     const delta = layout !== null && !sameLayouts(layout.before, layout.after) ? layout : null;
     for (const change of changes) current.overrides.intend(change.stageId, change.after);
@@ -250,6 +251,7 @@ export function useTransitionActions(input: TransitionActionInput): TransitionAc
 
   const setCondition = useCallback(async (sourceId: string, to: string, when: string | null): Promise<void> => {
     const current = inputRef.current;
+    if (current.workflow().columns.find(column => column.id === sourceId)?.deterministic) throw new Error('Edit named exits in the deterministic stage editor.');
     const before = presentedRules(current.workflow(), sourceId);
     const after = withCondition(before, to, when);
     const unchanged = before !== null && before.length === after.length
@@ -288,6 +290,7 @@ export function useTransitionActions(input: TransitionActionInput): TransitionAc
   const restore = useCallback((values: TransitionValues) => {
     const current = inputRef.current;
     const entries = Object.entries(values);
+    if (entries.some(([stageId]) => current.workflow().columns.find(column => column.id === stageId)?.deterministic)) { current.onError({ code: 'DETERMINISTIC_EXIT_EDIT', message: 'Named exits changed since this diagram history entry. Edit them in the stage editor.' }); return; }
     if (entries.length === 0) return;
     for (const [stageId, rules] of entries) current.overrides.intend(stageId, rules);
     inFlight.current += 1;

@@ -201,7 +201,7 @@ describe('native conversations', () => {
     const events = new Context(); const model = vi.fn();
     const dispose = registerTaskExecutionGuards(events, { bySession: (id: string) => id === 'a' ? { task: { sessionIds: ['a'] } } : undefined } as never, { assertExecutionContext: id => f.sessions.validateDirectory(id, expected) });
     try {
-      await expect(events.waterfall('agent/pre-step', { agent: f.agent, turn: 1, step: 1, signal: new AbortController().signal, messages: [] }, async () => { model(); return { kind: 'enter' as const, messages: [] }; })).rejects.toMatchObject({ code: 'SESSION_CONTEXT_UNAVAILABLE' });
+      await expect(events.waterfall('agent/pre-step', { agent: f.agent, turn: 1, step: 1, modelSelection: { provider: 'fixture', model: 'fixture' }, signal: new AbortController().signal, messages: [] }, async () => { model(); return { kind: 'enter' as const, messages: [] }; })).rejects.toMatchObject({ code: 'SESSION_CONTEXT_UNAVAILABLE' });
       expect(model).not.toHaveBeenCalled(); expect(f.prompt).not.toHaveBeenCalled(); expect(await f.sessions.directory('a')).toBe(root);
     } finally { dispose(); }
   });

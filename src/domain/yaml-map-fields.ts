@@ -294,6 +294,22 @@ export function writeSequenceItemField(edit: SequenceFieldEdit): string {
   return edit.invalid('Workflow ' + edit.sequenceKey + ' has no entry ' + edit.id + '.');
 }
 
+/** Rewrite one nested mapping field without serializing its parent or siblings. */
+export function writeNestedSequenceItemField(edit: SequenceFieldEdit & { readonly path: readonly string[] }): string {
+  const document = documentOf(edit.text, edit.invalid);
+  const sequence = document.getIn([edit.sequenceKey]);
+  if (!isSeq(sequence)) return edit.invalid('Workflow ' + edit.sequenceKey + ' must be an array.');
+  for (const item of sequence.items) {
+    if (!isMap(item) || item.get(edit.idKey) !== edit.id) continue;
+    const nested = item.getIn([...edit.path], true);
+    if (!isMap(nested)) return edit.invalid('The nested field must be a mapping.');
+    const pairs = nested.items as unknown as NodePair[];
+    const planned = planFieldEdit(edit.text, nested, pairs, edit.fieldKeys, edit.render);
+    return planned === null ? edit.text : applyEdits(edit.text, [planned]);
+  }
+  return edit.invalid('Workflow ' + edit.sequenceKey + ' has no entry ' + edit.id + '.');
+}
+
 /** Rewrite one authored top-level field, preserving every character outside it. */
 export function writeRootField(edit: RootFieldEdit): string {
   const document = documentOf(edit.text, edit.invalid);

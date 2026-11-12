@@ -1,5 +1,5 @@
 import React from 'react';
-import { BaseEdge, useStore, type EdgeProps } from '@xyflow/react';
+import { BaseEdge, EdgeLabelRenderer, useStore, type EdgeProps } from '@xyflow/react';
 import type { DiagramPoint } from './routing/orthogonal.js';
 import type { RouteLine } from './routing/route.js';
 import { useConnectionHandlers } from './connection-interaction.js';
@@ -24,6 +24,7 @@ export interface ConnectionEdgeData {
   readonly lines: readonly RouteLine[];
   /** True when this transition authors a condition. */
   readonly hasCondition: boolean;
+  readonly exitLabels?: readonly string[];
 }
 
 /** The middle of a drawn path, where its mark and its editor sit. */
@@ -89,6 +90,7 @@ export function ConnectionEdgeView({ id, data }: EdgeProps) {
       r={CONDITION_MARK_RADIUS * scale}
       aria-hidden="true"
     />}
+    {middle !== undefined && edge.exitLabels !== undefined && <EdgeLabelRenderer><button type="button" className="kb-flow-exit-label nodrag nopan" style={{ transform: 'translate(-50%, -50%) translate(' + middle.x + 'px,' + (middle.y - 8 * scale) + 'px) scale(' + scale + ')' }} aria-label={'Named exits ' + edge.exitLabels.join(', ')} onClick={event => { event.stopPropagation(); handlers?.onEditCondition(id); }}>{edge.exitLabels.join(', ')}</button></EdgeLabelRenderer>}
     {edge.lines.map(line => <rect
       key={'segment-' + line.index}
       className="kb-flow-segment"

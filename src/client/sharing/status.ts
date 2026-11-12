@@ -14,6 +14,7 @@ export const BOARD_STATE_LABEL: Record<SharingBoardState, string> = {
   draft: 'Draft',
   'updates-available': 'Updates available',
   'needs-review': 'Needs review',
+  'update-required': 'Plugin update required',
   orphan: 'Removed by the team',
 };
 

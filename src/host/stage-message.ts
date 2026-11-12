@@ -1,6 +1,7 @@
 import { boundContextSummary, createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm';
 import type { StageInstructionDelivery } from '../shared/ports.js';
 import type { Task, Workflow } from '../shared/types.js';
+import type { DeterministicHandoff } from '../shared/deterministic.js';
 import { defaultDestination } from '../domain/transitions.js';
 import { recordedTransition } from '../domain/transition-route.js';
 
@@ -38,6 +39,8 @@ export interface StageInstructionInput {
   readonly instruction: string;
   /** The reason the declared transition carried, when this delivery follows one. */
   readonly transition?: DeclaredTransitionNote;
+  /** A program result is evidence, not a reason declared by the destination agent. */
+  readonly handoff?: DeterministicHandoff;
   /** The host-generated transition briefing, when the stage configures two or more targets. */
   readonly briefing?: string;
   /** The name of the stage being entered. */
@@ -78,9 +81,14 @@ export function transitionNoteBlock(note: DeclaredTransitionNote): string {
  * Compose the model-facing delivery: the instruction, then the declared reason
  * when this delivery follows one, then the briefing when one applies.
  */
+export function deterministicHandoffBlock(handoff: DeterministicHandoff): string {
+  return `Deterministic result (from ${handoff.fromColumnId}; exit: ${handoff.exit}; execution: ${handoff.executionId}):\n${handoff.message}`;
+}
+
 export function buildStageInstructionDelivery(input: StageInstructionInput): StageInstructionDelivery {
   const blocks = [input.instruction];
   if (input.transition !== undefined) blocks.push(transitionNoteBlock(input.transition));
+  if (input.handoff !== undefined) blocks.push(deterministicHandoffBlock(input.handoff));
   if (input.briefing !== undefined) blocks.push(input.briefing);
   return {
     requestId: input.requestId,

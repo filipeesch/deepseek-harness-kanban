@@ -165,7 +165,7 @@ function CanvasInner(props: WorkflowCanvasProps) {
     source: edge.from,
     target: edge.to,
     type: 'connection',
-    data: { path: edge.path, points: edge.points, tipAngle: edge.tipAngle, kind: edge.kind, returning: edge.returning, lines: edge.lines, hasCondition: edge.condition !== undefined },
+    data: { path: edge.path, points: edge.points, tipAngle: edge.tipAngle, kind: edge.kind, returning: edge.returning, lines: edge.lines, hasCondition: edge.condition !== undefined || edge.exitLabels !== undefined, exitLabels: edge.exitLabels },
     selectable: false,
     focusable: false,
   })), [liveStages, props.connections, gestures]);

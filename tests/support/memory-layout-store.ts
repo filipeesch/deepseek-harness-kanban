@@ -71,6 +71,12 @@ export class MemoryLayoutStore implements SharedLayoutStore {
     this.probes.delete(key);
   }
 
+  /** Replace a test-owned raw log, including a future version this reader cannot decode. */
+  injectRawLog(key: string, value: unknown): void {
+    this.logs.set(key, JSON.stringify(value));
+    this.probes.set(key, (this.probes.get(key) ?? 0) + 1);
+  }
+
   /** How many manifest writes this store accepted, so a test can assert one write. */
   get manifestWrites(): number { return this.writes; }
 

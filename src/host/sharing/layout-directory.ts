@@ -168,11 +168,11 @@ export class DirectoryLayoutStore implements SharedLayoutStore {
   }
 
   private async writeLog(key: string, log: BoardLogFile): Promise<void> {
+    if (log.version < 1 || log.version > BOARD_LOG_VERSION || !decodeBoardLog(encodeBoardLog(log)).ok) throw new KanbanError('SHARING_INVALID_DOCUMENT', 'The board log version or content is not supported.');
     const directory = path.join(this.options.directory, SHARED_BOARD_DIRECTORY);
     try { await mkdir(directory, { recursive: true }); }
     catch (error) { throw new KanbanError('SHARING_FOLDER_MISSING', 'The board log directory cannot be created.', { path: directory, cause: error instanceof Error ? error.message : String(error) }); }
     await this.writeAtomically(this.logPath(key), stringifyYaml(encodeBoardLog(log), { lineWidth: 0 }));
-    if (log.version !== BOARD_LOG_VERSION) throw new KanbanError('SHARING_INVALID_DOCUMENT', 'The board log version is not supported.');
   }
 
   private async readOptional(file: string): Promise<string | null> {

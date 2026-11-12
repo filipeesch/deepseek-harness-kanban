@@ -3,6 +3,7 @@ import { buildSharingView } from '../../src/host/sharing/view.js';
 import { emptyBoard, type HubSharingRecord } from '../../src/host/sharing/state.js';
 import { hubWith, flow } from '../support/sharing-fixtures.js';
 import { workflowDigest } from '../../src/domain/sharing/board-plan.js';
+import { HubSharingViewSchema } from '../../src/remote.js';
 
 const NOW = '2026-01-01T00:00:00.000Z';
 
@@ -37,9 +38,17 @@ describe('sharing view', () => {
   it('reports a board with unapplied events as having updates', () => {
     const view = buildSharingView(record({ boards: { flow: { ...emptyBoard(), published: workflowDigest(flow()), behind: 2 } } }), hubWith([{ id: 'board', name: 'Flow' }]), { provider });
     expect(view.boards[0]).toMatchObject({ state: 'updates-available', updates: 2 });
+    expect(HubSharingViewSchema.safeParse(view).success).toBe(true);
     // The Hub total counts boards, while the board carries its own event count.
     expect(view.updates).toBe(1);
     expect(view.status).toBe('updates-available');
+  });
+
+  it('serializes a board that requires a plugin update without an unsafe choice', () => {
+    const view = buildSharingView(record({ boards: { flow: { ...emptyBoard(), problem: { code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED', message: 'Update the plugin.' } } } }), hubWith([{ id: 'board', name: 'Flow' }]), { provider });
+    expect(view.boards[0]).toMatchObject({ state: 'update-required', pending: false });
+    expect(view.conflicts).toBe(1); expect(view.status).toBe('needs-review');
+    expect(HubSharingViewSchema.safeParse(view).success).toBe(true);
   });
 
   it('reports a board needing a choice as a review', () => {

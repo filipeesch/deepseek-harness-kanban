@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DeterministicCaptureStore, createDeterministicTrust } from '../../src/host/deterministic/capture.js';
 import { defaultHubState } from '../../src/domain/hub-schema.js';
 import { HubRepository } from '../../src/host/hub-repository.js';
 import { HubSharingService } from '../../src/host/sharing/service.js';
@@ -6,10 +10,11 @@ import { emptyBoard, type HubSharingStore } from '../../src/host/sharing/state.j
 import type { ProviderDescription, ProviderState, SharingBinding, SharingProviderId } from '../../src/host/sharing/provider.js';
 import type { SharedLayoutStore } from '../../src/host/sharing/ports.js';
 import { serializeSharedManifest } from '../../src/domain/sharing/manifest.js';
-import { createBoardLog, encodeBoardLog, headToken } from '../../src/domain/journal/log.js';
+import { appendEvents, compactBoardLog, createBoardLog, encodeBoardLog, headToken } from '../../src/domain/journal/log.js';
 import { workflowDigest } from '../../src/domain/sharing/board-plan.js';
 import { MemoryLayoutStore } from '../support/memory-layout-store.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
+import { KanbanError } from '../../src/shared/errors.js';
 import { MemoryHubStorage } from './helpers.js';
 
 const NOW = '2026-01-02T00:00:00.000Z';
@@ -123,6 +128,36 @@ describe('per-board publishing service', () => {
     await f.close();
   });
 
+  it('preserves deterministic target identity and captured authority across a team stage rename', async () => {
+    const f = await fixture(); const privateRoot = await mkdtemp(join(tmpdir(), 'kanban-team-trust-'));
+    try {
+      const boardId = boardOf(f);
+      const yaml = FLOW.replace('    label: Backlog', '    label: Backlog\n    deterministic: {language: bash, code: "printf approved", exits: {passed: plan}}');
+      await f.hubs.hub('hub').saveBoardWorkflow(boardId, yaml);
+      const task = await f.hubs.hub('hub').createTask({ projectId: 'project', boardId, title: 'Waiting', description: '' });
+      const captured = structuredClone(f.hubs.requireTask(task.id).task.deterministic!);
+      expect(captured.targets?.passed?.stageIdentity).toBe('s2');
+      const captures = new DeterministicCaptureStore(privateRoot, { directory: async path => path, source: async () => { throw new Error('Inline source expected.'); }, execution: async directory => ({ mode: 'danger-full-access', workspaceRoot: directory }) });
+      const trust = createDeterministicTrust(privateRoot); const scope = { hubId: 'hub', boardId, projectId: 'project', stageIdentity: captured.stageIdentity };
+      const approved = await captures.capture({ definition: captured.definition, projectDirectory: '/repo', exits: captured.targets! });
+      await trust.approve(scope, approved.fingerprint);
+      await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
+      const key = f.service.view('hub')!.boards[0]!.key!; const snapshot = await f.layout.readLog(key);
+      await f.layout.appendChanges(key, [{ kind: 'stage.id-changed', key: 's2', from: 'plan', id: 'review' }], { expectedHead: snapshot!.head, message: 'rename destination', at: NOW });
+      await f.service.getUpdates('hub');
+      const board = f.hubs.requireHub('hub').boards.find(value => value.id === boardId)!;
+      const current = f.hubs.requireTask(task.id).task.deterministic!;
+      expect(board.workflow.columns.find(value => value.id === 'backlog')?.deterministic?.exits.passed).toBe('review');
+      expect(board.localStageIdentities?.review).toBe('s2');
+      expect(current.phase).toBe('capture-pending'); expect(current.definition.code).toBe(captured.definition.code);
+      expect(current.targets?.passed?.stageIdentity).toBe('s2');
+      const updatedDefinition = board.workflow.columns.find(value => value.id === 'backlog')!.deterministic!;
+      const updated = await captures.capture({ definition: updatedDefinition, projectDirectory: '/repo', exits: { passed: { columnId: 'review', stageIdentity: 's2' } } });
+      expect(await trust.isApproved(scope, approved.fingerprint)).toBe(true);
+      expect(await trust.isApproved(scope, updated.fingerprint)).toBe(false);
+    } finally { await f.close(); await rm(privateRoot, { recursive: true, force: true }); }
+  });
+
   it('refuses to publish a board that has unapplied team events', async () => {
     const f = await fixture();
     await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
@@ -157,6 +192,42 @@ describe('per-board publishing service', () => {
     expect(f.hubs.requireHub('hub').boards.find(board => board.name === 'Second')!.workflowYaml).toContain('name: Second renamed');
     expect(f.service.view('hub')?.boards.find(board => board.boardId === boardId)?.state).toBe('needs-review');
     await f.close();
+  });
+
+  it('isolates an unsupported team board while applying an unrelated supported board', async () => {
+    const f = await fixture();
+    try {
+      await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
+      const first = f.hubs.requireHub('hub').boards[0]!;
+      await f.hubs.hub('hub').transact(draft => { draft.boards.push({ ...draft.boards[0]!, id: 'second', name: 'Second' }); }, f.hubs.requireHub('hub').revision);
+      await f.service.publishManifest('hub');
+      const views = f.service.view('hub')!; const unsupported = views.boards.find(board => board.boardId === first.id)!.key!;
+      const supported = views.boards.find(board => board.boardId === 'second')!.key!;
+      const second = await f.layout.readLog(supported);
+      await f.layout.appendChanges(supported, [{ kind: 'workflow.field-changed', field: 'name', value: 'Updated independently' }], { expectedHead: second!.head, message: 'm', at: NOW });
+      const firstSnapshot = await f.layout.readLog(unsupported); const firstStage = parseWorkflow(firstSnapshot!.log.snapshot.text).columns[0]!;
+      const executable = appendEvents(firstSnapshot!.log, [{ kind: 'stage.field-changed', key: firstStage.key!, field: 'deterministic', value: { language: 'bash', code: 'printf example', directory: 'task', exits: { passed: 'plan' } } }], NOW);
+      const compacted = compactBoardLog(executable, 0); expect(compacted.events).toEqual([]); expect(compacted.version).toBe(2);
+      f.layout.injectRawLog(unsupported, encodeBoardLog(compacted));
+      const originalRead = f.layout.readLog.bind(f.layout);
+      // Model the legacy v1 reader's version gate against the actual compacted v2 bytes.
+      f.layout.readLog = async key => { const value = await originalRead(key); if (key === unsupported && value && value.log.version > 1) throw new KanbanError('SHARING_DOCUMENT_VERSION_UNSUPPORTED', 'Update the plugin to read this board.'); return value; };
+      await expect(f.service.getUpdates('hub')).rejects.toMatchObject({ code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED' });
+      expect(f.service.view('hub')!.boards.find(board => board.boardId === first.id)?.state).toBe('update-required');
+      expect(f.hubs.requireHub('hub').boards.find(board => board.id === 'second')!.workflowYaml).toContain('name: Updated independently');
+      await expect(f.service.publishBoard('hub', first.id)).rejects.toMatchObject({ code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED' });
+      await expect(f.service.resolve('hub', first.id, 'local')).rejects.toMatchObject({ code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED' });
+      expect(f.service.view('hub')!.boards.find(board => board.boardId === first.id)?.state).toBe('update-required');
+      const secondBoard = f.hubs.requireHub('hub').boards.find(board => board.id === 'second')!;
+      await f.hubs.hub('hub').saveBoardWorkflow('second', secondBoard.workflowYaml.replace('name: Updated independently', 'name: Published independently'));
+      await f.service.publishBoard('hub', 'second');
+      expect((await originalRead(supported))!.log.events.some(event => event.kind === 'workflow.field-changed' && event.value === 'Published independently')).toBe(true);
+      f.layout.readLog = originalRead;
+      await f.service.check('hub', true);
+      expect(f.service.view('hub')!.boards.find(board => board.boardId === first.id)?.state).toBe('updates-available');
+      await f.service.updateBoard('hub', first.id);
+      expect(f.hubs.requireHub('hub').boards.find(board => board.id === first.id)!.workflowYaml).toContain('printf example');
+    } finally { await f.close(); }
   });
 
   it('keeps a removed board that holds work as an orphan and publishes it under a new key', async () => {

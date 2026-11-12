@@ -3,6 +3,8 @@ import type { Attention, Column, Task } from '../../shared/types.js';
 import { ErrorNotice, Modal, type RunCommand } from '../ui.js';
 import { IdentitySection } from './identity-section.js';
 import { InitialSection } from './initial-section.js';
+import { DeterministicSection } from './deterministic-section.js';
+import { deterministicDraft } from './deterministic-draft.js';
 import { InstructionSection } from './instruction-section.js';
 import { transitionChoices, type StageEditorProblem } from './stage-editor-draft.js';
 import { TransitionsSection } from './transitions-section.js';
@@ -46,6 +48,9 @@ export function StageEditorDialog({ hubId, boardId, revision, initialStageId, co
         onName={value => editor.change('name', value)}
         onId={value => editor.change('id', value)}
       />
+      <label className="kb-field">Execution mode<select className="kb-input" aria-label="Execution mode" disabled={editor.pending} value={draft.execution ?? 'agent'} onChange={event => editor.change('execution', event.target.value as 'agent' | 'deterministic')}><option value="agent">Agent instruction or manual</option><option value="deterministic">Deterministic script</option></select></label>
+      {problem('execution') && <p className="kb-hint kb-problem" role="alert">{problem('execution')}</p>}
+      {draft.execution === 'deterministic' ? <DeterministicSection draft={draft.deterministic ?? deterministicDraft()} choices={transitionChoices(columns, column.id)} disabled={editor.pending} problem={problem} onChange={value => editor.change('deterministic', value)} /> : <>
       <InstructionSection value={draft.onEnterPrompt} disabled={editor.pending} onChange={value => editor.change('onEnterPrompt', value)} />
       <TransitionsSection
         choices={transitionChoices(columns, column.id)}
@@ -57,6 +62,7 @@ export function StageEditorDialog({ hubId, boardId, revision, initialStageId, co
         onChoose={editor.chooseDestination}
         onCondition={editor.changeCondition}
       />
+      </>}
       <InitialSection
         isInitial={column.id === initialStageId}
         willBeInitial={draft.initial}

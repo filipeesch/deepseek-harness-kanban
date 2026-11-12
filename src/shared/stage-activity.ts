@@ -1,5 +1,6 @@
 /** The persisted task facts that make a stage rename wait for the board to go idle. */
 export interface StageActivityFacts {
+  deterministic?: { phase: string };
   pendingTransition?: { status: string };
   autoMode?: { enabled: boolean };
   instructionPending?: { columnId: string };
@@ -13,6 +14,7 @@ export interface StageActivityFacts {
  */
 export function persistedStageActivity(facts: StageActivityFacts): string[] {
   const reasons: string[] = [];
+  if (facts.deterministic !== undefined && !['stopped', 'failed'].includes(facts.deterministic.phase)) reasons.push('a deterministic execution');
   if (facts.pendingTransition !== undefined) reasons.push('a pending transition');
   if (facts.autoMode?.enabled === true) reasons.push('auto mode is armed');
   if (facts.instructionPending !== undefined) reasons.push('an unresolved stage instruction');

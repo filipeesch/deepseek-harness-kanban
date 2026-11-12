@@ -166,12 +166,27 @@ async function installed(rounds?: QuestionRound[]) {
 describe('public SDK plugin binding contracts', () => {
   it('registers and disposes every plugin Chat Definition with the client conversation service', async () => {
     const f = fixture(); const dispose = await apply(f.ctx);
-    expect(f.uiConversation.events.register).toHaveBeenCalledTimes(3);
+    expect(f.uiConversation.events.register).toHaveBeenCalledTimes(4);
     expect(f.taskContextRegistrations[0]).toMatchObject({ kind: 'kanban-task-context', target: 'chat' });
     expect(f.taskContextRegistrations[1]).toMatchObject({ kind: 'kanban-stage-context', target: 'chat' });
-    expect(f.taskContextRegistrations[2]).toMatchObject({ kind: 'kanban-task-message', target: 'chat' });
+    expect(f.taskContextRegistrations[2]).toMatchObject({ kind: 'kanban-deterministic-handoff', target: 'chat' });
+    expect(f.taskContextRegistrations[3]).toMatchObject({ kind: 'kanban-task-message', target: 'chat' });
+    const handoff = f.taskContextRegistrations[2] as typeof import('../../src/client/deterministic-handoff-node.js').deterministicHandoffDefinition;
+    const event = { type: 'user/message', seq: 9, time: 1, surfaceOp: 'append', data: { id: 'handoff-message', source: { kind: 'deterministic-handoff', form: 'notice', summary: 'CI → Manual review', requestId: 'delivery', entryId: 'entry' }, content: [{ type: 'text', text: 'Exit passed · Execution run · [REDACTED]' }] } } as never;
+    expect(handoff.match(event)).toEqual({ id: 'handoff-message', role: 'start', exclusive: true });
+    expect(handoff.match({ type: 'user/message', data: { id: 'ordinary-message', source: { kind: 'user' } } } as never)).toBeNull();
+    for (const definition of [f.taskContextRegistrations[0], f.taskContextRegistrations[1], f.taskContextRegistrations[3]] as typeof handoff[]) expect(definition.match(event)).toBeNull();
+    const state = handoff.start({} as never, { event } as never, {} as never);
+    expect(state).toMatchObject({ form: 'notice', producer: { role: 'inject', label: 'deterministic-handoff' }, source: { requestId: 'delivery', entryId: 'entry' } });
+    const Handoff = f.entries.get('conversation.chat.node:kanban-deterministic-handoff')!.Component;
+    render(<Handoff node={{ data: state }} t={(key: string) => key} />);
+    const row = screen.getByText('CI → Manual review').closest('details');
+    expect(row?.className).toContain('kb-handoff-context-fallback');
+    expect(row?.textContent).toContain('Exit passed · Execution run · [REDACTED]');
+    expect(f.send).not.toHaveBeenCalled();
+    expect(f.requestDraftInitialization).not.toHaveBeenCalled();
     await dispose();
-    expect(f.taskContextDisposer).toHaveBeenCalledTimes(3);
+    expect(f.taskContextDisposer).toHaveBeenCalledTimes(4);
   });
 
   it('renders the conversation window seat inside the retained provider', async () => {
@@ -191,9 +206,9 @@ describe('public SDK plugin binding contracts', () => {
     expect(f.mount).toHaveBeenCalledWith(TYPERT_REMOTE); expect(f.entries.size).toBe(0);
     f.openMount(); const dispose = await pending; disposers.push(dispose);
     expect(inject).toContain('remote'); expect(inject).toContain('uiConversation'); expect(inject).not.toContain('remote.kanban');
-    expect([...f.entries.keys()]).toEqual(['main:kanban', 'kanban.conversation:', 'conversation.chat.node:kanban-task-context', 'conversation.chat.node:kanban-stage-context', 'conversation.chat.node:kanban-task-message', 'sidebar.panellist:kanban', 'conversation.input.dock:kanban-decision-questions', 'tool.call.toolview:decision_request']);
+    expect([...f.entries.keys()]).toEqual(['main:kanban', 'kanban.conversation:', 'conversation.chat.node:kanban-task-context', 'conversation.chat.node:kanban-stage-context', 'conversation.chat.node:kanban-deterministic-handoff', 'conversation.chat.node:kanban-task-message', 'sidebar.panellist:kanban', 'conversation.input.dock:kanban-decision-questions', 'tool.call.toolview:decision_request']);
     expect(f.entries.get('main:kanban')?.options.children).toEqual({ 'kanban.conversation': { kind: 'single', scope: 'session' } });
-    expect(f.uiConversation.events.register).toHaveBeenCalledTimes(3);
+    expect(f.uiConversation.events.register).toHaveBeenCalledTimes(4);
     expect(f.entries.get('sidebar.panellist:kanban')?.options).toMatchObject({ label: 'Kanban', order: 80 });
     expect(f.nativeSelect).not.toHaveBeenCalled(); await dispose(); expect(f.unmount).toHaveBeenCalledOnce();
   });

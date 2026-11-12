@@ -6,8 +6,8 @@ import type { TaskHistoryEntry } from '../../shared/task-history.js';
  * One task as a tool returns it. The flow record stays out of a model's context:
  * it grows with the task, and the drawer is the surface that presents it.
  */
-export function withoutHistory<T extends { history?: TaskHistoryEntry[] }>(task: T): Omit<T, 'history'> {
-  const { history: _history, ...rest } = task;
+export function withoutHistory<T extends { history?: TaskHistoryEntry[]; deterministic?: unknown }>(task: T): Omit<T, 'history' | 'deterministic'> {
+  const { history: _history, deterministic: _execution, ...rest } = task;
   return rest;
 }
 

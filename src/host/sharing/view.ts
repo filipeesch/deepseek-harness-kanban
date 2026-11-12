@@ -27,6 +27,7 @@ function boardState(local: LocalSharedBoard, entry: { name: string; projectKeys?
   // An orphan is a board whose published key the team dropped; a board the team never
   // named has no key and is simply a draft to send.
   if (entry === undefined) return orphaned || local.key !== undefined ? 'orphan' : 'draft';
+  if (stored?.problem?.code === 'SHARING_DOCUMENT_VERSION_UNSUPPORTED') return 'update-required';
   if (stored?.conflict != null) return 'needs-review';
   if ((stored?.behind ?? 0) > 0) return 'updates-available';
   const scopeMatches = (local.projectKeys === undefined && entry.projectKeys === undefined)
@@ -74,7 +75,7 @@ export function buildSharingView(record: HubSharingRecord, hub: HubState, contex
     .filter(([key]) => entries.has(key))
     .map(([key, value]) => ({ key, boardId: value.boardId, name: value.name }));
   const updated = boards.filter(board => board.state === 'updates-available').length + incoming.length;
-  const conflicts = boards.filter(board => board.state === 'needs-review').length;
+  const conflicts = boards.filter(board => board.state === 'needs-review' || board.state === 'update-required').length;
   const drafts = boards.filter(board => board.state === 'draft').length + (orderDiffers(local, manifest) ? 1 : 0) + record.pendingRemovals.length;
   const blocks: SharingBlockerView[] = record.storageReview
     ? [{ code: record.storageReview.code, message: record.storageReview.message }]

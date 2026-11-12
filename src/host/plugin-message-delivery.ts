@@ -7,6 +7,8 @@ export interface PluginMessageTarget {
 /** One plugin message delivery carrying its stable identity. */
 export interface PluginMessageEntry {
   readonly requestId: string;
+  /** Revalidate entry authority after every asynchronous preparation read. */
+  readonly assertCurrent?: () => void;
 }
 
 export interface PluginMessageDeliveryDeps<T extends PluginMessageTarget, D extends PluginMessageEntry> {
@@ -87,6 +89,7 @@ export function createPluginMessageDelivery<T extends PluginMessageTarget, D ext
       // The awaited read may let a concurrent admission land; the target is
       // authoritative immediately before the synchronous delivery.
       if (target.pending(delivery.requestId)) return;
+      delivery.assertCurrent?.();
       await deps.deliver(target, delivery);
       delivered.add(key);
       if (delivered.size > 1024) {

@@ -26,7 +26,7 @@ function setup(options: { events?: readonly unknown[]; read?: (id: string) => Pr
   const report = vi.fn();
   const dispose = registerTaskContextInjection(ctx, locator, { history: { read }, report });
   const signal = new AbortController().signal;
-  const step = (agent: Agent, messages: ReturnType<typeof userMessage>[]) => ctx.waterfall('agent/pre-step', { agent, turn: 1, step: 1, signal, messages }, enter(messages));
+  const step = (agent: Agent, messages: ReturnType<typeof userMessage>[]) => ctx.waterfall('agent/pre-step', { agent, turn: 1, step: 1, modelSelection: { provider: 'fixture', model: 'fixture' }, signal, messages }, enter(messages));
   return { ctx, read, report, dispose, step, setEvents: (next: readonly unknown[]) => { events = next; }, agent: { id: SessionId('session-1') } as Agent };
 }
 
@@ -65,7 +65,7 @@ describe('task context injection', () => {
   it('does not inspect or inject an aborted first step', async () => {
     const f = setup();
     const controller = new AbortController(); controller.abort();
-    const result = await f.ctx.waterfall('agent/pre-step', { agent: f.agent, turn: 1, step: 1, signal: controller.signal, messages: [userMessage('Hello')] }, enter([userMessage('Hello')]));
+    const result = await f.ctx.waterfall('agent/pre-step', { agent: f.agent, turn: 1, step: 1, modelSelection: { provider: 'fixture', model: 'fixture' }, signal: controller.signal, messages: [userMessage('Hello')] }, enter([userMessage('Hello')]));
     if (result.kind !== 'enter') throw new Error('expected enter');
     expect(result.messages).toHaveLength(1);
     expect(f.read).not.toHaveBeenCalled();
@@ -110,7 +110,7 @@ describe('task context injection', () => {
     const read = vi.fn(async () => ({ events: [] }));
     const dispose = registerTaskContextInjection(ctx, locator, { history: { read } });
     const agent = { id: SessionId('session-1') } as Agent;
-    const decision = await ctx.waterfall('agent/pre-step', { agent, turn: 1, step: 1, signal: new AbortController().signal, messages: [userMessage('Hello')] }, async () => ({ kind: 'reject' as const }));
+    const decision = await ctx.waterfall('agent/pre-step', { agent, turn: 1, step: 1, modelSelection: { provider: 'fixture', model: 'fixture' }, signal: new AbortController().signal, messages: [userMessage('Hello')] }, async () => ({ kind: 'reject' as const }));
     expect(decision).toEqual({ kind: 'reject' });
     expect(read).not.toHaveBeenCalled();
     dispose();

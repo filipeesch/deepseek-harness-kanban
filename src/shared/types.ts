@@ -1,3 +1,5 @@
+import type { DeterministicDefinition, DeterministicControl, DeterministicHandoff, DeterministicReview, DeterministicSummary, TaskStageEntry } from './deterministic.js';
+export type { DeterministicDefinition, DeterministicControl, DeterministicHandoff, DeterministicReview, DeterministicSummary, TaskStageEntry } from './deterministic.js';
 import type { NewTask } from './task-creation.js';
 import type { TaskHistoryEntry } from './task-history.js';
 
@@ -50,7 +52,7 @@ export type TransitionRule = { to: string; when?: string }
 /** An authored minimum size for one stage, in diagram pixels. */
 export interface StageSize { width: number; height: number }
 export interface Column {
-  id: string; name: string; onEnterPrompt?: string; allowedTransitions?: TransitionRule[];
+  id: string; name: string; onEnterPrompt?: string; allowedTransitions?: TransitionRule[]; deterministic?: DeterministicDefinition;
   /**
    * Stable stage identity, allocated when the stage first enters a published workflow and
    * preserved across identifier renames. Absent on a board that was never published.
@@ -69,6 +71,7 @@ export interface TransitionCondition {
 }
 /** The stage fields one stage edit may change; an absent field is left as authored. */
 export interface StagePatch {
+  deterministic?: DeterministicDefinition | null;
   /** New display name; absent leaves the name as authored. */
   name?: string;
   /** New entry instruction; `null` clears it, absent leaves it as authored. */
@@ -145,6 +148,9 @@ export interface AutoModeState { enabled: boolean; pause?: AutoModePause; hold?:
 /** One transition recorded for a task's current stage, the stage it was recorded for, and the reason the agent gave. */
 export interface RecordedTransition { fromColumnId: string; columnId: string; at: string; /** Absent only on a recording stored before reasons existed; such a recording never arms an advance by itself. */ reason?: string }
 export interface Task {
+  stageEntry?: TaskStageEntry;
+  deterministic?: DeterministicControl;
+  deterministicHandoff?: DeterministicHandoff;
   id: string; projectId: string; title: string; description: string; columnId: string; position: number;
   sessionIds: string[]; closedSessionIds: string[]; effectiveCwd: string;
   worktree: Worktree | null; operation: ContextOperation | null; pendingTransition?: PendingTransition;
@@ -166,6 +172,8 @@ export interface Task {
 export interface Note { id: string; taskId: string; content: string; createdAt: string; updatedAt: string; tags?: string[] }
 export interface BoardSettings { worktreeBasePath?: string }
 export interface Board {
+  /** Local-only stable associations; configuring a stage never publishes an identity. */
+  localStageIdentities?: Record<string, string>;
   id: string; name: string; workflowYaml: string; workflow: Workflow;
   /** Absent means every project of the Hub may create tasks on this board; an empty list closes it to creation. */
   allowedProjectKeys?: string[];
@@ -229,7 +237,7 @@ export interface KanbanSettings { revision: number; worktreeBasePath?: string }
 export interface KanbanMeta { initializedAt?: string; settingsRevision: number; worktreeBasePath?: string }
 export interface KanbanState { hubs: HubState[]; settings: KanbanSettings }
 /** Legacy single-board state, read only by the migration path. */
-export interface BoardState { schemaVersion: 2; revision: number; workflowYaml: string; workflow: Workflow; projects: Project[]; tasks: Task[]; notes: Note[]; settings?: BoardSettings }
+export interface BoardState { localStageIdentities?: Record<string, string>; schemaVersion: 2; revision: number; workflowYaml: string; workflow: Workflow; projects: Project[]; tasks: Task[]; notes: Note[]; settings?: BoardSettings }
 export type BackgroundKind = 'job' | 'schedule';
 /** One unsettled activity that outlives the turn, owned by a task conversation. */
 export interface BackgroundActivity { kind: BackgroundKind; label: string }
@@ -259,7 +267,7 @@ export interface CommandReceipt {
   model?: ConversationModelOutcome;
 }
 /** One board's publishing state, projected from the stored sharing record. */
-export type SharingBoardState = 'in-sync' | 'draft' | 'updates-available' | 'needs-review' | 'orphan';
+export type SharingBoardState = 'in-sync' | 'draft' | 'updates-available' | 'needs-review' | 'update-required' | 'orphan';
 export type SharingHubStatus = 'not-published' | 'preview' | 'published' | 'updates-available' | 'needs-review' | 'unavailable';
 /** Every team storage the product supports. This tuple is the single declared source of truth. */
 export const SHARING_STORAGES = ['git', 'google-drive', 'google-drive-local', 'local-folder'] as const;
@@ -401,7 +409,7 @@ export interface RetainedCheckout { path: string; projectId: string; taskTitle: 
  * `state` is present on baselines and command responses and omitted from an update frame that
  * did not change the state revision; the client merges it with the state it already holds.
  */
-export interface HostSnapshot { commandReceipt?: CommandReceipt; state?: KanbanState; stateRevision: number; conversations: Record<string, ConversationFacts>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; /** Runtime state of every Hub's schedules; omitted when empty. */ scheduleRuntime?: Record<string, HubScheduleRuntime>; /** Transient, in-memory retained checkouts; omitted when empty. */ retainedCheckouts?: RetainedCheckout[]; sequence: number }
+export interface HostSnapshot { deterministic?: Record<string, DeterministicSummary>; commandReceipt?: CommandReceipt; state?: KanbanState; stateRevision: number; conversations: Record<string, ConversationFacts>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; /** Runtime state of every Hub's schedules; omitted when empty. */ scheduleRuntime?: Record<string, HubScheduleRuntime>; /** Transient, in-memory retained checkouts; omitted when empty. */ retainedCheckouts?: RetainedCheckout[]; sequence: number }
 /** A snapshot that carries the board state: every unary response, baseline, and command result. */
 export type FullHostSnapshot = HostSnapshot & { state: KanbanState };
 /** A request for one unary snapshot; every field is an optional hint, never a required read. */
@@ -418,6 +426,11 @@ export interface KanbanSnapshot extends Omit<HostSnapshot, 'conversations' | 'st
 export const EMPTY_ATTENTION: Attention = { running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
 export interface ProjectInput { id?: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string; projectKey?: string }
 export type Command =
+  | { type: 'task.deterministicPlay'; taskId: string }
+  | { type: 'task.deterministicStop'; taskId: string; executionId?: string }
+  | { type: 'task.deterministicApprove'; taskId: string; executionId: string; fingerprint: string }
+  | { type: 'task.deterministicVariable'; taskId: string; projectId: string; stageIdentity: string; name: string; value?: string }
+  | { type: 'task.deterministicRetryDelivery'; taskId: string; entryId: string; executionId: string }
   | { type: 'hub.create'; name: string }
   | { type: 'hub.rename'; hubId: string; name: string; expectedRevision?: number }
   | { type: 'hub.delete'; hubId: string; confirmed: boolean }
@@ -465,6 +478,7 @@ export type Command =
   | { type: 'schedule.runNow'; hubId: string; scheduleId: string };
 export type Outcome<T> = { ok: true; value: T } | { ok: false; error: Problem };
 export interface ClientApi {
+  deterministicReview?(taskId: string): Promise<DeterministicReview>;
   snapshot(request?: SnapshotRequest): Promise<KanbanSnapshot>;
   command(command: Command): Promise<KanbanSnapshot>;
   sharing(command: SharingCommand): Promise<KanbanSnapshot>;

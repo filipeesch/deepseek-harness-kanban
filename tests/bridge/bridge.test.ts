@@ -61,6 +61,7 @@ function fixture(options: { storage?: KeyValueStorage } = {}) {
       snapshot: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: hostSnapshot() } }),
       command: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: hostSnapshot(2) } }),
       sharing: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: hostSnapshot(2) } }),
+      deterministicReview: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { executionId: 'run', fingerprint: 'version', code: 'echo test', language: 'bash', directory: 'task', exits: { ok: 'done' }, env: [], variables: [] } } }),
       branches: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['main'] } }),
       modelCatalog: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { default: { provider: 'deepseek', model: 'chat' }, providers: [], failures: [] } } }),
       worktreeDefault: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { branchName: 'task', path: '' } } }),

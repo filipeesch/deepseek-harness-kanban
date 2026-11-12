@@ -13,7 +13,7 @@ import { decodeEvent, encodeEvent, EVENT_FORMAT_VERSION, type BoardChange, type 
  * snapshot without losing which stage is which.
  */
 
-export const BOARD_LOG_VERSION = 1;
+export const BOARD_LOG_VERSION = 2;
 /** How many events one log keeps before the tail is folded into the snapshot. */
 export const BOARD_LOG_EVENT_BOUND = 200;
 /** The most events one stored log may carry, so a hostile log cannot exhaust the reader. */
@@ -34,7 +34,20 @@ export interface BoardLogFile {
 
 /** A log that carries one board state and no history. */
 export function createBoardLog(text: string): BoardLogFile {
-  return { version: BOARD_LOG_VERSION, snapshot: { text, seq: 0 }, events: [] };
+  return { version: executableText(text) ? 2 : 1, snapshot: { text, seq: 0 }, events: [] };
+}
+
+/** Executable grammar requires an envelope signal even with an empty tail. */
+function executableText(text: string): boolean {
+  try {
+    const raw = parseYaml(text) as { columns?: unknown };
+    return Array.isArray(raw?.columns) && raw.columns.some(column => typeof column === 'object' && column !== null && Object.hasOwn(column, 'deterministic'));
+  } catch { return false; }
+}
+function executableChange(change: BoardChange): boolean {
+  return change.kind === 'stage.field-changed' && change.field === 'deterministic'
+    || change.kind === 'stage.created' && change.stage.deterministic !== undefined
+    || change.kind === 'workflow.replaced' && executableText(change.text);
 }
 
 /** The sequence the next appended event takes. */
@@ -55,8 +68,8 @@ export function headToken(log: BoardLogFile): string {
 /** Append events to a log, stamped with their positions. */
 export function appendEvents(log: BoardLogFile, changes: readonly BoardChange[], at: string): BoardLogFile {
   let seq = nextSequence(log);
-  const events = changes.map(change => ({ ...change, seq: seq++, at, v: EVENT_FORMAT_VERSION } as JournalEvent));
-  return { ...log, events: [...log.events, ...events] };
+  const events = changes.map(change => ({ ...change, seq: seq++, at, v: executableChange(change) ? EVENT_FORMAT_VERSION : 1 } as JournalEvent));
+  return { ...log, version: log.version === 2 || executableText(log.snapshot.text) || changes.some(executableChange) ? 2 : 1, events: [...log.events, ...events] };
 }
 
 /** The events a member at the given cursor has not seen yet. */
@@ -117,7 +130,7 @@ export function compactBoardLog(log: BoardLogFile, bound = BOARD_LOG_EVENT_BOUND
 /** Serialize one log for storage. */
 export function encodeBoardLog(log: BoardLogFile): Record<string, unknown> {
   return {
-    version: BOARD_LOG_VERSION,
+    version: log.version,
     snapshot: { seq: log.snapshot.seq, text: log.snapshot.text },
     events: log.events.map(event => encodeEvent(event)),
   };
@@ -142,6 +155,7 @@ export function decodeBoardLog(raw: unknown): BoardLogDecode {
   const value = raw as Record<string, unknown>;
   const version = value.version;
   if (typeof version !== 'number' || !Number.isInteger(version)) return { ok: false, reason: 'invalid', message: 'A board log must state an integer format version.' };
+  if (version < 1) return { ok: false, reason: 'invalid', message: 'A board log version must be positive.' };
   if (version > BOARD_LOG_VERSION) return { ok: false, reason: 'unsupported-version', version };
   const snapshot = value.snapshot;
   if (typeof snapshot !== 'object' || snapshot === null) return { ok: false, reason: 'invalid', message: 'A board log requires a snapshot.' };
@@ -149,6 +163,7 @@ export function decodeBoardLog(raw: unknown): BoardLogDecode {
   if (typeof snapshotValue.text !== 'string' || snapshotValue.text.trim().length === 0) return { ok: false, reason: 'invalid', message: 'A board log snapshot requires workflow text.' };
   if (snapshotValue.text.length > BOARD_LOG_TEXT_LIMIT) return { ok: false, reason: 'invalid', message: 'A board log snapshot exceeds the supported size.' };
   if (typeof snapshotValue.seq !== 'number' || !Number.isInteger(snapshotValue.seq) || snapshotValue.seq < 0) return { ok: false, reason: 'invalid', message: 'A board log snapshot requires a sequence.' };
+  if (version === 1 && executableText(snapshotValue.text)) return { ok: false, reason: 'unsupported-version', version: 2 };
   const rawEvents = value.events === undefined ? [] : value.events;
   if (!Array.isArray(rawEvents)) return { ok: false, reason: 'invalid', message: 'A board log events field must be an array.' };
   if (rawEvents.length > BOARD_LOG_EVENT_LIMIT) return { ok: false, reason: 'invalid', message: 'A board log carries more events than this installation supports.' };
@@ -157,11 +172,12 @@ export function decodeBoardLog(raw: unknown): BoardLogDecode {
   for (const item of rawEvents) {
     const decoded = decodeEvent(item);
     if (!decoded.ok) return decoded;
+    if (version === 1 && (decoded.event.v === 2 || executableChange(decoded.event))) return { ok: false, reason: 'unsupported-version', version: 2 };
     // A cursor is only meaningful over an ordered log, so a disorder is refused here.
     if (decoded.event.seq <= previous) return { ok: false, reason: 'invalid', message: 'A board log must carry its events in order, after its snapshot.' };
     previous = decoded.event.seq;
     events.push(decoded.event);
   }
-  return { ok: true, log: { version: BOARD_LOG_VERSION, snapshot: { text: snapshotValue.text, seq: snapshotValue.seq }, events } };
+  return { ok: true, log: { version, snapshot: { text: snapshotValue.text, seq: snapshotValue.seq }, events } };
 }
 

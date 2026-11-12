@@ -16,6 +16,9 @@ import { resolveNextStageRoute } from '../domain/transition-route.js';
 import type { AutoRunController } from './auto-run.js';
 import { DrawerAutoRunNotice } from './auto-run-view.js';
 import { autoModeView } from './auto-mode.js';
+import { ScriptPanel } from './deterministic-panel.js';
+import { useScriptSummary } from './deterministic-context.js';
+import { ownedScript, scriptActive } from './deterministic-view.js';
 import { DrawerHeader } from './drawer-header.js';
 import { DrawerConversations } from './drawer-conversations.js';
 import type { SessionTitles } from './conversation-label.js';
@@ -44,6 +47,7 @@ function clampWidth(value: number): number { const max = Math.max(360, (typeof w
 function storedWidth(): number { try { const value = Number(window.localStorage.getItem(DRAWER_WIDTH_KEY)); if (Number.isFinite(value) && value > 0) return clampWidth(value === 560 ? DRAWER_DEFAULT_WIDTH : value); } catch { /* storage is optional */ } return clampWidth(DRAWER_DEFAULT_WIDTH); }
 
 export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAttention, state, api, run, autoRun, renderConversation, onClose, onMove, onDanger, onForce, onToggleAutoMode, autoModePending = false, viewState, sessionTitles, conversationLeases, entering = false, closing = false }: DrawerProps) {
+  const script = ownedScript(task, useScriptSummary(task.id));
   const [localViewState] = useState(createTaskPageState); const preferences = viewState ?? localViewState;
   const [section, setSection] = usePageField(preferences, 'section'); const id = useId(); const close = useRef<HTMLButtonElement>(null);
   const [width, setWidth] = useState(storedWidth); const widthRef = useRef(width); widthRef.current = width;
@@ -73,7 +77,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
   const project = state.projects.find(value => value.id === task.projectId); const blocked = Boolean(task.operation || task.pendingTransition);
   // The task-level attention already merges every conversation's pending user work,
   // including a closed one, so the control reads that instead of re-merging.
-  const autoMode = autoModeView(task, state.workflow, attention.pending);
+  const autoMode = autoModeView(task, state.workflow, attention.pending, script !== undefined);
   const gitBacked = project !== undefined && isGitProject(project);
   const worktreeDecisionRequired = requiresWorktreeDecision(task, project);
   const sections: DrawerSection[] = gitBacked ? ['Conversations', 'Info', 'Git', 'Notes', 'History'] : ['Conversations', 'Info', 'Notes', 'History'];
@@ -118,7 +122,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
     <div className="kb-drawer-resize" role="separator" aria-orientation="vertical" aria-label="Resize task drawer" aria-valuenow={Math.round(width)} aria-valuemin={360} aria-valuemax={Math.round(Math.max(360, (typeof window === 'undefined' ? 1200 : window.innerWidth) * 0.9))} tabIndex={0} onPointerDown={startResize} onDoubleClick={() => persistWidth(clampWidth(DRAWER_DEFAULT_WIDTH))} onKeyDown={resizeKey} />
     <DrawerHeader
       title={{ id: id + '-title', title: task.title, projectName }}
-      sectionNav={{ id, sections, selected: section, onSelect: value => setSection(value), activity: attention }}
+      sectionNav={{ id, sections, selected: section, onSelect: value => setSection(value), activity: { ...attention, script: scriptActive(script) } }}
       stage={{ id, destinations, currentColumnId: task.columnId, next, ...(staleNext === undefined ? {} : { staleNext, onRefuse: () => setStageNotice(staleNext) }), movingTo, blocked, onMove: column => { void moveTo(column); } }}
       actions={{ ...(onToggleAutoMode ? { autoMode, onToggleAutoMode: (enabled: boolean) => onToggleAutoMode(task.id, enabled) } : {}), autoModePending, blocked, onDelete: () => onDanger(task, 'task.delete'), onClose, closeRef: close }}
     />
@@ -127,7 +131,8 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
       {task.pendingTransition && <PendingTransitionStatus task={task} run={run} columnName={state.workflow.columns.find(column => column.id === task.pendingTransition?.columnId)?.name ?? task.pendingTransition?.columnId ?? ''} />}
     </div>}
     {stageNotice !== null && <div className="kb-status-stack"><div className="kb-error" role="alert"><strong>The recorded transition is no longer valid</strong><span>{stageNotice}</span></div></div>}
-    {autoRun && <DrawerAutoRunNotice task={task} controller={autoRun} columns={state.workflow.columns} sessionTitles={sessionTitles} />}
+    <ScriptPanel task={task} column={state.workflow.columns.find(column => column.id === task.columnId)} projectName={projectName} api={api} run={run} />
+    {autoRun && !script && <DrawerAutoRunNotice task={task} controller={autoRun} columns={state.workflow.columns} sessionTitles={sessionTitles} />}
     <section className={'kb-drawer-panel ' + (section === 'Conversations' ? 'kb-chat-panel' : '')} role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>
       {section === 'Conversations' && <>{!gitBacked && task.worktree && <p className="kb-hint" role="note" aria-label="Plain checkout">This checkout is no longer Git-managed. Git actions are unavailable and the directory is kept when the task is deleted.</p>}{gitBacked && !task.worktree && !task.worktreeDismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} />}<DrawerConversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} worktreeDecisionRequired={worktreeDecisionRequired} projectUnavailable={project === undefined} conversationAttention={conversationAttention} modelNoticeDismissed={modelNoticeDismissed} onDismissModelNotice={sessionId => setModelNoticeDismissed(current => current.includes(sessionId) ? current : [...current, sessionId])} /></>}
       {section === 'Info' && <InfoPanel task={task} state={state} run={run} viewState={preferences} />}

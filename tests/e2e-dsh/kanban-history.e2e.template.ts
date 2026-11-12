@@ -160,12 +160,11 @@ it('records creation, stage entries, auto mode, a recorded destination, and a wo
   await expectText(rows(page).first(), 'Requested by the agent: Review the diff');
 
   // A recorded destination is an intention; clearing it records nothing.
-  const taskId = await listedTaskId(scaffold, sessionId);
-  await runTool(scaffold, 'set_next_transition', { task_id: taskId, column_id: 'done' }, sessionId);
+  await runTool(scaffold, 'set_next_transition', { column_id: 'done', reason: 'Ready for review' }, sessionId);
   await expect.poll(() => rows(page).count()).toBe(5);
   await expectText(rows(page).first(), 'Next stage recorded');
   await expectText(rows(page).first(), 'Plan \u2192 Done');
-  await runTool(scaffold, 'set_next_transition', { task_id: taskId }, sessionId);
+  await runTool(scaffold, 'set_next_transition', {}, sessionId);
   await page.waitForTimeout(1000);
   expect(await rows(page).count()).toBe(5);
 

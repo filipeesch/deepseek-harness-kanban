@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SharedBoardEntry } from '../../src/domain/sharing/manifest.js';
 import { evaluateBoard, publishedWorkflow, wouldOrphanTasks, type LocalBoardView } from '../../src/domain/sharing/board-plan.js';
-import { appendEvents, createBoardLog } from '../../src/domain/journal/log.js';
+import { appendEvents, compactBoardLog, createBoardLog } from '../../src/domain/journal/log.js';
 
 const NL = String.fromCharCode(10);
 const AT = '2026-01-01T00:00:00.000Z';
@@ -48,6 +48,14 @@ describe('per-board evaluation', () => {
     expect(after.draft).toBe(false);
   });
 
+  it('reports an unapplied compacted snapshot even when its event tail is empty', () => {
+    const changed = appendEvents(createBoardLog(BASE), [{ kind: 'workflow.field-changed', field: 'name', value: 'Compacted update' }], AT);
+    const log = compactBoardLog(changed, 0); expect(log.events).toEqual([]);
+    const evaluation = evaluateBoard({ entry, local: local(), log, cursor: 0 });
+    expect(evaluation.state).toBe('updates-available');
+    expect(evaluation.apply).toMatchObject({ kind: 'applies', events: 1, text: expect.stringContaining('Compacted update') });
+  });
+
   it('reports a local draft beside team events', () => {
     const log = appendEvents(createBoardLog(BASE), [{ kind: 'workflow.field-changed', field: 'name', value: 'Renamed' }], AT);
     const evaluation = evaluateBoard({ entry, local: local({ workflow: BASE.replace('label: Plan', 'label: Planning') }), log, cursor: 0 });
@@ -61,6 +69,24 @@ describe('per-board evaluation', () => {
     const evaluation = evaluateBoard({ entry, local: local({ workflow: renamed }), log, cursor: 0 });
     expect(evaluation.state).toBe('needs-review');
     expect(evaluation.apply).toMatchObject({ kind: 'conflict', conflict: 'identity' });
+  });
+
+  it('previews migrated tasks across sequential team renames without a false orphan refusal', () => {
+    const log = appendEvents(createBoardLog(BASE), [
+      { kind: 'stage.id-changed', key: 's2', from: 'plan', id: 'review' },
+      { kind: 'stage.id-changed', key: 's2', from: 'review', id: 'ready' },
+    ], AT);
+    const evaluation = evaluateBoard({ entry, local: local({ tasks: 1, taskColumns: [{ columnId: 'plan', tasks: 1 }] }), log, cursor: 0 });
+    expect(evaluation.apply).toMatchObject({ kind: 'applies' }); expect(evaluation.refuses).toBe(false);
+  });
+
+  it('previews named deterministic exits after a destination identity rename', () => {
+    const source = BASE.replace('    label: Backlog', '    label: Backlog\n    deterministic: {language: bash, code: "printf ready", exits: {passed: plan}}');
+    const log = appendEvents(createBoardLog(source), [{ kind: 'stage.id-changed', key: 's2', from: 'plan', id: 'review' }], AT);
+    const evaluation = evaluateBoard({ entry, local: local({ workflow: source, tasks: 1, taskColumns: [{ columnId: 'plan', tasks: 1 }] }), log, cursor: 0 });
+    expect(evaluation.refuses).toBe(false); expect(evaluation.apply).toMatchObject({ kind: 'applies' });
+    if (evaluation.apply.kind !== 'applies') throw new Error('Expected team update.');
+    expect(evaluation.apply.text).toContain('passed: review');
   });
 
   it('refuses an application that would leave a task in an undefined stage', () => {

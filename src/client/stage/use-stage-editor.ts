@@ -1,4 +1,6 @@
 import { useCallback, useState } from 'react';
+import { useScriptSummaries } from '../deterministic-context.js';
+import { deterministicDraft } from './deterministic-draft.js';
 import type { Attention, Column, Task } from '../../shared/types.js';
 import type { RunCommand } from '../ui.js';
 import { useWorkflowSave } from '../workflow-save.js';
@@ -26,10 +28,11 @@ export function useStageEditor({ hubId, boardId, revision, column, columns, task
   const problems: StageEditorProblem[] = draftProblems(draft, otherIds);
   const changed = draftChanged(draft, column);
   const warning = duplicateNameWarning(draft, columns, column.id);
-  const renameBlock = stageRenameBlock(tasks, attention);
+  const deterministic = useScriptSummaries();
+  const renameBlock = stageRenameBlock(tasks, attention, deterministic);
 
   const change = useCallback(<K extends keyof StageEditorDraft>(key: K, value: StageEditorDraft[K]) => {
-    setDraft(current => ({ ...current, [key]: value }));
+    setDraft(current => key === 'execution' && value === 'deterministic' ? { ...current, execution: 'deterministic', deterministic: current.deterministic ?? deterministicDraft(), onEnterPrompt: '', mode: 'any', transitions: [] } : { ...current, [key]: value });
   }, []);
 
   const chooseDestination = useCallback((to: string, chosen: boolean) => {

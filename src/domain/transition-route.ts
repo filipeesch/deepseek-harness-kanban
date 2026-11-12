@@ -1,9 +1,10 @@
+import { ownsDeterministicEntry } from './deterministic-state.js';
 import type { Column, Task, Workflow } from '../shared/types.js';
 import { resolveAutoAdvance, type AutoAdvancePlan } from './auto-advance.js';
 import { defaultDestination, nextStage } from './transitions.js';
 
 /** The task fields the routing rules read. */
-export type RoutedTask = Pick<Task, 'columnId' | 'recordedTransition'>;
+export type RoutedTask = Pick<Task, 'columnId' | 'recordedTransition'> & Partial<Pick<Task, 'stageEntry' | 'deterministic'>>;
 
 /** Why a recorded transition no longer applies to the task's current stage. */
 export type TransitionStaleReason = 'missing-stage' | 'not-configured' | 'not-allowed';
@@ -21,6 +22,7 @@ export type RecordedTransitionResolution =
  * lists the target.
  */
 export function recordedTransition(workflow: Workflow, task: RoutedTask): RecordedTransitionResolution {
+  if (ownsDeterministicEntry(task) || workflow.columns.find(column => column.id === task.columnId)?.deterministic !== undefined) return { kind: 'none' };
   const recorded = task.recordedTransition;
   if (recorded === undefined || recorded.fromColumnId !== task.columnId) return { kind: 'none' };
   const source = workflow.columns.find(column => column.id === recorded.fromColumnId);
@@ -44,6 +46,7 @@ export type ArmedTask = RoutedTask & Pick<Task, 'autoMode'>;
  * and for the drawer, and arms nothing by itself.
  */
 export function advanceArmed(workflow: Workflow, task: ArmedTask): boolean {
+  if (ownsDeterministicEntry(task) || workflow.columns.find(column => column.id === task.columnId)?.deterministic !== undefined) return false;
   if (task.autoMode?.enabled === true) return true;
   const recorded = recordedTransition(workflow, task);
   return recorded.kind === 'resolved' && recorded.reason !== undefined;
@@ -105,6 +108,7 @@ export function resolveNextStageRoute(workflow: Workflow, task: RoutedTask): Nex
 }
 
 export function resolveAdvanceRoute(workflow: Workflow, task: RoutedTask): AdvanceRoute {
+  if (ownsDeterministicEntry(task)) return { kind: 'none' };
   const destination = routeDestination(workflow, task);
   if (destination.kind === 'none') return { kind: 'none' };
   if (destination.kind === 'stale') return { kind: 'stale', message: destination.message };

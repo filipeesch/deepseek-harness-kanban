@@ -145,7 +145,7 @@ describe('board log', () => {
     const decoded = decodeBoardLog(encodeBoardLog(log));
     expect(decoded.ok).toBe(true);
     if (decoded.ok) expect(headToken(decoded.log)).toBe(headToken(log));
-    expect(decodeBoardLog({ ...encodeBoardLog(log), version: 2 })).toEqual({ ok: false, reason: 'unsupported-version', version: 2 });
+    expect(decodeBoardLog({ ...encodeBoardLog(log), version: 3 })).toEqual({ ok: false, reason: 'unsupported-version', version: 3 });
     expect(decodeBoardLog({ version: 1, snapshot: { text: ' ', seq: 0 }, events: [] }).ok).toBe(false);
     expect(decodeBoardLog({ version: 1, snapshot: { text: BASE, seq: 5 }, events: [{ kind: 'workflow.field-changed', field: 'name', value: 'X', seq: 1, at: AT, v: 1 }] }).ok).toBe(false);
     expect(decodeBoardLog({ version: 1, snapshot: { text: BASE, seq: 0 }, events: [
@@ -156,7 +156,7 @@ describe('board log', () => {
 
   it('refuses an event of a newer format', () => {
     const log = encodeBoardLog(appendEvents(createBoardLog(BASE), changes, AT));
-    const events = (log.events as unknown[]).map(entry => ({ ...(entry as object), v: 2 }));
-    expect(decodeBoardLog({ ...log, events })).toEqual({ ok: false, reason: 'unsupported-version', version: 2 });
+    const events = (log.events as unknown[]).map(entry => ({ ...(entry as object), v: 3 }));
+    expect(decodeBoardLog({ ...log, events })).toEqual({ ok: false, reason: 'unsupported-version', version: 3 });
   });
 });

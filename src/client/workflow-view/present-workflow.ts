@@ -13,7 +13,7 @@ export function presentWorkflow(workflow: Workflow, overrides: TransitionOverrid
   const ids = Object.keys(overrides).filter(stageId => overrides[stageId] !== undefined);
   if (ids.length === 0) return workflow;
   const columns = workflow.columns.map(column => {
-    if (!(column.id in overrides)) return column;
+    if (column.deterministic || !(column.id in overrides)) return column;
     const value = overrides[column.id];
     if (value === undefined) return column;
     const next = { ...column };

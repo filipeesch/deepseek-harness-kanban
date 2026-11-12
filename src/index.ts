@@ -1,5 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import os from 'node:os';
+import { isAbsolute, join } from 'node:path';
+import { createDeterministicRuntime } from './host/deterministic/index.js';
 import type {} from '@deepseek-ai/dsh-typert-registry';
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-subagent';
@@ -35,6 +37,7 @@ import { KanbanController } from './host/controller.js';
 import { registerProductTools } from './host/tools.js';
 import { KanbanError } from './shared/errors.js';
 import { registerTaskContextInjection } from './host/task-context.js';
+import { registerDeterministicHandoffInjection } from './host/deterministic-handoff.js';
 import { createSessionHistory } from './host/session-history.js';
 import { openScheduleRunStorage } from './host/schedule-run-storage.js';
 import { ScheduleRunRegistry } from './host/schedule-runs.js';
@@ -195,6 +198,16 @@ export async function apply(ctx:Context):Promise<void>{
  const teamFiles=new TeamFiles({store:hubId=>sharing.service.fileStoreFor(hubId),exclusive:(hubId,operation)=>sharing.service.exclusive(hubId,operation)});
  const sessionModels=createSessionModelPort(ctx);
  const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,models:sessionModels,report,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
+ const profile=ctx.get('profileContext') as {readonly dir:string}|undefined;
+ if(profile&&isAbsolute(profile.dir)){
+  // Optional child injection grants access without making conventional boards
+  // depend on providers that might not be installed in this profile.
+  const runtimeFiber=ctx.inject(['fs','shell','ptcRuntime','sandbox'],child=>{
+   const detach=app.attachDeterministicRuntime(createDeterministicRuntime({context:child,privateDirectory:join(profile.dir,'kanban-private','deterministic')}));
+   child.effect(()=>detach,'kanban.deterministicRuntime');
+  });
+  ctx.effect(()=>()=>runtimeFiber.dispose(),'kanban.optionalDeterministicRuntime');
+ }
  const taskMessages=new InterCardMessaging({locateBySession:id=>app.locator.bySession(id),locate:id=>app.locator.byTask(id),prepare:id=>app.prepareMessageConversation(id),delivery:createNativeTaskMessageDelivery(ctx,history)});
  sharing.setNotify(()=>app.sharingChanged());
  const scheduleRuns=new ScheduleRunRegistry({storage:schedules.storage,now:()=>new Date().toISOString(),onChange:()=>app.activityChanged(),report});
@@ -232,9 +245,9 @@ export async function apply(ctx:Context):Promise<void>{
   runtime:()=>scheduleRuns.runtimeByHub(),
   modelCatalog:refresh=>sessionModels.catalog(refresh),
  });
- let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offSignals:(()=>void)|undefined;let offAdoption:(()=>void)|undefined;let offScheduleStatus:(()=>void)|undefined;
+ let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offHandoff:(()=>void)|undefined;let offSignals:(()=>void)|undefined;let offAdoption:(()=>void)|undefined;let offScheduleStatus:(()=>void)|undefined;
  ctx.effect(()=>async()=>{
-  lifetime.abort();offTools?.();offWire?.();offGuards?.();offContext?.();offSignals?.();offAdoption?.();offScheduleStatus?.();offSchedules();
+  lifetime.abort();offTools?.();offWire?.();offGuards?.();offContext?.();offHandoff?.();offSignals?.();offAdoption?.();offScheduleStatus?.();offSchedules();
   scheduleCoordinator.dispose();
   try{await scheduleCoordinator.settle();}finally{
    scheduleWatcher.dispose();
@@ -262,6 +275,7 @@ export async function apply(ctx:Context):Promise<void>{
  offSignals=registerAttentionSignals(ctx,app);
  offGuards=registerTaskExecutionGuards(ctx,app.locator,app);
  offContext=registerTaskContextInjection(ctx,app.locator,{history,report});
+ offHandoff=registerDeterministicHandoffInjection(ctx,{locateBySession:id=>app.locator.bySession(id),events:async id=>(await history.read(id)).events,reserve:(taskId,entryId,id)=>app.reserveDeterministicHandoff(taskId,entryId,id),accept:(taskId,entryId,id)=>app.acceptDeterministicHandoff(taskId,entryId,id),report});
  const adopter=new ForkAdopter({
   locate:sessionId=>{const located=app.locator.bySession(sessionId);return located===undefined?undefined:{hubId:located.hubId,taskId:located.task.id,effectiveCwd:located.task.effectiveCwd};},
   directory:sessionId=>native.sessions.directory(sessionId),

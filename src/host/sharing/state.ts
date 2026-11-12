@@ -33,6 +33,8 @@ export interface StoredBoard {
   draft: boolean;
   /** Applying this board requires a choice before it can proceed. */
   conflict: 'identity' | 'lifecycle' | null;
+  /** A board-local format error must not block observation of other boards. */
+  problem?: { code: string; message: string } | null;
 }
 
 /** One Hub's local publishing state. A record exists only while the Hub is published. */
@@ -73,6 +75,7 @@ const storedBoard = z.strictObject({
   behind: z.number().int().min(0),
   draft: z.boolean(),
   conflict: z.enum(['identity', 'lifecycle']).nullable(),
+  problem: z.strictObject({ code: z.string().min(1), message: z.string() }).nullable().optional(),
 });
 const storedManifest = z.strictObject({ token: z.string().min(1), manifest: SharedHubManifestSchema });
 const binding = z.strictObject({

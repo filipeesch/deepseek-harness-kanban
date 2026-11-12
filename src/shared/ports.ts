@@ -40,6 +40,8 @@ export interface StageInstructionDelivery {
   readonly text: string;
   /** One-line account the collapsed message row shows. */
   readonly summary: string;
+  /** Final synchronous authority check immediately before native enqueue. Never serialized. */
+  readonly assertCurrent?: () => void;
 }
 export interface SessionPort extends SessionTopologyPort {
   create(projectPath: string, workspaceId?: string): Promise<string>;
