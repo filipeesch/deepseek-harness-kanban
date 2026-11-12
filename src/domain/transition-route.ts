@@ -1,5 +1,5 @@
 import { ownsDeterministicEntry } from './deterministic-state.js';
-import type { Column, Task, Workflow } from '../shared/types.js';
+import type { AdvanceOrigin, Column, Task, Workflow } from '../shared/types.js';
 import { resolveAutoAdvance, type AutoAdvancePlan } from './auto-advance.js';
 import { defaultDestination, nextStage } from './transitions.js';
 
@@ -38,18 +38,33 @@ export function recordedTransition(workflow: Workflow, task: RoutedTask): Record
 export type ArmedTask = RoutedTask & Pick<Task, 'autoMode'>;
 
 /**
- * Whether a completed turn produces an advance for this task. Auto mode arms
- * every completed turn. A declared transition arms the completed turn that
- * follows it, whether or not auto mode is enabled, which is what lets a workflow
- * route without asking the user to turn auto mode on. A recording stored without
- * a reason predates this rule: it keeps its routing meaning for the destination
- * and for the drawer, and arms nothing by itself.
+ * Whether one advance origin is still armed for the task's current stage. The
+ * auto origin requires auto mode; the agent origin requires the reason-carrying
+ * recording the current stage resolves. Neither is armed inside a deterministic
+ * entry, which routes through its captured exit instead.
+ */
+export function advanceArmedFor(origin: AdvanceOrigin, workflow: Workflow, task: ArmedTask): boolean {
+  if (routesThroughDeterministicEntry(workflow, task)) return false;
+  if (origin === 'auto') return task.autoMode?.enabled === true;
+  return declaredTransitionReason(workflow, task) !== undefined;
+}
+
+/** Whether a deterministic entry, rather than a turn-end advance, owns the task's routing. */
+export function routesThroughDeterministicEntry(workflow: Workflow, task: Pick<Task, 'columnId' | 'stageEntry' | 'deterministic'>): boolean {
+  return ownsDeterministicEntry(task) || workflow.columns.find(column => column.id === task.columnId)?.deterministic !== undefined;
+}
+
+/**
+ * Whether a completed turn produces an advance for this task, whichever origin
+ * the coordinator later attributes it to. Auto mode arms every completed turn.
+ * A declared transition arms the completed turn that follows it, whether or not
+ * auto mode is enabled, which is what lets a workflow route without asking the
+ * user to turn auto mode on. A recording stored without a reason predates this
+ * rule: it keeps its routing meaning for the destination and for the drawer, and
+ * arms nothing by itself.
  */
 export function advanceArmed(workflow: Workflow, task: ArmedTask): boolean {
-  if (ownsDeterministicEntry(task) || workflow.columns.find(column => column.id === task.columnId)?.deterministic !== undefined) return false;
-  if (task.autoMode?.enabled === true) return true;
-  const recorded = recordedTransition(workflow, task);
-  return recorded.kind === 'resolved' && recorded.reason !== undefined;
+  return advanceArmedFor('auto', workflow, task) || advanceArmedFor('agent', workflow, task);
 }
 
 /** The reason a resolving declared transition carries, or undefined when none applies. */

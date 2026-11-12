@@ -3,7 +3,7 @@ import type { AutoAdvancePlan } from '../domain/auto-advance.js';
 import { hasPendingUserWork } from '../domain/pending-user-work.js';
 import { blocksAdvance } from '../domain/auto-mode-hold.js';
 import { entryInstruction } from '../domain/stage-entry.js';
-import { declaredTransitionReason, resolveAdvanceRoute } from '../domain/transition-route.js';
+import { advanceArmedFor, declaredTransitionReason, resolveAdvanceRoute, routesThroughDeterministicEntry } from '../domain/transition-route.js';
 import { firstOpenSessionId } from '../shared/conversations.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 import type { AdvanceOrigin, Column, HubState, PendingTransition, PendingUserWork, Task, Workflow } from '../shared/types.js';
@@ -27,10 +27,7 @@ export interface AdvanceAdmissionDeps {
  * user disabled auto mode, or before the declaration was cleared, is dropped here.
  */
 function blocked(located: LocatedTask, origin: AdvanceOrigin): boolean {
-  if (blocksAdvance(located.task)) return true;
-  return origin === 'auto'
-    ? located.task.autoMode?.enabled !== true
-    : declaredTransitionReason(located.board.workflow, located.task) === undefined;
+  return blocksAdvance(located.task) || !advanceArmedFor(origin, located.board.workflow, located.task);
 }
 
 /**
@@ -56,11 +53,13 @@ function requireSameDestination(located: LocatedTask, plan: AutoAdvancePlan): vo
  * transaction so an admission cannot outlive the state that justified it.
  */
 function requireArmed(origin: AdvanceOrigin, workflow: Workflow, task: Task): void {
-  if (origin === 'auto') {
-    invariant(task.autoMode?.enabled === true, 'AUTO_MODE_DISABLED', 'Auto mode is no longer enabled.');
-    return;
-  }
-  invariant(declaredTransitionReason(workflow, task) !== undefined, 'TRANSITION_STALE', 'The declared transition no longer applies.');
+  // The entry can turn deterministic between the settle read and this transaction;
+  // that is a routing-owner change, not a lost auto-mode setting, so it reports
+  // its own failure instead of borrowing the origin's error code.
+  invariant(!routesThroughDeterministicEntry(workflow, task), 'INVALID_TARGET', 'The task entered a deterministic stage, which routes through its captured exit.');
+  invariant(advanceArmedFor(origin, workflow, task),
+    origin === 'auto' ? 'AUTO_MODE_DISABLED' : 'TRANSITION_STALE',
+    origin === 'auto' ? 'Auto mode is no longer enabled.' : 'The declared transition no longer applies.');
 }
 
 /**
