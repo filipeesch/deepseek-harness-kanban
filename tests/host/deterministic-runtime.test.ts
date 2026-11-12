@@ -17,7 +17,7 @@ import { createNativeDeterministicPolicy } from '../../src/host/deterministic/na
 import { createServer } from 'node:net';
 import { askWitness, createNativeLifetime } from '../../src/host/deterministic/lifetime.js';
 import { SecretRedactor, parseCompletion } from '../../src/host/deterministic/safety.js';
-import { ownedProcesses } from '../../src/host/deterministic/owned-processes.js';
+import { ownedProcesses } from '../../src/host/deterministic/process/index.js';
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -254,7 +254,7 @@ describe('additional fail-closed execution contracts', () => {
   });
   it('refuses a concurrent host but safely recovers a host lost before code admission', async () => {
     const f = await fixture(); const ownership = new NativeExecutionOwnership(join(f.root, 'lease'));
-    const lifetime = await createNativeLifetime({ register: async () => {}, settled: async () => {} });
+    const lifetime = await createNativeLifetime({ register: async () => {}, settled: async () => {}, sweep: async () => {} });
     await ownership.acquire(scope, 'pre-spawn', 'task', lifetime.host);
     await expect(ownership.reclaim('pre-spawn')).rejects.toMatchObject({ code: 'OWNERSHIP_UNCERTAIN' });
     await lifetime.close(); await ownership.reclaim('pre-spawn');
@@ -335,17 +335,18 @@ describe('guarded Bash failure diagnostics and bounded retry', () => {
   });
 
   it.each([
-    ['an unproven process tree', guardFailure({ stderr: { text: 'NATIVE_LIFETIME_UNCLEAN: Owned processes survived cleanup.\n', truncated: false } }), 'started', /could not prove/],
-    ['an unavailable guard runtime', guardFailure({ stderr: { text: 'NATIVE_LIFETIME_UNAVAILABLE: install Node >=24.9\n', truncated: false } }), 'not-admitted', /unavailable/],
-    ['a killed guard', guardFailure({ exitCode: null, signal: 'SIGKILL' }), 'unknown', /terminated by SIGKILL/],
-    ['an unknown guard exit', guardFailure({ exitCode: 1, stderr: { text: 'node:internal failure\n', truncated: false } }), 'unknown', /did not return a valid result/],
-    ['whitespace-only stderr', guardFailure({ stderr: { text: ' \n', truncated: false } }), 'unknown', /did not return a valid result/],
-    ['a lossy empty capture', guardFailure({ stderr: { text: '', truncated: true } }), 'unknown', /did not return a valid result/],
-  ] as const)('does not repeat %s', async (_label, result, admission, message) => {
+    ['an unproven process tree', guardFailure({ stderr: { text: 'NATIVE_LIFETIME_UNCLEAN: Owned processes survived cleanup.\n', truncated: false } }), 'started', /could not prove/, 'BASH_PROTOCOL'],
+    ['an unavailable guard runtime', guardFailure({ stderr: { text: 'NATIVE_LIFETIME_UNAVAILABLE: install Node >=24.9\n', truncated: false } }), 'not-admitted', /unavailable/, 'GUARD_UNAVAILABLE'],
+    ['an unsupported guard platform', guardFailure({ stderr: { text: 'NATIVE_LIFETIME_UNSUPPORTED: no adapter\n', truncated: false } }), 'not-admitted', /does not support/, 'GUARD_UNAVAILABLE'],
+    ['a killed guard', guardFailure({ exitCode: null, signal: 'SIGKILL' }), 'unknown', /terminated by SIGKILL/, 'BASH_PROTOCOL'],
+    ['an unknown guard exit', guardFailure({ exitCode: 1, stderr: { text: 'node:internal failure\n', truncated: false } }), 'unknown', /did not return a valid result/, 'BASH_PROTOCOL'],
+    ['whitespace-only stderr', guardFailure({ stderr: { text: ' \n', truncated: false } }), 'unknown', /did not return a valid result/, 'BASH_PROTOCOL'],
+    ['a lossy empty capture', guardFailure({ stderr: { text: '', truncated: true } }), 'unknown', /did not return a valid result/, 'BASH_PROTOCOL'],
+  ] as const)('does not repeat %s', async (_label, result, admission, message, code) => {
     const native = rawShell(() => result);
     const f = await fixture({ shell: native, retry: { delaysMs: [0, 0] } });
     const outcome = await run(f);
-    expect(outcome).toMatchObject({ kind: 'failed', diagnostic: { code: 'BASH_PROTOCOL', details: { guard: { admission } } } });
+    expect(outcome).toMatchObject({ kind: 'failed', diagnostic: { code, details: { guard: { admission } } } });
     expect(failed(outcome).message).toMatch(message);
     expect(vi.mocked(native.execute)).toHaveBeenCalledTimes(1);
   });

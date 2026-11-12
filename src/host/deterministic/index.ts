@@ -4,7 +4,8 @@ import { credentialStoreFromContext } from '../sharing/credentials.js';
 import { DeterministicCaptureStore, createDeterministicTrust } from './capture.js';
 import { createNativeDeterministicPolicy, optionalService } from './native-policy.js';
 import { NativeExecutionOwnership, type OwnershipLease } from './ownership.js';
-import { createNativeLifetime, type NativeLifetime } from './lifetime.js';
+import { clearGuardConfigurations, createNativeLifetime, type NativeLifetime } from './lifetime.js';
+import { createProcessOwnership } from './process/index.js';
 import { createDeterministicVariables } from './variables.js';
 import { executeCapturedProgram, verifyExecutors } from './executor.js';
 import { createBashRetry, type BashRetryOptions } from './retry.js';
@@ -21,6 +22,8 @@ export interface DeterministicRuntimeOptions {
   policy?: DeterministicPolicyPort;
   /** Bounded repetition policy for a guarded Bash call; a test can shorten its waits. */
   retry?: BashRetryOptions;
+  /** The built guard artifact; resolved next to the host bundle when absent. */
+  guardPath?: string;
 }
 /** Missing optional native services fail per script, not at conventional Kanban startup. */
 export function createDeterministicRuntime(options: DeterministicRuntimeOptions): DeterministicRuntime {
@@ -29,6 +32,10 @@ export function createDeterministicRuntime(options: DeterministicRuntimeOptions)
   const trust = createDeterministicTrust(options.privateDirectory);
   const variables = createDeterministicVariables(() => credentialStoreFromContext(options.context));
   const ownership = new NativeExecutionOwnership(options.privateDirectory);
+  // The guard configuration is private to one run; a host that did not finish must
+  // not leave the previous run's configuration behind.
+  clearGuardConfigurations(options.privateDirectory);
+  const processOwnership = createProcessOwnership();
   const retry = createBashRetry(options.retry ?? {});
   const active = new Map<string, Promise<ExecutionOutcome>>();
   const services = () => ({ shell: optionalService<NativeShellPort>(options.context, 'shell'), runtime: optionalService<NativePtcPort>(options.context, 'ptcRuntime') });
@@ -55,6 +62,9 @@ export function createDeterministicRuntime(options: DeterministicRuntimeOptions)
         lifetime = await createNativeLifetime({
           register: witness => release ? release.register(witness) : Promise.reject(new Error('Native resource lease was not admitted.')),
           settled: token => release ? release.settled(token) : Promise.reject(new Error('Native resource lease was not admitted.')),
+          sweep: (marker, exclude) => processOwnership.sweep(marker, exclude),
+          directory: options.privateDirectory,
+          ...(options.guardPath === undefined ? {} : { guardPath: options.guardPath }),
         });
         release = await ownership.acquire(request.scope, key, request.taskId, lifetime.host);
         request.signal.throwIfAborted();

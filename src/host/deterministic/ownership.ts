@@ -5,7 +5,7 @@ import type { DeterministicScope } from './ports.js';
 import { failure } from './ports.js';
 import { scopeKey } from './variables.js';
 import { askWitness, type LifetimeWitness } from './lifetime.js';
-import { ownedProcesses, terminateOwned } from './owned-processes.js';
+import { ownedProcesses, terminateOwned } from './process/index.js';
 
 export interface OwnershipLease {
   (): Promise<void>;
@@ -18,7 +18,7 @@ interface OwnerRecord { execution: string; nonce: string; host?: LifetimeWitness
  * A guard can be force-killed before it answers, for example when a native command
  * deadline escalates; an empty owned set is still proof that nothing it owned runs.
  */
-async function witnessClean(witness: LifetimeWitness): Promise<boolean> {
+async function witnessClean(witness: LifetimeWitness, platform: NodeJS.Platform): Promise<boolean> {
   try {
     const outcome = await askWitness(witness, 'reclaim');
     if (outcome.clean === true) return true;
@@ -31,15 +31,15 @@ async function witnessClean(witness: LifetimeWitness): Promise<boolean> {
     if (witness.marker !== undefined) {
       // A guard can be force-killed before it finishes, so the host completes the
       // same ownership sweep instead of leaving the tree to the provider's grace.
-      try { await terminateOwned(witness.marker); if (ownedProcesses(witness.marker).length === 0) return true; }
-      catch { /* An unreadable or unkillable set cannot prove anything; fail closed. */ }
+      try { await terminateOwned(witness.marker, platform); if (ownedProcesses(witness.marker, platform).length === 0) return true; }
+      catch { /* An unreadable or unkillable set, or a platform with no primitive, cannot prove anything; fail closed. */ }
     }
   }
   failure('OWNERSHIP_UNCERTAIN', 'Native lifetime witnesses have not confirmed whole-tree cleanup.');
 }
 /** Exclusive resource bookkeeping only; task transactions are the sole execution authority. */
 export class NativeExecutionOwnership {
-  constructor(private readonly root: string) {}
+  constructor(private readonly root: string, private readonly platform: NodeJS.Platform = process.platform) {}
   private get directory(): string { return join(this.root, 'owners'); }
   async acquire(scope: DeterministicScope, executionId: string, taskId = executionId, host?: LifetimeWitness): Promise<OwnershipLease> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 }); scopeKey(scope);
@@ -68,7 +68,7 @@ export class NativeExecutionOwnership {
       // A command deadline may close its host socket before the final done message.
       // Reconcile only authenticated witnesses; a closed pipe alone is not cleanup proof.
       for (const witness of [...record.guards]) {
-        if (!await witnessClean(witness)) failure('OWNERSHIP_UNCERTAIN', 'Native lifetime witnesses have not confirmed whole-tree cleanup.');
+        if (!await witnessClean(witness, this.platform)) failure('OWNERSHIP_UNCERTAIN', 'Native lifetime witnesses have not confirmed whole-tree cleanup.');
         record.guards = record.guards.filter(value => value.token !== witness.token); await save();
       }
       await current(); await unlink(path);
@@ -108,7 +108,7 @@ export class NativeExecutionOwnership {
       const host = await askWitness(record.host, 'reclaim-host', true);
       if (host.absent !== true) failure('OWNERSHIP_UNCERTAIN', 'The original host still owns this execution.');
       for (const witness of record.guards) {
-        if (!await witnessClean(witness)) failure('OWNERSHIP_UNCERTAIN', 'Native predecessor cleanup is unconfirmed.');
+        if (!await witnessClean(witness, this.platform)) failure('OWNERSHIP_UNCERTAIN', 'Native predecessor cleanup is unconfirmed.');
       }
     } catch (error) {
       if (error instanceof Error && 'code' in error && error.code === 'OWNERSHIP_UNCERTAIN') throw error;

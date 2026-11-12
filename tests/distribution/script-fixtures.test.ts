@@ -13,6 +13,7 @@ import { LocalBashExecutor } from '@deepseek-ai/dsh-bash-local';
 import NodeRuntime from '@deepseek-ai/dsh-ptc-runtime-node';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { createDeterministicRuntime } from '../../src/host/deterministic/index.js';
+import { guardArtifact } from '../support/guard-artifact.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 
 const fixture = fileURLToPath(new URL('../e2e-dsh/deterministic/', import.meta.url));
@@ -26,7 +27,7 @@ async function setup() {
   await ctx.plugin(LocalBashExecutor, { cwd: root, timeoutMs: 1, maxTimeoutMs: 600000, graceMs: 50 });
   await ctx.plugin(NodeRuntime, {});
   await copyFile(join(fixture, 'fake-ci.cjs'), join(root, 'fake-ci.cjs'));
-  return { root, runtime: createDeterministicRuntime({ context: ctx, privateDirectory: join(root, 'private') }) };
+  return { root, runtime: createDeterministicRuntime({ context: ctx, privateDirectory: join(root, 'private'), guardPath: await guardArtifact() }) };
 }
 
 describe('documented deterministic examples', () => {
