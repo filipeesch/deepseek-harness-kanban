@@ -8,7 +8,7 @@ import { openFilterPopoverByClick } from '../client/helpers.js';
 import type { RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol';
 import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client';
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots';
-import type { FullHostSnapshot, HostSnapshot, QuestionFeedFrame, QuestionRound } from '../../src/shared/types.js';
+import type { FullHostSnapshot, HostSnapshot, QuestionFeedFrame, QuestionRound, StoredQuestionDraft } from '../../src/shared/types.js';
 import { apply, inject } from '../../src/client.js';
 import { TYPERT_REMOTE } from '../../src/remote.js';
 const disposers: Array<() => Promise<void>> = [];
@@ -51,7 +51,7 @@ function twoHubSnapshot(): FullHostSnapshot {
   return value;
 }
 type Entry = { options: Record<string, unknown>; Component: ComponentType<Record<string, unknown>> };
-function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
+function fixture(deferMount = false, rounds: QuestionRound[] = [question], drafts?: Record<string, StoredQuestionDraft>) {
   let mounted = false; let openMount!: () => void;
   const mounting = deferMount ? new Promise<void>(resolve => { openMount = resolve; }) : Promise.resolve();
   const unmount = vi.fn().mockResolvedValue(undefined);
@@ -109,11 +109,12 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
     questionsFollow: vi.fn((_request: { sessionId: string }, signal?: AbortSignal): RemoteStreamHandle<QuestionFeedFrame, never> => {
       const feed = new QuestionFeed();
       questionFeeds.push(feed);
-      if (rounds.length > 0) feed.push({ kind: 'baseline', rounds });
+      if (rounds.length > 0) feed.push({ kind: 'baseline', rounds, ...(drafts === undefined ? {} : { drafts }) });
       signal?.addEventListener('abort', () => feed.dispose(), { once: true });
       return feed;
     }),
     dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
+    saveQuestionDraft: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: null } }),
     agentPresets,
     follow(signal?: AbortSignal): RemoteStreamHandle<HostSnapshot, never> {
       return {
@@ -159,8 +160,8 @@ function fixture(deferMount = false, rounds: QuestionRound[] = [question]) {
   } as unknown as Context;
   return { ctx, entries, nativeActions, nativeSlots, mount, unmount, openMount: () => openMount(), remote, questionFeeds, send, scope, retain, refresh, references, nativeSelect, requestDraftInitialization, focus, focusComposer, agentPresets, uiConversation, sessionState, list, subagentAddress, taskContextRegistrations, taskContextDisposer };
 }
-async function installed(rounds?: QuestionRound[]) {
-  const f = fixture(false, rounds); const dispose = await apply(f.ctx); disposers.push(dispose); return f;
+async function installed(rounds?: QuestionRound[], drafts?: Record<string, StoredQuestionDraft>) {
+  const f = fixture(false, rounds, drafts); const dispose = await apply(f.ctx); disposers.push(dispose); return f;
 }
 
 describe('public SDK plugin binding contracts', () => {
@@ -339,6 +340,79 @@ describe('public SDK plugin binding contracts', () => {
     await waitFor(() => expect(g.remote.questionsFollow).toHaveBeenCalled());
     expect(empty.container.querySelector('form')).toBeNull();
   });
+  it('restores a stored draft together with its round baseline', async () => {
+    const stored: StoredQuestionDraft = {
+      answers: { 'call-a': { choices: [], text: 'Stored answer.', other: '', notes: '' } },
+      generalNotes: 'Stored notes.',
+      active: { kind: 'page', callId: 'call-a' },
+      updatedAt: '2026-11-12T10:00:00.000Z',
+    };
+    const f = await installed([question], { [question.id]: stored });
+    const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
+    render(<Dock sessionId="a" />);
+    await screen.findByRole('form', { name: 'Questions from the agent' });
+    expect((screen.getByLabelText('Your answer') as HTMLTextAreaElement).value).toBe('Stored answer.');
+  });
+
+  it('keeps a typed draft across a dock remount and sends it', async () => {
+    const f = await installed();
+    const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
+    const first = render(<Dock sessionId="a" />);
+    await screen.findByRole('form', { name: 'Questions from the agent' });
+    fireEvent.change(screen.getByLabelText('Your answer'), { target: { value: 'Kept across remounts.' } });
+    first.unmount();
+    // Unmount flushes the debounce window, so the answer reached the host before closing.
+    expect(f.remote.saveQuestionDraft).toHaveBeenCalled();
+    render(<Dock sessionId="a" />);
+    await screen.findByRole('form', { name: 'Questions from the agent' });
+    expect((screen.getByLabelText('Your answer') as HTMLTextAreaElement).value).toBe('Kept across remounts.');
+  });
+
+  it('saves a draft change after the debounce window', async () => {
+    const f = await installed();
+    const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
+    render(<Dock sessionId="a" />);
+    await screen.findByRole('form', { name: 'Questions from the agent' });
+    fireEvent.change(screen.getByLabelText('Your answer'), { target: { value: 'Saved soon.' } });
+    await waitFor(() => expect(f.remote.saveQuestionDraft).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'a', roundId: question.id })), { timeout: 3000 });
+    const request = f.remote.saveQuestionDraft.mock.calls.at(-1)![0] as { draft: { answers: Record<string, { text: string }> } };
+    expect(request.draft.answers['call-a']?.text).toBe('Saved soon.');
+  });
+
+  it('keeps another unresolved round draft when a dismissal targets a stale round', async () => {
+    const older: QuestionRound = { ...question, id: 'older', turnId: '1', pages: [{ callId: 'call-older', sequence: 1, page: { question: 'Older question', type: 'freetext' } }] };
+    const stored: StoredQuestionDraft = {
+      answers: { 'call-older': { choices: [], text: 'Older draft.', other: '', notes: '' } },
+      generalNotes: '',
+      active: { kind: 'page', callId: 'call-older' },
+      updatedAt: '2026-11-12T10:00:00.000Z',
+    };
+    const f = await installed([older, question], { [older.id]: stored });
+    const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
+    vi.mocked(f.remote.dismissQuestions).mockResolvedValueOnce({ ok: true, value: { ok: false, error: { code: 'QUESTION_ROUND_NOT_FOUND', message: 'The round is gone.' } } });
+    render(<Dock sessionId="a" />);
+    await screen.findByRole('form', { name: 'Questions from the agent' });
+    expect(screen.getByRole('heading', { name: 'Choose the implementation' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Older question' })).toBeTruthy());
+    expect((screen.getByLabelText('Your answer') as HTMLTextAreaElement).value).toBe('Older draft.');
+    expect(f.remote.saveQuestionDraft).not.toHaveBeenCalledWith(expect.objectContaining({ draft: null }));
+  });
+
+  it('clears a typed draft when the round becomes answered', async () => {
+    const f = await installed();
+    const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
+    const first = render(<Dock sessionId="a" />);
+    await screen.findByRole('form', { name: 'Questions from the agent' });
+    fireEvent.change(screen.getByLabelText('Your answer'), { target: { value: 'Draft that must die.' } });
+    f.questionFeeds[0]!.push({ kind: 'update', rounds: [{ ...question, answered: true }] });
+    await waitFor(() => expect(document.querySelector('form.kq-strip')).toBeNull());
+    first.unmount();
+    render(<Dock sessionId="a" />);
+    await screen.findByRole('form', { name: 'Questions from the agent' });
+    expect((screen.getByLabelText('Your answer') as HTMLTextAreaElement).value).toBe('');
+  });
+
   it('owns native reference/provider binding, keeps visited conversations warm across tabs and sections, and releases with the drawer', async () => {
     const f = await installed(); const Main = f.entries.get('main:kanban')!.Component;
     const provider = vi.fn(({ session, children }: { session: SessionReference; children: ReactNode }) => <div data-testid="provided-session" data-session={session.sessionId}>{children}</div>);

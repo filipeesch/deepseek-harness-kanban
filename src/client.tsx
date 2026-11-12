@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
+import React, { useCallback, useEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import type { Context } from '@deepseek-ai/cordis';
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client';
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client';
@@ -17,8 +17,7 @@ import { createDirectoryPicker } from './client/directory-picker.js';
 import { BoardView, createBoardPageState, type BoardPageState } from './client/board.js';
 import { allTasks } from './client/snapshot-normalize.js';
 import { AutoRunController } from './client/auto-run.js';
-import { QuestionForm } from './questions/QuestionForm.js';
-import { selectActiveRound } from './questions/submission.js';
+import { QuestionDock, createQuestionDockServices, type QuestionDockSessions } from './client/question-dock.js';
 import { RetainedConversation, TaskConversationWindow, type ConversationSurfaceOwner, type ConversationSurfaceServices } from './client/conversation-surface.js';
 import { AgentPresetProvider } from './client/agent-preset-context.js';
 import { createAgentPresetPortSource } from './client/agent-preset-port.js';
@@ -126,6 +125,13 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     if (!status.error) return null;
     return <div className="kanban-feed-error" role="alert">Kanban updates are unavailable: {status.error.message} <button type="button" onClick={() => bridge.retry()}>Retry updates</button></div>;
   }
+  // The extracted dock receives a narrow contract; the composition root keeps
+  // owning native scope lookup and the board feed status strip.
+  const questionDockServices = createQuestionDockServices({
+    bridge,
+    sessions: ctx.sessions as unknown as QuestionDockSessions,
+    status: <FeedStatus />,
+  });
   const viewSession = (sessionId: string) => bridge.viewSession(sessionId);
   function ConversationWindowSeat(props: ConversationSeatProps) {
     return <TaskConversationWindow
@@ -218,32 +224,6 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     if (!active) return null; // A hidden cached page must not leave another copy of a composer mounted.
     return <AgentPresetProvider source={presetSource} translate={ctx.locale.bind('settings.agentPreset')}><style>{clientCss}</style><FeedStatus /><BoardPage {...props} api={bridge.api} autoRun={autoRun} /></AgentPresetProvider>;
   }
-  function Dock(props: PropsRuntime<'conversation.input.dock'>) {
-    const view = useSyncExternalStore(bridge.questionsView.subscribe, bridge.questionsView.getSnapshot, bridge.questionsView.getSnapshot);
-    const [attempt, setAttempt] = useState(0);
-    useEffect(() => bridge.trackQuestions(props.sessionId), [props.sessionId]);
-    useEffect(() => {
-      if (attempt > 0) bridge.retryQuestions(props.sessionId);
-    }, [attempt]);
-    const historyError = view.errors.get(props.sessionId)?.message;
-    const round = selectActiveRound(view.rounds, props.sessionId, id => bridge.questions.isSubmitted(id), bridge.questions.focusedRoundId);
-    const scoped = scopedSessions.scope(props.sessionId);
-    const conversation = scoped?.get('conversation');
-    return <><FeedStatus />{historyError && <div role="alert">Question rounds are unavailable: {historyError} <button type="button" onClick={() => setAttempt(value => value + 1)}>Retry questions</button></div>}{round && <QuestionForm key={round.id} round={round} hidden={bridge.questions.isSubmitted(round.id)} onHide={() => {
-      if (!scoped || !conversation) return;
-      try { conversation.input.for(scoped).focus(); } catch { /* the form already blurred its active control */ }
-    }} onSubmit={async (text) => {
-      // This is ordinary native human text. It does not settle native approvals or userQuestions.
-      bridge.assertSubmissionAllowed(props.sessionId);
-      if (!conversation) throw new Error('The native conversation scope is not available. Reopen this conversation and retry.');
-      // The dock hides the round before admission settles; a failure restores it with the draft.
-      bridge.questions.submit(round.id);
-      try { await conversation.send(text); bridge.settleSubmission(round.id); }
-      catch (error) { bridge.questions.rollback(round.id); throw error; }
-    }} onDismiss={async () => {
-      await bridge.dismissQuestions(props.sessionId, round.id);
-    }} />}</>;
-  }
   /** The strip is the only question surface: the transcript row renders nothing (no generic JSON card). */
   function HiddenDecisionRow() { return null; }
   function BoardIcon() { return <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor"><rect x="2" y="3" width="16" height="14" rx="2" /><path d="M7 3v14M13 3v14M4 7h1M9 7h2M15 7h1M4 10h1M9 10h2" /></svg>; }
@@ -259,7 +239,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: HANDOFF_CONTEXT_NODE_KIND, locale: 'chat', inject: () => ({}) }, DeterministicHandoffChatNode));
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: TASK_MESSAGE_NODE_KIND, locale: 'chat', inject: () => ({}) }, TaskMessageChatNode));
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: 'kanban', order: 80, label: 'Kanban' }, BoardIcon));
-  ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'kanban-decision-questions', order: 20 }, Dock));
+  ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'kanban-decision-questions', order: 20 }, props => <QuestionDock sessionId={props.sessionId} services={questionDockServices} />));
   ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: 'decision_request' }, HiddenDecisionRow));
   // This subscription is the only reconciler for the shared controller; install it eagerly.
   const unsubscribeAutoRun = bridge.api.subscribe(snapshot => autoRun.reconcile(allTasks(snapshot), snapshot.deterministic));

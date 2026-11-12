@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis';
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
-import type { Command, FullHostSnapshot, HostSnapshot, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionFeedFrame, QuestionRound, ModelCatalog, SharingCommand, SnapshotRequest, WorktreeDefaults } from '../shared/types.js';
+import type { Command, FullHostSnapshot, HostSnapshot, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionDraftContent, QuestionFeedFrame, QuestionRound, ModelCatalog, SharingCommand, SnapshotRequest, StoredQuestionDraft, WorktreeDefaults } from '../shared/types.js';
 import { problem, KanbanError } from '../shared/errors.js';
 import type { KanbanApp } from './app.js';
 import type { DeterministicReview } from '../shared/deterministic.js';
@@ -16,6 +16,7 @@ export class KanbanController extends TypertRemoteService {
  @Remote async detectProject(request:{path:string}):Promise<Outcome<ProjectLocation>>{return this.attempt(()=>this.app.detectProject(request.path));}
  @Remote async localDrive(request:LocalDriveRequest):Promise<Outcome<LocalDriveResult>>{return this.attempt(()=>this.app.localDrive(request));}
  @Remote async dismissQuestions(request:{sessionId:string;roundId:string}):Promise<Outcome<QuestionRound[]>>{return this.attempt(()=>this.app.dismissQuestions(request.sessionId,request.roundId));}
+ @Remote async saveQuestionDraft(request:{sessionId:string;roundId:string;draft:QuestionDraftContent|null}):Promise<Outcome<StoredQuestionDraft|null>>{return this.attempt(()=>this.app.saveQuestionDraft(request.sessionId,request.roundId,request.draft));}
  @Remote async deterministicReview(request:{taskId:string}):Promise<Outcome<DeterministicReview>>{return this.attempt(()=>this.app.deterministicReview(request.taskId));}
  @Remote async modelCatalog(request:{refresh?:boolean}):Promise<Outcome<ModelCatalog>>{return this.attempt(()=>this.app.modelCatalog(request.refresh===true));}
  @Remote({mode:'stream'}) async *follow(signal:AbortSignal):AsyncGenerator<HostSnapshot>{
@@ -52,9 +53,16 @@ export class KanbanController extends TypertRemoteService {
     const revision=this.app.questions.revisionOf(sessionId);
     if(first||revision!==last){
      last=revision;
+     const kind=first?'baseline':'update';
      const rounds=await this.app.rounds(sessionId);
+     // Drafts travel only on the baseline: the form paints once with its round and
+     // its draft, and a client's own write is never echoed back to it.
+     // Drafts are best effort: a draft-read failure must never withhold the rounds
+     // baseline and its Submit surface.
+     const drafts=kind==='baseline'?await this.app.questionDrafts(sessionId).catch(()=>undefined):undefined;
      signal.throwIfAborted();
-     yield {kind:first?'baseline':'update',rounds};
+     // An empty draft map is the same as no drafts: keep the baseline shape it always had.
+     yield {...(drafts===undefined||Object.keys(drafts).length===0?{kind,rounds}:{kind,rounds,drafts})};
      first=false;continue;
     }
    }
