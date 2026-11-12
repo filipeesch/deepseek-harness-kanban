@@ -12,6 +12,7 @@ export function scriptLabel(summary: DeterministicSummary): string {
   // A saved result that could not be delivered is a distinct state from a script
   // failure: the program finished and only its route is pending.
   if (summary.phase === 'failed' && summary.deliveryStatus === 'failed') return 'Script result delivery failed';
+  if (summary.phase === 'failed' && summary.error?.code === 'PARAMETERS_REQUIRED') return 'Script: parameters required';
   switch (summary.phase) {
     case 'capture-pending': return 'Script: capturing program';
     case 'awaiting-trust': return 'Script: awaiting local trust';

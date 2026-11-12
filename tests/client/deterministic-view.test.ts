@@ -21,6 +21,12 @@ describe('deterministic safe projections', () => {
     expect(projectScopeActivity([task], {}, { task: summary }).runningTasks).toBe(1);
     expect(scriptLabel({ ...summary, phase: 'stopping' })).toBe('Script stopping');
   });
+  it('labels a parameter refusal distinctly from an executor failure', () => {
+    const refusal = { code: 'PARAMETERS_REQUIRED', message: 'Missing required parameter: pipeline.' };
+    expect(scriptLabel({ ...summary, phase: 'failed', error: refusal })).toBe('Script: parameters required');
+    expect(scriptLabel({ ...summary, phase: 'failed', error: { code: 'TYPESCRIPT_ERROR', message: 'boom' } })).toBe('Script failed');
+    expect(scriptLabel({ ...summary, phase: 'failed', deliveryStatus: 'failed', error: refusal })).toBe('Script result delivery failed');
+  });
   it('cancels an instruction countdown when a durable script owns the entry', () => {
     const controller = new AutoRunController({ run: async () => { throw Error('not called'); }, clock: { now: () => 0, setTimeout: () => 1, clearTimeout: () => {} } });
     controller.arm({ taskId: task.id, columnId: 'wait', enteredAt: 1, instruction: 'saved edit' });

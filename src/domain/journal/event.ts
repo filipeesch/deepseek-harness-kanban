@@ -5,7 +5,7 @@ import type { ColumnGroup, ConnectionAnchor, ConnectionLayout, ConnectionSegment
 import { isDomainId } from '../validation.js';
 
 /** The event format this installation writes. */
-export const EVENT_FORMAT_VERSION = 2;
+export const EVENT_FORMAT_VERSION = 3;
 
 /** One change to a board workflow, before the log stamps its position and time. */
 export type BoardChange =
@@ -63,7 +63,8 @@ const connection = z.strictObject({ from: identifier, to: identifier, source: an
 const group = z.strictObject({ id: identifier, name: z.string().min(1), columnIds: z.array(identifier).min(1) });
 const stage = z.strictObject({ id: identifier, key: identifier, name: z.string().min(1), deterministic: deterministicDefinitionSchema.optional(), onEnterPrompt: z.string().optional(), allowedTransitions: transitionList.optional(), position: position.optional(), size: size.optional() });
 
-const stamped = { seq: z.number().int().min(0), at: z.string().min(1), v: z.union([z.literal(1), z.literal(EVENT_FORMAT_VERSION)]) };
+/** Retained events keep the format they were written with, so every supported one decodes. */
+const stamped = { seq: z.number().int().min(0), at: z.string().min(1), v: z.union([z.literal(1), z.literal(2), z.literal(EVENT_FORMAT_VERSION)]) };
 const shape = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('workflow.replaced'), text: z.string().min(1), ...stamped }),
   z.strictObject({ kind: z.literal('workflow.field-changed'), field: z.enum(['name', 'defaultView']), value: z.string().nullable(), ...stamped }),
@@ -105,7 +106,7 @@ export function decodeEvent(raw: unknown): EventDecode {
   if (typeof version !== 'number' || !Number.isInteger(version)) return { ok: false, reason: 'invalid', message: 'An event must state an integer format version.' };
   if (version > EVENT_FORMAT_VERSION) return { ok: false, reason: 'unsupported-version', version };
   const kind = value.kind;
-  if (version === 1 && (kind === 'stage.field-changed' && value.field === 'deterministic' || kind === 'stage.created' && typeof value.stage === 'object' && value.stage !== null && Object.hasOwn(value.stage, 'deterministic'))) return { ok: false, reason: 'unsupported-version', version: 2 };
+  if (version === 1 && (kind === 'stage.field-changed' && value.field === 'deterministic' || kind === 'stage.created' && typeof value.stage === 'object' && value.stage !== null && Object.hasOwn(value.stage, 'deterministic'))) return { ok: false, reason: 'unsupported-version', version: EVENT_FORMAT_VERSION };
   if (typeof kind !== 'string' || !EVENT_KINDS.includes(kind)) return { ok: false, reason: 'unknown-kind', kind: typeof kind === 'string' ? kind : String(kind) };
   const parsed = shape.safeParse(value);
   if (!parsed.success) {

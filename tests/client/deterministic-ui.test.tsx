@@ -15,7 +15,7 @@ afterEach(cleanup);
 const card = { ...task('t','CI','p','wait'), sessionIds: [], stageEntry: { id: 'entry', columnId: 'wait', stageIdentity: 'stable', enteredAt: 'now' } };
 const summary: DeterministicSummary = { entryId: 'entry', executionId: 'run', phase: 'awaiting-trust', startedAt: 'now', attempt: 0, restartCount: 0 };
 const column: Column = { id: 'wait', name: 'Wait', deterministic: { language: 'bash', code: 'echo captured', directory: 'task', env: ['TOKEN'], exits: { ok: 'done' } } };
-const review: DeterministicReview = { executionId: 'run', fingerprint: 'exact-version', code: 'echo captured', language: 'bash', directory: 'task', exits: { ok: 'done' }, env: ['TOKEN'], variables: [{ name: 'TOKEN', configured: true }], executionDirectory: '/isolated/project', source: { kind: 'file', path: '/isolated/project/wait.sh' } };
+const review: DeterministicReview = { executionId: 'run', fingerprint: 'exact-version', code: 'echo captured', language: 'bash', directory: 'task', exits: { ok: 'done' }, env: ['TOKEN'], params: [], variables: [{ name: 'TOKEN', configured: true }], executionDirectory: '/isolated/project', source: { kind: 'file', path: '/isolated/project/wait.sh' } };
 const noop = () => {};
 describe('deterministic controls and local review', () => {
   it('keeps Stop after saved mode changes and addresses the owned execution', async () => {
@@ -50,6 +50,29 @@ describe('deterministic controls and local review', () => {
     // Rerunning stays a separate action whose accessible name matches its label.
     const again = screen.getByRole('button', { name: 'Run again — deterministic script' });
     expect(again.textContent).toBe('Run again');
+  });
+  it('offers parameter editing only for an owned non-active entry whose stage declares parameters', () => {
+    const parameterColumn: Column = { ...column, deterministic: { ...column.deterministic!, params: [{ name: 'pipeline', description: 'CI workflow' }] } };
+    const run = vi.fn(async () => fixture());
+    const view = render(<ScriptActions task={card} column={parameterColumn} summary={{ ...summary, phase: 'active' }} run={run} />);
+    expect(screen.queryByRole('button', { name: 'Edit deterministic script parameters' })).toBeNull();
+    view.rerender(<ScriptActions task={card} column={parameterColumn} summary={{ ...summary, phase: 'failed' }} run={run} />);
+    expect(screen.getByRole('button', { name: 'Edit deterministic script parameters' })).toBeTruthy();
+    view.rerender(<ScriptActions task={card} column={column} summary={{ ...summary, phase: 'failed' }} run={run} />);
+    expect(screen.queryByRole('button', { name: 'Edit deterministic script parameters' })).toBeNull();
+  });
+  it('edits and saves the current entry values through the parameter overlay', async () => {
+    const parameterColumn: Column = { ...column, deterministic: { ...column.deterministic!, params: [{ name: 'pipeline', description: 'CI workflow' }, { name: 'app' }] } };
+    const run = vi.fn(async () => fixture());
+    render(<ScriptActions task={card} column={parameterColumn} summary={{ ...summary, phase: 'failed', parameters: { pipeline: 'ci-main' } }} run={run} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit deterministic script parameters' }));
+    const pipeline = await screen.findByLabelText('Parameter pipeline') as HTMLInputElement;
+    expect(pipeline.value).toBe('ci-main');
+    expect((screen.getByLabelText('Parameter app') as HTMLInputElement).value).toBe('');
+    expect((screen.getByRole('button', { name: 'Save values' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Parameter app'), { target: { value: 'checkout' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save values' }));
+    await waitFor(() => expect(run).toHaveBeenCalledWith({ type: 'task.deterministicParameters', taskId: 't', entryId: 'entry', values: { pipeline: 'ci-main', app: 'checkout' } }));
   });
   it('reviews exact source and approves only the captured execution and fingerprint', async () => {
     const run = vi.fn(async () => fixture()); const api = { deterministicReview: vi.fn(async () => review) } as unknown as ClientApi;

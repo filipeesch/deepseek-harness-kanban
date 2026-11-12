@@ -1,5 +1,9 @@
 # stdin is one JSON context; never send diagnostic output to stdout.
-started=$(node -e 'let text="";process.stdin.on("data",chunk=>text+=chunk);process.stdin.on("end",()=>{const input=JSON.parse(text);process.stdout.write(String(Date.parse(input.startedAt)));});') || exit 3
+context=$(node -e 'let text="";process.stdin.on("data",chunk=>text+=chunk);process.stdin.on("end",()=>{const input=JSON.parse(text);process.stdout.write(String(Date.parse(input.startedAt))+" "+(input.params?.pipeline??""));});') || exit 3
+read -r started pipeline <<EOF
+$context
+EOF
+[ "$pipeline" = "local-ci" ] || { printf '%s\n' 'Missing the declared pipeline parameter.' >&2; exit 3; }
 while [ "$(node -e 'process.stdout.write(String(Date.now()))')" -lt "$((started + 60000))" ]; do
   node fake-ci.cjs
   status=$?

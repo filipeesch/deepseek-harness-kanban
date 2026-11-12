@@ -97,9 +97,11 @@ export async function admitTurnAdvance(deps: AdvanceAdmissionDeps, taskId: strin
   // The reason belongs to the destination, not to the origin: an auto-mode task
   // that declared its route still carries the justification into the next stage.
   const reason = declaredTransitionReason(latest.board.workflow, latest.task);
+  const parameters = latest.task.recordedTransition?.parameters;
   const transition: PendingTransition = {
     id: randomUUID(), fromColumnId: plan.fromColumnId, columnId: destination.id, mode: instruction !== undefined ? 'run' : 'move', status: 'waiting', origin,
     ...(reason === undefined ? {} : { reason }),
+    ...(parameters === undefined ? {} : { parameters: { ...parameters } }),
     ...(instruction !== undefined ? { text: instruction, sessionId: sessionId! } : {}),
   };
   await deps.transact(latest.hubId, draft => {

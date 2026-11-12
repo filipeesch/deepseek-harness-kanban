@@ -30,10 +30,33 @@ const BRANCHED_WORKFLOW = [
 const active: Array<Awaited<ReturnType<typeof fixture>>> = [];
 afterEach(async () => { for (const value of active.splice(0)) await value.close(); });
 
-async function setup() {
+const PARAMETERIZED_WORKFLOW = [
+  'name: Parameterized',
+  'initial_column: backlog',
+  'columns:',
+  '  - id: backlog',
+  '    label: Backlog',
+  '    allowed_transitions:',
+  '      - to: wait',
+  '  - id: wait',
+  '    label: Wait',
+  '    deterministic:',
+  '      language: bash',
+  '      code: echo ok',
+  '      params:',
+  '        - name: pipeline',
+  '          description: CI workflow',
+  '      exits:',
+  '        ok: done',
+  '  - id: done',
+  '    label: Done',
+  '',
+].join(String.fromCharCode(10));
+
+async function setup(workflow = BRANCHED_WORKFLOW) {
   const f = await fixture();
   active.push(f);
-  await f.store.saveBoardWorkflow(f.board.id, BRANCHED_WORKFLOW);
+  await f.store.saveBoardWorkflow(f.board.id, workflow);
   const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Route', description: '' });
   const tools = productToolDefinitions(f.app);
   const exec = (sessionId: string = task.sessionIds[0]!) => ({ signal: new AbortController().signal, agent: { id: sessionId }, deferContext: vi.fn(), concludeTurn: vi.fn() } as unknown as ToolRunContext);
@@ -158,5 +181,51 @@ describe('transition tools', () => {
     const value = await set.execute({ column_id: 'plan', reason: 'The work needs a plan.' }, exec) as Record<string, unknown>;
     expect(value.taskId).toBe('task');
     expect(writes).toEqual([{ taskId: 'task', write: { columnId: 'plan', reason: 'The work needs a plan.' } }]);
+    await set.execute({ column_id: 'plan', reason: 'The work needs a plan.', parameters: { pipeline: 'ci' } }, exec);
+    expect(writes[1]).toEqual({ taskId: 'task', write: { columnId: 'plan', reason: 'The work needs a plan.', parameters: { pipeline: 'ci' } } });
+  });
+});
+
+describe('parameterized transition targets', () => {
+  it('reports the declared parameters of every target that declares them', async () => {
+    const f = await setup(PARAMETERIZED_WORKFLOW);
+    const value = await f.named('list_allowed_transitions').execute({}, f.exec()) as Record<string, unknown>;
+    expect(value.targets).toEqual([{ columnId: 'wait', name: 'Wait', parameters: [{ name: 'pipeline', description: 'CI workflow' }] }]);
+  });
+
+  it('records every declared value and echoes the recorded set', async () => {
+    const f = await setup(PARAMETERIZED_WORKFLOW);
+    const value = await f.named('set_next_transition').execute({ column_id: 'wait', reason: 'Monitor the CI workflow.', parameters: { pipeline: 'ci-main' } }, f.exec()) as Record<string, unknown>;
+    expect(value.recorded).toMatchObject({ columnId: 'wait', fromColumnId: 'backlog', parameters: { pipeline: 'ci-main' } });
+    expect(f.app.hubs.requireTask(f.task.id).task.recordedTransition).toMatchObject({ parameters: { pipeline: 'ci-main' } });
+    expect(f.app.hubs.requireTask(f.task.id).task.columnId).toBe('backlog');
+  });
+
+  it('rejects a missing, unknown, empty, or undeclared value set and keeps the recording', async () => {
+    const f = await setup(PARAMETERIZED_WORKFLOW);
+    const set = f.named('set_next_transition');
+    await set.execute({ column_id: 'wait', reason: 'Monitor.', parameters: { pipeline: 'ci-main' } }, f.exec());
+    await expect(set.execute({ column_id: 'wait', reason: 'Monitor.', parameters: {} }, f.exec())).rejects.toThrow(/Missing required parameter: pipeline/);
+    await expect(set.execute({ column_id: 'wait', reason: 'Monitor.', parameters: { pipeline: 'ci', app: 'checkout' } }, f.exec())).rejects.toThrow(/Undeclared parameter: app/);
+    await expect(set.execute({ column_id: 'wait', reason: 'Monitor.', parameters: { pipeline: '' } }, f.exec())).rejects.toThrow(/Missing required parameter: pipeline/);
+    expect(f.app.hubs.requireTask(f.task.id).task.recordedTransition).toMatchObject({ parameters: { pipeline: 'ci-main' } });
+    expect(f.app.hubs.requireTask(f.task.id).task.columnId).toBe('backlog');
+  });
+
+  it('rejects any value set for a target that declares none', async () => {
+    const f = await setup();
+    await expect(f.named('set_next_transition').execute({ column_id: 'done', reason: 'Done.', parameters: { pipeline: 'ci' } }, f.exec()))
+      .rejects.toThrow(/declares no parameters/);
+    await expect(f.named('set_next_transition').execute({ column_id: 'done', reason: 'Done.', parameters: {} }, f.exec()))
+      .rejects.toThrow(/declares no parameters/);
+    expect(f.app.hubs.requireTask(f.task.id).task.recordedTransition).toBeUndefined();
+  });
+
+  it('rejects parameters without a destination and keeps the recording', async () => {
+    const f = await setup(PARAMETERIZED_WORKFLOW);
+    const set = f.named('set_next_transition');
+    await set.execute({ column_id: 'wait', reason: 'Monitor.', parameters: { pipeline: 'ci-main' } }, f.exec());
+    await expect(set.execute({ parameters: { pipeline: 'ci-other' } }, f.exec())).rejects.toThrow(/Parameters require a destination stage/);
+    expect(f.app.hubs.requireTask(f.task.id).task.recordedTransition).toMatchObject({ columnId: 'wait', parameters: { pipeline: 'ci-main' } });
   });
 });

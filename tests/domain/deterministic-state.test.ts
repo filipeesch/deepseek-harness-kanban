@@ -29,6 +29,23 @@ describe('durable deterministic stage entry', () => {
     expect(board.workflowYaml).not.toContain('key:');
     expect(board.localStageIdentities?.wait).toBe(task.stageEntry?.stageIdentity);
   });
+  it('binds declared parameter values to the entry and never to a later entry', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    saveBoardWorkflow(hub, 'board', 'columns:\n  - id: wait\n    label: Wait\n    deterministic: {language: bash, code: "echo ready", params: [{name: pipeline}], exits: {ok: done}}\n  - {id: done, label: Done}\n', deps);
+    const task = createTask(hub, { boardId: 'board', projectId: 'project', title: 'Wait', description: '', autoMode: false }, deps);
+    expect(task.deterministic?.parameters).toBeUndefined();
+    task.deterministic!.parameters = { pipeline: 'ci' };
+    placeTask(hub, task.id, 'done', 'start', 100, { at: deps.now() });
+    placeTask(hub, task.id, 'wait', 'start', 101, { at: deps.now() });
+    expect(task.deterministic?.entryId).toBe(task.stageEntry?.id);
+    expect(task.deterministic?.parameters).toBeUndefined();
+    placeTask(hub, task.id, 'done', 'start', 102, { at: deps.now() });
+    placeTask(hub, task.id, 'wait', 'start', 103, { at: deps.now(), parameters: { pipeline: 'ci-other' } });
+    expect(task.deterministic?.parameters).toEqual({ pipeline: 'ci-other' });
+    expect(HubStateSchema.parse(JSON.parse(JSON.stringify(hub))).tasks[0]?.deterministic?.parameters).toEqual({ pipeline: 'ci-other' });
+    task.deterministic!.parameters = { 'bad name': 'x' };
+    expect(HubStateSchema.safeParse(hub).success).toBe(false);
+  });
   it('keeps capture-pending source after edits and makes same-stage reorder nonactivating', () => {
     const { hub, deps, task } = fixture(); const original = structuredClone(task.deterministic); const entry = structuredClone(task.stageEntry);
     saveBoardWorkflow(hub, 'board', YAML.replace('echo ready', 'echo changed'), deps);

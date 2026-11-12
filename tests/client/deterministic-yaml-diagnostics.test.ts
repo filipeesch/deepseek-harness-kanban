@@ -15,6 +15,13 @@ describe('targeted deterministic YAML diagnostics', () => {
     expect(result.issues[0]?.message).toContain('sole deterministic routing');
     expect(yaml.slice(result.diagnostics[0]!.from, result.diagnostics[0]!.to)).toContain('done');
   });
+  it('pins an invalid parameter declaration to its authored scalar', () => {
+    const yaml = document('language: bash\ncode: echo ok\nparams:\n    - name: bad name\nexits: {ok: done}');
+    const result = analyzeWorkflow(yaml);
+    expect(result.status).toBe('invalid');
+    expect(result.diagnostics[0]!.from).toBeGreaterThan(0);
+    expect(yaml.slice(result.diagnostics[0]!.from, result.diagnostics[0]!.to)).toContain('bad name');
+  });
   it('rejects a self route and accepts distinct exits sharing a target', () => {
     expect(analyzeWorkflow(document('language: bash\ncode: echo ok\nexits: {ok: wait}')).issues[0]?.message).toContain('another existing stage');
     expect(analyzeWorkflow(document('language: bash\ncode: echo ok\nexits: {ok: done, cached: done}')).status).toBe('valid');

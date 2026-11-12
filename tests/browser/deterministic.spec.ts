@@ -43,6 +43,37 @@ for (const colorScheme of ['light', 'dark'] as const) {
     expect(await card.evaluate(element => getComputedStyle(element, '::after').animationName)).toBe('none');
     await expect(drawer.locator('[data-native]')).toHaveCount(0);
   });
+
+  test('edits entry parameters from the script panel in ' + colorScheme, async ({ page }) => {
+    await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+    await page.goto(HARNESS + '?scenario=deterministic&theme=host&phase=failed&refusal=parameters');
+    if (colorScheme === 'dark') await expect(page.locator('body')).toHaveAttribute('data-ds-dark-theme', '');
+    else await expect(page.locator('body')).not.toHaveAttribute('data-ds-dark-theme');
+    await page.locator('[data-task-id="long-0"]').getByRole('button', { name: 'Open task Long column task 0' }).click();
+    const drawer = page.locator('.kb-drawer');
+    await drawer.getByRole('tab', { name: 'Info', exact: true }).click();
+    await expect(drawer.getByText('Script: parameters required')).toBeVisible();
+    await expect(drawer.getByText('Missing required parameter: pipeline')).toBeVisible();
+    await expect(drawer.getByText('Parameters: pipeline=ci-main')).toBeVisible();
+    await expectLegible(page, '.kb-script-panel');
+    await drawer.getByRole('button', { name: 'Edit deterministic script parameters' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Edit script parameters' });
+    await expect(dialog.getByText('CI workflow')).toBeVisible();
+    const input = dialog.getByLabel('Parameter pipeline');
+    await expect(input).toHaveValue('ci-main');
+    await input.fill('ci-other');
+    await mkdir(OUT, { recursive: true });
+    await page.screenshot({ path: path.join(OUT, 'deterministic-parameters-' + colorScheme + '.png') });
+    await dialog.getByRole('button', { name: 'Save values' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(drawer.getByText('Parameters: pipeline=ci-other')).toBeVisible();
+    await drawer.getByRole('button', { name: 'Play deterministic script' }).click();
+    await expect(drawer.getByText('Script running', { exact: true })).toBeVisible();
+    const commands = await page.evaluate(() => (window as unknown as { __harnessCommands(): Array<{ type: string }> }).__harnessCommands());
+    expect(commands.map(command => command.type)).toEqual(['task.deterministicParameters', 'task.deterministicPlay']);
+    expect(commands[0]).toMatchObject({ entryId: 'script-entry', values: { pipeline: 'ci-other' } });
+  });
+
   test('deterministic failed delivery offers a delivery-only retry in ' + colorScheme, async ({ page }) => {
     await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
     await page.goto(HARNESS + '?scenario=deterministic&theme=host&phase=failed&delivery=failed');

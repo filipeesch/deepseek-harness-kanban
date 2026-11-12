@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { canonicalDeterministic, deterministicDefinitionSchema } from './deterministic-definition.js';
-import { deterministicControlSchema, deterministicHandoffSchema, taskStageEntrySchema } from './deterministic-state.js';
+import { deterministicControlSchema, deterministicHandoffSchema, parameterValuesSchema, taskStageEntrySchema } from './deterministic-state.js';
 import type { ConnectionLayout, Task, TransitionRule, Workflow } from '../shared/types.js';
 import { STAGE_MIN_SIZE, STAGE_SIZE_LIMIT } from './stage-size.js';
 import { PROJECT_KEY_PATTERN } from './project-key.js';
@@ -48,7 +48,7 @@ export const operation = z.strictObject({
 export const pendingTransition = z.strictObject({
   id, fromColumnId: id, columnId: id, mode: z.enum(['move', 'run']), sessionId: id.optional(), text: z.string().optional(), beforeTaskId: id.nullable().optional(),
   worktreeRequest: createWorktree.optional(), transitionOverride: z.boolean().optional(), status: z.enum(['waiting', 'sending', 'failed']), error: problem.optional(),
-  origin: z.enum(['auto', 'agent']).optional(), reason: nonempty.optional(),
+  origin: z.enum(['auto', 'agent']).optional(), reason: nonempty.optional(), parameters: parameterValuesSchema.optional(),
 }).superRefine((value, context) => {
   // An agent-declared advance exists to carry its reason to the destination stage
   // and to the manual retry; a record without one would promise a justification it
@@ -175,7 +175,7 @@ export const baseTask = z.strictObject({
   unclaimedWorktrees: z.array(z.strictObject({ path: absolutePath, branch: nonempty, error: problem })).optional(),
   worktreeWorkspaceId: id.optional(), worktreeWorkspaceOwned: z.boolean().optional(),
   operation: operation.nullable(), pendingTransition: pendingTransition.optional(), instructionPending: z.strictObject({ columnId: id, enteredAt: z.number().finite() }).optional(), autoMode: autoMode.optional(),
-  recordedTransition: z.strictObject({ fromColumnId: id, columnId: id, at: timestamp, reason: nonempty.optional() }).optional(), history: taskHistorySchema.optional(), createdAt: timestamp, updatedAt: timestamp,
+  recordedTransition: z.strictObject({ fromColumnId: id, columnId: id, at: timestamp, reason: nonempty.optional(), parameters: parameterValuesSchema.optional() }).optional(), history: taskHistorySchema.optional(), createdAt: timestamp, updatedAt: timestamp,
 });
 
 /** The task fields the shared invariant check reads. */
