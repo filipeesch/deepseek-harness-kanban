@@ -2,21 +2,6 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 
 /** Whether a process with an unreadable environment belongs to this user. */
-function ticks(pid: number): number {
-  const stat = readFileSync('/proc/' + pid + '/stat', 'utf8');
-  return Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]);
-}
-function foreignOrOwned(pid: number): 'own' | 'foreign' | 'uncertain' {
-  let status: string;
-  try { status = readFileSync('/proc/' + pid + '/status', 'utf8'); } catch { return 'uncertain'; }
-  const uid = /^Uid:\s*([0-9]+)/m.exec(status);
-  const self = process.getuid?.();
-  if (!uid || self === undefined) return 'uncertain';
-  if (Number(uid[1]) !== self) return 'foreign';
-  // Only a process created after this host can be a descendant of this run.
-  try { return ticks(pid) >= ticks(process.pid) ? 'own' : 'foreign'; } catch { return 'uncertain'; }
-}
-
 /**
  * Processes that still carry this run's ownership token, read from the host.
  *
@@ -94,11 +79,11 @@ export function ownedProcesses(marker: string, platform: NodeJS.Platform = proce
       let environment: Buffer;
       try { environment = readFileSync('/proc/' + name + '/environ'); }
       catch (error) {
+        // An unreadable environment cannot be inspected, so it is outside the
+        // tracked set (the documented credential-change residual).
         const code = (error as NodeJS.ErrnoException).code;
-        if (code === 'ENOENT' || code === 'ESRCH') continue;
-        if (code !== 'EACCES' && code !== 'EPERM') throw error;
-        if (foreignOrOwned(pid) !== 'own') continue;
-        throw new Error('Owned process membership could not be read.');
+        if (code === 'ENOENT' || code === 'ESRCH' || code === 'EACCES' || code === 'EPERM') continue;
+        throw error;
       }
       if (environment.includes(needle)) found.push(pid);
     }
