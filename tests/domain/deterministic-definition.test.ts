@@ -68,6 +68,13 @@ describe('deterministic definition codec', () => {
     expect(workflow.initialColumnId).toBe('wait');
     expect(workflow.columns[0]?.deterministic?.exits.ok).toBe('done');
   });
+  it('accepts the reserved infrastructure destination and still refuses a self-target', () => {
+    const reserved = { ...definition, exits: { ok: 'done', error: 'repair', infrastructure: 'repair' } };
+    const before = parseWorkflow(text(reserved));
+    expect(before.columns[0]?.deterministic?.exits).toEqual({ ok: 'done', error: 'repair', infrastructure: 'repair' });
+    expect(() => parseWorkflow(text({ ...reserved, exits: { ...reserved.exits, infrastructure: 'wait' } }))).toThrow(/own stage/);
+    expect(before.columns[0]?.deterministic?.exits.infrastructure).toBe('repair');
+  });
   it('updates a parameter declaration without touching the primary program', () => {
     const source = ['name: Flow', 'columns:', '  - id: wait', '    label: Wait', '    deterministic:', '      language: typescript', '      code: "echo exact"', '      params: [{name: pipeline}]', '      exits: {ok: done, passed: done, error: repair}', '  - {id: done, label: Done}', '  - {id: repair, label: Repair}', ''].join(String.fromCharCode(10));
     const before = parseWorkflow(source).columns[0]!.deterministic!;

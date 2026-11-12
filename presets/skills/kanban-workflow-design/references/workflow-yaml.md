@@ -21,7 +21,7 @@ Unknown fields are rejected: no WIP limits, stage `auto_mode`, agent/preset/engi
 - **Nonempty:** configured destinations in authored order; the first is default when no route is declared, regardless of conditions. Avoid self-targets: accepted as same-stage reorders, they are not routing targets and stop default progression when first.
 - **`[]`:** no permitted destinations/default advance; humans can still confirm restricted moves. This is terminal policy, not “wait until dependency.”
 
-A deterministic stage may declare required `params` (name + optional description). The declaring transition must supply every value; a missing, unknown, or empty value is rejected with accepted names. A value-less entry fails in place, not via its error exit; the user repairs it in the script panel.
+A deterministic stage may declare required `params` (name + optional description). The declaring transition must supply every value; a missing, unknown, or empty value is rejected with accepted names. A value-less entry fails in place; the user repairs it in the script panel. Reserved exits: `error` takes a script or completion failure, `infrastructure` takes a guard or runtime failure and falls back to `error`, and a configuration refusal follows none; neither may target its own stage.
 
 No cross-board YAML transitions exist. Handoffs create separate tasks using an authorized [coordination protocol](coordination.md), not a cross-board move.
 
@@ -64,14 +64,11 @@ columns:
         when: Every acceptance criterion has supporting evidence.
     on_enter_prompt: |
       Review the deliverable against the task's stated acceptance criteria.
-      Read the task description and referenced evidence; do not change the deliverable.
+      Do not change the deliverable; read it and its referenced evidence.
       Check each criterion and report pass, fail, or unknown with its evidence.
-      If an input is missing, ask the human and do not declare a transition;
-      pause_task if auto mode is enabled and a deliberate hold is needed.
-      Otherwise summarize findings and remaining risks.
-      Read list_allowed_transitions. Declare intake when changes are needed,
-      or done only when all criteria pass, using set_next_transition with a reason.
-      These declarations move only this task at the end of the completed turn.
+      If an input is missing, ask the human; pause_task only for a deliberate hold.
+      Otherwise summarize findings, then read list_allowed_transitions and declare
+      intake when changes are needed, or done only when all criteria pass, with a reason.
   - id: done
     label: Done
     allowed_transitions: []

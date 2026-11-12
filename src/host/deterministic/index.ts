@@ -7,6 +7,7 @@ import { NativeExecutionOwnership, type OwnershipLease } from './ownership.js';
 import { createNativeLifetime, type NativeLifetime } from './lifetime.js';
 import { createDeterministicVariables } from './variables.js';
 import { executeCapturedProgram, verifyExecutors } from './executor.js';
+import { createBashRetry, type BashRetryOptions } from './retry.js';
 import type { DeterministicPolicyPort, DeterministicRuntime, ExecuteRequest, ExecutionOutcome, NativePtcPort, NativeShellPort } from './ports.js';
 import { DeterministicRuntimeError, failure } from './ports.js';
 import { bounded } from './safety.js';
@@ -18,6 +19,8 @@ export interface DeterministicRuntimeOptions {
   context: unknown;
   privateDirectory: string;
   policy?: DeterministicPolicyPort;
+  /** Bounded repetition policy for a guarded Bash call; a test can shorten its waits. */
+  retry?: BashRetryOptions;
 }
 /** Missing optional native services fail per script, not at conventional Kanban startup. */
 export function createDeterministicRuntime(options: DeterministicRuntimeOptions): DeterministicRuntime {
@@ -26,6 +29,7 @@ export function createDeterministicRuntime(options: DeterministicRuntimeOptions)
   const trust = createDeterministicTrust(options.privateDirectory);
   const variables = createDeterministicVariables(() => credentialStoreFromContext(options.context));
   const ownership = new NativeExecutionOwnership(options.privateDirectory);
+  const retry = createBashRetry(options.retry ?? {});
   const active = new Map<string, Promise<ExecutionOutcome>>();
   const services = () => ({ shell: optionalService<NativeShellPort>(options.context, 'shell'), runtime: optionalService<NativePtcPort>(options.context, 'ptcRuntime') });
   const verify = async (capture: DeterministicCapture, signal?: AbortSignal) => {
@@ -42,6 +46,7 @@ export function createDeterministicRuntime(options: DeterministicRuntimeOptions)
     const running = (async (): Promise<ExecutionOutcome> => {
       let release: OwnershipLease | undefined;
       let lifetime: NativeLifetime | undefined;
+      let outcome: ExecutionOutcome;
       try {
         request.signal.throwIfAborted();
         if (!await trust.isApproved(request.scope, request.capture.fingerprint)) failure('TRUST_REQUIRED', 'Review and explicitly approve this exact local executable version before execution.');
@@ -55,14 +60,40 @@ export function createDeterministicRuntime(options: DeterministicRuntimeOptions)
         request.signal.throwIfAborted();
         const { shell, runtime } = services();
         if (!shell) failure('BASH_UNAVAILABLE', 'Mount the public native Bash executor.');
-        return await executeCapturedProgram({ request, code, policy: executionPolicy, shell, runtime, variables, lifetime });
+        outcome = await executeCapturedProgram({ request, code, policy: executionPolicy, shell, runtime, variables, lifetime, retry });
       } catch (error) {
-        if (request.signal.aborted) return { kind: 'aborted' };
-        return { kind: 'failed', diagnostic: { code: error instanceof DeterministicRuntimeError ? error.code : 'EXECUTOR_FAILED', message: bounded(error instanceof Error ? error.message : String(error)) } };
-      } finally {
-        try { await lifetime?.close(); await release?.(); }
-        catch (error) { return { kind: 'failed', diagnostic: { code: 'OWNERSHIP_UNCERTAIN', message: bounded('Native cleanup could not confirm quiescence. ' + (error instanceof Error ? error.message : String(error))) } }; }
+        outcome = request.signal.aborted
+          ? { kind: 'aborted' }
+          : { kind: 'failed', diagnostic: {
+            code: error instanceof DeterministicRuntimeError ? error.code : 'EXECUTOR_FAILED',
+            message: bounded(error instanceof Error ? error.message : String(error)),
+            ...(error instanceof DeterministicRuntimeError && error.detail !== undefined ? { details: error.detail } : {}),
+          } };
       }
+      try {
+        await lifetime?.close();
+        await release?.();
+      } catch (error) {
+        // Cleanup uncertainty is the settled failure, but it must not erase what the
+        // execution had already found: the complete earlier diagnosis becomes the cause.
+        const previous = outcome.kind === 'failed' ? outcome.diagnostic : undefined;
+        const stopped = outcome.kind === 'aborted';
+        const carried = previous?.details ?? {};
+        const cause = previous !== undefined
+          ? { code: previous.code, message: previous.message, ...(previous.details === undefined ? {} : { details: previous.details }) }
+          : stopped ? { code: 'EXECUTION_ABORTED', message: 'The execution was stopped before cleanup was confirmed.' } : undefined;
+        return { kind: 'failed', diagnostic: {
+          code: 'OWNERSHIP_UNCERTAIN',
+          message: bounded('Native cleanup could not confirm quiescence. ' + (error instanceof Error ? error.message : String(error))),
+          details: {
+            origin: 'infrastructure',
+            ...(cause === undefined ? {} : { cause }),
+            ...(carried.attempts === undefined ? {} : { attempts: carried.attempts }),
+            ...(carried.guard === undefined ? {} : { guard: carried.guard }),
+          },
+        } };
+      }
+      return outcome;
     })();
     active.set(key, running);
     try { return await running; } finally { if (active.get(key) === running) active.delete(key); }

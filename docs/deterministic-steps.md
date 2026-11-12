@@ -6,7 +6,7 @@ Deterministic stages run repeatable Bash or TypeScript checks without creating a
 
 ## Compatibility and installation
 
-Artifact **0.27.0** requires **DSH >=0.2.2-rc.1 <0.3.0-0**, **Node >=24.9.0**, and development **pnpm 10.15.1**. The lockfile records the tested **0.2.2-rc.1** SDK; declared SDK ranges are bounded. DSH evaluates prereleases in admission, so the explicit upper bound excludes 0.3 prereleases too. Host admission is not a claim that every optional execution provider is available.
+Artifact **0.29.0** requires **DSH >=0.2.2-rc.1 <0.3.0-0**, **Node >=24.9.0**, and development **pnpm 10.15.1**. The lockfile records the tested **0.2.2-rc.1** SDK; declared SDK ranges are bounded. DSH evaluates prereleases in admission, so the explicit upper bound excludes 0.3 prereleases too. Host admission is not a claim that every optional execution provider is available.
 
 Install from `https://github.com/filipeesch/deepseek-harness-kanban`, optionally pinned with `#<commit sha>` (immutable) or an existing version tag (a convenience, not an immutable pin). Follow [repository installation](<../README.md#install-from-the-repository-url>): the profile must approve the resolved Git dependency's **prepare** build. An unbuilt clone has no loadable bundle and can report installation success before failing to import. Verify its built entries and actual native activation; installation alone is not activation evidence.
 
@@ -59,7 +59,7 @@ TypeScript is an asynchronous function body supporting top-level await/return. T
 
 - `input`: structured task/project metadata, entry and execution identity, original `startedAt`, attempt identity/restart count, the entry's declared parameter values as `params`, and an incoming deterministic handoff when applicable. It contains no resolved secrets and never an undeclared parameter name.
 - `await env.get("CI_TOKEN")`: read-only access to an explicitly authorized local variable, separate from metadata.
-- **Only** `tools.bash({ command, timeoutMs? })` in the tool namespace. The command deadline is optional and kills on expiry; it never creates a detached chat job. The result includes `exitCode`, `signal`, `timedOut`, `aborted`, and bounded `stdout/stderr: { text, truncated }`. A nonzero nested Bash exit is data that the program may handle.
+- **Only** `tools.bash({ command, timeoutMs? })` in the tool namespace. The command deadline is optional and kills on expiry; it never creates a detached chat job. The result includes `exitCode`, `signal`, `timedOut`, `aborted`, and bounded `stdout/stderr: { text, truncated }`. A nonzero nested Bash exit is data that the program may handle; a host rejection is an exception, and leaving it uncaught reports the host cause rather than the exception.
 
 The [TypeScript CI fixture](<../tests/e2e-dsh/deterministic/wait-ci.ts>) checks a [local fake CI script](<../tests/e2e-dsh/deterministic/fake-ci.cjs>) and waits in its own loop:
 
@@ -93,7 +93,20 @@ An entry that lacks a declared parameter value never reaches the program: it fai
 
 A valid exit selects exactly the destination in the trusted captured mapping, independently of Auto mode. The host persists the terminal result before movement or native delivery. Pending user work/context changes may hold delivery without checking CI again. A renamed destination retains its stable identity; removing it causes a routing failure, and reusing its authored identifier cannot hijack delivery. Editing a mapping affects the next capture, not an active result.
 
-An executor/protocol error, including an unmapped exit, may use the captured reserved **error** route. Without that route the task stays recoverably failed. Ungranted trust is an authorization wait, not an error. Stop/supersession never routes through error. Destination removal or native handoff delivery failure does not recursively follow error.
+Every settled failure is classified by origin before it is routed or reported:
+
+- **script** — the program threw, or returned an exit its captured mapping does not name.
+- **contract** — the returned completion violates `{exit, message}` or its size bound.
+- **infrastructure** — the guard, its transport, or the execution runtime failed while the program was running.
+- **configuration** — the run could not be attempted as configured: a changed entry context, a missing or out-of-scope variable, an unrecoverable capture, a missing host capability, or a file policy the host cannot establish.
+
+The origin is stored with the diagnostic and shown on the card's script panel and in History. A script or contract failure follows the captured reserved **error** destination, which also receives an infrastructure failure when the stage does not map the reserved **infrastructure** destination. `infrastructure` never receives a script failure. A configuration refusal follows no destination: the task stays in its stage with the diagnosis and **Play**. Ungranted trust is an authorization wait, not a failure. Stop and supersession never route. Destination removal or native handoff delivery failure does not recursively follow a failure route. An execution already captured keeps its captured mapping, so mapping the reserved destination requires a new capture and therefore a new local approval, because exits are part of the approved fingerprint.
+
+### Guard failures and retries
+
+A guarded Bash call can end without the guard's result envelope. The host repeats that call only when the guard provably never started the command: both streams exactly empty and not truncated, exit status 125, and no terminating signal, timeout, or abort. Any other evidence — command output, a guard diagnostic line, a signal, or another status — is not repeated, because the command may already have produced an effect. One call makes at most three attempts with a short growing wait, and **Stop** vetoes the next attempt immediately, even while native cleanup is still draining. A repeated call is invisible to the program and never restarts the execution.
+
+An infrastructure failure is delivered as one sentence carrying its origin, the number of attempts, and where the detail lives; it never contains a stack trace or a local filesystem path. A provider's own text is kept as the nested cause and the delivered sentence comes from the failure code, so arbitrary provider output cannot reach the destination stage. A configuration failure never reaches a destination: its summary stays on the card. The bounded guard facts — whether the command was admitted, its exit status or signal, how long it took, how much it wrote, and both retained windows of its diagnostic stream — are recorded on that execution and shown in the script panel and, behind an expandable **Evidence** block, in History. Redaction runs over the whole stream before a window is cut, so a secret that crosses that boundary is redacted as a whole value. A program that catches a host rejection and then finishes normally is not a failure; one that lets it escape reports the host cause with the program exception recorded as its nested cause.
 
 An agent destination receives its own instruction and one identified output/provenance block in the same native context message and turn; only that downstream instruction creates a conversation when needed. A script destination receives structured input, without a conversation. A manual destination retains the handoff for the next explicit native execution in that exact entry; merely opening or creating a conversation does not consume it or force a turn. Handoffs are not user input, composer text, queued user work, title text, or fake agent-declared reasons. Durable delivery identity prevents duplicate accepted context across retries/restart; recorded delivery failures remain manual-retry.
 

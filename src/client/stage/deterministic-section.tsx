@@ -1,6 +1,6 @@
 import React from 'react';
 import type { Column } from '../../shared/types.js';
-import type { DeterministicDraft, DeterministicField } from './deterministic-draft.js';
+import { EXIT_HELP, type DeterministicDraft, type DeterministicField } from './deterministic-draft.js';
 
 /** Authored capabilities only. Credential values never belong in this draft. */
 export function DeterministicSection({ draft, choices, disabled, problem, onChange }: {
@@ -34,7 +34,7 @@ export function DeterministicSection({ draft, choices, disabled, problem, onChan
         <button type="button" className="kb-button" aria-label={'Remove exit ' + (index + 1)} onClick={() => field('exits', draft.exits.filter((_, i) => i !== index))}>Remove</button>
       </div>)}
       <button type="button" className="kb-button" onClick={() => field('exits', [...draft.exits, { name: '', to: '' }])}>Add exit</button>{issue('exits')}
-      <p className="kb-hint">Different exit names may share a destination. The optional error exit handles executor failures; no first-exit default is used.</p>
+      <p className="kb-hint">{EXIT_HELP}</p>
     </fieldset>
     <p className="kb-hint">Saving does not run code or grant trust. Existing executions retain their captured version until explicit Play.</p>
   </fieldset>;

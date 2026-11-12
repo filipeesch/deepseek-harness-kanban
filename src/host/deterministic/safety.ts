@@ -1,16 +1,13 @@
 import type { StepCompletion } from '../../shared/deterministic.js';
+import { bounded as boundText, boundedTail } from '../../shared/bounded.js';
+import { redactExact, redactRecord } from '../../shared/redact.js';
 import { failure } from './ports.js';
 
 export const SOURCE_MAX_BYTES = 128 * 1024;
 export const COMPLETION_MAX_BYTES = 32 * 1024;
 export const DIAGNOSTIC_MAX_BYTES = 16 * 1024;
 export function bounded(text: string, maxBytes = DIAGNOSTIC_MAX_BYTES): string {
-  const bytes = Buffer.from(text);
-  if (bytes.length <= maxBytes) return text;
-  const marker = '\n[output truncated]';
-  if (maxBytes <= marker.length) return marker.slice(0, Math.max(0, maxBytes));
-  const prefix = new TextDecoder().decode(bytes.subarray(0, maxBytes - marker.length), { stream: true });
-  return prefix + marker;
+  return boundText(text, maxBytes);
 }
 /** Exact-value protection, not a transformed-secret or network DLP boundary. */
 export class SecretRedactor {
@@ -26,9 +23,19 @@ export class SecretRedactor {
     }
   }
   text(text: string, maxBytes = DIAGNOSTIC_MAX_BYTES): string {
-    // NUL cannot occur in a resolved credential, so markers cannot be recursively remasked.
-    for (const secret of [...this.values].sort((a, b) => b.length - a.length)) text = text.split(secret).join('\0');
-    return bounded(text.replaceAll('\0', '[REDACTED]'), maxBytes);
+    return bounded(redactExact(text, [...this.values]), maxBytes);
+  }
+  /** The beginning of a stream after redaction, so a boundary cannot split a value. */
+  head(text: string, maxBytes: number): string {
+    return bounded(redactExact(text, [...this.values]), maxBytes);
+  }
+  /** The end of a stream after redaction, so a boundary cannot split a value. */
+  tail(text: string, maxBytes: number): string {
+    return boundedTail(redactExact(text, [...this.values]), maxBytes);
+  }
+  /** The same protection and bounds for a structured diagnostic detail. */
+  details(value: unknown): Record<string, unknown> | undefined {
+    return redactRecord(value, [...this.values]);
   }
 }
 export function parseCompletion(value: unknown): StepCompletion {

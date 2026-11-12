@@ -23,6 +23,9 @@ export function deterministicDefinition(draft: DeterministicDraft): Deterministi
   const params = draft.params.map(parameter => ({ name: parameter.name.trim(), ...(parameter.description.trim() ? { description: parameter.description.trim() } : {}) }));
   return { language: draft.language, ...(draft.source === 'inline' ? { code: draft.code } : { file: draft.file }), directory: draft.directory, ...(env.length ? { env } : {}), ...(params.length ? { params } : {}), exits: Object.fromEntries(draft.exits.map(route => [route.name, route.to])) };
 }
+/** The authored guidance the exits editor shows; one place so the contract is testable. */
+export const EXIT_HELP = 'Different exit names may share a destination. The reserved error and infrastructure exits receive synthesized failures: error for a script failure or a rejected completion, infrastructure for a failed guard or runtime, falling back to error when infrastructure is not mapped. No first-exit default is used.';
+
 export type DeterministicField = 'source' | 'env' | 'params' | 'exits';
 export function deterministicProblems(draft: DeterministicDraft, targets: ReadonlySet<string>): Array<{ field: DeterministicField; message: string }> {
   const problems: Array<{ field: DeterministicField; message: string }> = [];

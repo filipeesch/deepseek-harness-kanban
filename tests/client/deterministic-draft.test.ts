@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { deterministicDraft, deterministicDefinition, deterministicProblems } from '../../src/client/stage/deterministic-draft.js';
-import { stageDraft, stagePatch, draftChanged, draftProblems, stageRenameBlock } from '../../src/client/stage/stage-editor-draft.js';
+import { deterministicDraft, deterministicDefinition, deterministicProblems, EXIT_HELP } from '../../src/client/stage/deterministic-draft.js';
+import { stageDraft, stagePatch, draftChanged, draftProblems, stageRenameBlock, transitionChoices } from '../../src/client/stage/stage-editor-draft.js';
 import type { Column } from '../../src/shared/types.js';
 const column: Column = { id: 'wait', name: 'Wait', deterministic: { language: 'typescript', code: '  await tools.bash({command:"sleep 1"});\nreturn {exit:"ok",message:"done"};\n', directory: 'task', env: ['TOKEN'], exits: { ok: 'done', cached: 'done' } } };
 const targets = new Set(['done']);
@@ -55,6 +55,11 @@ describe('deterministic authoring draft', () => {
       [{ name: 'pipeline', description: '' }, { name: 'pipeline', description: '' }],
       [{ name: 'pipeline', description: 'x'.repeat(201) }],
     ]) expect(deterministicProblems({ ...base, params }, targets)).toEqual(expect.arrayContaining([expect.objectContaining({ field: 'params' })]));
+  });
+  it('documents both reserved destinations and keeps the stage out of the target choices', () => {
+    expect(EXIT_HELP).toContain('error');
+    expect(EXIT_HELP).toContain('infrastructure');
+    expect(transitionChoices([{ id: 'wait', name: 'Wait' }, { id: 'done', name: 'Done' }], 'wait').map(column => column.id)).toEqual(['done']);
   });
   it('blocks stage id edits during directly owned script work', () => {
     const task = { id: 't', columnId: 'wait' } as never;

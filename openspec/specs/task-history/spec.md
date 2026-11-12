@@ -6,7 +6,6 @@ Record what happened to a task over its life, as settled facts with the moment e
 ## Requirements
 
 ### Requirement: Durable task flow record
-
 Every task SHALL carry an ordered record of the flow facts that happened to it. Each entry SHALL name the kind of fact, the moment it happened, and the references that kind needs. Entries SHALL be appended only as facts settle, and SHALL NOT be rewritten afterwards, except to follow a renamed stage identifier. The record SHALL be removed together with the task, and SHALL NOT be included in anything the plugin publishes to team storage.
 
 #### Scenario: An appended entry keeps its moment
@@ -25,9 +24,7 @@ Every task SHALL carry an ordered record of the flow facts that happened to it. 
 
 - **WHEN** the board a task belongs to is published to a team storage
 - **THEN** the published content contains no task flow record
-
 ### Requirement: Flow facts recorded
-
 The record SHALL include, as separate entries: the task's creation together with the stage it was created in; every stage entry, naming the origin stage and the destination stage; every next-stage intent recorded on the task; every auto mode change, naming whether auto mode was enabled, disabled, paused with its reason, paused by the agent, or resumed; and the settled outcome of every worktree creation, attachment, and removal, and of every failed context operation, naming the path and branch the operation acted on and the failure reason when it failed.
 
 The record SHALL additionally include the settled outcome of each deterministic execution, distinguishing a completed named result, an executor failure, and an explicit or superseding cancellation. The outcome SHALL identify its execution and source stage and SHALL carry the named exit and redacted message or diagnostic when one exists. A settled execution SHALL additionally carry, bounded, the parameter names and values that execution used, so two executions of the same entry can be compared; it SHALL NOT carry a value the execution did not receive. A completed script outcome SHALL NOT claim that its destination was entered before that transition settles. A logical deterministic handoff acceptance or failure SHALL be recorded when that fact settles, with its delivery identity and destination reference, rather than by copying raw transcript events. Replaying the same execution outcome or handoff receipt after restart SHALL NOT create another occurrence; a later explicit Play creates a different execution whose settled outcome SHALL be recorded even when its text repeats a previous outcome. These entries SHALL contain no resolved variable values, trust grants, captured code, or polling log stream and SHALL remain installation-local. Parameter values are task data, not credentials, and SHALL be recorded only on the execution that received them.
@@ -108,12 +105,10 @@ The record SHALL additionally include the settled outcome of each deterministic 
 - **WHEN** a parameterized execution settles after running with a pipeline and an app value
 - **THEN** its settled outcome carries those names and values
 - **AND** a later execution of the same entry that runs with a different value records its own values
-
 ### Requirement: Only settled facts are recorded
-
 The record SHALL NOT include state that is still in progress or that an existing surface already presents as current state. A phase of an operation that has not settled, a transition awaiting delivery, and the current stage itself SHALL NOT produce an entry. Attaching or closing a conversation, delivering a stage instruction, saving or deleting a note, and editing the task's title or description SHALL NOT produce an entry. Clearing a next-stage intent SHALL NOT produce an entry.
 
-An active deterministic program, a sleeping loop, individual external checks, recovery process attempts, pending trust, and a saved result still awaiting delivery SHALL NOT generate progress or per-poll rows. Its terminal execution outcome and the eventual logical handoff settlement SHALL follow Flow facts recorded. A parameter admission refusal SHALL NOT produce an entry, because it is a configuration refusal rather than an execution attempt. Editing an entry's parameter values SHALL NOT produce an entry; the next settled execution records the values it used. A raw stage-instruction delivery SHALL still add no row merely because its context contains a handoff, and no script history SHALL be inferred from console output. Intermediate state SHALL remain on the current execution surfaces instead.
+An active deterministic program, a sleeping loop, individual external checks, recovery process attempts, repeated attempts of one host call, pending trust, and a saved result still awaiting delivery SHALL NOT generate progress or per-poll rows. Its terminal execution outcome and the eventual logical handoff settlement SHALL follow Flow facts recorded. A settled failed execution SHALL carry, bounded, the attempts the host made inside it, so the retries are auditable on that one entry instead of adding rows. A parameter admission refusal SHALL NOT produce an entry, because it is a configuration refusal rather than an execution attempt. Editing an entry's parameter values SHALL NOT produce an entry; the next settled execution records the values it used. A raw stage-instruction delivery SHALL still add no row merely because its context contains a handoff, and no script history SHALL be inferred from console output. Intermediate state SHALL remain on the current execution surfaces instead.
 
 #### Scenario: An operation in progress adds nothing
 
@@ -148,14 +143,18 @@ An active deterministic program, a sleeping loop, individual external checks, re
 - **THEN** those progress events add no task-history row
 - **AND** only distinct settled execution and logical handoff facts are appended
 
+#### Scenario: Attempts ride the settled row
+
+- **WHEN** the host repeats one guarded Bash call and the execution then settles as a failure
+- **THEN** the record gains one failed execution entry for that execution
+- **AND** that entry carries the bounded attempt facts of the repeated call
+
 #### Scenario: A parameter refusal and a repair add nothing
 
 - **WHEN** an admission is refused for a missing parameter and the user later edits that value
 - **THEN** neither the refusal nor the edit adds a task-history entry
 - **AND** the next settled execution records the values it used
-
 ### Requirement: Every occurrence is recorded
-
 A settled fact SHALL append an entry every time it happens, including when it repeats the previous entry's content. The record SHALL NOT collapse consecutive duplicate facts.
 
 #### Scenario: A repeated pause is recorded again
@@ -167,9 +166,7 @@ A settled fact SHALL append an entry every time it happens, including when it re
 
 - **WHEN** a task leaves a stage and later enters that same stage again
 - **THEN** the record gains an entry for each entry into that stage
-
 ### Requirement: A stage entry requires a stage change
-
 An entry for a stage change SHALL be appended only when the task's stage actually changes. A placement within the current stage, a move that is refused or canceled, an automatic advance that fails without moving the task, and renaming a stage SHALL NOT produce a stage entry.
 
 Stop, Play, correction of saved script configuration, and restart recovery within the same stage SHALL NOT produce a stage-entry fact or restart the time spent in that stage. A deterministic result SHALL produce a stage-entry fact only when its admitted transition actually changes the task's stage, independently of its execution-outcome or handoff facts.
@@ -200,9 +197,7 @@ Stop, Play, correction of saved script configuration, and restart recovery withi
 - **WHEN** a deterministic execution is stopped, its script is corrected, and Play starts a new run in the same stage
 - **THEN** history gains no stage-change entry for Stop, the edit, or Play
 - **AND** the current stage duration continues from the actual stage entry
-
 ### Requirement: The record follows a renamed stage
-
 The record SHALL reference stages by their identifier and resolve their names from the board's current workflow. Renaming a stage identifier SHALL carry that identifier into every entry that references it, preserving each entry's moment, order, and kind. An entry that references a stage the workflow no longer defines SHALL remain present and identifiable.
 
 #### Scenario: A renamed stage reads correctly
@@ -221,9 +216,7 @@ The record SHALL reference stages by their identifier and resolve their names fr
 
 - **WHEN** an entry references a stage the board's workflow no longer defines
 - **THEN** the entry remains in the record and is identifiable as that stage
-
 ### Requirement: No history before the feature
-
 A task that has no recorded entry SHALL present an empty record. The plugin SHALL NOT infer, backfill, or invent entries for time before the record existed.
 
 #### Scenario: A task stored before the record existed
@@ -231,12 +224,10 @@ A task that has no recorded entry SHALL present an empty record. The plugin SHAL
 - **WHEN** a task with no recorded entry is opened
 - **THEN** its record is empty
 - **AND** its next settled fact becomes the first entry
-
 ### Requirement: History table in the task drawer
-
 The History section SHALL present the record as a table with the columns **When**, **Event**, **Detail**, and **In stage**. The When column SHALL present the moment in the reader's local date and time and SHALL expose the same moment as a machine-readable timestamp. The Event column SHALL name the kind of fact. The Detail column SHALL carry the fact's own detail: the origin and destination for a stage entry, the recorded destination for an intention, the checkout path and branch for a worktree outcome, and the reason for a pause. Rows SHALL be ordered newest first and SHALL present the whole record without a cap, scrolling within the section when it exceeds the available height.
 
-A deterministic execution row SHALL identify the settled outcome as script execution rather than an assistant turn or Auto mode change. Its Detail SHALL include the named output and redacted message, or the relevant cancellation or execution diagnostic, and SHALL distinguish completion of the program from acceptance or failure of its result handoff. A handoff row SHALL identify its source and destination and SHALL NOT claim a move when no stage change occurred. Execution and handoff rows SHALL remain non-stage rows and SHALL show a placeholder in In stage. The record SHALL NOT expose configured secret values, trust data, program snapshots, or full diagnostic streams.
+A deterministic execution row SHALL identify the settled outcome as script execution rather than an assistant turn or Auto mode change. Its Detail SHALL include the named output and redacted message, or the relevant cancellation or execution diagnostic, and SHALL distinguish completion of the program from acceptance or failure of its result handoff. A failed execution row SHALL additionally name the failure origin, the root-cause code, and the number of attempts the host made, and SHALL present the bounded facts that explain a guard or runtime failure so the failure can be diagnosed without reproducing it. A handoff row SHALL identify its source and destination and SHALL NOT claim a move when no stage change occurred. Execution and handoff rows SHALL remain non-stage rows and SHALL show a placeholder in In stage. The record SHALL NOT expose configured secret values, trust data, program snapshots, or full diagnostic streams.
 
 #### Scenario: Read the recorded flow
 
@@ -273,8 +264,12 @@ A deterministic execution row SHALL identify the settled outcome as script execu
 - **AND** the result message is visible in Detail after known-secret redaction
 - **AND** only an actual stage-entry row carries the stage-duration value
 
-### Requirement: Time spent in a stage
+#### Scenario: Read a guard failure from the row
 
+- **WHEN** an execution failed inside the isolated Bash guard
+- **THEN** its row names the failure origin, the root-cause code and the attempt count
+- **AND** it presents the bounded guard facts, redacted, without a full diagnostic stream
+### Requirement: Time spent in a stage
 The In stage column SHALL present the time between a stage entry and the next later stage entry, and for the most recent stage entry the time since it happened. The value SHALL be refreshed while the section is open. Rows that are not stage entries SHALL present a placeholder instead of a duration.
 
 #### Scenario: Measure a completed stage
@@ -292,9 +287,7 @@ The In stage column SHALL present the time between a stage entry and the next la
 
 - **WHEN** a row presents an auto mode change or a worktree outcome
 - **THEN** its In stage cell presents a placeholder rather than a duration
-
 ### Requirement: Empty history
-
 A task with no recorded entry SHALL present the History section with a statement that nothing has been recorded yet, and SHALL NOT present an empty table.
 
 #### Scenario: Open a task with no recorded flow
@@ -302,9 +295,7 @@ A task with no recorded entry SHALL present the History section with a statement
 - **WHEN** the user opens the History section of a task with no entries
 - **THEN** the section states that nothing has been recorded yet
 - **AND** no empty table is presented
-
 ### Requirement: History stays out of task tool payloads
-
 Tool payloads that read or list tasks SHALL omit the flow record, so browsing tasks never carries a task's whole history into a model's context.
 
 #### Scenario: List tasks

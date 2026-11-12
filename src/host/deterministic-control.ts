@@ -48,7 +48,7 @@ export function createNativeSupervisorPorts(options: NativeSupervisorPorts): Sup
         if (outcome.kind === 'completed') return outcome.completion;
         if (outcome.kind === 'failed') {
           if (outcome.diagnostic.code === 'OWNERSHIP_UNCERTAIN') base.report?.(new KanbanError(outcome.diagnostic.code, outcome.diagnostic.message));
-          throw new KanbanError(outcome.diagnostic.code, outcome.diagnostic.message);
+          throw new KanbanError(outcome.diagnostic.code, outcome.diagnostic.message, outcome.diagnostic.details);
         }
         throw new KanbanError('EXECUTION_ABORTED', 'The execution was canceled.');
       },
