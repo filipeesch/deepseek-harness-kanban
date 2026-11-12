@@ -23,6 +23,9 @@ const hostExternals = {
  },
 };
 await mkdir('lib', { recursive: true });
+// The native lifetime guard is a real module in the execution world, so it is built
+// before the host bundle that resolves its path.
+await build({entryPoints:['src/host/deterministic/guard/cli.ts'],outfile:'lib/guard.mjs',bundle:true,format:'esm',platform:'node',target:'node24',logLevel:'silent'});
 await build({entryPoints:['src/index.ts','src/remote.ts'],outdir:'lib',bundle:true,format:'esm',platform:'node',target:'node24',plugins:[hostExternals],sourcemap:true});
 const client=await build({entryPoints:['src/client.tsx'],bundle:true,format:'cjs',platform:'browser',target:'es2022',write:false,jsx:'automatic',loader:{'.css':'text'},external:['react','react/jsx-runtime','react-dom','@deepseek-ai/cordis','@deepseek-ai/dsh-client-ui-renderer/client','@deepseek-ai/dsh-client-ui-conversation/client','@deepseek-ai/dsh-api-gateway/client'],sourcemap:false});
 const body=client.outputFiles[0].text;

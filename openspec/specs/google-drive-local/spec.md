@@ -81,13 +81,19 @@ Each discovered location SHALL be identified by its root path, with the account 
 
 ### Requirement: Folder browsing
 
-The plugin SHALL list one folder level at a time inside the discovered locations and SHALL return the folders of the requested location together with whether the published configuration is present in it, which is the case when the `kanban-hub.yaml` manifest or a `kanban-boards` directory is present. The plugin SHALL list only directories, SHALL NOT read the content of any file, and SHALL NOT create, modify, rename, or delete anything while browsing. At a location root the plugin SHALL omit the Drive application's own bookkeeping entries and SHALL NOT omit any other folder. A requested location outside every discovered root SHALL be refused, including through `..` segments or symbolic links that resolve outside a root. When a location cannot be read, the response SHALL name the typed reason instead of returning an empty list, and a location with more entries than the supported maximum SHALL be reported as truncated with the number of entries shown.
+The plugin SHALL list one folder level at a time inside the discovered locations and SHALL return the folders of the requested location together with whether the published layout is present in it, which is the case when the `kanban-hub.yaml` layout stamp or at least one board log is present. The plugin SHALL list only directories, SHALL NOT read the content of any file, and SHALL NOT create, modify, rename, or delete anything while browsing. At a location root the plugin SHALL omit the Drive application's own bookkeeping entries and SHALL NOT omit any other folder. A requested location outside every discovered root SHALL be refused, including through `..` segments or symbolic links that resolve outside a root. When a location cannot be read, the response SHALL name the typed reason instead of returning an empty list, and a location with more entries than the supported maximum SHALL be reported as truncated with the number of entries shown.
 
 #### Scenario: List a discovered root
 
 - **WHEN** the user opens a discovered location
 - **THEN** the plugin returns the directories directly inside it
-- **AND** it reports whether the published configuration is present there
+- **AND** it reports whether the published layout is present there
+
+#### Scenario: Report presence from the layout entries
+
+- **WHEN** a browsed folder contains a layout stamp or a board log
+- **THEN** the folder is reported as already holding a published layout
+- **AND** the plugin reads no file to decide it
 
 #### Scenario: Navigate into a subfolder
 

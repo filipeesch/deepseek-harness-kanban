@@ -1,5 +1,15 @@
 /** Publishing surfaces are scoped like every other plugin-owned selector. */
 export const sharingStyles = String.raw`
+.dsh-kanban .kb-share-count{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;font-size:10.5px;font-weight:700;line-height:1;color:#fff;flex:0 0 auto}
+.dsh-kanban .kb-share-count.kb-share-draft{background:var(--kb-soft);color:inherit;border:1px solid var(--kb-line);font-weight:700}
+.dsh-kanban .kb-share-count.kb-share-updates{background:#1d4ed8;color:#fff}
+.dsh-kanban .kb-share-count.kb-share-review{background:#92400e;color:#fff}
+.dsh-kanban .kb-share-count.kb-share-orphan{background:transparent;border:1px dashed currentColor;color:inherit}
+.dsh-kanban .kb-share-area{display:flex;flex-direction:column;gap:8px;padding:10px 0;border-top:1px solid var(--kb-line)}
+.dsh-kanban .kb-share-area:first-of-type{border-top:0}
+.dsh-kanban .kb-share-area h4{margin:0;font-size:12px;text-transform:uppercase;letter-spacing:.05em;opacity:.75}
+.dsh-kanban .kb-share-diff{display:flex;flex-direction:column;gap:2px}
+.dsh-kanban .kb-share-diff-list{margin:0;padding-left:16px;font-size:11.5px;line-height:1.5}
 .dsh-kanban .kb-share-dot{border-radius:2px;border-color:color-mix(in srgb,currentColor 40%,transparent)}
 .dsh-kanban .kb-share-updates{background:#2563eb}
 .dsh-kanban .kb-share-draft{background:color-mix(in srgb,currentColor 62%,transparent)}
@@ -23,7 +33,10 @@ export const sharingStyles = String.raw`
 .dsh-kanban .kb-share-actions{display:flex;flex-wrap:wrap;gap:6px}
 .dsh-kanban .kb-share-form{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end}
 .dsh-kanban .kb-share-form .kb-field{flex:1 1 240px}
-.dsh-kanban .kb-share-interval{max-width:120px}
+.dsh-kanban .kb-share-form .kb-field.kb-share-interval{flex:0 0 auto;display:flex;flex-direction:row;align-items:center;gap:8px;max-width:none}
+.dsh-kanban .kb-share-blocker{display:grid;gap:1px}
+.dsh-kanban .kb-share-blocker-text{font-weight:600}
+.dsh-kanban .kb-share-code{font-size:10px;opacity:.7}
 .dsh-kanban .kb-share-diff{width:100%;font-size:11.5px}
 .dsh-kanban .kb-share-diff summary{cursor:pointer;opacity:.8}
 .dsh-kanban .kb-share-diff-body{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;margin-top:6px}

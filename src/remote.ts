@@ -5,7 +5,7 @@ import type { TypertContribution } from '@deepseek-ai/dsh-typert-registry';
 import { KanbanStateSchema } from './domain/hub-schema.js';
 import { problem } from './domain/schema-parts.js';
 import { newTaskSchema } from './shared/task-creation.js';
-import type { Command, DriveBrowseView, DriveDiscoveryView, HostSnapshot, HubSharingView, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionDraftContent, QuestionFeedFrame, QuestionRound, ModelCatalog, SharingAuthView, SharingCommand, SnapshotRequest, StoredQuestionDraft, WorktreeDefaults } from './shared/types.js';
+import type { Command, DriveBrowseView, DriveDiscoveryView, HostSnapshot, HubSharingView, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionDraftContent, QuestionFeedFrame, QuestionRound, ModelCatalog, SharingAuthView, SharingChangeSummary, SharingCommand, SnapshotRequest, StoredQuestionDraft, WorktreeDefaults } from './shared/types.js';
 import { SHARING_STORAGES } from './shared/types.js';
 import type { DeterministicReview, DeterministicSummary } from './shared/deterministic.js';
 import { DETERMINISTIC_PHASES } from './shared/deterministic.js';
@@ -109,21 +109,24 @@ const sharingStorage=z.enum(SHARING_STORAGES);
 const sharingSyncMode=z.enum(['explicit','continuous']);
 const sharingAuthStatus=z.enum(['not-connected','authorizing','connected','error','reconnect-required']);
 const sharingBlocker=z.object({code:z.string(),message:z.string(),boardId:id.optional(),boardName:z.string().optional(),columnId:id.optional(),tasks:z.number().int().nonnegative().optional()}).strict();
-const sharingBoardView=z.object({boardId:id,key:id.optional(),name:z.string().min(1),state:sharingBoardState,bound:z.boolean(),pending:z.boolean(),updates:z.number().int().nonnegative().optional(),detail:z.object({local:z.string(),team:z.string(),localName:z.string(),teamName:z.string()}).strict().optional()}).strict();
+const sharingChangeSummary=z.object({kind:z.string().min(1)}).passthrough() as unknown as z.ZodType<SharingChangeSummary>;
+const sharingBoardView=z.object({boardId:id,key:id.optional(),name:z.string().min(1),state:sharingBoardState,bound:z.boolean(),draft:z.boolean(),updates:z.number().int().nonnegative().optional(),detail:z.object({changes:z.array(sharingChangeSummary),local:z.string().optional(),team:z.string().optional(),localName:z.string().optional(),teamName:z.string().optional()}).strict().optional()}).strict();
 export const SharingAuthViewSchema:z.ZodType<SharingAuthView>=z.object({
  status:sharingAuthStatus,authorizationUrl:z.string().optional(),email:z.string().optional(),error:ProblemSchema.optional(),
  drives:z.array(z.object({id:id,name:z.string().min(1)}).strict()).optional(),
  folders:z.array(z.object({id:id,name:z.string().min(1)}).strict()).optional(),
 }).strict();
 export const HubSharingViewSchema:z.ZodType<HubSharingView>=z.object({
- status:sharingHubStatus,provider:sharingStorage,providerLabel:z.string().min(1),supportsFiles:z.boolean(),address:z.string(),repository:z.string().optional(),syncMode:sharingSyncMode,
+ status:sharingHubStatus,provider:sharingStorage,providerLabel:z.string().min(1),supportsFiles:z.boolean(),address:z.string(),
+ notice:ProblemSchema.optional(),
  authorization:sharingAuthStatus.optional(),
  intervalMinutes:z.number().int().nonnegative(),lastCheckedAt:z.string().optional(),lastSyncedAt:z.string().optional(),error:ProblemSchema.optional(),
- drafts:z.number().int().nonnegative(),pending:z.number().int().nonnegative(),updates:z.number().int().nonnegative(),conflicts:z.number().int().nonnegative(),orderChanged:z.boolean(),syncing:z.boolean(),
+ drafts:z.number().int().nonnegative(),updates:z.number().int().nonnegative(),conflicts:z.number().int().nonnegative(),syncing:z.boolean(),
  boards:z.array(sharingBoardView),incoming:z.array(z.object({key:id,name:z.string().min(1)}).strict()),
+ pendingRemovals:z.array(z.object({key:id,name:z.string().min(1)}).strict()),
+ previewBoards:z.array(z.object({key:id,name:z.string().min(1)}).strict()).optional(),
  removed:z.array(z.object({boardId:id,key:id,name:z.string().min(1)}).strict()),blockers:z.array(sharingBlocker),
  preview:z.object({publishedBoards:z.number().int().nonnegative(),localBoards:z.number().int().nonnegative()}).strict().optional(),
- removing:z.array(z.object({boardId:id,name:z.string().min(1)}).strict()),
 }).strict();
 const drivePath=z.string().min(1).max(4096);
 export const DriveLocationViewSchema=z.object({id:drivePath,rootPath:drivePath,kind:z.enum(['account','legacy']),status:z.enum(['available','unavailable']),account:z.string().optional(),driveName:z.string().optional(),reason:z.string().optional()}).strict();
@@ -150,7 +153,7 @@ export const SharingCommandSchema:z.ZodType<SharingCommand>=z.discriminatedUnion
  z.object({type:z.literal('sharing.updateBoard'),hubId:id,boardId:id}).strict(),
  z.object({type:z.literal('sharing.publishBoard'),hubId:id,boardId:id}).strict(),
  z.object({type:z.literal('sharing.resolve'),hubId:id,boardId:id,choice:z.enum(['local','team'])}).strict(),
- z.object({type:z.literal('sharing.publish'),hubId:id}).strict(),
+ z.object({type:z.literal('sharing.publishAll'),hubId:id}).strict(),
  z.object({type:z.literal('sharing.setInterval'),hubId:id,intervalMinutes:z.number().int().min(0).max(1440)}).strict(),
  z.object({type:z.literal('sharing.disconnect'),hubId:id}).strict(),
  z.object({type:z.literal('sharing.restore'),hubId:id,boardId:id}).strict(),

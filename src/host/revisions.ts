@@ -77,11 +77,11 @@ export class BoardRevisions {
       const at = this.now();
       if (existing === undefined) {
         if (input.previous === null) {
-          const created = createRevisionLog({ hubId: input.hubId, boardId: input.boardId, text: input.next });
+          const created = createRevisionLog({ hubId: input.hubId, boardId: input.boardId, text: input.next, at });
           await this.options.store.save({ ...created, commits: [{ from: 0, to: 0, at, actor: input.actor, origin: input.origin, summary: 'Created the board workflow.' }] });
           return;
         }
-        const seeded = createRevisionLog({ hubId: input.hubId, boardId: input.boardId, text: input.previous });
+        const seeded = createRevisionLog({ hubId: input.hubId, boardId: input.boardId, text: input.previous, at });
         await this.options.store.save(appendRevision(seeded, { text: input.next, at, actor: input.actor, origin: input.origin }));
         return;
       }

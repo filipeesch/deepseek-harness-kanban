@@ -8,6 +8,14 @@ import { SOURCE_MAX_BYTES } from './safety.js';
 export function optionalService<T>(context: unknown, name: string): T | undefined {
   try { return (context as Record<string, T> | undefined)?.[name]; } catch { return undefined; }
 }
+/**
+ * A platform whose only backend reports partial enforcement gets a diagnostic that
+ * names the reason, instead of a generic policy failure the user cannot act on.
+ */
+export function partialEnforcementAdvice(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? ' The local Windows backend reports partial file enforcement, and a deterministic step does not accept partial confinement.' : '';
+}
+
 /** Agentless policy uses the standing mode, never trust as permission escalation. */
 export function createNativeDeterministicPolicy(context: unknown): DeterministicPolicyPort {
   const filesystem = () => optionalService<FileSystem>(context, 'fs') ?? failure('FILESYSTEM_UNAVAILABLE', 'Mount the native filesystem capability to resolve deterministic source and directory identity.');
@@ -40,7 +48,7 @@ export function createNativeDeterministicPolicy(context: unknown): Deterministic
         const sandbox = optionalService<Pick<SandboxProvider, 'confine'>>(context, 'sandbox');
         if (!sandbox) failure('POLICY_UNAVAILABLE', 'Mount a native process sandbox capable of the selected file policy.');
         const probe = await sandbox.confine(['bash', '-c', ':'], { ...policy, mode: policy.mode }, signal);
-        if (probe.enforcement !== 'full') failure('POLICY_INCOMPLETE', 'The native sandbox reports partial enforcement; select a fully enforcing backend before running this script.');
+        if (probe.enforcement !== 'full') failure('POLICY_INCOMPLETE', 'The native sandbox reports partial enforcement; select a fully enforcing backend before running this script.' + partialEnforcementAdvice());
       }
       return policy;
     },

@@ -38,6 +38,17 @@ describe('board and editor style contracts', () => {
     expect(styles).toMatch(/\.kb-motion-overlay\{[^}]*overflow:hidden/);
     expect(styles).toMatch(/\.kb-motion-overlay\{[^}]*pointer-events:none/);
   });
+  it('plays the diagram transit and the arrival pulse in CSS, not in script', () => {
+    for (const value of ['.kb-flow-transit{', '.kb-flow-transit-particle{', 'offset-path:var(--kb-transit-path)', 'animation-duration:var(--kb-transit-duration', '@keyframes kb-flow-transit-run', '.kb-card-arrival{', '@keyframes kb-card-arrival', 'background:color-mix(in srgb,var(--dsw-alias-state-business-primary,CanvasText) 10%,transparent)'])
+      expect(styles).toContain(value);
+    // The clone that duplicated a moving card is retired, and so is the exit label.
+    expect(styles).not.toContain('.kb-flow-travel');
+    expect(styles).not.toContain('.kb-flow-exit-label');
+  });
+  it('presents neither the transit nor the pulse under reduced motion', () => {
+    expect(styles).toContain('.kb-flow-transit{display:none}');
+    expect(styles).toContain('.kb-card-arrival{display:none}');
+  });
   it('disables card motion under reduced motion', () => {
     const start = styles.indexOf('@media (prefers-reduced-motion: reduce){.dsh-kanban .kb-motion-overlay');
     expect(start).toBeGreaterThan(-1);
@@ -86,7 +97,7 @@ describe('compact header and popover surfaces', () => {
   it('stacks a popover above the board content and below the task drawer', () => {
     const popoverLayer = Number(/\.kb-popover\{[^}]*z-index:(\d+)/.exec(styles)?.[1]);
     const drawerLayer = Number(/\.kb-drawer\{[^}]*z-index:(\d+)/.exec(styles)?.[1]);
-    expect(popoverLayer).toBeGreaterThan(8); // the diagram travel overlay is the busiest board layer
+    expect(popoverLayer).toBeGreaterThan(8); // the diagram transit overlay is the busiest board layer
     expect(popoverLayer).toBeLessThan(drawerLayer);
     expect(styles).toContain('.kb-popover-anchor,');
   });

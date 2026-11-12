@@ -5,7 +5,6 @@ export const deterministicStyles = String.raw`
 .dsh-kanban .kb-script-panel{padding:10px 14px;border-bottom:1px solid var(--kb-line);background:var(--kb-soft);font-size:12px}
 .dsh-kanban .kb-script-panel-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .dsh-kanban .kb-script-panel .kb-hint,.dsh-kanban .kb-script-panel .kb-problem{margin:5px 0;overflow-wrap:anywhere}
-.dsh-kanban .kb-flow-exit-label{position:absolute;pointer-events:all;background:var(--kb-surface);color:var(--dsw-alias-label-primary,CanvasText);border:1px solid var(--kb-line);border-radius:4px;padding:3px 6px;font:inherit;font-size:12px;cursor:pointer;font-weight:600}
 .dsh-kanban .kb-script-code{font-family:ui-monospace,SFMono-Regular,monospace;resize:vertical;min-height:150px;tab-size:2}
 .dsh-kanban .kb-script-route{display:flex;gap:6px;margin:6px 0;flex-wrap:wrap}
 .dsh-kanban .kb-script-route input,.dsh-kanban .kb-script-route select{min-width:0;flex:1}

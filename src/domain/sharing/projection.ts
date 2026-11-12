@@ -9,7 +9,7 @@ export interface LocalSharedBoard {
   /** Present only while the board is bound to a published key. */
   key?: string;
   /** Absent means the board allows every project; an empty list closes it to creation. */
-  projectKeys?: string[];
+  projectKeys: string[] | null;
   tasks: number;
   taskColumns: Array<{ columnId: string; tasks: number }>;
 }
@@ -33,7 +33,7 @@ export function projectSharingBoards(hub: HubState, bindings: Readonly<BoardBind
       name: board.name,
       workflow: board.workflowYaml,
       ...(key === undefined ? {} : { key }),
-      ...(board.allowedProjectKeys === undefined ? {} : { projectKeys: [...board.allowedProjectKeys] }),
+      projectKeys: board.allowedProjectKeys === undefined ? null : [...board.allowedProjectKeys],
       tasks,
       taskColumns: [...taskColumns].map(([columnId, count]) => ({ columnId, tasks: count })),
     };

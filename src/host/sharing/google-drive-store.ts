@@ -15,7 +15,7 @@ function text(value: unknown): string | undefined { return typeof value === 'str
 /** Drive publishing state persisted beside the binding. */
 function normalizeState(state: ProviderState): ProviderState {
   return {
-    ...(text(state.manifestFileId) ? { manifestFileId: text(state.manifestFileId) } : {}),
+    ...(text(state.stampFileId) ? { stampFileId: text(state.stampFileId) } : {}),
     ...(text(state.driveId) ? { driveId: text(state.driveId) } : {}),
     ...(typeof state.boardFileIds === 'object' && state.boardFileIds !== null ? { boardFileIds: state.boardFileIds } : {}),
   };
@@ -40,7 +40,6 @@ export function createGoogleDriveProviderDescriptor(options: GoogleDriveProvider
   return {
     id: 'google-drive',
     label: 'Google Drive',
-    syncMode: 'explicit',
     defaultIntervalMinutes: 1,
     requiresAuthorization: true,
     normalizeSettings(settings) {

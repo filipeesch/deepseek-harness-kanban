@@ -3,6 +3,7 @@ import type { DeterministicDefinition } from '../../shared/deterministic.js';
 import { deterministicDefinitionSchema } from '../deterministic-definition.js';
 import type { ColumnGroup, ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset, StagePosition, StageSize, TransitionRule } from '../../shared/types.js';
 import { isDomainId } from '../validation.js';
+import { PROJECT_KEY_PATTERN } from '../project-key.js';
 
 /** The event format this installation writes. */
 export const EVENT_FORMAT_VERSION = 3;
@@ -25,7 +26,11 @@ export type BoardChange =
   | { kind: 'group.field-changed'; id: string; field: 'columns'; value: string[] }
   | { kind: 'group.removed'; id: string }
   | { kind: 'connection.set'; layout: ConnectionLayout }
-  | { kind: 'connection.removed'; from: string; to: string };
+  | { kind: 'connection.removed'; from: string; to: string }
+  | { kind: 'board.renamed'; name: string }
+  | { kind: 'board.scope-changed'; projectKeys: string[] | null }
+  | { kind: 'board.rank-changed'; rank: string }
+  | { kind: 'board.removed' };
 
 /** One authored stage as an event carries it when the stage first appears. */
 export interface StageDefinition {
@@ -62,6 +67,8 @@ const segment = z.strictObject({ axis: z.enum(['x', 'y']), offset: z.number().fi
 const connection = z.strictObject({ from: identifier, to: identifier, source: anchor.optional(), target: anchor.optional(), segments: z.array(segment).optional() });
 const group = z.strictObject({ id: identifier, name: z.string().min(1), columnIds: z.array(identifier).min(1) });
 const stage = z.strictObject({ id: identifier, key: identifier, name: z.string().min(1), deterministic: deterministicDefinitionSchema.optional(), onEnterPrompt: z.string().optional(), allowedTransitions: transitionList.optional(), position: position.optional(), size: size.optional() });
+const projectKey = z.string().refine(value => PROJECT_KEY_PATTERN.test(value), 'Expected a safe project key.');
+const rank = z.string().refine(value => RANK_PATTERN.test(value), 'Expected an orderable board position.');
 
 /** Retained events keep the format they were written with, so every supported one decodes. */
 const stamped = { seq: z.number().int().min(0), at: z.string().min(1), v: z.union([z.literal(1), z.literal(2), z.literal(EVENT_FORMAT_VERSION)]) };
@@ -80,6 +87,10 @@ const shape = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('group.removed'), id: identifier, ...stamped }),
   z.strictObject({ kind: z.literal('connection.set'), layout: connection, ...stamped }),
   z.strictObject({ kind: z.literal('connection.removed'), from: identifier, to: identifier, ...stamped }),
+  z.strictObject({ kind: z.literal('board.renamed'), name: z.string().min(1).refine(value => value.trim().length > 0, 'Expected a nonempty board name.'), ...stamped }),
+  z.strictObject({ kind: z.literal('board.scope-changed'), projectKeys: z.array(projectKey).nullable(), ...stamped }),
+  z.strictObject({ kind: z.literal('board.rank-changed'), rank, ...stamped }),
+  z.strictObject({ kind: z.literal('board.removed'), ...stamped }),
 ]);
 
 /** Every kind this installation understands, so an unknown one is reported instead of guessed. */
@@ -88,7 +99,12 @@ export const EVENT_KINDS: readonly string[] = [
   'stage.created', 'stage.field-changed', 'stage.id-changed', 'stage.removed', 'stage.layout-set',
   'group.created', 'group.field-changed', 'group.removed',
   'connection.set', 'connection.removed',
+  'board.renamed', 'board.scope-changed', 'board.rank-changed', 'board.removed',
 ];
+
+/** The alphabet a published board position is written with, so ranks compare as text. */
+export const RANK_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
+const RANK_PATTERN = /^[0-9a-z]{1,32}$/;
 
 /** Serialize one event as the log stores it. */
 export function encodeEvent(event: JournalEvent): Record<string, unknown> {

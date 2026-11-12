@@ -225,17 +225,16 @@ it('refuses a team configuration written by a newer plugin version', async () =>
   await page.getByRole('radio', { name: 'Local folder' }).click();
   await page.getByRole('textbox', { name: 'Team folder path' }).fill(team);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  // A first connection to an empty team document offers to publish this Hub.
-  await page.getByRole('button', { name: 'Publish this Hub instead' }).click();
-  await page.getByRole('button', { name: 'Replace the team configuration' }).click();
-  await expect(page.getByRole('button', { name: 'Sync now' })).toBeVisible();
+  // A first connection to an empty folder publishes this Hub in the current layout.
+  await expect(page.getByRole('button', { name: 'Refresh' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Changes' })).toBeVisible();
 
-  // A teammate on a newer plugin publishes a document this version cannot read.
-  await writeFile(documentPath, ['version: 4', 'boards: []', 'newFormatField: true', ''].join('\n'), 'utf8');
-  await page.getByRole('button', { name: 'Sync now' }).click();
-  // The panel states the remedy; the failed command also reports the raw message.
+  // A teammate on a newer plugin publishes a layout this version cannot read.
+  await writeFile(documentPath, ['version: 5', ''].join('\n'), 'utf8');
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  // The panel states the remedy; nothing is applied or published over the newer layout.
   await expect(page.getByText('Update the plugin', { exact: true })).toBeVisible();
   await expect(page.getByText('Reading and publishing stay blocked until the plugin is updated.')).toBeVisible();
   await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
-  await expect(page.getByRole('img', { name: 'Team updates unavailable' })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Team review needed' })).toBeVisible();
 });

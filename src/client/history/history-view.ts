@@ -1,5 +1,7 @@
 import type { StageEntryOrigin, TaskHistoryEntry } from '../../shared/task-history.js';
-import type { Column } from '../../shared/types.js';
+import type { Column, Problem } from '../../shared/types.js';
+import { FAILURE_ORIGIN_LABELS } from '../../shared/deterministic-failure.js';
+import { failureDetail } from '../../domain/deterministic-failure.js';
 
 /**
  * How one task's flow record reads as table rows.
@@ -26,6 +28,8 @@ export interface HistoryRow {
   readonly when: string;
   readonly event: string;
   readonly detail: string;
+  /** The bounded deep facts behind the summary; the reader expands the row to see them. */
+  readonly evidence?: string;
   /** The time the task spent in the stage; the placeholder on other rows. */
   readonly duration: string;
   readonly tone: HistoryTone;
@@ -83,6 +87,47 @@ export function formatDuration(milliseconds: number): string {
   return minutes + ' min';
 }
 
+/**
+ * One settled failure in Detail: its origin, code, attempts, the admission proof,
+ * the exit status and the nested cause, so a tool failure reads differently from a
+ * problem in the work. The deep facts sit behind the row's evidence block.
+ */
+function failureText(error: Problem | undefined): string {
+  if (error === undefined) return '';
+  const detail = failureDetail(error.details);
+  if (detail === undefined) return ' \u2014 ' + error.message;
+  const parts = [FAILURE_ORIGIN_LABELS[detail.origin] + ' failure', error.code];
+  const attempts = detail.attempts?.length ?? 0;
+  if (attempts > 0) parts.push(attempts + (attempts === 1 ? ' attempt' : ' attempts'));
+  const guard = detail.guard;
+  if (guard !== undefined) parts.push(guard.admission === 'started' ? 'command started' : guard.admission === 'not-admitted' ? 'command not admitted' : 'admission unknown');
+  if (guard !== undefined && guard.signal !== null) parts.push('signal ' + guard.signal);
+  if (guard !== undefined && guard.signal === null && guard.exitCode !== null) parts.push('exit ' + guard.exitCode);
+  if (detail.cause !== undefined) parts.push('cause ' + detail.cause.code);
+  return ' \u00b7 ' + parts.join(' \u00b7 ') + ' \u2014 ' + error.message;
+}
+
+/** The bounded deep facts of one failure, or undefined when the record carries none. */
+function failureEvidence(error: Problem | undefined): string | undefined {
+  if (error === undefined) return undefined;
+  const detail = failureDetail(error.details);
+  if (detail === undefined) return undefined;
+  const lines: string[] = [];
+  if (detail.cause !== undefined) lines.push('Cause: ' + detail.cause.code + (detail.cause.message.trim() ? ' \u2014 ' + detail.cause.message.trim() : ''));
+  const guard = detail.guard;
+  if (guard !== undefined) {
+    lines.push('Guard: ' + (guard.admission === 'started' ? 'command started' : guard.admission === 'not-admitted' ? 'command not admitted' : 'admission unknown') + ' \u00b7 ' + guard.elapsedMs + ' ms');
+    lines.push('Exit: ' + (guard.signal !== null ? 'signal ' + guard.signal : guard.exitCode === null ? 'no status' : String(guard.exitCode)) + (guard.timedOut ? ' \u00b7 timed out' : '') + (guard.aborted ? ' \u00b7 aborted' : ''));
+    lines.push('Output: ' + guard.stdoutBytes + ' B stdout \u00b7 ' + guard.stderrBytes + ' B stderr');
+    if (guard.stdoutHead.trim()) lines.push('stdout: ' + guard.stdoutHead.trim());
+    if (guard.stderrTail.trim()) lines.push('stderr: ' + guard.stderrTail.trim());
+  }
+  if (detail.attempts !== undefined && detail.attempts.length > 0) {
+    lines.push('Attempts: ' + detail.attempts.map(attempt => attempt.code + (attempt.guard === undefined ? '' : ' (' + (attempt.guard.signal !== null ? attempt.guard.signal : attempt.guard.exitCode ?? 'no status') + ')')).join(', '));
+  }
+  return lines.length === 0 ? undefined : lines.join('\n');
+}
+
 /** The stage name the board defines now, or the identifier a removed stage left behind. */
 function stageName(columns: readonly Pick<Column, 'id' | 'name'>[], id: string): string {
   return columns.find(column => column.id === id)?.name ?? id;
@@ -129,9 +174,15 @@ function worktreeRow(entry: Extract<TaskHistoryEntry, { kind: 'worktree' }>): { 
   }
 }
 
-function present(entry: TaskHistoryEntry, columns: readonly Pick<Column, 'id' | 'name'>[]): { event: string; detail: string; tone: HistoryTone } {
+function present(entry: TaskHistoryEntry, columns: readonly Pick<Column, 'id' | 'name'>[]): { event: string; detail: string; tone: HistoryTone; evidence?: string } {
   switch (entry.kind) {
-    case 'deterministic-execution': return { event: 'Script ' + entry.outcome, detail: stageName(columns, entry.columnId) + ' · Execution ' + entry.executionId + (entry.exit ? ' · Exit ' + entry.exit : '') + (entry.parameters && Object.keys(entry.parameters).length > 0 ? ' · Parameters ' + Object.entries(entry.parameters).map(([name, value]) => name + '=' + value).join(', ').slice(0, 4096) : '') + (entry.message ? ' — ' + entry.message : '') + (entry.error ? ' — ' + entry.error.message : ''), tone: entry.outcome === 'failed' ? 'warning' : 'neutral' };
+    case 'deterministic-execution': {
+      // The synthetic result message and the diagnostic are the same sentence; show
+      // it once instead of repeating it inside the same row.
+      const repeated = entry.message !== undefined && entry.error !== undefined && entry.message === entry.error.message;
+      const evidence = failureEvidence(entry.error);
+      return { event: 'Script ' + entry.outcome, detail: stageName(columns, entry.columnId) + ' · Execution ' + entry.executionId + (entry.exit ? ' · Exit ' + entry.exit : '') + (entry.parameters && Object.keys(entry.parameters).length > 0 ? ' · Parameters ' + Object.entries(entry.parameters).map(([name, value]) => name + '=' + value).join(', ').slice(0, 4096) : '') + (entry.message !== undefined && !repeated ? ' — ' + entry.message : '') + failureText(entry.error), tone: entry.outcome === 'failed' ? 'warning' : 'neutral', ...(evidence === undefined ? {} : { evidence }) };
+    }
     case 'deterministic-handoff': return { event: 'Script handoff ' + entry.outcome, detail: transition(entry.fromColumnId, entry.columnId, columns) + ' · Execution ' + entry.executionId + ' · Delivery ' + entry.deliveryId + ' · Exit ' + entry.exit + ' — ' + entry.message + (entry.error ? ' — ' + entry.error.message : ''), tone: entry.outcome === 'failed' ? 'warning' : 'neutral' };
     case 'created': return { event: 'Created', detail: stageName(columns, entry.columnId), tone: 'accent' };
     case 'stage': return { event: 'Stage changed', detail: transition(entry.fromColumnId, entry.columnId, columns) + ' · ' + stageOrigin(entry.origin), tone: 'accent' };
@@ -167,6 +218,7 @@ export function buildHistoryRows(input: HistoryViewInput): HistoryRow[] {
       when: formatMoment(entry.at, input.locale, input.timeZone),
       event: presented.event,
       detail: presented.detail,
+      ...(presented.evidence === undefined ? {} : { evidence: presented.evidence }),
       duration: durations.get(index) ?? EMPTY_CELL,
       tone: presented.tone,
     });

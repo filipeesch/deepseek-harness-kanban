@@ -18,8 +18,8 @@ export interface BoardSharingPort {
   removeBoard(hubId: string, boardId: string, scope: 'local' | 'team', name: string): Promise<void>;
   /** Publish one board; a board write never publishes another board's draft. */
   publishBoard(hubId: string, boardId: string): Promise<void>;
-  /** Publish the hub manifest: board names, order, project scopes, and removals. */
-  publishManifest(hubId: string): Promise<void>;
+  /** Publish every board of the Hub that has local changes. */
+  publishAll(hubId: string): Promise<void>;
 }
 
 /** The command path keeps the UI publishing flow; the tool path publishes automatically. */
@@ -361,8 +361,8 @@ export class BoardAdministration {
       const board = await this.options.hubs.hub(located.hubId).deleteBoard(input.boardId, input.expectedRevision);
       try { await this.options.revisions?.remove?.(input.boardId); }
       catch (error) { this.options.report?.(error); }
-      // A team removal notifies the sharing layer inside removeBoard; a local-only
-      // removal must not schedule a synchronization that could publish other drafts.
+      // A team removal appends its removal event inside the sharing layer; a local-only
+      // removal must not publish anything, and neither may publish another board.
       if (this.options.sharing) {
         try { await this.options.sharing.removeBoard(located.hubId, input.boardId, input.sharing === 'team' ? 'team' : 'local', board.name); }
         catch (error) {
@@ -374,7 +374,7 @@ export class BoardAdministration {
       }
       const sharing: BoardPublishingOutcome = !bound || input.sharing === 'local'
         ? { status: 'local-only' }
-        : await this.publishOutcome(located.hubId, undefined, policy);
+        : { status: 'published' };
       return this.result(located.hubId, board, sharing);
     });
   }
@@ -383,7 +383,7 @@ export class BoardAdministration {
    * Publish after a successful local write. A refusal never rolls the local change
    * back; the caller reports the outcome instead of retrying the write.
    */
-  private async publishOutcome(hubId: string, boardId: string | undefined, policy: BoardPublishingPolicy): Promise<BoardPublishingOutcome> {
+  private async publishOutcome(hubId: string, boardId: string, policy: BoardPublishingPolicy): Promise<BoardPublishingOutcome> {
     if (policy === 'never') return { status: 'not-requested' };
     const sharing = this.options.sharing;
     if (!sharing) return { status: 'not-bound' };
@@ -392,26 +392,18 @@ export class BoardAdministration {
     catch (error) { return { status: 'failed', error: problem(error) }; }
     if (!view || view.status === 'not-published') return { status: 'not-bound' };
     if (view.status === 'preview') return { status: 'preview' };
-    if (boardId !== undefined && view.boards.find(entry => entry.boardId === boardId)?.state === 'orphan') {
+    if (view.boards.find(entry => entry.boardId === boardId)?.state === 'orphan') {
       return { status: 'blocked', reason: 'The board is not bound to the team document.' };
     }
     if (view.status === 'unavailable') {
       return { status: 'blocked', reason: 'The team storage is unavailable.', ...(view.error === undefined ? {} : { error: view.error }) };
     }
-    if (view.conflicts > 0) return { status: 'blocked', reason: 'The Hub has unresolved workflow conflicts.' };
     if (view.blockers.length > 0) return { status: 'blocked', reason: view.blockers[0]!.message };
-    if (boardId === undefined) {
-      try {
-        await sharing.publishManifest(hubId);
-        return { status: 'published' };
-      } catch (error) {
-        const value = problem(error);
-        return value.code === 'SHARING_PUBLISH_BLOCKED' || value.code === 'SHARING_NOT_PUBLISHED' ? { status: 'blocked', reason: value.message, error: value } : { status: 'failed', error: value };
-      }
-    }
-    if (view.boards.find(entry => entry.boardId === boardId)?.state === 'updates-available') {
-      return { status: 'blocked', reason: 'This board has team updates that have not been applied.' };
-    }
+    const state = view.boards.find(entry => entry.boardId === boardId)?.state;
+    if (state === 'updates-available') return { status: 'blocked', reason: 'This board has team updates that have not been applied.' };
+    if (state === 'needs-review') return { status: 'blocked', reason: 'This board needs a review before it can be published.' };
+    if (state === 'update-required') return { status: 'blocked', reason: 'Update the plugin to publish this board.' };
+    if (state === 'orphan') return { status: 'blocked', reason: 'The board was removed by the team. Publish it as a new board instead.' };
     try {
       await sharing.publishBoard(hubId, boardId);
       return { status: 'published' };

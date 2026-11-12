@@ -106,6 +106,27 @@ function StubCanvas(props: WorkflowCanvasProps) {
   </div>;
 }
 
+/** The card element props the capturing canvas was last rendered with. */
+const renderedCardProps: Array<Record<string, unknown>> = [];
+
+/** A canvas that records the props of every card element it is asked to render. */
+function CapturingCanvas(props: WorkflowCanvasProps) {
+  useEffect(() => {
+    for (const stage of props.stages) props.callbacks.onMeasure(stage.id, { width: stage.width, height: stage.height });
+  }, [props.stages]);
+  renderedCardProps.length = 0;
+  return <div data-testid="captured-canvas">
+    {props.stages.map(stage => <section key={stage.id} data-testid={'captured-' + stage.id}>
+      {stage.cardIds.map(cardId => {
+        const card = props.cardEnvironment.renderCard(cardId);
+        if (card !== null && typeof card === 'object' && 'props' in card) renderedCardProps.push((card as React.ReactElement<Record<string, unknown>>).props);
+        return <React.Fragment key={cardId}>{card}</React.Fragment>;
+      })}
+    </section>)}
+    {props.overlay}
+  </div>;
+}
+
 function setup(overrides: Partial<WorkflowViewProps> = {}) {
   const run = vi.fn(async (_command: Command) => fixture() as KanbanSnapshot);
   const state = boardState();
@@ -114,6 +135,7 @@ function setup(overrides: Partial<WorkflowViewProps> = {}) {
     hubId: 'hub-1', boardId: 'board-1', state, tasks: state.tasks, optimistic: null, drag: null,
     beginDrag: vi.fn(), shouldSuppressClick: () => false, run: run as unknown as RunCommand,
     revision: 7, onOpenTask: vi.fn(), onError: vi.fn(), canvas: StubCanvas, card: cardPort(),
+    supportsTransit: () => true,
     ...overrides,
   };
   const view = render(<WorkflowView {...props} />);
@@ -464,11 +486,11 @@ describe('workflow view', () => {
     expect(screen.queryByRole('button', { name: 'Open task Beta' })).toBeNull();
   });
 
-  it('does not travel a card hidden by the filter', async () => {
+  it('does not present a transit for a card hidden by the filter', async () => {
     const view = setup({ tasks: [] });
     const moved: BoardState = { ...view.props.state, tasks: [task('a', 'Alpha', 'two'), task('b', 'Beta', 'two')] };
     await act(async () => { view.update({ state: moved, tasks: [] }); });
-    expect(document.querySelector('.kb-flow-travel-card')).toBeNull();
+    expect(document.querySelector('.kb-flow-transit')).toBeNull();
   });
 
   it('restores a stored placement when the diagram opens', () => {
@@ -481,11 +503,62 @@ describe('workflow view', () => {
     expect(two.dataset['y']).toBe('222');
   });
 
-  it('presents a travelling card when a task changes stage', async () => {
+  it('presents a transit when a task changes stage, and never a duplicate card', async () => {
     const view = setup();
     const moved: BoardState = { ...view.props.state, tasks: [task('a', 'Alpha', 'two'), task('b', 'Beta', 'two')] };
     await act(async () => { view.update({ state: moved, tasks: moved.tasks }); });
-    expect(document.querySelector('.kb-flow-travel-card')?.textContent).toBe('Alpha');
+    const transit = document.querySelector('.kb-flow-transit');
+    expect(transit?.getAttribute('data-transit-task')).toBe('a');
+    expect(transit?.getAttribute('data-transit-from')).toBe('one');
+    expect(transit?.getAttribute('data-transit-to')).toBe('two');
+    // The card is presented once, in the destination; the transit is its only other trace.
+    expect(document.querySelectorAll('[data-task-id="a"]')).toHaveLength(1);
+    expect(within(screen.getByTestId('stage-two')).getByRole('button', { name: 'Open task Alpha' })).toBeTruthy();
+  });
+
+  it('keeps one transit through a re-render of the view', async () => {
+    const view = setup();
+    const moved: BoardState = { ...view.props.state, tasks: [task('a', 'Alpha', 'two'), task('b', 'Beta', 'two')] };
+    await act(async () => { view.update({ state: moved, tasks: moved.tasks }); });
+    const first = document.querySelector('.kb-flow-transit');
+    expect(first).not.toBeNull();
+    await act(async () => { view.update({ revision: 8 }); });
+    await act(async () => { view.update({ revision: 9 }); });
+    expect(document.querySelectorAll('.kb-flow-transit')).toHaveLength(1);
+    expect(document.querySelector('.kb-flow-transit')).toBe(first);
+  });
+
+  it('keeps one move handler per card across an arrival render', async () => {
+    const view = setup({ canvas: CapturingCanvas });
+    const before = renderedCardProps.find(props => (props['task'] as { id: string }).id === 'a')!['onMoveTask'];
+    const moved: BoardState = { ...view.props.state, tasks: [task('a', 'Alpha', 'two'), task('b', 'Beta', 'two')] };
+    await act(async () => { view.update({ state: moved, tasks: moved.tasks }); });
+    const particles = document.querySelectorAll('.kb-flow-transit-particle');
+    await act(async () => { fireEvent.animationEnd(particles[particles.length - 1]!); });
+    const card = renderedCardProps.find(props => (props['task'] as { id: string }).id === 'a')!;
+    // The arrival changed the card's own token and nothing else, so the memoized card
+    // still receives the identical handler and can bail out of re-rendering.
+    expect(document.querySelector('[data-task-id="a"] .kb-card-arrival')).not.toBeNull();
+    expect(typeof card['arrivalToken']).toBe('number');
+    expect(card['onMoveTask']).toBe(before);
+  });
+
+  it('presents the arrival pulse on the destination card and clears it', async () => {
+    const view = setup();
+    const moved: BoardState = { ...view.props.state, tasks: [task('a', 'Alpha', 'two'), task('b', 'Beta', 'two')] };
+    await act(async () => { view.update({ state: moved, tasks: moved.tasks }); });
+    const particles = document.querySelectorAll('.kb-flow-transit-particle');
+    expect(particles.length).toBeGreaterThan(0);
+    const cardBefore = document.querySelector('[data-task-id="a"]');
+    await act(async () => { fireEvent.animationEnd(particles[particles.length - 1]!); });
+    expect(document.querySelector('.kb-flow-transit')).toBeNull();
+    const pulse = document.querySelector('[data-task-id="a"] .kb-card-arrival');
+    expect(pulse).not.toBeNull();
+    // The pulse is a child of the same card: it never re-keys it, so focus, drag,
+    // and click activation survive the arrival.
+    expect(document.querySelector('[data-task-id="a"]')).toBe(cardBefore);
+    await act(async () => { fireEvent.animationEnd(pulse!); });
+    expect(document.querySelector('.kb-card-arrival')).toBeNull();
   });
   it('stores one workflow save per completed connection adjustment', async () => {
     vi.useFakeTimers();

@@ -6,7 +6,7 @@ import type { CommandResult } from '../../src/shared/ports.js';
 import { GitClone } from '../../src/host/sharing/git-clone.js';
 import { GitLayoutStore } from '../../src/host/sharing/layout-git.js';
 import { GitTeamFileStore } from '../../src/host/sharing/git-team-file-store.js';
-import { serializeSharedManifest } from '../../src/domain/sharing/manifest.js';
+import { serializeLayoutStamp } from '../../src/domain/sharing/layout.js';
 
 const REPOSITORY = 'git@example.com:team/repo.git';
 const roots: string[] = [];
@@ -292,7 +292,7 @@ describe('Git team file store', () => {
     await git.init();
     const clone = new GitClone({ root, hubId: 'hub-1', repository: REPOSITORY, runner: git.run });
     await mkdir(path.join(git.clonePath, 'team-files', 'docs'), { recursive: true });
-    const document = serializeSharedManifest({ version: 3, boards: [] });
+    const document = serializeLayoutStamp();
     await writeFile(path.join(git.clonePath, 'kanban-hub.yaml'), document, 'utf8');
     await writeFile(path.join(git.clonePath, 'team-files', 'docs', 'a.md'), 'alpha', 'utf8');
     await git.remoteCommit({ 'kanban-hub.yaml': document, 'team-files/docs/a.md': 'alpha' });
@@ -300,7 +300,7 @@ describe('Git team file store', () => {
     await git.run(['git', 'reset', '--hard', '--quiet', git.remoteHead!]);
     const documents = new GitLayoutStore({ root, hubId: 'hub-1', repository: REPOSITORY, runner: git.run });
     await git.remoteCommit({ 'team-files/docs/a.md': 'refreshed by the check' });
-    const snapshot = await documents.readManifest();
+    const snapshot = await documents.readStamp();
     expect(snapshot).not.toBeNull();
     expect(await readFile(path.join(git.clonePath, 'team-files', 'docs', 'a.md'), 'utf8')).toBe('refreshed by the check');
   });

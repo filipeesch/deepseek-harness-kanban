@@ -15,7 +15,7 @@ function sharingView(overrides: Partial<HubSharingView> = {}): HubSharingView {
     status: 'published', provider: 'git', providerLabel: 'Git repository', supportsFiles: true,
     repository: 'https://example.test/team.git', address: 'https://example.test/team.git', syncMode: 'explicit', intervalMinutes: 5,
     drafts: 0, pending: 0, updates: 2, conflicts: 0, orderChanged: false, syncing: false,
-    boards: [], incoming: [], removed: [], blockers: [], removing: [], ...overrides,
+    boards: [], incoming: [], pendingRemovals: [], removed: [], blockers: [], removing: [], ...overrides,
   } as HubSharingView;
 }
 

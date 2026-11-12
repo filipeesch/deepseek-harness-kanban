@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ownedScript, scriptActive, scriptLabel } from '../../src/client/deterministic-view.js';
+import { ownedScript, scriptActive, scriptCardLabel, scriptFailureFacts, scriptLabel } from '../../src/client/deterministic-view.js';
+import type { GuardFacts } from '../../src/shared/deterministic-failure.js';
 import { projectScopeActivity } from '../../src/client/scope-activity.js';
 import { buildHistoryRows } from '../../src/client/history/history-view.js';
 import { AutoRunController } from '../../src/client/auto-run.js';
@@ -26,6 +27,39 @@ describe('deterministic safe projections', () => {
     expect(scriptLabel({ ...summary, phase: 'failed', error: refusal })).toBe('Script: parameters required');
     expect(scriptLabel({ ...summary, phase: 'failed', error: { code: 'TYPESCRIPT_ERROR', message: 'boom' } })).toBe('Script failed');
     expect(scriptLabel({ ...summary, phase: 'failed', deliveryStatus: 'failed', error: refusal })).toBe('Script result delivery failed');
+  });
+  it('presents the failure origin, code, attempts and bounded guard facts', () => {
+    const guard: GuardFacts = { admission: 'not-admitted', exitCode: 125, signal: null, timedOut: false, aborted: false, elapsedMs: 20, stdoutBytes: 0, stdoutHead: '', stderrBytes: 34, stderrTail: 'NATIVE_LIFETIME_UNCLEAN: cleanup\n' };
+    const failed = { ...summary, phase: 'failed' as const, error: { code: 'BASH_PROTOCOL', message: 'Infrastructure failure: the guard did not admit the command. (2 attempts) Detail: the task History.', details: { origin: 'infrastructure', attempts: [{ attempt: 1, code: 'BASH_PROTOCOL', guard }, { attempt: 2, code: 'BASH_PROTOCOL', guard }], guard } } };
+    expect(scriptLabel(failed)).toBe('Script: infrastructure failure');
+    expect(scriptFailureFacts(failed)).toEqual([
+      { label: 'Failure origin', value: 'infrastructure' },
+      { label: 'Failure code', value: 'BASH_PROTOCOL' },
+      { label: 'Attempts', value: '2' },
+      { label: 'Guard', value: 'command not admitted' },
+      { label: 'Guard exit', value: '125' },
+      { label: 'Guard time', value: '20 ms' },
+      { label: 'Guard output', value: '0 B stdout · 34 B stderr' },
+      { label: 'Guard diagnostic', value: 'NATIVE_LIFETIME_UNCLEAN: cleanup' },
+    ]);
+    expect(scriptCardLabel(failed)).toBe('Script: tool failure');
+    expect(failed.error.message).not.toContain('    at ');
+    expect(scriptLabel({ ...summary, phase: 'failed' as const, error: { code: 'EXECUTION_CONTEXT_CHANGED', message: 'Configuration failure: changed.', details: { origin: 'configuration' } } })).toBe('Script: configuration failure');
+    expect(scriptLabel({ ...summary, phase: 'failed' as const, error: { code: 'INVALID_COMPLETION', message: 'rejected', details: { origin: 'contract' } } })).toBe('Script: completion rejected');
+    expect(scriptCardLabel({ ...summary, phase: 'failed' as const, error: { code: 'EXECUTION_CONTEXT_CHANGED', message: 'changed', details: { origin: 'configuration' } } })).toBe('Script: setup problem');
+  });
+  it('shows the nested cause and the guard windows a layered failure carries', () => {
+    const guard: GuardFacts = { admission: 'started', exitCode: 125, signal: null, timedOut: false, aborted: false, elapsedMs: 10_012, stdoutBytes: 12, stdoutHead: 'partial', stderrBytes: 40, stderrTail: 'NATIVE_LIFETIME_UNCLEAN: cleanup' };
+    const failed = { ...summary, phase: 'failed' as const, error: { code: 'OWNERSHIP_UNCERTAIN', message: 'Native cleanup could not confirm quiescence.', details: { origin: 'infrastructure', guard, cause: { code: 'BASH_PROTOCOL', message: 'Error: boom\n    at x' } } } };
+    const facts = scriptFailureFacts(failed);
+    expect(facts).toContainEqual({ label: 'Cause', value: 'BASH_PROTOCOL — Error: boom\n    at x' });
+    expect(facts).toContainEqual({ label: 'Guard time', value: '10012 ms' });
+    expect(facts).toContainEqual({ label: 'Guard output', value: '12 B stdout · 40 B stderr' });
+  });
+  it('keeps the generic label and no facts for a record written before the vocabulary', () => {
+    const legacy = { ...summary, phase: 'failed' as const, error: { code: 'TYPESCRIPT_ERROR', message: 'boom' } };
+    expect(scriptLabel(legacy)).toBe('Script failed');
+    expect(scriptFailureFacts(legacy)).toEqual([]);
   });
   it('cancels an instruction countdown when a durable script owns the entry', () => {
     const controller = new AutoRunController({ run: async () => { throw Error('not called'); }, clock: { now: () => 0, setTimeout: () => 1, clearTimeout: () => {} } });

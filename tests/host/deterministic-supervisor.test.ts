@@ -4,6 +4,8 @@ import type { Board, HubState, HubTask, Project } from '../../src/shared/types.j
 import type { LocatedTask } from '../../src/host/hub-repository.js';
 import { DeterministicSupervisor, type SupervisorExecution, type SupervisorPorts, type SupervisorRequest, type SupervisorRoute, type SupervisorRouteOutcome } from '../../src/host/deterministic-supervisor.js';
 import { KanbanError } from '../../src/shared/errors.js';
+import { failureDetail } from '../../src/domain/deterministic-failure.js';
+import type { TaskHistoryEntry } from '../../src/shared/task-history.js';
 import { createNativeSupervisorPorts } from '../../src/host/deterministic-control.js';
 import type { DeterministicRuntime } from '../../src/host/deterministic/ports.js';
 
@@ -238,7 +240,8 @@ describe('deterministic supervisor restart, result delivery and errors', () => {
   it.each([undefined, {}, { exit: '', message: 'x' }, { exit: 'passed', message: '' }, { exit: 'passed', message: 'x', extra: true }, { exit: 'unmapped', message: 'x' }, { exit: 'passed', message: 'x'.repeat(70_000) }])('rejects invalid protocol completion %# without a default route', async raw => { const h = harness(); h.execute(async () => raw); const s = h.supervisor(); s.start(); await s.settle(); expect(h.control().phase).toBe('failed'); expect(h.routes).toHaveLength(0); expect(h.task.history?.filter(value => value.kind === 'deterministic-execution')).toHaveLength(1); await h.close(); });
   it('uses captured optional error mapping once and redacts known secrets before persistence', async () => {
     const h = harness(); await h.edit(value => { value.task.deterministic!.definition.env = ['TOKEN']; value.task.deterministic!.definition.exits.error = 'review'; }); h.variables({ TOKEN: 'synthetic-secret' }); h.execute(async () => { throw new Error('failed synthetic-secret'); }); const s = h.supervisor(); s.start(); await s.settle();
-    expect(h.control().result).toMatchObject({ exit: 'error', message: 'failed [REDACTED]', synthetic: true, target: { stageIdentity: 'review-key' } }); expect(JSON.stringify(h.state)).not.toContain('synthetic-secret'); expect(h.routes).toHaveLength(1); await h.close();
+    expect(h.control().result).toMatchObject({ exit: 'error', synthetic: true, target: { stageIdentity: 'review-key' } });
+    expect(h.control().result?.message).toContain('Infrastructure failure: failed [REDACTED]'); expect(JSON.stringify(h.state)).not.toContain('synthetic-secret'); expect(h.routes).toHaveLength(1); await h.close();
   });
   it('never follows error mapping before trust or after explicit cancellation', async () => { const h = harness(); await h.edit(value => { value.task.deterministic!.definition.exits.error = 'review'; }); h.approved(false); const s = h.supervisor(); s.start(); await s.settle(); expect(h.control().phase).toBe('awaiting-trust'); expect(h.routes).toHaveLength(0); await s.stop(identity); expect(h.routes).toHaveLength(0); await h.close(); });
   it('passes only authorized variables and structured task/handoff input', async () => { const h = harness(); await h.edit(value => { value.task.deterministicHandoff = { id: 'incoming', entryId: 'entry', executionId: 'source', fromColumnId: 'before', columnId: 'wait', exit: 'ready', message: 'incoming', at }; }); const s = h.supervisor(); s.start(); await s.settle(); expect(h.calls[0]!.input).toMatchObject({ task: { title: h.task.title }, handoff: { id: 'incoming' }, executionId: 'execution' }); expect(h.calls[0]!.variables).toEqual({}); await h.close(); });
@@ -362,3 +365,135 @@ describe('deterministic stage parameters', () => {
     await h.close();
   });
 });
+
+describe('deterministic failure settlement by origin', () => {
+  const guard = { admission: 'not-admitted' as const, exitCode: 125, signal: null, timedOut: false, aborted: false, elapsedMs: 20, stdoutBytes: 0, stdoutHead: '', stderrBytes: 0, stderrTail: '' };
+
+  it('routes an infrastructure failure to the reserved destination before error', async () => {
+    const h = harness();
+    await h.edit(value => { value.task.deterministic!.definition.exits.infrastructure = 'review'; value.task.deterministic!.definition.exits.error = 'review'; });
+    h.execute(async () => { throw new KanbanError('BASH_PROTOCOL', 'The isolated Bash guard did not return a valid result.\n    at bindingFailure (/Users/someone/bootstrap.ts:246:61)', { origin: 'infrastructure', attempts: [{ attempt: 1, code: 'BASH_PROTOCOL', guard }], guard }); });
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.control().result).toMatchObject({ exit: 'infrastructure', synthetic: true, target: { columnId: 'review', stageIdentity: 'review-key' } });
+    expect(h.control().result?.message).toContain('Infrastructure failure');
+    expect(h.control().result?.message).toContain('1 attempt');
+    expect(h.control().result?.message).not.toContain('    at ');
+    expect(h.routes).toHaveLength(1);
+    await h.close();
+  });
+
+  it('keeps a configuration failure in its stage even when both reserved destinations exist', async () => {
+    const h = harness();
+    await h.edit(value => { value.task.deterministic!.definition.exits.infrastructure = 'review'; value.task.deterministic!.definition.exits.error = 'review'; });
+    h.execute(async () => { throw new KanbanError('EXECUTION_CONTEXT_CHANGED', 'The captured execution directory is unavailable or changed.', { origin: 'configuration' }); });
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.control().phase).toBe('failed');
+    expect(h.control().error).toMatchObject({ code: 'EXECUTION_CONTEXT_CHANGED', details: { origin: 'configuration' } });
+    expect(h.control().result).toBeUndefined();
+    expect(h.routes).toHaveLength(0);
+    await h.close();
+  });
+
+  it('routes a work failure to error and never to the reserved infrastructure destination', async () => {
+    const h = harness();
+    await h.edit(value => { value.task.deterministic!.definition.exits.infrastructure = 'review'; value.task.deterministic!.definition.exits.error = 'review'; });
+    h.execute(async () => { throw new KanbanError('TYPESCRIPT_EXCEPTION', 'Error: boom\\n    at run (/Users/someone/wait.ts:2:1)', { origin: 'script' }); });
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.control().result).toMatchObject({ exit: 'error', synthetic: true });
+    expect(h.control().result?.message).toContain('boom');
+    await h.close();
+  });
+
+  it('reports one settled history row that carries the origin and every attempt', async () => {
+    const h = harness();
+    await h.edit(value => { value.task.deterministic!.definition.exits.error = 'review'; });
+    const attempts = [1, 2, 3].map(attempt => ({ attempt, code: 'BASH_PROTOCOL', guard: { ...guard, elapsedMs: attempt * 10 } }));
+    h.execute(async () => { throw new KanbanError('BASH_PROTOCOL', 'The isolated Bash guard did not admit the command.', { origin: 'infrastructure', attempts, guard }); });
+    const s = h.supervisor(); s.start(); await s.settle();
+    const rows = (h.task.history ?? []).filter((value): value is Extract<TaskHistoryEntry, { kind: 'deterministic-execution' }> => value.kind === 'deterministic-execution');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ outcome: 'failed', exit: 'error', error: { code: 'BASH_PROTOCOL', details: { origin: 'infrastructure' } } });
+    // The stored row must still decode through the real redaction boundary.
+    const stored = failureDetail(rows[0]?.error?.details);
+    expect(stored?.attempts).toHaveLength(3);
+    expect(stored?.attempts?.[0]?.guard?.admission).toBe('not-admitted');
+    expect(stored?.attempts?.[2]?.guard?.elapsedMs).toBe(30);
+    expect(stored?.guard?.exitCode).toBe(125);
+    expect(h.calls).toHaveLength(1);
+    await h.close();
+  });
+
+  it('redacts a secret before a cause message is bounded', async () => {
+    const h = harness();
+    await h.edit(value => { value.task.deterministic!.definition.env = ['TOKEN']; value.task.deterministic!.definition.exits.error = 'review'; });
+    h.variables({ TOKEN: 'synthetic-secret' });
+    // The value sits exactly where a truncation would cut it, so bound-before-redact
+    // would persist a recognizable fragment.
+    h.execute(async () => { throw new KanbanError('EXECUTOR_FAILED', 'x'.repeat(487) + 'synthetic-secret' + 'y'.repeat(100), { origin: 'infrastructure' }); });
+    const s = h.supervisor(); s.start(); await s.settle();
+    const persisted = JSON.stringify({ result: h.control().result, error: h.control().error, history: h.task.history });
+    expect(persisted).not.toContain('synthetic-secret');
+    expect(persisted).not.toContain('secret');
+    await h.close();
+  });
+
+  it('redacts a secret before a structured cause detail is bounded', async () => {
+    const h = harness();
+    await h.edit(value => { value.task.deterministic!.definition.env = ['TOKEN']; value.task.deterministic!.definition.exits.error = 'review'; });
+    h.variables({ TOKEN: 'QUARANTINE-MARK' });
+    // The value sits where the codec's 512-byte cause bound would cut it, so decoding
+    // before redacting would persist a recognizable fragment.
+    h.execute(async () => { throw new KanbanError('TYPESCRIPT_EXCEPTION', 'boom', { origin: 'script', cause: { code: 'BASH_PROTOCOL', message: 'x'.repeat(505) + 'QUARANTINE-MARK' } }); });
+    const s = h.supervisor(); s.start(); await s.settle();
+    const persisted = JSON.stringify({ result: h.control().result, error: h.control().error, history: h.task.history });
+    expect(persisted).not.toContain('QUARANTINE');
+    expect(persisted).not.toContain('QUAR');
+    await h.close();
+  });
+
+  it('redacts a secret before a long program message is bounded', async () => {
+    const h = harness();
+    await h.edit(value => { value.task.deterministic!.definition.env = ['TOKEN']; value.task.deterministic!.definition.exits.error = 'review'; });
+    h.variables({ TOKEN: 'synthetic-secret' });
+    h.execute(async () => { throw new KanbanError('TYPESCRIPT_EXCEPTION', 'x'.repeat(4090) + 'synthetic-secret', { origin: 'script' }); });
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.control().result?.message).not.toContain('synthetic-secret');
+    expect(h.control().result?.message).not.toContain('synthe');
+    await h.close();
+  });
+
+  it('delivers a controlled sentence for a provider failure and keeps its text as the cause', async () => {
+    const h = harness();
+    await h.edit(value => { value.task.deterministic!.definition.exits.infrastructure = 'review'; value.task.deterministic!.definition.exits.error = 'review'; });
+    h.execute(async () => { throw new KanbanError('TYPESCRIPT_PROTOCOL', 'provider exploded at /Users/someone/ptc.ts', { origin: 'infrastructure' }); });
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.control().result?.message).toContain('The TypeScript execution provider returned an invalid result.');
+    expect(h.control().result?.message).not.toContain('/Users/someone');
+    expect(failureDetail(h.control().result?.error?.details)?.cause?.message).toContain('/Users/someone/ptc.ts');
+    await h.close();
+  });
+
+  it('routes a program-returned reserved exit as an ordinary mapped exit', async () => {
+    const h = harness();
+    await h.edit(value => { value.task.deterministic!.definition.exits.infrastructure = 'review'; });
+    h.execute(async () => ({ exit: 'infrastructure', message: 'the script reports a tool failure' }));
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.control().result).toMatchObject({ exit: 'infrastructure', target: { columnId: 'review', stageIdentity: 'review-key' } });
+    expect(h.control().result?.synthetic).toBeUndefined();
+    await h.close();
+  });
+
+  it('records one settled row for a configuration failure that stays in the stage', async () => {
+    const h = harness();
+    await h.edit(value => { value.task.deterministic!.definition.exits.error = 'review'; });
+    h.execute(async () => { throw new KanbanError('POLICY_DENIED', 'Native execution denied an operation.', { origin: 'configuration' }); });
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.control().result).toBeUndefined();
+    expect(h.routes).toHaveLength(0);
+    const rows = h.task.history?.filter(value => value.kind === 'deterministic-execution') ?? [];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ outcome: 'failed', error: { details: { origin: 'configuration' } } });
+    await h.close();
+  });
+});
+

@@ -18,7 +18,6 @@ class FakeSharing {
   localChanges: string[] = [];
   removed: Array<{ hubId: string; boardId: string; scope: 'local' | 'team'; name: string }> = [];
   published: string[] = [];
-  publishedManifest = 0;
   publishCheck: (() => void) | undefined;
   publishFailure: unknown;
   views(): Record<string, HubSharingView> { return this.viewValue === undefined ? {} : { [this.hubId]: this.viewValue }; }
@@ -30,9 +29,8 @@ class FakeSharing {
     this.published.push(boardId);
     if (this.publishFailure) throw this.publishFailure;
   }
-  async publishManifest(_hubId: string): Promise<void> {
+  async publishAll(_hubId: string): Promise<void> {
     this.publishCheck?.();
-    this.publishedManifest += 1;
     if (this.publishFailure) throw this.publishFailure;
   }
   async removeBoard(hubId: string, boardId: string, scope: 'local' | 'team', name: string): Promise<void> {
@@ -43,9 +41,9 @@ class FakeSharing {
 
 function sharingView(overrides: Partial<HubSharingView> = {}): HubSharingView {
   return {
-    status: 'published', provider: 'git', providerLabel: 'Git', supportsFiles: true, address: 'team/repo', syncMode: 'explicit', intervalMinutes: 5,
-    drafts: 0, pending: 0, updates: 0, conflicts: 0, orderChanged: false, syncing: false,
-    boards: [], incoming: [], removed: [], blockers: [], removing: [], ...overrides,
+    status: 'published', provider: 'git', providerLabel: 'Git', supportsFiles: true, address: 'team/repo', intervalMinutes: 5,
+    drafts: 0, updates: 0, conflicts: 0, syncing: false,
+    boards: [], incoming: [], pendingRemovals: [], removed: [], blockers: [], ...overrides,
   };
 }
 
@@ -132,7 +130,7 @@ describe('board workflow reads', () => {
   it('reports the board publishing state when the board is bound', async () => {
     const sharing = new FakeSharing();
     sharing.bound.add('board');
-    sharing.viewValue = sharingView({ boards: [{ boardId: 'board', name: 'Kanban', state: 'draft', bound: true, pending: false }] });
+    sharing.viewValue = sharingView({ boards: [{ boardId: 'board', name: 'Kanban', state: 'draft', bound: true, draft: true }] });
     const f = await setup({ sharing });
     const value = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
     expect(value.sharing).toMatchObject({ status: 'published', bound: true, boardState: 'draft' });
@@ -383,16 +381,16 @@ describe('board deletion tools', () => {
     expect(sharing.published).toEqual([]);
   });
 
-  it('removes a bound board for the team and publishes it', async () => {
+  it('removes a bound board for the team through the sharing layer', async () => {
     const sharing = new FakeSharing();
     sharing.bound.add('board');
     sharing.viewValue = sharingView();
     const f = await setup({ sharing });
     const value = await run(f, 'delete_board', { board_id: f.board.id, confirmed: true, sharing: 'team' });
     expect(value.sharing).toEqual({ status: 'published' });
-    // A removal is a manifest change, so it publishes the manifest and no board log.
+    // The sharing layer appends the removal event itself; no board write is published.
+    expect(sharing.removed[0]?.scope).toBe('team');
     expect(sharing.published).toEqual([]);
-    expect(sharing.publishedManifest).toBe(1);
   });
 
   it('keeps an unbound board removal local on a published Hub', async () => {
@@ -473,7 +471,7 @@ describe('board tool publishing', () => {
 
   it('publishes a new board even when another board is behind', async () => {
     const sharing = new FakeSharing();
-    sharing.viewValue = sharingView({ updates: 1, boards: [{ boardId: 'board', name: 'Kanban', state: 'updates-available', bound: true, pending: true }] });
+    sharing.viewValue = sharingView({ updates: 1, boards: [{ boardId: 'board', name: 'Kanban', state: 'updates-available', bound: true, draft: false }] });
     const f = await setup({ sharing });
     const value = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Fresh' });
     // A new board writes only its own log, so another board's pending events do not
@@ -485,7 +483,7 @@ describe('board tool publishing', () => {
 
   it('keeps a blocked edit local and reports the blocker', async () => {
     const sharing = new FakeSharing();
-    sharing.viewValue = sharingView({ updates: 1, boards: [{ boardId: 'board', name: 'Kanban', state: 'updates-available', bound: true, pending: true }] });
+    sharing.viewValue = sharingView({ updates: 1, boards: [{ boardId: 'board', name: 'Kanban', state: 'updates-available', bound: true, draft: false }] });
     const f = await setup({ sharing });
     const value = await run(f, 'edit_board_yaml', { board_id: f.board.id, edits: [{ old: '    label: Done', new: '    label: Complete' }] });
     expect(value.sharing).toMatchObject({ status: 'blocked' });

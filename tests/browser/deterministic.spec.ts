@@ -103,14 +103,45 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await mkdir(OUT, { recursive: true }); await page.screenshot({ path: path.join(OUT, 'deterministic-handoff-' + colorScheme + '.png') });
   });
 }
-test('groups deterministic exit names on one graph edge without a legacy condition editor', async ({ page }) => {
+test('draws one edge for the deterministic exits without an exit label', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=deterministic&theme=host');
   await page.getByRole('button', { name: 'Workflow', exact: true }).click();
   await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-ready', 'true');
-  await expect(page.getByRole('button', { name: 'Named exits passed, cached', exact: true })).toHaveCount(1);
-  await page.getByRole('button', { name: 'Named exits passed, cached', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Named exits passed, cached', exact: true })).toHaveCount(0);
+  // Exit names live in the stage editor, so the arrow carries no label and no
+  // condition mark either.
+  const group = page.locator('.kb-flow-edge-group[data-connection-id^="explore->propose"]');
+  await expect(group).toHaveCount(1);
+  await expect(group.locator('.kb-flow-condition-mark')).toHaveCount(0);
+  await expect(group.locator('button')).toHaveCount(0);
+  // Nothing the diagram publishes still announces the retired exit label.
+  const announced = await page.evaluate(() => [...document.querySelectorAll('.kb-flow-shell [aria-label], .kb-flow-shell [title]')]
+    .map(element => (element.getAttribute('aria-label') ?? '') + ' ' + (element.getAttribute('title') ?? ''))
+    .filter(name => /named exits|exit name/i.test(name)));
+  expect(announced).toEqual([]);
+});
+
+test('opens the deterministic stage editor from its connection, only while unlocked', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=deterministic&theme=host');
+  await page.getByRole('button', { name: 'Workflow', exact: true }).click();
+  await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-ready', 'true');
+  const edge = page.locator('.kb-flow-edge-group[data-connection-id^="explore->propose"]');
+  await expect(edge).toHaveCount(1);
+  // The double press is delivered to the connection itself here, so this test covers the
+  // surface's contract; the line's own hit target is covered by the connection tests.
+  await edge.dispatchEvent('dblclick');
+  await page.waitForTimeout(200);
+  // The layout lock gates the edit: a locked diagram opens nothing, presents no
+  // condition editor, and stores nothing.
+  await expect(page.getByRole('dialog', { name: 'Edit stage' })).toHaveCount(0);
+  await expect(page.locator('.kb-condition-popover')).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as { __harnessCommands(): Array<{ type: string }> }).__harnessCommands())).toEqual([]);
+  await page.getByRole('button', { name: 'Unlock layout editing', exact: true }).click();
+  await edge.dispatchEvent('dblclick');
   await expect(page.getByRole('dialog', { name: 'Edit stage' })).toBeVisible();
   await expect(page.getByLabel('Execution mode')).toHaveValue('deterministic');
+  // The routing is edited in the stage editor, never through a condition.
+  await expect(page.locator('.kb-condition-popover')).toHaveCount(0);
 });
 test('visual deterministic configuration keeps named exits and no prompt/countdown coexistence', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=deterministic&theme=host');
@@ -129,3 +160,61 @@ test('visual deterministic configuration keeps named exits and no prompt/countdo
   await expect(page.locator('[data-task-id="long-0"]')).toContainText('Script running');
   await expect(page.locator('.kb-card-countdown')).toHaveCount(0);
 });
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test('presents an infrastructure failure with its origin, attempts and guard facts in ' + colorScheme, async ({ page }) => {
+    await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+    await page.goto(HARNESS + '?scenario=deterministic&theme=host&phase=failed&failure=infrastructure');
+    await page.locator('[data-task-id="long-0"]').getByRole('button', { name: 'Open task Long column task 0' }).click();
+    const drawer = page.locator('.kb-drawer');
+    await drawer.getByRole('tab', { name: 'Info', exact: true }).click();
+    await expect(drawer.getByText('Script: infrastructure failure', { exact: true })).toBeVisible();
+    const problem = drawer.locator('.kb-script-panel .kb-problem');
+    await expect(problem).toContainText('Infrastructure failure');
+    await expect(problem).toContainText('3 attempts');
+    expect(await problem.textContent()).not.toMatch(/\n\s+at /);
+    const facts = drawer.locator('.kb-script-panel .kb-script-facts');
+    await expect(facts).toContainText('Failure origin');
+    await expect(facts).toContainText('infrastructure');
+    await expect(facts).toContainText('BASH_PROTOCOL');
+    await expect(facts).toContainText('command not admitted');
+    await expectLegible(page, '.kb-script-panel .kb-script-facts');
+    await mkdir(OUT, { recursive: true });
+    await page.screenshot({ path: path.join(OUT, 'deterministic-infrastructure-' + colorScheme + '.png') });
+    await drawer.getByRole('tab', { name: 'History', exact: true }).click();
+    const table = page.getByRole('table', { name: 'Task history' });
+    await expect(table).toContainText('infrastructure failure · BASH_PROTOCOL · 3 attempts · command not admitted · exit 125');
+    expect(await table.textContent()).not.toMatch(/\n\s+at /);
+    await page.screenshot({ path: path.join(OUT, 'deterministic-infrastructure-history-' + colorScheme + '.png') });
+  });
+}
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test('shows a layered failure and its expandable evidence in a narrow drawer in ' + colorScheme, async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 720 });
+    await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+    await page.goto(HARNESS + '?scenario=deterministic&theme=host&phase=failed&failure=diagnostic');
+    await page.locator('[data-task-id="long-0"]').getByRole('button', { name: 'Open task Long column task 0' }).click();
+    const drawer = page.locator('.kb-drawer');
+    await drawer.getByRole('tab', { name: 'Info', exact: true }).click();
+    await expect(drawer.getByText('Script: infrastructure failure', { exact: true })).toBeVisible();
+    const facts = drawer.locator('.kb-script-panel .kb-script-facts');
+    await expect(facts).toContainText('Cause');
+    await expect(facts).toContainText('TYPESCRIPT_EXCEPTION');
+    await expect(facts).toContainText('Guard diagnostic');
+    await expect(facts).toContainText('NATIVE_LIFETIME_UNCLEAN');
+    await expectLegible(page, '.kb-script-panel .kb-script-facts');
+    await mkdir(OUT, { recursive: true });
+    await page.screenshot({ path: path.join(OUT, 'deterministic-diagnostic-narrow-' + colorScheme + '.png') });
+    await drawer.getByRole('tab', { name: 'History', exact: true }).click();
+    const evidence = page.locator('.kb-history-evidence').first();
+    await expect(evidence).toBeVisible();
+    await evidence.locator('summary').click();
+    await expect(evidence).toContainText('stderr: NATIVE_LIFETIME_UNCLEAN');
+    await expect(evidence).toContainText('Cause: TYPESCRIPT_EXCEPTION');
+    expect(await drawer.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await page.screenshot({ path: path.join(OUT, 'deterministic-diagnostic-history-' + colorScheme + '.png') });
+  });
+}
+
+

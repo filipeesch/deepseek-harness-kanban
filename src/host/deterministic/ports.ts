@@ -2,6 +2,8 @@ import type { PtcJsonValue, PtcRuntime } from '@deepseek-ai/dsh-ptc-runtime';
 import type { ShellExecutor } from '@deepseek-ai/dsh-shell';
 import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox';
 import type { DeterministicCapture, DeterministicDefinition, DeterministicTarget, StepCompletion } from '../../shared/deterministic.js';
+import type { Problem } from '../../shared/types.js';
+import { classifyFailureCode } from '../../domain/deterministic-failure.js';
 
 export interface DeterministicScope { hubId: string; boardId: string; projectId: string; stageIdentity: string }
 export interface CaptureRequest {
@@ -34,9 +36,10 @@ export interface DeterministicTrust {
   approve(scope: DeterministicScope, fingerprint: string): Promise<void>;
   reject(scope: DeterministicScope, fingerprint: string): Promise<void>;
 }
+/** A failure keeps its diagnostics: the origin, the bounded facts, and the nested cause. */
 export type ExecutionOutcome =
   | { kind: 'completed'; completion: StepCompletion; diagnostics: string[] }
-  | { kind: 'failed'; diagnostic: { code: string; message: string } }
+  | { kind: 'failed'; diagnostic: Problem }
   | { kind: 'aborted' };
 export interface ExecuteRequest {
   executionId?: string;
@@ -64,6 +67,9 @@ export interface DeterministicRuntime {
 export type NativePtcPort = Pick<PtcRuntime, 'language' | 'isolation' | 'programFormat' | 'retainsState' | 'sandboxMode' | 'resolve' | 'run'>;
 export type NativeShellPort = Pick<ShellExecutor, 'sandboxMode' | 'resolve' | 'execute'>;
 export class DeterministicRuntimeError extends Error {
-  constructor(readonly code: string, message: string) { super(message); this.name = 'DeterministicRuntimeError'; }
+  constructor(readonly code: string, message: string, readonly detail?: Record<string, unknown>) { super(message); this.name = 'DeterministicRuntimeError'; }
 }
-export function failure(code: string, message: string): never { throw new DeterministicRuntimeError(code, message); }
+/** Raise one failure with the origin its code names, so no call site has to restate it. */
+export function failure(code: string, message: string, detail?: Record<string, unknown>): never {
+  throw new DeterministicRuntimeError(code, message, { origin: classifyFailureCode(code), ...(detail ?? {}) });
+}

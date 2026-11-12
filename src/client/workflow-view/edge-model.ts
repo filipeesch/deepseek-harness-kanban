@@ -28,8 +28,8 @@ export interface LiveConnectionDescriptor {
   readonly segments?: readonly ConnectionSegmentOffset[];
   /** The condition this transition authors; absent means it authors none. */
   readonly condition?: string;
-  /** Deterministic exit names sharing this exact destination. */
-  readonly exitLabels?: readonly string[];
+  /** This connection's routing is authored by a deterministic stage's named exits. */
+  readonly deterministic?: boolean;
 }
 
 export interface LiveEdge extends ConnectionShape {
@@ -40,8 +40,8 @@ export interface LiveEdge extends ConnectionShape {
   readonly returning: boolean;
   /** The condition this transition authors; absent means it authors none. */
   readonly condition?: string;
-  /** Deterministic exit names sharing this exact destination. */
-  readonly exitLabels?: readonly string[];
+  /** This connection's routing is authored by a deterministic stage's named exits. */
+  readonly deterministic?: boolean;
   /** The adjustable segments of the drawn path, in path order. */
   readonly lines: readonly RouteLine[];
 }
@@ -129,14 +129,14 @@ export function connectionRouteFor(stages: readonly LiveStageRect[], connection:
  * The edges the diagram draws for the rectangles it currently shows. Every edge
  * is derived from the live positions and sizes through the shared router, so a
  * stage being dragged or resized carries its connections with it and the drawn
- * path is the path a card travels.
+ * path is the path a transit follows.
  */
 export function edgeModel(stages: readonly LiveStageRect[], connections: readonly LiveConnectionDescriptor[]): LiveEdge[] {
   const edges: LiveEdge[] = [];
   for (const connection of connections) {
     const route = connectionRouteFor(stages, connection, true);
     if (route === null) continue;
-    edges.push({ id: connection.id, from: connection.from, to: connection.to, kind: connection.kind, returning: connection.returning, path: route.shape.path, points: route.shape.points, tipAngle: route.shape.tipAngle, lines: route.lines, ...(connection.condition === undefined ? {} : { condition: connection.condition }), ...(connection.exitLabels === undefined ? {} : { exitLabels: connection.exitLabels }) });
+    edges.push({ id: connection.id, from: connection.from, to: connection.to, kind: connection.kind, returning: connection.returning, path: route.shape.path, points: route.shape.points, tipAngle: route.shape.tipAngle, lines: route.lines, ...(connection.condition === undefined ? {} : { condition: connection.condition }), ...(connection.deterministic === undefined ? {} : { deterministic: connection.deterministic }) });
   }
   return edges;
 }

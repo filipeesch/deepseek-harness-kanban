@@ -13,7 +13,6 @@ export interface SharingBinding {
 }
 /** Opaque per-provider synchronization state persisted beside the binding. */
 export type ProviderState = Record<string, unknown>;
-export type SharingSyncMode = 'explicit' | 'continuous';
 
 /** A binding as stored by any Hub, used to refuse an address another Hub already owns. */
 export interface BindingCandidate {
@@ -26,7 +25,6 @@ export interface ProviderDescription {
   id: SharingProviderId;
   label: string;
   address: string;
-  syncMode: SharingSyncMode;
   defaultIntervalMinutes: number;
   /** The storage needs an external authorization before a binding is accepted. */
   requiresAuthorization: boolean;
@@ -41,14 +39,13 @@ export interface ProviderDescription {
 export interface SharingProviderDescriptor {
   id: SharingProviderId;
   label: string;
-  syncMode: SharingSyncMode;
   defaultIntervalMinutes: number;
   /** The storage needs an external authorization before a binding is accepted. */
   requiresAuthorization: boolean;
   /** Validate and normalize the stored string settings for this provider. */
   normalizeSettings(settings: Record<string, string>): Record<string, string>;
   describe(binding: SharingBinding): string;
-  /** The published layout of this storage: the hub manifest plus one log per board. */
+  /** The published layout of this storage: the layout stamp plus one log per board. */
   createLayoutStore(hubId: string, binding: SharingBinding, state: ProviderState): SharedLayoutStore;
   /** Absent when the storage cannot serve the team files directory. */
   createFileStore?(hubId: string, binding: SharingBinding, state: ProviderState): TeamFileStore;
@@ -113,7 +110,6 @@ export class SharingProviderRegistry implements SharingProviderResolver {
       id: descriptor.id,
       label: descriptor.label,
       address: descriptor.describe(binding),
-      syncMode: descriptor.syncMode,
       defaultIntervalMinutes: descriptor.defaultIntervalMinutes,
       requiresAuthorization: descriptor.requiresAuthorization,
       supportsFiles: descriptor.createFileStore !== undefined,

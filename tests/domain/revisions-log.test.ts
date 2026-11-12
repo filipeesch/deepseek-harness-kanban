@@ -7,7 +7,7 @@ const BASE = '# A comment\nname: Flow\ninitial_column: todo\ncolumns:\n  - id: t
 const EDITED = BASE.replace('label: Todo', 'label: To do');
 
 function logWith(...texts: readonly string[]) {
-  let log = createRevisionLog({ hubId: 'hub', boardId: 'board', text: texts[0] ?? BASE });
+  let log = createRevisionLog({ hubId: 'hub', boardId: 'board', text: texts[0] ?? BASE, at: '2026-11-11T09:00:00.000Z' });
   texts.slice(1).forEach((text, index) => {
     log = appendRevision(log, { text, at: '2026-11-11T09:0' + index + ':00.000Z', actor: { kind: 'operator' }, origin: 'editor' });
   });
@@ -44,7 +44,7 @@ describe('revision log', () => {
   });
 
   it('keeps only the retained number of revisions and counts the rest', () => {
-    let log = createRevisionLog({ hubId: 'hub', boardId: 'board', text: BASE });
+    let log = createRevisionLog({ hubId: 'hub', boardId: 'board', text: BASE, at: '2026-11-11T00:00:00.000Z' });
     for (let index = 1; index <= RETAINED_REVISIONS + 5; index++) {
       log = appendRevision(log, { text: BASE.replace('label: Todo', 'label: Todo ' + index), at: '2026-11-11T00:00:00.000Z', actor: { kind: 'operator' }, origin: 'editor' });
     }

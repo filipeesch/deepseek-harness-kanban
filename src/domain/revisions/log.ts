@@ -1,14 +1,14 @@
 import { z } from 'zod';
 import { applyEvents } from '../journal/conflict.js';
 import { deriveChanges } from '../journal/derive.js';
-import { appendEvents, createBoardLog, decodeBoardLog, encodeBoardLog, nextSequence, recoverBoard, type BoardLogFile } from '../journal/log.js';
+import { appendEvents, decodeBoardLog, encodeBoardLog, lastSequence, replay, type BoardLog } from '../journal/log.js';
 import type { BoardChange, JournalEvent } from '../journal/event.js';
 import { diffWorkflow } from '../workflow-difference.js';
 import { parseWorkflow } from '../workflow.js';
 
 /** The format this installation writes for a board's local revision log. */
 export const REVISION_LOG_VERSION = 1;
-/** How many revisions one board keeps before the oldest fold into the snapshot. */
+/** How many revisions one board keeps before the oldest fold into the checkpoint. */
 export const RETAINED_REVISIONS = 100;
 
 /** Where a revision came from. */
@@ -32,22 +32,22 @@ export interface RevisionCommit {
   readonly summary: string;
 }
 
-/** One board's local revision log: the same snapshot and events the journal uses, plus commits. */
+/** One board's local revision log: the journal log plus the commits that wrote it. */
 export interface BoardRevisionLog {
   readonly hubId: string;
   readonly boardId: string;
-  readonly board: BoardLogFile;
+  readonly log: BoardLog;
   readonly commits: readonly RevisionCommit[];
   /** Revisions folded out of the log since it was created. */
   readonly dropped: number;
 }
 
-/** A log for a board that has never been written beyond its current document. */
-export function createRevisionLog(input: { readonly hubId: string; readonly boardId: string; readonly text: string }): BoardRevisionLog {
+/** A log for a board's current document, as its first checkpoint. */
+export function createRevisionLog(input: { readonly hubId: string; readonly boardId: string; readonly text: string; readonly at: string }): BoardRevisionLog {
   return {
     hubId: input.hubId,
     boardId: input.boardId,
-    board: createBoardLog(input.text),
+    log: appendEvents([], [{ kind: 'workflow.replaced', text: input.text }], input.at),
     commits: [],
     dropped: 0,
   };
@@ -55,21 +55,24 @@ export function createRevisionLog(input: { readonly hubId: string; readonly boar
 
 /** The document the log currently describes. */
 export function headText(log: BoardRevisionLog): string {
-  const recovered = recoverBoard(log.board, null);
-  return recovered.ok ? recovered.text : log.board.snapshot.text;
+  const recovered = replay(log.log, null);
+  if (recovered.ok) return recovered.text;
+  const checkpoint = log.log[log.log.length - 1];
+  return checkpoint !== undefined && checkpoint.kind === 'workflow.replaced' ? checkpoint.text : '';
+}
+
+/** The sequence of the last event the log holds, or -1 when it holds none. */
+export function headSequence(log: BoardRevisionLog): number {
+  return lastSequence(log.log);
 }
 
 /** The document as it stood after the given revision, when the log still holds it. */
 export function textAtRevision(log: BoardRevisionLog, seq: number): string | undefined {
-  if (!Number.isInteger(seq) || seq < log.board.snapshot.seq) return undefined;
-  if (seq > headSequence(log)) return undefined;
-  const applied = applyEvents(log.board.snapshot.text, log.board.events.filter(event => event.seq <= seq));
-  return applied.ok ? applied.text : undefined;
-}
-
-/** The sequence of the last event the log holds. */
-export function headSequence(log: BoardRevisionLog): number {
-  return log.board.events.reduce((highest, event) => Math.max(highest, event.seq), log.board.snapshot.seq);
+  if (!Number.isInteger(seq) || seq < 0 || seq > headSequence(log)) return undefined;
+  const prefix = log.log.filter(event => event.seq <= seq);
+  if (prefix.length === 0) return undefined;
+  const recovered = replay(prefix, null);
+  return recovered.ok ? recovered.text : undefined;
 }
 
 /**
@@ -109,17 +112,21 @@ export function describeChange(previous: string, next: string): string {
   }
 }
 
+/** Fold the oldest revisions into a fresh checkpoint, keeping the log append-only. */
 function prune(log: BoardRevisionLog): BoardRevisionLog {
   const excess = log.commits.length - RETAINED_REVISIONS;
   if (excess <= 0) return log;
   const dropped = log.commits.slice(0, excess);
   const boundary = dropped[dropped.length - 1]!.to;
-  const folded = applyEvents(log.board.snapshot.text, log.board.events.filter(event => event.seq <= boundary));
-  if (!folded.ok) return log;
+  const text = textAtRevision(log, boundary);
+  const checkpoint = log.log.find(event => event.seq === boundary);
+  if (text === undefined || checkpoint === undefined) return log;
+  const retained = log.log.filter(event => event.seq > boundary).map((event, index) => ({ ...event, seq: index + 1 }));
+  const shifted = log.commits.slice(excess).map(commit => ({ ...commit, from: commit.from - boundary, to: commit.to - boundary }));
   return {
     ...log,
-    board: { version: log.board.version, snapshot: { text: folded.text, seq: boundary }, events: log.board.events.filter(event => event.seq > boundary) },
-    commits: log.commits.slice(excess),
+    log: [...appendEvents([], [{ kind: 'workflow.replaced', text }], checkpoint.at), ...retained],
+    commits: shifted,
     dropped: log.dropped + excess,
   };
 }
@@ -128,11 +135,11 @@ function prune(log: BoardRevisionLog): BoardRevisionLog {
 export function appendRevision(log: BoardRevisionLog, input: { readonly text: string; readonly at: string; readonly actor: RevisionActor; readonly origin: RevisionOrigin }): BoardRevisionLog {
   const previous = headText(log);
   if (previous === input.text) return log;
-  const from = nextSequence(log.board);
+  const from = lastSequence(log.log) + 1;
   const changes = exactChanges(previous, deriveChanges({ text: previous }, { text: input.text }), input.text, input.at);
-  const board = appendEvents(log.board, changes, input.at);
+  const next = appendEvents(log.log, changes, input.at);
   const commit: RevisionCommit = { from, to: from + changes.length - 1, at: input.at, actor: input.actor, origin: input.origin, summary: describeChange(previous, input.text) };
-  return prune({ ...log, board, commits: [...log.commits, commit] });
+  return prune({ ...log, log: next, commits: [...log.commits, commit] });
 }
 
 const actorSchema = z.union([
@@ -149,17 +156,13 @@ const commitSchema = z.strictObject({
   summary: z.string().min(1),
 });
 
-/**
- * One revision log as storage writes it. The nested board log keeps the
- * journal's own envelope, so a board with executable stages is written with the
- * version that grammar requires.
- */
+/** One revision log as storage writes it. The board log keeps the journal's own JSONL envelope. */
 export const encodedRevisionLogSchema = z.strictObject({
   version: z.literal(REVISION_LOG_VERSION),
   hubId: z.string().min(1),
   boardId: z.string().min(1),
   dropped: z.number().int().nonnegative(),
-  board: z.unknown(),
+  board: z.string().min(1),
   commits: z.array(commitSchema),
 });
 export type EncodedRevisionLog = z.infer<typeof encodedRevisionLogSchema>;
@@ -170,7 +173,7 @@ export function decodeRevisionLog(raw: unknown): BoardRevisionLog | undefined {
   if (!parsed.success) return undefined;
   const decoded = decodeBoardLog(parsed.data.board);
   if (!decoded.ok) return undefined;
-  return { hubId: parsed.data.hubId, boardId: parsed.data.boardId, board: decoded.log, commits: parsed.data.commits, dropped: parsed.data.dropped };
+  return { hubId: parsed.data.hubId, boardId: parsed.data.boardId, log: decoded.log, commits: parsed.data.commits, dropped: parsed.data.dropped };
 }
 
 /** One stored revision log, validated and decoded into the journal's own shape. */
@@ -180,10 +183,10 @@ export const revisionLogSchema: z.ZodType<BoardRevisionLog> = encodedRevisionLog
     context.addIssue({ code: 'custom', path: ['board'], message: 'The board log this revision log carries is invalid.' });
     return z.NEVER;
   }
-  return { hubId: value.hubId, boardId: value.boardId, board: decoded.log, commits: value.commits, dropped: value.dropped };
+  return { hubId: value.hubId, boardId: value.boardId, log: decoded.log, commits: value.commits, dropped: value.dropped };
 });
 
 /** Serialize one revision log as the storage domain stores it. */
 export function encodeRevisionLog(log: BoardRevisionLog): EncodedRevisionLog {
-  return { version: REVISION_LOG_VERSION, hubId: log.hubId, boardId: log.boardId, dropped: log.dropped, board: encodeBoardLog(log.board), commits: log.commits.map(commit => ({ ...commit })) };
+  return { version: REVISION_LOG_VERSION, hubId: log.hubId, boardId: log.boardId, dropped: log.dropped, board: encodeBoardLog(log.log), commits: log.commits.map(commit => ({ ...commit })) };
 }

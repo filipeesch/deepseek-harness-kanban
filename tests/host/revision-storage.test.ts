@@ -39,7 +39,9 @@ describe('revision storage', () => {
     const table = new MemoryTable();
     await revisions(table).record({ hubId: 'hub', boardId: 'board', previous: null, next: DETERMINISTIC, actor: { kind: 'agent', sessionId: 'session' }, origin: 'tool' });
     const stored = table.records.get('board');
-    expect(stored?.board).toMatchObject({ version: 3 });
+    // The board log is the journal's own append-only envelope, one event per line.
+    expect(typeof stored?.board).toBe('string');
+    expect(stored?.board).toContain('workflow.replaced');
     expect((await revisions(table).read('board'))?.commits[0]?.summary).toBe('Created the board workflow.');
   });
 

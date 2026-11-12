@@ -138,6 +138,16 @@ export class GitClone {
     throw gitFailure('show', result);
   }
 
+  /** The names directly inside one directory at one commit, or an empty list. */
+  async listDirectory(commit: string, relativePath: string): Promise<string[]> {
+    const result = await this.run(['ls-tree', '--name-only', commit + ':' + relativePath]);
+    if (result.exitCode !== 0) {
+      if (MISSING_PATH.test(result.stderr)) return [];
+      return [];
+    }
+    return result.stdout.split(String.fromCharCode(10)).map(name => name.trim()).filter(name => name.length > 0);
+  }
+
   /** Whether one path exists at one commit, without reading its content. */
   async hasFile(commit: string, relativePath: string): Promise<boolean> {
     const result = await this.run(['cat-file', '-e', commit + ':' + relativePath]);

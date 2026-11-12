@@ -99,6 +99,34 @@ describe('task history rows', () => {
     ]);
   });
 
+  it('names the failure origin, code, attempts and guard facts of one settled script failure', () => {
+    const guard = { admission: 'not-admitted', exitCode: 125, signal: null, timedOut: false, aborted: false, elapsedMs: 20, stdoutBytes: 0, stdoutHead: '', stderrBytes: 0, stderrTail: '' };
+    const value = rows([{ kind: 'deterministic-execution', at: FIRST, columnId: 'plan', executionId: 'run', outcome: 'failed', error: {
+      code: 'BASH_PROTOCOL', message: 'Infrastructure failure: the guard did not admit the command.',
+      details: { origin: 'infrastructure', attempts: [{ attempt: 1, code: 'BASH_PROTOCOL', guard }, { attempt: 2, code: 'BASH_PROTOCOL', guard }], guard },
+    } }]);
+    expect(value[0]).toMatchObject({ event: 'Script failed', tone: 'warning' });
+    expect(value[0]?.detail).toContain('infrastructure failure · BASH_PROTOCOL · 2 attempts · command not admitted · exit 125');
+    expect(value[0]?.detail).toContain('the guard did not admit the command');
+    expect(value[0]?.evidence).toBe('Guard: command not admitted · 20 ms\nExit: 125\nOutput: 0 B stdout · 0 B stderr\nAttempts: BASH_PROTOCOL (125), BASH_PROTOCOL (125)');
+  });
+
+  it('shows the synthetic result message once and keeps the deep facts expandable', () => {
+    const message = 'Infrastructure failure: boom. Detail: the task History.';
+    const guard = { admission: 'started', exitCode: 125, signal: null, timedOut: false, aborted: false, elapsedMs: 15, stdoutBytes: 3, stdoutHead: 'abc', stderrBytes: 23, stderrTail: 'NATIVE_LIFETIME_UNCLEAN: x' };
+    const value = rows([{ kind: 'deterministic-execution', at: FIRST, columnId: 'plan', executionId: 'run', outcome: 'failed', exit: 'error', message, error: { code: 'BASH_PROTOCOL', message, details: { origin: 'infrastructure', guard, cause: { code: 'BASH_PROTOCOL', message: 'The guard left no result.' } } } }]);
+    expect(value[0]?.detail.split(message)).toHaveLength(2);
+    expect(value[0]?.evidence).toContain('Cause: BASH_PROTOCOL — The guard left no result.');
+    expect(value[0]?.evidence).toContain('stderr: NATIVE_LIFETIME_UNCLEAN: x');
+    expect(value[0]?.evidence).toContain('stdout: abc');
+  });
+
+  it('keeps a failure recorded before the vocabulary readable', () => {
+    const value = rows([{ kind: 'deterministic-execution', at: FIRST, columnId: 'plan', executionId: 'run', outcome: 'failed', error: { code: 'EXECUTOR_FAILED', message: 'legacy failure' } }]);
+    expect(value[0]?.detail).toContain('— legacy failure');
+    expect(value[0]?.detail).not.toContain('failure · EXECUTOR_FAILED');
+  });
+
   it('returns no rows for a task that recorded nothing', () => {
     expect(rows([])).toEqual([]);
     expect(buildHistoryRows({ history: undefined, columns: COLUMNS, now: 0 })).toEqual([]);

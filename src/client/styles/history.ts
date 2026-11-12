@@ -14,4 +14,9 @@ export const historyStyles = [
   // The time and the duration wrap instead of forcing the table wider than a narrow drawer.
   '.dsh-kanban .kb-history-time{opacity:.85}',
   '.dsh-kanban .kb-history-duration{font-variant-numeric:tabular-nums;opacity:.85}',
+  // The deep failure facts stay collapsed, so a narrow Detail column is not forced wide.
+  '.dsh-kanban .kb-history-evidence{margin-top:4px;font-size:11.5px}',
+  '.dsh-kanban .kb-history-evidence summary{cursor:pointer;opacity:.85}',
+  '.dsh-kanban .kb-history-evidence-text{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:11.5px;opacity:.9}',
+  '.dsh-kanban .kb-history-evidence summary:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:2px}',
 ].join(String.fromCharCode(10));

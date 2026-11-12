@@ -20,7 +20,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { deterministic?: import('../../src/shared/deterministic.js').DeterministicPhase; deterministicDelivery?: 'failed'; deterministicRefusal?: boolean; stageUpdateFailure?: boolean; history?: 'short' | 'long'; recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; declared?: boolean; declaredFailed?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; agentPause?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string; reason: 'folder' | 'unresolved' }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean;
+export interface HarnessOptions { deterministic?: import('../../src/shared/deterministic.js').DeterministicPhase; deterministicDelivery?: 'failed'; deterministicRefusal?: boolean; deterministicFailure?: 'infrastructure' | 'diagnostic'; stageUpdateFailure?: boolean; history?: 'short' | 'long'; recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; declared?: boolean; declaredFailed?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; agentPause?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string; reason: 'folder' | 'unresolved' }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean;
   /** Names the board's default model and what its conversations report back when it cannot be applied. */
   boardModel?: { model: ModelSelection; fallback?: ConversationModelOutcome }; }
 
@@ -197,7 +197,16 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
     hub.boards[0]!.workflowYaml = updated.text; hub.boards[0]!.workflow = parseWorkflow(updated.text);
     const scriptTask = tasks.find(task => task.id === 'long-0')!;
     scriptTask.sessionIds = []; scriptTask.stageEntry = { id: 'script-entry', columnId: 'explore', stageIdentity: 'stable-wait', enteredAt: now };
-    raw.deterministic = { 'long-0': { entryId: 'script-entry', executionId: 'script-run', phase: options.deterministic, startedAt: now, attempt: 1, restartCount: 1, fingerprint: 'synthetic-captured-version', savedVersionChanged: false, parameters: { pipeline: 'ci-main' }, ...(options.deterministicDelivery === undefined ? {} : { deliveryStatus: options.deterministicDelivery }), ...(options.deterministic === 'failed' && options.deterministicRefusal ? { error: { code: 'PARAMETERS_REQUIRED', message: 'Missing required parameter: pipeline. Edit the entry parameters before Play.' } } : {}) } };
+    // The failure vocabulary a real settled run stores: origin, attempts and the guard facts.
+    const guard = { admission: 'not-admitted' as const, exitCode: 125, signal: null, timedOut: false, aborted: false, elapsedMs: 10_012, stdoutBytes: 0, stdoutHead: '', stderrBytes: 0, stderrTail: '' };
+    const diagnosticGuard = { ...guard, admission: 'started' as const, stderrBytes: 53, stderrTail: 'NATIVE_LIFETIME_UNCLEAN: Owned processes survived cleanup.' };
+    const failure = options.deterministic === 'failed' && options.deterministicFailure === 'infrastructure'
+      ? { code: 'BASH_PROTOCOL', message: 'Infrastructure failure: The isolated Bash guard returned no result and no diagnostic output (exit status 125). (3 attempts) Detail: the task History.', details: { origin: 'infrastructure', attempts: [1, 2, 3].map(attempt => ({ attempt, code: 'BASH_PROTOCOL', guard })), guard } }
+      : options.deterministic === 'failed' && options.deterministicFailure === 'diagnostic'
+        ? { code: 'BASH_PROTOCOL', message: 'Infrastructure failure: The isolated Bash guard could not prove that the command process tree was stopped. (2 attempts) Detail: the task History.', details: { origin: 'infrastructure', attempts: [1, 2].map(attempt => ({ attempt, code: 'BASH_PROTOCOL', guard: diagnosticGuard })), guard: diagnosticGuard, cause: { code: 'TYPESCRIPT_EXCEPTION', message: 'Error: the guard left no result' } } }
+        : undefined;
+    if (failure !== undefined) scriptTask.history = [{ kind: 'deterministic-execution', at: now, columnId: 'explore', executionId: 'script-run', outcome: 'failed', error: failure }];
+    raw.deterministic = { 'long-0': { entryId: 'script-entry', executionId: 'script-run', phase: options.deterministic, startedAt: now, attempt: 1, restartCount: 1, fingerprint: 'synthetic-captured-version', savedVersionChanged: false, parameters: { pipeline: 'ci-main' }, ...(options.deterministicDelivery === undefined ? {} : { deliveryStatus: options.deterministicDelivery }), ...(failure === undefined ? {} : { error: failure }), ...(failure !== undefined || !(options.deterministic === 'failed' && options.deterministicRefusal) ? {} : { error: { code: 'PARAMETERS_REQUIRED', message: 'Missing required parameter: pipeline. Edit the entry parameters before Play.' } }) } };
   }
   const configured = new Set<string>();
   let value = withLegacy(raw);
@@ -233,11 +242,11 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
     const folder = pathValue.slice(pathValue.lastIndexOf('/') + 1);
     return {
       status, provider: 'google-drive-local', providerLabel: 'Google Drive Local', supportsFiles: true, address: 'member@example.test / ' + folder,
-      syncMode: 'continuous', intervalMinutes: 1, lastSyncedAt: '2026-10-21T00:05:00Z',
-      drafts: 0, pending: 0, updates: 0, conflicts: 0, orderChanged: false, syncing: false,
-      boards: [{ boardId: 'board', key: 'harness-board', name: 'Harness board', state: 'in-sync', bound: true, pending: false }],
-      incoming: [], removed: [], blockers: [], removing: [],
-      ...(status === 'preview' ? { preview: { publishedBoards: 1, localBoards: 1 }, boards: [{ boardId: 'board', key: 'harness-board', name: 'Harness board', state: 'updates-available' as const, bound: true, pending: true }] } : {}),
+      intervalMinutes: 1, lastSyncedAt: '2026-10-21T00:05:00Z',
+      drafts: 0, updates: 0, conflicts: 0, syncing: false,
+      boards: [{ boardId: 'board', key: 'harness-board', name: 'Harness board', state: 'in-sync', bound: true, draft: false }],
+      incoming: [], pendingRemovals: [], removed: [], blockers: [],
+      ...(status === 'preview' ? { preview: { publishedBoards: 1, localBoards: 1 }, boards: [{ boardId: 'board', key: 'harness-board', name: 'Harness board', state: 'draft' as const, bound: true, draft: true }] } : {}),
     };
   }
   if (options.persist) { try { const stored = sessionStorage.getItem('dsh-kanban.harness'); if (stored) value = withLegacy(JSON.parse(stored) as KanbanSnapshot); } catch { /* storage is optional */ } }
