@@ -27,7 +27,7 @@ const intent = 'Use ONLY when the user explicitly requests this board change. ';
 
 const preserveNote = ' Only the named fields are rewritten; comments, key order, quoting, and every other authored character stay as they are.';
 
-const reportNote = ' The result carries the write report: the per-stage difference, the graph warnings, the reviewed authorization of every deterministic stage in each allowed project, and the affected cards. A refused write saves nothing and returns the same report.';
+const reportNote = ' The result carries the write report: the per-stage difference, the graph warnings, the board-level reviewed authorization of every deterministic stage, and the affected cards. A refused write saves nothing and returns the same report.';
 
 /** The document, stage, and write surface the authoring tools need. */
 export interface WorkflowAuthoringPort {

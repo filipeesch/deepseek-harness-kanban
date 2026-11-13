@@ -491,12 +491,12 @@ describe('reviewed workflow writes', () => {
       impact: {
         async describe(input) {
           seen.push(input.after.initialColumnId);
-          return [{ stage: 'wait', projectId: 'project', verdict: 'holds' as const, reasons: [] }];
+          return [{ stage: 'wait', verdict: 'holds' as const, reasons: [] }];
         },
       },
     });
     const value = await service.saveWorkflowReviewed({ boardId: 'board', compose: current => current.replace('label: Plan', 'label: Planning') });
     expect(seen).toEqual(['backlog']);
-    expect(value.report.scripts).toEqual([{ stage: 'wait', projectId: 'project', verdict: 'holds', reasons: [] }]);
+    expect(value.report.scripts).toEqual([{ stage: 'wait', verdict: 'holds', reasons: [] }]);
   });
 });

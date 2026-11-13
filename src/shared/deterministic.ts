@@ -28,7 +28,8 @@ export interface DeterministicCapture {
   language: DeterministicDefinition['language'];
   directory: DeterministicDefinition['directory'];
   executionDirectory: string;
-  source: { kind: 'inline' | 'file'; path?: string };
+  /** `path` is the resolved primary file; `reference` is the authored path. */
+  source: { kind: 'inline' | 'file'; path?: string; reference?: string };
   env: string[];
   /** Declared parameter names; the values stay on the entry and outside this authority. */
   params: string[];
@@ -70,16 +71,32 @@ export interface DeterministicSummary {
   /** Entry-bound values, projected so the script panel can show and repair them. */
   parameters?: Record<string, string>;
 }
-/** Explicit bounded review surface, separate from ordinary state publication. */
-export interface DeterministicReview {
-  executionId: string; fingerprint: string; code: string;
-  language: DeterministicDefinition['language']; directory: DeterministicDefinition['directory'];
-  exits: Record<string, string>; env: string[];
-  /** The captured declaration the reviewed version requires. */
+/** Stage-scoped executable version review; project variable values stay out of it. */
+export interface DeterministicStageReview {
+  stage: { boardId: string; stageId: string; stageIdentity: string; name: string };
+  version: {
+    fingerprint: string; stageGeneration: string; captured: boolean; directoryDependent: boolean;
+    /** The project directory that resolved an authored relative source. */
+    representative?: { projectId: string; projectName: string; directory: string };
+  };
+  code: string;
+  language: DeterministicDefinition['language'];
+  directory: DeterministicDefinition['directory'];
+  source: { kind: 'inline' | 'file'; reference?: string };
+  exits: Record<string, string>;
+  env: string[];
+  /** The reviewed declaration; descriptions are authored guidance, not authority. */
   params: DeterministicParameter[];
+  approval: 'approved' | 'required';
+  /** How many entries of this board and stage wait for this exact version. */
+  waitingCards?: number;
+  /** Present when the review is bound to a captured execution. */
+  captured?: { taskId: string; entryId: string; executionDirectory: string };
+}
+/** Authorized names and configured state for one project and stable stage; values never leave the host. */
+export interface DeterministicVariablesView {
+  env: string[];
   variables: Array<{ name: string; configured: boolean }>;
-  source?: { kind: 'inline' | 'file'; path?: string };
-  executionDirectory?: string;
 }
 /** Everything a deterministic program receives; values are data, never interpolated into source. */
 export interface DeterministicInput {

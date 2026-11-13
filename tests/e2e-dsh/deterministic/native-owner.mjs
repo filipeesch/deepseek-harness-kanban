@@ -34,13 +34,14 @@ if (kind.startsWith('guarded-')) {
   const capture = await runtime.capture({ definition: { language, code, directory: 'task', exits: { passed: 'done' } },
     projectDirectory: directory, taskDirectory: directory, exits: { passed: { columnId: 'done', stageIdentity: 'done-key' } } });
   const scope = { hubId: 'test-hub', boardId: 'test-board', projectId: 'test-project', stageIdentity: 'test-stage' };
-  await runtime.trust.approve(scope, capture.fingerprint);
+  const approvalScope = { hubId: scope.hubId, boardId: scope.boardId, stageIdentity: scope.stageIdentity };
+  await runtime.trust.approve(approvalScope, capture.fingerprint);
   const timer = setInterval(() => {
     try { const value = JSON.parse(readFileSync(join(directory, 'worker-ready.json'), 'utf8')); if (kind === 'guarded-nested') { const nested = JSON.parse(readFileSync(join(directory, 'bash-ready.json'), 'utf8')); value.descendants = [nested.pid, nested.child]; } clearInterval(timer); process.stdout.write(JSON.stringify(value) + '\n'); } catch { /* Source has not reached readiness. */ }
   }, 10);
   const cancellation = new AbortController();
   if (action === 'stop') process.once('SIGUSR2', () => cancellation.abort());
-  const result = await runtime.execute({ executionId: 'test-execution', taskId: 'test-task', capture, scope,
+  const result = await runtime.execute({ executionId: 'test-execution', taskId: 'test-task', capture, scope, approvalScope,
     input: { startedAt: new Date().toISOString() }, signal: cancellation.signal });
   clearInterval(timer); process.stderr.write(JSON.stringify(result) + '\n');
   if (action === 'stop' && result.kind !== 'aborted') process.exitCode = 1;

@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
-import type { Task } from '../shared/types.js';
-import type { DeterministicReview } from '../shared/deterministic.js';
-import { ErrorNotice, useAction, type RunCommand } from './ui.js';
+import React, { useEffect, useState } from 'react';
+import type { ClientApi, Problem, Task } from '../shared/types.js';
+import type { DeterministicVariablesView } from '../shared/deterministic.js';
+import { ErrorNotice, Modal, asProblem, useAction, type RunCommand } from './ui.js';
 
 /** Keyed by project, stable stage, and variable: no write-only draft crosses scopes. */
-function VariableValue({ taskId, projectId, stageIdentity, variable, run, onSaved }: { taskId: string; projectId: string; stageIdentity: string; variable: DeterministicReview['variables'][number]; run: RunCommand; onSaved: () => void }) {
+function VariableValue({ taskId, projectId, stageIdentity, variable, run, onSaved }: { taskId: string; projectId: string; stageIdentity: string; variable: DeterministicVariablesView['variables'][number]; run: RunCommand; onSaved: () => void }) {
   const [value, setValue] = useState('');
   const action = useAction(run);
   async function save(remove: boolean) {
@@ -21,12 +21,35 @@ function VariableValue({ taskId, projectId, stageIdentity, variable, run, onSave
     <ErrorNotice problem={action.error} />
   </fieldset>;
 }
-export function ScriptVariables({ task, projectName, review, run, onSaved }: { task: Task; projectName: string; review: DeterministicReview; run: RunCommand; onSaved: () => void }) {
+
+/**
+ * Local values belong to one project and stable stage. They are configured here,
+ * away from the executable-version review, so consent to code and credential
+ * entry never share a dialog.
+ */
+export function LocalVariablesDialog({ task, projectName, api, run, onClose }: { task: Task; projectName: string; api: ClientApi; run: RunCommand; onClose: () => void }) {
+  const [view, setView] = useState<DeterministicVariablesView | null>(null);
+  const [error, setError] = useState<Problem | null>(null);
+  const [generation, refresh] = useState(0);
   const stageIdentity = task.stageEntry?.stageIdentity;
-  const scope = task.projectId + ':' + (stageIdentity ?? task.columnId);
-  return <section aria-label="Local script variables">
-    <h3>Local variables</h3><p className="kb-hint">Project: {projectName}. Stable stage: {stageIdentity ?? 'current stage (local association)'}. Values are write-only and never enter shared YAML. Other projects and stages do not inherit them.</p>
-    {!stageIdentity && <p className="kb-hint">Move the task into this stage to bind its stable identity before saving values.</p>}
-    {review.variables.length === 0 ? <p className="kb-hint">This captured program requests no variables.</p> : review.variables.map(variable => stageIdentity ? <VariableValue key={scope + ':' + variable.name} taskId={task.id} projectId={task.projectId} stageIdentity={stageIdentity} variable={variable} run={run} onSaved={onSaved} /> : null)}
-  </section>;
+  useEffect(() => {
+    let current = true;
+    // A stage move changes the project/stage scope this dialog writes into; drop
+    // the previous view before its names can be shown under the new scope.
+    setView(null); setError(null);
+    if (!api.deterministicVariables) { setError({ code: 'UPDATE_REQUIRED', message: 'Update DSH and Kanban to configure local variables.' }); return; }
+    void api.deterministicVariables(task.id).then(value => { if (current) setView(value); }, failure => { if (current) setError(asProblem(failure)); });
+    return () => { current = false; };
+  }, [api, task.id, task.projectId, stageIdentity, generation]);
+  return <Modal title="Local variables" onClose={onClose} size="wide">
+    <div className="kb-form">
+      <p className="kb-hint">Project: {projectName}. Stable stage: {stageIdentity ?? 'current stage (local association)'}. Values are write-only and never enter shared YAML. Other projects and stages do not inherit them.</p>
+      <ErrorNotice problem={error} />
+      {!view && !error && <p role="status">Loading local variables…</p>}
+      {view && (view.variables.length === 0 ? <p className="kb-hint">This script requests no variables.</p> : view.variables.map(variable => stageIdentity
+        ? <VariableValue key={task.projectId + ':' + stageIdentity + ':' + variable.name} taskId={task.id} projectId={task.projectId} stageIdentity={stageIdentity} variable={variable} run={run} onSaved={() => refresh(value => value + 1)} />
+        : <p key={variable.name} className="kb-hint">{variable.name}: move the task into this stage to bind its stable identity before saving values.</p>))}
+      <div className="kb-actions"><button type="button" className="kb-button" onClick={onClose}>Close</button></div>
+    </div>
+  </Modal>;
 }

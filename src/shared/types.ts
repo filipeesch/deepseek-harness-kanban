@@ -1,5 +1,5 @@
-import type { DeterministicDefinition, DeterministicControl, DeterministicHandoff, DeterministicReview, DeterministicSummary, TaskStageEntry } from './deterministic.js';
-export type { DeterministicDefinition, DeterministicControl, DeterministicHandoff, DeterministicReview, DeterministicSummary, TaskStageEntry } from './deterministic.js';
+import type { DeterministicDefinition, DeterministicControl, DeterministicHandoff, DeterministicStageReview, DeterministicSummary, DeterministicVariablesView, TaskStageEntry } from './deterministic.js';
+export type { DeterministicDefinition, DeterministicControl, DeterministicHandoff, DeterministicStageReview, DeterministicSummary, DeterministicVariablesView, TaskStageEntry } from './deterministic.js';
 import type { NewTask } from './task-creation.js';
 import type { TaskHistoryEntry } from './task-history.js';
 
@@ -445,7 +445,7 @@ export interface ProjectInput { id?: string; name: string; projectPath: string; 
 export type Command =
   | { type: 'task.deterministicPlay'; taskId: string }
   | { type: 'task.deterministicStop'; taskId: string; executionId?: string }
-  | { type: 'task.deterministicApprove'; taskId: string; executionId: string; fingerprint: string }
+  | { type: 'board.deterministicApprove'; boardId: string; stageId: string; fingerprint: string; stageGeneration: string; taskId?: string }
   | { type: 'task.deterministicVariable'; taskId: string; projectId: string; stageIdentity: string; name: string; value?: string }
   | { type: 'task.deterministicRetryDelivery'; taskId: string; entryId: string; executionId: string }
   | { type: 'task.deterministicParameters'; taskId: string; entryId: string; values: Record<string, string> }
@@ -496,7 +496,8 @@ export type Command =
   | { type: 'schedule.runNow'; hubId: string; scheduleId: string };
 export type Outcome<T> = { ok: true; value: T } | { ok: false; error: Problem };
 export interface ClientApi {
-  deterministicReview?(taskId: string): Promise<DeterministicReview>;
+  deterministicReview?(request: { boardId: string; stageId: string; taskId?: string }): Promise<DeterministicStageReview>;
+  deterministicVariables?(taskId: string): Promise<DeterministicVariablesView>;
   snapshot(request?: SnapshotRequest): Promise<KanbanSnapshot>;
   command(command: Command): Promise<KanbanSnapshot>;
   sharing(command: SharingCommand): Promise<KanbanSnapshot>;

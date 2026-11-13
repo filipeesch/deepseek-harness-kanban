@@ -24,7 +24,7 @@ Board administration rejects task-owned chat, including descendants; give the us
 2. Prefer `set_stage_prompt`, `set_stage_routes`, `set_layout`, `add_stage`, and `remove_stage`: each rewrites only the named field and preserves every other authored character. Use `edit_board_yaml` for spans they do not cover, copying exact old text with enough context to match once.
 3. Use `update_board` for rename or approved whole replacement, preserving unrelated model, keys, layout, descriptions, comments, and formatting; omission can clear them. Board display name and workflow root name are separate.
 4. Supply fresh `expected_revision` for every write. It is **Hub-wide**: refresh after every write before the next one in that Hub, even to another board. Serialize related writes.
-5. Read the report every write returns: per-stage difference, graph warnings, each deterministic stage's reviewed authorization per allowed project, and affected cards. A refusal saves nothing and returns it; reconcile, do not drop the revision.
+5. Read the report every write returns: per-stage difference, graph warnings, each deterministic stage's board-level reviewed authorization, and affected cards. A refusal saves nothing and returns it; reconcile, do not drop the revision.
 6. Re-read saved content and verify changed spans: model, layout, identities. `revert_board` restores a retained revision as a new one.
 
 `remove_stage` refuses while the stage holds cards and names them by identifier and count. Removing the initial stage requires naming its replacement. An undrawn connection layout is saved and ignored; the report warns. There is no cross-board transaction or automatic rollback: apply prerequisites first, stop when failure invalidates later work, and report per board.

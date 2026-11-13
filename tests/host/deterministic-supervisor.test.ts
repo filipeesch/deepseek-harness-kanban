@@ -50,8 +50,8 @@ function harness(initial = fixture()) {
       async load(capture) { const code = blobs.get(capture.sourceRef); if (code === undefined) throw new KanbanError('CAPTURE_CORRUPT', 'Captured source is missing or corrupt.'); return code; },
     },
     runtime: { async reclaim(request) { reclaims.push(request.control.executionId); await reclaimHook?.(); }, async execute(request) { calls.push(request); expect(state.tasks.find(task => task.id === request.located.task.id)?.deterministic).toMatchObject({ phase: 'active', attemptId: request.control.attemptId }); return execute(request); } },
-    trust: { isApproved: async () => trustHook ? trustHook() : approved, approve: async () => { approved = true; } },
-    variable: { resolve: async () => ({ ...variables }), status: async request => request.capture.env.map(name => ({ name, configured: Object.hasOwn(variables, name) })) },
+    trust: { isApproved: async () => trustHook ? trustHook() : approved },
+    variable: { resolve: async () => ({ ...variables }) },
     async route(request) { routes.push(request); expect(state.tasks.find(task => task.id === request.located.task.id)?.deterministic?.result?.id).toBe(request.result.id); return route(request); },
     id: () => 'id-' + ++sequence, now: () => at, report: error => errors.push(error),
   };
@@ -73,19 +73,20 @@ describe('deterministic supervisor native composition and preview', () => {
     const h = harness(); const scopeCalls: unknown[] = []; let executed: Parameters<DeterministicRuntime['execute']>[0] | undefined;
     await h.edit(value => { value.task.deterministic!.targets = { passed: { columnId: 'review-before-rename', stageIdentity: 'review-key' } }; });
     const capture: DeterministicCapture = { sourceRef: 'native-blob', fingerprint: 'native-fingerprint', language: 'typescript', directory: 'task', executionDirectory: '/project', source: { kind: 'inline' }, env: [], params: [], exits: {} };
-    const native: DeterministicRuntime = { async capture(request) { expect(request.exits).toEqual(h.control().targets); return { ...capture, exits: request.exits }; }, async plan(request) { return { content: { ...capture, exits: request.exits }, code: 'return input', fingerprint: 'native-fingerprint' }; }, loadCapture: async () => 'return input', collectSources: async () => undefined, verify: async () => undefined, reclaim: async () => undefined,
+    const native: DeterministicRuntime = { async capture(request) { expect(request.exits).toEqual(h.control().targets); return { ...capture, exits: request.exits }; }, async plan(request) { return { content: { ...capture, exits: request.exits }, code: 'return input', fingerprint: 'native-fingerprint' }; }, loadCapture: async () => 'return input', normalizeCapture: async capture => capture, releaseCapture: () => undefined, collectSources: async () => undefined, verify: async () => undefined, reclaim: async () => undefined,
       execute: async request => { executed = request; return { kind: 'completed', completion: { exit: 'passed', message: 'native success' }, diagnostics: [] }; },
-      trust: { async isApproved(scope) { scopeCalls.push(scope); return true; }, approve: async () => undefined, reject: async () => undefined },
+      trust: { async isApproved(scope) { scopeCalls.push(scope); return true; }, approve: async () => undefined },
       variables: { resolve: async () => ({}), status: async () => [], set: async () => undefined, remove: async () => undefined } };
     const ports = createNativeSupervisorPorts({ ...h.ports, nativeRuntime: native }); const s = new DeterministicSupervisor(ports); s.start(); await s.settle();
     expect(executed).toMatchObject({ executionId: 'execution', taskId: 'task', scope: { hubId: 'hub', boardId: 'board', projectId: 'project', stageIdentity: 'wait-key' } });
-    expect(scopeCalls).toEqual([{ hubId: 'hub', boardId: 'board', projectId: 'project', stageIdentity: 'wait-key' }]); expect(h.control().result?.message).toBe('native success'); s.dispose(); await s.settle(); await h.close();
+    expect(scopeCalls).toEqual([{ hubId: 'hub', boardId: 'board', stageIdentity: 'wait-key' }]); expect(h.control().result?.message).toBe('native success'); s.dispose(); await s.settle(); await h.close();
   });
-  it('previews a historical stage and configures local variables without creating entry intent or approval', async () => {
+  it('configures local variables on a historical stage without creating entry intent', async () => {
     const h = harness(); await h.edit(value => { delete value.task.deterministic; delete value.task.stageEntry; }); const changes: unknown[] = [];
     h.ports.variable.set = async (located, stage, name, value) => { changes.push([located.project.id, stage, name, value]); };
-    const s = h.supervisor(); const review = await s.review('task'); expect(review.executionId).toBe('preview'); expect(h.task.stageEntry).toBeUndefined(); expect(h.task.deterministic).toBeUndefined(); expect(h.calls).toHaveLength(0);
-    await s.variable('task', 'TOKEN', 'synthetic-value'); expect(changes).toEqual([['project', 'wait-key', 'TOKEN', 'synthetic-value']]); await expect(s.approve('task', 'preview', review.fingerprint)).rejects.toThrow(/Review/); await h.close();
+    const s = h.supervisor();
+    expect(h.task.stageEntry).toBeUndefined(); expect(h.task.deterministic).toBeUndefined(); expect(h.calls).toHaveLength(0);
+    await s.variable('task', 'TOKEN', 'synthetic-value'); expect(changes).toEqual([['project', 'wait-key', 'TOKEN', 'synthetic-value']]); await h.close();
   });
   it('does not error-route uncertain predecessor ownership even when a captured error route exists', async () => {
     const h = harness(); h.approved(false); await h.edit(value => { value.task.deterministic!.definition.exits.error = 'review'; }); const s = h.supervisor(); s.start(); await s.settle();
@@ -169,10 +170,27 @@ describe('deterministic supervisor durable ordering', () => {
   it('waits for exact capture trust and resumes without recapturing', async () => {
     const h = harness(); h.approved(false); const s = h.supervisor(); s.start(); await s.settle();
     expect(h.control().phase).toBe('awaiting-trust'); expect(h.calls).toHaveLength(0);
-    const review = await s.review('task'); expect(review.code).toContain('return'); await s.approve('task', review.executionId, review.fingerprint); await s.settle();
+    const capture = h.control().capture!; expect(capture.fingerprint).toBeTruthy();
+    h.approved(true); s.reconcile('task'); await s.settle();
     expect(h.captures).toHaveLength(1); expect(h.calls).toHaveLength(1); await h.close();
   });
-  it('refuses stale capture approval', async () => { const h = harness(); h.approved(false); const s = h.supervisor(); s.start(); await s.settle(); await expect(s.approve('task', 'execution', 'old-fingerprint')).rejects.toThrow(/Review/); expect(h.calls).toHaveLength(0); await h.close(); });
+  it('wakes a waiting owner whose negative trust check is still draining', async () => {
+    const h = harness(); h.approved(false);
+    const gate = deferred<boolean>();
+    h.trustHook(async () => gate.promise);
+    const s = h.supervisor(); s.start();
+    await expect.poll(() => h.captures.length).toBe(1);
+    h.approved(true); s.wakeWaiting({ boardId: 'board', stageIdentity: 'wait-key', fingerprint: h.control().capture!.fingerprint });
+    h.trustHook(undefined);
+    gate.resolve(false);
+    await expect.poll(() => h.calls.length).toBe(1);
+    await s.settle(); await h.close();
+  });
+  it('keeps an unapproved capture waiting when the stage is reconciled again', async () => {
+    const h = harness(); h.approved(false); const s = h.supervisor(); s.start(); await s.settle();
+    s.reconcile('task'); await s.settle();
+    expect(h.control().phase).toBe('awaiting-trust'); expect(h.calls).toHaveLength(0); expect(h.captures).toHaveLength(1); await h.close();
+  });
   it('does not autoactivate a historical occupied stage', async () => { const h = harness(); await h.edit(value => { delete value.task.deterministic; delete value.task.stageEntry; }); const s = h.supervisor(); s.start(); await s.settle(); expect(h.captures).toHaveLength(0); expect(h.calls).toHaveLength(0); await h.close(); });
   it('preserves a genuine capture-pending request when interrupted before capture', async () => {
     const h = harness(); const gate = deferred(); h.captureHook(async () => gate.promise); const s = h.supervisor(); s.start(); await flush(); s.dispose(); gate.resolve(); await s.settle(); expect(h.control().phase).toBe('capture-pending');
@@ -355,13 +373,12 @@ describe('deterministic stage parameters', () => {
     await h.close();
   });
 
-  it('reviews the captured parameter declaration', async () => {
+  it('captures the declared parameter names into the executable version', async () => {
     const h = harness();
     h.approved(false);
     await declare(h, [{ name: 'pipeline', description: 'CI workflow' }]);
     const s = h.supervisor(); s.start(); await s.settle();
-    const review = await s.review('task');
-    expect(review.params).toEqual([{ name: 'pipeline', description: 'CI workflow' }]);
+    expect(h.control().capture!.params).toEqual(['pipeline']);
     await h.close();
   });
 });

@@ -19,7 +19,7 @@ export const parameterValuesSchema = z.record(z.string().regex(PARAMETER_NAME), 
 });
 export const deterministicCaptureSchema = z.strictObject({
   sourceRef: z.string().min(1), fingerprint: z.string().min(1), language: z.enum(['bash', 'typescript']), directory: z.enum(['task', 'project']),
-  executionDirectory: z.string().refine(isAbsolutePath), source: z.strictObject({ kind: z.enum(['inline', 'file']), path: z.string().optional() }),
+  executionDirectory: z.string().refine(isAbsolutePath), source: z.strictObject({ kind: z.enum(['inline', 'file']), path: z.string().optional(), reference: z.string().optional() }),
   env: z.array(z.string()), params: z.array(z.string().regex(PARAMETER_NAME)).max(PARAMETER_LIMITS.count), exits: z.record(z.string(), deterministicTargetSchema),
 });
 export const deterministicResultSchema = z.strictObject({ id, exit: z.string(), message: z.string(), at: timestamp, target: deterministicTargetSchema.optional(), synthetic: z.boolean().optional(), deliveryId: id.optional(), deliveryStatus: z.enum(['pending', 'accepted', 'failed']).optional(), error: problem.optional() });

@@ -9,18 +9,19 @@ import { transitionAccess } from './transitions.js';
 export const REPORT_ITEM_LIMIT = 100;
 
 /** Why a reviewed script authorization no longer holds. */
-export type ScriptImpactReason = 'source' | 'exits' | 'environment' | 'directory' | 'execution-directory' | 'unapproved' | 'unresolvable';
+export type ScriptImpactReason = 'source' | 'exits' | 'environment' | 'directory' | 'parameters' | 'unapproved' | 'directory-dependent' | 'unresolvable';
 
 /**
- * The state of one deterministic stage's reviewed authorization in one project.
- * `unverifiable` is a real answer: the project directory or the source file
- * could not be read, so the report never claims the approval still holds.
+ * The state of one deterministic stage's reviewed authorization for the board.
+ * `unverifiable` is a real answer: the stage or the source could not be
+ * resolved, so the report never claims the approval still holds.
  */
 export interface ScriptImpact {
   readonly stage: string;
-  readonly projectId: string;
   readonly verdict: 'holds' | 'changed' | 'unverifiable';
   readonly reasons: readonly ScriptImpactReason[];
+  /** The executable version the report resolved, when one was resolvable. */
+  readonly version?: string;
   readonly detail?: string;
 }
 

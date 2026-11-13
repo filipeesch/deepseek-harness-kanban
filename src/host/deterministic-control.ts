@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { ensureLocalStageIdentity } from '../domain/deterministic-state.js';
 import { KanbanError } from '../shared/errors.js';
 import type { DeterministicTarget } from '../shared/deterministic.js';
-import type { DeterministicRuntime, DeterministicScope } from './deterministic/ports.js';
+import type { DeterministicApprovalScope, DeterministicRuntime, DeterministicScope } from './deterministic/ports.js';
 import type { SupervisorPorts, SupervisorRequest } from './deterministic-supervisor.js';
 
 export interface NativeSupervisorPorts extends Omit<SupervisorPorts, 'capture' | 'runtime' | 'trust' | 'variable'> {
@@ -12,6 +12,10 @@ export interface NativeSupervisorPorts extends Omit<SupervisorPorts, 'capture' |
 function scope(request: Pick<SupervisorRequest, 'located' | 'control'>): DeterministicScope {
   return { hubId: request.located.hubId, boardId: request.located.board.id, projectId: request.located.project.id, stageIdentity: request.control.stageIdentity };
 }
+/** Approval spans every project the board allows; ownership and variables stay project-scoped. */
+export function approvalScope(request: Pick<SupervisorRequest, 'located' | 'control'>): DeterministicApprovalScope {
+  return { hubId: request.located.hubId, boardId: request.located.board.id, stageIdentity: request.control.stageIdentity };
+}
 
 /** Bind the task authority ports to native capture/execution; never copy native secret storage. */
 export function createNativeSupervisorPorts(options: NativeSupervisorPorts): SupervisorPorts {
@@ -20,7 +24,7 @@ export function createNativeSupervisorPorts(options: NativeSupervisorPorts): Sup
     capture: {
       async capture(request) {
         const exits = await base.transact(request.located.task.id, (task, located) => {
-          if (!request.preview && (task.stageEntry?.id !== request.control.entryId || task.deterministic?.executionId !== request.control.executionId)) throw new KanbanError('STALE_EXECUTION', 'This executable entry has been replaced.');
+          if (task.stageEntry?.id !== request.control.entryId || task.deterministic?.executionId !== request.control.executionId) throw new KanbanError('STALE_EXECUTION', 'This executable entry has been replaced.');
           if (request.control.targets) return structuredClone(request.control.targets);
           const targets: Record<string, DeterministicTarget> = {};
           for (const [exit, columnId] of Object.entries(request.control.definition.exits)) {
@@ -44,7 +48,7 @@ export function createNativeSupervisorPorts(options: NativeSupervisorPorts): Sup
         await native.verify(request.capture, request.signal);
         if (request.signal.aborted) throw new KanbanError('EXECUTION_ABORTED', 'The execution was canceled.');
         const input = JSON.parse(JSON.stringify(request.input)) as Parameters<DeterministicRuntime['execute']>[0]['input'];
-        const outcome = await native.execute({ executionId: request.control.executionId, taskId: request.located.task.id, capture: request.capture, input, scope: scope(request), signal: request.signal });
+        const outcome = await native.execute({ executionId: request.control.executionId, taskId: request.located.task.id, capture: request.capture, input, scope: scope(request), approvalScope: approvalScope(request), signal: request.signal });
         if (outcome.kind === 'completed') return outcome.completion;
         if (outcome.kind === 'failed') {
           if (outcome.diagnostic.code === 'OWNERSHIP_UNCERTAIN') base.report?.(new KanbanError(outcome.diagnostic.code, outcome.diagnostic.message));
@@ -54,12 +58,10 @@ export function createNativeSupervisorPorts(options: NativeSupervisorPorts): Sup
       },
     },
     trust: {
-      isApproved: request => native.trust.isApproved(scope(request), request.capture.fingerprint),
-      approve: request => native.trust.approve(scope(request), request.capture.fingerprint),
+      isApproved: request => native.trust.isApproved(approvalScope(request), request.capture.fingerprint),
     },
     variable: {
       resolve: request => native.variables.resolve(scope(request), request.capture.env),
-      status: request => native.variables.status(scope(request), request.capture.env),
       set: (located, stageIdentity, name, value) => value === null
         ? native.variables.remove({ hubId: located.hubId, boardId: located.board.id, projectId: located.project.id, stageIdentity }, name)
         : native.variables.set({ hubId: located.hubId, boardId: located.board.id, projectId: located.project.id, stageIdentity }, name, value),

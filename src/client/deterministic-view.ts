@@ -10,6 +10,10 @@ export function ownedScript(task: Pick<Task, 'stageEntry'> & Partial<Pick<Task, 
 export function scriptActive(summary?: DeterministicSummary): boolean {
   return summary?.phase === 'active' || summary?.phase === 'stopping';
 }
+/** One predicate for the phase every surface names "awaiting approval". */
+export function scriptAwaitingApproval(summary?: DeterministicSummary): boolean {
+  return summary?.phase === 'awaiting-trust';
+}
 export function scriptFailureOrigin(summary: DeterministicSummary): FailureOrigin | undefined {
   return failureDetail(summary.error?.details)?.origin;
 }
@@ -27,7 +31,7 @@ export function scriptLabel(summary: DeterministicSummary): string {
   }
   switch (summary.phase) {
     case 'capture-pending': return 'Script: capturing program';
-    case 'awaiting-trust': return 'Script: awaiting local trust';
+    case 'awaiting-trust': return 'Script: awaiting approval';
     case 'active': return 'Script running';
     case 'stopping': return 'Script stopping';
     case 'stopped': return 'Script stopped';

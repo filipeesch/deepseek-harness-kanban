@@ -209,6 +209,7 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
     raw.deterministic = { 'long-0': { entryId: 'script-entry', executionId: 'script-run', phase: options.deterministic, startedAt: now, attempt: 1, restartCount: 1, fingerprint: 'synthetic-captured-version', savedVersionChanged: false, parameters: { pipeline: 'ci-main' }, ...(options.deterministicDelivery === undefined ? {} : { deliveryStatus: options.deterministicDelivery }), ...(failure === undefined ? {} : { error: failure }), ...(failure !== undefined || !(options.deterministic === 'failed' && options.deterministicRefusal) ? {} : { error: { code: 'PARAMETERS_REQUIRED', message: 'Missing required parameter: pipeline. Edit the entry parameters before Play.' } }) } };
   }
   const configured = new Set<string>();
+  const approvedAuthoring = new Set<string>();
   let value = withLegacy(raw);
   if ((options.hubs ?? 1) > 1) value.state.hubs.push({ id: 'hub-2', name: 'Second Hub', revision: 0, projects: [], boards: [], tasks: [], notes: [], createdAt: now, updatedAt: now });
   const listeners = new Set<(snapshot: TestSnapshot) => void>();
@@ -253,18 +254,46 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
   const publish = () => { value = withLegacy(clone(value)); value.sequence++; if (options.persist) { try { sessionStorage.setItem('dsh-kanban.harness', JSON.stringify(value)); } catch { /* storage is optional */ } } const copy = withLegacy(clone(value)); for (const listener of listeners) listener(copy); return withLegacy(clone(value)); };
   const api: ClientApi = {
     snapshot: async () => withLegacy(clone(value)),
-    deterministicReview: async taskId => {
+    deterministicReview: async (request: { boardId: string; stageId: string; taskId?: string }) => {
+      const board = value.state.hubs.flatMap(hub => hub.boards).find(item => item.id === request.boardId) ?? value.state.hubs[0]!.boards[0]!;
+      const column = board.workflow.columns.find(item => item.id === request.stageId) ?? board.workflow.columns[0]!;
+      const script = column.deterministic!;
+      const taskValue = request.taskId === undefined ? undefined : value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === request.taskId);
+      const stageIdentity = taskValue?.stageEntry?.stageIdentity ?? board.localStageIdentities?.[column.id] ?? column.key ?? 'harness-stage';
+      const summary = request.taskId === undefined ? undefined : value.deterministic?.[request.taskId];
+      const authoredFingerprint = 'authored-' + JSON.stringify({ language: script.language, file: script.file, code: script.code, directory: script.directory, env: script.env ?? [], params: (script.params ?? []).map(parameter => parameter.name), exits: script.exits });
+      const fingerprint = summary?.fingerprint ?? authoredFingerprint;
+      const authoringKey = board.id + ':' + column.id + ':' + fingerprint;
+      const approval = request.taskId !== undefined
+        ? (summary?.phase === 'awaiting-trust' ? 'required' as const : 'approved' as const)
+        : (approvedAuthoring.has(authoringKey) ? 'approved' as const : 'required' as const);
+      return {
+        stage: { boardId: board.id, stageId: column.id, stageIdentity, name: column.name },
+        version: { fingerprint, stageGeneration: 'synthetic-stage-generation', captured: summary !== undefined, directoryDependent: false },
+        code: script.code!, language: script.language, directory: script.directory, exits: script.exits, env: script.env ?? [], params: script.params ?? [],
+        source: script.file === undefined ? { kind: 'inline' as const } : { kind: 'file' as const, reference: script.file },
+        approval,
+        waitingCards: summary?.phase === 'awaiting-trust' ? 1 : 0,
+        ...(request.taskId === undefined || summary === undefined ? {} : { captured: { taskId: request.taskId, entryId: summary.entryId, executionDirectory: '/isolated/project' } }),
+      };
+    },
+    deterministicVariables: async taskId => {
       const script = value.state.workflow.columns[0]!.deterministic!;
-      return { executionId: value.deterministic?.[taskId]?.executionId ?? 'preview', fingerprint: 'synthetic-captured-version', code: script.code!, language: script.language, directory: script.directory, exits: script.exits, env: script.env ?? [], params: script.params ?? [], variables: (script.env ?? []).map(name => ({ name, configured: configured.has(name) })), source: { kind: 'inline' }, executionDirectory: '/isolated/project' };
+      return { env: script.env ?? [], variables: (script.env ?? []).map(name => ({ name, configured: configured.has(name) })) };
     },
     command: async (command: Command) => {
       commands.push(structuredClone(command));
       if (command.type === 'task.deterministicVariable') { if (command.value === undefined) configured.delete(command.name); else configured.add(command.name); }
       if (command.type === 'task.deterministicParameters') { const summary = value.deterministic?.[command.taskId]; if (summary) summary.parameters = structuredClone(command.values); }
       if (command.type === 'task.deterministicRetryDelivery') { const summary = value.deterministic?.[command.taskId]; if (summary) { summary.phase = 'result-ready'; summary.deliveryStatus = 'pending'; } }
-      if (command.type === 'task.deterministicStop' || command.type === 'task.deterministicPlay' || command.type === 'task.deterministicApprove') {
+      if (command.type === 'task.deterministicStop' || command.type === 'task.deterministicPlay') {
         const summary = value.deterministic?.[command.taskId];
         if (summary) { summary.phase = command.type === 'task.deterministicStop' ? 'stopped' : 'active'; if (command.type === 'task.deterministicPlay') { summary.executionId = 'script-run-play'; delete summary.error; } }
+      }
+      if (command.type === 'board.deterministicApprove') {
+        const summary = command.taskId === undefined ? undefined : value.deterministic?.[command.taskId];
+        if (summary) { summary.phase = 'active'; delete summary.error; }
+        else if (command.taskId === undefined) approvedAuthoring.add(command.boardId + ':' + command.stageId + ':' + command.fingerprint);
       }
       const firstHub = value.state.hubs[0]!; const firstBoard = firstHub.boards[0]!;
       let receipt: KanbanSnapshot['commandReceipt'];

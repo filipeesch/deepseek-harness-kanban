@@ -22,6 +22,7 @@ function deferred() { let resolve!: () => void; const promise = new Promise<void
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 const scope = { hubId: 'local-hub', boardId: 'board-a', projectId: 'project-a', stageIdentity: 'stable-stage-a' };
+const approvalScope = { hubId: scope.hubId, boardId: scope.boardId, stageIdentity: scope.stageIdentity };
 const exits = { passed: { columnId: 'review', stageIdentity: 'stable-review' } };
 function credentials() {
   const records = new Map<string, CredentialRecord>();
@@ -95,10 +96,35 @@ describe('deterministic immutable source and scoped local authority', () => {
     await expect(f.runtime.loadCapture({ ...capture, env: ['NEW_TOKEN'] })).rejects.toMatchObject({ code: 'CAPTURE_CORRUPT' });
     await rm(join(f.root, 'private', 'sources', capture.sourceRef + '.json')); await expect(f.runtime.loadCapture(capture)).rejects.toMatchObject({ code: 'CAPTURE_MISSING' });
   });
+  it('shares one version for identical relative primary files in different task directories', async () => {
+    const f = await fixture();
+    const other = join(f.root, 'other-task'); await mkdir(other);
+    await writeFile(join(f.task, 'wait.sh'), 'echo same');
+    await writeFile(join(other, 'wait.sh'), 'echo same');
+    const definition = { language: 'bash' as const, code: undefined, file: 'wait.sh', directory: 'task' as const, exits: { passed: 'review' } };
+    const first = await f.runtime.capture({ definition, projectDirectory: f.project, taskDirectory: f.task, exits });
+    const second = await f.runtime.capture({ definition, projectDirectory: f.project, taskDirectory: other, exits });
+    expect(first.fingerprint).toBe(second.fingerprint);
+    expect(first.source.reference).toBe('wait.sh');
+    expect(first.source.path).toBe(await realpath(join(f.task, 'wait.sh')));
+    expect(first.executionDirectory).not.toBe(second.executionDirectory);
+  });
+  it('creates distinct versions for different relative primary bytes', async () => {
+    const f = await fixture();
+    const other = join(f.root, 'other-task'); await mkdir(other);
+    await writeFile(join(f.task, 'wait.sh'), 'echo first');
+    await writeFile(join(other, 'wait.sh'), 'echo second');
+    const definition = { language: 'bash' as const, code: undefined, file: 'wait.sh', directory: 'task' as const, exits: { passed: 'review' } };
+    const first = await f.runtime.capture({ definition, projectDirectory: f.project, taskDirectory: f.task, exits });
+    const second = await f.runtime.capture({ definition, projectDirectory: f.project, taskDirectory: other, exits });
+    expect(first.fingerprint).not.toBe(second.fingerprint);
+    expect(first.source.reference).toBe('wait.sh');
+    expect(second.source.reference).toBe('wait.sh');
+  });
   it('captures absolute references and does not reread a deleted primary file', async () => {
     const f = await fixture(); const source = join(f.project, 'absolute.sh'); await writeFile(source, 'printf original');
     const capture = await f.capture('bash', { code: undefined, file: source, directory: 'project' });
-    expect(capture.source).toEqual({ kind: 'file', path: await realpath(source) });
+    expect(capture.source).toEqual({ kind: 'file', path: await realpath(source), reference: source });
     await rm(source); expect(await f.runtime.loadCapture(capture)).toBe('printf original');
     await expect(f.capture('bash', { code: undefined, file: source, directory: 'project' })).rejects.toThrow();
     await writeFile(join(f.root, 'private', 'sources', capture.sourceRef + '.json'), '{corrupt');
@@ -110,22 +136,25 @@ describe('deterministic immutable source and scoped local authority', () => {
     f.runtime.releaseSource?.(b.sourceRef); await f.runtime.collectSources([]);
     await expect(f.runtime.loadCapture(b)).rejects.toMatchObject({ code: 'CAPTURE_MISSING' });
   });
-  it('binds approval to exact fingerprint and local project/stage scope, never saves implicitly', async () => {
+  it('binds approval to the exact fingerprint and board/stage scope, never saves implicitly', async () => {
     const f = await fixture(); const capture = await f.capture();
-    expect(await f.runtime.trust.isApproved(scope, capture.fingerprint)).toBe(false);
-    await f.runtime.trust.approve(scope, capture.fingerprint); expect(await f.runtime.trust.isApproved(scope, capture.fingerprint)).toBe(true);
-    expect(await f.runtime.trust.isApproved({ ...scope, projectId: 'other' }, capture.fingerprint)).toBe(false);
-    expect(await f.runtime.trust.isApproved({ ...scope, boardId: 'other-board' }, capture.fingerprint)).toBe(false);
-    expect(await f.runtime.trust.isApproved({ ...scope, stageIdentity: 'reused-name-new-stage' }, capture.fingerprint)).toBe(false);
-    const expanded = await f.capture('bash', { env: ['CI_TOKEN'] }); expect(await f.runtime.trust.isApproved(scope, expanded.fingerprint)).toBe(false);
-    await f.runtime.trust.reject(scope, capture.fingerprint); expect(await f.runtime.trust.isApproved(scope, capture.fingerprint)).toBe(false);
+    expect(await f.runtime.trust.isApproved(approvalScope, capture.fingerprint)).toBe(false);
+    await f.runtime.trust.approve(approvalScope, capture.fingerprint); expect(await f.runtime.trust.isApproved(approvalScope, capture.fingerprint)).toBe(true);
+    expect(await f.runtime.trust.isApproved({ ...approvalScope, boardId: 'other-board' }, capture.fingerprint)).toBe(false);
+    expect(await f.runtime.trust.isApproved({ ...approvalScope, stageIdentity: 'reused-name-new-stage' }, capture.fingerprint)).toBe(false);
+    // The same executable version in another task directory shares the approval.
+    const other = join(f.root, 'other-task'); await mkdir(other);
+    const shared = await f.runtime.capture({ definition: { language: 'bash', code: 'return {exit:"passed",message:"ready"};', directory: 'task', exits: { passed: 'review' } }, projectDirectory: f.project, taskDirectory: other, exits });
+    expect(shared.executionDirectory).toBe(await realpath(other)); expect(shared.fingerprint).toBe(capture.fingerprint);
+    expect(await f.runtime.trust.isApproved(approvalScope, shared.fingerprint)).toBe(true);
+    const expanded = await f.capture('bash', { env: ['CI_TOKEN'] }); expect(await f.runtime.trust.isApproved(approvalScope, expanded.fingerprint)).toBe(false);
   });
   it('changes reviewed fingerprints for language, source provenance, directory, and routes', async () => {
-    const f = await fixture(); const baseline = await f.capture('bash'); await f.runtime.trust.approve(scope, baseline.fingerprint);
+    const f = await fixture(); const baseline = await f.capture('bash'); await f.runtime.trust.approve(approvalScope, baseline.fingerprint);
     const code = 'return {exit:"passed",message:"ready"};'; await writeFile(join(f.task, 'same-code.sh'), code);
     const variants = [await f.capture('typescript'), await f.capture('bash', { directory: 'project' }), await f.capture('bash', { code: undefined, file: 'same-code.sh' }),
       await f.runtime.capture({ definition: { language: 'bash', code, directory: 'task', exits: { passed: 'other' } }, projectDirectory: f.project, taskDirectory: f.task, exits: { passed: { columnId: 'other', stageIdentity: 'other-key' } } })];
-    for (const variant of variants) { expect(variant.fingerprint).not.toBe(baseline.fingerprint); expect(await f.runtime.trust.isApproved(scope, variant.fingerprint)).toBe(false); }
+    for (const variant of variants) { expect(variant.fingerprint).not.toBe(baseline.fingerprint); expect(await f.runtime.trust.isApproved(approvalScope, variant.fingerprint)).toBe(false); }
     expect((await f.capture()).fingerprint).toBe(baseline.fingerprint);
   });
   it('isolates native credential records and exposes masked status only', async () => {
@@ -142,8 +171,8 @@ describe('deterministic immutable source and scoped local authority', () => {
 });
 describe('public native execution boundary', () => {
   it('runs standalone Bash without outer deadline and passes untrusted task text through stdin only', async () => {
-    const native = shell(); const f = await fixture({ shell: native }); const capture = await f.capture(); await f.runtime.trust.approve(scope, capture.fingerprint);
-    const text = '$(not-a-command); untrusted text'; const result = await f.runtime.execute({ capture, input: { title: text }, scope, signal: new AbortController().signal });
+    const native = shell(); const f = await fixture({ shell: native }); const capture = await f.capture(); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
+    const text = '$(not-a-command); untrusted text'; const result = await f.runtime.execute({ capture, input: { title: text }, scope, approvalScope, signal: new AbortController().signal });
     expect(result).toMatchObject({ kind: 'completed', completion: { exit: 'passed', message: 'ready' } });
     const spec = vi.mocked(native.execute).mock.calls[0]![0]; expect(spec.onExpiry).toBe('none'); expect(spec.stdin).toBe(JSON.stringify({ title: text })); expect(spec.command).not.toContain(text); expect(spec.env).toEqual({});
   });
@@ -155,8 +184,8 @@ describe('public native execution boundary', () => {
     shellResult({ stdout: { text: '{"exit":"passed","message":"ready"}', truncated: true } }),
     shellResult({ stdout: { text: 'x'.repeat(33000), truncated: false } }),
   ])('rejects invalid standalone output without heuristic final-line parsing', async output => {
-    const f = await fixture({ shell: shell(async () => output) }); const capture = await f.capture(); await f.runtime.trust.approve(scope, capture.fingerprint);
-    expect((await f.runtime.execute({ capture, input: {}, scope, signal: new AbortController().signal })).kind).toBe('failed');
+    const f = await fixture({ shell: shell(async () => output) }); const capture = await f.capture(); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
+    expect((await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal })).kind).toBe('failed');
   });
   it('keeps only tools.bash, handles nested nonzero facts, and transfers context without interpolation', async () => {
     let observed: PtcRunSpec | undefined;
@@ -165,8 +194,8 @@ describe('public native execution boundary', () => {
       const facts = await binding(spec, 'tools', 'bash', { command: 'exit 7', timeoutMs: 123 }) as { exitCode: number };
       return { value: { exit: 'passed', message: 'Handled ' + facts.exitCode }, logs: [] };
     });
-    const bash = shell(async () => shellResult({ exitCode: 7 })); const f = await fixture({ shell: bash, ptc: native }); const capture = await f.capture('typescript'); await f.runtime.trust.approve(scope, capture.fingerprint);
-    expect(await f.runtime.execute({ capture, input: { title: 'untrusted task text' }, scope, signal: new AbortController().signal })).toMatchObject({ kind: 'completed', completion: { message: 'Handled 7' } });
+    const bash = shell(async () => shellResult({ exitCode: 7 })); const f = await fixture({ shell: bash, ptc: native }); const capture = await f.capture('typescript'); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
+    expect(await f.runtime.execute({ capture, input: { title: 'untrusted task text' }, scope, approvalScope, signal: new AbortController().signal })).toMatchObject({ kind: 'completed', completion: { message: 'Handled 7' } });
     expect(observed?.timeoutMs).toBe(null); expect(Object.keys(observed!.bindings.find(item => item.global === 'tools')!.functions)).toEqual(['bash']); expect(observed!.program).not.toContain('untrusted');
     expect(vi.mocked(bash.execute).mock.calls[0]![0]).toMatchObject({ timeoutMs: 123, onExpiry: 'kill' });
   });
@@ -174,23 +203,23 @@ describe('public native execution boundary', () => {
     const started = deferred(); const drained = deferred(); let childSignal: AbortSignal | undefined;
     const bash = shell(async spec => { childSignal = spec.signal; started.resolve(); await new Promise<void>(resolve => spec.signal!.addEventListener('abort', () => { drained.resolve(); resolve(); }, { once: true })); return shellResult({ aborted: true }); });
     const native = ptc(async spec => { void binding(spec, 'tools', 'bash', { command: 'sleep 99999' }); await started.promise; return ending === 'return' ? { value: { exit: 'passed', message: 'done' }, logs: [] } : { error: { kind: 'exception', message: 'failed' }, logs: [] }; });
-    const f = await fixture({ shell: bash, ptc: native }); const capture = await f.capture('typescript'); await f.runtime.trust.approve(scope, capture.fingerprint);
-    const outcome = await f.runtime.execute({ capture, input: {}, scope, signal: new AbortController().signal });
+    const f = await fixture({ shell: bash, ptc: native }); const capture = await f.capture('typescript'); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
+    const outcome = await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal });
     await drained.promise; expect(childSignal?.aborted).toBe(true); expect(outcome.kind).toBe(ending === 'return' ? 'completed' : 'failed');
   });
   it('passes only currently authorized values to Bash while keeping task input separate', async () => {
     const native = shell(); const f = await fixture({ shell: native });
     await f.runtime.variables.set(scope, 'TOKEN', 'old-synthetic-value'); await f.runtime.variables.set(scope, 'UNUSED', 'not-authorized');
-    const capture = await f.capture('bash', { env: ['TOKEN'] }); await f.runtime.trust.approve(scope, capture.fingerprint);
+    const capture = await f.capture('bash', { env: ['TOKEN'] }); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
     await f.runtime.variables.set(scope, 'TOKEN', 'new-synthetic-value');
-    expect((await f.runtime.execute({ capture, input: { task: 'synthetic' }, scope, signal: new AbortController().signal })).kind).toBe('completed');
+    expect((await f.runtime.execute({ capture, input: { task: 'synthetic' }, scope, approvalScope, signal: new AbortController().signal })).kind).toBe('completed');
     const spec = vi.mocked(native.execute).mock.calls[0]![0]; expect(spec.env).toEqual({ TOKEN: 'new-synthetic-value' });
     expect(spec.stdin).not.toContain('synthetic-value'); expect(JSON.stringify(capture)).not.toContain('synthetic-value');
   });
   it('redacts actual resolved values and refuses unauthorized variable access', async () => {
     const native = ptc(async spec => { const secret = await binding(spec, 'authorizedEnvironment', 'get', 'CI_TOKEN'); await expect(binding(spec, 'authorizedEnvironment', 'get', 'OTHER')).rejects.toMatchObject({ code: 'VARIABLE_UNAUTHORIZED' }); return { value: { exit: 'passed', message: 'result ' + secret }, logs: ['log ' + secret] }; });
-    const f = await fixture({ ptc: native }); await f.runtime.variables.set(scope, 'CI_TOKEN', 'synthetic-only-secret'); const capture = await f.capture('typescript', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(scope, capture.fingerprint);
-    const result = await f.runtime.execute({ capture, input: {}, scope, signal: new AbortController().signal }); expect(JSON.stringify(result)).not.toContain('synthetic-only-secret'); expect(JSON.stringify(result)).toContain('[REDACTED]');
+    const f = await fixture({ ptc: native }); await f.runtime.variables.set(scope, 'CI_TOKEN', 'synthetic-only-secret'); const capture = await f.capture('typescript', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
+    const result = await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal }); expect(JSON.stringify(result)).not.toContain('synthetic-only-secret'); expect(JSON.stringify(result)).toContain('[REDACTED]');
   });
   it.each([{ programFormat: 'repl' }, { programFormat: 'script' }, { language: 'python' }, { retainsState: true }, { isolation: 'worker-thread' }])('refuses incompatible TypeScript provider %j', async patch => {
     const native = ptc(async () => ({ logs: [] })); Object.assign(native, patch); const f = await fixture({ ptc: native }); const capture = await f.capture('typescript'); await expect(f.runtime.verify(capture)).rejects.toMatchObject({ code: 'TYPESCRIPT_FORMAT_UNSUPPORTED' }); expect(native.run).not.toHaveBeenCalled();
@@ -218,9 +247,9 @@ describe('additional fail-closed execution contracts', () => {
     expect(await f.runtime.loadCapture(kept)).toContain('return');
   });
   it('re-resolves the native credential provider per operation and never launches for missing values', async () => {
-    const f = await fixture(); const capture = await f.capture('bash', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(scope, capture.fingerprint);
+    const f = await fixture(); const capture = await f.capture('bash', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
     f.context.credentials = undefined as never;
-    expect(await f.runtime.execute({ capture, input: {}, scope, signal: new AbortController().signal })).toMatchObject({ kind: 'failed', diagnostic: { code: 'CREDENTIALS_UNAVAILABLE' } });
+    expect(await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal })).toMatchObject({ kind: 'failed', diagnostic: { code: 'CREDENTIALS_UNAVAILABLE' } });
     expect(f.context.shell.execute).not.toHaveBeenCalled();
     const replacement = credentials(); f.context.credentials = replacement.store;
     await f.runtime.variables.set(scope, 'CI_TOKEN', 'current-provider-value');
@@ -230,14 +259,14 @@ describe('additional fail-closed execution contracts', () => {
   it('redacts native exception and standalone stderr before returning diagnostics', async () => {
     const native = ptc(async () => ({ logs: [], error: { kind: 'exception', message: 'synthetic-secret error' } }));
     const f = await fixture({ ptc: native }); await f.runtime.variables.set(scope, 'CI_TOKEN', 'synthetic-secret');
-    const capture = await f.capture('typescript', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(scope, capture.fingerprint);
-    const outcome = await f.runtime.execute({ capture, input: {}, scope, signal: new AbortController().signal });
+    const capture = await f.capture('typescript', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
+    const outcome = await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal });
     expect(outcome).toMatchObject({ kind: 'failed', diagnostic: { message: '[REDACTED] error' } });
   });
   it('rejects an unmapped exit, unsupported lifetime, and a provider that widens explicit roots', async () => {
     const f = await fixture({ shell: shell(async () => shellResult({ stdout: { text: '{"exit":"unmapped","message":"bad route"}', truncated: false } })) });
-    const capture = await f.capture(); await f.runtime.trust.approve(scope, capture.fingerprint);
-    expect(await f.runtime.execute({ capture, input: {}, scope, signal: new AbortController().signal })).toMatchObject({ kind: 'failed', diagnostic: { code: 'UNMAPPED_EXIT' } });
+    const capture = await f.capture(); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
+    expect(await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal })).toMatchObject({ kind: 'failed', diagnostic: { code: 'UNMAPPED_EXIT' } });
     const original = f.context.shell.resolve.bind(f.context.shell);
     f.context.shell.resolve = request => ({ ...original(request), onExpiry: 'kill' });
     await expect(f.runtime.verify(capture)).rejects.toMatchObject({ code: 'BASH_LIFETIME_UNSUPPORTED' });
@@ -312,8 +341,8 @@ describe('guarded Bash failure diagnostics and bounded retry', () => {
     return outcome.diagnostic;
   }
   async function run(f: Awaited<ReturnType<typeof fixture>>, language: 'bash' | 'typescript' = 'bash') {
-    const capture = await f.capture(language); await f.runtime.trust.approve(scope, capture.fingerprint);
-    return f.runtime.execute({ capture, input: {}, scope, signal: new AbortController().signal });
+    const capture = await f.capture(language); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
+    return f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal });
   }
 
   it('repeats a guard that never admitted the command and continues the same execution', async () => {
@@ -377,7 +406,7 @@ describe('guarded Bash failure diagnostics and bounded retry', () => {
     const stop = () => new Promise<void>(resolve => setTimeout(resolve, 300));
     const lifetime = { host: { port: 1, token: 'x' }, shell: (command: string) => command, typescriptPrelude: () => '', stop, close: async () => { await stop(); } } as unknown as NativeLifetime;
     const capture: DeterministicCapture = { sourceRef: 'ref', fingerprint: 'fp', language: 'bash', directory: 'project', executionDirectory: '/project', source: { kind: 'inline' }, env: [], params: [], exits: { passed: { columnId: 'review', stageIdentity: 'review-key' } } };
-    const request: ExecuteRequest = { capture, input: {}, scope, signal: controller.signal };
+    const request: ExecuteRequest = { capture, input: {}, scope, approvalScope, signal: controller.signal };
     const running = executeCapturedProgram({ request, code: 'printf ready', policy: { mode: 'danger-full-access', workspaceRoot: '/project' }, shell: shellPort, variables: { resolve: async () => ({}), status: async () => [], set: async () => undefined, remove: async () => undefined }, lifetime, retry: createBashRetry({ delaysMs: [50] }) });
     await expect.poll(() => calls, { timeout: 5000 }).toBe(1);
     controller.abort(new Error('stopped by the user'));
@@ -414,8 +443,8 @@ describe('guarded Bash failure diagnostics and bounded retry', () => {
     const native = rawShell(() => guardFailure({ stderr: { text: 'NATIVE_LIFETIME_UNCLEAN: token synthetic-secret rejected\n', truncated: false } }));
     const f = await fixture({ shell: native, retry: { delaysMs: [0, 0] } });
     await f.runtime.variables.set(scope, 'CI_TOKEN', 'synthetic-secret');
-    const capture = await f.capture('bash', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(scope, capture.fingerprint);
-    const outcome = await f.runtime.execute({ capture, input: {}, scope, signal: new AbortController().signal });
+    const capture = await f.capture('bash', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
+    const outcome = await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal });
     expect(JSON.stringify(outcome)).not.toContain('synthetic-secret');
     expect((failed(outcome).details as { guard?: { stderrTail?: string } }).guard?.stderrTail).toContain('[REDACTED]');
   });
@@ -427,8 +456,8 @@ describe('guarded Bash failure diagnostics and bounded retry', () => {
     const native = rawShell(() => guardFailure({ stderr: { text: secret + 'y'.repeat(100), truncated: false } }));
     const f = await fixture({ shell: native, retry: { delaysMs: [0, 0] } });
     await f.runtime.variables.set(scope, 'CI_TOKEN', secret);
-    const capture = await f.capture('bash', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(scope, capture.fingerprint);
-    const outcome = await f.runtime.execute({ capture, input: {}, scope, signal: new AbortController().signal });
+    const capture = await f.capture('bash', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
+    const outcome = await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal });
     const encoded = JSON.stringify(outcome);
     expect(encoded).not.toContain('SECRET-TAIL-MARKER');
     const tail = (failed(outcome).details as { guard?: { stderrTail?: string } }).guard?.stderrTail ?? '';
@@ -442,8 +471,8 @@ describe('guarded Bash failure diagnostics and bounded retry', () => {
     const native = rawShell(() => shellResult({ stdout: { text: envelopeText, truncated: false }, stderr: { text: '', truncated: false } }));
     const f = await fixture({ shell: native, retry: { delaysMs: [0, 0] } });
     await f.runtime.variables.set(scope, 'CI_TOKEN', secret);
-    const capture = await f.capture('bash', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(scope, capture.fingerprint);
-    const outcome = await f.runtime.execute({ capture, input: {}, scope, signal: new AbortController().signal });
+    const capture = await f.capture('bash', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
+    const outcome = await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal });
     const encoded = JSON.stringify(outcome);
     expect(encoded).not.toContain('synthetic');
     expect(encoded).not.toContain('synthetic\\"secret');
@@ -474,8 +503,8 @@ describe('guarded Bash failure diagnostics and bounded retry', () => {
     const entered = deferred(); const release = deferred();
     const native = ptc(async () => { entered.resolve(); await release.promise; return { error: { kind: 'exception', message: 'program failed' }, logs: [] }; });
     const f = await fixture({ ptc: native });
-    const capture = await f.capture('typescript'); await f.runtime.trust.approve(scope, capture.fingerprint);
-    const running = f.runtime.execute({ capture, input: {}, scope, signal: new AbortController().signal });
+    const capture = await f.capture('typescript'); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
+    const running = f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal });
     await entered.promise;
     const owners = join(f.root, 'private', 'owners');
     const [name] = await readdir(owners);
@@ -490,9 +519,9 @@ describe('guarded Bash failure diagnostics and bounded retry', () => {
     const entered = deferred(); const aborted = deferred();
     const native = ptc(async spec => { entered.resolve(); await new Promise<void>(resolve => spec.signal!.addEventListener('abort', () => resolve())); aborted.resolve(); return { error: { kind: 'abort', message: 'stopped' }, logs: [] }; });
     const f = await fixture({ ptc: native });
-    const capture = await f.capture('typescript'); await f.runtime.trust.approve(scope, capture.fingerprint);
+    const capture = await f.capture('typescript'); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
     const controller = new AbortController();
-    const running = f.runtime.execute({ capture, input: {}, scope, signal: controller.signal });
+    const running = f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: controller.signal });
     await entered.promise;
     const owners = join(f.root, 'private', 'owners');
     const [name] = await readdir(owners);

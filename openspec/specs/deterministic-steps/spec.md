@@ -36,6 +36,7 @@ A workflow SHALL support a deterministic stage configured with a language of Bas
 - **WHEN** a workflow marks a stage that declares parameters as its initial stage, or an exit or transition targets that stage
 - **THEN** saving succeeds and the workflow keeps that composition
 - **AND** no entry is started merely because the composition is stored
+
 ### Requirement: Repeatable program execution without a model
 A deterministic stage SHALL execute code outside the plugin's main process without creating a conversation, selecting a model, or starting a model turn for that execution. Bash and TypeScript scripts SHALL own their polling loops, sleep intervals, and business deadlines. The host SHALL NOT replace those loops with per-poll scheduling or impose the chat runtime's short-call deadline on the entire wait. The host SHALL supervise cancellation and bounded diagnostic/resource handling separately from the script's business deadline. TypeScript SHALL expose only bash from the DSH tool surface, callable as tools.bash, and SHALL support asynchronous function-body evaluation with top-level await and return. External TypeScript files SHALL use the same program format as inline TypeScript. Other DSH/MCP tools and model invocations SHALL NOT be injected. The documented contract SHALL require scripts to perform repeatable checks; the product SHALL NOT claim that arbitrary Bash or TypeScript is provably read-only.
 
@@ -53,8 +54,10 @@ A deterministic stage SHALL execute code outside the plugin's main process witho
 - **WHEN** the host cannot provide the required language format, long-lived cancellable execution, confinement, or child-process cleanup
 - **THEN** execution does not silently fall back to an in-process evaluator, an agent turn, or broader permissions
 - **AND** the user receives an actionable capability diagnostic
+
 ### Requirement: Immutable execution capture
-Before an executable run is admitted, the host SHALL resolve the selected directory, read and validate the primary external script when applicable, and durably capture the exact primary script bytes, language, directory choice and resolved directory, named routes, authorized variable names, declared parameter names, and incoming handoff. The capture SHALL NOT include parameter values: a value belongs to the entry, and the reviewed authority is the declaration, not what one entry supplies. Configuration edits, declaration edits, and changes to the primary file SHALL NOT modify an active or recovering run. Explicit Play SHALL capture the latest configuration and file contents for a new execution in the same stage. The host SHALL distinguish the selected file path from the bytes it actually approved and captured, and SHALL NOT substitute changed bytes during recovery. The product SHALL disclose that imported modules, called executables, and external services are not frozen transitively.
+
+The host SHALL distinguish an executable version from an execution capture. The executable version SHALL be identified by the exact primary program bytes, the language and program format, the source form and authored source reference, the directory choice, the named routes together with their stable destination identities, the authorized variable names, and the declared parameter names. The executable version SHALL NOT include the resolved execution directory, parameter values, or any entry-local data. Before an executable run is admitted, the host SHALL resolve the selected directory, read and validate the primary external script when applicable, and durably capture the exact executable version together with the resolved execution directory and incoming handoff. The capture SHALL NOT include parameter values: a value belongs to the entry, and the reviewed authority is the declaration, not what one entry supplies. Configuration edits, declaration edits, and changes to the primary file SHALL NOT modify an active or recovering run. Explicit Play SHALL capture the latest configuration and file contents for a new execution in the same stage. The host SHALL distinguish the selected file path from the bytes it actually approved and captured, and SHALL NOT substitute changed bytes during recovery. Every execution SHALL still be admitted only in the directory recorded by its own capture, even when its version was approved through another execution. The product SHALL disclose that imported modules, called executables, and external services are not frozen transitively.
 
 #### Scenario: Edit an active stage
 
@@ -77,6 +80,19 @@ Before an executable run is admitted, the host SHALL resolve the selected direct
 - **WHEN** the saved stage gains or removes a declared parameter name while a run remains active
 - **THEN** that run keeps its captured declaration and values
 - **AND** the saved edit applies to the next captured version
+
+#### Scenario: Reuse one approved version across task directories
+
+- **WHEN** two entries of the same board and stage resolve the same program bytes and reviewed capabilities from different task directories
+- **THEN** both executions use the same executable version
+- **AND** each execution is admitted only in the directory recorded by its own capture
+
+#### Scenario: A directory change alone does not create a version
+
+- **WHEN** a task's execution directory changes without any change to the program or reviewed capabilities
+- **THEN** the executable version identifier is unchanged
+- **AND** an execution whose recorded directory no longer matches the task is rejected instead of running in the new directory
+
 ### Requirement: Entry activation independent of auto mode
 A newly persisted entry into a deterministic stage SHALL request its execution even when task auto mode is disabled, subject to local trust, native execution policy, and valid task/project context. The activation request and entry identity SHALL be persisted atomically with the task creation or actual stage placement, before asynchronous capture, file reads, trust review, or program launch. Startup SHALL resume a pending activation without inventing one for historical occupied stages. Initial task creation in a deterministic initial stage SHALL count as a new entry. Starting a script-only entry SHALL NOT require conversation or model preparation, create a worktree implicitly, or use the prompt-stage five-second countdown. An entry whose stage declares parameters SHALL request its execution even when no value has been supplied, and the supervisor SHALL settle that attempt as a parameter failure without launching the program. Reordering a card in its current stage, loading an existing card, or changing a stage's configuration SHALL NOT synthesize a new entry or reactivate a stopped or failed run. A task whose worktree is preparing or in error SHALL not execute from that unresolved binding.
 
@@ -108,8 +124,10 @@ A newly persisted entry into a deterministic stage SHALL request its execution e
 - **WHEN** a new entry is persisted in a stage that declares parameters and the entry holds no value for a declared name
 - **THEN** the activation is recorded and the supervisor reports the missing parameters
 - **AND** the program is not launched
+
 ### Requirement: Stop and Play on the current stage
-The card and drawer SHALL provide Stop for an active deterministic execution and Play for a stopped, failed, or not-yet-started deterministic entry whose latest saved configuration is still deterministic. The durable entry and its captured control state, not the latest saved execution mode, SHALL determine whether an existing run is deterministic. Saving an agent or manual mode SHALL NOT hide Stop, arm an agent instruction, or let a completed conversation turn bypass that run. If the latest saved mode is no longer deterministic, Play SHALL not silently execute the old code or start an agent; the interface SHALL explain that valid deterministic configuration or a genuine stage change is required. Play SHALL revalidate the entry's values against the declaration captured for that new execution and SHALL fail in the stage when a declared name has no value, leaving the entry available for editing. Stop SHALL durably revoke the active run before requesting cancellation of its TypeScript/Bash program and owned Bash children, SHALL leave the task in its current stage, and SHALL neither follow an exit nor generate an error-route handoff. A successful Stop SHALL remain effective after restart. Play SHALL create a new execution identity and start time in the same stage, capture the latest configuration, and perform any required trust review. Play SHALL NOT move the task merely to begin execution, but a subsequent completed result SHALL follow its configured route normally. There SHALL be no dry-run behavior implied by Play. A new run SHALL NOT overlap an owned predecessor whose termination has not been confirmed.
+
+The card and drawer SHALL provide Stop for an active deterministic execution and Play for a stopped, failed, or not-yet-started deterministic entry whose latest saved configuration is still deterministic. The durable entry and its captured control state, not the latest saved execution mode, SHALL determine whether an existing run is deterministic. An entry awaiting approval SHALL NOT present Stop or Play: it SHALL present the approval action defined for that executable version, and moving the card away SHALL revoke the waiting entry without executing code. Saving an agent or manual mode SHALL NOT hide Stop, arm an agent instruction, or let a completed conversation turn bypass that run. If the latest saved mode is no longer deterministic, Play SHALL not silently execute the old code or start an agent; the interface SHALL explain that valid deterministic configuration or a genuine stage change is required. Play SHALL revalidate the entry's values against the declaration captured for that new execution and SHALL fail in the stage when a declared name has no value, leaving the entry available for editing. Stop SHALL durably revoke the active run before requesting cancellation of its TypeScript/Bash program and owned Bash children, SHALL leave the task in its current stage, and SHALL neither follow an exit nor generate an error-route handoff. A successful Stop SHALL remain effective after restart. Play SHALL create a new execution identity and start time in the same stage, capture the latest configuration, and perform any required approval. Approving a waiting entry SHALL resume that same captured execution instead of creating a new one. Play SHALL NOT move the task merely to begin execution, but a subsequent completed result SHALL follow its configured route normally. There SHALL be no dry-run behavior implied by Play. A new run SHALL NOT overlap an owned predecessor whose termination has not been confirmed.
 
 #### Scenario: Stop during sleep or an external command
 
@@ -145,6 +163,18 @@ The card and drawer SHALL provide Stop for an active deterministic execution and
 - **WHEN** the saved declaration gained a parameter name after the entry was created and the entry has no value for it
 - **THEN** Play does not start the program and the card names the missing name
 - **AND** filling the value before Play admits the new execution
+
+#### Scenario: Awaiting approval offers neither Stop nor Play
+
+- **WHEN** an entry is waiting for approval of its executable version
+- **THEN** its card and drawer present the approval action instead of Stop or Play
+- **AND** no program is launched
+
+#### Scenario: Approval resumes the waiting execution
+
+- **WHEN** the user approves the executable version of a waiting entry
+- **THEN** that same captured execution starts without a new execution identity or start time
+
 ### Requirement: Durable recovery from host loss
 The host SHALL persist an execution intent before launching code. If the host exits or crashes while that intent remains active and no terminal result has been saved, startup SHALL recover the same execution by running its captured program from the beginning. Its execution identity, original start time, entry identity, incoming handoff, and entry-bound parameter values SHALL remain unchanged; its process-attempt identity and restart count SHALL distinguish the replacement process. Recovery SHALL NOT re-read parameter values from the saved workflow or from a changed declaration. Recovery SHALL NOT restore variables, instruction position, timers, or process memory, and SHALL NOT replay every polling check missed while the host was unavailable. Stopped, failed, superseded, and completed executions SHALL NOT be rerun automatically. A saved terminal result awaiting transition or handoff SHALL resume interrupted delivery instead of rerunning the script, reusing its identity and reconciling any existing native admission. A delivery explicitly recorded as failed SHALL remain failed after restart and require explicit retry; it SHALL NOT be retried merely because the host restarted. The host SHALL prevent concurrent owners or surviving predecessor processes from acting on the same active execution.
 
@@ -170,6 +200,7 @@ The host SHALL persist an execution intent before launching code. If the host ex
 - **WHEN** the host restarts an active execution whose entry holds parameter values
 - **THEN** the replacement attempt receives those same values
 - **AND** a saved edit to the declaration does not change them during recovery
+
 ### Requirement: Entry and run identity protect against stale results
 Each actual stage entry and each explicit execution SHALL have distinct durable identities. Moving a card away from an active deterministic stage SHALL revoke that run and cancel its owned processes without waiting for its external condition to complete. A result SHALL be accepted only for the current entry, current run, and current process attempt, before a Stop or movement has revoked it. Returning to the same stage SHALL create a new entry rather than accepting a result from an earlier visit. Turn-end events from conversations SHALL NOT route a task past an active, stopped, untrusted, or failed deterministic entry.
 
@@ -185,6 +216,7 @@ Each actual stage entry and each explicit execution SHALL have distinct durable 
 #### Scenario: A conversation finishes while the script is active
 - **WHEN** an owned conversation completes a turn while the task's current entry is deterministic
 - **THEN** that turn does not bypass or complete the deterministic stage
+
 ### Requirement: Structured completion and exact named routing
 A successfully completed script SHALL return an object containing a nonempty exit name and a nonempty message. TypeScript SHALL return that object as its completion value. A standalone Bash script SHALL exit successfully and emit exactly one JSON completion object on stdout; diagnostic output SHALL use stderr. The host SHALL reject missing, malformed, truncated, oversized, or nonconforming completion values and SHALL NOT infer an exit from log text. A valid mapped exit SHALL select exactly its captured destination, not the first configured transition or the next stage in display order. Distinct exit names MAY select the same stage. Before admitting the move, the host SHALL confirm that the task still owns that run, the same captured destination stage still exists by stable identity, and applicable task-context and pending-user-work guards permit delivery. The trusted captured mapping SHALL remain the authority for that run even when the saved workflow changes its exits; the host SHALL NOT substitute the new mapping or reject an otherwise valid captured route solely because it is absent from the latest saved exit list. A result held by those guards SHALL remain durable without polling the external system again. A script result SHALL NOT authorize an otherwise required manual transition override.
 
@@ -212,6 +244,7 @@ A successfully completed script SHALL return an object containing a nonempty exi
 - **WHEN** the target of a captured route is renamed while retaining its stable stage identity
 - **THEN** the result resolves to that same stage under its current identifier
 - **AND** another stage reusing the old identifier cannot receive the result
+
 ### Requirement: Executor failure routing and repair
 A script exception, a program exit that its captured mapping does not name, an invalid completion, or an execution failure SHALL produce a structured diagnostic carrying its origin, and a synthetic result that follows the captured destination for that origin. When a captured destination for that origin still exists and remains admissible, the synthetic result SHALL follow it through the normal durable routing path. A missing or undeclared parameter value SHALL be a configuration refusal rather than an executor failure: it SHALL NOT follow any route, SHALL leave the task in its current stage with its entry preserved, and SHALL offer Play and parameter editing. A failure whose origin is configuration SHALL likewise remain in its current stage and SHALL NOT follow a route. Trust not yet granted, explicit cancellation, and a source entry that is no longer current SHALL NOT be treated as script error outcomes. An unmapped script exit SHALL become a diagnostic rather than falling back to an unrelated route. Failure to deliver a saved result SHALL be handled as transition/handoff recovery, not as a reason to execute the script again or recursively follow error routes. When the run confirmed exclusive native ownership cannot be re-established after a failure, the execution SHALL remain failed in its stage without following a route, and the original diagnostic SHALL be preserved beside the ownership diagnostic.
 
@@ -253,6 +286,7 @@ A script exception, a program exit that its captured mapping does not name, an i
 - **WHEN** native cleanup cannot confirm quiescence after a failed execution
 - **THEN** the task stays failed in its stage without following a route
 - **AND** the original failure diagnostic remains readable beside the ownership diagnostic
+
 ### Requirement: Handoff to any destination type
 The host SHALL preserve the completed exit name, message, source stage, source execution identity, and delivery identity as a handoff bound to the exact destination entry. An agent destination SHALL receive the message as identified native context accompanying its own stage instruction. A deterministic destination SHALL receive the handoff in its input without creating a conversation. A manual destination SHALL retain it for its next execution and expose it in the task's history. Routing SHALL stop at the mapped destination even if that destination has no agent instruction. Delivery retries and restart recovery SHALL reuse the same identity and SHALL NOT duplicate the handoff. After any awaited destination preparation or durable-log read, final native admission SHALL still require the exact destination entry identity and delivery identity; matching a stage identifier alone SHALL NOT authorize a handoff after the task moved away and returned. The host SHALL serialize the final check and native admission against an intervening placement for that task or provide an equivalent entry-bound admission guarantee. A future visit to the same stage SHALL NOT inherit an unrelated older entry's handoff.
 
@@ -278,6 +312,7 @@ The host SHALL preserve the completed exit name, message, source stage, source e
 #### Scenario: Keep an explicitly failed handoff failed after restart
 - **WHEN** a deterministic result delivery was durably recorded as failed before host shutdown
 - **THEN** recovery retains its failure and explicit retry action without rerunning the script or automatically resending the handoff
+
 ### Requirement: Minimal input context
 The script SHALL receive structured input containing task identity, title and description; Hub, board and stage identity; project identity and directory; effective directory and any recorded worktree/branch; entry and execution identities and timestamps; process-attempt/restart information; the entry's parameter values for exactly the declared names; and the incoming handoff when present. The context SHALL NOT automatically include the entire conversation history or secret values, and SHALL NOT include an undeclared parameter name. TypeScript SHALL receive the context without source-code interpolation of task text or parameter values. Standalone Bash SHALL receive JSON input through stdin rather than interpolating task fields or parameter values into shell code. Recorded branch metadata SHALL NOT be presented as proof of the live Git HEAD.
 
@@ -297,18 +332,20 @@ The script SHALL receive structured input containing task identity, title and de
 - **WHEN** a declared parameter value contains shell syntax or a TypeScript delimiter
 - **THEN** both supported languages receive it as structured data
 - **AND** the host does not interpolate it into the program source
+
 ### Requirement: Local executable trust
-The first execution of an executable version SHALL require explicit local approval after review of the exact captured primary code, language, source location, working-directory scope, routes, declared parameter names, and authorized variable names. Parameter values SHALL NOT be part of the reviewed version. Changes to that reviewed executable configuration, including external primary file contents, a change to a declared parameter name, or an expansion of variable access, SHALL invalidate the previous approval. Editing an entry's parameter values SHALL NOT invalidate an approval. Approval SHALL be local to the project/stage scope and SHALL NOT be granted by saving, publishing, or accepting a shared workflow. Repeated use and restart recovery of the same approved version SHALL not request trust again. Rejecting or withholding approval SHALL leave the task in its current stage without executing code. Trust SHALL NOT bypass native filesystem/execution policy or claim to freeze dependencies outside the captured program.
+
+An executable version SHALL require explicit local approval after review of the exact primary program, language and program format, source form and authored source reference, directory choice, named routes and their destinations, declared parameter names, and authorized variable names. Parameter values, the resolved execution directory, and entry-local data SHALL NOT be part of the approved version. Approval SHALL be recorded for the board and the stable stage identity, independent of project: one approval SHALL authorize every project the board allows and every future card of that stage whose execution resolves to the same executable version. A change to any reviewed input, including the bytes read from an external primary file, SHALL create a new executable version and require exactly one new approval. Editing an entry's parameter values or changing the directory in which a task runs SHALL NOT invalidate an approval. Approval SHALL be local to the installation and SHALL NOT be granted by saving, publishing, accepting a shared workflow, or by tool-originated writing. Repeated entries, repeated executions, and restart recovery of an approved executable version SHALL NOT request approval again. Withholding approval SHALL leave the task in its current stage without executing code. Trust SHALL NOT bypass native filesystem or execution policy and SHALL NOT claim to freeze dependencies outside the captured program. An installation holding approvals recorded before the stage-scoped model SHALL NOT reuse them: after the upgrade each stage SHALL request one approval, and obsolete approval records MAY be discarded.
 
 #### Scenario: Receive executable YAML from the team
 
 - **WHEN** a shared update introduces or changes a deterministic script
 - **THEN** accepting the update does not authorize it locally
-- **AND** the next requested execution waits for approval of the actual captured version
+- **AND** the next requested execution waits for approval of the captured executable version
 
 #### Scenario: Recover an approved execution
 
-- **WHEN** the host restarts a run with the same captured version and valid local approval
+- **WHEN** the host restarts a run with the same executable version and a valid local approval
 - **THEN** it does not ask for the same approval again
 
 #### Scenario: Change a primary file between review and launch
@@ -322,8 +359,33 @@ The first execution of an executable version SHALL require explicit local approv
 - **WHEN** the saved declaration adds or removes a parameter name after the executable version was approved
 - **THEN** the next execution requires a new local review
 - **AND** changing only a value for an approved version does not
+
+#### Scenario: Approve once for every project of the board
+
+- **WHEN** the same approved executable version is executed by cards in two projects the board allows
+- **THEN** neither project requests approval again
+- **AND** each project still resolves its own local variable values
+
+#### Scenario: A different worktree does not request approval again
+
+- **WHEN** a second card enters the same stage with a different execution directory and the same executable version
+- **THEN** the card starts without a new approval request
+
+#### Scenario: An approved version is requested only once per change
+
+- **WHEN** the saved program changes while several cards wait in the stage
+- **THEN** the stage is unapproved once
+- **AND** one approval satisfies every card whose execution resolves to that changed version
+
+#### Scenario: An upgrade does not reuse a project-scoped approval
+
+- **WHEN** the installation holds an approval recorded before the stage-scoped model
+- **THEN** the stage requests one approval
+- **AND** the old record neither authorizes nor blocks execution
+
 ### Requirement: Local variables isolated by project and stage
-Explicit execution variables SHALL be configured independently for each local project-and-stage pair using the host credential mechanism. Stable stage identity SHALL keep that scope intact across a stage identifier rename; another project or stage SHALL NOT inherit its variables. A deterministic definition SHALL list only the variable names that run is authorized to access, not their values. TypeScript and Bash execution SHALL enforce the same authorized set without implicitly exposing other installation credentials. Resolved values SHALL remain outside shared YAML, task input metadata, run snapshots, and ordinary client projections. Configuration UI SHALL show configured/missing status without reading stored values back to the browser. An unavailable native credential provider or missing explicitly required variable SHALL report an actionable diagnostic rather than silently widening access or substituting an unrelated credential. A recovering process SHALL resolve authorized values again rather than persisting secret values for replay.
+
+Explicit execution variables SHALL be configured independently for each local project-and-stage pair using the host credential mechanism. Stable stage identity SHALL keep that scope intact across a stage identifier rename; another project or stage SHALL NOT inherit its variables. A deterministic definition SHALL list only the variable names that run is authorized to access, not their values. TypeScript and Bash execution SHALL enforce the same authorized set without implicitly exposing other installation credentials. Resolved values SHALL remain outside shared YAML, task input metadata, run snapshots, and ordinary client projections. Configured and missing state SHALL be presented on a dedicated local-variables surface for the selected project and stable stage, separate from the executable-version review; the review SHALL NOT present project variable values or their configured or missing state. Configuration UI SHALL show configured/missing status without reading stored values back to the browser. An unavailable native credential provider or missing explicitly required variable SHALL report an actionable diagnostic rather than silently widening access or substituting an unrelated credential. A recovering process SHALL resolve authorized values again rather than persisting secret values for replay.
 
 #### Scenario: Separate two projects using the same stage
 - **WHEN** the same workflow stage runs for tasks in two projects with different local values
@@ -337,8 +399,20 @@ Explicit execution variables SHALL be configured independently for each local pr
 - **WHEN** an active run is recovered after an authorized variable's local value has changed
 - **THEN** the replacement process resolves the current value for the same authorized name
 - **AND** the old secret was not recovered from a run snapshot
+
+#### Scenario: Configure values away from the review
+- **WHEN** a user needs to supply multiple values for the project and stage
+- **THEN** the local-variables surface stores them without opening or repeating the executable-version review
+- **AND** the review neither displays nor edits those values
+
+#### Scenario: Review a version of a project with missing values
+- **WHEN** a project the board allows lacks a required local variable
+- **THEN** the executable-version review still presents only the executable version
+- **AND** the missing variable is reported on that project's local-variables surface and on the task that fails because of it
+
 ### Requirement: Truthful execution controls and diagnostics
-Cards and drawers SHALL distinguish awaiting trust, active, stopping, stopped, failed, result-awaiting-delivery, and a parameter refusal without reporting a running agent when no conversation is running. The interface SHALL display the captured version and whether a saved edit requires Play, the relevant failure, and Stop/Play controls with accessible names and action-local progress. A failed execution SHALL present its failure origin, its root-cause code, and the number of attempts it made, in the card's script panel and in the task's history detail. The persisted and displayed diagnostic SHALL carry, bounded and redacted, the facts the host observed: the guard's exit status and terminating signal, the received output sizes and bounded beginning, the bounded end of its diagnostic stream, and whether the command was admitted. An infrastructure or configuration diagnostic SHALL NOT present a stack trace or a local filesystem path in the message delivered to a destination stage; the detailed facts SHALL remain available through the task's history. For an entry whose stage declares parameters, the card and drawer SHALL show the entry's parameter values read-only and SHALL offer parameter editing whenever the entry exists and its execution is not active or stopping. It SHALL present a parameter refusal as a recoverable configuration problem that offers both Play and editing, distinct from an executor failure. Available diagnostics SHALL be bounded and SHALL not add one task-history row per polling iteration or per retried call. The host SHALL avoid logging resolved variable values and redact known secret values from persisted/displayed diagnostics, their detailed facts, and handoff messages; documentation SHALL explain that arbitrary user code can transform or disclose secrets and that redaction is not a complete data-loss-prevention boundary. Parameter values SHALL be presented as task data and SHALL NOT be treated as secrets. Secret values SHALL NOT appear in ordinary snapshots or verification evidence. Switching panels or closing the browser SHALL not stop a host-owned active script.
+
+Cards and drawers SHALL distinguish awaiting approval, active, stopping, stopped, failed, result-awaiting-delivery, and a parameter refusal without reporting a running agent when no conversation is running. The interface SHALL display the executable version and whether a saved edit requires Play, the relevant failure, and the applicable control with accessible names and action-local progress. An entry awaiting approval SHALL present its approval state, the executable version, and the action that opens the review, and SHALL NOT present Stop or Play for that entry. The executable-version review SHALL present the exact primary program with syntax highlighting for its language and every reviewed capability. The review SHALL NOT present project variable values or their configured or missing state. A failed execution SHALL present its failure origin, its root-cause code, and the number of attempts it made, in the card's script panel and in the task's history detail. The persisted and displayed diagnostic SHALL carry, bounded and redacted, the facts the host observed: the guard's exit status and terminating signal, the received output sizes and bounded beginning, the bounded end of its diagnostic stream, and whether the command was admitted. An infrastructure or configuration diagnostic SHALL NOT present a stack trace or a local filesystem path in the message delivered to a destination stage; the detailed facts SHALL remain available through the task's history. For an entry whose stage declares parameters, the card and drawer SHALL show the entry's parameter values read-only and SHALL offer parameter editing whenever the entry exists and its execution is not active or stopping. It SHALL present a parameter refusal as a recoverable configuration problem that offers both Play and editing, distinct from an executor failure. Available diagnostics SHALL be bounded and SHALL not add one task-history row per polling iteration or per retried call. The host SHALL avoid logging resolved variable values and redact known secret values from persisted/displayed diagnostics, their detailed facts, and handoff messages; documentation SHALL explain that arbitrary user code can transform or disclose secrets and that redaction is not a complete data-loss-prevention boundary. Parameter values SHALL be presented as task data and SHALL NOT be treated as secrets. Secret values SHALL NOT appear in ordinary snapshots or verification evidence. Switching panels or closing the browser SHALL not stop a host-owned active script.
 
 #### Scenario: Observe a sleeping script without an agent
 
@@ -364,7 +438,7 @@ Cards and drawers SHALL distinguish awaiting trust, active, stopping, stopped, f
 
 #### Scenario: Keep secrets out of diagnostics
 
-- **WHEN** captured output contains an exact resolved secret value known to the host
+- **WHEN** captured output contains an exact resolved secret value known by the host
 - **THEN** that value is redacted before diagnostic or handoff persistence and display
 - **AND** tests and screenshots contain no real credentials
 
@@ -373,6 +447,20 @@ Cards and drawers SHALL distinguish awaiting trust, active, stopping, stopped, f
 - **WHEN** an entry failed for a missing parameter and the user opens the script panel
 - **THEN** the panel presents the failure, Play, and the parameter editing action
 - **AND** it presents the entry's current values read-only until the user edits them
+
+#### Scenario: Present awaiting approval without an execution control
+
+- **WHEN** an entry is waiting for approval
+- **THEN** the card and drawer present the approval state and the review action
+- **AND** neither presents Stop or Play for that entry
+- **AND** no agent turn is reported
+
+#### Scenario: Highlight the reviewed program
+
+- **WHEN** the review presents the exact primary program
+- **THEN** the program is presented with syntax highlighting for its language
+- **AND** the highlighted text is the captured program rather than a live read of the source file
+
 ### Requirement: Declared stage parameters
 A deterministic stage definition SHALL declare required parameters as an ordered list of entries, each with a name that is unique within the declaration and matches a safe identifier, and an optional nonempty description no longer than the accepted length. The declaration SHALL be authored workflow configuration, SHALL be published with the stage, and SHALL NOT carry values, defaults, or optionality markers. A declaration SHALL hold no more than the accepted number of parameters. The declared names SHALL be part of the executable authority reviewed for local trust, and SHALL NOT be resolved through the credential mechanism: parameters are data, not secrets. A deterministic stage SHALL remain the only stage type that declares parameters.
 
@@ -393,6 +481,7 @@ A deterministic stage definition SHALL declare required parameters as an ordered
 - **WHEN** a declaration holds more parameters than the accepted number
 - **THEN** saving fails with a diagnostic naming the limit
 - **AND** no partial declaration is stored
+
 ### Requirement: Parameter values bound to a stage entry
 Parameter values SHALL be supplied through the transition declaration of the stage that precedes the deterministic entry, or through the local repair command for that entry, and SHALL be bound to that entry. They SHALL remain unchanged for every attempt and every Play of that entry, and a later entry SHALL NOT inherit them. Values SHALL be nonempty strings within the accepted per-value and total size limits, and SHALL be limited to the names the destination declares. A program SHALL receive exactly the declared names as structured input and SHALL NOT receive an undeclared name even when the entry holds one. The host SHALL NOT interpolate a value into TypeScript or Bash source. A stage that declares no parameters SHALL give its program an empty parameter object. The declaration is authored configuration; a value is entry-local task data and SHALL NOT be written into workflow text, the shared log, or another entry.
 
@@ -418,6 +507,7 @@ Parameter values SHALL be supplied through the transition declaration of the sta
 - **WHEN** the host restarts an active execution
 - **THEN** the replacement attempt receives the same values bound to that entry
 - **AND** it does not read values from the saved workflow
+
 ### Requirement: Parameterized entry admission failure
 An entry whose stage declares parameters SHALL NOT start its program while any declared name lacks a nonempty value. The host SHALL settle that attempt as a failed execution with a diagnostic naming every missing name. That failure SHALL NOT follow the error exit, SHALL NOT move the task, SHALL NOT replace the entry, and SHALL NOT append a history entry, because it is a configuration refusal rather than an execution attempt. The entry SHALL remain in its stage with Play and parameter editing available. Every stage entry SHALL be admissible regardless of how it was created, including an agent declaration, a manual move, task creation, an automatic advance, and a script exit; a stage that declares parameters SHALL be a valid initial stage and a valid exit or transition destination.
 
@@ -443,6 +533,7 @@ An entry whose stage declares parameters SHALL NOT start its program while any d
 - **WHEN** a task is created in a stage that declares parameters
 - **THEN** the task remains in that stage and the attempt reports the missing parameters
 - **AND** no conversation or agent execution is created merely to satisfy them
+
 ### Requirement: Repairing entry parameters without trust review
 The host SHALL let the user replace the parameter values of the current entry while its execution is not active or stopping, through an explicit command that names the entry identity and the complete value set. The command SHALL reject a stale entry, an incomplete or malformed value set, a value beyond the accepted limits, and an entry whose saved stage no longer declares parameters. Saving values SHALL NOT grant executable trust, SHALL NOT change the authored declaration, SHALL NOT start a program, and SHALL NOT append a history entry. A subsequent Play SHALL admit a new execution of the same entry with the saved values, and a parameter refusal caused by a new declaration name SHALL remain recoverable by editing that name before Play.
 
@@ -463,6 +554,7 @@ The host SHALL let the user replace the parameter values of the current entry wh
 - **WHEN** the saved declaration gains a parameter name while an entry exists, and the user fills that name before Play
 - **THEN** Play admits a new execution with the completed value set
 - **AND** Play without that value fails in the card instead of starting
+
 ### Requirement: Bounded retry of an unadmitted Bash call
 The host SHALL repeat a guarded Bash call only when the guard provably did not start the command: it produced no output on either stream, exited with status 125, was not terminated by a signal, and was neither timed out nor aborted by the caller. A guard failure with any evidence — command output, a terminating signal, a guard diagnostic line, another exit status, or a timeout — SHALL NOT be repeated, because the host cannot prove that the command produced no effect. The host SHALL make at most three attempts within one call, with a short growing delay before each repetition, and SHALL abandon the wait when the execution is stopped. A repeated call SHALL remain one logical call to the program, which observes only the final result or failure. The host SHALL NOT restart the whole program because of an infrastructure failure; automatic whole-program restart remains reserved for loss of the host.
 
@@ -489,6 +581,7 @@ The host SHALL repeat a guarded Bash call only when the guard provably did not s
 - **WHEN** every attempt of the call fails
 - **THEN** the execution settles as one failure
 - **AND** the captured program is not restarted automatically
+
 ### Requirement: Failure origin classification
 Every failed deterministic execution SHALL be classified by origin before it is reported or routed: `script` when the captured program threw or returned an exit that its captured mapping does not name; `contract` when the program's completion value violates the required completion shape or its size bound; `infrastructure` when the guard, its transport, the execution runtime, or the host failed while the program was running; and `configuration` when the execution could not be attempted as configured, including an entry context that changed, a missing or out-of-scope variable, an unrecoverable capture, a missing host capability, or a file policy the host cannot establish. The origin SHALL be persisted with the diagnostic as part of the execution record and SHALL remain readable after the process that produced it ends. An infrastructure failure SHALL keep the root-cause code of the failure that produced it, and a program exception that carried that cause SHALL be recorded as a nested cause rather than replace it. When several host failures occur in one execution, the first one SHALL be the reported cause.
 
@@ -518,6 +611,7 @@ Every failed deterministic execution SHALL be classified by origin before it is 
 - **WHEN** the host lacks the required Bash or TypeScript capability, or cannot establish the selected file policy
 - **THEN** the origin is `configuration`
 - **AND** the diagnostic names what must be mounted or changed
+
 ### Requirement: Reserved infrastructure destination
 A deterministic stage SHALL accept the reserved exit name `infrastructure` in its exit mapping on the same terms as the reserved name `error`. The host SHALL choose the synthetic destination for a settled failure in this order: the reserved `infrastructure` destination when the failure origin is `infrastructure` and the captured mapping names it; otherwise the reserved `error` destination when the captured mapping names it; otherwise no destination, leaving the task failed in its stage. A failure whose origin is `configuration` SHALL NOT follow `infrastructure`, `error`, or any other route. The reserved name SHALL be part of the captured exit mapping and the approved fingerprint, and SHALL NOT be allowed to target the source stage. A program MAY return the name itself, in which case the host SHALL treat it as an ordinary mapped exit. The synthetic result SHALL carry the reserved name as its exit when the infrastructure destination is used.
 
@@ -549,7 +643,6 @@ A deterministic stage SHALL accept the reserved exit name `infrastructure` in it
 
 - **WHEN** an exit named `infrastructure` targets its own stage
 - **THEN** saving the workflow fails and the previous workflow remains unchanged
-
 
 ### Requirement: Whole-tree cleanup proof per platform
 
@@ -634,3 +727,74 @@ guarantee.
 #### Scenario: The private files do not outlive the execution
 - **WHEN** the execution settles, or the next startup finds a configuration or a program left by a host that did not finish
 - **THEN** those private files are removed
+
+### Requirement: Stage-scoped approval request
+
+A pending executable-version approval SHALL be a board-and-stage fact shared by every entry of that stage that resolves to the same executable version. The host SHALL present one pending approval for that board, stage, and executable version rather than one request per card. The pending approval SHALL be presented on the waiting card, in a board queue, and in the stage editor. Approving SHALL resume every waiting entry of that board, stage, and executable version whose captured execution context is still valid, and SHALL leave the others waiting with their own state. An approval SHALL be rejected with an actionable diagnostic when the stage's executable version changed after the review; the user SHALL review the current version. Saving a workflow, accepting a shared update, publishing a board, or writing through a tool SHALL NOT approve an executable version. The host SHALL NOT approve an executable version automatically after a timeout or a restart. The product SHALL NOT present a separate revocation action: changing a reviewed input is what requests a new approval.
+
+#### Scenario: Share one approval with waiting cards
+
+- **WHEN** several cards of the same board and stage wait for the same executable version
+- **THEN** the board presents one pending approval for that version
+- **AND** approving it resumes every waiting entry whose execution context remains valid
+
+#### Scenario: Approve from a waiting card
+
+- **WHEN** the user activates the approval action on a waiting card and approves the current version
+- **THEN** that card's execution starts
+- **AND** every other card waiting for the same version also starts
+
+#### Scenario: Approve from the board queue
+
+- **WHEN** the user approves a queued stage version
+- **THEN** the queue removes that item once no card remains waiting for it
+- **AND** the approval applies to every project the board allows
+
+#### Scenario: Approve before the first card enters
+
+- **WHEN** the stage editor approves the stored executable version before any card enters the stage
+- **THEN** the next entry of that stage starts without an approval request
+- **AND** no card, conversation, worktree, or execution is created by the approval
+
+#### Scenario: Reject an approval for a replaced version
+
+- **WHEN** the executable version changes while the review is open and the user submits the approval
+- **THEN** the approval is rejected
+- **AND** the interface asks the user to review the current version
+- **AND** no code runs under the earlier review
+
+#### Scenario: Saving or publishing does not approve
+
+- **WHEN** the user saves the stage, accepts a shared update, publishes the board, or writes the stage through a tool
+- **THEN** the executable version is not approved
+- **AND** the next execution still waits for approval
+
+#### Scenario: A relative source that resolves different bytes per directory
+
+- **WHEN** the primary source is an external file resolved relative to a task or project directory and two directories produce different primary bytes
+- **THEN** each resolved result is its own executable version and needs its own approval
+- **AND** the stage editor approves only the version it can resolve from the authored configuration and reports the remaining versions as needing approval when they are captured
+
+### Requirement: Executable version review
+
+The executable-version review SHALL present the exact primary program, the language and program format, the source form and authored source reference, the directory choice, the named routes and their destinations, the declared parameter names, the authorized variable names, and the executable version identifier. When the review is bound to a captured execution it SHALL also present that execution's resolved directory as an execution fact, not as part of the approved version. The review SHALL NOT present project variable values or their configured or missing state. Requesting a review SHALL NOT store anything, execute code, create a conversation or worktree, or change the workflow. A review of a version resolved from the authored configuration SHALL be identified as not yet captured and SHALL NOT authorize any other captured version.
+
+#### Scenario: Review a captured execution from a card
+
+- **WHEN** a waiting card opens the review
+- **THEN** it presents the exact captured program and reviewed capabilities
+- **AND** it presents the captured execution's resolved directory as context
+- **AND** it presents no project variable values
+
+#### Scenario: Review the authored version without a capture
+
+- **WHEN** the stage editor opens the review before any entry exists
+- **THEN** it presents the version resolved from the authored configuration
+- **AND** it identifies the version as not yet captured
+- **AND** approving it does not execute code or create an entry
+
+#### Scenario: Review reveals no stored secrets
+
+- **WHEN** the reviewed version authorizes local variable names
+- **THEN** the review presents only those names
+- **AND** it never returns a stored value to the browser

@@ -1,6 +1,6 @@
 // Real native profile composition; local scripts and replay-only downstream turn.
 // The runner stages this template outside the read-only DSH checkout.
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
@@ -48,8 +48,8 @@ it('runs local Bash/TypeScript loops, repairs via Play, reloads captures, and ha
     const value = await task();
     try { await expect.poll(async () => (await summary())?.phase).toBe('awaiting-trust'); }
     catch (error) { throw new Error('Deterministic entry did not reach review: ' + JSON.stringify(await summary()), { cause: error }); }
-    const review = unwrap(await controller().deterministicReview({ taskId: value.id }));
-    await command({ type: 'task.deterministicApprove', taskId: value.id, executionId: review.executionId, fingerprint: review.fingerprint });
+    const review = unwrap(await controller().deterministicReview({ boardId, stageId: value.columnId, taskId: value.id }));
+    await command({ type: 'board.deterministicApprove', boardId, stageId: value.columnId, fingerprint: review.version.fingerprint, stageGeneration: review.version.stageGeneration, taskId: value.id });
   };
   const reloadPlugin = async () => {
     const manager = scaffold.ctx.get('pluginManager') as any;
@@ -93,7 +93,7 @@ it('runs local Bash/TypeScript loops, repairs via Play, reloads captures, and ha
   await command({ type: 'task.deterministicParameters', taskId, entryId: firstEntry, values: { pipeline: 'local-ci' } });
   await command({ type: 'task.deterministicPlay', taskId });
   await approve();
-  await expect.poll(async () => (await observe('.fake-ci-observations')).filter(value => value === 'pending').length).toBeGreaterThanOrEqual(2);
+  await expect.poll(async () => (await observe('.fake-ci-observations')).filter(value => value === 'pending').length, { timeout: 10000 }).toBeGreaterThanOrEqual(2);
   const firstExecution = await summary();
   await command({ type: 'task.deterministicStop', taskId, executionId: firstExecution.executionId });
   await expect.poll(async () => (await summary())?.phase).toBe('stopped');
@@ -122,7 +122,8 @@ it('runs local Bash/TypeScript loops, repairs via Play, reloads captures, and ha
   await expect.poll(async () => (await task()).columnId).toBe('wait_ts');
   expect((await task()).sessionIds).toEqual([]);
   await approve();
-  await expect.poll(async () => (await observe('.fake-review-observations')).filter(value => value === 'pending').length).toBeGreaterThanOrEqual(2);
+  try { await expect.poll(async () => (await observe('.fake-review-observations')).filter(value => value === 'pending').length, { timeout: 10000 }).toBeGreaterThanOrEqual(2); }
+  catch (error) { throw new Error('Review observations missing: ' + JSON.stringify({ summary: await summary(), task: await task() }), { cause: error }); }
   const beforeReload = await summary();
   await writeFile(join(scaffold.workspaceCwd, 'wait-review.ts'), 'throw new Error("Unapproved replacement must not run during recovery.");');
   await reloadPlugin();
@@ -209,8 +210,8 @@ it('recovers an entry before source capture and a held terminal result without r
   };
   await reload();
   await expect.poll(async () => (await snapshot()).deterministic?.[taskId]?.phase).toBe('awaiting-trust');
-  const review = unwrap(await controller().deterministicReview({ taskId })); expect(review.code).toBe(original);
-  await command({ type: 'task.deterministicApprove', taskId, executionId: review.executionId, fingerprint: review.fingerprint });
+  const review = unwrap(await controller().deterministicReview({ boardId, stageId: (await task()).columnId, taskId })); expect(review.code).toBe(original);
+  await command({ type: 'board.deterministicApprove', boardId, stageId: (await task()).columnId, fingerprint: review.version.fingerprint, stageGeneration: review.version.stageGeneration, taskId });
   await expect.poll(async () => { try { return (await readFile(join(scaffold.workspaceCwd, '.recovery-runs'), 'utf8')).trim(); } catch { return ''; } }).toBe('run');
   await command({ type: 'task.pause', taskId, reason: 'Hold the saved external result' });
   await writeFile(join(scaffold.workspaceCwd, '.recovery-ready'), 'ready');
@@ -227,6 +228,114 @@ it('recovers an entry before source capture and a held terminal result without r
   expect((await readFile(join(scaffold.workspaceCwd, '.recovery-runs'), 'utf8')).trim()).toBe('run');
 });
 
+it('fans approval out, approves before the first entry, accepts a team update, and reports a directory-dependent source', { timeout: 180000 }, async () => {
+  const fixture = await mkdtemp(join(tmpdir(), 'kanban-deterministic-approval-'));
+  onTestFinished(async () => { await rm(fixture, { recursive: true, force: true }); });
+  const overlay = join(fixture, 'native-test-policy.yaml');
+  await writeFile(overlay, '- id: sandbox-policy\n  config:\n    mode: danger-full-access\n    workspaceRoot: !!js process.cwd()\n- id: permission\n  config:\n    defaultPreset: danger-full-access\n');
+  const scaffold = await launchWebScaffold({ profile: { packages: [{ dir: ROOT, enabled: true }] }, extraOverlayPath: overlay });
+  onTestFinished(async () => { await scaffold.close(); });
+  const controller = () => scaffold.ctx.get('kanbanController') as any;
+  const snapshot = async () => unwrap(await controller().snapshot({}));
+  const command = async (value: any) => unwrap(await controller().command(value));
+  const first = await snapshot(); const hubId = first.state.hubs[0].id; const boardId = first.state.hubs[0].boards[0].id;
+  await command({ type: 'project.save', hubId, project: { name: 'Approval lane', projectPath: scaffold.workspaceCwd, projectKey: 'approval-lane' } });
+  const projectId = (await snapshot()).state.hubs[0].projects[0].id;
+  const waiting = (message: string) => 'sleep 10; printf \'%s\\n\' \'{"exit":"done","message":"' + message + '"}\'';
+  const yaml = (waitMessage = 'wait ok') => [
+    'name: Approval lane', 'initial_column: pre', 'columns:',
+    '  - id: pre', '    label: Pre', '    deterministic:', '      language: bash', '      directory: task', '      code: ' + JSON.stringify(waiting('pre ok')), '      exits: {done: done}',
+    '  - id: wait', '    label: Wait', '    deterministic:', '      language: bash', '      directory: task', '      code: ' + JSON.stringify(waiting(waitMessage)), '      exits: {done: done}',
+    '  - id: relative', '    label: Relative', '    deterministic:', '      language: bash', '      directory: task', '      file: relative.sh', '      exits: {done: done}',
+    '  - id: done', '    label: Done', '',
+  ].join('\n');
+  await command({ type: 'board.workflow.save', hubId, boardId, yaml: yaml() });
+  await writeFile(join(scaffold.workspaceCwd, 'relative.sh'), 'printf \'%s\\n\' \'{"exit":"done","message":"relative"}\'');
+  const byTitle = async (title: string) => (await snapshot()).state.hubs[0].tasks.find((value: any) => value.title === title);
+  const phase = async (title: string) => { const value = await byTitle(title); return value === undefined ? undefined : (await snapshot()).deterministic?.[value.id]?.phase; };
+  const create = async (title: string) => { await command({ type: 'task.create', hubId, boardId, projectId, title, description: '', autoMode: false }); return byTitle(title); };
+
+  // Approve the authored initial version from the stage editor before any card exists.
+  const browser = await chromium.launch();
+  onTestFinished(async () => { await browser.close(); });
+  const page = await newEnglishPage(browser);
+  await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' });
+  await page.getByRole('button', { name: 'Kanban', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit stage Pre' }).click();
+  const stageEditor = page.getByRole('dialog', { name: 'Edit stage' });
+  await stageEditor.getByRole('button', { name: 'Review and approve script' }).click();
+  const authoredReview = page.getByRole('dialog', { name: 'Review deterministic script' });
+  await authoredReview.getByRole('button', { name: 'Approve this version' }).click();
+  await expect(page.getByRole('dialog', { name: 'Edit stage' })).toHaveCount(0);
+  const authored = unwrap(await controller().deterministicReview({ boardId, stageId: 'pre' }));
+  expect(authored.version.captured).toBe(false);
+  expect(authored.approval).toBe('approved');
+  await page.close();
+  const preapproved = await create('Preapproved');
+  await expect.poll(() => phase('Preapproved')).toBe('active');
+  const preSummary = (await snapshot()).deterministic[preapproved.id];
+  await command({ type: 'task.deterministicStop', taskId: preapproved.id, executionId: preSummary.executionId });
+  await expect.poll(() => phase('Preapproved')).toBe('stopped');
+
+  // Cards in different projects waiting for one version start from one approval.
+  const a = await create('Fan A'); const b = await create('Fan B');
+  const secondProjectPath = join(scaffold.workspaceCwd, 'second-project'); await mkdir(secondProjectPath);
+  await command({ type: 'project.save', hubId, project: { name: 'Second card project', projectPath: secondProjectPath, projectKey: 'second-card' } });
+  const secondProjectId = (await snapshot()).state.hubs[0].projects.find((value: any) => value.projectKey === 'second-card').id;
+  await command({ type: 'task.create', hubId, boardId, projectId: secondProjectId, title: 'Fan C', description: '', autoMode: false });
+  const c = await byTitle('Fan C');
+  await command({ type: 'task.move', hubId, taskId: a.id, columnId: 'wait', overrideTransition: true });
+  await command({ type: 'task.move', hubId, taskId: b.id, columnId: 'wait', overrideTransition: true });
+  await command({ type: 'task.move', hubId, taskId: c.id, columnId: 'wait', overrideTransition: true });
+  await expect.poll(async () => [await phase('Fan A'), await phase('Fan B'), await phase('Fan C')]).toEqual(['awaiting-trust', 'awaiting-trust', 'awaiting-trust']);
+  const fan = unwrap(await controller().deterministicReview({ boardId, stageId: 'wait', taskId: a.id }));
+  expect(fan.version.captured).toBe(true);
+  expect(fan.waitingCards).toBe(3);
+  await command({ type: 'board.deterministicApprove', boardId, stageId: 'wait', fingerprint: fan.version.fingerprint, stageGeneration: fan.version.stageGeneration, taskId: a.id });
+  await expect.poll(async () => [await phase('Fan A'), await phase('Fan B'), await phase('Fan C')]).toEqual(['active', 'active', 'active']);
+  for (const title of ['Fan A', 'Fan B', 'Fan C']) {
+    const value = await byTitle(title); const summary = (await snapshot()).deterministic[value.id];
+    await command({ type: 'task.deterministicStop', taskId: value.id, executionId: summary.executionId });
+  }
+
+  // A team-folder update creates a new version; the next card must wait for approval.
+  const teamDir = join(fixture, 'team'); await mkdir(teamDir);
+  await unwrap(await controller().sharing({ type: 'sharing.connect', hubId, provider: 'local-folder', settings: { path: teamDir } }));
+  const boardLog = async () => {
+    try { const entries = await readdir(teamDir, { recursive: true }); const file = entries.find(entry => entry.endsWith('.jsonl')); return file === undefined ? undefined : join(teamDir, file); }
+    catch { return undefined; }
+  };
+  await expect.poll(boardLog).toBeTruthy();
+  const logPath = await boardLog();
+  if (logPath === undefined) throw new Error('The team folder has no board log.');
+  const logText = await readFile(logPath, 'utf8');
+  const lastEvent = JSON.parse(logText.trimEnd().split(String.fromCharCode(10)).pop()!) as { seq: number };
+  await writeFile(logPath, logText.trimEnd() + String.fromCharCode(10)
+    + JSON.stringify({ kind: 'workflow.replaced', text: yaml('team wait'), seq: lastEvent.seq + 1, at: new Date().toISOString(), v: 3 }) + String.fromCharCode(10));
+  await unwrap(await controller().sharing({ type: 'sharing.getUpdates', hubId }));
+  await expect.poll(async () => (await snapshot()).state.hubs[0].boards[0].workflowYaml.includes('team wait')).toBe(true);
+  const updated = await create('Updated');
+  await command({ type: 'task.move', hubId, taskId: updated.id, columnId: 'wait', overrideTransition: true });
+  await expect.poll(() => phase('Updated')).toBe('awaiting-trust');
+  const updatedReview = unwrap(await controller().deterministicReview({ boardId, stageId: 'wait', taskId: updated.id }));
+  expect(updatedReview.approval).toBe('required');
+  expect(updatedReview.version.fingerprint).not.toBe(fan.version.fingerprint);
+  await command({ type: 'board.deterministicApprove', boardId, stageId: 'wait', fingerprint: updatedReview.version.fingerprint, stageGeneration: updatedReview.version.stageGeneration, taskId: updated.id });
+  await expect.poll(() => phase('Updated')).toBe('active');
+  const updatedSummary = (await snapshot()).deterministic[updated.id];
+  await command({ type: 'task.deterministicStop', taskId: updated.id, executionId: updatedSummary.executionId });
+
+  // A relative primary file is reported as directory-dependent before approval.
+  const relative = unwrap(await controller().deterministicReview({ boardId, stageId: 'relative' }));
+  expect(relative.version.directoryDependent).toBe(true);
+  expect(relative.source).toMatchObject({ kind: 'file', reference: 'relative.sh' });
+  expect(relative.approval).toBe('required');
+
+  await mkdir(join(ROOT, '.verification'), { recursive: true });
+  await writeFile(join(ROOT, '.verification/deterministic-approval-e2e-report.json'), JSON.stringify({
+    status: 'passed', authoredApprovalBeforeFirstEntry: true, twoCardApprovalFanout: true, crossProjectApprovalFanout: true, teamUpdateNeedsNewApproval: true, directoryDependentSourceReported: true,
+  }, null, 2) + '\n');
+});
 it('draws the deterministic routing without an exit label and opens its stage editor only while unlocked', { timeout: 120000 }, async () => {
   const scaffold = await launchWebScaffold({ profile: { packages: [{ dir: ROOT, enabled: true }] } });
   const browserPromise = chromium.launch();

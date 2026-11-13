@@ -11,26 +11,49 @@ for (const colorScheme of ['light', 'dark'] as const) {
     if (colorScheme === 'dark') await expect(page.locator('body')).toHaveAttribute('data-ds-dark-theme', '');
     else await expect(page.locator('body')).not.toHaveAttribute('data-ds-dark-theme');
     const card = page.locator('[data-task-id="long-0"]');
-    await expect(card.locator('.kb-script-card-label')).toHaveText('Script: awaiting local trust');
+    await expect(card).toHaveAttribute('data-presence', 'approval');
+    await expect(card.locator('.kb-attention-dots [aria-label="Awaiting approval"]')).toHaveCount(1);
+    await expect(card.getByText('Awaiting approval', { exact: true })).toBeVisible();
     await expect(card.locator('.kb-card-activity')).toHaveCount(1);
     expect(await card.locator('.kb-card-activity').evaluate(element => element.getBoundingClientRect().height)).toBe(26);
-    await expectLegible(page, '[data-task-id="long-0"] .kb-script-card-label');
+    await expect(card.getByText('pipeline=ci-main')).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Edit deterministic script parameters' })).toBeVisible();
+    await expectLegible(page, '[data-task-id="long-0"] .kb-card-parameters-values');
+    await expectLegible(page, '[data-task-id="long-0"] .kb-card-parameter-edit');
+    await card.getByRole('button', { name: 'Edit deterministic script parameters' }).click();
+    const parameters = page.getByRole('dialog', { name: 'Edit script parameters' });
+    await expect(parameters).toBeVisible();
+    await parameters.getByRole('button', { name: /Close/ }).click();
+    await expectLegible(page, '[data-task-id="long-0"] .kb-card-status-line');
+    await mkdir(OUT, { recursive: true });
+    await card.screenshot({ path: path.join(OUT, 'deterministic-approval-card-' + colorScheme + '.png') });
+    await expect(page.locator('.kb-approval-queue')).toBeVisible();
+    await page.locator('.kb-approval-queue').screenshot({ path: path.join(OUT, 'deterministic-approval-queue-' + colorScheme + '.png') });
+    await card.getByRole('button', { name: 'Approve and run deterministic script' }).click();
+    const review = page.getByRole('dialog', { name: 'Review deterministic script' });
+    await expect(review.getByLabel('Exact captured code')).toContainText('await tools.bash');
+    await expect(review.getByText('Task', { exact: false }).first()).toBeVisible();
+    await expect(review.getByLabel('Replacement value for CI_TOKEN')).toHaveCount(0);
+    await expect(review.getByText(/Approving starts this waiting card/)).toBeVisible();
+    await expectLegible(page, '.kb-code-view');
+    await mkdir(OUT, { recursive: true });
+    await page.screenshot({ path: path.join(OUT, 'deterministic-review-' + colorScheme + '.png') });
+    await review.getByRole('button', { name: 'Approve and run' }).click();
+    await expect(review).toBeHidden();
     await card.getByRole('button', { name: 'Open task Long column task 0' }).click();
     const drawer = page.locator('.kb-drawer');
     await drawer.getByRole('tab', { name: 'Info', exact: true }).click();
-    await expect(drawer.getByRole('button', { name: 'Stop deterministic script' })).toBeVisible();
-    await drawer.getByRole('button', { name: 'Review deterministic script and local settings' }).click();
-    const review = page.getByRole('dialog', { name: 'Review deterministic script' });
-    await expect(review.getByLabel('Exact captured code')).toContainText('await tools.bash');
-    await expect(review.getByText('CI_TOKEN — Missing')).toBeVisible();
-    const replacement = review.getByLabel('Replacement value for CI_TOKEN');
-    await expect(replacement).toHaveAttribute('type', 'password'); await expect(replacement).toHaveValue('');
-    await expectLegible(page, '.kb-script-source');
-    await mkdir(OUT, { recursive: true });
-    await page.screenshot({ path: path.join(OUT, 'deterministic-review-' + colorScheme + '.png') });
-    await review.getByRole('button', { name: 'Approve this captured version' }).click();
-    await expect(review).toBeHidden();
     await expect(drawer.getByText('Script running', { exact: true })).toBeVisible();
+    await drawer.getByRole('button', { name: 'Configure local variables' }).click();
+    const variables = page.getByRole('dialog', { name: 'Local variables' });
+    await expect(variables.getByText('CI_TOKEN — Missing')).toBeVisible();
+    const replacement = variables.getByLabel('Replacement value for CI_TOKEN');
+    await expect(replacement).toHaveAttribute('type', 'password'); await expect(replacement).toHaveValue('');
+    await replacement.fill('synthetic-value');
+    await variables.getByRole('button', { name: 'Replace value' }).click();
+    await expect(variables.getByText('CI_TOKEN — Configured')).toBeVisible();
+    await page.screenshot({ path: path.join(OUT, 'deterministic-variables-' + colorScheme + '.png') });
+    await variables.getByRole('button', { name: 'Close', exact: true }).click();
     await drawer.getByRole('button', { name: 'Stop deterministic script' }).click();
     await expect(drawer.getByRole('button', { name: 'Play deterministic script' })).toBeVisible();
     await expect(drawer.getByText('Script stopped', { exact: true })).toBeVisible();
@@ -38,7 +61,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await drawer.getByRole('button', { name: 'Play deterministic script' }).click();
     await expect(drawer.getByText('Script running', { exact: true })).toBeVisible();
     const commands = await page.evaluate(() => (window as unknown as { __harnessCommands(): Array<{ type: string }> }).__harnessCommands());
-    expect(commands.map(command => command.type)).toEqual(['task.deterministicApprove', 'task.deterministicStop', 'task.deterministicPlay']);
+    expect(commands.map(command => command.type)).toEqual(['board.deterministicApprove', 'task.deterministicVariable', 'task.deterministicStop', 'task.deterministicPlay']);
     expect(await card.getAttribute('data-working')).toBe('true');
     expect(await card.evaluate(element => getComputedStyle(element, '::after').animationName)).toBe('none');
     await expect(drawer.locator('[data-native]')).toHaveCount(0);
@@ -143,7 +166,9 @@ test('opens the deterministic stage editor from its connection, only while unloc
   // The routing is edited in the stage editor, never through a condition.
   await expect(page.locator('.kb-condition-popover')).toHaveCount(0);
 });
-test('visual deterministic configuration keeps named exits and no prompt/countdown coexistence', async ({ page }) => {
+for (const colorScheme of ['light', 'dark'] as const) {
+  test('visual deterministic configuration keeps named exits and no prompt/countdown coexistence in ' + colorScheme, async ({ page }) => {
+  await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
   await page.goto(HARNESS + '?scenario=deterministic&theme=host');
   await page.getByRole('button', { name: 'Edit stage Explore' }).click();
   const dialog = page.getByRole('dialog', { name: 'Edit stage' });
@@ -156,10 +181,18 @@ test('visual deterministic configuration keeps named exits and no prompt/countdo
   await expect(dialog.getByRole('textbox', { name: 'Stage id', exact: true })).not.toBeEditable();
   await dialog.getByLabel('Execution directory').selectOption('project');
   await dialog.getByRole('button', { name: 'Save stage' }).click();
-  await expect(dialog).toBeHidden();
+  const saved = page.getByRole('dialog', { name: 'Stage saved' });
+  await expect(saved.getByText(/This executable version is not approved yet/)).toBeVisible();
+  await mkdir(OUT, { recursive: true });
+  await page.screenshot({ path: path.join(OUT, 'deterministic-editor-unapproved-' + colorScheme + '.png') });
+  await saved.getByRole('button', { name: 'Review and approve script' }).click();
+  const review = page.getByRole('dialog', { name: 'Review deterministic script' });
+  await review.getByRole('button', { name: 'Approve this version' }).click();
+  await expect(saved).toBeHidden();
   await expect(page.locator('[data-task-id="long-0"]')).toContainText('Script running');
   await expect(page.locator('.kb-card-countdown')).toHaveCount(0);
-});
+  });
+}
 
 for (const colorScheme of ['light', 'dark'] as const) {
   test('presents an infrastructure failure with its origin, attempts and guard facts in ' + colorScheme, async ({ page }) => {
