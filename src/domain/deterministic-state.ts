@@ -20,7 +20,7 @@ export const parameterValuesSchema = z.record(z.string().regex(PARAMETER_NAME), 
 });
 export const deterministicCaptureSchema = z.strictObject({
   sourceRef: z.string().min(1), fingerprint: z.string().min(1), language: z.enum(['bash', 'typescript']), directory: z.enum(['task', 'project']),
-  executionDirectory: z.string().refine(isAbsolutePath), source: z.strictObject({ kind: z.enum(['inline', 'file']), path: z.string().optional() }),
+  executionDirectory: z.string().refine(isAbsolutePath), source: z.strictObject({ kind: z.enum(['inline', 'file']), path: z.string().optional(), reference: z.string().optional() }),
   env: z.array(z.string()), params: z.array(z.string().regex(PARAMETER_NAME)).max(PARAMETER_LIMITS.count), exits: z.record(z.string(), deterministicTargetSchema),
 });
 /** Bounded hold facts: at most three background items with bounded labels and unique pending kinds. */

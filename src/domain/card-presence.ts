@@ -3,7 +3,7 @@
  * presents one of them; its marks present every one that applies, so dominance
  * orders the surface without hiding a state.
  */
-export const CARD_PRESENCE_PRIORITY = ['error', 'attention', 'running', 'unread'] as const;
+export const CARD_PRESENCE_PRIORITY = ['error', 'approval', 'attention', 'running', 'unread'] as const;
 
 export type CardPresenceState = (typeof CARD_PRESENCE_PRIORITY)[number];
 
@@ -16,10 +16,13 @@ export interface CardPresenceFacts {
   readonly unread: boolean;
   readonly awaitingReply: boolean;
   readonly failed: boolean;
+  /** A task-level pending executable approval, not a conversation attention fact. */
+  readonly approval?: boolean;
 }
 
 function isActive(state: CardPresenceState, facts: CardPresenceFacts): boolean {
   if (state === 'error') return facts.failed;
+  if (state === 'approval') return facts.approval === true;
   if (state === 'attention') return facts.awaitingReply;
   if (state === 'running') return facts.running;
   return facts.unread;

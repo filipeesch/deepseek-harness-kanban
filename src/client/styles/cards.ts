@@ -20,6 +20,9 @@ export const cardStyles = String.raw`
 .dsh-kanban .kb-countdown-label,.dsh-kanban .kb-countdown-cancel{position:relative;z-index:1;font-variant-numeric:tabular-nums}
 .dsh-kanban .kb-countdown-cancel{font-size:14px;line-height:1}
 .dsh-kanban .kb-card-status{display:flex;flex-direction:column;gap:3px;min-width:0;pointer-events:none}
+.dsh-kanban .kb-card-parameters{display:flex;align-items:center;gap:6px;min-width:0;pointer-events:auto;position:relative;z-index:3}
+.dsh-kanban .kb-card-parameters-values{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;line-height:1.35;opacity:.78}
+.dsh-kanban .kb-card-parameter-edit{flex:0 0 auto;padding:0;border:0;background:none;color:inherit;font:inherit;font-size:11px;line-height:1.35;text-decoration:underline;cursor:pointer;opacity:.8}
 .dsh-kanban .kb-card-status-line{display:flex;align-items:flex-start;gap:5px;margin:0;font-size:11px;line-height:1.35;overflow-wrap:anywhere}
 .dsh-kanban .kb-card-status-line svg{flex:0 0 auto;margin-top:1px}
 .dsh-kanban .kb-card-status-line.is-danger{color:color-mix(in srgb,var(--color-destructive,#c53030) 65%,var(--dsw-alias-label-primary,CanvasText))}
@@ -41,6 +44,7 @@ export const cardStyles = String.raw`
    surface underneath, so both appearances stay legible. */
 .dsh-kanban .kb-card[data-presence=error]{background:color-mix(in srgb,var(--kb-state-error) var(--kb-state-tint),var(--kb-surface))}
 .dsh-kanban .kb-card[data-presence=attention]{background:color-mix(in srgb,var(--kb-state-attention) var(--kb-state-tint),var(--kb-surface))}
+.dsh-kanban .kb-card[data-presence=approval]{background:color-mix(in srgb,var(--kb-state-attention) var(--kb-state-tint),var(--kb-surface))}
 .dsh-kanban .kb-card[data-presence=running]{background:color-mix(in srgb,var(--kb-state-running) var(--kb-state-tint),var(--kb-surface))}
 .dsh-kanban .kb-card[data-presence=unread]{background:color-mix(in srgb,var(--kb-state-unread) var(--kb-state-tint),var(--kb-surface))}
 /* The diagram publishes the bounded inverse of its zoom on the canvas; the column
@@ -54,4 +58,13 @@ export const cardStyles = String.raw`
 .dsh-kanban .kb-card[data-working=true]::before{content:'';position:absolute;inset:0;border:1px solid var(--kb-state-running);border-radius:8px;pointer-events:none;animation:kb-working-frame 1.4s ease-in-out infinite}
 @keyframes kb-working-frame{0%,100%{opacity:.4}50%{opacity:1}}
 @media (prefers-reduced-motion: reduce){.dsh-kanban .kb-countdown-bar{display:none}.dsh-kanban .kb-auto-chip.is-advancing::after{animation:none;opacity:1}.dsh-kanban .kb-card[data-working=true]::before{animation:none;opacity:1}.dsh-kanban .kb-card[data-working=true]::after{animation:none;opacity:1}}
+.dsh-kanban .kb-approval-queue{display:flex;flex-direction:column;gap:6px;margin:8px 0;padding:9px 11px;border:1px solid color-mix(in srgb,var(--kb-state-attention) 42%,var(--kb-line));border-radius:8px;background:color-mix(in srgb,var(--kb-state-attention) 8%,var(--kb-surface))}
+.dsh-kanban .kb-approval-title{font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+.dsh-kanban .kb-approval-item{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0;font-size:12px;min-width:0}
+.dsh-kanban .kb-approval-item span{min-width:0;overflow-wrap:anywhere}
+.dsh-kanban .kb-script-panel-tools{display:flex;gap:6px;flex-wrap:wrap}
+.dsh-kanban .kb-script-consequence{padding:7px 9px;border-left:3px solid var(--kb-state-attention);border-radius:4px;background:color-mix(in srgb,var(--kb-state-attention) 10%,var(--kb-surface));font-weight:600}
+.dsh-kanban .kb-code-view{border:1px solid var(--kb-line);border-radius:7px;background:color-mix(in srgb,currentColor 4%,var(--kb-surface));max-height:340px;overflow:auto}
+.dsh-kanban .kb-code-view .cm-editor{max-height:340px}
+.dsh-kanban .kb-code-view:focus-visible,.dsh-kanban .kb-code-view .cm-content:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:2px}
 `;

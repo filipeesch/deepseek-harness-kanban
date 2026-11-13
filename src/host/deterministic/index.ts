@@ -56,7 +56,7 @@ export function createDeterministicRuntime(options: DeterministicRuntimeOptions)
       let outcome: ExecutionOutcome;
       try {
         request.signal.throwIfAborted();
-        if (!await trust.isApproved(request.scope, request.capture.fingerprint)) failure('TRUST_REQUIRED', 'Review and explicitly approve this exact local executable version before execution.');
+        if (!await trust.isApproved(request.approvalScope, request.capture.fingerprint)) failure('TRUST_REQUIRED', 'Review and explicitly approve this exact local executable version before execution.');
         const code = await captures.load(request.capture);
         const executionPolicy = await verify(request.capture, request.signal);
         lifetime = await createNativeLifetime({
@@ -109,7 +109,8 @@ export function createDeterministicRuntime(options: DeterministicRuntimeOptions)
     try { return await running; } finally { if (active.get(key) === running) active.delete(key); }
   };
   return {
-    capture: request => captures.capture(request), plan: request => captures.plan(request), loadCapture: capture => captures.load(capture), trust, variables, execute,
+    capture: request => captures.capture(request), plan: request => captures.plan(request), loadCapture: capture => captures.load(capture),
+    normalizeCapture: (capture, definition) => captures.normalize(capture, definition), releaseCapture: capture => captures.releaseSource(capture.sourceRef), trust, variables, execute,
     collectSources: referenced => captures.collectSources(referenced),
     releaseSource: reference => captures.releaseSource(reference),
     async verify(capture, signal) { await captures.load(capture); await verify(capture, signal); },

@@ -8,9 +8,9 @@ import { CardInstructionAction, useAutoRunEntry } from './auto-run-view.js';
 import { AutoModeControl, type AutoModeView } from './auto-mode.js';
 import { cardStatusEntries, type CardStatusEntry } from './card-status-entries.js';
 import { projectCardDominance } from '../domain/card-presence.js';
-import { CardScriptActions } from './deterministic-actions.js';
+import { CardScriptActions, CardScriptParameters } from './deterministic-actions.js';
 import { useScriptSummary } from './deterministic-context.js';
-import { ownedScript, scriptActive, scriptCardLabel, scriptLabel } from './deterministic-view.js';
+import { ownedScript, scriptActive, scriptAwaitingApproval, scriptCardLabel, scriptLabel } from './deterministic-view.js';
 import { advanceStageLabel } from './stage-advance.js';
 import { AdvanceStageIcon, AlertIcon, ClockIcon } from './icons.js';
 
@@ -44,7 +44,7 @@ export interface TaskCardProps {
 }
 
 function CardContext({ taskId, title, projectName, attention, selectionMode, selected, onToggleSelect, onActivate }: {
-  taskId: string; title: string; projectName: string; attention: Attention; selectionMode: boolean; selected: boolean;
+  taskId: string; title: string; projectName: string; attention: Attention & { approval?: boolean }; selectionMode: boolean; selected: boolean;
   onToggleSelect: (taskId: string) => void; onActivate: () => void;
 }) {
   return <div className="kb-card-context" onClick={onActivate}>
@@ -75,9 +75,10 @@ function CardAdvanceAction({ next, disabled, onMove }: { next: TransitionDestina
   ><AdvanceStageIcon size={15} /></button>;
 }
 
-function CardStatus({ entries }: { entries: readonly CardStatusEntry[] }) {
-  if (entries.length === 0) return null;
+function CardStatus({ entries, parameters }: { entries: readonly CardStatusEntry[]; parameters?: React.ReactNode }) {
+  if (entries.length === 0 && parameters === undefined) return null;
   return <div className="kb-card-status">
+    {parameters}
     {entries.map(entry => <p key={entry.key} className={'kb-card-status-line is-' + entry.tone} role={entry.alert ? 'alert' : undefined}>
       {entry.tone === 'danger' ? <AlertIcon size={12} /> : <ClockIcon size={12} />}
       <span>{entry.label}</span>
@@ -90,7 +91,9 @@ export function TaskCard({ task, column, projectName, attention, selectionMode, 
   const openButton = useRef<HTMLButtonElement>(null);
   const script = ownedScript(task, useScriptSummary(task.id));
   const activeScript = scriptActive(script);
-  const presence = projectCardDominance(attention);
+  const awaitingApproval = scriptAwaitingApproval(script);
+  const presenceAttention = { ...attention, approval: awaitingApproval };
+  const presence = projectCardDominance(presenceAttention);
   const runEntry = useAutoRunEntry(autoRun, task.id);
   const currentRun = autoRunEntryForColumn(runEntry, column.id);
   const runFailure = currentRun?.status === 'failed' ? currentRun.error?.message ?? RUN_FAILURE_FALLBACK : undefined;
@@ -114,15 +117,15 @@ export function TaskCard({ task, column, projectName, attention, selectionMode, 
   return <article className={'kb-card' + (selected ? ' kb-card-selected' : '')} data-task-id={task.id} data-working={attention.running || activeScript ? 'true' : undefined} data-presence={presence}
     onPointerDown={event => {
       if (selectionMode) return;
-      if ((event.target as Element).closest('.kb-card-activity, .kb-auto-chip, input, select, textarea, a')) return;
+      if ((event.target as Element).closest('.kb-card-activity, .kb-card-parameters, .kb-auto-chip, input, select, textarea, a')) return;
       onBeginDrag(event, task.id, task.columnId);
     }}>
     <button ref={openButton} type="button" className="kb-card-open" aria-label={(selectionMode ? 'Select task ' : 'Open task ') + task.title} aria-pressed={selectionMode ? selected : undefined} onClick={activate}>
       <strong>{task.title}</strong>
     </button>
-    <CardContext taskId={task.id} title={task.title} projectName={projectName} attention={attention} selectionMode={selectionMode} selected={selected} onToggleSelect={onToggleSelect} onActivate={activate} />
-    <CardActivity attention={attention} label={task.title} controls={controls} script={script ? scriptCardLabel(script) : undefined} {...(script?.hold === undefined ? {} : { scriptTitle: scriptLabel(script) })} scriptHeld={script?.hold !== undefined} />
-    <CardStatus entries={[...cardStatusEntries(task, runFailure, autoMode.status, autoMode.secondaryStatuses), ...(script?.error ? [{ key: 'script-error', tone: 'danger' as const, label: script.error.message.slice(0, 512), alert: true }] : [])]} />
+    <CardContext taskId={task.id} title={task.title} projectName={projectName} attention={presenceAttention} selectionMode={selectionMode} selected={selected} onToggleSelect={onToggleSelect} onActivate={activate} />
+    <CardActivity attention={attention} label={task.title} controls={controls} script={script && !awaitingApproval ? scriptCardLabel(script) : undefined} {...(script?.hold === undefined || awaitingApproval ? {} : { scriptTitle: scriptLabel(script) })} scriptHeld={script?.hold !== undefined && !awaitingApproval} />
+    <CardStatus parameters={script !== undefined && (column.deterministic?.params?.length ?? 0) > 0 ? <CardScriptParameters task={task} column={column} selectionMode={selectionMode} /> : undefined} entries={[...cardStatusEntries(task, runFailure, autoMode.status, autoMode.secondaryStatuses), ...(awaitingApproval ? [{ key: 'script-approval', tone: 'pending' as const, label: 'Awaiting approval' }] : []), ...(script?.error ? [{ key: 'script-error', tone: 'danger' as const, label: script.error.message.slice(0, 512), alert: true }] : [])]} />
     {arrivalToken !== undefined && <span key={arrivalToken} className="kb-card-arrival" aria-hidden="true" onAnimationEnd={() => onArrivalEnd?.(task.id, arrivalToken)} />}
   </article>;
 }

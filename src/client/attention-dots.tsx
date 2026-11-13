@@ -1,11 +1,12 @@
 import React from 'react';
 import type { Attention } from '../shared/types.js';
 
-export type AttentionState = Pick<Attention, 'unread' | 'awaitingReply' | 'failed'>;
+export type AttentionState = Pick<Attention, 'unread' | 'awaitingReply' | 'failed'> & { approval?: boolean };
 
 /** Human-readable states shared by the visible dots and the hidden summaries. */
 export function attentionStatusLabels(value: AttentionState): string[] {
   const labels: string[] = [];
+  if (value.approval === true) labels.push('Awaiting approval');
   if (value.unread) labels.push('Unread messages');
   if (value.awaitingReply) labels.push('Awaiting reply');
   if (value.failed) labels.push('Agent failure');
@@ -17,8 +18,9 @@ export function attentionStatusLabels(value: AttentionState): string[] {
  * decorative uses hide them so the surrounding control keeps one stable accessible name.
  */
 export function AttentionDots({ value, label = 'Attention', decorative = false }: { value: AttentionState; label?: string; decorative?: boolean }) {
-  if (!value.unread && !value.awaitingReply && !value.failed) return null;
+  if (value.approval !== true && !value.unread && !value.awaitingReply && !value.failed) return null;
   return <span className="kb-attention-dots" role={decorative ? undefined : 'group'} aria-label={decorative ? undefined : label} aria-hidden={decorative ? true : undefined}>
+    {value.approval === true && <span className="kb-dot kb-orange" role={decorative ? undefined : 'img'} aria-label={decorative ? undefined : 'Awaiting approval'} title="Awaiting approval" />}
     {value.unread && <span className="kb-dot kb-blue" role={decorative ? undefined : 'img'} aria-label={decorative ? undefined : 'Unread messages'} title="Unread messages" />}
     {value.awaitingReply && <span className="kb-dot kb-orange" role={decorative ? undefined : 'img'} aria-label={decorative ? undefined : 'Awaiting reply'} title="Awaiting reply" />}
     {value.failed && <span className="kb-dot kb-red" role={decorative ? undefined : 'img'} aria-label={decorative ? undefined : 'Agent failure'} title="Agent failure" />}
