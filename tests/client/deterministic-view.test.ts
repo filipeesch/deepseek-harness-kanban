@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { ownedScript, scriptActive, scriptCardLabel, scriptFailureFacts, scriptLabel } from '../../src/client/deterministic-view.js';
+import { holdDetail, holdJobs, holdLabel, holdNextStep, ownedScript, scriptActive, scriptCardLabel, scriptFailureFacts, scriptLabel } from '../../src/client/deterministic-view.js';
 import type { GuardFacts } from '../../src/shared/deterministic-failure.js';
 import { projectScopeActivity } from '../../src/client/scope-activity.js';
 import { buildHistoryRows } from '../../src/client/history/history-view.js';
 import { AutoRunController } from '../../src/client/auto-run.js';
 import { EMPTY_ATTENTION, type Task } from '../../src/shared/types.js';
-import type { DeterministicSummary } from '../../src/shared/deterministic.js';
+import { DETERMINISTIC_HOLD_CODES, type DeterministicSummary } from '../../src/shared/deterministic.js';
 const task = { id: 'task', title: 'CI', columnId: 'wait', stageEntry: { id: 'entry', columnId: 'wait', stageIdentity: 'stable', enteredAt: '2026-11-01T00:00:00Z' } } as Task;
 const summary: DeterministicSummary = { entryId: 'entry', executionId: 'run', phase: 'active', startedAt: '2026-11-01T00:00:00Z', attempt: 1, restartCount: 0 };
 describe('deterministic safe projections', () => {
@@ -66,6 +66,21 @@ describe('deterministic safe projections', () => {
     controller.arm({ taskId: task.id, columnId: 'wait', enteredAt: 1, instruction: 'saved edit' });
     controller.reconcile([{ id: task.id, columnId: 'wait', stageEntry: { id: 'entry' }, instructionPending: { columnId: 'wait', enteredAt: 1 } }], { task: summary });
     expect(controller.getSnapshot()).toEqual({}); controller.dispose();
+  });
+  it('keeps a short held card label while the drawer names the awaiting state', () => {
+    const held = { ...summary, phase: 'result-ready' as const, exit: 'passed', deliveryStatus: 'pending' as const, hold: { code: 'background-work' as const, at: 'now', background: [{ kind: 'job' as const, label: 'find' }] } };
+    expect(scriptCardLabel(held)).toBe('Result held');
+    expect(scriptLabel(held)).toBe('Script result awaiting delivery');
+  });
+  it('explains every hold reason with bounded facts and the applicable action', () => {
+    for (const code of DETERMINISTIC_HOLD_CODES) expect(holdLabel({ code, at: 'now' }).length).toBeGreaterThan(10);
+    const job = { code: 'background-work' as const, at: 'now', background: [{ kind: 'job' as const, id: 'bash-1', label: 'find the home directory' }, { kind: 'schedule' as const, label: 'nightly' }], pending: ['approval' as const] };
+    expect(holdDetail(job)).toEqual(['Job: find the home directory', 'Schedule: nightly', 'Waiting for: An approval request']);
+    expect(holdJobs(job)).toEqual([{ id: 'bash-1', label: 'find the home directory' }]);
+    expect(holdNextStep(job)).toContain('Cancel');
+    expect(holdDetail({ code: 'conversation-active', at: 'now' })).toEqual([]);
+    expect(holdJobs({ code: 'conversation-active', at: 'now' })).toEqual([]);
+    expect(holdNextStep({ code: 'pending-user-work', at: 'now', pending: ['decision-question'] })).toContain('Answer');
   });
   it('renders settled outcomes and provenance without resetting stage duration', () => {
     const rows = buildHistoryRows({ columns: [{ id: 'wait', name: 'CI' }, { id: 'done', name: 'Review' }], now: Date.parse('2026-11-01T01:00:00Z'), history: [

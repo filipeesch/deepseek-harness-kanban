@@ -157,7 +157,7 @@ export class KanbanApp {
   this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,queue:this.operationQueue,worktreeDefaults:{derive:async taskId=>this.worktreeDefaultsFor(this.locatedTask(taskId).task)},onTaskDeleted:async task=>{try{await this.workspaceCoordinator?.cleanup(task as HubTask);await this.deterministicRuntime?.collectSources();}catch(error){this.options.report?.(error);}await this.removeConversationQuestionState(task.sessionIds);},onCheckoutRetained:(task,project,retainedPath,reason)=>this.retainCheckout(task,project,retainedPath,reason)});
   this.relocations=new ProjectRelocationCoordinator(new RepositoryProjectRelocationStore(hubs),sessions,git,{queue:this.operationQueue,signal:options.signal,...(this.workspaceCoordinator?{workspaces:{bind:async(hubId,project)=>{await this.workspaceCoordinator!.rebindProject(hubId,project);}}}:{}),...(options.report?{report:options.report}:{})});
   this.pendingWork=new PendingWorkRunner({resumeWorktrees:async()=>{await this.worktrees.resumePending();},resumeRelocations:async()=>{await this.relocations.resumePending();},dispatchPending:async()=>{await this.dispatchPending();},report:error=>this.options.report?.(error)});
-  this.attention=new AttentionCoordinator({source:this.factsSource,tasks:()=>this.attentionTasks(),runPendingWork:async()=>{await this.pendingWork.run();},onChange:()=>this.attentionChanged(),onFacts:()=>this.markChanged(),report:error=>this.options.report?.(error)});
+  this.attention=new AttentionCoordinator({source:this.factsSource,tasks:()=>this.attentionTasks(),runPendingWork:async()=>{await this.pendingWork.run();},onChange:changedSessionIds=>this.attentionChanged(changedSessionIds),onFacts:()=>this.markChanged(),report:error=>this.options.report?.(error)});
   this.turnAdvance=new TurnAdvanceCoordinator({
    locateBySession:sessionId=>{const located=this.locator.bySession(sessionId);return located?{task:located.task,board:located.board}:undefined;},
    locate:taskId=>{const located=this.locator.byTask(taskId);return located?{task:located.task,board:located.board}:undefined;},
@@ -223,7 +223,7 @@ export class KanbanApp {
    const saved=board.workflow.columns.find(column=>column.id===task.columnId)?.deterministic;
    const unavailable=!this.deterministicRuntime;
    result[task.id]={entryId:value.entryId,executionId:value.executionId,phase:unavailable?'failed':value.phase,startedAt:value.startedAt,attempt:value.attempt,restartCount:value.restartCount,...(value.parameters===undefined?{}:{parameters:{...value.parameters}}),
-    ...(unavailable?{error:{code:'DETERMINISTIC_UNAVAILABLE',message:'Mount the native filesystem, sandbox, shell, and function-body TypeScript capabilities to run deterministic steps.'}}:value.error?{error:value.error}:{}),...(value.result?{exit:value.result.exit,message:value.result.message,...(value.result.deliveryStatus?{deliveryStatus:value.result.deliveryStatus}:{})}:{}),...(value.capture?{fingerprint:value.capture.fingerprint}:{}),savedVersionChanged:!saved||!deterministicEqual(saved,value.definition)};
+    ...(unavailable?{error:{code:'DETERMINISTIC_UNAVAILABLE',message:'Mount the native filesystem, sandbox, shell, and function-body TypeScript capabilities to run deterministic steps.'}}:value.error?{error:value.error}:{}),...(value.result?{exit:value.result.exit,message:value.result.message,...(value.result.deliveryStatus?{deliveryStatus:value.result.deliveryStatus}:{})}:{}),...(value.hold===undefined?{}:{hold:value.hold}),...(value.capture?{fingerprint:value.capture.fingerprint}:{}),savedVersionChanged:!saved||!deterministicEqual(saved,value.definition)};
   }return result;
  }
  private assertNoHandoffAdmission(taskId:string):void{invariant(!this.handoffAdmissions.has(taskId),'NATIVE_ADMISSION_PENDING','Wait for native context admission before moving this task or changing its directory.');}
@@ -360,7 +360,16 @@ export class KanbanApp {
   this.retainedCheckouts.splice(0,this.retainedCheckouts.length,...kept);
   this.markChanged();
  }
- private attentionChanged():void{if(this.disposed)return;this.deterministicRuntime?.sync();this.sequence++;this.publisher.request();this.publisher.flush();}
+ /**
+  * Publish the new attention projection. A conversation-fact change wakes only the tasks
+  * that own those conversations; a broad invalidation keeps the full reconciliation.
+  */
+ private attentionChanged(changedSessionIds?:readonly string[]):void{
+  if(this.disposed)return;
+  if(changedSessionIds===undefined)this.deterministicRuntime?.sync();
+  else{const woken=new Set<string>();for(const sessionId of changedSessionIds){const task=this.locator.bySession(sessionId)?.task;if(task!==undefined&&!woken.has(task.id)){woken.add(task.id);this.deterministicRuntime?.wake(task.id);}}}
+  this.sequence++;this.publisher.request();this.publisher.flush();
+ }
  subscribe(listener:()=>void):()=>void{this.listeners.add(listener);return()=>this.listeners.delete(listener);}
  private attentionTasks():AttentionTask[]{
   return this.locator.summaries().map(summary=>({id:summary.taskId,sessionIds:summary.sessionIds,closedSessionIds:summary.closedSessionIds,...(summary.autoModeEnabled?{priority:'active' as const}:{})}));
@@ -987,7 +996,33 @@ export class KanbanApp {
    case 'settings.save':await this.settings(command.settings,command.expectedRevision);break;
    case 'task.create':{const value=await this.createTaskNow(command);commandReceipt={kind:'task',id:value.id};break;}
    case 'task.prepareFirstExecution':{const value=await this.startFirstExecutionNow(command.taskId,{send:false,columnId:command.columnId,expectedEnteredAt:command.expectedEnteredAt,...(command.expectedInstruction===undefined?{}:{expectedInstruction:command.expectedInstruction})});commandReceipt={kind:'conversation',id:value.sessionId,...(value.model===undefined?{}:{model:value.model})};break;}
-   case 'task.deterministicPlay':{invariant(!this.contextAdmissions.has(command.taskId),'CONTEXT_ADMISSION_PENDING','A task context operation is being admitted.');const task=await this.ensureDeterministicEntry(command.taskId);invariant(task.stageEntry,'STAGE_ENTRY_REQUIRED','Move into this stage before starting a script.');await this.requireDeterministic().play(task.id,task.stageEntry.id);break;}
+   case 'task.deterministicPlay':{
+    invariant(!this.contextAdmissions.has(command.taskId),'CONTEXT_ADMISSION_PENDING','A task context operation is being admitted.');
+    const task=await this.ensureDeterministicEntry(command.taskId);invariant(task.stageEntry,'STAGE_ENTRY_REQUIRED','Move into this stage before starting a script.');
+    const control=task.deterministic;const saved=control!==undefined&&control.entryId===task.stageEntry.id?control.result:undefined;
+    const runtime=this.requireDeterministic();
+    if(saved!==undefined&&saved.deliveryStatus!=='accepted'){const owned=control!;
+     if(owned.phase==='delivering')runtime.wake(task.id);
+     else await runtime.retryDelivery({taskId:task.id,entryId:owned.entryId,executionId:owned.executionId});}
+    else await runtime.play(task.id,task.stageEntry.id);
+    break;}
+   case 'task.deterministicRunAgain':{
+    invariant(!this.contextAdmissions.has(command.taskId),'CONTEXT_ADMISSION_PENDING','A task context operation is being admitted.');
+    const task=await this.ensureDeterministicEntry(command.taskId);invariant(task.stageEntry?.id===command.entryId,'STALE_EXECUTION','This stage entry has been replaced.');
+    const control=task.deterministic;invariant(control===undefined||!['active','stopping'].includes(control.phase),'EXECUTION_ACTIVE','Stop the running execution before starting a new one.');
+    await this.requireDeterministic().play(task.id,task.stageEntry.id);break;}
+   case 'task.deterministicCancelJob':{
+    const located=this.locatedTask(command.taskId);const task=located.task;const hold=task.deterministic?.hold;
+    const named=hold?.background?.some(fact=>fact.kind==='job'&&fact.id===command.jobId)===true;
+    invariant(named,'STALE_HOLD','This job is not the one blocking the saved result.');
+    const cancel=this.sessions.cancelJob;invariant(cancel,'JOBS_UNAVAILABLE','The native background-job registry is unavailable.');
+    let cancelled:'requested'|'already-finished'|undefined;
+    for(const sessionId of task.sessionIds){if(task.closedSessionIds.includes(sessionId))continue;
+     try{cancelled=await cancel.call(this.sessions,sessionId,command.jobId);}catch(error){
+      if((error as {code?:string}).code==='JOB_NOT_OWNED'||(error as {code?:string}).code==='SESSION_STATE_UNAVAILABLE')continue;throw error;}
+     break;}
+    invariant(cancelled!==undefined,'JOB_NOT_OWNED','The background job does not belong to this task conversation.');
+    this.requireDeterministic().wake(task.id);break;}
    case 'task.deterministicStop':{const task=this.locatedTask(command.taskId).task;invariant(task.deterministic,'EXECUTION_NOT_FOUND','This task has no deterministic execution.');await this.requireDeterministic().stop({taskId:task.id,entryId:task.deterministic.entryId,executionId:command.executionId??task.deterministic.executionId});break;}
    case 'task.deterministicApprove':await this.requireDeterministic().approve(command.taskId,command.executionId,command.fingerprint);break;
    case 'task.deterministicVariable':{const located=this.locatedTask(command.taskId);invariant(located.project.id===command.projectId,'STALE_STAGE','The task project changed before this value could be saved.');await this.ensureDeterministicEntry(command.taskId);const current=this.locatedTask(command.taskId).task;invariant(current.stageEntry?.stageIdentity===command.stageIdentity,'STALE_STAGE','The task moved to another stage before this value could be saved.');await this.requireDeterministic().variable(command.taskId,command.name,command.value??null,command.stageIdentity);break;}

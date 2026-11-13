@@ -23,7 +23,8 @@ export interface AttentionCoordinatorOptions {
   source: ConversationFactsSource;
   tasks: () => readonly AttentionTask[];
   runPendingWork: () => Promise<void>;
-  onChange: () => void;
+  /** Called with the conversations whose resolved facts changed, so only their tasks are woken. */
+  onChange: (changedSessionIds: readonly string[]) => void;
   report: (error: unknown) => void;
   /** Called once per resolved background fact batch so the caller can publish the new projection. */
   onFacts?: () => void;
@@ -43,22 +44,37 @@ function sameSettledTurn(left: ConversationFacts['settledTurn'], right: Conversa
   return (left?.seq ?? null) === (right?.seq ?? null) && (left?.outcome ?? null) === (right?.outcome ?? null);
 }
 
+/** Whether two resolved facts for the same conversation describe the same work. */
+function sameFacts(before: ConversationFacts | undefined, after: ConversationFacts): boolean {
+  if (before === undefined) return false;
+  if (before.running !== after.running || !samePendingUserWork(before.pending, after.pending)) return false;
+  if (!sameSettledTurn(before.settledTurn, after.settledTurn)) return false;
+  if (before.background.length !== after.background.length) return false;
+  for (let index = 0; index < before.background.length; index += 1) {
+    if (before.background[index]!.kind !== after.background[index]!.kind
+      || before.background[index]!.label !== after.background[index]!.label) return false;
+  }
+  return true;
+}
+
 /** Compare two conversation-fact projections for the host's publish-on-change rule. */
 export function sameConversationFacts(left: Record<string, ConversationFacts>, right: Record<string, ConversationFacts>): boolean {
   const keys = Object.keys(left);
   if (keys.length !== Object.keys(right).length) return false;
   for (const key of keys) {
-    const before = left[key]!, after = right[key];
-    if (!after) return false;
-    if (before.running !== after.running || !samePendingUserWork(before.pending, after.pending)) return false;
-    if (!sameSettledTurn(before.settledTurn, after.settledTurn)) return false;
-    if (before.background.length !== after.background.length) return false;
-    for (let index = 0; index < before.background.length; index += 1) {
-      if (before.background[index]!.kind !== after.background[index]!.kind
-        || before.background[index]!.label !== after.background[index]!.label) return false;
-    }
+    const after = right[key];
+    if (after === undefined || !sameFacts(left[key], after)) return false;
   }
   return true;
+}
+
+/** The conversations whose facts changed between two resolved projections. */
+export function changedConversationFacts(left: Record<string, ConversationFacts> | undefined, right: Record<string, ConversationFacts>): string[] {
+  if (left === undefined) return Object.keys(right);
+  const changed: string[] = [];
+  for (const [sessionId, after] of Object.entries(right)) if (!sameFacts(left[sessionId], after)) changed.push(sessionId);
+  for (const sessionId of Object.keys(left)) if (right[sessionId] === undefined) changed.push(sessionId);
+  return changed;
 }
 
 function sessionsOf(tasks: readonly AttentionTask[]): string[] {
@@ -314,9 +330,9 @@ export class AttentionCoordinator {
       let next = 0;
       const publishIfChanged = (): void => {
         const projected = this.facts.resolvedFor(this.sessionIds());
-        const changed = this.last === undefined || !sameConversationFacts(this.last, projected);
+        const changed = changedConversationFacts(this.last, projected);
         this.last = projected;
-        if (changed) this.options.onChange();
+        if (changed.length > 0) this.options.onChange(changed);
       };
       const worker = async (): Promise<void> => {
         while (!this.disposed) {

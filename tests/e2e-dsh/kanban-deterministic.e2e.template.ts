@@ -227,6 +227,64 @@ it('recovers an entry before source capture and a held terminal result without r
   expect((await readFile(join(scaffold.workspaceCwd, '.recovery-runs'), 'utf8')).trim()).toBe('run');
 });
 
+it('holds a real saved result for a running background job and delivers it after the job is cancelled from the drawer', { timeout: 180000 }, async () => {
+  const fixture = await mkdtemp(join(tmpdir(), 'kanban-deterministic-hold-'));
+  onTestFinished(async () => { await rm(fixture, { recursive: true, force: true }); });
+  const overlay = join(fixture, 'native-test-policy.yaml');
+  await writeFile(overlay, '- id: sandbox-policy\n  config:\n    mode: danger-full-access\n    workspaceRoot: !!js process.cwd()\n- id: permission\n  config:\n    defaultPreset: danger-full-access\n');
+  const scaffold = await launchWebScaffold({ profile: { packages: [{ dir: ROOT, enabled: true }] }, extraOverlayPath: overlay });
+  onTestFinished(async () => { await scaffold.close(); });
+  const controller = () => scaffold.ctx.get('kanbanController') as any;
+  const snapshot = async () => unwrap(await controller().snapshot({}));
+  const command = async (value: any) => unwrap(await controller().command(value));
+  const state = await snapshot(); const hubId = state.state.hubs[0].id; const boardId = state.state.hubs[0].boards[0].id;
+  await command({ type: 'project.save', hubId, project: { name: 'Held delivery', projectPath: scaffold.workspaceCwd, projectKey: 'held-delivery' } });
+  const projectId = (await snapshot()).state.hubs[0].projects[0].id;
+  const code = 'printf "run\\n" >> .held-runs; while [ ! -f .held-ready ]; do sleep 0.05; done; printf \'%s\\n\' \'{"exit":"done","message":"Held result"}\'';
+  const yaml = 'name: Held delivery\ninitial_column: wait\ncolumns:\n  - id: wait\n    label: Waiting\n    deterministic:\n      language: bash\n      code: ' + JSON.stringify(code) + '\n      exits: {done: done}\n  - {id: done, label: Done}\n';
+  await command({ type: 'board.workflow.save', hubId, boardId, yaml });
+  await command({ type: 'task.create', hubId, boardId, projectId, title: 'Held result check', description: '', autoMode: false });
+  const task = async () => (await snapshot()).state.hubs[0].tasks.find((value: any) => value.title === 'Held result check');
+  const summary = async () => { const value = await task(); return (await snapshot()).deterministic?.[value.id]; };
+  const taskId = (await task()).id;
+  await expect.poll(async () => (await summary())?.phase).toBe('awaiting-trust');
+  const review = unwrap(await controller().deterministicReview({ taskId }));
+  await command({ type: 'task.deterministicApprove', taskId, executionId: review.executionId, fingerprint: review.fingerprint });
+  await expect.poll(async () => { try { return (await readFile(join(scaffold.workspaceCwd, '.held-runs'), 'utf8')).trim(); } catch { return ''; } }).toBe('run');
+  const created = await command({ type: 'conversation.create', taskId });
+  const sessionId = String(created.commandReceipt.id);
+  const jobs = scaffold.ctx.get('jobs') as any;
+  expect(jobs, 'The isolated composition must expose the public job registry.').toBeDefined();
+  let settle!: (outcome: { status: 'killed'; detail?: string }) => void;
+  const done = new Promise<{ status: 'killed'; detail?: string }>(resolve => { settle = resolve; });
+  const jobId = jobs.start({ kind: 'bash', label: 'find the home directory hold fixture', owner: SessionId(sessionId), run: () => ({ cancel: () => settle({ status: 'killed', detail: 'cancelled by the Kanban hold test' }), done }) });
+  await writeFile(join(scaffold.workspaceCwd, '.held-ready'), 'ready');
+  await expect.poll(async () => (await summary())?.hold?.code).toBe('background-work');
+  const held = await summary();
+  expect(held.phase).toBe('result-ready');
+  expect(held.hold.background).toEqual([expect.objectContaining({ kind: 'job', id: jobId, label: 'find the home directory hold fixture' })]);
+  expect((await task()).columnId).toBe('wait');
+  expect((await readFile(join(scaffold.workspaceCwd, '.held-runs'), 'utf8')).trim()).toBe('run');
+  const browser = await chromium.launch();
+  try {
+    const page = await newEnglishPage(browser);
+    await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' });
+    await page.getByRole('button', { name: 'Kanban', exact: true }).click();
+    await page.getByRole('button', { name: 'Open task Held result check' }).click();
+    const notice = page.locator('.kb-drawer .kb-hold');
+    await expect(notice).toBeVisible();
+    await expect(notice).toContainText('Waiting for background work to finish.');
+    await expect(notice).toContainText('find the home directory hold fixture');
+    await mkdir(join(ROOT, '.verification'), { recursive: true });
+    await page.screenshot({ path: join(ROOT, '.verification/deterministic-hold-e2e.png') });
+  } finally { await browser.close(); }
+  await command({ type: 'task.deterministicCancelJob', taskId, jobId });
+  expect(jobs.get(jobId, SessionId(sessionId)).status).toBe('killed');
+  await expect.poll(async () => (await task()).columnId).toBe('done');
+  expect((await summary())).toBeUndefined();
+  expect((await readFile(join(scaffold.workspaceCwd, '.held-runs'), 'utf8')).trim()).toBe('run');
+});
+
 it('draws the deterministic routing without an exit label and opens its stage editor only while unlocked', { timeout: 120000 }, async () => {
   const scaffold = await launchWebScaffold({ profile: { packages: [{ dir: ROOT, enabled: true }] } });
   const browserPromise = chromium.launch();

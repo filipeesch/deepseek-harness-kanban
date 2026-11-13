@@ -6,7 +6,16 @@ import { failure } from './ports.js';
 import { SOURCE_MAX_BYTES } from './safety.js';
 
 export function optionalService<T>(context: unknown, name: string): T | undefined {
-  try { return (context as Record<string, T> | undefined)?.[name]; } catch { return undefined; }
+  try {
+    const value = (context as Record<string, T> | undefined)?.[name];
+    if (value !== undefined) return value;
+  } catch { /* the property face is unavailable; try the registry */ }
+  // A scoped context may not expose every service as a property; the registry
+  // face resolves the same service for the plugin's own fiber.
+  try {
+    const get = (context as { get?: (key: string) => unknown } | undefined)?.get;
+    return typeof get === 'function' ? get.call(context, name) as T | undefined : undefined;
+  } catch { return undefined; }
 }
 /**
  * A platform whose only backend reports partial enforcement gets a diagnostic that

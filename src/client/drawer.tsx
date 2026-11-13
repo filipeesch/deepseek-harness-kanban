@@ -17,6 +17,7 @@ import type { AutoRunController } from './auto-run.js';
 import { DrawerAutoRunNotice } from './auto-run-view.js';
 import { autoModeView } from './auto-mode.js';
 import { ScriptPanel } from './deterministic-panel.js';
+import { DeterministicHoldNotice } from './deterministic-hold-notice.js';
 import { useScriptSummary } from './deterministic-context.js';
 import { ownedScript, scriptActive } from './deterministic-view.js';
 import { DrawerHeader } from './drawer-header.js';
@@ -131,6 +132,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
       {task.pendingTransition && <PendingTransitionStatus task={task} run={run} columnName={state.workflow.columns.find(column => column.id === task.pendingTransition?.columnId)?.name ?? task.pendingTransition?.columnId ?? ''} />}
     </div>}
     {stageNotice !== null && <div className="kb-status-stack"><div className="kb-error" role="alert"><strong>The recorded transition is no longer valid</strong><span>{stageNotice}</span></div></div>}
+    {script?.hold && <div className="kb-status-stack"><DeterministicHoldNotice task={task} hold={script.hold} run={run} /></div>}
     <ScriptPanel task={task} column={state.workflow.columns.find(column => column.id === task.columnId)} projectName={projectName} api={api} run={run} />
     {autoRun && !script && <DrawerAutoRunNotice task={task} controller={autoRun} columns={state.workflow.columns} sessionTitles={sessionTitles} />}
     <section className={'kb-drawer-panel ' + (section === 'Conversations' ? 'kb-chat-panel' : '')} role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>

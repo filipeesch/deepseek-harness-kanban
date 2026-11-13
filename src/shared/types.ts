@@ -444,7 +444,11 @@ export const EMPTY_ATTENTION: Attention = { running: false, background: [], unre
 export interface ProjectInput { id?: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string; projectKey?: string }
 export type Command =
   | { type: 'task.deterministicPlay'; taskId: string }
+  /** Start a new execution of the current entry; the only action that captures and runs again. */
+  | { type: 'task.deterministicRunAgain'; taskId: string; entryId: string }
   | { type: 'task.deterministicStop'; taskId: string; executionId?: string }
+  /** Cancel the background job named by the current delivery hold. */
+  | { type: 'task.deterministicCancelJob'; taskId: string; jobId: string }
   | { type: 'task.deterministicApprove'; taskId: string; executionId: string; fingerprint: string }
   | { type: 'task.deterministicVariable'; taskId: string; projectId: string; stageIdentity: string; name: string; value?: string }
   | { type: 'task.deterministicRetryDelivery'; taskId: string; entryId: string; executionId: string }

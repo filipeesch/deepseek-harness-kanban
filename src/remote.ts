@@ -8,7 +8,8 @@ import { newTaskSchema } from './shared/task-creation.js';
 import type { Command, DriveBrowseView, DriveDiscoveryView, HostSnapshot, HubSharingView, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionDraftContent, QuestionFeedFrame, QuestionRound, ModelCatalog, SharingAuthView, SharingChangeSummary, SharingCommand, SnapshotRequest, StoredQuestionDraft, WorktreeDefaults } from './shared/types.js';
 import { SHARING_STORAGES } from './shared/types.js';
 import type { DeterministicReview, DeterministicSummary } from './shared/deterministic.js';
-import { DETERMINISTIC_PHASES } from './shared/deterministic.js';
+import { DETERMINISTIC_HOLD_CODES, DETERMINISTIC_PHASES } from './shared/deterministic.js';
+import { PENDING_USER_WORK_KINDS } from './domain/pending-user-work.js';
 import { deterministicDefinitionSchema } from './domain/deterministic-definition.js';
 export const PACKAGE_NAME = 'dsh-kanban';
 const id=z.string().min(1).max(200);
@@ -63,6 +64,8 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('task.edit'),hubId,taskId:id,title:z.string().optional(),description:z.string().optional(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('task.move'),hubId,taskId:id,columnId:id,beforeTaskId:id.nullable().optional(),overrideTransition:z.boolean().optional()}).strict(),
  z.object({type:z.literal('task.deterministicPlay'),taskId:id}).strict(),
+ z.object({type:z.literal('task.deterministicRunAgain'),taskId:id,entryId:id}).strict(),
+ z.object({type:z.literal('task.deterministicCancelJob'),taskId:id,jobId:id}).strict(),
  z.object({type:z.literal('task.deterministicStop'),taskId:id,executionId:id.optional()}).strict(),
  z.object({type:z.literal('task.deterministicApprove'),taskId:id,executionId:id,fingerprint:z.string().min(1).max(256)}).strict(),
  z.object({type:z.literal('task.deterministicVariable'),taskId:id,projectId:id,stageIdentity:id,name:z.string().min(1).max(200),value:z.string().max(65536).optional()}).strict(),
@@ -141,7 +144,8 @@ export const LocalDriveResultSchema:z.ZodType<LocalDriveResult>=z.discriminatedU
  z.object({action:z.literal('list'),page:DriveBrowseViewSchema}).strict(),
 ]);
 export const SnapshotRequestSchema:z.ZodType<SnapshotRequest>=z.object({refreshSessionIds:z.array(id).optional(),priorityTaskIds:z.array(id).optional(),refreshAuth:z.boolean().optional()}).strict();
-export const DeterministicSummarySchema:z.ZodType<DeterministicSummary>=z.object({entryId:id,executionId:id,phase:z.enum(DETERMINISTIC_PHASES),startedAt:z.string(),attempt:z.number().int().nonnegative(),restartCount:z.number().int().nonnegative(),deliveryStatus:z.enum(['pending','accepted','failed']).optional(),error:ProblemSchema.optional(),exit:z.string().optional(),message:z.string().optional(),savedVersionChanged:z.boolean().optional(),fingerprint:z.string().optional(),parameters:z.record(z.string().min(1).max(64),z.string().min(1).max(4096)).optional()}).strict();
+const deterministicHoldSchema=z.object({code:z.enum(DETERMINISTIC_HOLD_CODES),at:z.string(),background:z.array(z.object({kind:z.enum(['job','schedule']),id:id.optional(),label:z.string().min(1).max(200)}).strict()).max(3).optional(),pending:z.array(z.enum(PENDING_USER_WORK_KINDS)).max(PENDING_USER_WORK_KINDS.length).optional()}).strict();
+export const DeterministicSummarySchema:z.ZodType<DeterministicSummary>=z.object({entryId:id,executionId:id,phase:z.enum(DETERMINISTIC_PHASES),startedAt:z.string(),attempt:z.number().int().nonnegative(),restartCount:z.number().int().nonnegative(),deliveryStatus:z.enum(['pending','accepted','failed']).optional(),error:ProblemSchema.optional(),exit:z.string().optional(),message:z.string().optional(),savedVersionChanged:z.boolean().optional(),fingerprint:z.string().optional(),parameters:z.record(z.string().min(1).max(64),z.string().min(1).max(4096)).optional(),hold:deterministicHoldSchema.optional()}).strict();
 export const DeterministicReviewSchema:z.ZodType<DeterministicReview>=z.object({executionId:id,fingerprint:z.string(),code:z.string(),language:z.enum(['bash','typescript']),directory:z.enum(['task','project']),exits:z.record(z.string(),id),env:z.array(z.string()),params:z.array(z.object({name:z.string(),description:z.string().optional()}).strict()),variables:z.array(z.object({name:z.string(),configured:z.boolean()}).strict()),source:z.object({kind:z.enum(['inline','file']),path:z.string().optional()}).strict().optional(),executionDirectory:z.string().optional()}).strict();
 export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note','schedule']),id,model:z.object({requested:modelSelection,applied:z.boolean(),reason:z.enum(['unavailable','unsupported','failed']).optional(),inUse:modelSelection.optional()}).strict().optional()}).strict().optional(),state:KanbanStateSchema.optional(),stateRevision:z.number().int().nonnegative(),conversations:z.record(z.string(),ConversationFactsSchema),sharing:z.record(z.string(),HubSharingViewSchema),sharingAuth:SharingAuthViewSchema.optional(),scheduleRuntime:z.record(z.string(),z.record(z.string(),scheduleRuntimeView)).optional(),deterministic:z.record(z.string(),DeterministicSummarySchema).optional(),retainedCheckouts:z.array(z.object({path:z.string(),projectId:id,taskTitle:z.string(),reason:z.enum(['folder','unresolved'])}).strict()).optional(),sequence:z.number().int().nonnegative()}).strict();
 export const SharingCommandSchema:z.ZodType<SharingCommand>=z.discriminatedUnion('type',[
