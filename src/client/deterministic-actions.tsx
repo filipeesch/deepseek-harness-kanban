@@ -22,17 +22,19 @@ export function ScriptActions({ task, column, summary, run, compact = false, onR
   const busy = action.pending || stopping;
   const play = !stoppable && !stopping;
   const className = compact ? 'kb-button kb-card-action' : 'kb-button';
-  // A failed saved delivery keeps its result identity; rerunning is a separate
-  // action, so its accessible name must match the visible "Run again" label.
-  const deliveryFailed = owned?.deliveryStatus === 'failed';
-  const label = stoppable ? 'Stop deterministic script' : deliveryFailed ? 'Run again — deterministic script' : 'Play deterministic script';
-  const disabled = busy || (play && (!column?.deterministic || Boolean(task.operation || task.pendingTransition)));
+  // A saved result is delivered, never re-run: Play keeps its result identity and the
+  // explicit Run again action is the only path that captures and executes again.
+  const saved = owned !== undefined && owned.exit !== undefined && owned.deliveryStatus !== 'accepted';
+  const canRunAgain = saved && owned !== undefined && !stoppable && !stopping;
+  const label = stoppable ? 'Stop deterministic script' : saved ? 'Deliver saved result — deterministic script' : 'Play deterministic script';
+  const blockedByContext = Boolean(task.operation || task.pendingTransition);
+  const disabled = busy || (!stoppable && ((!saved && !column?.deterministic) || blockedByContext));
 
   return <div className={compact ? 'kb-script-actions kb-card-run' : 'kb-script-actions'} onPointerDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
-    <button type="button" className={className} aria-label={label} title={action.error?.message ?? (play && !column?.deterministic ? 'Configure a deterministic script or change stage before Play.' : label)} aria-busy={busy || undefined} disabled={disabled} onClick={() => void action.execute(stoppable ? { type: 'task.deterministicStop', taskId: task.id, executionId: owned!.executionId } : { type: 'task.deterministicPlay', taskId: task.id })}>
-      {busy ? '…' : stoppable ? compact ? <span aria-hidden="true">■</span> : 'Stop' : compact ? <PlayIcon size={15} /> : deliveryFailed ? 'Run again' : 'Play'}
+    <button type="button" className={className} aria-label={label} title={action.error?.message ?? (play && !saved && !column?.deterministic ? 'Configure a deterministic script or change stage before Play.' : label)} aria-busy={busy || undefined} disabled={disabled} onClick={() => void action.execute(stoppable ? { type: 'task.deterministicStop', taskId: task.id, executionId: owned!.executionId } : { type: 'task.deterministicPlay', taskId: task.id })}>
+      {busy ? '…' : stoppable ? compact ? <span aria-hidden="true">■</span> : 'Stop' : compact ? <PlayIcon size={15} /> : saved ? 'Deliver' : 'Play'}
     </button>
-    {deliveryFailed && <button type="button" className={className} aria-label="Retry delivery — deterministic result" title={action.error?.message ?? 'Deliver the saved result again without running the script.'} aria-busy={busy || undefined} disabled={busy} onClick={() => void action.execute({ type: 'task.deterministicRetryDelivery', taskId: task.id, entryId: owned!.entryId, executionId: owned!.executionId })}>{compact ? <span aria-hidden="true">↻</span> : 'Retry delivery'}</button>}
+    {canRunAgain && !compact && <button type="button" className={className} aria-label="Run again — deterministic script" title={action.error?.message ?? 'Start a new execution of this entry without using the saved result.'} aria-busy={busy || undefined} disabled={busy} onClick={() => void action.execute({ type: 'task.deterministicRunAgain', taskId: task.id, entryId: owned!.entryId })}>{compact ? <span aria-hidden="true">↻</span> : 'Run again'}</button>}
     {editableParameters && <button type="button" className={className} aria-label="Edit deterministic script parameters" title="Edit the values this stage entry passes to the script" disabled={busy} onClick={() => setEditingParameters(true)}>{compact ? <span aria-hidden="true">⚙</span> : 'Edit parameters'}</button>}
     {onReview && <button type="button" className={className} onClick={onReview} aria-label="Review deterministic script and local settings">{compact ? '⋯' : 'Review / local settings'}</button>}
     {editingParameters && owned && <ScriptParametersDialog key={owned.entryId} task={task} column={column} summary={owned} run={run} onClose={() => setEditingParameters(false)} />}

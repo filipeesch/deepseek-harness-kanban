@@ -20,7 +20,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { deterministic?: import('../../src/shared/deterministic.js').DeterministicPhase; deterministicDelivery?: 'failed'; deterministicRefusal?: boolean; deterministicFailure?: 'infrastructure' | 'diagnostic'; stageUpdateFailure?: boolean; history?: 'short' | 'long'; recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; declared?: boolean; declaredFailed?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; agentPause?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string; reason: 'folder' | 'unresolved' }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean;
+export interface HarnessOptions { deterministic?: import('../../src/shared/deterministic.js').DeterministicPhase; deterministicDelivery?: 'failed'; deterministicRefusal?: boolean; deterministicFailure?: 'infrastructure' | 'diagnostic'; deterministicHold?: 'job' | 'pending'; stageUpdateFailure?: boolean; history?: 'short' | 'long'; recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; declared?: boolean; declaredFailed?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; agentPause?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string; reason: 'folder' | 'unresolved' }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean;
   /** Names the board's default model and what its conversations report back when it cannot be applied. */
   boardModel?: { model: ModelSelection; fallback?: ConversationModelOutcome }; }
 
@@ -206,7 +206,7 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
         ? { code: 'BASH_PROTOCOL', message: 'Infrastructure failure: The isolated Bash guard could not prove that the command process tree was stopped. (2 attempts) Detail: the task History.', details: { origin: 'infrastructure', attempts: [1, 2].map(attempt => ({ attempt, code: 'BASH_PROTOCOL', guard: diagnosticGuard })), guard: diagnosticGuard, cause: { code: 'TYPESCRIPT_EXCEPTION', message: 'Error: the guard left no result' } } }
         : undefined;
     if (failure !== undefined) scriptTask.history = [{ kind: 'deterministic-execution', at: now, columnId: 'explore', executionId: 'script-run', outcome: 'failed', error: failure }];
-    raw.deterministic = { 'long-0': { entryId: 'script-entry', executionId: 'script-run', phase: options.deterministic, startedAt: now, attempt: 1, restartCount: 1, fingerprint: 'synthetic-captured-version', savedVersionChanged: false, parameters: { pipeline: 'ci-main' }, ...(options.deterministicDelivery === undefined ? {} : { deliveryStatus: options.deterministicDelivery }), ...(failure === undefined ? {} : { error: failure }), ...(failure !== undefined || !(options.deterministic === 'failed' && options.deterministicRefusal) ? {} : { error: { code: 'PARAMETERS_REQUIRED', message: 'Missing required parameter: pipeline. Edit the entry parameters before Play.' } }) } };
+    raw.deterministic = { 'long-0': { entryId: 'script-entry', executionId: 'script-run', phase: options.deterministic, startedAt: now, attempt: 1, restartCount: 1, fingerprint: 'synthetic-captured-version', savedVersionChanged: false, parameters: { pipeline: 'ci-main' }, ...(options.deterministicDelivery === undefined ? {} : { deliveryStatus: options.deterministicDelivery }), ...(options.deterministic === 'result-ready' && options.deterministicHold !== undefined ? { hold: options.deterministicHold === 'job' ? { code: 'background-work' as const, at: now, background: [{ kind: 'job' as const, id: 'bash-1', label: 'find the home directory' }] } : { code: 'pending-user-work' as const, at: now, pending: ['approval' as const] } } : {}), ...(options.deterministicDelivery !== undefined || options.deterministic === 'result-ready' ? { exit: 'passed', message: 'CI passed' } : {}), ...(failure === undefined ? {} : { error: failure }), ...(failure !== undefined || !(options.deterministic === 'failed' && options.deterministicRefusal) ? {} : { error: { code: 'PARAMETERS_REQUIRED', message: 'Missing required parameter: pipeline. Edit the entry parameters before Play.' } }) } };
   }
   const configured = new Set<string>();
   let value = withLegacy(raw);
@@ -262,9 +262,19 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
       if (command.type === 'task.deterministicVariable') { if (command.value === undefined) configured.delete(command.name); else configured.add(command.name); }
       if (command.type === 'task.deterministicParameters') { const summary = value.deterministic?.[command.taskId]; if (summary) summary.parameters = structuredClone(command.values); }
       if (command.type === 'task.deterministicRetryDelivery') { const summary = value.deterministic?.[command.taskId]; if (summary) { summary.phase = 'result-ready'; summary.deliveryStatus = 'pending'; } }
+      if (command.type === 'task.deterministicCancelJob') { const summary = value.deterministic?.[command.taskId]; if (summary) { delete summary.hold; } }
+      if (command.type === 'task.deterministicRunAgain') {
+        const summary = value.deterministic?.[command.taskId];
+        if (summary) { summary.phase = 'active'; summary.executionId = 'script-run-again'; delete summary.error; delete summary.exit; delete summary.message; delete summary.deliveryStatus; delete summary.hold; }
+      }
       if (command.type === 'task.deterministicStop' || command.type === 'task.deterministicPlay' || command.type === 'task.deterministicApprove') {
         const summary = value.deterministic?.[command.taskId];
-        if (summary) { summary.phase = command.type === 'task.deterministicStop' ? 'stopped' : 'active'; if (command.type === 'task.deterministicPlay') { summary.executionId = 'script-run-play'; delete summary.error; } }
+        if (summary) {
+          const delivers = command.type === 'task.deterministicPlay' && summary.exit !== undefined && summary.deliveryStatus !== 'accepted';
+          summary.phase = command.type === 'task.deterministicStop' ? 'stopped' : delivers ? 'result-ready' : 'active';
+          if (delivers) { summary.deliveryStatus = 'pending'; delete summary.hold; }
+          if (command.type === 'task.deterministicPlay' && !delivers) { summary.executionId = 'script-run-play'; delete summary.error; }
+        }
       }
       const firstHub = value.state.hubs[0]!; const firstBoard = firstHub.boards[0]!;
       let receipt: KanbanSnapshot['commandReceipt'];

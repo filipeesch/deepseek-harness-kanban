@@ -3,9 +3,11 @@ import { HubRepository } from '../../src/host/hub-repository.js';
 import { createDeterministicRouter } from '../../src/host/deterministic-routing.js';
 import type { SupervisorRoute } from '../../src/host/deterministic-supervisor.js';
 import { NO_PENDING_USER_WORK, type HubState, type HubTask, type PendingUserWork } from '../../src/shared/types.js';
+import type { ConversationIdleReport } from '../../src/shared/conversation-idle.js';
 import { MemoryHubStorage, operationDeps, sampleHub } from '../domain/hub-helpers.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import { placeTask } from '../../src/domain/hub-operations.js';
+import { KanbanError } from '../../src/shared/errors.js';
 
 const at = '2026-11-12T07:00:00.000Z';
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(yes => { resolve = yes; }); return { promise, resolve }; }
@@ -25,9 +27,18 @@ async function fixture(kind: 'manual' | 'agent' | 'script' = 'manual') {
   const request: SupervisorRoute = { located: hubs.requireTask('task'), control: structuredClone(task.deterministic!), capture, result, signal: new AbortController().signal };
   let idle = true; let pending: PendingUserWork = NO_PENDING_USER_WORK; let reserved = false; let notified = 0;
   let idleHook: (() => Promise<void>) | undefined; let pendingHook: (() => Promise<void>) | undefined;
-  const route = createDeterministicRouter({ hubs, sessions: { isIdle: async () => { await idleHook?.(); return idle; } }, pending: async () => { await pendingHook?.(); return pending; }, reserved: () => reserved, notify: () => { notified++; }, now: () => at });
+  let report: ConversationIdleReport | undefined; let reportError: unknown; let pendingError: unknown;
+  const route = createDeterministicRouter({ hubs,
+    sessions: {
+      isIdle: async () => { await idleHook?.(); return idle; },
+      idleReport: async () => { await idleHook?.(); if (reportError !== undefined) throw reportError; return report ?? { idle, blockers: [] }; },
+    },
+    pending: async () => { await pendingHook?.(); if (pendingError !== undefined) throw pendingError; return pending; },
+    reserved: () => reserved, notify: () => { notified++; }, now: () => at });
   return { hubs, storage, request, route, task: () => hubs.requireTask('task').task,
-    edit: (change: (hub: HubState) => void) => hubs.transact('hub', change), idle(value: boolean) { idle = value; }, pending(value: PendingUserWork) { pending = value; }, reserved(value: boolean) { reserved = value; }, notified: () => notified,
+    edit: (change: (hub: HubState) => void) => hubs.transact('hub', change),
+    idle(value: boolean) { idle = value; }, pending(value: PendingUserWork) { pending = value; }, reserved(value: boolean) { reserved = value; }, notified: () => notified,
+    report(value: ConversationIdleReport) { report = value; }, reportError(value: unknown) { reportError = value; }, pendingError(value: unknown) { pendingError = value; },
     idleHook(value: () => Promise<void>) { idleHook = value; }, pendingHook(value: () => Promise<void>) { pendingHook = value; }, close: () => hubs.close() };
 }
 
@@ -72,12 +83,57 @@ describe('deterministic saved-result routing', () => {
     const f = await fixture(); await f.edit(hub => { hub.tasks[0]!.autoMode = { enabled: false }; const board = hub.boards[0]!; board.workflowYaml = board.workflowYaml.replace('deterministic: {language: typescript, code: "return input", exits: {passed: review, error: repair}}', 'on_enter_prompt: Saved mode changed'); board.workflow = parseWorkflow(board.workflowYaml); });
     expect(await f.route(f.request)).toEqual({ status: 'accepted' }); expect(f.task().autoMode?.enabled).toBe(false); expect(f.task().recordedTransition).toBeUndefined(); await f.close();
   });
-  it.each(['native-question', 'approval', 'queued-prompt'] as const)('holds for pending %s and retains result for a later admission', async kind => {
-    const f = await fixture(); f.pending({ kinds: [kind], queuedPrompts: kind === 'queued-prompt' ? 1 : 0 }); expect(await f.route(f.request)).toEqual({ status: 'held' }); expect(f.task().deterministic?.result?.id).toBe('result');
+  it.each(['native-question', 'approval', 'queued-prompt'] as const)('holds for pending %s, names the work and retains the result for a later admission', async kind => {
+    const f = await fixture(); f.pending({ kinds: [kind], queuedPrompts: kind === 'queued-prompt' ? 1 : 0 });
+    expect(await f.route(f.request)).toMatchObject({ status: 'held', hold: { code: 'pending-user-work', at, pending: [kind] } }); expect(f.task().deterministic?.result?.id).toBe('result');
     f.pending(NO_PENDING_USER_WORK); expect(await f.route(f.request)).toEqual({ status: 'accepted' }); await f.close();
   });
-  it('holds when task context is reserved', async () => { const f = await fixture(); f.reserved(true); expect(await f.route(f.request)).toEqual({ status: 'held' }); expect(f.task().columnId).toBe('wait'); await f.close(); });
-  it('holds for a running task conversation and does not inspect closed conversations', async () => { const f = await fixture(); await f.edit(hub => { hub.tasks[0]!.sessionIds = ['session']; }); f.idle(false); expect(await f.route(f.request)).toEqual({ status: 'held' }); await f.edit(hub => { hub.tasks[0]!.closedSessionIds = ['session']; }); expect(await f.route(f.request)).toEqual({ status: 'accepted' }); await f.close(); });
+  it('holds when task context is reserved and names the reservation', async () => {
+    const f = await fixture(); f.reserved(true);
+    expect(await f.route(f.request)).toMatchObject({ status: 'held', hold: { code: 'context-reserved', at } }); expect(f.task().columnId).toBe('wait'); await f.close();
+  });
+  it('holds for a running task conversation and does not inspect closed conversations', async () => {
+    const f = await fixture(); await f.edit(hub => { hub.tasks[0]!.sessionIds = ['session']; }); f.idle(false);
+    expect(await f.route(f.request)).toMatchObject({ status: 'held', hold: { code: 'conversation-active', at } });
+    await f.edit(hub => { hub.tasks[0]!.closedSessionIds = ['session']; }); expect(await f.route(f.request)).toEqual({ status: 'accepted' }); await f.close();
+  });
+  it('names the background job that refuses delivery and keeps its identity for the next admission', async () => {
+    const f = await fixture(); await f.edit(hub => { hub.tasks[0]!.sessionIds = ['session']; });
+    f.report({ idle: false, blockers: [{ family: 'job', id: 'bash-1', label: 'find the home directory' }, { family: 'job', id: 'bash-2', label: 'second' }] });
+    expect(await f.route(f.request)).toMatchObject({ status: 'held', hold: { code: 'background-work', at, background: [
+      { kind: 'job', id: 'bash-1', label: 'find the home directory' }, { kind: 'job', id: 'bash-2', label: 'second' },
+    ] } });
+    expect(f.task().columnId).toBe('wait');
+    f.report({ idle: true, blockers: [] });
+    expect(await f.route(f.request)).toEqual({ status: 'accepted' });
+    await f.close();
+  });
+  it('records an unreadable conversation or pending read instead of a silent refusal', async () => {
+    const f = await fixture(); await f.edit(hub => { hub.tasks[0]!.sessionIds = ['session']; });
+    f.reportError(new KanbanError('SESSION_STATE_UNAVAILABLE', 'Exact projections are unavailable.'));
+    expect(await f.route(f.request)).toMatchObject({ status: 'held', hold: { code: 'conversation-unreadable', at } });
+    expect(f.task().columnId).toBe('wait');
+    f.reportError(undefined);
+    f.pendingError(new KanbanError('SESSION_STATE_UNAVAILABLE', 'Exact projections are unavailable.'));
+    expect(await f.route(f.request)).toMatchObject({ status: 'held', hold: { code: 'conversation-unreadable', at } });
+    await f.close();
+  });
+  it('stops a request aborted during an awaited conversation read', async () => {
+    const f = await fixture(); await f.edit(hub => { hub.tasks[0]!.sessionIds = ['session']; });
+    const entered = deferred(); const gate = deferred(); f.idleHook(async () => { entered.resolve(); await gate.promise; });
+    const controller = new AbortController(); const routing = f.route({ ...f.request, signal: controller.signal });
+    await entered.promise; controller.abort(); gate.resolve();
+    expect(await routing).toEqual({ status: 'held' });
+    expect(f.task().columnId).toBe('wait'); expect(f.task().deterministicHandoff).toBeUndefined(); await f.close();
+  });
+  it('reads pending work after the awaited conversation reads so work admitted during them is seen', async () => {
+    const f = await fixture(); await f.edit(hub => { hub.tasks[0]!.sessionIds = ['session']; });
+    const entered = deferred(); const gate = deferred(); f.idleHook(async () => { entered.resolve(); await gate.promise; });
+    const routing = f.route(f.request); await entered.promise;
+    f.pending({ kinds: ['approval'], queuedPrompts: 0 }); gate.resolve();
+    expect(await routing).toMatchObject({ status: 'held', hold: { code: 'pending-user-work', pending: ['approval'] } });
+    expect(f.task().columnId).toBe('wait'); await f.close();
+  });
   it.each(['idle', 'pending'] as const)('rejects move-away-and-back during the awaited %s boundary', async boundary => {
     const f = await fixture(); await f.edit(hub => { hub.tasks[0]!.sessionIds = ['session']; }); const gate = deferred(); const entered = deferred(); const hook = async () => { entered.resolve(); await gate.promise; };
     if (boundary === 'idle') f.idleHook(hook); else f.pendingHook(hook);
@@ -87,11 +143,19 @@ describe('deterministic saved-result routing', () => {
   });
   it('revalidates reservation inside the final transaction rather than only before awaited reads', async () => {
     const f = await fixture(); const gate = deferred(); const entered = deferred(); f.pendingHook(async () => { entered.resolve(); await gate.promise; }); const routing = f.route(f.request); await entered.promise;
-    f.reserved(true); gate.resolve(); expect(await routing).toEqual({ status: 'held' }); expect(f.task().columnId).toBe('wait'); await f.close();
+    f.reserved(true); gate.resolve(); expect(await routing).toMatchObject({ status: 'held', hold: { code: 'context-reserved' } }); expect(f.task().columnId).toBe('wait'); await f.close();
   });
-  it.each(['executionId', 'attemptId'] as const)('refuses stale %s and a stopped authority', async key => { const f = await fixture(); await f.edit(hub => { hub.tasks[0]!.deterministic![key] = 'replacement'; }); expect(await f.route(f.request)).toEqual({ status: 'held' }); expect(f.task().columnId).toBe('wait'); await f.close(); });
-  it('refuses changed result identity and does not use an altered request target', async () => { const f = await fixture(); f.request.result = { ...f.request.result, id: 'forged' }; expect(await f.route(f.request)).toEqual({ status: 'held' }); expect(f.task().columnId).toBe('wait'); await f.close(); });
-  it('keeps source control untouched when transactional storage fails, then retries the same receipt', async () => { const f = await fixture(); f.storage.failSave = true; await expect(f.route(f.request)).rejects.toMatchObject({ code: 'STORAGE_SAVE_FAILED' }); expect(f.task().deterministic?.result?.id).toBe('result'); expect(f.task().columnId).toBe('wait'); f.storage.failSave = false; expect(await f.route(f.request)).toEqual({ status: 'accepted' }); await f.close(); });
+  it.each(['executionId', 'attemptId'] as const)('refuses stale %s and a stopped authority', async key => {
+    const f = await fixture(); await f.edit(hub => { hub.tasks[0]!.deterministic![key] = 'replacement'; });
+    expect(await f.route(f.request)).toEqual({ status: 'held' }); expect(f.task().columnId).toBe('wait'); await f.close();
+  });
+  it('refuses changed result identity and does not use an altered request target', async () => {
+    const f = await fixture(); f.request.result = { ...f.request.result, id: 'forged' };
+    expect(await f.route(f.request)).toEqual({ status: 'held' }); expect(f.task().columnId).toBe('wait'); await f.close();
+  });
+  it('keeps source control untouched when transactional storage fails, then retries the same receipt', async () => {
+    const f = await fixture(); f.storage.failSave = true; await expect(f.route(f.request)).rejects.toMatchObject({ code: 'STORAGE_SAVE_FAILED' }); expect(f.task().deterministic?.result?.id).toBe('result'); expect(f.task().columnId).toBe('wait'); f.storage.failSave = false; expect(await f.route(f.request)).toEqual({ status: 'accepted' }); await f.close();
+  });
   it('persists consumed source and new destination handoff together through repository reopen, then rejects duplicate routing', async () => {
     const f = await fixture('script'); expect(await f.route(f.request)).toEqual({ status: 'accepted' }); const entry = f.task().stageEntry!.id; await f.close();
     const reopened = await HubRepository.open(f.storage, operationDeps()); const recovered = reopened.requireTask('task').task; expect(recovered.stageEntry!.id).toBe(entry); expect(recovered.deterministicHandoff?.id).toBe('delivery'); expect(recovered.deterministic?.executionId).not.toBe('execution');

@@ -7,6 +7,7 @@ import type { BoardState, ConversationFacts, CreateWorktree, GitProject, HubStat
 import type { LocatedTask } from '../../src/host/hub-repository.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import type { HubStorage, SessionPort, StageInstructionDelivery, GitPort, GitRepository, GitTree, WorkspacePort, WorkspaceInfo, WorkspaceEnsureOptions, ProjectProbe } from '../../src/shared/ports.js';
+import type { ConversationIdleReport } from '../../src/shared/conversation-idle.js';
 import type { BoardRevisionPort } from '../../src/host/board-administration.js';
 import { KanbanError } from '../../src/shared/errors.js';
 import { isGitProject } from '../../src/shared/project.js';
@@ -42,7 +43,7 @@ export class MemoryHubStorage implements HubStorage {
 /** @deprecated Use MemoryHubStorage. Kept for legacy migration tests. */
 export class MemoryStorage {value:BoardState|null=null;async load(){return structuredClone(this.value);}async save(value:BoardState){this.value=structuredClone(value);}}
 export class TestSessions implements SessionPort {
- dirs=new Map<string,string>();lineage=new Map<string,{parentSessionId?:string;origin?:'subagent'}>();workspaceIds=new Map<string,string|undefined>();busy=new Set<string>();awaiting=new Set<string>();approvals=new Set<string>();queued=new Set<string>();settled=new Map<string,SettledTurn>();sent:Array<{id:string;text:string;requestId?:string;kind:'prompt'|'stage-instruction';summary?:string}>=[];archived:string[]=[];failSend=false;private count=0;private requests=new Set<string>();
+ dirs=new Map<string,string>();lineage=new Map<string,{parentSessionId?:string;origin?:'subagent'}>();workspaceIds=new Map<string,string|undefined>();busy=new Set<string>();awaiting=new Set<string>();approvals=new Set<string>();queued=new Set<string>();settled=new Map<string,SettledTurn>();sent:Array<{id:string;text:string;requestId?:string;kind:'prompt'|'stage-instruction';summary?:string}>=[];archived:string[]=[];failSend=false;background=new Map<string,Array<{id:string;label:string}>>();settledJobs=new Set<string>();cancelled:string[]=[];private count=0;private requests=new Set<string>();
  async create(cwd:string,workspaceId?:string){const id='session-'+(++this.count);this.dirs.set(id,cwd);this.workspaceIds.set(id,workspaceId);return id;}
  async directory(id:string){const value=this.dirs.get(id);if(!value)throw new KanbanError('SESSION_NOT_FOUND','Missing test session.');return value;}
  async validateDirectory(id:string,expected:string):Promise<void>{
@@ -52,7 +53,14 @@ export class TestSessions implements SessionPort {
   if(current!==target)throw new KanbanError('CONTEXT_MISMATCH','The native conversation is not in the configured task directory.');
  }
  async setDirectory(id:string,cwd:string){if(this.busy.has(id))throw new KanbanError('SESSION_BUSY','Busy test session.');this.dirs.set(id,cwd);}
- async isIdle(id:string){return !this.busy.has(id);}
+ async isIdle(id:string){return !this.busy.has(id) && (this.background.get(id)?.length ?? 0) === 0;}
+ async idleReport(id:string):Promise<ConversationIdleReport>{const blockers:ConversationIdleReport['blockers'][number][]=[];
+  if(this.busy.has(id))blockers.push({family:'turn'});
+  for(const job of this.background.get(id)??[])blockers.push({family:'job',id:job.id,label:job.label});
+  return {idle:blockers.length===0,blockers};}
+ async cancelJob(id:string,jobId:string){const jobs=this.background.get(id)??[];const found=jobs.find(job=>job.id===jobId);
+  if(found===undefined){if(this.settledJobs.has(jobId))return 'already-finished' as const;throw new KanbanError('JOB_NOT_OWNED','The background job does not belong to this conversation.');}
+  this.background.set(id,jobs.filter(job=>job.id!==jobId));this.settledJobs.add(jobId);this.cancelled.push(jobId);return 'requested' as const;}
  async send(id:string,text:string,requestId?:string){if(this.failSend)throw new KanbanError('SEND_FAILED','Injected native admission failure.');if(requestId&&this.requests.has(requestId))return;if(requestId)this.requests.add(requestId);this.sent.push({id,text,requestId,kind:'prompt'});}
  async deliverStageInstruction(id:string,delivery:StageInstructionDelivery){if(this.failSend)throw new KanbanError('SEND_FAILED','Injected native admission failure.');if(this.requests.has(delivery.requestId))return;this.requests.add(delivery.requestId);this.sent.push({id,text:delivery.text,requestId:delivery.requestId,kind:'stage-instruction',summary:delivery.summary});}
  async archive(id:string){this.archived.push(id);}

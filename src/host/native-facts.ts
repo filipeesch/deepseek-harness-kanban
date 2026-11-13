@@ -80,7 +80,15 @@ export function inspectedApprovals(inspection: SessionEventsLike): boolean {
 }
 
 export function nativePending(projection: ProjectionLike | null | undefined, inspection: SessionEventsLike): boolean {
-  return pendingUserQuestion(projection) || inspectedApprovals(inspection);
+  return nativePendingKinds(projection, inspection).length > 0;
+}
+
+/** The pending kinds one conversation reports, so callers can name the reason without re-reading. */
+export function nativePendingKinds(projection: ProjectionLike | null | undefined, inspection: SessionEventsLike): PendingUserWorkKind[] {
+  const kinds: PendingUserWorkKind[] = [];
+  if (pendingUserQuestion(projection)) kinds.push('native-question');
+  if (inspectedApprovals(inspection)) kinds.push('approval');
+  return kinds;
 }
 
 /** A turn boundary is open until its matching `turn/end` is recorded. */

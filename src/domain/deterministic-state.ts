@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import type { Board, Column, Task, Workflow } from '../shared/types.js';
 import type { DeterministicControl, DeterministicTarget } from '../shared/deterministic.js';
-import { DETERMINISTIC_PHASES } from '../shared/deterministic.js';
+import { DETERMINISTIC_HOLD_CODES, DETERMINISTIC_PHASES } from '../shared/deterministic.js';
+import { PENDING_USER_WORK_KINDS } from './pending-user-work.js';
 import { PARAMETER_LIMITS, PARAMETER_NAME, deterministicDefinitionSchema } from './deterministic-definition.js';
 import { parameterValuesProblem } from './deterministic-parameters.js';
 import { isDomainId, isAbsolutePath } from './validation.js';
@@ -22,12 +23,18 @@ export const deterministicCaptureSchema = z.strictObject({
   executionDirectory: z.string().refine(isAbsolutePath), source: z.strictObject({ kind: z.enum(['inline', 'file']), path: z.string().optional() }),
   env: z.array(z.string()), params: z.array(z.string().regex(PARAMETER_NAME)).max(PARAMETER_LIMITS.count), exits: z.record(z.string(), deterministicTargetSchema),
 });
+/** Bounded hold facts: at most three background items with bounded labels and unique pending kinds. */
+export const deterministicHoldSchema = z.strictObject({
+  code: z.enum(DETERMINISTIC_HOLD_CODES), at: timestamp,
+  background: z.array(z.strictObject({ kind: z.enum(['job', 'schedule']), id: z.string().min(1).max(128).optional(), label: z.string().min(1).max(200) })).max(3).optional(),
+  pending: z.array(z.enum(PENDING_USER_WORK_KINDS)).max(PENDING_USER_WORK_KINDS.length).optional(),
+});
 export const deterministicResultSchema = z.strictObject({ id, exit: z.string(), message: z.string(), at: timestamp, target: deterministicTargetSchema.optional(), synthetic: z.boolean().optional(), deliveryId: id.optional(), deliveryStatus: z.enum(['pending', 'accepted', 'failed']).optional(), error: problem.optional() });
 export const deterministicControlSchema = z.strictObject({
   entryId: id, executionId: id, stageIdentity: id, definition: deterministicDefinitionSchema, targets: z.record(z.string(), deterministicTargetSchema).optional(),
   parameters: parameterValuesSchema.optional(),
   phase: z.enum(DETERMINISTIC_PHASES), startedAt: timestamp, attempt: z.number().int().nonnegative(), restartCount: z.number().int().nonnegative(),
-  attemptId: id.optional(), capture: deterministicCaptureSchema.optional(), result: deterministicResultSchema.optional(), error: problem.optional(),
+  attemptId: id.optional(), capture: deterministicCaptureSchema.optional(), result: deterministicResultSchema.optional(), error: problem.optional(), hold: deterministicHoldSchema.optional(),
 });
 export const deterministicHandoffSchema = z.strictObject({ id, entryId: id, executionId: id, fromColumnId: id, columnId: id, exit: z.string(), message: z.string(), at: timestamp, acceptedAt: timestamp.optional(), error: problem.optional(), instruction: z.string().optional(), sessionId: id.optional() });
 
