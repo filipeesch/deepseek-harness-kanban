@@ -10,6 +10,7 @@ import { creationCandidateFor, creationPreviewRoute } from '../creation-preview.
 import { authoredOffsetAt, baselineCoordinateOf, connectionLayoutOf, connectionRouteFor, withOffset, type ConnectionLayoutOverride, type LiveStageRect } from '../edge-model.js';
 import { candidateStageFor, decideEndDrop } from '../connection-target.js';
 import { stepAnchor, type ConnectionEnd, type ConnectionHandlers } from '../connection-interaction.js';
+import { editable, type ConnectionMode } from '../connection-mode.js';
 import type { CanvasConnection, ConnectionEdit } from '../canvas-types.js';
 
 /** The connection layout a gesture previews before it is committed. */
@@ -33,7 +34,7 @@ function previewPatch(values: Record<string, ConnectionPreview>, connectionId: s
 }
 
 export interface ConnectionGestureInput {
-  readonly locked: boolean;
+  readonly mode: ConnectionMode;
   readonly snap: SnapPolicy;
   /** The connections the view presents, already merged with its own overrides. */
   readonly connections: readonly CanvasConnection[];
@@ -141,7 +142,7 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
 
   const startAnchorDrag = useCallback((event: React.PointerEvent<Element>, connectionId: string, end: ConnectionEnd) => {
     const current = inputRef.current;
-    if (current.locked || event.button !== 0 || drag.current !== null) return;
+    if (!editable(current.mode) || event.button !== 0 || drag.current !== null) return;
     const connection = connectionOf(connectionId);
     if (connection === undefined) return;
     const stage = stageOf(end === 'source' ? connection.from : connection.to);
@@ -190,7 +191,7 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
 
   const startSegmentDrag = useCallback((event: React.PointerEvent<Element>, connectionId: string, lineIndex: number) => {
     const current = inputRef.current;
-    if (current.locked || event.button !== 0 || drag.current !== null) return;
+    if (!editable(current.mode) || event.button !== 0 || drag.current !== null) return;
     const connection = connectionOf(connectionId);
     if (connection === undefined) return;
     // The drawn route, not one rebuilt without offsets: a displacement on the other
@@ -243,7 +244,7 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
 
   const beginCreation = useCallback((event: React.PointerEvent<Element>, stageId: string, side: StageSide) => {
     const current = inputRef.current;
-    if (current.locked || event.button !== 0 || drag.current !== null) return;
+    if (!editable(current.mode) || event.button !== 0 || drag.current !== null) return;
     const stage = stageOf(stageId);
     if (stage === undefined) return;
     event.preventDefault();
@@ -286,7 +287,7 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
   }, [stageOf]);
 
   const anchorKeyDown = useCallback((event: React.KeyboardEvent<Element>, connectionId: string, end: ConnectionEnd) => {
-    if (inputRef.current.locked) return;
+    if (!editable(inputRef.current.mode)) return;
     if (event.key === 'Enter') {
       if (previewRef.current[connectionId] === undefined) return;
       event.preventDefault();
@@ -328,13 +329,13 @@ export function useConnectionGestures(input: ConnectionGestureInput): Connection
   }, [connectionOf, currentAnchor]);
 
   const handlers = useMemo<Omit<ConnectionHandlers, 'selectedId' | 'onSelect' | 'onEditCondition' | 'hoveredId' | 'onHover' | 'onHoverEnd'>>(() => ({
-    locked: input.locked,
+    mode: input.mode,
     onAnchorPointerDown: startAnchorDrag,
     onSegmentPointerDown: startSegmentDrag,
     onAnchorKeyDown: anchorKeyDown,
     onAnchorBlur: anchorBlur,
     describe,
-  }), [anchorBlur, anchorKeyDown, describe, input.locked, startAnchorDrag, startSegmentDrag]);
+  }), [anchorBlur, anchorKeyDown, describe, input.mode, startAnchorDrag, startSegmentDrag]);
 
   const present = useCallback((connection: CanvasConnection): CanvasConnection => {
     const override = preview[connection.id];

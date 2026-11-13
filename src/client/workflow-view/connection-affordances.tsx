@@ -1,8 +1,9 @@
 import React from 'react';
 import { useStore } from '@xyflow/react';
 import type { StageSide } from '../../shared/types.js';
-import { AFFORDANCE, affordanceScale } from './affordance-geometry.js';
+import { AFFORDANCE, affordanceScale, diagramBox } from './affordance-geometry.js';
 import { useConnectionHandlers, type ConnectionEnd } from './connection-interaction.js';
+import { ABSENT_MODE, editable, marksPresented, selectsOnFocus } from './connection-mode.js';
 import type { LiveEdge, LiveStageRect } from './edge-model.js';
 import type { DiagramPoint } from '../../domain/diagram/orthogonal.js';
 import type { CreationState } from './use/use-connection-gestures.js';
@@ -24,7 +25,6 @@ export interface ConnectionAffordancesProps {
   readonly stages: readonly LiveStageRect[];
   /** The stage the pointer is on; its ports are the only ones presented. */
   readonly hoveredStageId: string | null;
-  readonly locked: boolean;
   /** Keeps the ports presented while the pointer crosses from the stage to a port. */
   onStageEnter(stageId: string): void;
   onStageLeave(stageId: string): void;
@@ -70,20 +70,11 @@ function positionStyle(point: DiagramPoint, target: number, mark: number, scale:
   } as React.CSSProperties;
 }
 
-function previewBox(points: readonly DiagramPoint[]): { readonly x: number; readonly y: number; readonly width: number; readonly height: number } {
-  if (points.length === 0) return { x: -PREVIEW_PADDING, y: -PREVIEW_PADDING, width: PREVIEW_PADDING * 2, height: PREVIEW_PADDING * 2 };
-  const xs = points.map(point => point.x);
-  const ys = points.map(point => point.y);
-  const minX = Math.min(...xs) - PREVIEW_PADDING;
-  const minY = Math.min(...ys) - PREVIEW_PADDING;
-  return { x: minX, y: minY, width: Math.max(1, Math.max(...xs) + PREVIEW_PADDING - minX), height: Math.max(1, Math.max(...ys) + PREVIEW_PADDING - minY) };
-}
-
 /** The line, route, and arrowhead a creation drag presents while it is running. */
 function CreationAffordance({ creation, scale }: { readonly creation: CreationState; readonly scale: number }) {
   const route = creation.route;
   const points = route?.points ?? [creation.from, creation.to];
-  const box = previewBox(points);
+  const box = diagramBox(points, PREVIEW_PADDING);
   const tip = route?.points[route.points.length - 1];
   return <svg
     className="kb-flow-creation"
@@ -106,21 +97,24 @@ function CreationAffordance({ creation, scale }: { readonly creation: CreationSt
  * The marks that move a connection, drawn above the stage regions so a stage
  * boundary or the arrowhead can never cover them. One handle sits at each end and
  * one grip on each adjustable segment of every drawn connection; a connection's
- * marks are presented while it is pointed at or selected, and focused marks stay
- * presented so the keyboard adjustment keeps working. The marks exist in the DOM
- * for every connection at all times, which is what keeps both ends reachable by
- * keyboard without pointing at the line first.
+ * marks are presented only while the diagram is editable and the connection is
+ * pointed at or selected, and focused marks stay presented so the keyboard
+ * adjustment keeps working. The marks exist in the DOM for every connection at all
+ * times, which is what keeps both ends reachable by keyboard without pointing at
+ * the line first; an inspecting diagram never reveals them, and focusing an end
+ * selects its connection instead.
  */
-export function ConnectionAffordances({ edges, creation, stages, hoveredStageId, locked, onStageEnter, onStageLeave, onBeginConnect }: ConnectionAffordancesProps) {
+export function ConnectionAffordances({ edges, creation, stages, hoveredStageId, onStageEnter, onStageLeave, onBeginConnect }: ConnectionAffordancesProps) {
   const handlers = useConnectionHandlers();
+  const mode = handlers?.mode ?? ABSENT_MODE;
   const zoom = useStore(state => state.transform[2]);
   const scale = affordanceScale(zoom);
   const target = AFFORDANCE.target * scale;
   const mark = AFFORDANCE.mark;
   const grip = AFFORDANCE.grip;
   const portMark = AFFORDANCE.portMark;
-  const operational = handlers !== null && !handlers.locked;
-  const portStage = locked ? undefined : stages.find(stage => stage.id === hoveredStageId);
+  const operational = editable(mode);
+  const portStage = operational ? stages.find(stage => stage.id === hoveredStageId) : undefined;
   return <div className="kb-flow-affordances">
     {portStage !== undefined && CONNECTION_SIDES.map(side => {
       const point = boundaryPoint(portStage, side, target / 2);
@@ -139,7 +133,8 @@ export function ConnectionAffordances({ edges, creation, stages, hoveredStageId,
     })}
     {edges.map(edge => {
       const selected = handlers?.selectedId === edge.id;
-      const active = selected || handlers?.hoveredId === edge.id;
+      const marked = marksPresented(mode, { hovered: handlers?.hoveredId === edge.id, selected });
+      const selectOnFocus = selectsOnFocus(mode);
       const start = edge.points[0];
       const tip = edge.points[edge.points.length - 1];
       const describe = (end: ConnectionEnd) => handlers?.describe(edge.id, end) ?? 'Arrow ' + end + ' end';
@@ -147,7 +142,7 @@ export function ConnectionAffordances({ edges, creation, stages, hoveredStageId,
         key={edge.id}
         className={'kb-flow-marks' + (selected ? ' is-selected' : '')}
         data-connection-mark={edge.id}
-        data-active={active ? 'true' : undefined}
+        data-active={marked ? 'true' : undefined}
         onPointerEnter={() => handlers?.onHover(edge.id)}
         onPointerLeave={() => handlers?.onHoverEnd(edge.id)}
       >
@@ -162,6 +157,7 @@ export function ConnectionAffordances({ edges, creation, stages, hoveredStageId,
           style={positionStyle(start, target, mark, scale)}
           onPointerDown={event => { if (operational) handlers?.onAnchorPointerDown(event, edge.id, 'source'); }}
           onKeyDown={event => handlers?.onAnchorKeyDown(event, edge.id, 'source')}
+          onFocus={() => { if (selectOnFocus) handlers?.onSelect(edge.id); }}
           onBlur={() => handlers?.onAnchorBlur(edge.id, 'source')}
         ><span className="kb-flow-handle-dot" aria-hidden="true" /></div>}
         {edge.lines.map(line => <div
@@ -186,6 +182,7 @@ export function ConnectionAffordances({ edges, creation, stages, hoveredStageId,
           style={positionStyle(tip, target, mark, scale)}
           onPointerDown={event => { if (operational) handlers?.onAnchorPointerDown(event, edge.id, 'target'); }}
           onKeyDown={event => handlers?.onAnchorKeyDown(event, edge.id, 'target')}
+          onFocus={() => { if (selectOnFocus) handlers?.onSelect(edge.id); }}
           onBlur={() => handlers?.onAnchorBlur(edge.id, 'target')}
         ><span className="kb-flow-handle-dot" aria-hidden="true" /></div>}
       </div>;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AFFORDANCE, MIN_POINTER_TARGET, affordanceScale, markSize, screenSizeOf } from '../../src/client/workflow-view/affordance-geometry.js';
+import { AFFORDANCE, MIN_POINTER_TARGET, affordanceScale, diagramBox, markSize, screenSizeOf } from '../../src/client/workflow-view/affordance-geometry.js';
 import { FLOW_ZOOM } from '../../src/client/workflow-view/gestures/viewport-policy.js';
 
 const zooms = [FLOW_ZOOM.min, 1, FLOW_ZOOM.max] as const;
@@ -27,5 +27,18 @@ describe('affordance geometry', () => {
     expect(affordanceScale(Number.NaN)).toBe(1);
     expect(affordanceScale(-1)).toBe(1);
     expect(affordanceScale(2)).toBe(0.5);
+  });
+});
+describe('diagram box', () => {
+  it('pads a straight route by the requested amount', () => {
+    expect(diagramBox([{ x: 10, y: 20 }, { x: 110, y: 20 }], 16)).toEqual({ x: -6, y: 4, width: 132, height: 32 });
+  });
+
+  it('covers both axes of a returning route', () => {
+    expect(diagramBox([{ x: 100, y: 50 }, { x: 100, y: 150 }, { x: 20, y: 150 }], 8)).toEqual({ x: 12, y: 42, width: 96, height: 116 });
+  });
+
+  it('keeps a box of its own padding for an empty route', () => {
+    expect(diagramBox([], 12)).toEqual({ x: -12, y: -12, width: 24, height: 24 });
   });
 });

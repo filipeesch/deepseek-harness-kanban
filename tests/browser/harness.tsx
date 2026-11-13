@@ -18,7 +18,7 @@ import type { NativeSlotSource } from '../../src/client/native-slot-host.js';
 
 const scenario = new URLSearchParams(window.location.search).get('scenario') ?? 'board';
 const sharingCase = new URLSearchParams(window.location.search).get('sharing');
-const flowScenario = scenario === 'flow' || scenario === 'flow-anchored' || scenario === 'flow-orphan' || scenario === 'flow-offgrid' || scenario === 'flow-placed' || scenario === 'flow-restricted' || scenario === 'flow-restricted-next' || scenario === 'flow-presence' || scenario === 'flow-refused';
+const flowScenario = scenario === 'flow' || scenario === 'flow-anchored' || scenario === 'flow-orphan' || scenario === 'flow-offgrid' || scenario === 'flow-placed' || scenario === 'flow-crossing' || scenario === 'flow-restricted' || scenario === 'flow-restricted-next' || scenario === 'flow-presence' || scenario === 'flow-refused';
 const query = new URLSearchParams(window.location.search);
 const themed = query.get('theme') === 'host';
 const refuse = query.get('refuse');
@@ -108,7 +108,14 @@ if (flowScenario) {
           .replace('  - id: explore', '  - id: explore' + String.fromCharCode(10) + '    position: {x: 0, y: 0}')
           .replace('  - id: propose', '  - id: propose' + String.fromCharCode(10) + '    position: {x: 400, y: 200}')
           .replace('  - id: apply', '  - id: apply' + String.fromCharCode(10) + '    position: {x: 800, y: 300}')
-        : board.workflowYaml;
+        // A third stage sits between the two connected stages, so the automatic
+        // route crosses its region and the selected copy must paint above it.
+        : scenario === 'flow-crossing'
+          ? board.workflowYaml
+            .replace('  - id: explore', '  - id: explore' + String.fromCharCode(10) + '    position: {x: 0, y: 0}')
+            .replace('  - id: propose', '  - id: propose' + String.fromCharCode(10) + '    position: {x: 800, y: 0}')
+            .replace('  - id: apply', '  - id: apply' + String.fromCharCode(10) + '    position: {x: 300, y: 0}')
+          : board.workflowYaml;
     board.workflowYaml = 'default_view: workflow' + String.fromCharCode(10) + positioned + anchored;
     board.workflow = parseWorkflow(board.workflowYaml);
   });

@@ -43,26 +43,34 @@ export const workflowViewStyles = String.raw`
    screen pixels by the layer, which corrects for the viewport zoom. */
 .dsh-kanban .kb-flow-affordances{position:absolute;left:0;top:0;width:0;height:0;z-index:6;pointer-events:none}
 .dsh-kanban .kb-flow-marks{position:absolute;left:0;top:0;width:0;height:0;opacity:0;transition:opacity 110ms ease;pointer-events:none}
-.dsh-kanban .kb-flow-marks[data-active=true],.dsh-kanban .kb-flow-marks:focus-within{opacity:1}
+.dsh-kanban .kb-flow-canvas[data-mode=edit] .kb-flow-marks[data-active=true],.dsh-kanban .kb-flow-canvas[data-mode=edit] .kb-flow-marks:focus-within{opacity:1}
 .dsh-kanban .kb-flow-handle{position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;border-radius:50%;pointer-events:none;cursor:grab}
-.dsh-kanban .kb-flow-marks[data-active=true] .kb-flow-handle,.dsh-kanban .kb-flow-marks:focus-within .kb-flow-handle{pointer-events:auto}
+.dsh-kanban .kb-flow-canvas[data-mode=edit] .kb-flow-marks[data-active=true] .kb-flow-handle,.dsh-kanban .kb-flow-canvas[data-mode=edit] .kb-flow-marks:focus-within .kb-flow-handle{pointer-events:auto}
 .dsh-kanban .kb-flow-handle:active{cursor:grabbing}
-.dsh-kanban .kb-flow-canvas[data-locked=true] .kb-flow-handle{cursor:default}
 .dsh-kanban .kb-flow-handle-dot{flex:0 0 auto;width:var(--kb-affordance-mark,12px);height:var(--kb-affordance-mark,12px);transform:scale(var(--kb-affordance-scale,1));border-radius:50%;border:1.5px solid color-mix(in srgb,currentColor 55%,var(--kb-line));background:var(--kb-surface);box-shadow:0 1px 4px #00000024}
 .dsh-kanban .kb-flow-handle:hover .kb-flow-handle-dot,.dsh-kanban .kb-flow-marks.is-selected .kb-flow-handle-dot{border-color:var(--dsw-alias-state-business-primary,CanvasText)}
 .dsh-kanban .kb-flow-marks.is-selected .kb-flow-handle-dot{border-width:2px}
 .dsh-kanban .kb-flow-handle:focus-visible{outline:calc(var(--dsw-focus-ring-width,2px) * var(--kb-affordance-scale,1)) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:calc(2px * var(--kb-affordance-scale,1))}
 .dsh-kanban .kb-flow-grip{position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;border-radius:4px;pointer-events:none;cursor:move}
-.dsh-kanban .kb-flow-marks[data-active=true] .kb-flow-grip{pointer-events:auto}
-.dsh-kanban .kb-flow-canvas[data-locked=true] .kb-flow-marks .kb-flow-handle,.dsh-kanban .kb-flow-canvas[data-locked=true] .kb-flow-marks .kb-flow-grip{pointer-events:none}
+.dsh-kanban .kb-flow-canvas[data-mode=edit] .kb-flow-marks[data-active=true] .kb-flow-grip{pointer-events:auto}
 .dsh-kanban .kb-flow-grip[data-axis=x]{cursor:ew-resize}
 .dsh-kanban .kb-flow-grip[data-axis=y]{cursor:ns-resize}
-.dsh-kanban .kb-flow-canvas[data-locked=true] .kb-flow-grip{cursor:default}
 .dsh-kanban .kb-flow-grip-dot{flex:0 0 auto;width:var(--kb-affordance-mark,12px);height:var(--kb-affordance-mark,12px);transform:scale(var(--kb-affordance-scale,1));border-radius:2px;border:1.2px solid color-mix(in srgb,currentColor 55%,var(--kb-line));background:var(--kb-surface);box-shadow:0 1px 4px #00000024}
 .dsh-kanban .kb-flow-grip:hover .kb-flow-grip-dot,.dsh-kanban .kb-flow-marks.is-selected .kb-flow-grip-dot{border-color:var(--dsw-alias-state-business-primary,CanvasText)}
 /* A connection is pressed to select it and double-pressed to edit its condition, so
-   the line itself carries a cursor that says so. */
+   the line itself carries a cursor that says so. Pointing at one strengthens its
+   stroke without presenting a mark; the selected rules below follow this rule so a
+   selected connection keeps its own paint while pointed at. */
 .dsh-kanban .react-flow__edge{cursor:pointer}
+.dsh-kanban .kb-flow-edge-group:hover .kb-flow-edge{stroke:color-mix(in srgb,currentColor 55%,var(--kb-line));stroke-width:2}
+/* The route of the selected connection is copied above the stage regions, so a
+   segment a stage region hides is still readable. The copy repeats the selected
+   paint, keeps the dashed pattern of an implicit connection, and never receives a
+   press or reaches assistive technology. */
+.dsh-kanban .kb-flow-selected-route{position:absolute;overflow:visible;pointer-events:none;z-index:5}
+.dsh-kanban .kb-flow-selected-route-path{fill:none;stroke:var(--dsw-alias-state-business-primary,CanvasText);stroke-width:2.4}
+.dsh-kanban .kb-flow-selected-route-path.is-implicit{stroke-dasharray:6 5}
+.dsh-kanban .kb-flow-selected-route-arrow{fill:currentColor;opacity:.85}
 .dsh-kanban .kb-flow-edge-group.is-selected .kb-flow-edge{stroke:var(--dsw-alias-state-business-primary,CanvasText);stroke-width:2.4}
 .dsh-kanban .kb-flow-edge-group.is-selected .kb-flow-arrow{opacity:.85}
 /* A dashed hollow ring reads as "nothing set here", which is what it marks. */

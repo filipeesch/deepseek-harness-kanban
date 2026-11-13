@@ -30,8 +30,6 @@ export interface ConditionPopoverProps {
   readonly title: string;
   readonly value: string;
   readonly pending: boolean;
-  /** The layout lock; removing a connection is a structural edit, so the lock gates it. */
-  readonly locked: boolean;
   readonly problem: string | null;
   readonly onSave: (value: string) => void;
   readonly onDelete: () => void;
@@ -46,7 +44,7 @@ export interface ConditionPopoverProps {
  * field is the same one the stage editor presents, so a condition is edited the
  * same way wherever it appears.
  */
-export function ConditionPopover({ anchor, title, value, pending, locked, problem, onSave, onDelete, onClose }: ConditionPopoverProps) {
+export function ConditionPopover({ anchor, title, value, pending, problem, onSave, onDelete, onClose }: ConditionPopoverProps) {
   const [text, setText] = React.useState(value);
   const [size, setSize] = React.useState({ width: WIDTH, height: ESTIMATED_HEIGHT });
   const surface = useRef<HTMLDivElement>(null);
@@ -107,8 +105,8 @@ export function ConditionPopover({ anchor, title, value, pending, locked, proble
       <button
         type="button"
         className="kb-button"
-        title={locked ? 'Unlock layout editing to remove a connection' : 'Remove this connection'}
-        disabled={pending || locked}
+        title="Remove this connection"
+        disabled={pending}
         onClick={onDelete}
       >Delete</button>
       <button type="button" className="kb-button" onClick={onClose}>Cancel</button>
