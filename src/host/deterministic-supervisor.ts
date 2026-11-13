@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { DeterministicCapture, DeterministicControl, DeterministicHold, DeterministicInput, DeterministicResult, DeterministicReview, StepCompletion } from '../shared/deterministic.js';
+import type { DeterministicCapture, DeterministicControl, DeterministicHold, DeterministicInput, DeterministicResult, StepCompletion } from '../shared/deterministic.js';
 import type { HubTask, Problem } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
 import type { LocatedTask } from './hub-repository.js';
@@ -16,7 +16,7 @@ import { buildDeterministicInput } from './deterministic/input.js';
 import { sameDeterministicHold } from '../domain/deterministic-hold.js';
 
 export interface DeterministicIdentity { taskId: string; entryId: string; executionId: string; attemptId?: string }
-export interface SupervisorRequest { located: LocatedTask; control: DeterministicControl; signal: AbortSignal; preview?: boolean }
+export interface SupervisorRequest { located: LocatedTask; control: DeterministicControl; signal: AbortSignal }
 export interface SupervisorExecution extends SupervisorRequest { capture: DeterministicCapture; code: string; variables: Readonly<Record<string, string>>; input: DeterministicInput }
 export interface SupervisorRoute extends SupervisorRequest { capture: DeterministicCapture; result: DeterministicResult }
 /** A refusal carries the bounded reason the drawer presents; absent only when the request was already stale. */
@@ -46,11 +46,9 @@ export interface SupervisorPorts {
   };
   trust: {
     isApproved(request: SupervisorRequest & { capture: DeterministicCapture }): Promise<boolean>;
-    approve?(request: SupervisorRequest & { capture: DeterministicCapture }): Promise<void>;
   };
   variable: {
     resolve(request: SupervisorRequest & { capture: DeterministicCapture }): Promise<Readonly<Record<string, string>>>;
-    status?(request: SupervisorRequest & { capture: DeterministicCapture }): Promise<Array<{ name: string; configured: boolean }>>;
     set?(located: LocatedTask, stageIdentity: string, name: string, value: string | null): Promise<void>;
   };
   /** Atomically validate current authority, consume result and place exact captured stable target.
@@ -171,6 +169,31 @@ export class DeterministicSupervisor {
       if (next.rerun && !this.disposed) this.reconcile(taskId);
     });
     this.ports.notify?.();
+  }
+
+  /**
+   * Wake the entries of one board, stage, and version after approval. A waiting
+   * owner whose trust check is still draining is asked to run once more; an
+   * active owner is never restarted.
+   */
+  wakeWaiting(filter: { boardId: string; stageIdentity: string; fingerprint: string }): void {
+    if (this.disposed) return;
+    // A capture can exist only in the owner's in-memory control while its trust
+    // check is in flight; match that owner before the task row carries it.
+    for (const [taskId, owner] of this.owners) {
+      if (owner.control.capture?.fingerprint !== filter.fingerprint || (owner.control.phase !== 'awaiting-trust' && owner.control.phase !== 'capture-pending')) continue;
+      const located = this.ports.locate(taskId);
+      if (located?.task.boardId !== filter.boardId || located.task.stageEntry?.stageIdentity !== filter.stageIdentity) continue;
+      owner.rerun = true;
+    }
+    for (const located of this.ports.all()) {
+      if (located.task.boardId !== filter.boardId || located.task.stageEntry?.stageIdentity !== filter.stageIdentity) continue;
+      const control = located.task.deterministic;
+      if (control?.capture?.fingerprint !== filter.fingerprint || (control.phase !== 'awaiting-trust' && control.phase !== 'capture-pending')) continue;
+      const owner = this.owners.get(located.task.id);
+      if (owner) owner.rerun = true;
+      else this.reconcile(located.task.id);
+    }
   }
 
   /** Retry a held result after an external guard changes, even if its current drain is finishing. */
@@ -297,30 +320,6 @@ export class DeterministicSupervisor {
   dispose(): void { this.disposed = true; this.clearRechecks(); for (const owner of this.owners.values()) owner.abort.abort(); }
   async settle(): Promise<void> { while (this.owners.size) await Promise.allSettled([...this.owners.values()].map(owner => owner.done)); await this.sourceTail; this.clearRechecks(); }
 
-  async review(taskId: string): Promise<DeterministicReview> {
-    const located = this.ports.locate(taskId);
-    const control = located?.task.deterministic;
-    if (located && !control) return this.preview(located);
-    if (!located || !control?.capture || !current(located, control)) throw new KanbanError('CAPTURE_NOT_READY', 'The executable capture is not ready for review.');
-    const request = { located, control, capture: control.capture, signal: new AbortController().signal };
-    const code = await this.ports.capture.load(control.capture);
-    const variables = await this.ports.variable.status?.(request) ?? control.capture.env.map(name => ({ name, configured: false }));
-    if (!current(this.ports.locate(taskId), control)) throw new KanbanError('STALE_EXECUTION', 'The executable review was replaced.');
-    return { executionId: control.executionId, fingerprint: control.capture.fingerprint, code, language: control.capture.language, directory: control.capture.directory,
-      exits: Object.fromEntries(Object.entries(control.capture.exits).map(([exit, target]) => [exit, target.columnId])), env: [...control.capture.env], params: structuredClone(control.definition.params ?? []), variables,
-      source: control.capture.source, executionDirectory: control.capture.executionDirectory };
-  }
-
-  async approve(taskId: string, executionId: string, fingerprint: string): Promise<void> {
-    const located = this.ports.locate(taskId); const control = located?.task.deterministic;
-    if (!located || !control?.capture || control.executionId !== executionId || control.capture.fingerprint !== fingerprint || !current(located, control)) throw new KanbanError('STALE_EXECUTION', 'Review the current executable capture before approving it.');
-    if (!this.ports.trust.approve) throw new KanbanError('TRUST_UNAVAILABLE', 'Local executable approval is unavailable.');
-    await this.ports.trust.approve({ located, control, capture: control.capture, signal: new AbortController().signal });
-    const owner = this.owners.get(taskId);
-    if (owner && current(this.ports.locate(taskId), control)) owner.rerun = true;
-    this.reconcile(taskId);
-  }
-
   async variable(taskId: string, name: string, value: string | null, expectedStageIdentity?: string): Promise<void> {
     const located = this.ports.locate(taskId);
     const column = located?.board.workflow.columns.find(item => item.id === located.task.columnId);
@@ -361,27 +360,6 @@ export class DeterministicSupervisor {
       delete task.deterministic!.error; delete task.deterministic!.result!.error;
     });
     this.reconcile(identity.taskId);
-  }
-
-  private async preview(located: LocatedTask): Promise<DeterministicReview> {
-    const column = located.board.workflow.columns.find(value => value.id === located.task.columnId);
-    const stageIdentity = located.task.stageEntry?.stageIdentity ?? located.board.localStageIdentities?.[located.task.columnId] ?? column?.key;
-    if (!column?.deterministic || !stageIdentity) throw new KanbanError('CAPTURE_NOT_READY', 'Configure a deterministic script and stable local stage scope before reviewing it.');
-    const control: DeterministicControl = { entryId: located.task.stageEntry?.id ?? 'preview', executionId: 'preview', stageIdentity,
-      definition: structuredClone(column.deterministic), phase: 'capture-pending', startedAt: this.now(), attempt: 0, restartCount: 0 };
-    const request: SupervisorRequest = { located, control, signal: new AbortController().signal, preview: true };
-    const { capture, code } = await this.withSources(async () => {
-      const capture = await this.ports.capture.capture(request);
-      try { return { capture, code: await this.ports.capture.load(capture) }; }
-      finally { this.ports.capture.releaseSource?.(capture.sourceRef); await this.ports.capture.collectSources?.(this.sourceReferences()); }
-    });
-    const variables = await this.ports.variable.status?.({ ...request, capture }) ?? capture.env.map(name => ({ name, configured: false }));
-    const latest = this.ports.locate(located.task.id);
-    const currentColumn = latest?.board.workflow.columns.find(value => value.id === latest.task.columnId);
-    if (!latest || latest.task.columnId !== located.task.columnId || latest.task.stageEntry?.id !== located.task.stageEntry?.id
-      || JSON.stringify(currentColumn?.deterministic) !== JSON.stringify(control.definition)) throw new KanbanError('STALE_EXECUTION', 'The saved executable changed during preview.');
-    return { executionId: 'preview', fingerprint: capture.fingerprint, code, language: capture.language, directory: capture.directory,
-      exits: Object.fromEntries(Object.entries(capture.exits).map(([exit, target]) => [exit, target.columnId])), env: [...capture.env], params: structuredClone(control.definition.params ?? []), variables, source: capture.source, executionDirectory: capture.executionDirectory };
   }
 
   private require(identity: DeterministicIdentity): DeterministicControl {

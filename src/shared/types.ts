@@ -1,5 +1,5 @@
-import type { DeterministicDefinition, DeterministicControl, DeterministicHandoff, DeterministicReview, DeterministicSummary, TaskStageEntry } from './deterministic.js';
-export type { DeterministicDefinition, DeterministicControl, DeterministicHandoff, DeterministicReview, DeterministicSummary, TaskStageEntry } from './deterministic.js';
+import type { DeterministicDefinition, DeterministicControl, DeterministicHandoff, DeterministicStageReview, DeterministicSummary, DeterministicVariablesView, TaskStageEntry } from './deterministic.js';
+export type { DeterministicDefinition, DeterministicControl, DeterministicHandoff, DeterministicStageReview, DeterministicSummary, DeterministicVariablesView, TaskStageEntry } from './deterministic.js';
 import type { NewTask } from './task-creation.js';
 import type { TaskHistoryEntry } from './task-history.js';
 
@@ -447,6 +447,7 @@ export type Command =
   /** Start a new execution of the current entry; the only action that captures and runs again. */
   | { type: 'task.deterministicRunAgain'; taskId: string; entryId: string }
   | { type: 'task.deterministicStop'; taskId: string; executionId?: string }
+  | { type: 'board.deterministicApprove'; boardId: string; stageId: string; fingerprint: string; stageGeneration: string; taskId?: string }
   /** Cancel the background job named by the current delivery hold. */
   | { type: 'task.deterministicCancelJob'; taskId: string; jobId: string }
   | { type: 'task.deterministicApprove'; taskId: string; executionId: string; fingerprint: string }
@@ -500,7 +501,8 @@ export type Command =
   | { type: 'schedule.runNow'; hubId: string; scheduleId: string };
 export type Outcome<T> = { ok: true; value: T } | { ok: false; error: Problem };
 export interface ClientApi {
-  deterministicReview?(taskId: string): Promise<DeterministicReview>;
+  deterministicReview?(request: { boardId: string; stageId: string; taskId?: string }): Promise<DeterministicStageReview>;
+  deterministicVariables?(taskId: string): Promise<DeterministicVariablesView>;
   snapshot(request?: SnapshotRequest): Promise<KanbanSnapshot>;
   command(command: Command): Promise<KanbanSnapshot>;
   sharing(command: SharingCommand): Promise<KanbanSnapshot>;

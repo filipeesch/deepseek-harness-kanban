@@ -35,7 +35,7 @@ async function fixture() {
   const trust = createDeterministicTrust(join(root, 'private')); let executions = 0; const codes: string[] = [];
   const requests: Array<{ input: ExecuteRequest['input']; executionId?: string }> = [];
   let executeHook: ((request: ExecuteRequest) => Promise<ExecutionOutcome>) | undefined;
-  const native: DeterministicRuntime = { capture: request => captures.capture(request), plan: request => captures.plan(request), loadCapture: capture => captures.load(capture), collectSources: references => captures.collectSources(references), releaseSource: reference => captures.releaseSource(reference), trust, variables: { status: async () => [], set: async () => undefined, remove: async () => undefined, resolve: async () => ({}) }, verify: async () => undefined, reclaim: async () => undefined,
+  const native: DeterministicRuntime = { capture: request => captures.capture(request), plan: request => captures.plan(request), loadCapture: capture => captures.load(capture), normalizeCapture: (capture, definition) => captures.normalize(capture, definition), releaseCapture: capture => captures.releaseSource(capture.sourceRef), collectSources: references => captures.collectSources(references), releaseSource: reference => captures.releaseSource(reference), trust, variables: { status: async () => [], set: async () => undefined, remove: async () => undefined, resolve: async () => ({}) }, verify: async () => undefined, reclaim: async () => undefined,
     async execute(request) { executions++; codes.push(await captures.load(request.capture)); requests.push({ input: structuredClone(request.input), executionId: request.executionId }); return executeHook ? executeHook(request) : { kind: 'completed', completion: { exit: 'passed', message: 'approved original bytes' }, diagnostics: [] }; } };
   let hubs = await HubRepository.open(new FileHubStorage(path), operationDeps());
   const task = await hubs.hub('hub').createTask({ projectId: 'project', boardId: 'board', title: 'File-backed execution', description: '' });
@@ -53,13 +53,21 @@ async function fixture() {
   };
 }
 
+/** Approve the current capture exactly as the stage approval service does. */
+async function approveCaptured(f: Awaited<ReturnType<typeof fixture>>, supervisor: DeterministicSupervisor) {
+  const task = f.task();
+  const stageIdentity = task.stageEntry!.stageIdentity;
+  await f.native.trust.approve({ hubId: 'hub', boardId: 'board', stageIdentity }, task.deterministic!.capture!.fingerprint);
+  supervisor.sync();
+}
+
 describe('deterministic supervisor real durable aggregate and private source blobs', () => {
   it('recovers placement-before-capture and approved immutable bytes after complete repository reopen', async () => {
     const f = await fixture(); try {
       const initial = f.task().deterministic!; expect(initial.phase).toBe('capture-pending'); expect(initial.targets?.passed?.stageIdentity).toBeTruthy(); await f.reopen();
-      const s = f.supervisor(); s.start(); await s.settle(); expect(f.task().deterministic!.phase).toBe('awaiting-trust'); const review = await s.review(f.taskId); const sourceRef = f.task().deterministic!.capture!.sourceRef;
+      const s = f.supervisor(); s.start(); await s.settle(); expect(f.task().deterministic!.phase).toBe('awaiting-trust'); const sourceRef = f.task().deterministic!.capture!.sourceRef;
+      await approveCaptured(f, s); await s.settle();
       await writeFile(f.primary, 'return {exit: "passed",message: "different unapproved bytes"};'); s.dispose(); await f.reopen();
-      const restored = f.supervisor(); await restored.approve(f.taskId, review.executionId, review.fingerprint); await restored.settle();
       expect(f.executions()).toBe(1); expect(f.codes).toEqual(['return { exit: "passed", message: "approved original bytes" };']); expect(f.task().deterministic!.capture!.sourceRef).toBe(sourceRef); expect(f.task().deterministic!.startedAt).toBe(initial.startedAt);
       const disk = JSON.parse(await readFile(f.path, 'utf8')) as { hubs: HubState[] }; expect(disk.hubs[0]!.tasks[0]!.deterministic?.result?.deliveryId).toBeTruthy(); expect(await readFile(f.path, 'utf8')).not.toContain('different unapproved bytes');
     } finally { await f.close(); }
@@ -77,7 +85,7 @@ describe('deterministic supervisor real durable aggregate and private source blo
         });
       });
       const initial = f.supervisor(); initial.start(); await initial.settle();
-      const review = await initial.review(f.taskId); await initial.approve(f.taskId, review.executionId, review.fingerprint); await firstStarted;
+      await approveCaptured(f, initial); await firstStarted;
       const before = structuredClone(f.task().deterministic!); expect(before.phase).toBe('active');
       initial.dispose(); await initial.settle(); expect(f.task().deterministic?.phase).toBe('active');
       await writeFile(f.primary, 'return {exit: "passed", message: "changed after interruption"};'); await f.reopen();
@@ -94,7 +102,7 @@ describe('deterministic supervisor real durable aggregate and private source blo
   });
   it('resumes only durable result placement after restart and atomically binds the same delivery receipt', async () => {
     const f = await fixture(); try {
-      const s = f.supervisor(); s.start(); await s.settle(); const review = await s.review(f.taskId); await s.approve(f.taskId, review.executionId, review.fingerprint); await s.settle(); const result = f.task().deterministic!.result!;
+      const s = f.supervisor(); s.start(); await s.settle(); await approveCaptured(f, s); await s.settle(); const result = f.task().deterministic!.result!;
       expect(f.task().deterministic!.phase).toBe('result-ready'); s.dispose(); await f.reopen();
       const router = createDeterministicRouter({ hubs: f.hubs, sessions: { isIdle: async () => true }, pending: async () => NO_PENDING_USER_WORK }); const restored = f.supervisor(router); restored.start(); await restored.settle();
       expect(f.executions()).toBe(1); expect(f.task().columnId).toBe('review'); expect(f.task().deterministic).toBeUndefined(); expect(f.task().deterministicHandoff?.id).toBe(result.deliveryId); const entryId = f.task().stageEntry!.id;
@@ -112,9 +120,10 @@ describe('deterministic supervisor real durable aggregate and private source blo
   });
   it('fails closed when a durably referenced blob is corrupted without replacing it from a changed primary', async () => {
     const f = await fixture(); try {
-      const s = f.supervisor(); s.start(); await s.settle(); const review = await s.review(f.taskId); const capture = f.task().deterministic!.capture!;
+      const s = f.supervisor(); s.start(); await s.settle(); const capture = f.task().deterministic!.capture!;
+      await approveCaptured(f, s);
       await writeFile(join(f.root, 'private', 'sources', capture.sourceRef + '.json'), 'corrupt'); await writeFile(f.primary, 'return "not approved"'); s.dispose(); await f.reopen();
-      const restored = f.supervisor(); await restored.approve(f.taskId, review.executionId, review.fingerprint); await restored.settle(); expect(f.executions()).toBe(0); expect(f.task().deterministic!.phase).toBe('failed'); expect(f.task().deterministic!.error?.code).toBe('CAPTURE_CORRUPT');
+      const restored = f.supervisor(); restored.start(); await restored.settle(); expect(f.executions()).toBe(0); expect(f.task().deterministic!.phase).toBe('failed'); expect(f.task().deterministic!.error?.code).toBe('CAPTURE_CORRUPT');
     } finally { await f.close(); }
   });
 });

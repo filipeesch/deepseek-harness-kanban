@@ -19,6 +19,8 @@ import { useBoardNotices, type NoticeDismissalPort } from './notices/use-board-n
 import type { NoticeHandlers } from './notices/model.js';
 import { BoardColumnsView } from './board/board-columns-view.js';
 import { StageEditorDialog } from './stage/stage-editor-dialog.js';
+import { ScriptReviewProvider } from './script-review-provider.js';
+import { ApprovalQueue } from './deterministic-approval-queue.js';
 import { BoardCreationDialogs } from './board/board-dialogs.js';
 import { useCreationDialogs } from './use-creation-dialogs.js';
 import { useTaskCreation } from './use-task-creation.js';
@@ -378,7 +380,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     requestCloseDrawer();
   }
 
-  return <DirectoryPickerProvider picker={picker}><ModelFallbacksProvider registry={modelFallbacks}><DeterministicProvider api={api} run={command => run(command, false)} summaries={snapshot?.deterministic ?? {}}><section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style>
+  return <DirectoryPickerProvider picker={picker}><ModelFallbacksProvider registry={modelFallbacks}><DeterministicProvider api={api} run={command => run(command, false)} summaries={snapshot?.deterministic ?? {}} boardId={activeBoard?.id}><section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style><ScriptReviewProvider api={api} run={command => run(command, false)}>
     <BoardHeader
       hubTabs={<HubTabRow
         hubs={snapshot?.state.hubs ?? []}
@@ -434,6 +436,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       {...(dismissAllRetained === undefined ? {} : { dismissAllRetained })}
       onFocusBoard={focusBoard}
     />
+    {state && <ApprovalQueue boardId={activeBoard?.id} tasks={state.tasks} scripts={snapshot?.deterministic ?? {}} workflow={state.workflow} projectNames={new Map(state.projects.map(project => [project.id, project.name]))} />}
     <BoardEmptyStates snapshot={snapshot} loadError={loadError} hub={activeHub} board={activeBoard} onCreateHub={containers.openHub} onCreateBoard={containers.openBoard} />
     {state && <>
       <BoardBody bodyRef={boardBody} onPointerDown={onBoardPointerDown} flow={view === 'workflow'} empty={state.projects.length === 0 && view !== 'workflow' ? <ProjectsEmptyState onConfigureProjects={() => setConfiguration('Projects')} /> : null}>
@@ -497,6 +500,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       columns={stageEditor.columns}
       tasks={state?.tasks ?? []}
       attention={snapshot?.attention ?? {}}
+      api={api}
       run={run}
       onClose={() => setStageEditor(null)}
       onSaved={() => setStageEditor(null)}
@@ -504,5 +508,5 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     <BoardCreationDialogs hub={activeHub} run={run} taskDialog={creation.dialog} containers={containers} />
     {moves.overrideDialog && <div hidden={preparation.dialog !== null}>{moves.overrideDialog}</div>}
     {preparation.dialog}
-  </section></DeterministicProvider></ModelFallbacksProvider></DirectoryPickerProvider>;
+  </ScriptReviewProvider></section></DeterministicProvider></ModelFallbacksProvider></DirectoryPickerProvider>;
 }

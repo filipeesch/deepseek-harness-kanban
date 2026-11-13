@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 import { mkdir, open, readFile, readdir, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { DeterministicCapture } from '../../shared/deterministic.js';
+import type { DeterministicCapture, DeterministicDefinition } from '../../shared/deterministic.js';
 import { PARAMETER_LIMITS } from '../../domain/deterministic-definition.js';
 import { declaredParameterNames } from '../../domain/deterministic-parameters.js';
-import type { CapturePlan, CaptureRequest, DeterministicPolicyPort, DeterministicScope, DeterministicTrust } from './ports.js';
+import type { CapturePlan, CaptureRequest, DeterministicApprovalScope, DeterministicPolicyPort, DeterministicTrust } from './ports.js';
 import { failure } from './ports.js';
-import { scopeKey } from './variables.js';
+import { approvalScopeKey } from './variables.js';
 import { SOURCE_MAX_BYTES, validateVariableName } from './safety.js';
 
 function canonical(value: unknown): string {
@@ -15,7 +15,20 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
+/**
+ * The approved version excludes execution context: the resolved directory and the
+ * resolved primary path. Two entries of the same board and stage that read the
+ * same authored source and capabilities therefore share it.
+ */
+function versionContent(content: Omit<DeterministicCapture, 'sourceRef' | 'fingerprint'>): Omit<DeterministicCapture, 'sourceRef' | 'fingerprint' | 'executionDirectory'> {
+  const { executionDirectory: _executionDirectory, source, ...version } = content;
+  return { ...version, source: source.kind === 'file' ? { kind: 'file' as const, ...(source.reference === undefined ? {} : { reference: source.reference }) } : { kind: 'inline' as const } };
+}
 function fingerprint(content: Omit<DeterministicCapture, 'sourceRef' | 'fingerprint'>, code: string): string {
+  return digest(canonical({ ...versionContent(content), format: content.language === 'typescript' ? 'function-body' : 'bash-stdin-json', code }));
+}
+/** The pre-upgrade hash trusted the execution directory and the resolved path. */
+function legacyFingerprint(content: Omit<DeterministicCapture, 'sourceRef' | 'fingerprint'>, code: string): string {
   return digest(canonical({ ...content, format: content.language === 'typescript' ? 'function-body' : 'bash-stdin-json', code }));
 }
 function hash(value: string): string {
@@ -67,7 +80,9 @@ export class DeterministicCaptureStore {
     for (const [name, target] of Object.entries(exits)) {
       if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(name) || !target.columnId || !target.stageIdentity || definition.exits[name] !== target.columnId) failure('ROUTES_INVALID', 'Captured exits must match reviewed authored destinations and stable identities.');
     }
-    const content = { language: definition.language, directory, executionDirectory, source: primary ? { kind: 'file' as const, path: primary.path } : { kind: 'inline' as const }, env, params, exits };
+    const content = { language: definition.language, directory, executionDirectory,
+      source: primary ? { kind: 'file' as const, path: primary.path, ...(definition.file === undefined ? {} : { reference: definition.file }) } : { kind: 'inline' as const },
+      env, params, exits };
     return { content, code, fingerprint: fingerprint(content, code) };
   }
 
@@ -117,25 +132,69 @@ export class DeterministicCaptureStore {
     let blob: { version?: number; content?: unknown; code?: unknown; fingerprint?: string };
     try { blob = JSON.parse(text) as typeof blob; } catch { return failure('CAPTURE_CORRUPT', 'Private source capture is not valid JSON.'); }
     const { sourceRef: _ref, fingerprint: fp, ...content } = capture;
-    if (blob.version !== 1 || typeof blob.code !== 'string' || canonical(content) !== canonical(blob.content) || fingerprint(content, blob.code) !== fp || blob.fingerprint !== fp) failure('CAPTURE_CORRUPT', 'Private source capture does not match the durable reviewed authority.');
+    if (blob.version !== 1 || typeof blob.code !== 'string' || canonical(content) !== canonical(blob.content)) failure('CAPTURE_CORRUPT', 'Private source capture does not match the durable reviewed authority.');
+    if ((fingerprint(content, blob.code) !== fp && legacyFingerprint(content, blob.code) !== fp) || blob.fingerprint !== fp) failure('CAPTURE_CORRUPT', 'Private source capture does not match the durable reviewed authority.');
     return blob.code;
   }
+  /**
+   * Persist the current version identity for a verified legacy capture without
+   * rereading the primary source. A new immutable blob carries the normalized
+   * metadata and fingerprint; the task adopts the new reference in its own
+   * transaction, and the superseded blob becomes collectable.
+   */
+  async normalize(capture: DeterministicCapture, definition: DeterministicDefinition): Promise<DeterministicCapture> {
+    const code = await this.load(capture);
+    const normalized = normalizeCapture(capture, definition, code);
+    if (normalized.fingerprint === capture.fingerprint && normalized.source.reference === capture.source.reference) return capture;
+    const { sourceRef: _sourceRef, fingerprint: _fingerprint, ...content } = normalized;
+    const text = canonical({ version: 1, content, code, fingerprint: normalized.fingerprint });
+    const sourceRef = digest(text);
+    if (Buffer.byteLength(text) > SOURCE_MAX_BYTES * 8) failure('CAPTURE_CORRUPT', 'The normalized private source capture exceeds its storage bound.');
+    this.uncommitted.set(sourceRef, (this.uncommitted.get(sourceRef) ?? 0) + 1);
+    try {
+      await this.immutable(join(this.root, 'sources', sourceRef + '.json'), text);
+      const adopted = { ...normalized, sourceRef };
+      await this.load(adopted);
+      return adopted;
+    } catch (error) { this.releaseSource(sourceRef); throw error; }
+  }
+}
+function approvalRecord(scope: DeterministicApprovalScope, fingerprintValue: string, approvedAt: string): string {
+  return canonical({ version: 1, scope: approvalScopeKey(scope), fingerprint: fingerprintValue, approved: true, approvedAt });
+}
+/**
+ * Rewrite a verified stored capture into the current version identity without
+ * rereading the primary source. A pre-upgrade capture keeps its bytes and
+ * execution directory; only the authority changes.
+ */
+export function normalizeCapture(capture: DeterministicCapture, definition: DeterministicDefinition, code: string): DeterministicCapture {
+  const source = capture.source.kind === 'file'
+    ? { kind: 'file' as const, ...(capture.source.path === undefined ? {} : { path: capture.source.path }), ...(definition.file === undefined ? {} : { reference: definition.file }) }
+    : { kind: 'inline' as const };
+  const content = { ...capture, source };
+  const { sourceRef: _sourceRef, fingerprint: _fingerprint, ...hashed } = content;
+  return { ...content, fingerprint: fingerprint(hashed, code) };
 }
 export function createDeterministicTrust(root: string): DeterministicTrust {
-  const path = (scope: DeterministicScope, fp: string) => join(root, 'trust', scopeKey(scope) + '-' + hash(fp) + '.json');
+  const path = (scope: DeterministicApprovalScope, fp: string) => join(root, 'trust', approvalScopeKey(scope) + '-' + hash(fp) + '.json');
   return {
     async isApproved(scope, fp) {
-      try { return await readFile(path(scope, fp), 'utf8') === canonical({ scope: scopeKey(scope), fingerprint: fp, approved: true }); }
+      try {
+        const text = await readFile(path(scope, fp), 'utf8');
+        let record: { version?: number; scope?: string; fingerprint?: string; approved?: boolean; approvedAt?: string };
+        try { record = JSON.parse(text) as typeof record; } catch { return false; }
+        return record.version === 1 && record.scope === approvalScopeKey(scope) && record.fingerprint === fp && record.approved === true
+          && typeof record.approvedAt === 'string' && record.approvedAt.length > 0;
+      }
       catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
     },
     async approve(scope, fp) {
       await mkdir(join(root, 'trust'), { recursive: true, mode: 0o700 });
-      const text = canonical({ scope: scopeKey(scope), fingerprint: fp, approved: true });
+      const text = approvalRecord(scope, fp, new Date().toISOString());
       let file;
       try { file = await open(path(scope, fp), 'wx', 0o600); }
       catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') { if (await this.isApproved(scope, fp)) return; failure('TRUST_CORRUPT', 'Remove the corrupt local approval and review this version again.'); } throw error; }
       try { await file.writeFile(text); await file.sync(); } finally { await file.close(); }
     },
-    async reject(scope, fp) { try { await unlink(path(scope, fp)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } },
   };
 }

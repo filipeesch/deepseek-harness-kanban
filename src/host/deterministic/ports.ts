@@ -5,6 +5,8 @@ import type { DeterministicCapture, DeterministicDefinition, DeterministicTarget
 import type { Problem } from '../../shared/types.js';
 import { classifyFailureCode } from '../../domain/deterministic-failure.js';
 
+/** Approval, ownership, and variable scopes are deliberately distinct. */
+export interface DeterministicApprovalScope { hubId: string; boardId: string; stageIdentity: string }
 export interface DeterministicScope { hubId: string; boardId: string; projectId: string; stageIdentity: string }
 export interface CaptureRequest {
   definition: DeterministicDefinition;
@@ -32,9 +34,8 @@ export interface DeterministicVariables {
   resolve(scope: DeterministicScope, names: readonly string[]): Promise<Readonly<Record<string, string>>>;
 }
 export interface DeterministicTrust {
-  isApproved(scope: DeterministicScope, fingerprint: string): Promise<boolean>;
-  approve(scope: DeterministicScope, fingerprint: string): Promise<void>;
-  reject(scope: DeterministicScope, fingerprint: string): Promise<void>;
+  isApproved(scope: DeterministicApprovalScope, fingerprint: string): Promise<boolean>;
+  approve(scope: DeterministicApprovalScope, fingerprint: string): Promise<void>;
 }
 /** A failure keeps its diagnostics: the origin, the bounded facts, and the nested cause. */
 export type ExecutionOutcome =
@@ -46,7 +47,10 @@ export interface ExecuteRequest {
   taskId?: string;
   capture: DeterministicCapture;
   input: PtcJsonValue;
+  /** Process ownership and variables remain project-scoped. */
   scope: DeterministicScope;
+  /** Approval is board-and-stage scoped. */
+  approvalScope: DeterministicApprovalScope;
   signal: AbortSignal;
 }
 export interface DeterministicRuntime {
@@ -54,6 +58,10 @@ export interface DeterministicRuntime {
   /** Resolve one definition without storing it, so a report can name its fingerprint. */
   plan(request: CaptureRequest): Promise<CapturePlan>;
   loadCapture(capture: DeterministicCapture): Promise<string>;
+  /** Rewrite a verified stored capture under the current version identity and pin its new immutable reference. */
+  normalizeCapture(capture: DeterministicCapture, definition: DeterministicDefinition): Promise<DeterministicCapture>;
+  /** Release the pin created by normalizeCapture after the task or owner adopts it. */
+  releaseCapture(capture: DeterministicCapture): void;
   collectSources(referencedSourceRefs: readonly string[]): Promise<void>;
   releaseSource?(sourceRef: string): void;
   verify(capture: DeterministicCapture, signal?: AbortSignal): Promise<void>;

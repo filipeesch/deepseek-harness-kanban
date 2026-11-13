@@ -550,7 +550,7 @@ A deterministic script SHALL NOT count as an agent, assistant turn, or native su
 
 The board SHALL derive attention per task conversation and aggregate it across all conversations belonging to a task. It SHALL distinguish blue unread-message indicators, orange awaiting-reply indicators, and red failure indicators. Blue and red SHALL be derived by the conversation's last settled assistant turn and its stored per-conversation read acknowledgment: unread SHALL mean that the conversation has a settled turn newer than its acknowledgment, and failure SHALL mean that the settled turn ended with an error outcome and is still unread. Blue and red SHALL NOT be presented while any agent owned by that conversation is running. The orange indicator SHALL reflect a live awaiting-reply state and SHALL NOT require acknowledgment. Attention SHALL be derived from durable conversation facts and the stored acknowledgment, SHALL survive a reload or plugin restart, and SHALL NOT depend on a per-client native unread transition. A conversation with no stored acknowledgment SHALL present its last settled turn as unread. Simultaneously applicable indicators SHALL coexist rather than collapse to a single highest-priority indicator. Those attention indicators SHALL also coexist with the card's agent execution accent rather than replacing one another.
 
-Background activity SHALL remain derived per task as unsettled work other than agent execution, and SHALL NOT be presented on the task card as a generic activity count or background indicator. Directly owned deterministic execution SHALL instead expose its own controls and runtime status as defined by `deterministic-steps`, without fabricating conversation attention. It SHALL remain available through the task drawer's section navigation, whose Conversations entry SHALL expose the number of unsettled activities and their labels on hover and to assistive technology.
+Background activity SHALL remain derived per task as unsettled work other than agent execution, and SHALL NOT be presented on the task card as a generic activity count or background indicator. Directly owned deterministic execution SHALL instead expose its own controls and runtime status as defined by `deterministic-steps`, without fabricating conversation attention. A pending executable approval SHALL be a task-level attention fact derived from the task's own deterministic control state; it SHALL present the approval attention defined by `Card attention surface`, and it SHALL NOT mark any conversation as unread, awaiting reply, or failed. Directly owned deterministic execution SHALL remain available through the task drawer's section navigation, whose Conversations entry SHALL expose the number of unsettled activities and their labels on hover and to assistive technology.
 
 #### Scenario: Attention from a nonselected conversation
 
@@ -603,6 +603,12 @@ Background activity SHALL remain derived per task as unsettled work other than a
 - **AND** the script alone creates no blue, orange, or red conversation attention mark
 - **AND** the card adds no generic background activity count
 
+#### Scenario: Present a pending approval as task attention
+
+- **WHEN** a task's current entry awaits executable approval and no conversation has unread, awaiting-reply, or failure attention
+- **THEN** the card presents the approval attention defined by `Card attention surface`
+- **AND** no conversation is marked unread, awaiting reply, or failed
+
 ### Requirement: Truthful and self-healing turn execution state
 The board SHALL stop presenting a task's agent execution when the last agent owned by its conversations finishes, without requiring another session event, a reload, or any user action. The board SHALL NOT present agent execution when no owned agent is running. When an activity update is missed or a transient read fails, the board SHALL recover the correct execution state within at most two seconds. Background activity SHALL NOT be presented as agent execution.
 
@@ -624,11 +630,11 @@ The board SHALL stop presenting a task's agent execution when the last agent own
 
 ### Requirement: Task card layout
 
-The board SHALL render each task as a card composed of distinct regions in a fixed order: a title region, a context region, an activity region, and a status region. The context region SHALL present the task's project name and its unread, awaiting-reply, and failure attention indicators. The activity region SHALL present the auto-mode control defined by Auto mode on a task card, the stage run action defined by Run a stage instruction from a card, and the advance action defined by Advance a task from its card, kept on one line at the trailing edge of the card. The status region SHALL present unresolved context-operation, confirmed-transition, and automatic-advance state as defined by Task card status strip. The card's agent execution state SHALL be presented by the execution accent defined by Execution accent on task cards and SHALL NOT occupy a region of its own.
+The board SHALL render each task as a card composed of distinct regions in a fixed order: a title region, a context region, an activity region, and a status region. The context region SHALL present the task's project name and its unread, awaiting-reply, failure, and pending-approval attention indicators. The activity region SHALL present the auto-mode control defined by Auto mode on a task card, the stage run action defined by Run a stage instruction from a card, and the advance action defined by Advance a task from its card, kept on one line at the trailing edge of the card. The status region SHALL present unresolved context-operation, confirmed-transition, automatic-advance, and executable-approval state as defined by Task card status strip. The card's agent execution state SHALL be presented by the execution accent defined by Execution accent on task cards and SHALL NOT occupy a region of its own.
 
 The project name SHALL remain visible on every card, SHALL be visually quieter than the title, and SHALL expose the complete name when the available width truncates it. The title SHALL NOT be clamped to a fixed number of lines. In selection mode the card SHALL present its selection control at the leading edge of the context region. The whole card surface SHALL remain activatable as defined by Open a task drawer, except for nested controls, which SHALL perform their own action without opening the drawer.
 
-For an entry owned by durable deterministic activation or control state, the activity region SHALL additionally present the applicable Stop or Play control defined by `deterministic-steps`, not an agent instruction countdown. Ownership SHALL follow that persisted entry state rather than the latest saved workflow mode, so changing the saved stage to an agent or manual mode SHALL NOT hide Stop for its owned active run. The status region SHALL include its deterministic execution state. These controls SHALL preserve the single activity row, nested-control activation rules, project visibility, selection behavior, and independent conversation attention of the existing card.
+For an entry owned by durable deterministic activation or control state, the activity region SHALL additionally present the applicable Stop, Play, or approval action defined by `deterministic-steps`, not an agent instruction countdown. While that entry awaits approval, the approval action SHALL take the place of Stop and Play in the same single control slot. Ownership SHALL follow that persisted entry state rather than the latest saved workflow mode, so changing the saved stage to an agent or manual mode SHALL NOT hide Stop for its owned active run. The status region SHALL include its deterministic execution state. These controls SHALL preserve the single activity row, nested-control activation rules, project visibility, selection behavior, and independent conversation attention of the existing card.
 
 #### Scenario: Present the card regions in order
 
@@ -671,15 +677,22 @@ For an entry owned by durable deterministic activation or control state, the act
 
 #### Scenario: Omit an empty status region
 
-- **WHEN** a card has no unresolved context operation, confirmed transition, automatic-advance state, or run-action failure
+- **WHEN** a card has no unresolved context operation, confirmed transition, automatic-advance state, executable approval, or run-action failure
 - **THEN** the card presents no status-region content
 
 #### Scenario: Present deterministic controls without replacing card regions
 
 - **WHEN** a task card is in a deterministic stage
-- **THEN** its applicable Stop or Play control is placed in the activity region
+- **THEN** its applicable Stop, Play, or approval control is placed in the activity region
 - **AND** its deterministic status is placed in the status region
 - **AND** no new card region or separate action row is introduced
+
+#### Scenario: Present deterministic parameter data in the status region
+
+- **WHEN** a deterministic entry declares parameters
+- **THEN** the status region presents the entry's parameter values read-only
+- **AND** it offers an inline edit action while the entry exists and its execution is not active or stopping
+- **AND** the data and action stay inside the status region without adding an activity control or a separate card region
 
 #### Scenario: Keep owned Stop after a saved mode change
 
@@ -688,11 +701,17 @@ For an entry owned by durable deterministic activation or control state, the act
 - **AND** no agent countdown or stage-run action replaces it
 - **AND** a later Play is offered only for valid latest deterministic configuration, otherwise the interface explains the required configuration or new entry
 
+#### Scenario: Replace Stop with approval while an entry waits
+
+- **WHEN** a task's current deterministic entry awaits approval
+- **THEN** the activity region presents the approval action in the place of Stop and Play
+- **AND** the status region presents the pending approval
+
 ### Requirement: Single-line activity strip on task cards
 
 The card's activity region SHALL keep its content on one line. It SHALL present the auto-mode control, the stage run action or its countdown control, and the advance action at the trailing edge, and it SHALL NOT present a background activity indicator. The card SHALL reserve the activity region's height in every task state, so that starting or ending a turn, or showing or hiding the run and advance actions, SHALL NOT change the card's height. The controls SHALL share one row and SHALL NOT add a separate action row.
 
-A deterministic Stop or Play control SHALL share this same reserved one-line activity region. It SHALL NOT be represented as an agent stage-instruction action or a background-count indicator, and changes between stopped and running SHALL NOT introduce another action row or resize the reserved activity region.
+A deterministic Stop, Play, or approval control SHALL share this same reserved one-line activity region. It SHALL NOT be represented as an agent stage-instruction action or a background-count indicator, and changes between stopped, running, and awaiting approval SHALL NOT introduce another action row or resize the reserved activity region.
 
 #### Scenario: Label a single background kind
 
@@ -739,7 +758,7 @@ A deterministic Stop or Play control SHALL share this same reserved one-line act
 
 #### Scenario: Keep deterministic controls on the reserved row
 
-- **WHEN** a deterministic execution starts or stops and its card changes between Play and Stop
+- **WHEN** a deterministic execution starts, stops, or starts waiting for approval and its card changes between Play, Stop, and the approval action
 - **THEN** the control remains on the same single activity row
 - **AND** the reserved activity-region height is unchanged
 
@@ -749,7 +768,7 @@ The board SHALL present a card's unresolved context operation, confirmed transit
 
 A pause requested by the agent SHALL present the reason the agent recorded, and a diagnostic pause recorded for the same task SHALL remain presented beside it, so a turn that failed while the task was paused is not hidden by the pause.
 
-The same status region SHALL present deterministic execution state defined by `deterministic-steps`, including authorization needed, running, stopped, and a recoverable execution or handoff failure. Stopped SHALL NOT be reported as an executor error or an Auto mode pause. These states SHALL coexist with applicable operation, transition, and conversation-derived facts without replacing them, and SHALL NOT disappear merely because a conversation was read.
+The same status region SHALL present deterministic execution state defined by `deterministic-steps`, including awaiting approval, running, stopped, and a recoverable execution or handoff failure. Awaiting approval SHALL be presented as a pending status whose label states that the executable version needs approval, and SHALL NOT be presented as an executor failure, an agent turn, or an Auto mode pause. Stopped SHALL NOT be reported as an executor error or an Auto mode pause. These states SHALL coexist with applicable operation, transition, and conversation-derived facts without replacing them, and SHALL NOT disappear merely because a conversation was read.
 
 #### Scenario: Report a failed operation
 - **WHEN** a card's task has a context operation in a failed phase
@@ -834,6 +853,12 @@ The same status region SHALL present deterministic execution state defined by `d
 - **THEN** the status region identifies the deterministic state and its available recovery
 - **AND** it does not fabricate an Auto mode pause or a failed conversation turn
 - **AND** the applicable Play action remains available without requiring a stage change
+
+#### Scenario: Report a pending executable approval
+
+- **WHEN** a task's current deterministic entry awaits approval
+- **THEN** the status region presents a pending status stating that the executable version needs approval
+- **AND** it does not present the approval as a failure, an agent turn, or an Auto mode pause
 
 ### Requirement: Host-themed board controls
 The board SHALL follow the host application's light and dark appearance for its primary actions, focus indicators, and selection accents. Enabled primary actions SHALL use host theme colors for their fill, foreground, and hover state in both appearances. Primary-action text SHALL maintain at least 4.5:1 contrast against its fill at rest and on hover. The board SHALL NOT use the browser's selection highlight color as a product fill or accent.
@@ -2884,7 +2909,7 @@ The action SHALL be available while card selection is active and while the searc
 
 ### Requirement: Card attention surface
 
-The board SHALL present a task's dominant attention state as a tint of the card surface. The dominant state SHALL be selected from the task's attention facts by a fixed priority: a failure, then an awaiting reply, then agent execution, then unread messages. The tint SHALL be the state's attention color mixed into the host surface at a low share, so that the card stays legible as text while its surface reads as area. The tint SHALL NOT be the only presentation of the state: the attention marks defined by Coexisting attention indicators across task conversations SHALL remain presented, including for every state that does not win the surface. The surface SHALL present no tint when none of those states applies. The tint SHALL NOT change the card's height, SHALL NOT add, remove, or reorder a region of the card, and SHALL NOT affect the task's workflow stage, its position, or its drag behavior. Task-level context-operation, confirmed-transition, and automatic-advance state SHALL NOT tint the card; those remain in the status region as defined by Task card status strip.
+The board SHALL present a task's dominant attention state as a tint of the card surface. The dominant state SHALL be selected from the task's attention facts by a fixed priority: a failure, then a pending executable approval, then an awaiting reply, then agent execution, then unread messages. The tint SHALL be the state's attention color mixed into the host surface at a low share, so that the card stays legible as text while its surface reads as area. The tint SHALL NOT be the only presentation of the state: the attention marks defined by Coexisting attention indicators across task conversations SHALL remain presented, including for every state that does not win the surface. The pending executable approval SHALL present the attention mark with the accessible name for awaiting approval, and it SHALL present the status line defined by Task card status strip. The surface SHALL present no tint when none of those states applies. The tint SHALL NOT change the card's height, SHALL NOT add, remove, or reorder a region of the card, and SHALL NOT affect the task's workflow stage, its position, or its drag behavior. Task-level context-operation, confirmed-transition, and automatic-advance state SHALL NOT tint the card; those remain in the status region as defined by Task card status strip.
 
 #### Scenario: Paint the dominant state
 
@@ -2899,7 +2924,7 @@ The board SHALL present a task's dominant attention state as a tint of the card 
 
 #### Scenario: Present no tint without attention
 
-- **WHEN** a task has no failure, no awaiting reply, no running agent, and no unread messages
+- **WHEN** a task has no failure, no pending approval, no awaiting reply, no running agent, and no unread messages
 - **THEN** the card surface presents no tint
 
 #### Scenario: Keep the card height stable
@@ -2909,7 +2934,7 @@ The board SHALL present a task's dominant attention state as a tint of the card 
 
 #### Scenario: Keep status state out of the surface
 
-- **WHEN** a task has a failed context operation and no failure, awaiting reply, running agent, or unread message
+- **WHEN** a task has a failed context operation and no failure, pending approval, awaiting reply, running agent, or unread message
 - **THEN** the card surface presents no tint
 - **AND** the status region reports the failed operation
 
@@ -2919,9 +2944,22 @@ The board SHALL present a task's dominant attention state as a tint of the card 
 - **THEN** the card still presents its tint
 - **AND** the selection control and the selection accent remain presented
 
+#### Scenario: Paint a pending executable approval
+
+- **WHEN** a task's current entry awaits approval and the task has no failure
+- **THEN** the card surface is tinted with the attention color
+- **AND** the approval mark is presented in the context region
+- **AND** the status region names the pending approval
+
+#### Scenario: A failure outranks a pending approval
+
+- **WHEN** a task has a failure and also waits for executable approval
+- **THEN** the card surface is tinted with the failure color
+- **AND** the approval mark and status line remain presented
+
 ### Requirement: Attention marks keep a readable size in the diagram
 
-The board SHALL present each attention mark at a readable on-screen size in the column board and in the workflow diagram. A mark's on-screen size SHALL remain constant while the diagram's zoom is between 0.29 and 1, SHALL follow the diagram's zoom above 1, and SHALL NOT exceed 3.5 times its authored size at any zoom, including the diagram's minimum zoom. Marks SHALL remain circles distinguished by their attention color and their fixed order of unread, awaiting reply, and failure. The card SHALL NOT present a mark for agent execution. Each mark SHALL keep the accessible name for its state at every zoom.
+The board SHALL present each attention mark at a readable on-screen size in the column board and in the workflow diagram. A mark's on-screen size SHALL remain constant while the diagram's zoom is between 0.29 and 1, SHALL follow the diagram's zoom above 1, and SHALL NOT exceed 3.5 times its authored size at any zoom, including the diagram's minimum zoom. Marks SHALL remain circles in the fixed order of approval, unread, awaiting reply, and failure; each mark SHALL keep its own accessible name at every zoom, so marks that share a color remain distinguishable by their order and name. The card SHALL NOT present a mark for agent execution.
 
 #### Scenario: Keep a constant size above the bound
 
@@ -2943,6 +2981,12 @@ The board SHALL present each attention mark at a readable on-screen size in the 
 
 - **WHEN** assistive technology reads a card that presents attention marks at any zoom
 - **THEN** each mark exposes the name of its state
+
+#### Scenario: Keep the approval mark named
+
+- **WHEN** a card waits for executable approval
+- **THEN** its approval mark exposes the name for awaiting approval
+- **AND** it does not reuse the awaiting-reply name
 
 ### Requirement: Board-wide mark all as read
 
@@ -3110,3 +3154,36 @@ A board's workflow MAY author an empty allowed transitions list for a stage, and
 
 - **WHEN** a stage that authored an empty list is stored with its allowed transitions omitted
 - **THEN** any other stage may be a destination again
+
+### Requirement: Board approval queue
+
+The active board SHALL present an approval queue while at least one card of that board waits for executable approval. The queue SHALL present one item per unapproved executable version of a board stage, together with the number of cards waiting for that version and the project identities only when more than one project waits. The queue SHALL NOT present one item per card. Activating an item SHALL open the executable-version review defined by `deterministic-steps` for that version. Approving from the queue SHALL resume the waiting entries as defined by `deterministic-steps`, and the item SHALL disappear once no card remains waiting for that version. The queue SHALL NOT be dismissible while it holds an item, SHALL NOT claim an agent turn or a failed conversation turn, and SHALL coexist with the board's other notices without replacing them. The queue SHALL NOT include an approved version or a version with no waiting card.
+
+#### Scenario: List one item per waiting version
+
+- **WHEN** four cards of one stage wait for the same executable version, and one card of another stage waits for a different version
+- **THEN** the queue presents two items
+- **AND** the first names four waiting cards and the second names one
+
+#### Scenario: Open the review from the queue
+
+- **WHEN** the user activates a queue item
+- **THEN** the board opens the review for that exact executable version
+- **AND** approving it resumes every waiting card of that version
+
+#### Scenario: Remove a resolved item
+
+- **WHEN** the last waiting card of an executable version starts after approval
+- **THEN** the queue no longer presents that item
+
+#### Scenario: Keep the queue while work is pending
+
+- **WHEN** the queue holds an item
+- **THEN** the queue presents no dismissal control
+- **AND** it remains presented across a reload until the approval or the waiting entry resolves
+
+#### Scenario: Do not claim an agent turn
+
+- **WHEN** the queue presents a waiting executable version
+- **THEN** no card is presented as running an agent because of that item
+- **AND** no conversation attention is fabricated

@@ -6,7 +6,8 @@ import { KanbanApp } from '../../src/host/app.js';
 import { HubRepository } from '../../src/host/hub-repository.js';
 import { TURN_ADVANCE_SETTLE_MS } from '../../src/host/turn-advance.js';
 import type { DeterministicCapture } from '../../src/shared/deterministic.js';
-import type { CaptureRequest, DeterministicRuntime, DeterministicScope, ExecuteRequest, ExecutionOutcome } from '../../src/host/deterministic/ports.js';
+import type { CaptureRequest, DeterministicApprovalScope, DeterministicRuntime, DeterministicScope, ExecuteRequest, ExecutionOutcome } from '../../src/host/deterministic/ports.js';
+import { normalizeCapture as normalizeStoredCapture } from '../../src/host/deterministic/capture.js';
 import { SnapshotSchema } from '../../src/remote.js';
 import { fixture } from './helpers.js';
 
@@ -26,17 +27,28 @@ class FakeNativeRuntime implements DeterministicRuntime {
   readonly values = new Map<string, string>();
   private sequence = 0;
   private scope(scope: DeterministicScope): string { return [scope.hubId, scope.boardId, scope.projectId, scope.stageIdentity].join('/'); }
+  private approvalKey(scope: DeterministicApprovalScope): string { return [scope.hubId, scope.boardId, scope.stageIdentity].join('/'); }
   capture = vi.fn(async (request: CaptureRequest): Promise<DeterministicCapture> => {
     const code = request.definition.code ?? this.files.get(request.definition.file!);
     if (code === undefined) throw new Error('The synthetic primary file is missing.');
     const executionDirectory = request.definition.directory === 'project' ? request.projectDirectory : request.taskDirectory ?? request.projectDirectory;
     const sourceRef = 'private-source-' + (++this.sequence);
     this.sources.set(sourceRef, code);
-    return { sourceRef, fingerprint: createHash('sha256').update(JSON.stringify({ code, definition: request.definition, executionDirectory, exits: request.exits })).digest('hex'), language: request.definition.language, directory: request.definition.directory, executionDirectory,
-      source: request.definition.file === undefined ? { kind: 'inline' } : { kind: 'file', path: request.definition.file }, env: [...(request.definition.env ?? [])], params: (request.definition.params ?? []).map(parameter => parameter.name), exits: structuredClone(request.exits) };
+    const capture: DeterministicCapture = { sourceRef, fingerprint: '', language: request.definition.language, directory: request.definition.directory, executionDirectory,
+      source: request.definition.file === undefined ? { kind: 'inline' } : { kind: 'file', path: request.definition.file, reference: request.definition.file }, env: [...(request.definition.env ?? [])], params: (request.definition.params ?? []).map(parameter => parameter.name), exits: structuredClone(request.exits) };
+    return normalizeStoredCapture(capture, request.definition, code);
   });
   plan = vi.fn(async (request: CaptureRequest) => { const capture = await this.capture(request); const { sourceRef: _sourceRef, fingerprint, ...content } = capture; return { content, code: this.sources.get(capture.sourceRef) ?? '', fingerprint }; });
   loadCapture = vi.fn(async (capture: DeterministicCapture) => { const source = this.sources.get(capture.sourceRef); if (source === undefined) throw new Error('Missing immutable source.'); return source; });
+  releaseCapture = vi.fn((_capture: DeterministicCapture) => undefined);
+  normalizeCapture = vi.fn(async (capture: DeterministicCapture, definition: CaptureRequest['definition']) => {
+    const code = await this.loadCapture(capture);
+    const normalized = normalizeStoredCapture(capture, definition, code);
+    if (normalized.fingerprint === capture.fingerprint && normalized.source.reference === capture.source.reference) return capture;
+    const sourceRef = 'normalized-source-' + (++this.sequence);
+    this.sources.set(sourceRef, code);
+    return { ...normalized, sourceRef };
+  });
   collectSources = vi.fn(async (_references: readonly string[]) => {});
   verify = vi.fn(async (_capture: DeterministicCapture, _signal?: AbortSignal) => {});
   reclaim = vi.fn(async (_executionId: string) => {});
@@ -49,9 +61,8 @@ class FakeNativeRuntime implements DeterministicRuntime {
     return gate.promise;
   });
   trust = {
-    isApproved: vi.fn(async (scope: DeterministicScope, fingerprint: string) => this.trusted || this.approvals.has(this.scope(scope) + '/' + fingerprint)),
-    approve: vi.fn(async (scope: DeterministicScope, fingerprint: string) => { this.approvals.add(this.scope(scope) + '/' + fingerprint); }),
-    reject: vi.fn(async (scope: DeterministicScope, fingerprint: string) => { this.approvals.delete(this.scope(scope) + '/' + fingerprint); }),
+    isApproved: vi.fn(async (scope: DeterministicApprovalScope, fingerprint: string) => this.trusted || this.approvals.has(this.approvalKey(scope) + '/' + fingerprint)),
+    approve: vi.fn(async (scope: DeterministicApprovalScope, fingerprint: string) => { this.approvals.add(this.approvalKey(scope) + '/' + fingerprint); }),
   };
   variables = {
     status: vi.fn(async (scope: DeterministicScope, names: readonly string[]) => names.map(name => ({ name, configured: this.values.has(this.scope(scope) + '/' + name) }))),
@@ -73,11 +84,11 @@ const fixtures: Fixture[] = [];
 const extraApps: KanbanApp[] = [];
 const runtimes: FakeNativeRuntime[] = [];
 afterEach(async () => { vi.useRealTimers(); for (const runtime of runtimes.splice(0)) for (const run of runtime.runs) run.resolve({ kind: 'aborted' }); for (const app of extraApps.splice(0)) await app.close(); for (const f of fixtures.splice(0)) await f.close(); });
-async function setup(options: { yaml?: string; initialize?: boolean; trusted?: boolean } = {}) {
+async function setup(options: { yaml?: string; initialize?: boolean; trusted?: boolean; attach?: boolean } = {}) {
   const f = await fixture(); fixtures.push(f);
   const runtime = new FakeNativeRuntime(); runtimes.push(runtime); runtime.trusted = options.trusted ?? true;
   await f.store.setWorkflow(options.yaml ?? flow());
-  f.app.attachDeterministicRuntime(runtime);
+  if (options.attach !== false) f.app.attachDeterministicRuntime(runtime);
   if (options.initialize !== false) await f.app.initialize();
   return { ...f, runtime };
 }
@@ -97,11 +108,126 @@ describe('deterministic execution through the real app and durable repository', 
     await expect.poll(() => f.store.requireTask(task.id).deterministic?.phase, POLL).toBe('awaiting-trust');
     expect(f.runtime.runs).toEqual([]); expect(f.sessions.dirs.size).toBe(0); expect(f.sessions.sent).toEqual([]);
     const review = await f.app.deterministicReview(task.id);
-    expect(review.code).toBe(SOURCE); expect(review.executionId).toBe(f.store.requireTask(task.id).deterministic!.executionId);
-    await f.app.command({ type: 'task.deterministicApprove', taskId: task.id, executionId: review.executionId, fingerprint: review.fingerprint });
+    expect(review.code).toBe(SOURCE); expect(review.version.captured).toBe(true); expect(review.captured?.taskId).toBe(task.id); expect(review.version.fingerprint).toBe(f.store.requireTask(task.id).deterministic!.capture!.fingerprint);
+    await f.app.command({ type: 'board.deterministicApprove', boardId: task.boardId, stageId: task.columnId, fingerprint: review.version.fingerprint, stageGeneration: review.version.stageGeneration, taskId: task.id });
     await attempt(f.runtime);
     expect(f.runtime.trust.approve).toHaveBeenCalledOnce(); expect(f.store.requireTask(task.id).autoMode?.enabled).not.toBe(true);
     expect(f.store.requireTask(task.id).sessionIds).toEqual([]);
+  });
+
+  it('normalizes legacy captures when a native runtime attaches after initialization', async () => {
+    const f = await setup({ attach: false, trusted: false });
+    const task = await create(f);
+    f.runtime.sources.set('legacy-source', SOURCE);
+    await f.store.transact(draft => {
+      const value = draft.tasks.find(item => item.id === task.id)!;
+      value.deterministic = {
+        ...value.deterministic!, phase: 'awaiting-trust',
+        capture: { sourceRef: 'legacy-source', fingerprint: 'legacy-fingerprint', language: 'typescript', directory: 'task', executionDirectory: f.project.projectPath, source: { kind: 'inline' }, env: [], params: [], exits: value.deterministic!.targets ?? {} },
+      };
+    });
+    f.app.attachDeterministicRuntime(f.runtime);
+    await expect.poll(() => f.store.requireTask(task.id).deterministic?.capture?.sourceRef, POLL).not.toBe('legacy-source');
+    expect(f.store.requireTask(task.id).deterministic?.phase).toBe('awaiting-trust');
+  });
+
+  it('does not start a trusted late-attached entry before legacy normalization finishes', async () => {
+    const f = await setup({ attach: false, trusted: true });
+    const task = await create(f);
+    f.runtime.sources.set('legacy-source', SOURCE);
+    await f.store.transact(draft => {
+      const value = draft.tasks.find(item => item.id === task.id)!;
+      value.deterministic = {
+        ...value.deterministic!, phase: 'awaiting-trust',
+        capture: { sourceRef: 'legacy-source', fingerprint: 'legacy-fingerprint', language: 'typescript', directory: 'task', executionDirectory: f.project.projectPath, source: { kind: 'inline' }, env: [], params: [], exits: value.deterministic!.targets ?? {} },
+      };
+    });
+    let entered!: () => void; let release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const original = f.runtime.normalizeCapture.getMockImplementation()!;
+    f.runtime.normalizeCapture.mockImplementationOnce(async (capture, definition) => { entered(); await gate; return original(capture, definition); });
+    f.app.attachDeterministicRuntime(f.runtime);
+    await started;
+    expect(f.runtime.runs).toEqual([]);
+    release();
+    await expect.poll(() => f.store.requireTask(task.id).deterministic?.capture?.sourceRef, POLL).not.toBe('legacy-source');
+    await expect.poll(() => f.runtime.runs.length, POLL).toBe(1);
+  });
+
+  it('approves one stage version for every waiting card', async () => {
+    const f = await setup({ trusted: false });
+    const first = await create(f);
+    const second = await create(f);
+    await expect.poll(() => [f.store.requireTask(first.id).deterministic?.phase, f.store.requireTask(second.id).deterministic?.phase], POLL).toEqual(['awaiting-trust', 'awaiting-trust']);
+    expect(f.runtime.runs).toEqual([]);
+    const review = await f.app.deterministicReview(first.id);
+    await f.app.command({ type: 'board.deterministicApprove', boardId: first.boardId, stageId: first.columnId, fingerprint: review.version.fingerprint, stageGeneration: review.version.stageGeneration, taskId: first.id });
+    await expect.poll(() => f.runtime.runs.length, POLL).toBe(2);
+    expect(f.store.requireTask(first.id).deterministic?.phase).toBe('active');
+    expect(f.store.requireTask(second.id).deterministic?.phase).toBe('active');
+  });
+
+  it('approves the authored stage version before the first card enters', async () => {
+    const f = await setup({ trusted: false });
+    const authored = await f.app.deterministicReview({ boardId: 'board', stageId: 'wait' });
+    expect(authored.version.captured).toBe(false);
+    expect(authored.approval).toBe('required');
+    await f.app.command({ type: 'board.deterministicApprove', boardId: 'board', stageId: 'wait', fingerprint: authored.version.fingerprint, stageGeneration: authored.version.stageGeneration });
+    const task = await create(f);
+    await attempt(f.runtime);
+    expect(f.store.requireTask(task.id).deterministic?.phase).toBe('active');
+  });
+
+  it('rejects an approval whose stage version changed after the review', async () => {
+    const f = await setup({ trusted: false });
+    const authored = await f.app.deterministicReview({ boardId: 'board', stageId: 'wait' });
+    await f.store.setWorkflow(flow({ source: 'return { exit: "manual", message: "Changed source" };' }));
+    await expect(f.app.command({ type: 'board.deterministicApprove', boardId: 'board', stageId: 'wait', fingerprint: authored.version.fingerprint, stageGeneration: authored.version.stageGeneration })).rejects.toMatchObject({ code: 'STALE_VERSION' });
+  });
+
+  it('rejects a card approval when the saved stage changed while its review was open', async () => {
+    const f = await setup({ trusted: false });
+    const task = await create(f);
+    await expect.poll(() => f.store.requireTask(task.id).deterministic?.phase, POLL).toBe('awaiting-trust');
+    const captured = await f.app.deterministicReview(task.id);
+    await f.store.setWorkflow(flow({ source: 'return { exit: "manual", message: "Changed after review" };' }));
+    await expect(f.app.command({ type: 'board.deterministicApprove', boardId: task.boardId, stageId: task.columnId, fingerprint: captured.version.fingerprint, stageGeneration: captured.version.stageGeneration, taskId: task.id })).rejects.toMatchObject({ code: 'STALE_VERSION' });
+    expect(f.runtime.runs).toEqual([]);
+  });
+
+  it('rejects a card review after the stable stage identity is replaced', async () => {
+    const f = await setup({ trusted: false });
+    const task = await create(f);
+    await expect.poll(() => f.store.requireTask(task.id).deterministic?.phase, POLL).toBe('awaiting-trust');
+    await f.store.transact(draft => { const board = draft.boards[0]!; board.localStageIdentities = { ...(board.localStageIdentities ?? {}), wait: 'replacement-stage' }; });
+    await expect(f.app.deterministicReview(task.id)).rejects.toMatchObject({ code: 'STALE_VERSION' });
+  });
+
+  it('rejects a stale card review instead of falling back to the authored version', async () => {
+    const f = await setup({ trusted: false });
+    const task = await create(f);
+    await expect.poll(() => f.store.requireTask(task.id).deterministic?.phase, POLL).toBe('awaiting-trust');
+    await f.app.command({ type: 'task.move', hubId: 'hub', taskId: task.id, columnId: 'manual', overrideTransition: true });
+    await expect(f.app.deterministicReview({ boardId: 'board', stageId: 'wait', taskId: task.id })).rejects.toMatchObject({ code: 'STALE_VERSION' });
+  });
+
+  it('rejects a card approval when the stage changes while normalization is running', async () => {
+    const f = await setup({ trusted: false });
+    const task = await create(f);
+    await expect.poll(() => f.store.requireTask(task.id).deterministic?.phase, POLL).toBe('awaiting-trust');
+    const captured = await f.app.deterministicReview(task.id);
+    let entered!: () => void; let release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const original = f.runtime.normalizeCapture.getMockImplementation()!;
+    f.runtime.normalizeCapture.mockImplementationOnce(async (capture, definition) => { entered(); await gate; return original(capture, definition); });
+    const pending = f.app.command({ type: 'board.deterministicApprove', boardId: task.boardId, stageId: task.columnId, fingerprint: captured.version.fingerprint, stageGeneration: captured.version.stageGeneration, taskId: task.id });
+    await started;
+    await f.store.setWorkflow(flow({ source: 'return { exit: "manual", message: "Changed during normalization" };' }));
+    release();
+    await expect(pending).rejects.toMatchObject({ code: 'STALE_VERSION' });
+    expect(f.runtime.runs).toEqual([]);
   });
 
   it('refuses a missing parameter in place and starts after the entry values are repaired', async () => {
@@ -135,10 +261,11 @@ describe('deterministic execution through the real app and durable repository', 
     const task = await create(f); await expect.poll(() => f.store.requireTask(task.id).deterministic?.phase, POLL).toBe('awaiting-trust');
     const active = f.store.requireTask(task.id);
     await f.app.command({ type: 'task.deterministicVariable', taskId: task.id, projectId: active.projectId, stageIdentity: active.stageEntry!.stageIdentity, name: 'CI_TOKEN', value: secret });
-    const review = await f.app.deterministicReview(task.id); expect(review.code).toBe(privateCode); expect(review.variables).toEqual([{ name: 'CI_TOKEN', configured: true }]); expect(JSON.stringify(review)).not.toContain(secret);
-    await f.app.command({ type: 'task.deterministicApprove', taskId: task.id, executionId: review.executionId, fingerprint: review.fingerprint }); const run = await attempt(f.runtime);
+    const review = await f.app.deterministicReview(task.id); expect(review.code).toBe(privateCode); expect(JSON.stringify(review)).not.toContain(secret);
+    expect(await f.app.deterministicVariables(task.id)).toEqual({ env: ['CI_TOKEN'], variables: [{ name: 'CI_TOKEN', configured: true }] });
+    await f.app.command({ type: 'board.deterministicApprove', boardId: task.boardId, stageId: task.columnId, fingerprint: review.version.fingerprint, stageGeneration: review.version.stageGeneration, taskId: task.id }); const run = await attempt(f.runtime);
     const snapshot = await f.app.snapshot(); expect(SnapshotSchema.safeParse(snapshot).success).toBe(true);
-    expect(snapshot.state.hubs.flatMap(hub => hub.tasks).find(value => value.id === task.id)?.deterministic).toBeUndefined(); expect(snapshot.deterministic?.[task.id]).toMatchObject({ phase: 'active', executionId: review.executionId, fingerprint: review.fingerprint });
+    expect(snapshot.state.hubs.flatMap(hub => hub.tasks).find(value => value.id === task.id)?.deterministic).toBeUndefined(); expect(snapshot.deterministic?.[task.id]).toMatchObject({ phase: 'active', executionId: f.store.requireTask(task.id).deterministic!.executionId, fingerprint: review.version.fingerprint });
     const serialized = JSON.stringify(snapshot); for (const privateValue of [privateCode, secret, run.request.capture.sourceRef]) expect(serialized).not.toContain(privateValue);
     expect(JSON.stringify(run.request.input)).not.toContain(secret);
     complete(run, 'manual', 'CI said ' + secret);

@@ -79,8 +79,8 @@ describe('report bounds', () => {
 
   it('carries the script impact the host resolved', () => {
     const report = composeWorkflowReport({ valid: true, problems: [], difference: null, warnings: [], affectedCards: [], workflow: null, previous: null }, [
-      { stage: 'wait', projectId: 'project-1', verdict: 'changed', reasons: ['exits'] },
+      { stage: 'wait', verdict: 'changed', reasons: ['exits'] },
     ]);
-    expect(report.scripts).toEqual([{ stage: 'wait', projectId: 'project-1', verdict: 'changed', reasons: ['exits'] }]);
+    expect(report.scripts).toEqual([{ stage: 'wait', verdict: 'changed', reasons: ['exits'] }]);
   });
 });
