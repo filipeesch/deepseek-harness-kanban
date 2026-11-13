@@ -23,6 +23,9 @@ function gitTrap(): { port: GitPort; calls: string[] } {
   const order = (name: string) => { calls.push(name); throw new KanbanError('GIT_UNEXPECTED', 'Git must not be called for a plain checkout.'); };
   const port: GitPort = {
     async branches() { return order('branches'); },
+    async sourceCommit(): Promise<string> { return order('sourceCommit'); },
+    async branchTip(): Promise<string | undefined> { return order('branchTip'); },
+    async clearRegistration(): Promise<void> { return order('clearRegistration'); },
     async inspect(): Promise<GitTree> { return order('inspect'); },
     async localChanges(): Promise<boolean> { return order('localChanges'); },
     async assertRemovable(): Promise<never> { return order('assertRemovable'); },

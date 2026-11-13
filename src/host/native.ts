@@ -9,7 +9,7 @@ import { writableRoots, type SandboxExecutionPolicy, type ConfinedArgv } from '@
 import { randomUUID } from 'node:crypto';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import type { GitExecutor, SessionPort, CommandResult, ProjectProbe, WorkspacePort } from '../shared/ports.js';
+import type { GitDeadline, GitExecutor, SessionPort, CommandResult, ProjectProbe, WorkspacePort } from '../shared/ports.js';
 import type { GitProject } from '../shared/types.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 import { createNativeSessionFacts, inspectedOpenTurn, nativePendingKinds } from './native-facts.js';
@@ -25,6 +25,12 @@ import { createHostProjectProbe } from './project-probe.js';
 
 const EXECUTION_TIMEOUT_MS = 60_000;
 const READ_TIMEOUT_MS = 30_000;
+/**
+ * A command that touches a checkout's working tree costs what the repository costs,
+ * so it gets its own ceiling instead of the ref-read deadline. The numbers were
+ * calibrated against a 147k-file checkout writing at about 4.6 MB/s.
+ */
+const GIT_DEADLINE_MS: Record<GitDeadline, number> = { read: EXECUTION_TIMEOUT_MS, tree: 5 * 60_000, write: 15 * 60_000 };
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -409,10 +415,10 @@ export function createNativePorts(ctx: Context, options: NativePortsOptions = {}
     async assertPolicy(project, paths, ids, write) {
       await checkPaths(paths, await policiesFor(project, ids, undefined, write), write);
     },
-    async run(project, args, ids, signal, write = false) {
+    async run(project, args, ids, signal, write = false, deadline = 'read') {
       signal?.throwIfAborted();
       invariant(args.every((arg) => typeof arg === 'string' && !arg.includes('\0')), 'INVALID_GIT_ARGUMENT', 'Git arguments must be exact strings without NUL bytes.');
-      const timeout = AbortSignal.timeout(EXECUTION_TIMEOUT_MS);
+      const timeout = AbortSignal.timeout(GIT_DEADLINE_MS[deadline]);
       const lifetime = signal ? AbortSignal.any([signal, timeout]) : timeout;
       const cwd = await directoryPath(project.gitRootPath);
       const policy = commonPolicy(await policiesFor(project, ids, lifetime, write));

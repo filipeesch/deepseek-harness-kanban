@@ -11,6 +11,7 @@ import { board, cleanup, fixture, LocalExecutor, MemoryStore, Sessions } from '.
 function wrap(adapter: GitPort, overrides: Partial<GitPort>): GitPort {
   return {
     resolve: adapter.resolve.bind(adapter), branches: adapter.branches.bind(adapter), inspect: adapter.inspect.bind(adapter),
+    sourceCommit: adapter.sourceCommit.bind(adapter), branchTip: adapter.branchTip.bind(adapter), clearRegistration: adapter.clearRegistration.bind(adapter),
     localChanges: adapter.localChanges.bind(adapter), assertRemovable: adapter.assertRemovable.bind(adapter),
     create: adapter.create.bind(adapter), remove: adapter.remove.bind(adapter), repair: adapter.repair.bind(adapter),
     assertPolicy: adapter.assertPolicy.bind(adapter), projectDirectory: adapter.projectDirectory.bind(adapter),

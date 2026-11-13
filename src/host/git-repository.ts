@@ -1,14 +1,13 @@
-import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { KanbanError } from '../shared/errors.js';
-import type { GitExecutor, GitRepository, RegisteredWorktree } from '../shared/ports.js';
+import type { GitDeadline, GitExecutor, GitRepository, RegisteredWorktree } from '../shared/ports.js';
 import type { GitProject } from '../shared/types.js';
 import { resolveCanonicalPath, requireDirectory } from './path-resolution.js';
 import { containsPath } from './repository-layout.js';
 
 /** One bounded Git invocation bound to a project and its conversation policies. */
 export interface RepositoryCommands {
-  run(args: string[], options?: { signal?: AbortSignal; write?: boolean }): Promise<string>;
+  run(args: string[], options?: { signal?: AbortSignal; write?: boolean; deadline?: GitDeadline }): Promise<string>;
 }
 
 /** The executor, project, and conversation set one repository operation runs against. */
@@ -24,16 +23,11 @@ export function createRepositoryCommands(input: RepositoryCommandsInput): Reposi
     async run(args, options = {}) {
       const signal = options.signal;
       signal?.throwIfAborted();
-      const result = await executor.run(project, args, sessionIds, signal, options.write === true);
+      const result = await executor.run(project, args, sessionIds, signal, options.write === true, options.deadline);
       if (result.exitCode !== 0) throw new KanbanError('GIT_FAILED', 'Git operation failed: ' + (result.stderr.trim() || result.stdout.trim() || 'exit ' + result.exitCode), { args, exitCode: result.exitCode, stderr: result.stderr });
       return result.stdout;
     },
   };
-}
-
-async function present(value: string): Promise<boolean> {
-  try { await stat(value); return true; }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
 }
 
 async function canonicalOrNull(value: string): Promise<string | null> {
@@ -65,9 +59,12 @@ export class RepositoryFacts implements GitRepository {
     for (const field of output.split('\0')) {
       if (field.startsWith('worktree ')) {
         if (record) records.push(record);
+        // A prunable registration names a directory Git no longer sees; its path is
+        // still canonicalized so an attempt can target exactly that registration.
         const resolved = await canonicalOrNull(field.slice(9));
-        record = resolved === null ? undefined : { path: resolved, locked: false };
+        record = resolved === null ? undefined : { path: resolved, locked: false, prunable: false };
       } else if (field === 'locked' || field.startsWith('locked ')) { if (record) record.locked = true; }
+      else if (field === 'prunable' || field.startsWith('prunable ')) { if (record) record.prunable = true; }
     }
     if (record) records.push(record);
     this.worktrees = records;
@@ -84,8 +81,6 @@ export class RepositoryFacts implements GitRepository {
   /** The bounded command runner this operation's Git calls share. */
   runnable(): RepositoryCommands { return this.commands; }
 
-  /** Whether the checkout directory still exists on disk. */
-  present(target: string): Promise<boolean> { return present(target); }
 }
 
 /**

@@ -44,6 +44,8 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     deleteTarget(),
     failedDelete(),
     failedDeleteReturn(),
+    failedCreate(),
+    slowCreate(),
     ...(options.prepare === undefined ? [] : [firstExecutionTask(), blockedBindingTask()]),
   ];
   // One task with a recorded flow, so the History section can render every kind of row.
@@ -545,6 +547,30 @@ function deleteTarget(): HubTask {
 function failedDeleteReturn(): HubTask {
   const value = failedDelete();
   return { ...value, id: 'failed-delete-return', title: 'Failed return', position: 44, sessionIds: ['s-failed-delete-return'], operation: { ...value.operation!, id: 'failed-delete-return-op', archivedSessionIds: [], error: { code: 'SHARED_WORKTREE', message: 'Another DSH conversation is using this checkout.', details: { sessionId: 'child', path: '/worktrees/failed-delete', failedPhase: 'preflight' } } } };
+}
+function failedCreate(): HubTask {
+  return {
+    ...task('failed-create', 'Failed create', 'apply', 46), effectiveCwd: '/repo',
+    operation: {
+      id: 'failed-create-op', request: { kind: 'create', mode: 'new', path: '/worktrees/team/failed-create', branchName: 'failed-create' },
+      phase: 'failed', targetPath: '/worktrees/team/failed-create', previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false, createdAt: 'now',
+      error: { code: 'GIT_TIMEOUT', message: 'The Git operation exceeded its execution deadline.', details: { failedPhase: 'git', gitAttempted: true } },
+      createAttempt: {
+        operationId: 'failed-create-op', path: '/worktrees/team/failed-create', gitRootPath: '/repo', branchName: 'failed-create', mode: 'new', absentBefore: true, sourceCommit: 'abc1234',
+        observed: { directory: 'present', registration: 'none', at: 'now', parentCandidates: ['/worktrees/team'] },
+      },
+    },
+  };
+}
+function slowCreate(): HubTask {
+  return {
+    ...task('slow-create', 'Creating checkout', 'apply', 47), effectiveCwd: '/repo',
+    operation: {
+      id: 'slow-create-op', request: { kind: 'create', mode: 'new', path: '/worktrees/slow-create', branchName: 'slow-create' },
+      phase: 'git', targetPath: '/worktrees/slow-create', previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false, createdAt: 'now',
+      createAttempt: { operationId: 'slow-create-op', path: '/worktrees/slow-create', gitRootPath: '/repo', branchName: 'slow-create', mode: 'new', absentBefore: true, sourceCommit: 'abc1234', reusedBranch: true },
+    },
+  };
 }
 function failedDelete(): HubTask {
   return { ...task('failed-delete', 'Failed delete', 'apply', 43), effectiveCwd: '/worktrees/failed-delete', worktree: { path: '/worktrees/failed-delete', branch: 'failed-delete', owned: true, status: 'ready' }, operation: { id: 'failed-delete-op', request: { kind: 'delete', discardChanges: false, expectedWorktreePath: '/worktrees/failed-delete' }, phase: 'failed', targetPath: '/worktrees/failed-delete', previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: ['s-failed-delete'], gitCompleted: true, createdAt: 'now', error: { code: 'SHARED_WORKTREE', message: 'Another DSH conversation is using this checkout.', details: { sessionId: 'child', path: '/worktrees/failed-delete', failedPhase: 'archiving' } } } };

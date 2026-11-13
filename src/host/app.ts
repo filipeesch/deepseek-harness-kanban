@@ -962,13 +962,22 @@ export class KanbanApp {
   await admitStageInstruction(this.stageInstructionDeps(),{taskId,columnId,instruction,expectedEnteredAt,sessionId:prepared.sessionId});
   return {...prepared,sent:true};
  }
+ /** Refuse an unknown task, then abort that task's pass without joining its serial lane. */
+ private async cancelOperation(command:Extract<Command,{type:'operation.cancel'}>):Promise<FullHostSnapshot>{
+  this.locatedTask(command.taskId);
+  await this.worktrees.cancel(command.taskId);
+  return this.snapshot();
+ }
  saveNote(input:Extract<Command,{type:'note.save'}>){return this.serial(()=>this.saveNoteNow(input));}
  private async saveNoteNow(input:Extract<Command,{type:'note.save'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).saveNote(input.taskId,{id:input.noteId,content:input.content,tags:input.tags});}
  private async deleteNoteNow(input:Extract<Command,{type:'note.delete'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).deleteNote(input.taskId,input.noteId);}
  async command(command:Command):Promise<FullHostSnapshot>{
   if(command.type.startsWith('task.deterministic'))return this.execute(command);
+  // Cancellation interrupts a pass that is still awaiting Git, so it cannot queue
+  // behind the serial lane that pass holds.
+  if(command.type==='operation.cancel')return this.cancelOperation(command);
   const ids=command.type==='project.relocate'&&command.confirmed?this.locator.all().filter(value=>value.project.id===command.project.id).map(value=>value.task.id)
-   :((command.type==='task.delete'||command.type==='worktree.remove')&&command.confirmed)||command.type==='worktree.create'||command.type==='worktree.attach'||command.type==='operation.return'?[command.taskId]:[];
+   :((command.type==='task.delete'||command.type==='worktree.remove')&&command.confirmed)||command.type==='worktree.create'||command.type==='worktree.attach'||command.type==='worktree.discardCreate'||command.type==='operation.return'?[command.taskId]:[];
   for(const id of ids)invariant(!this.contextAdmissions.has(id),'CONTEXT_ADMISSION_PENDING','Another operation is changing this task context.');
   for(const id of ids)this.contextAdmissions.add(id);
   try { const preparing=this.prepareDeterministicContext(command); if(preparing)await preparing; return await this.serial(()=>this.execute(command)); }
@@ -982,7 +991,7 @@ export class KanbanApp {
   else if(command.type==='task.delete'||command.type==='worktree.remove'){
    if(!command.confirmed)return undefined;
    this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,command.type==='task.delete'?'delete':'remove');taskIds=[command.taskId];
-  }else if(command.type==='worktree.create'||command.type==='worktree.attach'||command.type==='operation.return')taskIds=[command.taskId];
+  }else if(command.type==='worktree.create'||command.type==='worktree.attach'||command.type==='worktree.discardCreate'||command.type==='operation.return')taskIds=[command.taskId];
   for(const id of taskIds)this.assertNoHandoffAdmission(id);
   if(taskIds.length===0)return undefined;
   // A replaced entry can leave a native lease even when the current task has no control.
@@ -1089,6 +1098,7 @@ export class KanbanApp {
    case 'task.delete':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm task data/worktree removal and native conversation archiving.');this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'delete');this.assertScriptContextStopped(command.taskId);await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'delete',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true});break;
    case 'worktree.create':this.assertScriptContextStopped(command.taskId);this.assertContext(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'create',mode:command.mode,path:command.path,branchName:command.branchName,sourceBranch:command.sourceBranch});break;
    case 'worktree.attach':this.assertScriptContextStopped(command.taskId);this.assertContext(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'attach',path:command.path});break;
+   case 'worktree.discardCreate':this.assertScriptContextStopped(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'recovering its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.discardCreate(command.taskId,command.confirmed);break;
    case 'worktree.dismiss':{this.assertContext(command.taskId);const located=this.locatedTask(command.taskId);invariant(isGitProject(located.project),'PROJECT_NOT_GIT','Worktree choices require a Git-backed project.');invariant(!located.task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');invariant(!located.task.worktree,'WORKTREE_EXISTS','The task already has a worktree.');if(located.task.worktreeDismissed!==true)await this.hubs.hub(located.hubId).dismissWorktree(command.taskId);break;}
    case 'worktree.remove':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm removal of the worktree while preserving the task and branch.');this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'remove');this.assertScriptContextStopped(command.taskId);await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'remove',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true});break;
    case 'operation.retry':{

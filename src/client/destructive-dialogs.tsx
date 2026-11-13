@@ -1,5 +1,5 @@
 import React, { useId, useState } from 'react';
-import type { Attention, Command, Problem, Project, Task } from '../shared/types.js';
+import type { Attention, Command, ContextOperation, Problem, Project, Task } from '../shared/types.js';
 import { describeOperation } from './operation-description.js';
 import { DestructiveConsequences } from './destructive-consequences.js';
 import { asProblem, Modal, ProblemNotice, type RunCommand } from './ui.js';
@@ -94,6 +94,61 @@ export function DiscardDialog({ request, run, onClose, onDeleted }: {
       </div>
     </div>
   </Modal>;
+}
+
+/**
+ * The one recovery for an incomplete checkout: the directory the failed attempt
+ * left is removed and the same creation is retried. Nothing is touched before the
+ * user opts in, and the confirmation names every directory the discard may remove.
+ */
+export function DiscardCheckoutDialog({ task, operation, run, onClose, worktreeBasePath }: {
+  task: Task;
+  operation: ContextOperation;
+  run: RunCommand;
+  onClose: () => void;
+  worktreeBasePath?: string;
+}) {
+  const [understood, setUnderstood] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<Problem | null>(null);
+  const attempt = operation.request.kind === 'create' ? operation.createAttempt : undefined;
+  // A persisted candidate can predate a base-path change; only directories strictly
+  // below the current base are ever removable, so only those are promised.
+  const parents = (attempt?.observed?.parentCandidates ?? []).filter(parent => worktreeBasePath === undefined || strictlyBelow(worktreeBasePath, parent));
+  return <Modal title="Discard the incomplete checkout?" onClose={onClose} busy={pending} initialFocus="cancel">
+    <div className="kb-destructive-dialog">
+      <p className="kb-warning">The previous attempt left a directory that Git does not register as a worktree. Discarding removes it and retries the same creation.</p>
+      <div className="kb-destructive-identity">
+        <strong>{task.title}</strong>
+        {attempt && <code>{attempt.path}</code>}
+        {attempt && <span className="kb-hint">Branch <code>{attempt.branchName}</code> {attempt.sourceCommit === undefined ? <>is reused only when it still matches the source commit; it is never deleted.</> : <>is reused when its tip is still <code>{attempt.sourceCommit}</code>; it is never deleted.</>}</span>}
+      </div>
+      <div className="kb-destructive-consequences">
+        <p className="kb-hint">Directories this discard may remove:</p>
+        <ul className="kb-note-list">{parents.length === 0 ? <li className="kb-note"><p>The checkout only; no parent directory will be removed.</p></li> : parents.map(parent => <li className="kb-note" key={parent}><p><code>{parent}</code></p></li>)}</ul>
+      </div>
+      <ProblemNotice problem={error ?? operation.error ?? null} title="The incomplete checkout needs a decision" />
+      <label className="kb-choice"><input type="checkbox" checked={understood} disabled={pending} onChange={event => setUnderstood(event.target.checked)} />I understand that the incomplete checkout directory will be removed and the creation retried.</label>
+      <div className="kb-actions">
+        <button type="button" className="kb-button" data-kb-initial-focus disabled={pending} onClick={onClose}>Keep the checkout</button>
+        <button type="button" className="kb-button kb-danger" disabled={pending || !understood} onClick={async () => {
+          if (!understood) return;
+          setPending(true); setError(null);
+          try { await run({ type: 'worktree.discardCreate', taskId: task.id, confirmed: true }); onClose(); }
+          catch (failure) { setError(asProblem(failure)); }
+          finally { setPending(false); }
+        }}>{pending ? 'Discarding…' : 'Discard and retry'}</button>
+      </div>
+    </div>
+  </Modal>;
+}
+
+/** Whether a candidate lives strictly below the configured base. */
+function strictlyBelow(base: string, candidate: string): boolean {
+  const normalize = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/, '');
+  const parent = normalize(base);
+  const child = normalize(candidate);
+  return child !== parent && child.startsWith(parent + '/');
 }
 
 /** Semantic entry points over the shared destructive dialog implementation. */

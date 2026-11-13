@@ -1,9 +1,9 @@
-import { stat } from 'node:fs/promises';
 import { KanbanError } from '../shared/errors.js';
 import type { GitExecutor, GitRepository, GitTree } from '../shared/ports.js';
 import type { CreateWorktree } from '../shared/types.js';
 import { createRepositoryCommands, type RepositoryCommands } from './git-repository.js';
 import { resolveCanonicalPath } from './path-resolution.js';
+import { entryExists } from './paths.js';
 import { assertWorktreeTarget } from './repository-layout.js';
 import { WorktreeReader } from './worktree-reader.js';
 
@@ -31,7 +31,12 @@ export class WorktreeWriter {
     return createRepositoryCommands({ executor: this.executor, project: repo.project, sessionIds });
   }
 
-  async create(repo: GitRepository, request: CreateWorktree, sessionIds: string[], signal?: AbortSignal): Promise<GitTree> {
+  /**
+   * Create the checkout. The caller may pass the commit it already persisted as the
+   * attempt's proof, so the write checks out exactly what was proven rather than
+   * resolving the source a second time.
+   */
+  async create(repo: GitRepository, request: CreateWorktree, sessionIds: string[], signal?: AbortSignal, options: { sourceCommit?: string; beforeWrite?: () => void } = {}): Promise<GitTree> {
     const commands = this.commands(repo, sessionIds);
     const target = await resolveCanonicalPath(request.path, true);
     assertWorktreeTarget(repo, target);
@@ -42,16 +47,28 @@ export class WorktreeWriter {
     if (request.mode === 'new') {
       const source = request.sourceBranch ?? repo.project.defaultBranch ?? 'HEAD';
       if (!source || /[\0\r\n]/.test(source)) throw new KanbanError('INVALID_BRANCH', 'A valid source branch is required.');
-      const commit = (await commands.run(['-C', repo.root, 'rev-parse', '--verify', '--end-of-options', source + '^{commit}'], { signal })).trim();
-      await commands.run(['-C', repo.root, 'worktree', 'add', '-b', request.branchName, '--', target, commit], { signal, write: true });
+      const commit = options.sourceCommit ?? (await commands.run(['-C', repo.root, 'rev-parse', '--verify', '--end-of-options', source + '^{commit}'], { signal })).trim();
+      options.beforeWrite?.();
+      await commands.run(['-C', repo.root, 'worktree', 'add', '-b', request.branchName, '--', target, commit], { signal, write: true, deadline: 'write' });
     } else {
-      await commands.run(['-C', repo.root, 'worktree', 'add', '--', target, request.branchName], { signal, write: true });
+      options.beforeWrite?.();
+      await commands.run(['-C', repo.root, 'worktree', 'add', '--', target, request.branchName], { signal, write: true, deadline: 'write' });
     }
     repo.invalidate();
     // The add command created exactly this checkout; its branch is the only fact
     // worth reading back, and a fresh checkout has no local changes.
     const branch = await this.reader.branch(commands, target, signal);
     return { path: target, branch, dirty: false, commonDirectory: repo.commonDirectory };
+  }
+
+  /** Clear one registration whose directory is gone, targeting that exact path only. */
+  async clearRegistration(repo: GitRepository, value: string, sessionIds: string[], signal?: AbortSignal): Promise<void> {
+    const commands = this.commands(repo, sessionIds);
+    const target = await resolveCanonicalPath(value, true);
+    assertWorktreeTarget(repo, target);
+    await this.executor.assertPolicy(repo.project, [repo.commonDirectory], sessionIds, true);
+    await commands.run(['-C', repo.root, 'worktree', 'remove', '--', target], { signal, write: true, deadline: 'write' });
+    repo.invalidate();
   }
 
   /** Existing-branch creation refuses a branch that is not local, before any write. */
@@ -74,7 +91,7 @@ export class WorktreeWriter {
     const target = await resolveCanonicalPath(value, true);
     assertWorktreeTarget(repo, target);
     const entry = await this.reader.registered(repo, target);
-    const present = await presentDirectory(target);
+    const present = await entryExists(target);
     if (!entry) {
       // An interrupted, already-completed removal is safe to retry.
       if (!present) return;
@@ -90,7 +107,7 @@ export class WorktreeWriter {
     // assertRemovable threw for every refusal, so a still-absent registration means
     // an interrupted removal that already completed.
     if (!await this.reader.registered(repo, target)) return;
-    const present = await presentDirectory(target);
+    const present = await entryExists(target);
     // Discard consent already decides the outcome, so the local-change scan is
     // only read when it can still refuse the removal.
     // A caller that already read the working tree in this execution does not pay
@@ -102,9 +119,9 @@ export class WorktreeWriter {
     const args = ['-C', repo.root, 'worktree', 'remove'];
     if (discardChanges) args.push('--force');
     args.push('--', target);
-    await commands.run(args, { signal, write: true });
+    await commands.run(args, { signal, write: true, deadline: 'write' });
     repo.invalidate();
-    if (await presentDirectory(target)) throw new KanbanError('WORKTREE_REMOVE_INCOMPLETE', 'Git reported removal but the worktree directory still exists.', { path: target });
+    if (await entryExists(target)) throw new KanbanError('WORKTREE_REMOVE_INCOMPLETE', 'Git reported removal but the worktree directory still exists.', { path: target });
   }
 
   async repair(repo: GitRepository, worktreePaths: string[], sessionIds: string[], signal?: AbortSignal): Promise<void> {
@@ -112,17 +129,13 @@ export class WorktreeWriter {
     const existing: string[] = [];
     for (const value of worktreePaths) {
       const target = await resolveCanonicalPath(value, true);
-      if (await presentDirectory(target)) existing.push(target);
+      if (await entryExists(target)) existing.push(target);
     }
     // A checkout that no longer exists cannot be repaired; its binding records the error instead.
     if (existing.length === 0) return;
     await this.executor.assertPolicy(repo.project, [repo.commonDirectory, ...existing], sessionIds, true);
-    await commands.run(['-C', repo.root, 'worktree', 'repair', ...existing], { signal, write: true });
+    await commands.run(['-C', repo.root, 'worktree', 'repair', ...existing], { signal, write: true, deadline: 'write' });
     repo.invalidate();
   }
 }
 
-async function presentDirectory(value: string): Promise<boolean> {
-  try { await stat(value); return true; }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
-}
