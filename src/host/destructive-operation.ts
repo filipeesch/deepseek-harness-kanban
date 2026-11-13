@@ -8,7 +8,7 @@ import { CheckoutRemoval } from './checkout-removal.js';
 import type { ConversationProbe } from './conversation-probe.js';
 import type { DestructiveJournal } from './destructive-journal.js';
 import type { WorktreeBinding } from './hub-repository.js';
-import { requireTask, type OperationJournal } from './operation-journal.js';
+import { recoveryPendingError, requireTask, type OperationJournal } from './operation-journal.js';
 import { SessionArchiver, WaitingForIdle } from './session-archiver.js';
 import { TaskBindingIndex } from './task-binding-index.js';
 import { TaskTeardown, type TeardownOutcome } from './task-teardown.js';
@@ -25,13 +25,16 @@ export interface DestructiveStore {
 export interface DestructiveOperationHost {
   read(taskId: string): { task: Task; project: Project; hub: HubState };
   assertOpen(): void;
-  signal: AbortSignal;
+  /** Refuse at the next boundary once this task's operation was cancelled. */
+  assertTaskOpen(taskId: string): void;
   sourceUnchanged(taskId: string, expected: Project): void;
 }
 
 /** One execution pass: the idleness probe, the directory switch, and the repository facts. */
 export interface OperationPass {
   readonly probe: ConversationProbe;
+  /** The pass's own signal: a cancel targets one operation, never the coordinator. */
+  readonly signal: AbortSignal;
   switchDirectories(taskId: string, operationId: string, target: string, write: boolean, project: GitProject): Promise<boolean>;
   repository(project: GitProject, sessionIds: string[]): Promise<GitRepository>;
 }
@@ -62,7 +65,6 @@ export class DestructiveExecution {
   private readonly index: TaskBindingIndex;
   private readonly onTaskDeleted?: (task: Task, project: Project) => Promise<void>;
   private readonly onCheckoutRetained?: (task: Task, project: Project, path: string, reason: RetainedCheckoutReason) => void;
-  readonly signal: AbortSignal;
 
   constructor(
     private readonly store: DestructiveStore,
@@ -77,7 +79,6 @@ export class DestructiveExecution {
     this.sharing = options.sharing ?? new WorktreeSharingGuard(store, sessions, this.index);
     this.onTaskDeleted = options.onTaskDeleted;
     this.onCheckoutRetained = options.onCheckoutRetained;
-    this.signal = host.signal;
   }
 
   private update(taskId: string, operationId: string, change: (task: Task, operation: ContextOperation) => void): Promise<void> {
@@ -89,7 +90,7 @@ export class DestructiveExecution {
     return {
       read: () => this.host.read(taskId),
       update: (operationId, change) => this.update(taskId, operationId, change),
-      assertOpen: () => this.host.assertOpen(),
+      assertOpen: () => this.host.assertTaskOpen(taskId),
     };
   }
 
@@ -149,7 +150,7 @@ export class DestructiveExecution {
       });
     } else if (removable) {
       const archiver = new SessionArchiver({ sessions: this.sessions, probe: pass.probe, journal });
-      const removal = new CheckoutRemoval({ git: this.git, sharing: this.sharing, index: this.index, journal, signal: this.signal });
+      const removal = new CheckoutRemoval({ git: this.git, sharing: this.sharing, index: this.index, journal, signal: pass.signal });
       const input = { task, request, operationId, plan, repository: repository! };
       const outcome = await new TaskTeardown().run({
         prepare: () => removal.prepare(input),
@@ -177,7 +178,7 @@ export class DestructiveExecution {
       if (await this.archive(taskId, archiver, task, operationId) === 'waiting') return 'waiting';
     }
 
-    this.host.assertOpen();
+    this.host.assertTaskOpen(taskId);
     const deleted = this.host.read(taskId);
     const settled = deleted.task.operation!;
     const retainedPath = settled.retainedCheckoutPath;
@@ -288,11 +289,12 @@ export class DestructiveExecution {
   }
 
   private async idle(taskId: string, operationId: string, pass: OperationPass): Promise<boolean> {
-    this.host.assertOpen();
+    this.host.assertTaskOpen(taskId);
     const { task } = this.host.read(taskId);
     const idle = await pass.probe.allIdle(task.sessionIds);
     if (!idle) await this.update(taskId, operationId, (_task, operation) => {
-      if (operation.phase === 'git' && !operation.gitCompleted) operation.error = { code: 'RECOVERY_PENDING', message: 'Waiting to inspect the previously started Git operation.', details: { failedPhase: 'git', gitAttempted: !!operation.createAttempt } };
+      const pending = recoveryPendingError(operation);
+      if (pending !== undefined) operation.error = pending;
       operation.phase = 'waiting';
     });
     return idle;

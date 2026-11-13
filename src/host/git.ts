@@ -1,7 +1,7 @@
 import type { GitExecutor, GitPort, GitRepository, GitTree } from '../shared/ports.js';
 import type { CreateWorktree, GitProject } from '../shared/types.js';
-import { stat } from 'node:fs/promises';
 import { resolveCanonicalPath } from './path-resolution.js';
+import { entryExists } from './paths.js';
 import { resolveProjectDirectory, resolveRepository } from './git-repository.js';
 import { WorktreeReader } from './worktree-reader.js';
 import { WorktreeWriter } from './worktree-writer.js';
@@ -10,11 +10,6 @@ import { WorktreeWriter } from './worktree-writer.js';
 export { resolveCanonicalPath as canonicalPath } from './path-resolution.js';
 /** The containment rule is a pure path fact; it is re-exported for its Git-facing callers. */
 export { containsPath } from './repository-layout.js';
-
-async function exists(value: string): Promise<boolean> {
-  try { await stat(value); return true; }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
-}
 
 /**
  * The Git port over the injected confined executor. Each call either reuses the
@@ -47,6 +42,18 @@ export class GitAdapter implements GitPort {
     return this.use(project, sessionIds, repository, found => this.reader.branches(found, sessionIds));
   }
 
+  sourceCommit(project: GitProject, sourceBranch: string, sessionIds: string[], repository?: GitRepository): Promise<string> {
+    return this.use(project, sessionIds, repository, found => this.reader.sourceCommit(found, sourceBranch, sessionIds));
+  }
+
+  branchTip(project: GitProject, branchName: string, sessionIds: string[], repository?: GitRepository): Promise<string | undefined> {
+    return this.use(project, sessionIds, repository, found => this.reader.branchTip(found, branchName, sessionIds));
+  }
+
+  clearRegistration(project: GitProject, value: string, sessionIds: string[], repository?: GitRepository): Promise<void> {
+    return this.use(project, sessionIds, repository, found => this.writer.clearRegistration(found, value, sessionIds));
+  }
+
   inspect(project: GitProject, value: string, sessionIds: string[], repository?: GitRepository): Promise<GitTree> {
     return this.use(project, sessionIds, repository, found => this.reader.inspect(found, value, sessionIds));
   }
@@ -58,12 +65,12 @@ export class GitAdapter implements GitPort {
   async localChanges(project: GitProject, value: string, sessionIds: string[], repository?: GitRepository): Promise<boolean> {
     const target = await resolveCanonicalPath(value, true);
     // An absent checkout cannot carry local changes; the Git removal path treats it as completed.
-    if (!await exists(target)) return false;
+    if (!await entryExists(target)) return false;
     return this.use(project, sessionIds, repository, found => this.reader.localChanges(found, target, sessionIds));
   }
 
-  create(project: GitProject, request: CreateWorktree, sessionIds: string[], signal?: AbortSignal, repository?: GitRepository): Promise<GitTree> {
-    return this.use(project, sessionIds, repository, found => this.writer.create(found, request, sessionIds, signal));
+  create(project: GitProject, request: CreateWorktree, sessionIds: string[], signal?: AbortSignal, repository?: GitRepository, options?: { sourceCommit?: string; beforeWrite?: () => void }): Promise<GitTree> {
+    return this.use(project, sessionIds, repository, found => this.writer.create(found, request, sessionIds, signal, options));
   }
 
   remove(project: GitProject, value: string, discardChanges: boolean, sessionIds: string[], signal?: AbortSignal, repository?: GitRepository, options?: { verifiedClean?: boolean }): Promise<void> {

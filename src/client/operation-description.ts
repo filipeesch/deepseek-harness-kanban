@@ -8,6 +8,8 @@ export interface OperationDescription {
   retry: boolean;
   return: boolean;
   force: boolean;
+  discard: boolean;
+  cancel: boolean;
   retryLabel: string;
   returnLabel: string;
 }
@@ -33,6 +35,39 @@ function returned(task: Task, operation: ContextOperation): string {
 
 function archived(task: Task, operation: ContextOperation): string {
   return operation.archivedSessionIds.length + '/' + task.sessionIds.length;
+}
+
+/**
+ * The checkout state one creation attempt left, as the host last observed it. A
+ * partial checkout is named for what it is rather than reported as "not completed"
+ * beside megabytes that exist on disk.
+ */
+export function checkoutStateValue(operation: ContextOperation): string | undefined {
+  if (operation.request.kind !== 'create' && operation.request.kind !== 'attach') return undefined;
+  if (operation.request.kind === 'attach') return operation.gitCompleted ? 'Prepared' : 'Not completed';
+  if (operation.gitCompleted) return 'Prepared';
+  // An operation still running has no observed failure yet; name the step it is in.
+  if (operation.phase === 'git') return 'Creating';
+  if (operation.phase !== 'failed') return 'Not started';
+  const observed = operation.createAttempt?.observed;
+  if (observed === undefined) return operation.createAttempt === undefined ? 'No attempt recorded' : 'Awaiting recovery';
+  if (observed.registration === 'registered') return 'Registered';
+  if (observed.directory === 'absent') return 'Absent';
+  if (observed.directory === 'empty') return 'Empty destination';
+  return 'Incomplete (directory on disk, not registered)';
+}
+
+function checkoutFact(operation: ContextOperation): OperationFact | undefined {
+  const value = checkoutStateValue(operation);
+  return value === undefined ? undefined : { label: 'Checkout', value };
+}
+
+/** Whether the failed creation left a checkout the discard may remove. */
+function incompleteCheckout(operation: ContextOperation): boolean {
+  if (operation.request.kind !== 'create' || operation.phase !== 'failed') return false;
+  const observed = operation.createAttempt?.observed;
+  if (observed === undefined) return false;
+  return observed.directory === 'present' && observed.registration !== 'registered';
 }
 
 export function describeOperation(task: Task, operation: ContextOperation): OperationDescription {
@@ -75,8 +110,14 @@ export function describeOperation(task: Task, operation: ContextOperation): Oper
   if (operation.request.kind === 'remove' || operation.request.kind === 'delete') {
     facts.push({ label: 'Checkout', value: operation.gitCompleted ? 'Removed' : 'Not completed' });
   }
-  if (operation.request.kind === 'create' || operation.request.kind === 'attach') {
-    facts.push({ label: 'Checkout', value: operation.gitCompleted ? 'Prepared' : 'Not completed' });
+  const checkout = checkoutFact(operation);
+  if (checkout !== undefined) facts.push(checkout);
+  if (operation.request.kind === 'create' && operation.createAttempt?.sourceCommit !== undefined) {
+    facts.push({ label: 'Branch commit', value: operation.createAttempt.sourceCommit });
+  }
+  if (operation.request.kind === 'create' && operation.createAttempt !== undefined) {
+    facts.push({ label: 'Branch', value: operation.createAttempt.branchName });
+    if (operation.createAttempt.reusedBranch === true) facts.push({ label: 'Branch reuse', value: 'Reuses the branch left by the failed attempt' });
   }
   if (operation.request.kind === 'delete') facts.push({ label: 'Conversations', value: String(total) });
   return {
@@ -86,6 +127,8 @@ export function describeOperation(task: Task, operation: ContextOperation): Oper
     retry: operation.phase === 'queued' || operation.phase === 'waiting' || failed,
     return: failed && operation.request.kind !== 'return' && !archivingStarted(operation),
     force: failed && (operation.request.kind === 'delete' || operation.request.kind === 'remove') && operation.error?.code === 'SHARED_WORKTREE',
+    discard: incompleteCheckout(operation),
+    cancel: operation.phase === 'git' || operation.phase === 'removing',
     retryLabel: operation.request.kind === 'delete' ? 'Retry deletion' : 'Retry ' + label.toLowerCase(),
     returnLabel: 'Return chats to project',
   };

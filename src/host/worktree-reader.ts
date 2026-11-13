@@ -36,12 +36,12 @@ export class WorktreeReader {
 
   /** The checkout's current branch, read in one invocation. */
   async branch(commands: RepositoryCommands, target: string, signal?: AbortSignal): Promise<string> {
-    return (await commands.run(['-C', target, 'branch', '--show-current'], { signal })).trim() || 'HEAD';
+    return (await commands.run(['-C', target, 'branch', '--show-current'], { signal, deadline: 'tree' })).trim() || 'HEAD';
   }
 
   /** Whether the checkout has tracked or untracked local changes. */
   async isDirty(commands: RepositoryCommands, target: string, signal?: AbortSignal): Promise<boolean> {
-    const output = await commands.run(['-C', target, 'status', '--porcelain=v1', '--untracked-files=all', '-z'], { signal });
+    const output = await commands.run(['-C', target, 'status', '--porcelain=v1', '--untracked-files=all', '-z'], { signal, deadline: 'tree' });
     return output.length > 0;
   }
 
@@ -50,6 +50,28 @@ export class WorktreeReader {
     const commands = this.commands(repo, sessionIds);
     await this.executor.assertPolicy(repo.project, [target], sessionIds, false);
     return this.isDirty(commands, target, signal);
+  }
+
+  /** The commit a creation will check out for the given source ref. */
+  async sourceCommit(repo: GitRepository, sourceBranch: string, sessionIds: string[], signal?: AbortSignal): Promise<string> {
+    const commands = this.commands(repo, sessionIds);
+    await this.executor.assertPolicy(repo.project, [repo.root], sessionIds, false);
+    return (await commands.run(['-C', repo.root, 'rev-parse', '--verify', '--end-of-options', sourceBranch + '^{commit}'], { signal })).trim();
+  }
+
+  /** The commit a local branch points at, or undefined when that branch does not exist. */
+  async branchTip(repo: GitRepository, branchName: string, sessionIds: string[], signal?: AbortSignal): Promise<string | undefined> {
+    const commands = this.commands(repo, sessionIds);
+    const ref = 'refs/heads/' + branchName;
+    try {
+      // show-ref answers "missing" with exit 1; rev-parse cannot tell a missing ref
+      // from a broken repository, so presence is proven before the commit is read.
+      await commands.run(['-C', repo.root, 'show-ref', '--verify', '--quiet', ref], { signal });
+    } catch (error) {
+      if (error instanceof KanbanError && error.code === 'GIT_FAILED' && error.details?.exitCode === 1) return undefined;
+      throw error;
+    }
+    return (await commands.run(['-C', repo.root, 'rev-parse', '--verify', '--end-of-options', ref + '^{commit}'], { signal })).trim();
   }
 
   async branches(repo: GitRepository, sessionIds: string[], signal?: AbortSignal): Promise<string[]> {

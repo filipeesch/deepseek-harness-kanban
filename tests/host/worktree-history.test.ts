@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ContextOperation, OperationRequest, Task, Worktree } from '../../src/shared/types.js';
@@ -100,6 +100,7 @@ describe('worktree outcomes through the coordinator', () => {
     const task = await createTask(f, 'Failed tree');
     const taken = path.join(f.root, 'trees', 'taken');
     await mkdir(taken, { recursive: true });
+    await writeFile(path.join(taken, 'external.txt'), 'x');
     await expect(f.app.command({ type: 'worktree.create', taskId: task.id, mode: 'new', path: taken, branchName: 'feat/taken', sourceBranch: 'main' }))
       .rejects.toMatchObject({ code: 'WORKTREE_TARGET_EXISTS' });
     const failed = f.store.requireTask(task.id);

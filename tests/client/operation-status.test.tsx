@@ -58,4 +58,35 @@ describe('OperationStatus', () => {
     expect(screen.getByText('Waiting')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Retry deletion' })).toBeTruthy();
   });
+
+  it('confirms an incomplete checkout before discarding it', async () => {
+    const run = mount(operation({
+      request: { kind: 'create', mode: 'new', path: '/trees/alpha', branchName: 'feature' }, targetPath: '/trees/alpha', error: { code: 'GIT_TIMEOUT', message: 'deadline', details: { failedPhase: 'git' } },
+      createAttempt: { operationId: 'op', path: '/trees/alpha', gitRootPath: '/repo', branchName: 'feature', mode: 'new', absentBefore: true, sourceCommit: 'abc', observed: { directory: 'present', registration: 'none', at: 'now', parentCandidates: ['/trees'] } },
+    }));
+    expect(screen.getByText('Incomplete (directory on disk, not registered)')).toBeTruthy();
+    screen.getByRole('button', { name: 'Discard incomplete checkout and retry…' }).click();
+    await waitFor(() => expect(screen.getByText('Directories this discard may remove:')).toBeTruthy());
+    expect(screen.getByText('/trees')).toBeTruthy();
+    const confirm = screen.getByRole('button', { name: 'Discard and retry' }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    (screen.getByRole('checkbox') as HTMLInputElement).click();
+    await waitFor(() => expect(confirm.disabled).toBe(false));
+    confirm.click();
+    await waitFor(() => expect(run).toHaveBeenCalledWith({ type: 'worktree.discardCreate', taskId: 't1', confirmed: true }));
+  });
+
+  it('cancels a running checkout', async () => {
+    const run = mount(operation({ request: { kind: 'create', mode: 'new', path: '/trees/alpha', branchName: 'feature' }, phase: 'git', error: undefined }));
+    screen.getByRole('button', { name: 'Cancel checkout' }).click();
+    await waitFor(() => expect(run).toHaveBeenCalledWith({ type: 'operation.cancel', taskId: 't1' }));
+  });
+
+  it('labels a failure the last action produced as not saved', async () => {
+    const run = vi.fn(async () => { throw { code: 'RECOVERY_UNVERIFIED', message: 'The last action could not be verified.' }; });
+    render(<OperationStatus task={{ ...base, operation: operation() }} run={run as never} />);
+    screen.getByRole('button', { name: 'Retry deletion' }).click();
+    await waitFor(() => expect(screen.getByText('Last action failed (not saved)')).toBeTruthy());
+    expect(screen.getAllByText('Task deletion needs attention').length).toBeGreaterThanOrEqual(1);
+  });
 });

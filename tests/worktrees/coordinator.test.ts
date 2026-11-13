@@ -9,7 +9,7 @@ import { board, cleanup, fixture, git, gitOk, LocalExecutor, MemoryStore, Sessio
 
 afterEach(cleanup);
 function wrapped(adapter: GitPort, overrides: Partial<GitPort>): GitPort {
-  return { resolve: adapter.resolve.bind(adapter), branches: adapter.branches.bind(adapter), inspect: adapter.inspect.bind(adapter), localChanges: adapter.localChanges.bind(adapter), assertRemovable: adapter.assertRemovable.bind(adapter), create: adapter.create.bind(adapter), remove: adapter.remove.bind(adapter), repair: adapter.repair.bind(adapter), assertPolicy: adapter.assertPolicy.bind(adapter), projectDirectory: adapter.projectDirectory.bind(adapter), ...overrides };
+  return { resolve: adapter.resolve.bind(adapter), branches: adapter.branches.bind(adapter), sourceCommit: adapter.sourceCommit.bind(adapter), branchTip: adapter.branchTip.bind(adapter), clearRegistration: adapter.clearRegistration.bind(adapter), inspect: adapter.inspect.bind(adapter), localChanges: adapter.localChanges.bind(adapter), assertRemovable: adapter.assertRemovable.bind(adapter), create: adapter.create.bind(adapter), remove: adapter.remove.bind(adapter), repair: adapter.repair.bind(adapter), assertPolicy: adapter.assertPolicy.bind(adapter), projectDirectory: adapter.projectDirectory.bind(adapter), ...overrides };
 }
 async function setup() {
   const f = await fixture(); const executor = new LocalExecutor(); const adapter = new GitAdapter(executor);
@@ -334,7 +334,7 @@ describe('WorktreeCoordinator', () => {
     const f = await setup();
     if (kind === 'existing-branch') await f.adapter.create(f.project, { mode: 'new', path: f.tree, branchName: 'feature' }, []);
     else if (kind === 'detached') await gitOk(f.project.gitRootPath, ['worktree', 'add', '--detach', f.tree, 'main']);
-    else { await mkdir(path.dirname(f.tree), { recursive: true }); if (kind === 'ordinary-directory') await mkdir(f.tree); else if (kind === 'ordinary-file') await writeFile(f.tree, 'External file'); else await symlink(path.join(f.root, 'absent-external-target'), f.tree); }
+    else { await mkdir(path.dirname(f.tree), { recursive: true }); if (kind === 'ordinary-directory') { await mkdir(f.tree); await writeFile(path.join(f.tree, 'external.txt'), 'x'); } else if (kind === 'ordinary-file') await writeFile(f.tree, 'External file'); else await symlink(path.join(f.root, 'absent-external-target'), f.tree); }
     const before = f.executor.calls.length;
     await expect(f.coordinator.request('task', { kind: 'create', mode: 'existing', path: f.tree, branchName: kind === 'detached' ? 'main' : 'feature' })).rejects.toMatchObject({ code: 'WORKTREE_TARGET_EXISTS' });
     await expect(f.coordinator.retry('task')).rejects.toMatchObject({ code: 'WORKTREE_TARGET_EXISTS' });
@@ -355,9 +355,11 @@ describe('WorktreeCoordinator', () => {
 
   it('CR03 never arms ownership for a known source-ref validation error even if another actor fills the path', async () => {
     const f = await setup(); let calls = 0;
-    const port = wrapped(f.adapter, { create: async (...args) => {
+    // The source is resolved before the write, so a missing source fails here; the
+    // external actor still fills the path while the attempt owns no checkout.
+    const port = wrapped(f.adapter, { sourceCommit: async (...args) => {
       calls++;
-      try { return await f.adapter.create(...args); }
+      try { return await f.adapter.sourceCommit(...args); }
       catch (error) { await gitOk(f.project.gitRootPath, ['worktree', 'add', '-b', 'feature', f.tree, 'main']); throw error; }
     } });
     const coordinator = new WorktreeCoordinator(f.store, f.sessions, port);
@@ -382,7 +384,7 @@ describe('WorktreeCoordinator', () => {
     const f = await setup(); let observed = false;
     const port = wrapped(f.adapter, { create: async (...args) => {
       const operation = f.store.snapshot().tasks[0]!.operation!;
-      expect(operation.createAttempt).toEqual({ operationId: operation.id, path: f.tree, gitRootPath: f.project.gitRootPath, branchName: 'feature', mode: 'new', absentBefore: true });
+      expect(operation.createAttempt).toEqual({ operationId: operation.id, path: f.tree, gitRootPath: f.project.gitRootPath, branchName: 'feature', mode: 'new', absentBefore: true, sourceCommit: expect.any(String) });
       expect(operation.phase).toBe('git'); await expect(lstat(f.tree)).rejects.toMatchObject({ code: 'ENOENT' }); observed = true;
       return f.adapter.create(...args);
     } });

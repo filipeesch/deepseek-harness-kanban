@@ -1,6 +1,7 @@
 import React, { useId, useState } from 'react';
 import type { ClientApi, CreateWorktree, Project, Task } from '../shared/types.js';
 import { asProblem, ErrorNotice, ProblemNotice, useAction, type RunCommand } from './ui.js';
+import { checkoutStateValue } from './operation-description.js';
 import { taskTitleSlug } from '../shared/worktree-name.js';
 import { cleanWorktree, validWorktree, type WorktreeDraft } from './worktree-draft.js';
 
@@ -83,6 +84,7 @@ export function GitPanel({ task, project, api, run, worktreeBasePath, draft }: {
   async function attach() { if (blocked || !attachPath.trim()) return; await action.execute({ type: 'worktree.attach', taskId: task.id, path: attachPath.trim() }); }
   async function remove() { if (!tree || blocked) return; await action.execute({ type: 'worktree.remove', taskId: task.id, confirmed: true, expectedWorktreePath: tree.path }); }
   const statusLabel = stateLabel === 'ready' ? 'Ready' : stateLabel === 'creating' ? 'Creating' : stateLabel === 'error' ? 'Needs attention' : 'Not created';
+  const checkoutState = task.operation ? checkoutStateValue(task.operation) : undefined;
   return <div className="kb-git">
     <UnclaimedWorktreesNotice task={task} />
     <section className="kb-git-card" aria-label="Worktree">
@@ -105,6 +107,7 @@ export function GitPanel({ task, project, api, run, worktreeBasePath, draft }: {
       </div></div>}
       {(stateLabel === 'none' || stateLabel === 'error') && <div className="kb-git-card-body">
         {stateLabel === 'error' && <div className="kb-callout kb-callout-danger" role="alert"><strong>{tree?.error?.code === 'WORKTREE_REMOVED' ? 'Checkout removed externally' : 'Worktree setup failed'}</strong><p>Review the error and retry, or attach an existing checkout.</p></div>}
+        {checkoutState !== undefined && <p className="kb-hint" role="status">Checkout: {checkoutState}</p>}
         <ProblemNotice problem={tree?.error ?? null} title="Worktree binding needs attention" />
         <div className="kb-segmented" role="group" aria-label="Worktree setup mode">
           <button type="button" className={'kb-segment' + (createMode === 'create' ? ' is-active' : '')} aria-pressed={createMode === 'create'} onClick={() => setCreateMode('create')}>Create new</button>
