@@ -51,3 +51,53 @@ export async function contrastOf(page: Page, selector: string): Promise<number> 
 export async function expectLegible(page: Page, selector: string, minimum = 4.5): Promise<void> {
   expect(await contrastOf(page, selector)).toBeGreaterThanOrEqual(minimum);
 }
+
+/** The channels of a rendered color, including the alpha that a stroke may carry. */
+type Rgba = readonly [number, number, number, number];
+
+function rgbaChannels(value: string): Rgba {
+  const colorFunction = /color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\)/.exec(value);
+  if (colorFunction !== null) {
+    return [
+      Number(colorFunction[1]) * 255,
+      Number(colorFunction[2]) * 255,
+      Number(colorFunction[3]) * 255,
+      colorFunction[4] === undefined ? 1 : Number(colorFunction[4]),
+    ];
+  }
+  const rgb = /rgba?\(([^)]+)\)/.exec(value);
+  if (rgb === null) return [0, 0, 0, 1];
+  const parts = rgb[1]!.split(',').map(part => Number(part.trim()));
+  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, parts[3] ?? 1];
+}
+
+/** The color a stroke renders as over an opaque background, alpha included. */
+function overOpaque(foreground: Rgba, background: Rgba): [number, number, number] {
+  const alpha = foreground[3];
+  return [0, 1, 2].map(index => Math.round(foreground[index]! * alpha + background[index]! * (1 - alpha))) as [number, number, number];
+}
+
+/**
+ * The contrast a rendered SVG stroke has against the nearest painted background,
+ * measured in the page so the host theme's color() values resolve; a stroke is a
+ * non-text surface, so the caller decides the minimum it must clear.
+ */
+export async function strokeContrastOf(page: Page, selector: string): Promise<number> {
+  const values = await page.evaluate((target: string) => {
+    const element = document.querySelector<SVGElement>(target);
+    if (element === null) throw new Error('Missing element for stroke contrast: ' + target);
+    const background = (start: Element): string => {
+      let current: Element | null = start;
+      while (current !== null) {
+        const value = getComputedStyle(current).backgroundColor;
+        if (value !== 'rgba(0, 0, 0, 0)' && value !== 'transparent') return value;
+        current = current.parentElement;
+      }
+      return getComputedStyle(document.body).backgroundColor;
+    };
+    return { stroke: getComputedStyle(element).stroke, background: background(element) };
+  }, selector);
+  const stroke = rgbaChannels(values.stroke);
+  const background = rgbaChannels(values.background);
+  return ratio(overOpaque(stroke, background), [background[0], background[1], background[2]]);
+}

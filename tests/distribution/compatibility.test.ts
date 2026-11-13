@@ -17,7 +17,7 @@ const versions = [
 
 describe('DSH 0.2.2 artifact compatibility', () => {
   it('declares the installed artifact and tested host/Node floors', () => {
-    expect(manifest.version).toBe('0.31.0');
+    expect(manifest.version).toBe('0.32.0');
     expect(manifest.engines).toEqual({ node: '>=24.9.0', dsh: range });
     expect(manifest.packageManager).toBe('pnpm@10.15.1');
     expect(manifest.scripts.prepare).toBe('node scripts/build.mjs');

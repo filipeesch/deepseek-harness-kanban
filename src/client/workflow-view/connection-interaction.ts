@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { ConnectionAnchor } from '../../shared/types.js';
+import type { ConnectionMode } from './connection-mode.js';
 
 /** Which end of a connection a handle belongs to. */
 export type ConnectionEnd = 'source' | 'target';
@@ -9,8 +10,8 @@ export type ConnectionEnd = 'source' | 'target';
  * Shared through a context so node and edge data stay plain values.
  */
 export interface ConnectionHandlers {
-  /** True while the layout lock is on: the handles are drawn but cannot act. */
-  readonly locked: boolean;
+  /** The mode the surface presents: inspecting refuses every change, editing accepts them. */
+  readonly mode: ConnectionMode;
   /** The connection the diagram presents as selected. */
   readonly selectedId: string | null;
   /** The connection the diagram presents as pointed at. */
