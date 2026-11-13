@@ -54,7 +54,7 @@ The diagram SHALL derive a stage's outgoing connections from its configured tran
 
 A connection SHALL be drawn as an orthogonal path with rounded corners and an arrowhead at its target. A connection whose ends are not authored SHALL leave its source's right edge and enter its target's left edge when the target follows the source in workflow order and sits to its right. When stages are rearranged so those edges would cross a stage region, the automatic route SHALL step around the outside instead, below the stages or through a side gutter for two stages that share a column. A connection whose target precedes its source in workflow order SHALL leave and enter through the bottom edges. When a stage has more than one outgoing connection and their ends are not authored, each connection SHALL leave from a distinct point of the stage boundary so the separate paths are visible. A connection whose end is authored SHALL leave or enter through the side that end names, perpendicular to that side. An automatic connection SHALL NOT pass through the interior of its own source or target stage when the two stages do not overlap, and a connection whose target precedes its source in workflow order SHALL be routed outside both stage regions. When stages are arranged so a path passes over a third stage region, both the automatic and the adjusted route MAY cross it.
 
-A connection's clearance corridor SHALL be the region its own drawn route occupies: the departure leg at its source, the arrival leg at its target, and the run that joins them. A route that must clear stage regions SHALL be cleared only against the stages that corridor crosses. Moving, resizing, or adding a stage that the corridor does not cross SHALL NOT change that connection's drawn path, its clearance, or the displacements the user authored for it. Each connection SHALL mark its contact with the stage boundary at both ends. The drawn path, its departure points, its clearance, and its contact marks SHALL follow the position and size of the stage at each end and of the stages the corridor crosses, while one of those stages is moved or resized, without waiting for the change to be stored.
+A connection's clearance corridor SHALL be the region its own drawn route occupies: the departure leg at its source, the arrival leg at its target, and the run that joins them. A route that must clear stage regions SHALL be cleared only against the stages that corridor crosses. Moving, resizing, or adding a stage that the corridor does not cross SHALL NOT change that connection's drawn path, its clearance, or the displacements the user authored for it. Each connection SHALL mark its contact with the stage boundary at both ends while the layout is unlocked; a locked diagram presents no contact mark. The drawn path, its departure points, its clearance, and its contact marks SHALL follow the position and size of the stage at each end and of the stages the corridor crosses, while one of those stages is moved or resized, without waiting for the change to be stored.
 
 #### Scenario: Draw configured transitions
 
@@ -93,7 +93,7 @@ A connection's clearance corridor SHALL be the region its own drawn route occupi
 
 #### Scenario: Reveal the contact points on hover
 
-- **WHEN** the user points at a connection
+- **WHEN** the layout is unlocked and the user points at a connection
 - **THEN** a mark appears at the connection's contact with each end of the stage boundary
 - **AND** the marks are absent while the connection is neither pointed at nor selected
 
@@ -430,7 +430,7 @@ The workflow view SHALL present the same cards as the board view for the active 
 
 ### Requirement: Accessible diagram surface
 
-The diagram SHALL expose each stage region as a labelled region and each card as an activatable control reachable by keyboard. The diagram SHALL expose both ends of every drawn connection as focusable controls, each with an accessible name that identifies the connection and the end. The pan and zoom state SHALL NOT hide a card or a connection from assistive technology, and the diagram SHALL NOT trap keyboard focus: focus SHALL be able to leave the diagram through its normal tab order. The control stack SHALL expose an accessible name and a tooltip for every control, and each control's unavailable state SHALL be exposed as disabled rather than hidden. The minimap SHALL expose an accessible name, SHALL be operable by pointer, and SHALL NOT insert itself into the diagram's card tab order.
+The diagram SHALL expose each stage region as a labelled region and each card as an activatable control reachable by keyboard. The diagram SHALL expose both ends of every drawn connection as focusable controls, each with an accessible name that identifies the connection and the end. Focusing a connection end while the layout is locked SHALL select that connection so its route can be read from the keyboard, and the selected route SHALL be the focus indication; focusing a connection end while the layout is unlocked SHALL NOT change the selection. The pan and zoom state SHALL NOT hide a card or a connection from assistive technology, and the diagram SHALL NOT trap keyboard focus: focus SHALL be able to leave the diagram through its normal tab order. The control stack SHALL expose an accessible name and a tooltip for every control, and each control's unavailable state SHALL be exposed as disabled rather than hidden. The minimap SHALL expose an accessible name, SHALL be operable by pointer, and SHALL NOT insert itself into the diagram's card tab order.
 
 #### Scenario: Reach a card by keyboard
 
@@ -443,6 +443,18 @@ The diagram SHALL expose each stage region as a labelled region and each card as
 - **WHEN** the user tabs through the diagram
 - **THEN** focus reaches each end of each drawn connection
 - **AND** each end is announced with a name naming the connection and the end
+
+#### Scenario: Read a connection by keyboard while locked
+
+- **WHEN** the layout is locked and focus reaches a connection end
+- **THEN** that connection is selected
+- **AND** its route is presented above the stage regions as the focus indication
+- **AND** no mark that would change the connection is presented
+
+#### Scenario: Keep the selection while editing from the keyboard
+
+- **WHEN** the layout is unlocked and focus reaches a connection end
+- **THEN** the connection selection is unchanged
 
 #### Scenario: Identify a stage region
 
@@ -574,7 +586,7 @@ The user SHALL be able to resize a stage by dragging a resize handle on the stag
 
 ### Requirement: Layout editing lock
 
-The diagram SHALL provide a layout lock that is on by default every time the diagram is presented. The lock SHALL gate every gesture that changes which connections the diagram draws or where they are drawn: stage move, stage resize, connection re-anchoring, connection creation, connection re-pointing, connection deletion, route segment adjustment, the stage edit action, authoring a condition for a connection that authors none, Organize, Undo, and Redo SHALL NOT be available while the lock is on and SHALL NOT change the workflow. While the lock is off, those actions SHALL be available subject to their own availability rules. The lock SHALL NOT gate card activation, card drag, selection, the run action, the advance action, editing a condition a connection already authors, pan, zoom, or the shared search and project filter. Unlocking and locking SHALL NOT change board data, and the lock SHALL NOT persist across a reload.
+The diagram SHALL provide a layout lock that is on by default every time the diagram is presented. The lock SHALL gate every gesture that changes which connections the diagram draws or where they are drawn: stage move, stage resize, connection re-anchoring, connection creation, connection re-pointing, connection deletion, route segment adjustment, the stage edit action, authoring or editing a connection's condition, Organize, Undo, and Redo SHALL NOT be available while the lock is on and SHALL NOT change the workflow. While the lock is off, those actions SHALL be available subject to their own availability rules. The lock SHALL NOT gate card activation, card drag, selection, the run action, the advance action, pan, zoom, or the shared search and project filter. Selection while the lock is on is reading only: it presents the connection's route without presenting a mark that would change it, opens no editor, and refuses deletion. Unlocking and locking SHALL NOT change board data, and the lock SHALL NOT persist across a reload.
 
 #### Scenario: Start locked
 
@@ -591,15 +603,16 @@ The diagram SHALL provide a layout lock that is on by default every time the dia
 
 #### Scenario: Block connection authoring while locked
 
-- **WHEN** the layout is locked and the user points at a stage, presses a connection, or presses a delete action for a connection
-- **THEN** no connection port is presented, no connection is selected, and no transition changes
+- **WHEN** the layout is locked and the user points at a stage or presses a connection
+- **THEN** no connection port is presented and no transition changes
+- **AND** the pressed connection is selected for reading
 - **AND** no command is sent
 
 #### Scenario: Edit a condition while locked
 
-- **WHEN** the layout is locked and the user double-clicks a drawn connection and saves a condition
-- **THEN** the condition is stored
-- **AND** the diagram still refuses stage moves, resizes, connection creation, connection re-pointing, connection deletion, and route adjustments
+- **WHEN** the layout is locked and the user double-clicks a drawn connection
+- **THEN** no condition editor opens
+- **AND** no condition is stored and no command is sent
 
 #### Scenario: Rearrange after unlocking
 
@@ -733,13 +746,13 @@ Each connection's layout SHALL be stored in the board's workflow configuration a
 
 ### Requirement: Connection re-anchoring and route adjustment
 
-While the layout lock is off, the diagram SHALL let the user move either end of a drawn connection, including the dashed connection derived from a stage without configured transitions. Pointing at a connection SHALL reveal a handle at each end and a handle on each adjustable segment. Those marks SHALL be presented above the stage regions, so a handle that sits on a stage boundary or under the arrowhead is still presented and still receives a press. Each handle SHALL present a pointer target of at least 24 screen pixels across at every zoom level the diagram allows. While the layout lock is on, pointing at a connection SHALL reveal the same marks without making them operable.
+While the layout lock is off, the diagram SHALL let the user move either end of a drawn connection, including the dashed connection derived from a stage without configured transitions. Pointing at a connection SHALL reveal a handle at each end and a handle on each adjustable segment. Those marks SHALL be presented above the stage regions, so a handle that sits on a stage boundary or under the arrowhead is still presented and still receives a press. Each handle SHALL present a pointer target of at least 24 screen pixels across at every zoom level the diagram allows. While the layout lock is on, no mark SHALL be presented on a connection and no gesture SHALL change one; a press on a connection SHALL still select it, as defined by Inspecting a connection while the layout is locked.
 
-Pressing a handle and dragging SHALL start that adjustment in one step. A press on a handle that never moves SHALL select the connection and SHALL NOT adjust it. A selected connection SHALL keep its marks presented and operable while the selection lasts, and a press on a stage or on the empty surface SHALL clear the selection and its marks. Dragging an end handle and releasing it inside that end's own stage SHALL move the end to the anchor point nearest the pointer and SHALL store the layout. While an end handle is dragged over a stage that end does not belong to, the diagram SHALL mark that stage as the candidate destination, with the same presentation the creation gesture uses for its candidate. Releasing an end handle over a different stage SHALL change that connection's destination instead, as defined by Re-pointing a connection. Moving the pointer SHALL NOT store the workflow. A press that never moves SHALL change nothing and SHALL store nothing. Dragging a segment handle SHALL move that segment perpendicular to itself, SHALL settle the segment's line on the nearest lattice point while snapping is on, and SHALL store the layout on release. A cancelled gesture SHALL leave the connection as it was. An adjustment SHALL change no stage, no card, no transition, and no other connection; only the end-drag release defined by Re-pointing a connection changes a transition.
+Pressing a handle and dragging SHALL start that adjustment in one step. A press on a handle that never moves SHALL select the connection and SHALL NOT adjust it. While the layout is unlocked, a selected connection SHALL keep its marks presented and operable. A press on a stage or on the empty surface SHALL clear the selection in either mode, and with it any presented marks. Dragging an end handle and releasing it inside that end's own stage SHALL move the end to the anchor point nearest the pointer and SHALL store the layout. While an end handle is dragged over a stage that end does not belong to, the diagram SHALL mark that stage as the candidate destination, with the same presentation the creation gesture uses for its candidate. Releasing an end handle over a different stage SHALL change that connection's destination instead, as defined by Re-pointing a connection. Moving the pointer SHALL NOT store the workflow. A press that never moves SHALL change nothing and SHALL store nothing. Dragging a segment handle SHALL move that segment perpendicular to itself, SHALL settle the segment's line on the nearest lattice point while snapping is on, and SHALL store the layout on release. A cancelled gesture SHALL leave the connection as it was. An adjustment SHALL change no stage, no card, no transition, and no other connection; only the end-drag release defined by Re-pointing a connection changes a transition.
 
 #### Scenario: Reveal the handles on hover
 
-- **WHEN** the user points at a connection
+- **WHEN** the layout is unlocked and the user points at a connection
 - **THEN** the diagram marks each end of that connection and each adjustable segment
 - **AND** the marks are absent while the connection is neither pointed at nor selected
 
@@ -757,7 +770,7 @@ Pressing a handle and dragging SHALL start that adjustment in one step. A press 
 
 #### Scenario: Keep the marks of a selected connection
 
-- **WHEN** the user selects a connection and then moves the pointer away from it
+- **WHEN** the layout is unlocked and the user selects a connection and then moves the pointer away from it
 - **THEN** the connection's marks stay presented and operable
 - **AND** a press on a stage or the empty surface clears the selection and the marks
 
@@ -1167,7 +1180,7 @@ The accessible name of each connection end SHALL say whether that connection aut
 
 ### Requirement: Editing a connection's condition
 
-Double-clicking a drawn connection SHALL open a condition editor anchored to that connection. The editor SHALL present the connection's condition as editable multiline text whose field the user can resize, a save action, and a cancel action. The save action SHALL store the condition; Escape, the cancel action, and dismissing the editor SHALL close it without storing. No change SHALL be stored while the text is being edited. An empty or whitespace-only condition SHALL be stored as no condition.
+Double-clicking a drawn connection while the layout is unlocked SHALL open a condition editor anchored to that connection. The editor SHALL present the connection's condition as editable multiline text whose field the user can resize, a save action, and a cancel action. The save action SHALL store the condition; Escape, the cancel action, and dismissing the editor SHALL close it without storing. No change SHALL be stored while the text is being edited. An empty or whitespace-only condition SHALL be stored as no condition. The editor SHALL be available only while the layout is unlocked: a locked diagram opens no editor, and locking the layout closes an open editor and discards its draft without storing.
 
 Double-clicking the dashed connection a stage that authors no transitions receives SHALL open the editor for the transition that connection stands for. Saving SHALL author that transition, with the condition it carries, as one workflow change and one history entry; dismissing SHALL author nothing.
 
@@ -1177,6 +1190,18 @@ The editor SHALL take focus while it is open and SHALL return focus to the diagr
 
 - **WHEN** the layout is unlocked and the user double-clicks a drawn connection that authors a condition
 - **THEN** the editor opens anchored to that connection with that condition as its text
+- **AND** nothing is stored
+
+#### Scenario: Open nothing while locked
+
+- **WHEN** the layout is locked and the user double-clicks a drawn connection that authors a condition
+- **THEN** no editor opens
+- **AND** nothing is stored and no command is sent
+
+#### Scenario: Close the editor when the layout is locked
+
+- **WHEN** the editor is open and the layout is locked
+- **THEN** the editor closes and its draft is discarded
 - **AND** nothing is stored
 
 #### Scenario: Save a condition
@@ -1243,7 +1268,6 @@ A connection whose source stage is deterministic SHALL NOT open the condition ed
 - **WHEN** the layout lock is on and the user double-clicks a connection whose source stage is deterministic
 - **THEN** no editor opens
 - **AND** no change is stored
-
 
 ### Requirement: Re-pointing a connection
 
@@ -1314,11 +1338,11 @@ Keyboard adjustment SHALL keep moving an end's anchor point only, as defined by 
 
 ### Requirement: Deleting a connection
 
-A drawn connection SHALL be selectable by pressing it, and the diagram SHALL present the selected connection distinctly. While a connection is selected, Delete and Backspace SHALL remove that connection's transition and, when it authors one, its stored layout entry. The condition editor SHALL present a delete action for the connection it edits. Selecting a connection SHALL NOT select a stage or a card, pressing a stage or the empty surface SHALL clear the selection, and deleting SHALL clear it.
+A drawn connection SHALL be selectable by pressing it, and the diagram SHALL present the selected connection distinctly. While a connection is selected and the layout is unlocked, Delete and Backspace SHALL remove that connection's transition and, when it authors one, its stored layout entry. A selected connection SHALL be presented distinctly in either mode, and the layout lock SHALL refuse deletion without clearing that selection. The condition editor SHALL present a delete action for the connection it edits. Selecting a connection SHALL NOT select a stage or a card, pressing a stage or the empty surface SHALL clear the selection, and deleting SHALL clear it.
 
 Removing a stage's last destination SHALL leave that stage authoring no destination, which is a valid stage: the stage SHALL NOT be turned back into a stage that allows any other stage. Deleting a connection SHALL change no other transition, no card, and no other connection. Each deletion SHALL be one history entry that restores the transition and the removed layout entry together.
 
-Selection and deletion SHALL be pointer actions. Removing a destination by keyboard and by assistive technology is provided by the stage editor's allowed transitions section.
+Selection and deletion SHALL be pointer actions, except that keyboard focus on a connection end selects that connection while the layout is locked. Removing a destination by keyboard and by assistive technology is provided by the stage editor's allowed transitions section.
 
 #### Scenario: Select a connection
 
@@ -1367,9 +1391,9 @@ Selection and deletion SHALL be pointer actions. Removing a destination by keybo
 
 #### Scenario: Delete while locked
 
-- **WHEN** the layout is locked and the user presses a drawn connection
-- **THEN** no connection is selected
-- **AND** nothing is stored
+- **WHEN** the layout is locked and a connection is selected and the user presses Delete or Backspace
+- **THEN** the connection is still presented as selected
+- **AND** nothing is deleted and nothing is stored
 
 ### Requirement: A drawn connection reflects the authored transitions first
 
@@ -1402,3 +1426,50 @@ After a connection is created, re-pointed, re-owned, deleted, or given a conditi
 - **WHEN** a connection write is acknowledged
 - **THEN** the diagram presents the acknowledged workflow
 - **AND** a change another client stored meanwhile is presented
+
+### Requirement: Inspecting a connection while the layout is locked
+
+The diagram SHALL let the user read a drawn connection while the layout is locked without changing the workflow. Pressing a connection while locked SHALL select it and SHALL present the connection distinctly, and a selected connection SHALL present the route the diagram draws for it above the stage regions, so a segment a stage region hides is visible. The presented route SHALL use the same paint as the selected connection in the editable mode, SHALL keep the dashed pattern of a connection a stage that authors no transitions receives, SHALL present its arrowhead, SHALL follow the drawn path at every zoom level the diagram allows and while a stage at either end moves or resizes, and SHALL NOT receive a press. Pointing at a connection while locked SHALL emphasize its drawn stroke, and SHALL present no mark and start no gesture. The inspection SHALL NOT be stored, and a press on a stage or on the empty surface SHALL clear it.
+
+#### Scenario: Select a connection while locked
+
+- **WHEN** the layout is locked and the user presses a drawn connection
+- **THEN** that connection is presented as selected
+- **AND** no mark that would change it is presented
+- **AND** nothing is stored
+
+#### Scenario: Read a route a stage hides
+
+- **WHEN** the layout is locked and a selected connection's route passes over a stage region
+- **THEN** the route is presented above that stage region for the whole path it occupies
+- **AND** the presented route keeps the selected connection's paint
+
+#### Scenario: Keep the implicit arrow's pattern
+
+- **WHEN** the selected connection is the dashed connection a stage that authors no transitions receives
+- **THEN** the route presented above the stage regions is dashed
+- **AND** it presents its arrowhead
+
+#### Scenario: Emphasize a connection on hover
+
+- **WHEN** the layout is locked and the user points at a connection
+- **THEN** the connection's drawn stroke is emphasized
+- **AND** no end handle and no segment handle is presented
+- **AND** pressing it starts no gesture
+
+#### Scenario: Follow the drawn path
+
+- **WHEN** the diagram zooms while a locked connection is selected
+- **THEN** the presented route stays over the drawn path at every zoom level the diagram allows
+
+#### Scenario: Clear the inspection
+
+- **WHEN** the layout is locked, a connection is selected, and the user presses a stage or the empty surface
+- **THEN** the connection is no longer selected
+- **AND** the route presented above the stage regions is removed
+
+#### Scenario: Keep the inspection when unlocking
+
+- **WHEN** the layout is unlocked while a connection is selected
+- **THEN** the connection stays selected
+- **AND** its editable marks are presented

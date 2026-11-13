@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { parse as parseYaml } from 'yaml';
+import { strokeContrastOf } from './contrast.js';
 
 const HARNESS = new URL('./.tmp/index.html', import.meta.url).href;
 const OUT = path.resolve('.verification');
@@ -612,6 +613,214 @@ test('keeps the marks of a selected connection and clears them on a press elsewh
   expect(await commands(page)).toHaveLength(0);
 });
 
+test('reads a locked connection without presenting a mark', async ({ page }) => {
+  await openFlow(page);
+  await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-mode', 'inspect');
+  const id = await connectionMarkId(page, 0);
+  const marks = page.locator('[data-connection-mark="' + id + '"]');
+  // Pointing at a locked arrow strengthens its stroke and reveals no mark.
+  await revealEdge(page, 0);
+  await expect(marks).not.toHaveAttribute('data-active', 'true');
+  await expect.poll(() => marks.evaluate(element => getComputedStyle(element).opacity)).toBe('0');
+  const hoveredWidth = await page.locator('.kb-flow-edge-group[data-connection-id="' + id + '"] .kb-flow-edge')
+    .evaluate(element => Number.parseFloat(getComputedStyle(element).strokeWidth));
+  expect(hoveredWidth).toBeGreaterThan(1.6);
+  // Pressing selects it for reading and copies its route above the stage regions.
+  await pressEdge(page, 0);
+  await expect(page.locator('.kb-flow-edge-group.is-selected')).toHaveCount(1);
+  await expect(marks).not.toHaveAttribute('data-active', 'true');
+  const route = page.locator('.kb-flow-selected-route');
+  await expect(route).toHaveCount(1);
+  const drawn = await page.locator('.kb-flow-edge-group[data-connection-id="' + id + '"] .kb-flow-edge').getAttribute('d');
+  await expect(route.locator('.kb-flow-selected-route-path')).toHaveAttribute('d', drawn!);
+  const paint = await page.evaluate(() => {
+    const svg = document.querySelector('.kb-flow-selected-route');
+    const marks = document.querySelector('.kb-flow-affordances');
+    const node = document.querySelector('.react-flow__node');
+    const path = document.querySelector<SVGPathElement>('.kb-flow-selected-route-path');
+    if (svg === null || marks === null || node === null || path === null) return null;
+    const matrix = path.getScreenCTM();
+    const middle = path.getPointAtLength(path.getTotalLength() / 2);
+    const screen = matrix === null ? null : new DOMPoint(middle.x, middle.y).matrixTransform(matrix);
+    const hit = screen === null ? null : document.elementFromPoint(screen.x, screen.y);
+    return {
+      route: Number(getComputedStyle(svg).zIndex) || 0,
+      marks: Number(getComputedStyle(marks).zIndex) || 0,
+      node: Number(getComputedStyle(node).zIndex) || 0,
+      pointerEvents: getComputedStyle(path).pointerEvents,
+      covered: hit !== null && hit.closest('.kb-flow-selected-route') !== null,
+    };
+  });
+  expect(paint).not.toBeNull();
+  expect(paint!.route).toBeGreaterThan(paint!.node);
+  expect(paint!.route).toBeLessThan(paint!.marks);
+  expect(paint!.pointerEvents).toBe('none');
+  expect(paint!.covered).toBe(false);
+  await shoot(page, 'connection-locked-inspection.png');
+  const routeBox = (await route.locator('.kb-flow-selected-route-path').boundingBox())!;
+  const clip = {
+    x: Math.max(0, routeBox.x - 40),
+    y: Math.max(0, routeBox.y - 40),
+    width: Math.min(1280, routeBox.width + 80),
+    height: Math.min(900, routeBox.height + 80),
+  };
+  await page.screenshot({ path: path.join(OUT, 'connection-locked-route.png'), clip });
+  // The keyboard reads a connection too: focusing an end selects its arrow, still
+  // reveals no mark, and leaves no invisible pointer target behind.
+  const other = await connectionMarkId(page, 1);
+  const otherEnd = page.locator('[data-connection-mark="' + other + '"] .kb-flow-handle[data-end="target"]');
+  await otherEnd.focus();
+  await expect(page.locator('[data-connection-mark="' + other + '"]')).not.toHaveAttribute('data-active', 'true');
+  await expect(page.locator('.kb-flow-edge-group[data-connection-id="' + other + '"]')).toHaveClass(/is-selected/);
+  const focused = await otherEnd.evaluate(element => {
+    const box = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+    return { pointerEvents: getComputedStyle(element).pointerEvents, hit: hit !== null && hit.closest('.kb-flow-handle') !== null };
+  });
+  expect(focused.pointerEvents).toBe('none');
+  expect(focused.hit).toBe(false);
+  // Return to the first connection, then unlock without changing the view: the same
+  // connection at the same zoom shows its editable marks, so the pair of prints is a
+  // direct before/after comparison.
+  await page.locator('[data-connection-mark="' + id + '"] .kb-flow-handle[data-end="target"]').focus();
+  await expect(page.locator('.kb-flow-edge-group[data-connection-id="' + id + '"]')).toHaveClass(/is-selected/);
+  await unlock(page);
+  await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-mode', 'edit');
+  await expect(marks).toHaveAttribute('data-active', 'true');
+  // The marks fade in over a short transition; wait for the fade to settle so the
+  // capture shows them instead of a half-transparent frame.
+  await expect.poll(() => marks.evaluate(element => getComputedStyle(element).opacity)).toBe('1');
+  await shoot(page, 'connection-inspection-unlocked.png');
+  await page.screenshot({ path: path.join(OUT, 'connection-unlocked-route.png'), clip });
+  // The copy keeps the drawn path at both zoom bounds.
+  const alignment = async () => {
+    const boxes = await page.evaluate(connectionId => {
+      const routeBox = document.querySelector('.kb-flow-selected-route-path')!.getBoundingClientRect();
+      const edgeBox = document.querySelector('.kb-flow-edge-group[data-connection-id="' + connectionId + '"] .kb-flow-edge')!.getBoundingClientRect();
+      return {
+        route: { x: routeBox.x, y: routeBox.y, width: routeBox.width, height: routeBox.height },
+        edge: { x: edgeBox.x, y: edgeBox.y, width: edgeBox.width, height: edgeBox.height },
+      };
+    }, id);
+    for (const key of ['x', 'y', 'width', 'height'] as const) expect(Math.abs(boxes.route[key] - boxes.edge[key])).toBeLessThan(1.5);
+  };
+  await page.mouse.move(640, 450);
+  await zoomToBound(page, 'in');
+  await alignment();
+  await zoomToBound(page, 'out');
+  await alignment();
+  // A press on a control keeps the inspection; a press on a stage clears it, and
+  // the copy leaves with the selection.
+  await page.getByRole('button', { name: 'Fit to view' }).click({ force: true });
+  await page.waitForTimeout(250);
+  await expect(page.locator('.kb-flow-selected-route')).toHaveCount(1);
+  const applyBox = (await page.getByRole('region', { name: 'Apply stage' }).boundingBox())!;
+  await page.mouse.click(applyBox.x + 12, applyBox.y + 10);
+  await expect(page.locator('.kb-flow-selected-route')).toHaveCount(0);
+  await expect(page.locator('.kb-flow-edge-group.is-selected')).toHaveCount(0);
+});
+
+test('presents a selected route above the stage it crosses, in both appearances', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(HARNESS + '?scenario=flow-crossing&theme=host');
+  await page.waitForFunction(() => (window as unknown as { __harnessReady?: boolean }).__harnessReady === true);
+  await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-ready', 'true');
+  await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-mode', 'inspect');
+  await page.waitForTimeout(300);
+  await pressEdge(page, 0);
+  await expect(page.locator('.kb-flow-selected-route')).toHaveCount(1);
+  // An interior sample of the presented route lies inside the stage the drawn edge
+  // crosses, away from either end. The fixture places that stage between the two
+  // connected stages, so this is the occlusion the copy exists for.
+  const crossingPoint = async () => page.evaluate(() => {
+    const path = document.querySelector<SVGPathElement>('.kb-flow-selected-route-path');
+    if (path === null) return null;
+    const matrix = path.getScreenCTM();
+    if (matrix === null) return null;
+    const stages = [...document.querySelectorAll('.kb-flow-stage')].map(stage => ({ id: stage.getAttribute('data-column-id'), rect: stage.getBoundingClientRect() }));
+    const total = path.getTotalLength();
+    for (let step = 20; step <= 180; step += 1) {
+      const local = path.getPointAtLength((total * step) / 200);
+      const screen = new DOMPoint(local.x, local.y).matrixTransform(matrix);
+      for (const stage of stages) {
+        const { rect } = stage;
+        if (screen.x > rect.left + 8 && screen.x < rect.right - 8 && screen.y > rect.top + 8 && screen.y < rect.bottom - 8) return { x: screen.x, y: screen.y, stage: stage.id };
+      }
+    }
+    return null;
+  });
+  const crossing = await crossingPoint();
+  expect(crossing).not.toBeNull();
+  await page.screenshot({ path: path.join(OUT, 'connection-route-over-stage-light.png') });
+  // The copy carries the selected paint and the implicit dash, with its arrowhead,
+  // and paints above the stage node it crosses.
+  const parity = await page.evaluate(() => {
+    const route = document.querySelector<SVGPathElement>('.kb-flow-selected-route-path');
+    const base = document.querySelector<SVGPathElement>('.kb-flow-edge-group.is-selected .kb-flow-edge');
+    const svg = document.querySelector('.kb-flow-selected-route');
+    const node = document.querySelector('.react-flow__node');
+    if (route === null || base === null || svg === null || node === null) return null;
+    const routeStyle = getComputedStyle(route);
+    const baseStyle = getComputedStyle(base);
+    return {
+      sameStroke: routeStyle.stroke === baseStyle.stroke && routeStyle.strokeWidth === baseStyle.strokeWidth,
+      sameDash: routeStyle.strokeDasharray === baseStyle.strokeDasharray,
+      dash: routeStyle.strokeDasharray,
+      arrow: document.querySelectorAll('.kb-flow-selected-route-arrow').length,
+      aboveNode: (Number(getComputedStyle(svg).zIndex) || 0) > (Number(getComputedStyle(node).zIndex) || 0),
+    };
+  });
+  expect(parity).not.toBeNull();
+  expect(parity!.sameStroke).toBe(true);
+  expect(parity!.sameDash).toBe(true);
+  expect(parity!.dash).not.toBe('none');
+  expect(parity!.arrow).toBe(1);
+  expect(parity!.aboveNode).toBe(true);
+  // A press through the copy reaches the stage below and clears the inspection.
+  const through = await page.evaluate(point => {
+    const hit = document.elementFromPoint(point.x, point.y);
+    return hit !== null && hit.closest('.kb-flow-stage') !== null && hit.closest('.kb-flow-selected-route') === null;
+  }, crossing!);
+  expect(through).toBe(true);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('');
+  await page.waitForTimeout(300);
+  await expect(page.locator('.kb-flow-selected-route')).toHaveCount(1);
+  await page.screenshot({ path: path.join(OUT, 'connection-route-over-stage-dark.png') });
+  const darkParity = await page.evaluate(() => {
+    const route = document.querySelector<SVGPathElement>('.kb-flow-selected-route-path');
+    const base = document.querySelector<SVGPathElement>('.kb-flow-edge-group.is-selected .kb-flow-edge');
+    if (route === null || base === null) return null;
+    return { stroke: getComputedStyle(route).stroke, width: getComputedStyle(route).strokeWidth, base: getComputedStyle(base).stroke };
+  });
+  expect(darkParity).not.toBeNull();
+  expect(darkParity!.stroke).toBe(darkParity!.base);
+  await page.mouse.click(crossing!.x, crossing!.y);
+  await expect(page.locator('.kb-flow-selected-route')).toHaveCount(0);
+  await expect(page.locator('.kb-flow-edge-group.is-selected')).toHaveCount(0);
+});
+
+test('forgets a hover that ends while the layout is locked', async ({ page }) => {
+  await openFlow(page);
+  await unlock(page);
+  const id = await connectionMarkId(page, 0);
+  const marks = page.locator('[data-connection-mark="' + id + '"]');
+  await revealEdge(page, 0);
+  await expect(marks).toHaveAttribute('data-active', 'true');
+  // Lock from the keyboard so the pointer never leaves the line; while locked the
+  // line reports no leave, so the editable surface must forget the hover itself.
+  await page.getByRole('button', { name: 'Lock layout editing', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await page.mouse.move(8, 8);
+  await page.waitForTimeout(250);
+  await page.getByRole('button', { name: 'Unlock layout editing', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(250);
+  await expect(marks).not.toHaveAttribute('data-active', 'true');
+  await expect.poll(() => marks.evaluate(element => getComputedStyle(element).opacity)).toBe('0');
+});
+
 test('keeps a connection handle reachable at both zoom bounds', async ({ page }) => {
   await openFlow(page);
   await unlock(page);
@@ -726,6 +935,21 @@ test('switches presentations without sending a command', async ({ page }) => {
   expect((await commands(page)).length).toBe(before);
 });
 
+/** Pointing at a locked arrow strengthens its stroke in the current appearance. */
+async function expectHoverEmphasis(page: Page): Promise<void> {
+  const edge = page.locator('.kb-flow-edge-group .kb-flow-edge').first();
+  await page.mouse.move(4, 4);
+  await page.waitForTimeout(120);
+  const resting = await edge.evaluate(element => Number.parseFloat(getComputedStyle(element).strokeWidth));
+  expect(resting).toBeCloseTo(1.6, 1);
+  await revealEdge(page, 0);
+  const hovered = await edge.evaluate(element => Number.parseFloat(getComputedStyle(element).strokeWidth));
+  expect(hovered).toBeGreaterThan(resting);
+  // A stroke is a non-text surface: the emphasized line must stay visible against
+  // the diagram in the current appearance.
+  expect(await strokeContrastOf(page, '.kb-flow-edge-group .kb-flow-edge')).toBeGreaterThanOrEqual(3);
+}
+
 test('captures the diagram in both host appearances', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'light' });
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -733,10 +957,12 @@ test('captures the diagram in both host appearances', async ({ page }) => {
   await page.waitForFunction(() => (window as unknown as { __harnessReady?: boolean }).__harnessReady === true);
   await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-ready', 'true');
   await page.waitForTimeout(300);
+  await expectHoverEmphasis(page);
   await page.screenshot({ path: '.verification/workflow-diagram-light.png' });
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('');
   await page.waitForTimeout(300);
+  await expectHoverEmphasis(page);
   await page.screenshot({ path: '.verification/workflow-diagram-dark.png' });
 });
 
@@ -849,8 +1075,8 @@ async function connectionEnd(page: Page, index: number, end: 'source' | 'target'
   return page.locator('[data-connection-mark="' + id + '"] .kb-flow-handle[data-end="' + end + '"]');
 }
 
-/** Points at a place the edge's interaction path owns, revealing its handles. */
-async function revealEdge(page: Page, index: number): Promise<void> {
+/** A client point the edge's interaction path owns. */
+async function edgePoint(page: Page, index: number): Promise<{ x: number; y: number }> {
   // The edge is measured after the first paint, and the hit target may be the
   // visible path under the interaction path. Sample the actual stroke instead of
   // a bounding-box grid, accept any element inside the edge group, and retry
@@ -861,6 +1087,7 @@ async function revealEdge(page: Page, index: number): Promise<void> {
       const path = paths[index] as SVGPathElement | undefined;
       if (path === undefined) return null;
       const group = path.closest('.react-flow__edge');
+      const connectionId = group?.querySelector('.kb-flow-edge-group')?.getAttribute('data-connection-id');
       const matrix = path.getScreenCTM();
       if (matrix === null) return null;
       const total = path.getTotalLength();
@@ -870,16 +1097,30 @@ async function revealEdge(page: Page, index: number): Promise<void> {
         const element = document.elementFromPoint(screen.x, screen.y);
         if (element === null) continue;
         if (element === path || (group !== null && group.contains(element))) return { x: screen.x, y: screen.y };
-        // A mark of this connection may already cover its own line; that point is
-        // still a valid place to point at the connection.
-        if (element.closest('[data-connection-mark]') !== null) return { x: screen.x, y: screen.y };
+        // A mark of this connection may already cover its own line; a mark of
+        // another connection is not a valid place to point at this one.
+        const mark = element.closest('[data-connection-mark]');
+        if (mark !== null && mark.getAttribute('data-connection-mark') === connectionId) return { x: screen.x, y: screen.y };
       }
       return null;
     }, index);
-    if (point !== null) { await page.mouse.move(point.x, point.y); return; }
+    if (point !== null) return point;
     await page.waitForTimeout(60);
   }
   throw new Error('the edge has no reachable point');
+}
+
+/** Points at a place the edge's interaction path owns, revealing its handles. */
+async function revealEdge(page: Page, index: number): Promise<void> {
+  const point = await edgePoint(page, index);
+  await page.mouse.move(point.x, point.y);
+}
+
+/** Presses the line of one connection. */
+async function pressEdge(page: Page, index: number): Promise<void> {
+  const point = await edgePoint(page, index);
+  await page.mouse.click(point.x, point.y);
+  await page.waitForTimeout(80);
 }
 
 /** The screen point of a stage edge, a few pixels outside the stage box. */
@@ -912,10 +1153,16 @@ test('re-anchors a connection end and stores one change', async ({ page }) => {
   expect(Math.abs((circle!.y + circle!.height / 2) - stage.y)).toBeLessThan(3);
 });
 
-test('does not adjust a connection while the diagram is locked', async ({ page }) => {
+test('presents no mark and adjusts nothing while the diagram is locked', async ({ page }) => {
   await openFlow(page);
-  // The marks exist in the DOM but are inert while locked, so pressing an end's
-  // position must fall through instead of starting an adjustment.
+  const id = await connectionMarkId(page, 0);
+  const marks = page.locator('[data-connection-mark="' + id + '"]');
+  await revealEdge(page, 0);
+  await expect(marks).not.toHaveAttribute('data-active', 'true');
+  await expect.poll(() => marks.evaluate(element => getComputedStyle(element).opacity)).toBe('0');
+  await shoot(page, 'connection-locked-no-marks.png');
+  // The handle positions stay in the document for the keyboard, but pressing one
+  // falls through instead of starting an adjustment.
   await dragHandle(page, connectionEnd(page, 0, 'target'), await stageEdge(page, 'Propose', 'bottom'));
   await page.waitForTimeout(700);
   expect(await commands(page)).toHaveLength(0);

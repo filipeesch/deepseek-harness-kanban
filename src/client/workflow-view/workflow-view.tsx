@@ -438,11 +438,20 @@ export function WorkflowView(props: WorkflowViewProps) {
   }), [tasksById, columnsById, props.card, presented, props.onOpenTask, props.beginDrag, props.shouldSuppressClick, arrivals.tokens, settleArrival]);
 
   const openCondition = useCallback((connectionId: string, anchor: ConditionAnchor) => {
+    if (lock.locked) return;
     const connection = connectionsRef.current.find(value => value.id === connectionId);
     if (connection && presented.columns.find(column => column.id === connection.from)?.deterministic) { props.onEditStage?.(connection.from); return; }
     setSelectedConnectionId(connectionId);
     setConditionEditor({ connectionId, anchor });
-  }, [presented, props.onEditStage]);
+  }, [lock.locked, presented, props.onEditStage]);
+
+  // The layout lock owns every edit, so turning it on ends an open condition session
+  // and discards its draft instead of leaving an editor that cannot store.
+  useEffect(() => {
+    if (!lock.locked) return;
+    setConditionEditor(null);
+    actionsRef.current.clearError();
+  }, [lock.locked]);
 
   const editorConnection = conditionEditor === null ? undefined : connections.find(value => value.id === conditionEditor.connectionId);
 
@@ -514,7 +523,6 @@ export function WorkflowView(props: WorkflowViewProps) {
       title={'Condition from ' + (presented.columns.find(column => column.id === editorConnection.from)?.name ?? editorConnection.from) + ' to ' + (presented.columns.find(column => column.id === editorConnection.to)?.name ?? editorConnection.to)}
       value={editorConnection.condition ?? ''}
       pending={actions.pending}
-      locked={lock.locked}
       problem={actions.error}
       onSave={text => { void saveCondition(text); }}
       onDelete={deleteConnection}

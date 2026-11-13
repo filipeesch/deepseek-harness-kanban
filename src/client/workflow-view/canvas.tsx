@@ -13,6 +13,8 @@ import { FLOW_ZOOM, clampZoom, markScale, nextZoom, zoomAroundPoint, type Viewpo
 import { edgeModel, type LiveStageRect } from './edge-model.js';
 import { affordanceScale } from './affordance-geometry.js';
 import { ConnectionHandlersContext, type ConnectionHandlers } from './connection-interaction.js';
+import { connectionMode, editable } from './connection-mode.js';
+import { SelectedRoute } from './selected-route.js';
 import { boardConnectionDropResolver, type ConnectionDropResolver } from './connection-drop.js';
 import { ConnectionAffordances } from './connection-affordances.js';
 import { useConnectionGestures } from './use/use-connection-gestures.js';
@@ -137,9 +139,17 @@ function CanvasInner(props: WorkflowCanvasProps) {
 
   const hover = useConnectionHover();
   const stageHover = useConnectionHover();
+  const mode = connectionMode(props.locked);
+  const clearHover = hover.clear;
+  // The editable surface owns the hover that reveals a connection's marks, so the
+  // hover ends with it: a pointer that leaves while inspecting never reports the
+  // leave, and the stale hover would otherwise reveal the marks when editing returns.
+  useEffect(() => {
+    if (!editable(mode)) clearHover();
+  }, [mode, clearHover]);
 
   const gestures = useConnectionGestures({
-    locked: props.locked,
+    mode,
     snap: props.snap,
     connections: props.connections,
     stages: liveStages,
@@ -154,6 +164,8 @@ function CanvasInner(props: WorkflowCanvasProps) {
   });
 
   const liveEdges = useMemo(() => edgeModel(liveStages, props.connections.map(gestures.present)), [liveStages, props.connections, gestures]);
+  /** The connection whose route is presented above the stage regions. */
+  const selectedEdge = useMemo(() => liveEdges.find(edge => edge.id === props.selectedConnectionId), [liveEdges, props.selectedConnectionId]);
 
   const edges = useMemo<Edge[]>(() => liveEdges.map(edge => ({
     id: edge.id,
@@ -222,15 +234,17 @@ function CanvasInner(props: WorkflowCanvasProps) {
 
   const dragState = useMemo(() => ({ stageId: props.drop.stageId, indicatorY: props.drop.indicatorY, candidateStageId: gestures.candidateStageId }), [props.drop.stageId, props.drop.indicatorY, gestures.candidateStageId]);
 
-  // Pressing anything that is not a connection clears the selection, so the selection
-  // never survives a press somewhere else in the diagram.
+  // Pressing a stage or the empty surface clears the selection, so it never survives
+  // a press somewhere else in the diagram. Pressing a control stack, the minimap, or
+  // a connection's own marks is navigation or interaction with the connection, so the
+  // inspection survives it — including the press that unlocks the layout.
   const clearSelectionOutside = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const target = event.target as Element | null;
-    if (target !== null && target.closest('[data-connection-id], [data-connection-mark]') !== null) return;
+    if (target !== null && target.closest('[data-connection-id], [data-connection-mark], .react-flow__panel, .react-flow__minimap') !== null) return;
     props.onSelectConnection(null);
   }, [props.onSelectConnection]);
 
-  return <div ref={wrapper} className="kb-flow-canvas" data-ready={props.ready ? 'true' : 'false'} data-locked={props.locked ? 'true' : 'false'} onPointerDownCapture={clearSelectionOutside}>
+  return <div ref={wrapper} className="kb-flow-canvas" data-ready={props.ready ? 'true' : 'false'} data-mode={mode} onPointerDownCapture={clearSelectionOutside}>
     <style>{flowStyles}</style>
     <CardEnvironmentContext.Provider value={props.cardEnvironment}>
       <StageCallbacksContext.Provider value={callbacks}>
@@ -265,16 +279,18 @@ function CanvasInner(props: WorkflowCanvasProps) {
               {props.controls !== undefined && <Panel position="bottom-left">{props.controls(viewport)}</Panel>}
               <DiagramMinimap />
               {props.overlay !== undefined && <ViewportPortal>{props.overlay}</ViewportPortal>}
-              <ViewportPortal><ConnectionAffordances
-                edges={liveEdges}
-                creation={gestures.creation}
-                stages={liveStages}
-                hoveredStageId={stageHover.hoveredId}
-                locked={props.locked}
-                onStageEnter={stageHover.enter}
-                onStageLeave={stageHover.leave}
-                onBeginConnect={gestures.beginCreation}
-              /></ViewportPortal>
+              <ViewportPortal>
+                <SelectedRoute edge={selectedEdge} />
+                <ConnectionAffordances
+                  edges={liveEdges}
+                  creation={gestures.creation}
+                  stages={liveStages}
+                  hoveredStageId={stageHover.hoveredId}
+                  onStageEnter={stageHover.enter}
+                  onStageLeave={stageHover.leave}
+                  onBeginConnect={gestures.beginCreation}
+                />
+              </ViewportPortal>
             </ReactFlow>
           </StageDragContext.Provider>
         </ConnectionHandlersContext.Provider>
