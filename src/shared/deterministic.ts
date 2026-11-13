@@ -1,4 +1,4 @@
-import type { Problem } from './types.js';
+import type { PendingUserWorkKind, Problem } from './types.js';
 
 /** One required parameter a deterministic stage declares; the declaration carries no value. */
 export interface DeterministicParameter {
@@ -35,6 +35,25 @@ export interface DeterministicCapture {
   params: string[];
   exits: Record<string, DeterministicTarget>;
 }
+/** One bounded background fact that refused delivery of a saved result. */
+export interface DeterministicHoldBackground {
+  kind: 'job' | 'schedule';
+  /** Present for a job the drawer can cancel; never synthesized. */
+  id?: string;
+  label: string;
+}
+/** The stable reasons a saved result may be refused delivery. Never presentation text. */
+export const DETERMINISTIC_HOLD_CODES = ['task-operation', 'project-operation', 'pending-transition', 'worktree-not-ready', 'project-directory-missing', 'execution-directory-changed', 'auto-mode-hold', 'context-reserved', 'conversation-active', 'background-work', 'pending-user-work', 'conversation-unreadable', 'stale-authority'] as const;
+export type DeterministicHoldCode = (typeof DETERMINISTIC_HOLD_CODES)[number];
+/** Durable explanation of one refused delivery: why, when, and the bounded facts behind it. */
+export interface DeterministicHold {
+  code: DeterministicHoldCode;
+  at: string;
+  /** Bounded background activity; absent unless the reason is background work. */
+  background?: DeterministicHoldBackground[];
+  /** Pending user-work kinds; absent unless the reason is pending user work. */
+  pending?: PendingUserWorkKind[];
+}
 export interface DeterministicResult {
   id: string; exit: string; message: string; at: string;
   target?: DeterministicTarget;
@@ -53,6 +72,8 @@ export interface DeterministicControl {
   parameters?: Record<string, string>;
   phase: DeterministicPhase; startedAt: string; attempt: number; restartCount: number;
   attemptId?: string; capture?: DeterministicCapture; result?: DeterministicResult; error?: Problem;
+  /** Present while delivery of a saved result is refused; cleared once admitted or settled. */
+  hold?: DeterministicHold;
 }
 export interface DeterministicHandoff {
   id: string; entryId: string; executionId: string;
@@ -70,6 +91,8 @@ export interface DeterministicSummary {
   fingerprint?: string;
   /** Entry-bound values, projected so the script panel can show and repair them. */
   parameters?: Record<string, string>;
+  /** Present while a saved result awaits delivery; explains the refusal without a run. */
+  hold?: DeterministicHold;
 }
 /** Stage-scoped executable version review; project variable values stay out of it. */
 export interface DeterministicStageReview {

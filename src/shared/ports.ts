@@ -1,5 +1,6 @@
 import type { BoardState, ConversationFacts, CreateWorktree, GitProject, HubState, KanbanMeta, ProjectLocation } from './types.js';
 import type { TaskMessageDelivery } from './task-message.js';
+import type { ConversationIdleReport } from './conversation-idle.js';
 export interface StateStorage { load(): Promise<unknown | null>; save(state: BoardState): Promise<void> }
 /** Durable Hub-record storage. The adapter owns the DSH domain; the repository owns the write chain. */
 export interface HubStorage {
@@ -51,6 +52,10 @@ export interface SessionPort extends SessionTopologyPort {
   validateDirectory(sessionId: string, expected: string): Promise<void>;
   setDirectory(sessionId: string, directory: string, signal?: AbortSignal): Promise<void>;
   isIdle(sessionId: string): Promise<boolean>;
+  /** The same verdict with the bounded facts behind it; absent keeps only the boolean contract. */
+  idleReport?(sessionId: string): Promise<ConversationIdleReport>;
+  /** Cancel a background job owned by this conversation; absent when the host exposes no job registry. */
+  cancelJob?(sessionId: string, jobId: string): Promise<'requested' | 'already-finished'>;
   send(sessionId: string, text: string, requestId?: string): Promise<void>;
   /** Deliver one stage instruction as a plugin-sourced message that starts the turn. */
   deliverStageInstruction(sessionId: string, delivery: StageInstructionDelivery): Promise<void>;

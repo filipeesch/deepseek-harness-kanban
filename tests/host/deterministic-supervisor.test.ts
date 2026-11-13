@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { DeterministicCapture, DeterministicControl } from '../../src/shared/deterministic.js';
 import type { Board, HubState, HubTask, Project } from '../../src/shared/types.js';
 import type { LocatedTask } from '../../src/host/hub-repository.js';
@@ -53,7 +53,7 @@ function harness(initial = fixture()) {
     trust: { isApproved: async () => trustHook ? trustHook() : approved },
     variable: { resolve: async () => ({ ...variables }) },
     async route(request) { routes.push(request); expect(state.tasks.find(task => task.id === request.located.task.id)?.deterministic?.result?.id).toBe(request.result.id); return route(request); },
-    id: () => 'id-' + ++sequence, now: () => at, report: error => errors.push(error),
+    id: () => 'id-' + ++sequence, now: () => at, report: error => errors.push(error), recheckMs: 0,
   };
   const supervisors: DeterministicSupervisor[] = [];
   function supervisor() { const value = new DeterministicSupervisor(ports); supervisors.push(value); return value; }
@@ -62,6 +62,7 @@ function harness(initial = fixture()) {
     approved(value: boolean) { approved = value; }, variables(value: Record<string, string>) { variables = value; },
     execute(value: typeof execute) { execute = value; }, route(value: typeof route) { route = value; }, captureHook(value: typeof captureHook) { captureHook = value; }, trustHook(value: typeof trustHook) { trustHook = value; }, reclaimHook(value: typeof reclaimHook) { reclaimHook = value; },
     afterCommit(value: typeof afterCommit) { afterCommit = value; }, beforeCommit(value: typeof beforeCommit) { beforeCommit = value; },
+    recheck(value: number) { ports.recheckMs = value; },
     async edit(change: (located: LocatedTask) => void) { await ports.transact('task', (_task, located) => change(located)); },
     async close() { for (const value of supervisors) value.dispose(); for (const value of supervisors) await value.settle(); },
   };
@@ -111,6 +112,95 @@ describe('deterministic supervisor source collection and interrupted cleanup', (
   });
   it('records one failed handoff receipt without rerunning or recursively following error', async () => {
     const h = harness(); h.route(async () => ({ status: 'failed', error: { code: 'TARGET_REMOVED', message: 'No stable target remains.' } })); const s = h.supervisor(); s.start(); await s.settle(); const first = h.task.history?.filter(value => value.kind === 'deterministic-handoff'); expect(first).toHaveLength(1); s.sync(); await s.settle(); expect(h.calls).toHaveLength(1); expect(h.task.history?.filter(value => value.kind === 'deterministic-handoff')).toEqual(first); await h.close();
+  });
+});
+
+describe('deterministic delivery holds and delivery-only retries', () => {
+  const jobHold = { code: 'background-work' as const, at, background: [{ kind: 'job' as const, id: 'bash-1', label: 'find the home directory' }] };
+  const holds = (h: ReturnType<typeof harness>) => h.errors.filter(error => (error as { code?: string }).code === 'DETERMINISTIC_DELIVERY_HELD');
+
+  it('persists the refusal reason until it changes and reports once per change', async () => {
+    const h = harness(); h.route(async () => ({ status: 'held', hold: jobHold }));
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.control().phase).toBe('result-ready');
+    expect(h.control().hold).toEqual(jobHold);
+    expect(holds(h)).toHaveLength(1);
+    s.reconcile('task'); await s.settle();
+    expect(h.control().hold).toEqual(jobHold);
+    expect(holds(h)).toHaveLength(1);
+    h.route(async () => ({ status: 'held', hold: { code: 'pending-user-work', at, pending: ['approval'] } }));
+    s.reconcile('task'); await s.settle();
+    expect(h.control().hold).toMatchObject({ code: 'pending-user-work', pending: ['approval'] });
+    expect(holds(h)).toHaveLength(2);
+    h.route(async () => ({ status: 'accepted' }));
+    s.reconcile('task'); await s.settle();
+    expect(h.control().hold).toBeUndefined();
+    expect(h.control().result?.deliveryStatus).toBe('accepted');
+    await h.close();
+  });
+
+  it('keeps a plain hold silent instead of inventing a reason', async () => {
+    const h = harness(); h.route(async () => ({ status: 'held' }));
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.control().hold).toBeUndefined();
+    expect(holds(h)).toHaveLength(0);
+    await h.close();
+  });
+
+  it('replays a pending saved delivery without executing the program again', async () => {
+    const h = harness(); h.route(async () => ({ status: 'held', hold: jobHold }));
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.calls).toHaveLength(1);
+    h.route(async () => ({ status: 'accepted' }));
+    await s.retryDelivery(identity); await s.settle();
+    expect(h.calls).toHaveLength(1);
+    expect(h.control().result?.deliveryStatus).toBe('accepted');
+    expect(h.control().hold).toBeUndefined();
+    await expect(s.retryDelivery({ ...identity, executionId: 'other' })).rejects.toMatchObject({ code: 'STALE_EXECUTION' });
+    await h.close();
+  });
+
+  it('schedules one coalesced re-check per refusal and stops it on dispose', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness(); h.recheck(1_000); h.route(async () => ({ status: 'held', hold: jobHold }));
+      const s = h.supervisor(); s.start(); await flush();
+      expect(h.routes).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1_000); await flush();
+      expect(h.routes).toHaveLength(2);
+      s.dispose();
+      await vi.advanceTimersByTimeAsync(5_000); await flush();
+      expect(h.routes).toHaveLength(2);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('clears the re-check when the execution or the task ends', async () => {
+    vi.useFakeTimers();
+    try {
+      const held = async () => {
+        const h = harness(); h.recheck(1_000); h.route(async () => ({ status: 'held', hold: jobHold }));
+        const s = h.supervisor(); s.start(); await flush();
+        expect(vi.getTimerCount()).toBe(1);
+        return { h, s };
+      };
+      const stopped = await held(); await stopped.s.stop(identity); expect(vi.getTimerCount()).toBe(0); await stopped.h.close();
+      const replaced = await held(); replaced.h.route(async () => ({ status: 'accepted' })); await replaced.s.play('task', 'entry'); await flush(); expect(vi.getTimerCount()).toBe(0); await replaced.h.close();
+      const removed = await held(); await removed.s.removeTask('task'); expect(vi.getTimerCount()).toBe(0); await removed.h.close();
+      const accepted = await held(); accepted.h.route(async () => ({ status: 'accepted' })); accepted.s.reconcile('task'); await flush(); expect(vi.getTimerCount()).toBe(0); await accepted.h.close();
+      const orphaned = await held(); await orphaned.h.edit(value => { value.task.deterministic = undefined; }); orphaned.s.sync(); await flush(); expect(vi.getTimerCount()).toBe(0); await orphaned.h.close();
+    } finally { vi.useRealTimers(); }
+  });
+  it('allows a wake to supersede the scheduled re-check', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness(); h.recheck(1_000); h.route(async () => ({ status: 'held', hold: jobHold }));
+      const s = h.supervisor(); s.start(); await flush();
+      s.wake('task'); await flush();
+      expect(h.routes).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(5_000); await flush();
+      expect(h.routes).toHaveLength(2);
+      s.dispose();
+    } finally { vi.useRealTimers(); }
   });
 });
 

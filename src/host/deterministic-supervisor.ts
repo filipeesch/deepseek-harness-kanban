@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { DeterministicCapture, DeterministicControl, DeterministicInput, DeterministicResult, StepCompletion } from '../shared/deterministic.js';
+import type { DeterministicCapture, DeterministicControl, DeterministicHold, DeterministicInput, DeterministicResult, StepCompletion } from '../shared/deterministic.js';
 import type { HubTask, Problem } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
 import type { LocatedTask } from './hub-repository.js';
@@ -13,12 +13,14 @@ import { settleFailureRoute } from '../domain/deterministic-failure-settlement.j
 import { bounded } from '../shared/bounded.js';
 import { redactExact, redactRecord } from '../shared/redact.js';
 import { buildDeterministicInput } from './deterministic/input.js';
+import { sameDeterministicHold } from '../domain/deterministic-hold.js';
 
 export interface DeterministicIdentity { taskId: string; entryId: string; executionId: string; attemptId?: string }
 export interface SupervisorRequest { located: LocatedTask; control: DeterministicControl; signal: AbortSignal }
 export interface SupervisorExecution extends SupervisorRequest { capture: DeterministicCapture; code: string; variables: Readonly<Record<string, string>>; input: DeterministicInput }
 export interface SupervisorRoute extends SupervisorRequest { capture: DeterministicCapture; result: DeterministicResult }
-export type SupervisorRouteOutcome = { status: 'held' } | { status: 'accepted' } | { status: 'failed'; error: Problem };
+/** A refusal carries the bounded reason the drawer presents; absent only when the request was already stale. */
+export type SupervisorRouteOutcome = { status: 'held'; hold?: DeterministicHold } | { status: 'accepted' } | { status: 'failed'; error: Problem };
 
 /** All control changes belong to the existing durable task transaction, not a run database. */
 export interface SupervisorPorts {
@@ -53,6 +55,8 @@ export interface SupervisorPorts {
    * Native delivery admission is entry/delivery-bound. A hold returns without waiting for user work. */
   route(request: SupervisorRoute): Promise<SupervisorRouteOutcome>;
   canStart?(taskId: string): boolean;
+  /** Delay before the one coalesced re-check of a refused delivery; a test shortens it. */
+  recheckMs?: number;
   report?(error: unknown): void;
   notify?(): void;
   id?(): string;
@@ -63,6 +67,7 @@ interface Owner { located: LocatedTask; control: DeterministicControl; abort: Ab
 class SupervisorPersistenceFailure extends Error { constructor(readonly cause: unknown) { super('The deterministic task transaction could not be persisted.'); } }
 const MAX_MESSAGE_BYTES = 64 * 1024;
 const MAX_DIAGNOSTIC = 4096;
+const DEFAULT_RECHECK_MS = 5_000;
 
 function current(located: LocatedTask | undefined, expected: DeterministicControl): boolean {
   const task = located?.task;
@@ -79,6 +84,13 @@ function historyParameters(control: Pick<DeterministicControl, 'parameters' | 'c
 }
 function safeText(value: string, secrets: Readonly<Record<string, string>>, limit: number): string {
   return bounded(redactExact(value, Object.values(secrets)), limit);
+}
+/** The bounded line logged when a refusal reason appears or changes; never per attempt. */
+function holdDiagnostic(hold: DeterministicHold): string {
+  const parts: string[] = [hold.code];
+  if (hold.pending !== undefined && hold.pending.length > 0) parts.push('pending ' + hold.pending.join(', '));
+  if (hold.background !== undefined && hold.background.length > 0) parts.push('background ' + hold.background.map(fact => fact.kind + (fact.id === undefined ? '' : ' ' + fact.id) + ' "' + fact.label + '"').join('; '));
+  return bounded('Saved result delivery held: ' + parts.join(' · '), MAX_DIAGNOSTIC);
 }
 function completion(value: unknown): StepCompletion {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new KanbanError('INVALID_COMPLETION', 'The program must return exactly { exit, message }.');
@@ -99,8 +111,13 @@ export class DeterministicSupervisor {
   private sourceTail: Promise<void> = Promise.resolve();
   private readonly id: () => string;
   private readonly now: () => string;
+  private readonly recheckMs: number;
+  private readonly rechecks = new Map<string, ReturnType<typeof setTimeout>>();
 
-  constructor(private readonly ports: SupervisorPorts) { this.id = ports.id ?? randomUUID; this.now = ports.now ?? (() => new Date().toISOString()); }
+  constructor(private readonly ports: SupervisorPorts) {
+    this.id = ports.id ?? randomUUID; this.now = ports.now ?? (() => new Date().toISOString());
+    this.recheckMs = ports.recheckMs ?? DEFAULT_RECHECK_MS;
+  }
 
   start(): void { this.sync(); }
   sync(): void {
@@ -108,6 +125,8 @@ export class DeterministicSupervisor {
     const tasks = new Set<string>();
     for (const located of this.ports.all()) { tasks.add(located.task.id); this.reconcile(located.task.id); }
     for (const [taskId, owner] of this.owners) if (!tasks.has(taskId)) owner.abort.abort();
+    // A task removed or replaced outside this runtime must not keep a delivery timer alive.
+    for (const taskId of [...this.rechecks.keys()]) if (!tasks.has(taskId)) this.clearRecheck(taskId);
   }
 
   /** Schedule reconciliation, including after trust changes, placement or guard release. */
@@ -123,7 +142,7 @@ export class DeterministicSupervisor {
     }
     const control = located?.task.deterministic;
     if (this.ports.canStart?.(taskId) === false) return;
-    if (!control || !current(located, control) || ['stopped', 'failed'].includes(control.phase) || control.result?.deliveryStatus === 'accepted' || control.result?.deliveryStatus === 'failed') return;
+    if (!control || !current(located, control) || ['stopped', 'failed'].includes(control.phase) || control.result?.deliveryStatus === 'accepted' || control.result?.deliveryStatus === 'failed') { this.clearRecheck(taskId); return; }
     const next: Owner = { located: located!, control: structuredClone(control), abort: new AbortController(), done: Promise.resolve(), rerun: false };
     this.owners.set(taskId, next);
     next.done = Promise.resolve().then(() => this.drive(taskId, next)).catch(error => this.ports.report?.(error)).finally(async () => {
@@ -179,6 +198,8 @@ export class DeterministicSupervisor {
 
   /** Retry a held result after an external guard changes, even if its current drain is finishing. */
   wake(taskId: string): void {
+    // A real edge supersedes the scheduled safety re-check for this task.
+    this.clearRecheck(taskId);
     const owner = this.owners.get(taskId);
     if (owner) { if (this.ports.locate(taskId)?.task.deterministic?.result) owner.rerun = true; }
     else this.reconcile(taskId);
@@ -207,6 +228,7 @@ export class DeterministicSupervisor {
         recordDeterministicExecution(task, { at: this.now(), executionId: expected.executionId, columnId: task.columnId, outcome: 'stopped', ...historyParameters(expected) });
       }
     });
+    this.clearRecheck(identity.taskId);
     this.ports.notify?.();
   }
 
@@ -226,12 +248,15 @@ export class DeterministicSupervisor {
       if (superseded && !superseded.result && !['stopped', 'failed'].includes(superseded.phase)) recordDeterministicExecution(task, { at: this.now(), executionId: superseded.executionId, columnId: task.columnId, outcome: 'stopped', ...historyParameters(superseded) });
       task.deterministic = { entryId, executionId: this.id(), stageIdentity: task.stageEntry.stageIdentity, definition: structuredClone(definition), targets: captureDeterministicTargets(located.board, column, this.id), ...(superseded?.parameters === undefined ? {} : { parameters: { ...superseded.parameters } }), phase: 'capture-pending', startedAt: this.now(), attempt: 0, restartCount: 0 };
     });
+    // A new execution supersedes any scheduled delivery re-check for this task.
+    this.clearRecheck(taskId);
     // Reconciliation aborts a predecessor, but launches only after its full drain.
     this.reconcile(taskId);
   }
 
   /** Must finish before deleting/relocating a task directory. Refused moves do not call this. */
   async beforeContextChange(taskId: string): Promise<void> {
+    this.clearRecheck(taskId);
     const predecessor = this.owners.get(taskId) ?? this.uncertainOwners.get(taskId);
     if (predecessor) {
       predecessor.abort.abort(); await predecessor.done;
@@ -264,6 +289,7 @@ export class DeterministicSupervisor {
   }
 
   async removeTask(taskId: string): Promise<void> {
+    this.clearRecheck(taskId);
     await this.beforeContextChange(taskId);
     await this.withSources(async () => {
       const refs = this.sourceReferences();
@@ -291,8 +317,8 @@ export class DeterministicSupervisor {
   }
 
   /** Shutdown cancels processes but deliberately retains recoverable active intent. */
-  dispose(): void { this.disposed = true; for (const owner of this.owners.values()) owner.abort.abort(); }
-  async settle(): Promise<void> { while (this.owners.size) await Promise.allSettled([...this.owners.values()].map(owner => owner.done)); await this.sourceTail; }
+  dispose(): void { this.disposed = true; this.clearRechecks(); for (const owner of this.owners.values()) owner.abort.abort(); }
+  async settle(): Promise<void> { while (this.owners.size) await Promise.allSettled([...this.owners.values()].map(owner => owner.done)); await this.sourceTail; this.clearRechecks(); }
 
   async variable(taskId: string, name: string, value: string | null, expectedStageIdentity?: string): Promise<void> {
     const located = this.ports.locate(taskId);
@@ -328,9 +354,10 @@ export class DeterministicSupervisor {
   async retryDelivery(identity: DeterministicIdentity): Promise<void> {
     const expected = this.require(identity);
     await this.ports.transact(identity.taskId, (task, located) => {
-      if (!current(located, expected) || !task.deterministic?.result?.target || task.deterministic.result.deliveryStatus !== 'failed') throw new KanbanError('STALE_EXECUTION', 'No failed result delivery is available here.');
-      task.deterministic.phase = 'result-ready'; task.deterministic.result.deliveryStatus = 'pending';
-      delete task.deterministic.error; delete task.deterministic.result.error;
+      const result = task.deterministic?.result;
+      if (!current(located, expected) || !result?.target || (result.deliveryStatus !== 'failed' && result.deliveryStatus !== 'pending')) throw new KanbanError('STALE_EXECUTION', 'No saved result delivery is available here.');
+      task.deterministic!.phase = 'result-ready'; task.deterministic!.result!.deliveryStatus = 'pending';
+      delete task.deterministic!.error; delete task.deterministic!.result!.error;
     });
     this.reconcile(identity.taskId);
   }
@@ -510,16 +537,53 @@ export class DeterministicSupervisor {
     let outcome: SupervisorRouteOutcome;
     try { outcome = await this.ports.route({ located: this.ports.locate(taskId)!, control: structuredClone(control), capture: structuredClone(control.capture), result: structuredClone(control.result), signal: owner.abort.signal }); }
     catch { outcome = { status: 'failed', error: { code: 'DETERMINISTIC_DELIVERY_FAILED', message: 'The saved result could not be delivered. Retry delivery explicitly; the source program will not run again.' } }; }
+    // A refusal is durable state on the entry, replaced only when the reason changes and
+    // never appended as a history row. The attempt itself keeps the previous observation
+    // visible, so a re-check of an unchanged reason reports nothing.
+    let changed: DeterministicHold | undefined;
     // Placement may already have replaced the source control. Never write into its destination.
     await this.ports.transact(taskId, (task, value) => {
       if (!current(value, owner.control) || task.deterministic!.phase !== 'delivering' || task.deterministic!.result?.id !== control.result!.id) return;
-      if (outcome.status === 'held') task.deterministic!.phase = 'result-ready';
-      else if (outcome.status === 'accepted') task.deterministic!.result!.deliveryStatus = 'accepted';
-      else {
+      if (outcome.status === 'held') {
+        task.deterministic!.phase = 'result-ready';
+        if (outcome.hold === undefined || sameDeterministicHold(task.deterministic!.hold, outcome.hold)) return;
+        task.deterministic!.hold = outcome.hold;
+        changed = outcome.hold;
+      } else if (outcome.status === 'accepted') {
+        task.deterministic!.result!.deliveryStatus = 'accepted'; delete task.deterministic!.hold;
+      } else {
         task.deterministic!.phase = 'failed'; task.deterministic!.result!.deliveryStatus = 'failed'; task.deterministic!.result!.error = outcome.error; task.deterministic!.error = outcome.error;
+        delete task.deterministic!.hold;
         recordDeterministicHandoff(task, { at: this.now(), deliveryId: control.result!.deliveryId ?? control.result!.id, executionId: control.executionId, fromColumnId: task.columnId, columnId: control.result!.target?.columnId ?? task.columnId, outcome: 'failed', exit: control.result!.exit, message: control.result!.message, error: outcome.error });
       }
     });
+    if (changed !== undefined) this.ports.report?.(new KanbanError('DETERMINISTIC_DELIVERY_HELD', holdDiagnostic(changed)));
+    // One safety re-check per observation, never a poll: a refusal that reveals the same
+    // reason waits for a real edge instead of re-reading the conversation on a timer.
+    if (outcome.status !== 'held') this.clearRecheck(taskId);
+    else if (changed !== undefined) this.scheduleRecheck(taskId);
   }
+
+  /** One coalesced safety re-check per refused result: it closes the race where the clearing edge arrived mid-attempt. */
+  private scheduleRecheck(taskId: string): void {
+    this.clearRecheck(taskId);
+    if (this.disposed || this.recheckMs <= 0) return;
+    const timer = setTimeout(() => {
+      this.rechecks.delete(taskId);
+      if (!this.disposed) this.reconcile(taskId);
+    }, this.recheckMs);
+    timer.unref?.();
+    this.rechecks.set(taskId, timer);
+  }
+
+  private clearRecheck(taskId: string): void {
+    const timer = this.rechecks.get(taskId);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    this.rechecks.delete(taskId);
+  }
+
+  private clearRechecks(): void { for (const taskId of [...this.rechecks.keys()]) this.clearRecheck(taskId); }
+
 
 }

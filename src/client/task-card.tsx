@@ -10,7 +10,7 @@ import { cardStatusEntries, type CardStatusEntry } from './card-status-entries.j
 import { projectCardDominance } from '../domain/card-presence.js';
 import { CardScriptActions, CardScriptParameters } from './deterministic-actions.js';
 import { useScriptSummary } from './deterministic-context.js';
-import { ownedScript, scriptActive, scriptAwaitingApproval, scriptCardLabel } from './deterministic-view.js';
+import { ownedScript, scriptActive, scriptAwaitingApproval, scriptCardLabel, scriptLabel } from './deterministic-view.js';
 import { advanceStageLabel } from './stage-advance.js';
 import { AdvanceStageIcon, AlertIcon, ClockIcon } from './icons.js';
 
@@ -54,10 +54,10 @@ function CardContext({ taskId, title, projectName, attention, selectionMode, sel
   </div>;
 }
 
-function CardActivity({ attention, label, controls, script }: { attention: Attention; label: string; controls: React.ReactNode; script?: string }) {
+function CardActivity({ attention, label, controls, script, scriptTitle, scriptHeld }: { attention: Attention; label: string; controls: React.ReactNode; script?: string; scriptTitle?: string; scriptHeld?: boolean }) {
   return <div className="kb-card-activity">
     <WorkingAnnouncement running={attention.running} label={label} />
-    {script && <span className="kb-script-card-label" role="status" title={script}>{script}</span>}
+    {script && <span className="kb-script-card-label" role="status" data-held={scriptHeld ? 'true' : undefined} title={scriptTitle ?? script}>{script}</span>}
     <div className="kb-card-actions">{controls}</div>
   </div>;
 }
@@ -124,7 +124,7 @@ export function TaskCard({ task, column, projectName, attention, selectionMode, 
       <strong>{task.title}</strong>
     </button>
     <CardContext taskId={task.id} title={task.title} projectName={projectName} attention={presenceAttention} selectionMode={selectionMode} selected={selected} onToggleSelect={onToggleSelect} onActivate={activate} />
-    <CardActivity attention={attention} label={task.title} controls={controls} script={script && !awaitingApproval ? scriptCardLabel(script) : undefined} />
+    <CardActivity attention={attention} label={task.title} controls={controls} script={script && !awaitingApproval ? scriptCardLabel(script) : undefined} {...(script?.hold === undefined || awaitingApproval ? {} : { scriptTitle: scriptLabel(script) })} scriptHeld={script?.hold !== undefined && !awaitingApproval} />
     <CardStatus parameters={script !== undefined && (column.deterministic?.params?.length ?? 0) > 0 ? <CardScriptParameters task={task} column={column} selectionMode={selectionMode} /> : undefined} entries={[...cardStatusEntries(task, runFailure, autoMode.status, autoMode.secondaryStatuses), ...(awaitingApproval ? [{ key: 'script-approval', tone: 'pending' as const, label: 'Awaiting approval' }] : []), ...(script?.error ? [{ key: 'script-error', tone: 'danger' as const, label: script.error.message.slice(0, 512), alert: true }] : [])]} />
     {arrivalToken !== undefined && <span key={arrivalToken} className="kb-card-arrival" aria-hidden="true" onAnimationEnd={() => onArrivalEnd?.(task.id, arrivalToken)} />}
   </article>;

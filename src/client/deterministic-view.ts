@@ -1,4 +1,4 @@
-import type { DeterministicSummary } from '../shared/deterministic.js';
+import type { DeterministicHold, DeterministicSummary } from '../shared/deterministic.js';
 import type { Task } from '../shared/types.js';
 import { FAILURE_ORIGIN_LABELS, type FailureOrigin } from '../shared/deterministic-failure.js';
 import { failureDetail } from '../domain/deterministic-failure.js';
@@ -42,6 +42,9 @@ export function scriptLabel(summary: DeterministicSummary): string {
 }
 /** The card label: short enough for a narrow column, with the detail left to the drawer. */
 export function scriptCardLabel(summary: DeterministicSummary): string {
+  // A held result shares the narrow card row with its actions, so it names the state
+  // without repeating the full drawer label the notice already explains.
+  if (summary.phase === 'result-ready' && summary.hold !== undefined) return 'Result held';
   if (summary.phase === 'failed' && summary.deliveryStatus === 'failed') return 'Script result delivery failed';
   if (summary.phase === 'failed' && summary.error?.code === 'PARAMETERS_REQUIRED') return 'Script: parameters required';
   if (summary.phase === 'failed') {
@@ -52,6 +55,47 @@ export function scriptCardLabel(summary: DeterministicSummary): string {
     return 'Script failed';
   }
   return scriptLabel(summary);
+}
+
+const HOLD_REASONS: Record<DeterministicHold['code'], string> = {
+  'task-operation': 'Waiting for a task directory operation to finish.',
+  'project-operation': 'Waiting for the project relocation to finish.',
+  'pending-transition': 'Waiting for the recorded stage transition to settle.',
+  'worktree-not-ready': 'Waiting for the task worktree to be ready.',
+  'project-directory-missing': 'The project has no directory. Adopt it, then deliver this result.',
+  'execution-directory-changed': 'The execution directory changed. Repair the binding, then deliver this result.',
+  'auto-mode-hold': 'The task is paused. Resume it to deliver this result.',
+  'context-reserved': 'Waiting for another task context operation to finish.',
+  'conversation-active': 'Waiting for the task conversation to finish its turn.',
+  'background-work': 'Waiting for background work to finish.',
+  'pending-user-work': 'Waiting for your answer in the task conversation.',
+  'conversation-unreadable': 'The task conversation could not be read. Delivery is retried when it reports activity.',
+  'stale-authority': 'This saved result no longer owns the stage entry.',
+};
+const PENDING_LABELS: Record<NonNullable<DeterministicHold['pending']>[number], string> = {
+  'decision-question': 'A question in this task', 'native-question': 'A native question', approval: 'An approval request', 'queued-prompt': 'A queued prompt',
+};
+/** The one sentence that explains why a saved result has not been delivered. */
+export function holdLabel(hold: DeterministicHold): string { return HOLD_REASONS[hold.code]; }
+/** The bounded facts behind a hold: named background work and pending user work. */
+export function holdDetail(hold: DeterministicHold): string[] {
+  const facts: string[] = [];
+  for (const fact of hold.background ?? []) facts.push((fact.kind === 'job' ? 'Job: ' : 'Schedule: ') + fact.label);
+  for (const kind of hold.pending ?? []) facts.push('Waiting for: ' + PENDING_LABELS[kind]);
+  return facts;
+}
+/** The jobs the drawer may cancel for this hold; only a real job id is offered. */
+export function holdJobs(hold: DeterministicHold): Array<{ id: string; label: string }> {
+  return (hold.background ?? []).flatMap(fact => fact.kind === 'job' && fact.id !== undefined ? [{ id: fact.id, label: fact.label }] : []);
+}
+/** What the user can do about this hold, or the wait it explains. */
+export function holdNextStep(hold: DeterministicHold): string {
+  if (hold.code === 'background-work') return holdJobs(hold).length > 0 ? 'Cancel the blocking job to deliver now, or wait for it to finish.' : 'Delivery resumes when the schedule is idle.';
+  if (hold.code === 'pending-user-work') return 'Answer the pending work; delivery resumes then.';
+  if (hold.code === 'auto-mode-hold') return 'Resume the task to deliver this result.';
+  if (hold.code === 'pending-transition') return 'Resolve the recorded transition; delivery resumes then.';
+  if (hold.code === 'conversation-active') return 'Delivery resumes when the turn ends.';
+  return 'Delivery resumes when this condition clears.';
 }
 
 /** One labeled fact the script panel shows beside the failure message. */

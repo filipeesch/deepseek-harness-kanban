@@ -529,4 +529,110 @@ describe('deterministic execution through the real app and durable repository', 
     f.sessions.awaiting.delete(sessionId); f.app.sessionActivity(sessionId);
     await expect.poll(() => f.store.requireTask(task.id).columnId, POLL).toBe('manual'); expect(f.runtime.runs).toHaveLength(1); expect(f.sessions.sent).toEqual([]);
   });
+
+  it('holds a saved result for a running background job, names it, and delivers when the job settles', async () => {
+    const f = await setup(); const task = await create(f); const run = await attempt(f.runtime);
+    await f.app.command({ type: 'worktree.dismiss', taskId: task.id }); const sessionId = await f.app.createConversation(task.id);
+    f.sessions.background.set(sessionId, [{ id: 'bash-1', label: 'find the home directory' }]);
+    complete(run, 'manual', 'Saved while the conversation works');
+    await expect.poll(() => f.store.requireTask(task.id).deterministic?.phase, POLL).toBe('result-ready');
+    const held = f.store.requireTask(task.id);
+    expect(held.columnId).toBe('wait');
+    expect(held.deterministic?.hold).toMatchObject({ code: 'background-work', background: [{ kind: 'job', id: 'bash-1', label: 'find the home directory' }] });
+    expect(held.deterministic?.result?.deliveryStatus).toBe('pending');
+    expect(f.runtime.runs).toHaveLength(1);
+    f.sessions.background.delete(sessionId); f.app.sessionActivity(sessionId);
+    await expect.poll(() => f.store.requireTask(task.id).columnId, POLL).toBe('manual');
+    expect(f.runtime.runs).toHaveLength(1); expect(f.runtime.capture).toHaveBeenCalledOnce();
+  });
+
+  it('delivers the saved result from Play without capturing or executing the program again', async () => {
+    const f = await setup(); const task = await create(f); const run = await attempt(f.runtime);
+    await f.app.command({ type: 'worktree.dismiss', taskId: task.id }); const sessionId = await f.app.createConversation(task.id);
+    f.sessions.background.set(sessionId, [{ id: 'bash-1', label: 'find the home directory' }]);
+    complete(run, 'manual', 'Saved for delivery');
+    await expect.poll(() => f.store.requireTask(task.id).deterministic?.hold?.code, POLL).toBe('background-work');
+    const resultId = f.store.requireTask(task.id).deterministic!.result!.id; const deliveryId = f.store.requireTask(task.id).deterministic!.result!.deliveryId;
+    await f.app.command({ type: 'task.deterministicPlay', taskId: task.id });
+    await expect.poll(() => f.store.requireTask(task.id).deterministic?.hold?.code, POLL).toBe('background-work');
+    expect(f.runtime.capture).toHaveBeenCalledOnce(); expect(f.runtime.runs).toHaveLength(1);
+    expect(f.store.requireTask(task.id).deterministic?.result).toMatchObject({ id: resultId, deliveryId });
+    f.sessions.background.delete(sessionId);
+    await f.app.command({ type: 'task.deterministicPlay', taskId: task.id });
+    await expect.poll(() => f.store.requireTask(task.id).columnId, POLL).toBe('manual');
+    expect(f.runtime.capture).toHaveBeenCalledOnce(); expect(f.runtime.runs).toHaveLength(1);
+  });
+
+  it('starts a new execution only through the explicit Run again command', async () => {
+    const f = await setup(); const task = await create(f); const run = await attempt(f.runtime);
+    await f.app.command({ type: 'worktree.dismiss', taskId: task.id }); const sessionId = await f.app.createConversation(task.id);
+    f.sessions.background.set(sessionId, [{ id: 'bash-1', label: 'find the home directory' }]);
+    complete(run, 'manual', 'Saved before rerun');
+    await expect.poll(() => f.store.requireTask(task.id).deterministic?.hold?.code, POLL).toBe('background-work');
+    const entryId = f.store.requireTask(task.id).stageEntry!.id;
+    await f.app.command({ type: 'task.deterministicRunAgain', taskId: task.id, entryId });
+    await expect.poll(() => f.runtime.runs.length, POLL).toBe(2);
+    expect(f.runtime.capture).toHaveBeenCalledTimes(2);
+    await expect.poll(() => f.store.requireTask(task.id).deterministic?.result, POLL).toBeUndefined();
+    const second = await attempt(f.runtime, 1);
+    await expect(f.app.command({ type: 'task.deterministicRunAgain', taskId: task.id, entryId })).rejects.toMatchObject({ code: 'EXECUTION_ACTIVE' });
+    await expect(f.app.command({ type: 'task.deterministicRunAgain', taskId: task.id, entryId: 'stale-entry' })).rejects.toMatchObject({ code: 'STALE_EXECUTION' });
+    f.sessions.background.delete(sessionId);
+    complete(second, 'manual', 'Second execution');
+    await expect.poll(() => f.store.requireTask(task.id).columnId, POLL).toBe('manual');
+  });
+
+  it('wakes only the task whose conversation facts changed', async () => {
+    const f = await setup(); const first = await create(f); const second = await create(f);
+    const firstRun = await attempt(f.runtime, 0); const secondRun = await attempt(f.runtime, 1);
+    await f.app.command({ type: 'worktree.dismiss', taskId: first.id });
+    await f.app.command({ type: 'worktree.dismiss', taskId: second.id });
+    const firstSession = await f.app.createConversation(first.id); const secondSession = await f.app.createConversation(second.id);
+    f.sessions.awaiting.add(firstSession); f.sessions.awaiting.add(secondSession);
+    await f.app.snapshot({ refreshSessionIds: [firstSession, secondSession] });
+    complete(firstRun); complete(secondRun);
+    await expect.poll(() => f.store.requireTask(first.id).deterministic?.hold?.code, POLL).toBe('pending-user-work');
+    await expect.poll(() => f.store.requireTask(second.id).deterministic?.hold?.code, POLL).toBe('pending-user-work');
+    f.sessions.awaiting.delete(firstSession);
+    f.app.observe(firstSession, { type: 'turn/end', seq: 99, data: { turn: 1, reason: { kind: 'completed' } } } as never);
+    await expect.poll(() => f.store.requireTask(first.id).columnId, POLL).toBe('manual');
+    expect(f.store.requireTask(second.id).columnId).toBe('wait');
+    expect(f.store.requireTask(second.id).deterministic?.hold?.code).toBe('pending-user-work');
+  });
+
+  it('cancels the job named by the hold and delivers the saved result', async () => {
+    const f = await setup(); const task = await create(f); const run = await attempt(f.runtime);
+    await f.app.command({ type: 'worktree.dismiss', taskId: task.id }); const sessionId = await f.app.createConversation(task.id);
+    f.sessions.background.set(sessionId, [{ id: 'bash-1', label: 'find the home directory' }]);
+    complete(run, 'manual', 'Saved for cancellation');
+    await expect.poll(() => f.store.requireTask(task.id).deterministic?.hold?.code, POLL).toBe('background-work');
+    await f.app.command({ type: 'task.deterministicCancelJob', taskId: task.id, jobId: 'bash-1' });
+    expect(f.sessions.cancelled).toEqual(['bash-1']);
+    await expect.poll(() => f.store.requireTask(task.id).columnId, POLL).toBe('manual');
+    expect(f.runtime.runs).toHaveLength(1);
+  });
+
+  it('refuses a job the current hold does not name and a job another conversation owns', async () => {
+    const f = await setup(); const task = await create(f); const run = await attempt(f.runtime);
+    await f.app.command({ type: 'worktree.dismiss', taskId: task.id }); const sessionId = await f.app.createConversation(task.id);
+    f.sessions.background.set(sessionId, [{ id: 'bash-1', label: 'find the home directory' }]);
+    complete(run, 'manual', 'Saved for ownership');
+    await expect.poll(() => f.store.requireTask(task.id).deterministic?.hold?.code, POLL).toBe('background-work');
+    await expect(f.app.command({ type: 'task.deterministicCancelJob', taskId: task.id, jobId: 'bash-9' })).rejects.toMatchObject({ code: 'STALE_HOLD' });
+    f.sessions.background.delete(sessionId); f.sessions.background.set('foreign-session', [{ id: 'bash-1', label: 'find the home directory' }]);
+    await expect(f.app.command({ type: 'task.deterministicCancelJob', taskId: task.id, jobId: 'bash-1' })).rejects.toMatchObject({ code: 'JOB_NOT_OWNED' });
+    expect(f.sessions.cancelled).toEqual([]);
+  });
+
+  it('treats an already settled blocking job as a completed cancellation', async () => {
+    const f = await setup(); const task = await create(f); const run = await attempt(f.runtime);
+    await f.app.command({ type: 'worktree.dismiss', taskId: task.id }); const sessionId = await f.app.createConversation(task.id);
+    f.sessions.background.set(sessionId, [{ id: 'bash-1', label: 'find the home directory' }]);
+    complete(run, 'manual', 'Saved for a settled job');
+    await expect.poll(() => f.store.requireTask(task.id).deterministic?.hold?.code, POLL).toBe('background-work');
+    f.sessions.background.delete(sessionId); f.sessions.settledJobs.add('bash-1');
+    await f.app.command({ type: 'task.deterministicCancelJob', taskId: task.id, jobId: 'bash-1' });
+    await expect.poll(() => f.store.requireTask(task.id).columnId, POLL).toBe('manual');
+    expect(f.sessions.cancelled).toEqual([]);
+  });
 });

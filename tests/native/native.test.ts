@@ -268,6 +268,64 @@ describe('native conversations', () => {
     f.projection.mockResolvedValue({ kind: 'sequenced', asOfSeq: 1, values: { inbox: { 'next-turn': [{}], 'next-step': [] } } } as unknown as Projection);
     expect(await f.sessions.isIdle('a')).toBe(false);
   });
+  it.each(['turn', 'job', 'subagent', 'schedule'])('reports %s activity with the facts behind it', async (kind) => {
+    const f = fixture(); f.waterfall.mockResolvedValue([{ kind, items: [{ id: 'busy', label: 'busy label' }] }]);
+    const report = await f.sessions.idleReport!('a');
+    expect(report.idle).toBe(false);
+    expect(report.blockers[0]).toMatchObject({ family: kind });
+    if (kind === 'job' || kind === 'schedule') expect(report.blockers[0]).toMatchObject({ id: 'busy', label: 'busy label' });
+    expect(await f.sessions.isIdle('a')).toBe(false);
+  });
+  it('keeps the report and the boolean verdict in agreement for every blocker family', async () => {
+    const f = fixture();
+    f.waterfall.mockResolvedValue([{ kind: 'job', items: [] }]);
+    expect((await f.sessions.idleReport!('a')).blockers).toEqual([{ family: 'job', label: 'job' }]);
+    expect(await f.sessions.isIdle('a')).toBe((await f.sessions.idleReport!('a')).idle);
+    f.waterfall.mockResolvedValue([]);
+    const agent = f.agent as unknown as { status: string; inbox: { nextTurn: unknown[] } };
+    agent.status = 'active';
+    expect((await f.sessions.idleReport!('a')).blockers).toEqual([{ family: 'turn' }]);
+    expect(await f.sessions.isIdle('a')).toBe(false);
+    agent.status = 'idle'; agent.inbox.nextTurn = [{ source: { kind: 'user' } }];
+    expect((await f.sessions.idleReport!('a')).blockers).toEqual([{ family: 'inbox' }]);
+    expect(await f.sessions.isIdle('a')).toBe(false);
+    agent.inbox.nextTurn = [];
+    f.projection.mockResolvedValue({ kind: 'sequenced', asOfSeq: 1, values: { turnBoundary: { openTurnStartSeq: 0 } } } as unknown as Projection);
+    expect((await f.sessions.idleReport!('a')).blockers).toEqual([{ family: 'turn' }]);
+    f.projection.mockResolvedValue({ kind: 'sequenced', asOfSeq: 1, values: { userQuestions: { active: [{ callId: 'q' }] } } } as unknown as Projection);
+    expect((await f.sessions.idleReport!('a')).blockers).toEqual([{ family: 'question' }]);
+    expect(await f.sessions.isIdle('a')).toBe(false);
+    f.projection.mockResolvedValue({ kind: 'sequenced', asOfSeq: 1, values: {} });
+    const previous = f.inspections.get('a')!;
+    f.inspections.set('a', { ...previous, events: [envelope('approval/asked', { id: 'approval' })] });
+    expect((await f.sessions.idleReport!('a')).blockers).toEqual([{ family: 'approval' }]);
+    f.inspections.set('a', previous);
+    expect((await f.sessions.idleReport!('a')).idle).toBe(true);
+    expect(await f.sessions.isIdle('a')).toBe(true);
+  });
+  it('fails closed with the same code when exact projections are unavailable', async () => {
+    const f = fixture(); f.projection.mockResolvedValue({ kind: 'migration-required', values: {} });
+    await expect(f.sessions.idleReport!('a')).rejects.toMatchObject({ code: 'SESSION_STATE_UNAVAILABLE' });
+    await expect(f.sessions.isIdle('a')).rejects.toMatchObject({ code: 'SESSION_STATE_UNAVAILABLE' });
+  });
+  it('cancels a task job through the public registry with an explicit reason', async () => {
+    const f = fixture(); const kill = vi.fn(() => 'requested' as const);
+    Object.assign(f.ctx as object, { jobs: { kill } });
+    expect(await f.sessions.cancelJob!('a', 'bash-1')).toBe('requested');
+    expect(kill).toHaveBeenCalledWith('bash-1', 'a', expect.stringContaining('saved deterministic result'));
+  });
+  it('reports a settled job without treating it as an error', async () => {
+    const f = fixture(); Object.assign(f.ctx as object, { jobs: { kill: () => 'already-finished' } });
+    expect(await f.sessions.cancelJob!('a', 'bash-1')).toBe('already-finished');
+  });
+  it('refuses a job another conversation owns', async () => {
+    const f = fixture(); Object.assign(f.ctx as object, { jobs: { kill: () => { throw new Error('job bash-1 belongs to another session'); } } });
+    await expect(f.sessions.cancelJob!('a', 'bash-1')).rejects.toMatchObject({ code: 'JOB_NOT_OWNED' });
+  });
+  it('fails closed when no job registry is mounted', async () => {
+    const f = fixture();
+    await expect(f.sessions.cancelJob!('a', 'bash-1')).rejects.toMatchObject({ code: 'JOBS_UNAVAILABLE' });
+  });
   it('submits one ordinary native prompt to the selected session', async () => {
     const f = fixture(); await f.sessions.send('a', 'Implement the approved plan.');
     expect(f.prompt).toHaveBeenCalledWith({ sessionId: 'a', requestId: expect.any(String), mode: 'queue', content: [{ type: 'text', text: 'Implement the approved plan.' }] }, expect.any(AbortSignal));

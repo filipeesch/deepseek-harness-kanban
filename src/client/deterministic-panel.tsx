@@ -22,9 +22,9 @@ export function ScriptPanel({ task, column, projectName, api, run }: { task: Tas
       <button type="button" className="kb-button" aria-label="Review deterministic script" disabled={environment?.boardId === undefined} onClick={() => { if (environment?.boardId !== undefined) void openReview({ boardId: environment.boardId, stageId, taskId: task.id }); }}>Review</button>
       <button type="button" className="kb-button" aria-label="Configure local variables" onClick={() => setVariables(true)}>Local variables</button>
     </div>
-    {summary && <p className="kb-hint">Execution {summary.executionId}{summary.fingerprint ? ' · Version ' + summary.fingerprint.slice(0, 16) : ''} · Restarted {summary.restartCount} {summary.restartCount === 1 ? 'time' : 'times'}{summary.savedVersionChanged ? ' · Saved changes require Play' : ''}</p>}
+    {summary && <p className="kb-hint">Execution {summary.executionId}{summary.fingerprint ? ' · Captured version ' + summary.fingerprint.slice(0, 16) : ''} · Restarted {summary.restartCount} {summary.restartCount === 1 ? 'time' : 'times'}{summary.savedVersionChanged ? ' · Saved changes require Run again' : ''}</p>}
     {summary && !column?.deterministic && <p className="kb-hint">The saved stage is no longer deterministic. This owned entry retains its captured version. Configure a script or change stage before Play.</p>}
-    {summary?.deliveryStatus === 'failed' && <p className="kb-hint">This result was saved but its delivery failed. Retry delivery keeps the saved result and its identities; Run again starts a new execution.</p>}
+    {summary?.deliveryStatus === 'failed' && <p className="kb-hint">This result was saved but its delivery failed. Deliver retries the saved result and its identities; Run again starts a new execution.</p>}
     {summary?.error && <p className="kb-problem" role="alert">{summary.error.message.slice(0, 4096)}</p>}
     {facts.length > 0 && <dl className="kb-script-facts">{facts.map(fact => <React.Fragment key={fact.label}><dt>{fact.label}</dt><dd>{fact.value}</dd></React.Fragment>)}</dl>}
     {summary?.error?.code === 'PARAMETERS_REQUIRED' && <p className="kb-hint">Edit this entry's parameters, then press Play.</p>}

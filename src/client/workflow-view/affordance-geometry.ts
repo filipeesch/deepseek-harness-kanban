@@ -1,3 +1,5 @@
+import type { DiagramPoint } from '../../domain/diagram/orthogonal.js';
+
 /** The sizes a connection affordance draws, in screen pixels. */
 export const AFFORDANCE = {
   /** The visible diameter of an end handle. */
@@ -34,4 +36,31 @@ export function markSize(size: number, zoom: number): number {
 export function screenSizeOf(flowSize: number, zoom: number): number {
   const safe = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
   return flowSize * safe;
+}
+/** A rectangle in diagram units that holds a drawn route. */
+export interface DiagramBox {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * The smallest box that holds a diagram-space route with the given padding, used
+ * by everything the affordance layer draws from a route: the creation preview and
+ * the route of the selected connection. Padding keeps a stroke and an arrowhead
+ * inside the box, and an empty route still presents a box of its own padding.
+ */
+export function diagramBox(points: readonly DiagramPoint[], padding: number): DiagramBox {
+  if (points.length === 0) return { x: -padding, y: -padding, width: padding * 2, height: padding * 2 };
+  const xs = points.map(point => point.x);
+  const ys = points.map(point => point.y);
+  const minX = Math.min(...xs) - padding;
+  const minY = Math.min(...ys) - padding;
+  return {
+    x: minX,
+    y: minY,
+    width: Math.max(1, Math.max(...xs) + padding - minX),
+    height: Math.max(1, Math.max(...ys) + padding - minY),
+  };
 }

@@ -307,6 +307,35 @@ test('keeps the condition editor open when the store refuses the write', async (
   await expect(editor).toBeHidden();
 });
 
+test('discards an open condition editor and its error when the layout is locked', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 950 });
+  await page.goto(HARNESS + '?scenario=flow-refused&theme=host');
+  await page.waitForFunction(() => (window as unknown as { __harnessReady?: boolean }).__harnessReady === true);
+  await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-ready', 'true');
+  await page.waitForTimeout(300);
+  await unlock(page);
+  await doublePressEdge(page, 'propose->apply:0');
+  const editor = page.getByRole('dialog', { name: /Condition from Propose to Apply/ });
+  await expect(editor).toBeVisible();
+  await editor.getByRole('textbox', { name: 'Transition condition' }).fill('after the proposal');
+  await editor.getByRole('button', { name: 'Save' }).click();
+  await expect(editor.getByRole('alert')).toContainText('The Hub changed while the stage edit was open.');
+  // Lock from the keyboard so the editor is still open when the mode changes; a
+  // pointer press anywhere else would dismiss it before the lock applies.
+  await page.getByRole('button', { name: 'Lock layout editing', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.kb-condition-popover')).toHaveCount(0);
+  await page.waitForTimeout(120);
+  // The discarded draft leaves no stale problem behind when the editor reopens.
+  await unlock(page);
+  await doublePressEdge(page, 'propose->apply:0');
+  const reopened = page.getByRole('dialog', { name: /Condition from Propose to Apply/ });
+  await expect(reopened).toBeVisible();
+  await expect(reopened.getByRole('alert')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(reopened).toBeHidden();
+});
+
 test('clears the connection selection when the diagram background is pressed', async ({ page }) => {
   await openFlow(page);
   await unlock(page);
@@ -318,13 +347,20 @@ test('clears the connection selection when the diagram background is pressed', a
   await expect(page.locator('.kb-flow-edge-group.is-selected')).toHaveCount(0);
 });
 
-test('refuses creation, selection, and deletion while the layout is locked', async ({ page }) => {
+test('refuses creation and deletion while the layout is locked but reads a selected arrow', async ({ page }) => {
   await openFlow(page);
+  await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-mode', 'inspect');
   await expect(page.locator('.kb-flow-port')).toHaveCount(0);
   await pressEdge(page, 'propose->apply:0');
-  await expect(page.locator('.kb-flow-edge-group.is-selected')).toHaveCount(0);
+  // A locked press is reading only: the arrow is selected for its route, with no
+  // mark that could change it, and the delete key changes nothing.
+  await expect(page.locator('.kb-flow-edge-group.is-selected')).toHaveCount(1);
+  await expect(page.locator('[data-connection-mark="propose->apply:0"]')).not.toHaveAttribute('data-active', 'true');
+  await expect(page.locator('.kb-flow-selected-route')).toHaveCount(1);
   await page.keyboard.press('Delete');
+  await page.waitForTimeout(120);
   expect(await commands(page)).toEqual([]);
+  await expect(page.locator('.kb-flow-edge-group.is-selected')).toHaveCount(1);
   await shoot(page, 'connections-locked.png');
 });
 
@@ -345,7 +381,7 @@ test('keeps a connection without a condition out of reach while the layout is lo
   expect(updates).toHaveLength(1);
 });
 
-test('keeps an authored condition editable while the layout is locked', async ({ page }) => {
+test('refuses an authored condition while the layout is locked', async ({ page }) => {
   await openFlow(page);
   await unlock(page);
   await drawConnection(page, 'explore', 'apply');
@@ -355,16 +391,24 @@ test('keeps an authored condition editable while the layout is locked', async ({
   await first.getByRole('button', { name: 'Save' }).click();
   await expect(first).toBeHidden();
   await page.getByRole('button', { name: 'Lock layout editing', exact: true }).click();
+  await page.waitForTimeout(120);
+  await doublePressEdge(page, 'explore->apply:0');
+  await expect(page.getByRole('dialog', { name: /^Condition from / })).toHaveCount(0);
+  // A draft that is open when the lock turns on is discarded, not stored.
+  await unlock(page);
   await doublePressEdge(page, 'explore->apply:0');
   const editor = page.getByRole('dialog', { name: /Condition from Explore to Apply/ });
   await expect(editor).toBeVisible();
-  await editor.getByRole('textbox', { name: 'Transition condition' }).fill('while locked');
-  // Removing a connection is a structural edit, so the lock keeps it unavailable.
-  await expect(editor.getByRole('button', { name: 'Delete' })).toBeDisabled();
-  await editor.getByRole('button', { name: 'Save' }).click();
-  await expect(editor).toBeHidden();
+  await editor.getByRole('textbox', { name: 'Transition condition' }).fill('draft that must be discarded');
+  // The lock is activated from the keyboard so the editor is still open when the
+  // mode changes; a pointer press anywhere else would dismiss it first.
+  await page.getByRole('button', { name: 'Lock layout editing', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog', { name: /Condition from Explore to Apply/ })).toHaveCount(0);
+  await page.waitForTimeout(120);
   const updates = (await commands(page)).filter(command => command.type === 'board.stage.update');
-  expect(updates.at(-1)?.patch).toMatchObject({ transitionCondition: { to: 'apply', when: 'while locked' } });
+  expect(updates.at(-1)?.patch).toMatchObject({ transitionCondition: { to: 'apply', when: 'before locking' } });
+  expect(JSON.stringify(updates)).not.toContain('draft that must be discarded');
 });
 
 test('presents a connection port on each of the four sides', async ({ page }) => {

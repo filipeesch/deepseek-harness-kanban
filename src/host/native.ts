@@ -12,7 +12,9 @@ import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import type { GitExecutor, SessionPort, CommandResult, ProjectProbe, WorkspacePort } from '../shared/ports.js';
 import type { GitProject } from '../shared/types.js';
 import { KanbanError, invariant } from '../shared/errors.js';
-import { createNativeSessionFacts, inspectedOpenTurn, nativePending } from './native-facts.js';
+import { createNativeSessionFacts, inspectedOpenTurn, nativePendingKinds } from './native-facts.js';
+import type { ConversationBlocker, ConversationIdleReport } from '../shared/conversation-idle.js';
+import { optionalService } from './deterministic/native-policy.js';
 import type { ConversationFactsReader } from './conversation-facts.js';
 import { createSessionHistory, type SessionHistory, type SessionHistoryReader } from './session-history.js';
 import { createQueuedPromptReader, PluginPromptLedger } from './queued-prompts.js';
@@ -82,6 +84,9 @@ function commonPolicy(policies: SandboxExecutionPolicy[]): SandboxExecutionPolic
   return selected;
 }
 
+/** The minimal public job-registry face Kanban needs; absent leaves job cancellation unavailable. */
+interface JobControlPort { kill(id: string, caller: string, reason?: string): 'requested' | 'already-finished' }
+
 /** Optional Host integrations the native adapters read; absent creates the public history reader. */
 export interface NativePortsOptions {
   conversationFacts?: ConversationFactsReader;
@@ -95,6 +100,46 @@ export function createNativePorts(ctx: Context, options: NativePortsOptions = {}
     ctx.sessionController.projections({ sessionId: SessionId(id) }, signal);
   const activity = (id: string) => ctx.waterfall('workspace/session-activity',
     { sessionId: SessionId(id) }, () => Promise.resolve([]));
+  /**
+   * The single readiness computation behind isIdle and idleReport: the activity families
+   * first (a conversation that already owns work needs no projection read), then the live
+   * agent, then the exact projections, then the committed log.
+   */
+  const idleReport = async (id: string): Promise<ConversationIdleReport> => {
+    const blockers: ConversationBlocker[] = [];
+    for (const entry of await activity(id)) {
+      if (entry.kind === 'turn' || entry.kind === 'subagent') { blockers.push({ family: entry.kind }); continue; }
+      if (entry.kind !== 'job' && entry.kind !== 'schedule') continue;
+      const items = Array.isArray(entry.items) ? entry.items : [];
+      if (items.length === 0) { blockers.push({ family: entry.kind, label: entry.kind }); continue; }
+      for (const item of items) {
+        const value = item as { id?: unknown; label?: unknown } | undefined;
+        blockers.push({ family: entry.kind,
+          ...(typeof value?.id === 'string' ? { id: value.id } : {}),
+          label: typeof value?.label === 'string' && value.label.trim() ? value.label.trim() : typeof value?.id === 'string' ? value.id : entry.kind });
+      }
+    }
+    if (blockers.length === 0) {
+      const agent = ctx.agents.get(SessionId(id));
+      // nextStep can contain non-waking native cwd/context notices; those are not active work.
+      if (agent && agent.status !== 'idle') blockers.push({ family: 'turn' });
+      if (agent && agent.inbox.nextTurn.length > 0) blockers.push({ family: 'inbox' });
+    }
+    if (blockers.length === 0) {
+      const projection = await projections(id);
+      if (projection?.kind !== 'sequenced') throw new KanbanError('SESSION_STATE_UNAVAILABLE', 'Exact native activity projections are unavailable.');
+      const boundary: unknown = projection.values['turnBoundary'];
+      if (record(boundary) && boundary.openTurnStartSeq != null) blockers.push({ family: 'turn' });
+      const inbox: unknown = projection.values.inbox;
+      if (record(inbox) && Array.isArray(inbox['next-turn']) && inbox['next-turn'].length > 0) blockers.push({ family: 'inbox' });
+      if (blockers.length === 0) {
+        const snapshot = await history.read(id);
+        if (inspectedOpenTurn(snapshot)) blockers.push({ family: 'turn' });
+        for (const kind of nativePendingKinds(projection, snapshot)) blockers.push({ family: kind === 'native-question' ? 'question' : 'approval' });
+      }
+    }
+    return { idle: blockers.length === 0, blockers };
+  };
   const resolveAgent = async (id: string) => {
     const resolved = await ctx.sessionController.resolveAgent(SessionId(id));
     if ('error' in resolved) throw resolved.error;
@@ -222,19 +267,23 @@ export function createNativePorts(ctx: Context, options: NativePortsOptions = {}
       invariant(ctx.workingDirectory.get(agent.session) === target, 'DIRECTORY_SWITCH_FAILED', 'The native conversation did not commit the requested directory.');
     },
     async isIdle(id) {
-      const owned = await activity(id);
-      if (owned.length > 0) return false; // Includes native turns, jobs, descendants, and schedules.
-      const agent = ctx.agents.get(SessionId(id));
-      // nextStep can contain non-waking native cwd/context notices; those are not active work.
-      if (agent && (agent.status !== 'idle' || agent.inbox.nextTurn.length > 0)) return false;
-      const projection = await projections(id);
-      if (projection?.kind !== 'sequenced') throw new KanbanError('SESSION_STATE_UNAVAILABLE', 'Exact native activity projections are unavailable.');
-      const boundary: unknown = projection.values['turnBoundary'];
-      if (record(boundary) && boundary.openTurnStartSeq != null) return false;
-      const inbox: unknown = projection.values.inbox;
-      if (record(inbox) && Array.isArray(inbox['next-turn']) && inbox['next-turn'].length > 0) return false;
-      const snapshot = await history.read(id);
-      return !inspectedOpenTurn(snapshot) && !nativePending(projection, snapshot);
+      return (await idleReport(id)).idle;
+    },
+    async idleReport(id) {
+      return idleReport(id);
+    },
+    async cancelJob(id, jobId) {
+      const registry = optionalService<JobControlPort>(ctx, 'jobs');
+      if (registry === undefined) throw new KanbanError('JOBS_UNAVAILABLE', 'The native background-job registry is unavailable.');
+      try {
+        return registry.kill(jobId, id, 'Cancelled from Kanban because a saved deterministic result awaited delivery.');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes('belongs to another session') || message.includes('unknown job')) {
+          throw new KanbanError('JOB_NOT_OWNED', 'The background job does not belong to this conversation.');
+        }
+        throw new KanbanError('JOB_CANCEL_FAILED', 'The background job could not be cancelled. ' + message);
+      }
     },
     async send(id, text, requestId = randomUUID()) {
       invariant(text.trim(), 'EMPTY_PROMPT', 'A task execution requires a non-empty instruction.');

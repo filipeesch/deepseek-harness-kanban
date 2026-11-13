@@ -2,6 +2,7 @@ import React from 'react';
 import { BaseEdge, EdgeLabelRenderer, useStore, type EdgeProps } from '@xyflow/react';
 import type { DiagramPoint } from '../../domain/diagram/orthogonal.js';
 import { useConnectionHandlers } from './connection-interaction.js';
+import { conditionEditingAllowed, editable } from './connection-mode.js';
 
 /** The hollow mark that identifies a connection authoring no condition. */
 const CONDITION_MARK_RADIUS = 4;
@@ -53,9 +54,11 @@ export function pathMidpoint(points: readonly DiagramPoint[]): DiagramPoint | un
  * live in the affordance layer above the stages, so a stage or the arrowhead can
  * never cover them. This component still owns the press that selects the connection
  * and the double press that edits it, because the line remains the press target
- * below the stage content. A connection whose routing comes from a deterministic
- * stage's named exits presents no exit name: its double press opens that stage's
- * editor, and the layout lock still gates that edit.
+ * below the stage content. Selecting is always available: a locked diagram reads a
+ * connection without changing it, so the press selects in both modes while the
+ * double press and the condition mark wait for the editable mode. A connection whose
+ * routing comes from a deterministic stage's named exits presents no exit name: its
+ * double press opens that stage's editor, which the layout lock gates as well.
  */
 export function ConnectionEdgeView({ id, data }: EdgeProps) {
   const edge = data as unknown as ConnectionEdgeData;
@@ -66,21 +69,22 @@ export function ConnectionEdgeView({ id, data }: EdgeProps) {
   const middle = pathMidpoint(edge.points);
   const angle = Number.isFinite(edge.tipAngle) ? edge.tipAngle : 0;
   const selected = handlers?.selectedId === id;
+  const edit = handlers !== null && editable(handlers.mode);
   return <g
     className={'kb-flow-edge-group' + (selected ? ' is-selected' : '')}
     data-connection-id={id}
-    onClick={event => { if (!handlers?.locked) handlers?.onSelect(id); event.stopPropagation(); }}
+    onClick={event => { handlers?.onSelect(id); event.stopPropagation(); }}
     onDoubleClick={event => {
-      // Authoring a condition for a connection that has none is a structural edit, so the
-      // layout lock gates it; a condition that already exists stays editable.
-      if (!handlers?.locked || edge.hasCondition) handlers?.onEditCondition(id);
+      // The layout lock owns every edit, including a condition the connection already
+      // authors; the inspecting mode opens nothing.
+      if (handlers !== null && conditionEditingAllowed(handlers.mode)) handlers.onEditCondition(id);
       event.stopPropagation();
     }}
-    onPointerEnter={() => handlers?.onHover(id)}
-    onPointerLeave={() => handlers?.onHoverEnd(id)}
+    onPointerEnter={edit ? () => handlers.onHover(id) : undefined}
+    onPointerLeave={edit ? () => handlers.onHoverEnd(id) : undefined}
   >
     <BaseEdge id={id} path={edge.path} interactionWidth={LINE_HIT_WIDTH} className={'kb-flow-edge ' + (edge.kind === 'implicit' ? 'is-implicit' : 'is-explicit') + (edge.returning ? ' is-returning' : '')} />
-    {middle !== undefined && !edge.hasCondition && edge.deterministic !== true && edge.kind === 'explicit' && handlers?.locked !== true && <circle
+    {middle !== undefined && !edge.hasCondition && edge.deterministic !== true && edge.kind === 'explicit' && edit && <circle
       className="kb-flow-condition-mark"
       cx={middle.x}
       cy={middle.y}

@@ -97,24 +97,64 @@ for (const colorScheme of ['light', 'dark'] as const) {
     expect(commands[0]).toMatchObject({ entryId: 'script-entry', values: { pipeline: 'ci-other' } });
   });
 
-  test('deterministic failed delivery offers a delivery-only retry in ' + colorScheme, async ({ page }) => {
+  test('delivers a failed saved result from the primary action in ' + colorScheme, async ({ page }) => {
     await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
     await page.goto(HARNESS + '?scenario=deterministic&theme=host&phase=failed&delivery=failed');
     if (colorScheme === 'dark') await expect(page.locator('body')).toHaveAttribute('data-ds-dark-theme', '');
     await page.locator('[data-task-id="long-0"]').getByRole('button', { name: 'Open task Long column task 0' }).click();
     const drawer = page.locator('.kb-drawer');
     await drawer.getByRole('tab', { name: 'Info', exact: true }).click();
-    await expect(drawer.getByText('Failed', { exact: false }).first()).toBeVisible();
-    await expect(drawer.getByText(/Retry delivery keeps the saved result and its identities/)).toBeVisible();
-    const retry = drawer.getByRole('button', { name: 'Retry delivery — deterministic result' });
-    await expect(retry).toBeVisible();
+    await expect(drawer.getByText(/Deliver retries the saved result and its identities/)).toBeVisible();
+    const deliver = drawer.getByRole('button', { name: 'Deliver saved result — deterministic script' });
+    await expect(deliver).toBeVisible();
+    await expect(drawer.getByRole('button', { name: 'Run again — deterministic script' })).toBeVisible();
+    await expect(drawer.getByRole('button', { name: 'Retry delivery — deterministic result' })).toHaveCount(0);
     await expectLegible(page, '.kb-script-panel');
     await mkdir(OUT, { recursive: true });
     await page.screenshot({ path: path.join(OUT, 'deterministic-delivery-failed-' + colorScheme + '.png') });
-    await retry.click();
+    await deliver.click();
     await expect(drawer.getByText('Script result awaiting delivery', { exact: true })).toBeVisible();
     const commands = await page.evaluate(() => (window as unknown as { __harnessCommands(): Array<{ type: string }> }).__harnessCommands());
-    expect(commands.map(command => command.type)).toEqual(['task.deterministicRetryDelivery']);
+    expect(commands.map(command => command.type)).toEqual(['task.deterministicPlay']);
+  });
+
+  test('explains a held result and cancels the blocking job in ' + colorScheme, async ({ page }) => {
+    await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+    await page.goto(HARNESS + '?scenario=deterministic&theme=host&phase=result-ready&hold=job');
+    if (colorScheme === 'dark') await expect(page.locator('body')).toHaveAttribute('data-ds-dark-theme', '');
+    const card = page.locator('[data-task-id="long-0"]');
+    await expect(card.locator('.kb-script-card-label')).toHaveAttribute('data-held', 'true');
+    await card.getByRole('button', { name: 'Open task Long column task 0' }).click();
+    const drawer = page.locator('.kb-drawer');
+    const notice = drawer.locator('.kb-hold');
+    await expect(notice).toBeVisible();
+    await expect(notice).toContainText('Waiting for background work to finish.');
+    await expect(notice).toContainText('Job: find the home directory');
+    await expect(drawer.getByRole('button', { name: 'Deliver saved result — deterministic script' })).toBeVisible();
+    await expect(drawer.getByRole('button', { name: 'Run again — deterministic script' })).toBeVisible();
+    await expect(drawer.getByRole('button', { name: 'Play deterministic script' })).toHaveCount(0);
+    await expectLegible(page, '.kb-hold');
+    await mkdir(OUT, { recursive: true });
+    await page.screenshot({ path: path.join(OUT, 'deterministic-hold-job-' + colorScheme + '.png') });
+    await notice.getByRole('button', { name: 'Cancel job bash-1' }).click();
+    await expect(notice).toHaveCount(0);
+    const commands = await page.evaluate(() => (window as unknown as { __harnessCommands(): Array<{ type: string }> }).__harnessCommands());
+    expect(commands.map(command => command.type)).toEqual(['task.deterministicCancelJob']);
+    expect(commands[0]).toMatchObject({ taskId: 'long-0', jobId: 'bash-1' });
+  });
+
+  test('explains pending work behind a held result in ' + colorScheme, async ({ page }) => {
+    await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+    await page.goto(HARNESS + '?scenario=deterministic&theme=host&phase=result-ready&hold=pending');
+    if (colorScheme === 'dark') await expect(page.locator('body')).toHaveAttribute('data-ds-dark-theme', '');
+    await page.locator('[data-task-id="long-0"]').getByRole('button', { name: 'Open task Long column task 0' }).click();
+    const drawer = page.locator('.kb-drawer');
+    const notice = drawer.locator('.kb-hold');
+    await expect(notice).toContainText('Waiting for your answer in the task conversation.');
+    await expect(notice).toContainText('Waiting for: An approval request');
+    await expect(notice.getByRole('button', { name: /Cancel job/ })).toHaveCount(0);
+    await mkdir(OUT, { recursive: true });
+    await page.screenshot({ path: path.join(OUT, 'deterministic-hold-pending-' + colorScheme + '.png') });
   });
   test('standalone manual handoff context in ' + colorScheme, async ({ page }) => {
     await page.emulateMedia({ colorScheme });
@@ -249,5 +289,4 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.screenshot({ path: path.join(OUT, 'deterministic-diagnostic-history-' + colorScheme + '.png') });
   });
 }
-
 

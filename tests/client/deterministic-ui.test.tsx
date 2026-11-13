@@ -65,14 +65,45 @@ describe('deterministic controls and local review', () => {
     expect(screen.queryByRole('button', { name: 'Stop deterministic script' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Play deterministic script' })).toBeNull();
   });
-  it('offers a delivery-only retry for a failed saved result next to an explicit rerun', async () => {
+it('delivers a saved result from the primary action and keeps Run again explicit', async () => {
     const run = vi.fn(async () => fixture());
-    render(provider(<ScriptActions task={card} column={column} summary={{ ...summary, phase: 'failed', deliveryStatus: 'failed' }} run={run} />, run));
-    fireEvent.click(screen.getByRole('button', { name: 'Retry delivery — deterministic result' }));
-    await waitFor(() => expect(run).toHaveBeenCalledWith({ type: 'task.deterministicRetryDelivery', taskId: 't', entryId: 'entry', executionId: 'run' }));
+    render(<ScriptActions task={card} column={column} summary={{ ...summary, phase: 'result-ready', exit: 'passed', deliveryStatus: 'pending' }} run={run} />);
+    const deliver = screen.getByRole('button', { name: 'Deliver saved result — deterministic script' });
+    expect(deliver.textContent).toBe('Deliver');
+    fireEvent.click(deliver);
+    await waitFor(() => expect(run).toHaveBeenCalledWith({ type: 'task.deterministicPlay', taskId: 't' }));
     const again = screen.getByRole('button', { name: 'Run again — deterministic script' });
     expect(again.textContent).toBe('Run again');
+    fireEvent.click(again);
+    await waitFor(() => expect(run).toHaveBeenCalledWith({ type: 'task.deterministicRunAgain', taskId: 't', entryId: 'entry' }));
   });
+
+it('offers the delivery action for a failed saved result and hides rerun while the entry is owned', async () => {
+    const run = vi.fn(async () => fixture());
+    const view = render(<ScriptActions task={card} column={column} summary={{ ...summary, phase: 'failed', exit: 'passed', deliveryStatus: 'failed' }} run={run} />);
+    expect(screen.getByRole('button', { name: 'Deliver saved result — deterministic script' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Retry delivery — deterministic result' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Run again — deterministic script' })).toBeTruthy();
+    view.rerender(<ScriptActions task={card} column={column} summary={{ ...summary, phase: 'active' }} run={run} />);
+    expect(screen.queryByRole('button', { name: 'Run again — deterministic script' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Stop deterministic script' })).toBeTruthy();
+  });
+
+it('keeps the compact card row to the primary action', () => {
+    const run = vi.fn(async () => fixture());
+    render(<ScriptActions task={card} column={column} summary={{ ...summary, phase: 'result-ready', exit: 'passed', deliveryStatus: 'pending' }} run={run} compact />);
+    expect(screen.getByRole('button', { name: 'Deliver saved result — deterministic script' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Run again — deterministic script' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Stop deterministic script' })).toBeNull();
+  });
+
+it('delivers a saved result even after the saved stage is no longer deterministic', async () => {
+    const run = vi.fn(async () => fixture());
+    render(<ScriptActions task={card} column={{ id: 'wait', name: 'Manual' }} summary={{ ...summary, phase: 'result-ready', exit: 'passed', deliveryStatus: 'pending' }} run={run} />);
+    const deliver = screen.getByRole('button', { name: 'Deliver saved result — deterministic script' }) as HTMLButtonElement;
+    expect(deliver.disabled).toBe(false);
+  });
+
   it('offers parameter editing only for an owned non-active entry whose stage declares parameters', () => {
     const parameterColumn: Column = { ...column, deterministic: { ...column.deterministic!, params: [{ name: 'pipeline', description: 'CI workflow' }] } };
     const run = vi.fn(async () => fixture());
