@@ -221,6 +221,24 @@ describe('public native execution boundary', () => {
     const f = await fixture({ ptc: native }); await f.runtime.variables.set(scope, 'CI_TOKEN', 'synthetic-only-secret'); const capture = await f.capture('typescript', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
     const result = await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal }); expect(JSON.stringify(result)).not.toContain('synthetic-only-secret'); expect(JSON.stringify(result)).toContain('[REDACTED]');
   });
+  it('carries bounded sent values through a completion and redacts a known secret', async () => {
+    const output = shellResult({ stdout: { text: JSON.stringify({ exit: 'passed', message: 'ok', params: { pipeline: 'ci-main', token: 'synthetic-only-secret' } }), truncated: false } });
+    const f = await fixture({ shell: shell(async () => output) }); await f.runtime.variables.set(scope, 'CI_TOKEN', 'synthetic-only-secret');
+    const capture = await f.capture('bash', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
+    const result = await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal });
+    expect(result).toMatchObject({ kind: 'completed', completion: { exit: 'passed', message: 'ok', params: { pipeline: 'ci-main', token: '[REDACTED]' } } });
+    expect(JSON.stringify(result)).not.toContain('synthetic-only-secret');
+  });
+  it('carries bounded sent values through a TypeScript completion', async () => {
+    const native = ptc(async () => ({ value: { exit: 'passed', message: 'ok', params: { pipeline: 'ci-main', commit: 'abc' } }, logs: [] }));
+    const f = await fixture({ ptc: native }); const capture = await f.capture('typescript'); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
+    expect(await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal })).toMatchObject({ kind: 'completed', completion: { exit: 'passed', message: 'ok', params: { pipeline: 'ci-main', commit: 'abc' } } });
+  });
+  it('rejects a malformed params map as an invalid completion', async () => {
+    const output = shellResult({ stdout: { text: JSON.stringify({ exit: 'passed', message: 'ok', params: { 'bad name': 'x' } }), truncated: false } });
+    const f = await fixture({ shell: shell(async () => output) }); const capture = await f.capture('bash'); await f.runtime.trust.approve(approvalScope, capture.fingerprint);
+    expect(await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal })).toMatchObject({ kind: 'failed', diagnostic: { code: 'INVALID_COMPLETION' } });
+  });
   it.each([{ programFormat: 'repl' }, { programFormat: 'script' }, { language: 'python' }, { retainsState: true }, { isolation: 'worker-thread' }])('refuses incompatible TypeScript provider %j', async patch => {
     const native = ptc(async () => ({ logs: [] })); Object.assign(native, patch); const f = await fixture({ ptc: native }); const capture = await f.capture('typescript'); await expect(f.runtime.verify(capture)).rejects.toMatchObject({ code: 'TYPESCRIPT_FORMAT_UNSUPPORTED' }); expect(native.run).not.toHaveBeenCalled();
   });

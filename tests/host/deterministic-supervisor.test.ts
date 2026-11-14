@@ -160,6 +160,30 @@ describe('deterministic delivery holds and delivery-only retries', () => {
     await h.close();
   });
 
+  it('persists the sent values with the saved result and reuses them on a delivery retry', async () => {
+    const h = harness(); await h.edit(value => { value.task.deterministic!.definition.env = ['TOKEN']; });
+    h.variables({ TOKEN: 'synthetic-only-secret' });
+    h.execute(async () => ({ exit: 'passed', message: 'ok', params: { pipeline: 'ci-main', token: 'synthetic-only-secret' } }));
+    h.route(async request => { expect(request.result.params).toEqual({ pipeline: 'ci-main', token: '[REDACTED]' }); return { status: 'held', hold: jobHold }; });
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.control().result?.params).toEqual({ pipeline: 'ci-main', token: '[REDACTED]' });
+    h.route(async request => { expect(request.result.params).toEqual({ pipeline: 'ci-main', token: '[REDACTED]' }); return { status: 'accepted' }; });
+    await s.retryDelivery(identity); await s.settle();
+    expect(h.calls).toHaveLength(1);
+    expect(h.control().result?.deliveryStatus).toBe('accepted');
+    await h.close();
+  });
+
+  it('records the sent values on a failed handoff receipt without rerunning', async () => {
+    const h = harness(); h.execute(async () => ({ exit: 'passed', message: 'ok', params: { pipeline: 'ci-main' } }));
+    h.route(async () => ({ status: 'failed', error: { code: 'TARGET_REMOVED', message: 'No stable target remains.' } }));
+    const s = h.supervisor(); s.start(); await s.settle();
+    const row = h.task.history?.find(value => value.kind === 'deterministic-handoff');
+    expect(row).toMatchObject({ outcome: 'failed', parameters: { pipeline: 'ci-main' } });
+    expect(h.calls).toHaveLength(1);
+    await h.close();
+  });
+
   it('schedules one coalesced re-check per refusal and stops it on dispose', async () => {
     vi.useFakeTimers();
     try {
@@ -345,7 +369,7 @@ describe('deterministic supervisor restart, result delivery and errors', () => {
   });
   it('refuses uncertain predecessor ownership before recovery spawn', async () => { const h = harness(); h.approved(false); const s = h.supervisor(); s.start(); await s.settle(); await h.edit(value => { Object.assign(value.task.deterministic!, { phase: 'active', attempt: 1, attemptId: 'dead-attempt' }); }); h.approved(true); h.reclaimHook(async () => { throw new Error('ownership uncertain'); }); const restored = h.supervisor(); restored.start(); await restored.settle(); expect(h.calls).toHaveLength(0); expect(h.control().phase).toBe('failed'); await h.close(); });
   it.each(['stopped', 'failed'] as const)('never autorestarts %s', async phase => { const h = harness(); await h.edit(value => { value.task.deterministic!.phase = phase; }); const s = h.supervisor(); s.start(); await s.settle(); expect(h.calls).toHaveLength(0); expect(h.captures).toHaveLength(0); await h.close(); });
-  it.each([undefined, {}, { exit: '', message: 'x' }, { exit: 'passed', message: '' }, { exit: 'passed', message: 'x', extra: true }, { exit: 'unmapped', message: 'x' }, { exit: 'passed', message: 'x'.repeat(70_000) }])('rejects invalid protocol completion %# without a default route', async raw => { const h = harness(); h.execute(async () => raw); const s = h.supervisor(); s.start(); await s.settle(); expect(h.control().phase).toBe('failed'); expect(h.routes).toHaveLength(0); expect(h.task.history?.filter(value => value.kind === 'deterministic-execution')).toHaveLength(1); await h.close(); });
+  it.each([undefined, {}, { exit: '', message: 'x' }, { exit: 'passed', message: '' }, { exit: 'passed', message: 'x', extra: true }, { exit: 'passed', message: 'x', params: { 'bad name': 'x' } }, { exit: 'unmapped', message: 'x' }, { exit: 'passed', message: 'x'.repeat(70_000) }])('rejects invalid protocol completion %# without a default route', async raw => { const h = harness(); h.execute(async () => raw); const s = h.supervisor(); s.start(); await s.settle(); expect(h.control().phase).toBe('failed'); expect(h.routes).toHaveLength(0); expect(h.task.history?.filter(value => value.kind === 'deterministic-execution')).toHaveLength(1); await h.close(); });
   it('uses captured optional error mapping once and redacts known secrets before persistence', async () => {
     const h = harness(); await h.edit(value => { value.task.deterministic!.definition.env = ['TOKEN']; value.task.deterministic!.definition.exits.error = 'review'; }); h.variables({ TOKEN: 'synthetic-secret' }); h.execute(async () => { throw new Error('failed synthetic-secret'); }); const s = h.supervisor(); s.start(); await s.settle();
     expect(h.control().result).toMatchObject({ exit: 'error', synthetic: true, target: { stageIdentity: 'review-key' } });

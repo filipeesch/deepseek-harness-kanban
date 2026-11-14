@@ -1,5 +1,6 @@
 import { evaluateDeterministicHold, type DeterministicHoldInput, type HoldConversation } from '../domain/deterministic-hold.js';
 import { resolveDeterministicTarget } from '../domain/deterministic-state.js';
+import { bindHandoffParameterValues, declaredParameterNames } from '../domain/deterministic-parameters.js';
 import { entryInstruction } from '../domain/stage-entry.js';
 import { placeTask } from '../domain/hub-operations.js';
 import type { DeterministicHold } from '../shared/deterministic.js';
@@ -113,14 +114,20 @@ export function createDeterministicRouter(ports: DeterministicRoutingPorts): (re
       if (!destination || destination.id === task.columnId) return { status: 'failed', error: { code: 'DETERMINISTIC_TARGET_REMOVED', message: 'The captured destination no longer exists as the same stage. Repair the workflow and retry delivery explicitly.' } } as const;
       const fromColumnId = task.columnId;
       const instruction = entryInstruction(destination);
+      const declared = destination.deterministic === undefined ? [] : declaredParameterNames(destination.deterministic.params);
+      const bound = bindHandoffParameterValues(declared, result.params);
+      if (!bound.ok) return { status: 'failed', error: { code: 'INVALID_HANDOFF_PARAMETERS', message: bound.message } } as const;
       const at = ports.now?.() ?? new Date().toISOString();
       // The saved result names the exit that routed the card; the reserved error
       // route records itself as such.
       const origin: StageEntryOrigin = result.synthetic === true ? `error:${result.exit}` : `script:${result.exit}`;
-      placeTask(hub, taskId, destination.id, 'start', Date.parse(at), { at, origin });
+      placeTask(hub, taskId, destination.id, 'start', Date.parse(at), { at, origin, ...(Object.keys(bound.values).length === 0 ? {} : { parameters: bound.values }) });
       // The result receipt and destination entry/handoff share this one task transaction.
+      // The handoff keeps every sent value for context and history; only declared
+      // names were written to the entry above.
       task.deterministicHandoff = { id: result.deliveryId ?? result.id, entryId: task.stageEntry!.id,
         executionId: control.executionId, fromColumnId, columnId: destination.id, exit: result.exit, message: result.message, at,
+        ...(result.params === undefined ? {} : { params: result.params }),
         ...(instruction === undefined ? {} : { instruction }) };
       return { status: 'accepted' } as const;
     });

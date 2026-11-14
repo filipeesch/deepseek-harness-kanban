@@ -51,6 +51,67 @@ describe('deterministic saved-result routing', () => {
     if (kind === 'agent') expect(task.deterministicHandoff!.instruction).toBe('Review this result'); else expect(task.deterministicHandoff!.instruction).toBeUndefined();
     expect(task.autoMode).toBeUndefined(); expect(f.notified()).toBe(1); await f.close();
   });
+  it('binds the sent values by exact name for a deterministic destination', async () => {
+    const f = await fixture('script');
+    await f.edit(hub => {
+      const board = hub.boards[0]!;
+      board.workflowYaml = board.workflowYaml.replace('deterministic: {language: bash, code: echo, exits: {done: repair}}', 'deterministic: {language: bash, code: echo, params: [{name: pipeline}], exits: {done: repair}}');
+      board.workflow = parseWorkflow(board.workflowYaml);
+      hub.tasks[0]!.deterministic!.result!.params = { pipeline: 'ci-main', extra: 'ignored' };
+    });
+    f.request.result = { ...f.request.result, params: { pipeline: 'ci-main', extra: 'ignored' } };
+    expect(await f.route(f.request)).toEqual({ status: 'accepted' });
+    const task = f.task();
+    expect(task.columnId).toBe('review');
+    expect(task.deterministic?.parameters).toEqual({ pipeline: 'ci-main' });
+    expect(task.deterministicHandoff).toMatchObject({ exit: 'passed', params: { pipeline: 'ci-main', extra: 'ignored' } });
+    await f.close();
+  });
+
+  it('routes a partial sent map and leaves the missing declared name for admission repair', async () => {
+    const f = await fixture('script');
+    await f.edit(hub => {
+      const board = hub.boards[0]!;
+      board.workflowYaml = board.workflowYaml.replace('deterministic: {language: bash, code: echo, exits: {done: repair}}', 'deterministic: {language: bash, code: echo, params: [{name: pipeline}, {name: app}], exits: {done: repair}}');
+      board.workflow = parseWorkflow(board.workflowYaml);
+      hub.tasks[0]!.deterministic!.result!.params = { pipeline: 'ci-main' };
+    });
+    f.request.result = { ...f.request.result, params: { pipeline: 'ci-main' } };
+    expect(await f.route(f.request)).toEqual({ status: 'accepted' });
+    const task = f.task();
+    expect(task.columnId).toBe('review');
+    expect(task.deterministic?.parameters).toEqual({ pipeline: 'ci-main' });
+    expect(task.deterministicHandoff).toMatchObject({ params: { pipeline: 'ci-main' } });
+    await f.close();
+  });
+
+  it('uses the destination declaration as it is now, not the one captured by the source', async () => {
+    const f = await fixture('script');
+    await f.edit(hub => {
+      const board = hub.boards[0]!;
+      board.workflowYaml = board.workflowYaml.replace('deterministic: {language: bash, code: echo, exits: {done: repair}}', 'deterministic: {language: bash, code: echo, params: [{name: app}], exits: {done: repair}}');
+      board.workflow = parseWorkflow(board.workflowYaml);
+      hub.tasks[0]!.deterministic!.result!.params = { pipeline: 'ci-main' };
+    });
+    f.request.result = { ...f.request.result, params: { pipeline: 'ci-main' } };
+    expect(await f.route(f.request)).toEqual({ status: 'accepted' });
+    const task = f.task();
+    expect(task.deterministic?.parameters).toBeUndefined();
+    expect(task.deterministicHandoff).toMatchObject({ params: { pipeline: 'ci-main' } });
+    await f.close();
+  });
+
+  it('keeps a sent value out of an entry whose destination declares none', async () => {
+    const f = await fixture('script');
+    await f.edit(hub => { hub.tasks[0]!.deterministic!.result!.params = { pipeline: 'ci-main' }; });
+    f.request.result = { ...f.request.result, params: { pipeline: 'ci-main' } };
+    expect(await f.route(f.request)).toEqual({ status: 'accepted' });
+    const task = f.task();
+    expect(task.deterministic?.parameters).toBeUndefined();
+    expect(task.deterministicHandoff).toMatchObject({ params: { pipeline: 'ci-main' } });
+    await f.close();
+  });
+
   it('records the named script exit as the stage origin', async () => {
     const f = await fixture();
     expect(await f.route(f.request)).toEqual({ status: 'accepted' });

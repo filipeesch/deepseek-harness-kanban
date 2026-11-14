@@ -8,7 +8,7 @@ while [ "$(node -e 'process.stdout.write(String(Date.now()))')" -lt "$((started 
   node fake-ci.cjs
   status=$?
   case "$status" in
-    0) printf '%s\n' '{"exit":"passed","message":"Local CI passed."}'; exit 0 ;;
+    0) printf '%s\n' '{"exit":"passed","message":"Local CI passed.","params":{"pipeline":"'"$pipeline"'"}}'; exit 0 ;;
     1) printf '%s\n' '{"exit":"rejected","message":"Local CI rejected the change."}'; exit 0 ;;
     2) sleep 0.02 ;;
     *) printf '%s\n' 'Local CI checker failed.' >&2; exit 3 ;;

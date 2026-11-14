@@ -109,6 +109,22 @@ describe('deterministic supervisor real durable aggregate and private source blo
       restored.dispose(); await f.reopen(); expect(f.task().stageEntry!.id).toBe(entryId); expect(f.task().deterministicHandoff?.id).toBe(result.deliveryId); expect(f.executions()).toBe(1);
     } finally { await f.close(); }
   });
+  it('reuses the saved sent values when resuming a durable result after restart', async () => {
+    const f = await fixture(); try {
+      f.executeWith(async () => ({ kind: 'completed', completion: { exit: 'passed', message: 'ok', params: { pipeline: 'ci-main' } }, diagnostics: [] }));
+      const s = f.supervisor(); s.start(); await s.settle(); await approveCaptured(f, s); await s.settle();
+      expect(f.task().deterministic!.result?.params).toEqual({ pipeline: 'ci-main' });
+      s.dispose(); await f.reopen();
+      const seen: Array<Record<string, string> | undefined> = [];
+      const router = createDeterministicRouter({ hubs: f.hubs, sessions: { isIdle: async () => true }, pending: async () => NO_PENDING_USER_WORK });
+      const restored = f.supervisor(async request => { seen.push(request.result.params); return router(request); });
+      restored.start(); await restored.settle();
+      expect(seen[0]).toEqual({ pipeline: 'ci-main' });
+      expect(f.task().deterministicHandoff?.params).toEqual({ pipeline: 'ci-main' });
+      expect(f.executions()).toBe(1);
+    } finally { await f.close(); }
+  });
+
   it('collects only globally unreferenced private blobs after committed task deletion', async () => {
     const f = await fixture(); try {
       const s = f.supervisor(); s.start(); await s.settle(); const capture = f.task().deterministic!.capture!;

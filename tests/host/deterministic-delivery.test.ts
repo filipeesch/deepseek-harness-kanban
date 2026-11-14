@@ -36,6 +36,22 @@ describe('combined deterministic instruction final admission guard', () => {
     expect(f.task.instructionPending).toBeUndefined(); expect(f.task.deterministicHandoff?.acceptedAt).toBeDefined();
     expect(f.task.recordedTransition).toBeUndefined(); expect(f.task.sessionIds).toEqual(['session']);
   });
+  it('appends a bounded sent-parameters section and records the sent values on acceptance', async () => {
+    const f = fixture();
+    f.task.deterministicHandoff = { ...f.task.deterministicHandoff!, params: { pipeline: 'ci-main', commit: 'abc' } };
+    await f.run();
+    expect(f.admitted[0]!.text).toBe('Review it.\n\nDeterministic result (from ci; exit: passed; execution: source-run):\nSynthetic evidence [REDACTED]\n\nSent parameters:\npipeline: ci-main\ncommit: abc');
+    expect(f.task.history?.find(value => value.kind === 'deterministic-handoff')).toMatchObject({ outcome: 'accepted', parameters: { pipeline: 'ci-main', commit: 'abc' } });
+  });
+
+  it('bounds the sent-parameters section so a large map cannot crowd the instruction', async () => {
+    const f = fixture();
+    f.task.deterministicHandoff = { ...f.task.deterministicHandoff!, params: { pipeline: 'x'.repeat(4096), commit: 'y'.repeat(4096) } };
+    await f.run();
+    expect(f.admitted[0]!.text).toContain('Sent parameters:');
+    expect(f.admitted[0]!.text).toContain('[output truncated]');
+  });
+
   it.each(['resolve-session', 'execution-context', 'native-resolve', 'native-events'] as const)('rejects move-away-and-back during awaited %s despite same stage id and no duplicate log', async point => {
     const f = fixture(point); const pending = f.run(); const observed = pending.then(value => ({ value }), error => ({ error }));
     await f.started.promise; f.replaceEntry(); f.gate.resolve();

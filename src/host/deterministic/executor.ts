@@ -4,6 +4,7 @@ import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox';
 import type { FailureAttempt } from '../../shared/deterministic-failure.js';
 import type { DeterministicCapture } from '../../shared/deterministic.js';
 import { classifyFailureCode } from '../../domain/deterministic-failure.js';
+import { boundedRedactedParameters } from '../../domain/deterministic-parameters.js';
 import { readGuardOutcome } from './guard-outcome.js';
 import { createBashRetry, type BashRetry } from './retry.js';
 import type { NativeLifetime } from './lifetime.js';
@@ -161,7 +162,8 @@ export async function executeCapturedProgram(options: {
     }
     const completion = parseCompletion(value);
     if (!Object.hasOwn(request.capture.exits, completion.exit)) failure('UNMAPPED_EXIT', 'The returned exit is not present in the reviewed mapping.');
-    return { kind: 'completed', completion: { exit: completion.exit, message: redactor.text(completion.message, COMPLETION_MAX_BYTES) }, diagnostics: [redactor.text(logs.join('\n'))].filter(Boolean) };
+    const params = completion.params === undefined ? undefined : boundedRedactedParameters(Object.fromEntries(Object.entries(completion.params).map(([name, text]) => [name, redactor.parameter(text)])));
+    return { kind: 'completed', completion: { exit: completion.exit, message: redactor.text(completion.message, COMPLETION_MAX_BYTES), ...(params === undefined ? {} : { params }) }, diagnostics: [redactor.text(logs.join('\n'))].filter(Boolean) };
   } catch (error) {
     if (request.signal.aborted) return { kind: 'aborted' };
     const code = error instanceof DeterministicRuntimeError ? error.code : 'EXECUTOR_FAILED';

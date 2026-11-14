@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { CardScriptParameters, ScriptActions } from '../../src/client/deterministic-actions.js';
 import { ScriptReviewDialog, type ScriptReviewRequest } from '../../src/client/deterministic-review.js';
+import { ScriptPanel } from '../../src/client/deterministic-panel.js';
 import { LocalVariablesDialog } from '../../src/client/deterministic-variables.js';
 import { StageEditorDialog } from '../../src/client/stage/stage-editor-dialog.js';
 import { DeterministicProvider } from '../../src/client/deterministic-context.js';
@@ -119,7 +120,12 @@ it('delivers a saved result even after the saved stage is no longer deterministi
     const run = vi.fn(async () => fixture());
     render(provider(<ScriptActions task={card} column={parameterColumn} summary={{ ...summary, phase: 'failed', parameters: { pipeline: 'ci-main' } }} run={run} />, run));
     fireEvent.click(screen.getByRole('button', { name: 'Edit deterministic script parameters' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit script parameters' });
+    expect(dialog.classList.contains('kb-dialog-parameters')).toBe(true);
+    expect(dialog.closest('.kb-card')).toBeNull();
+    expect(dialog.closest('.dsh-kanban')?.parentElement).toBe(document.body);
     const pipeline = await screen.findByLabelText('Parameter pipeline') as HTMLInputElement;
+    expect(pipeline.tagName).toBe('TEXTAREA');
     expect(pipeline.value).toBe('ci-main');
     expect((screen.getByLabelText('Parameter app') as HTMLInputElement).value).toBe('');
     expect((screen.getByRole('button', { name: 'Save values' }) as HTMLButtonElement).disabled).toBe(true);
@@ -127,6 +133,44 @@ it('delivers a saved result even after the saved stage is no longer deterministi
     fireEvent.click(screen.getByRole('button', { name: 'Save values' }));
     await waitFor(() => expect(run).toHaveBeenCalledWith({ type: 'task.deterministicParameters', taskId: 't', entryId: 'entry', values: { pipeline: 'ci-main', app: 'checkout' } }));
   });
+  it('returns focus to the opener when the parameter editor is dismissed without saving', async () => {
+    const parameterColumn: Column = { ...column, deterministic: { ...column.deterministic!, params: [{ name: 'pipeline', description: 'CI workflow' }] } };
+    const run = vi.fn(async () => fixture());
+    render(provider(<ScriptActions task={card} column={parameterColumn} summary={{ ...summary, phase: 'failed', parameters: { pipeline: 'ci-main' } }} run={run} />, run));
+    const opener = screen.getByRole('button', { name: 'Edit deterministic script parameters' });
+    opener.focus();
+    fireEvent.click(opener);
+    const dialog = await screen.findByRole('dialog', { name: 'Edit script parameters' });
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit script parameters' })).toBeNull());
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('portals the parameter editor outside the card and offers every declared value', async () => {
+    const parameters = Array.from({ length: 6 }, (_, index) => ({ name: 'p' + index, description: 'Description ' + index }));
+    const parameterColumn: Column = { ...column, deterministic: { ...column.deterministic!, params: parameters } };
+    const run = vi.fn(async () => fixture());
+    const root = document.createElement('div'); root.className = 'dsh-kanban'; document.body.append(root);
+    const view = render(<div className="dsh-kanban"><div data-testid="workflow-stage"><div data-testid="card">{provider(<ScriptActions task={card} column={parameterColumn} summary={{ ...summary, phase: 'failed', parameters: { p0: 'v0' } }} run={run} />, run)}</div></div></div>);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit deterministic script parameters' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit script parameters' });
+    expect(screen.getByTestId('card').contains(dialog)).toBe(false);
+    expect(screen.getByTestId('workflow-stage').contains(dialog)).toBe(false);
+    expect(dialog.querySelector('.kb-script-parameter-list')).toBeTruthy();
+    for (let index = 0; index < 6; index += 1) expect(screen.getByLabelText('Parameter p' + index)).toBeTruthy();
+    expect((screen.getByLabelText('Parameter p0') as HTMLTextAreaElement).value).toBe('v0');
+    view.unmount(); root.remove();
+  });
+
+  it('keeps the drawer parameter display without a received-from provenance line', () => {
+    const parameterColumn: Column = { ...column, deterministic: { ...column.deterministic!, params: [{ name: 'pipeline', description: 'CI workflow' }] } };
+    const run = vi.fn(async () => fixture());
+    const summaryWithParameters: DeterministicSummary = { ...summary, phase: 'failed', parameters: { pipeline: 'ci-main' } };
+    render(<DeterministicProvider api={api()} run={run as never} summaries={{ t: summaryWithParameters }} boardId="board"><ScriptReviewProvider api={api()} run={run as never}><ScriptPanel task={card} column={parameterColumn} projectName="A" api={api()} run={run} /></ScriptReviewProvider></DeterministicProvider>);
+    expect(screen.getByText('Parameters: pipeline=ci-main')).toBeTruthy();
+    expect(screen.queryByText(/received from/i)).toBeNull();
+  });
+
   it('shows parameter values read-only in selection mode without hiding them', () => {
     const run = vi.fn(async () => fixture());
     const parameterColumn: Column = { ...column, deterministic: { ...column.deterministic!, params: [{ name: 'pipeline', description: 'CI workflow' }] } };

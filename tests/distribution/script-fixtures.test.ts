@@ -36,7 +36,8 @@ describe('documented deterministic examples', () => {
     const script = await readFile(join(fixture, 'wait-ci.ts'), 'utf8');
     expect(guide).toContain(script.trimEnd());
     const workflow = parseWorkflow(await readFile(join(fixture, 'workflow.yaml'), 'utf8'));
-    expect(workflow.columns[0]!.deterministic).toMatchObject({ language: 'typescript', file: 'wait-ci.ts', exits: { passed: 'review', rejected: 'fix', error: 'repair' } });
+    expect(workflow.columns[0]!.deterministic).toMatchObject({ language: 'typescript', file: 'wait-ci.ts', exits: { passed: 'deploy', rejected: 'fix', error: 'repair' } });
+    expect(workflow.columns.find(column => column.id === 'deploy')?.deterministic).toMatchObject({ file: 'wait-ci.ts', params: [{ name: 'pipeline' }], exits: { passed: 'review', rejected: 'fix', error: 'repair' } });
   });
 
   it.each(['bash', 'typescript'] as const)('executes the actual %s example through public native providers', async language => {

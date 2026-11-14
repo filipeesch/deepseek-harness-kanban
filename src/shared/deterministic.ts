@@ -56,6 +56,8 @@ export interface DeterministicHold {
 }
 export interface DeterministicResult {
   id: string; exit: string; message: string; at: string;
+  /** Bounded, redacted values the program sent; never part of the approved capture. */
+  params?: Record<string, string>;
   target?: DeterministicTarget;
   synthetic?: boolean;
   deliveryId?: string;
@@ -78,6 +80,8 @@ export interface DeterministicControl {
 export interface DeterministicHandoff {
   id: string; entryId: string; executionId: string;
   fromColumnId: string; columnId: string; exit: string; message: string; at: string;
+  /** Bounded, redacted values the source program sent; conversation context and history, never program input. */
+  params?: Record<string, string>;
   acceptedAt?: string; error?: Problem;
   instruction?: string; sessionId?: string;
 }
@@ -139,6 +143,8 @@ export interface DeterministicInput {
   restartCount: number;
   /** Exactly the declared names, with the entry's values. */
   params: Record<string, string>;
-  handoff?: DeterministicHandoff;
+  handoff?: DeterministicInputHandoff;
 }
-export interface StepCompletion { exit: string; message: string }
+/** The handoff as a program sees it: exit and message metadata, never the sent parameter map. */
+export type DeterministicInputHandoff = Omit<DeterministicHandoff, 'params'>;
+export interface StepCompletion { exit: string; message: string; params?: Record<string, string> }
