@@ -129,7 +129,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
       actions={{ ...(onToggleAutoMode ? { autoMode, onToggleAutoMode: (enabled: boolean) => onToggleAutoMode(task.id, enabled) } : {}), autoModePending, blocked, onDelete: () => onDanger(task, 'task.delete'), onClose, closeRef: close }}
     />
     {(task.operation || task.pendingTransition) && <div className="kb-status-stack">
-      <OperationStatus task={task} run={run} sessionTitles={sessionTitles} {...(onForce ? { onForce } : {})} />
+      <OperationStatus task={task} run={run} sessionTitles={sessionTitles} {...(onForce ? { onForce } : {})} {...(state.settings?.worktreeBasePath ? { worktreeBasePath: state.settings.worktreeBasePath } : {})} />
       {task.pendingTransition && <PendingTransitionStatus task={task} run={run} columnName={state.workflow.columns.find(column => column.id === task.pendingTransition?.columnId)?.name ?? task.pendingTransition?.columnId ?? ''} />}
     </div>}
     {stageNotice !== null && <div className="kb-status-stack"><div className="kb-error" role="alert"><strong>The recorded transition is no longer valid</strong><span>{stageNotice}</span></div></div>}

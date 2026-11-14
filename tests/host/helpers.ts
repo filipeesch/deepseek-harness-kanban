@@ -78,6 +78,11 @@ function inside(root:string,candidate:string):boolean{const part=path.relative(r
 export class TestGit implements GitPort {
  trees=new Map<string,GitTree>();created=0;removed:string[]=[];repaired:string[]=[];repairCalls:Array<{paths:string[];sessionIds:string[]}>=[];projectDirectoryCalls=0;projectDirectoryFailure:KanbanError|undefined;branchNames=['main','feature'];
  async branches(){return [...this.branchNames];}
+ sourceCommits=new Map<string,string>();
+ async sourceCommit(_project:GitProject,sourceBranch:string){return this.sourceCommits.get(sourceBranch)??'test-source-commit';}
+ async branchTip(_project:GitProject,branchName:string){if(!this.branchNames.includes(branchName))return undefined;return this.sourceCommits.get(branchName)??'test-source-commit';}
+ async clearRegistration(_project:GitProject,_root:string){this.clearedRegistrations.push(_root);}
+ clearedRegistrations:string[]=[];
  async projectDirectory(project:GitProject,root?:string){this.projectDirectoryCalls++;if(this.projectDirectoryFailure)throw this.projectDirectoryFailure;return root?path.join(root,path.relative(project.gitRootPath,project.projectPath)):project.projectPath;}
  async inspect(_project:GitProject,root:string){const tree=this.trees.get(root);if(!tree)throw new KanbanError('NOT_WORKTREE','Not a test worktree.');return {...tree};}
  async localChanges(_project:GitProject,root:string){return this.trees.get(root)?.dirty===true;}
@@ -85,7 +90,7 @@ export class TestGit implements GitPort {
  async create(project:GitProject,request:CreateWorktree){this.created++;await mkdir(await this.projectDirectory(project,request.path),{recursive:true});const tree={path:request.path,branch:request.branchName,dirty:false,commonDirectory:path.join(project.gitRootPath,'.git')};this.trees.set(request.path,tree);return tree;}
  async remove(_project:GitProject,root:string,discard:boolean){const tree=this.trees.get(root);if(tree?.dirty&&!discard)throw new KanbanError('DISCARD_REQUIRED','Confirm discard.',{path:root});this.trees.delete(root);this.removed.push(root);}
  async repair(_project:GitProject,roots:string[],sessionIds:string[]){this.repaired.push(...roots);this.repairCalls.push({paths:[...roots],sessionIds:[...sessionIds]});}
- async resolve(project:GitProject):Promise<GitRepository>{return {project,root:project.gitRootPath,projectPath:project.projectPath,commonDirectory:path.join(project.gitRootPath,'.git'),registered:async()=>[...this.trees.keys()].map(value=>({path:value,locked:false})),invalidate(){}};}
+ async resolve(project:GitProject):Promise<GitRepository>{return {project,root:project.gitRootPath,projectPath:project.projectPath,commonDirectory:path.join(project.gitRootPath,'.git'),registered:async()=>[...this.trees.keys()].map(value=>({path:value,locked:false,prunable:false})),invalidate(){}};}
  async assertPolicy(){}
 }
 export class TestProjectProbe implements ProjectProbe {

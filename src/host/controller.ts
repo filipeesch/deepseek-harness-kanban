@@ -3,7 +3,7 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import type { Command, FullHostSnapshot, HostSnapshot, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionDraftContent, QuestionFeedFrame, QuestionRound, ModelCatalog, SharingCommand, SnapshotRequest, StoredQuestionDraft, WorktreeDefaults } from '../shared/types.js';
 import { problem, KanbanError } from '../shared/errors.js';
 import type { KanbanApp } from './app.js';
-import type { DeterministicReview } from '../shared/deterministic.js';
+import type { DeterministicStageReview, DeterministicVariablesView } from '../shared/deterministic.js';
 export class KanbanController extends TypertRemoteService {
  constructor(ctx:Context,private readonly app:KanbanApp){super(ctx,'kanbanController',{namespace:'kanban'});}
  private owner():void{if(this.ctx.invocation&&this.ctx.invocation.peer.principal.kind!=='owner')throw new KanbanError('FORBIDDEN','Kanban access requires the native host owner.');}
@@ -17,7 +17,8 @@ export class KanbanController extends TypertRemoteService {
  @Remote async localDrive(request:LocalDriveRequest):Promise<Outcome<LocalDriveResult>>{return this.attempt(()=>this.app.localDrive(request));}
  @Remote async dismissQuestions(request:{sessionId:string;roundId:string}):Promise<Outcome<QuestionRound[]>>{return this.attempt(()=>this.app.dismissQuestions(request.sessionId,request.roundId));}
  @Remote async saveQuestionDraft(request:{sessionId:string;roundId:string;draft:QuestionDraftContent|null}):Promise<Outcome<StoredQuestionDraft|null>>{return this.attempt(()=>this.app.saveQuestionDraft(request.sessionId,request.roundId,request.draft));}
- @Remote async deterministicReview(request:{taskId:string}):Promise<Outcome<DeterministicReview>>{return this.attempt(()=>this.app.deterministicReview(request.taskId));}
+ @Remote async deterministicReview(request:{boardId?:string;stageId?:string;taskId?:string}):Promise<Outcome<DeterministicStageReview>>{return this.attempt(()=>this.app.deterministicReview(request));}
+ @Remote async deterministicVariables(request:{taskId:string}):Promise<Outcome<DeterministicVariablesView>>{return this.attempt(()=>this.app.deterministicVariables(request.taskId));}
  @Remote async modelCatalog(request:{refresh?:boolean}):Promise<Outcome<ModelCatalog>>{return this.attempt(()=>this.app.modelCatalog(request.refresh===true));}
  @Remote({mode:'stream'}) async *follow(signal:AbortSignal):AsyncGenerator<HostSnapshot>{
   this.owner();let dirty=true;let wake:(()=>void)|undefined;let lastRevision=-1;

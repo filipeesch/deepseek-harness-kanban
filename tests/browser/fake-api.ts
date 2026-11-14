@@ -44,6 +44,8 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     deleteTarget(),
     failedDelete(),
     failedDeleteReturn(),
+    failedCreate(),
+    slowCreate(),
     ...(options.prepare === undefined ? [] : [firstExecutionTask(), blockedBindingTask()]),
   ];
   // One task with a recorded flow, so the History section can render every kind of row.
@@ -217,6 +219,7 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
     raw.deterministic = { 'long-0': { entryId: 'script-entry', executionId: 'script-run', phase: options.deterministic, startedAt: now, attempt: 1, restartCount: 1, fingerprint: 'synthetic-captured-version', savedVersionChanged: false, parameters: { pipeline: 'ci-main' }, ...(options.deterministicDelivery === undefined ? {} : { deliveryStatus: options.deterministicDelivery }), ...(options.deterministic === 'result-ready' && options.deterministicHold !== undefined ? { hold: options.deterministicHold === 'job' ? { code: 'background-work' as const, at: now, background: [{ kind: 'job' as const, id: 'bash-1', label: 'find the home directory' }] } : { code: 'pending-user-work' as const, at: now, pending: ['approval' as const] } } : {}), ...(options.deterministicDelivery !== undefined || options.deterministic === 'result-ready' ? { exit: 'passed', message: 'CI passed' } : {}), ...(failure === undefined ? {} : { error: failure }), ...(failure !== undefined || !(options.deterministic === 'failed' && options.deterministicRefusal) ? {} : { error: { code: 'PARAMETERS_REQUIRED', message: 'Missing required parameter: pipeline. Edit the entry parameters before Play.' } }) } };
   }
   const configured = new Set<string>();
+  const approvedAuthoring = new Set<string>();
   let value = withLegacy(raw);
   if ((options.hubs ?? 1) > 1) value.state.hubs.push({ id: 'hub-2', name: 'Second Hub', revision: 0, projects: [], boards: [], tasks: [], notes: [], createdAt: now, updatedAt: now });
   const listeners = new Set<(snapshot: TestSnapshot) => void>();
@@ -261,9 +264,32 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
   const publish = () => { value = withLegacy(clone(value)); value.sequence++; if (options.persist) { try { sessionStorage.setItem('dsh-kanban.harness', JSON.stringify(value)); } catch { /* storage is optional */ } } const copy = withLegacy(clone(value)); for (const listener of listeners) listener(copy); return withLegacy(clone(value)); };
   const api: ClientApi = {
     snapshot: async () => withLegacy(clone(value)),
-    deterministicReview: async taskId => {
+    deterministicReview: async (request: { boardId: string; stageId: string; taskId?: string }) => {
+      const board = value.state.hubs.flatMap(hub => hub.boards).find(item => item.id === request.boardId) ?? value.state.hubs[0]!.boards[0]!;
+      const column = board.workflow.columns.find(item => item.id === request.stageId) ?? board.workflow.columns[0]!;
+      const script = column.deterministic!;
+      const taskValue = request.taskId === undefined ? undefined : value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === request.taskId);
+      const stageIdentity = taskValue?.stageEntry?.stageIdentity ?? board.localStageIdentities?.[column.id] ?? column.key ?? 'harness-stage';
+      const summary = request.taskId === undefined ? undefined : value.deterministic?.[request.taskId];
+      const authoredFingerprint = 'authored-' + JSON.stringify({ language: script.language, file: script.file, code: script.code, directory: script.directory, env: script.env ?? [], params: (script.params ?? []).map(parameter => parameter.name), exits: script.exits });
+      const fingerprint = summary?.fingerprint ?? authoredFingerprint;
+      const authoringKey = board.id + ':' + column.id + ':' + fingerprint;
+      const approval = request.taskId !== undefined
+        ? (summary?.phase === 'awaiting-trust' ? 'required' as const : 'approved' as const)
+        : (approvedAuthoring.has(authoringKey) ? 'approved' as const : 'required' as const);
+      return {
+        stage: { boardId: board.id, stageId: column.id, stageIdentity, name: column.name },
+        version: { fingerprint, stageGeneration: 'synthetic-stage-generation', captured: summary !== undefined, directoryDependent: false },
+        code: script.code!, language: script.language, directory: script.directory, exits: script.exits, env: script.env ?? [], params: script.params ?? [],
+        source: script.file === undefined ? { kind: 'inline' as const } : { kind: 'file' as const, reference: script.file },
+        approval,
+        waitingCards: summary?.phase === 'awaiting-trust' ? 1 : 0,
+        ...(request.taskId === undefined || summary === undefined ? {} : { captured: { taskId: request.taskId, entryId: summary.entryId, executionDirectory: '/isolated/project' } }),
+      };
+    },
+    deterministicVariables: async taskId => {
       const script = value.state.workflow.columns[0]!.deterministic!;
-      return { executionId: value.deterministic?.[taskId]?.executionId ?? 'preview', fingerprint: 'synthetic-captured-version', code: script.code!, language: script.language, directory: script.directory, exits: script.exits, env: script.env ?? [], params: script.params ?? [], variables: (script.env ?? []).map(name => ({ name, configured: configured.has(name) })), source: { kind: 'inline' }, executionDirectory: '/isolated/project' };
+      return { env: script.env ?? [], variables: (script.env ?? []).map(name => ({ name, configured: configured.has(name) })) };
     },
     command: async (command: Command) => {
       commands.push(structuredClone(command));
@@ -283,6 +309,11 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
           if (delivers) { summary.deliveryStatus = 'pending'; delete summary.hold; }
           if (command.type === 'task.deterministicPlay' && !delivers) { summary.executionId = 'script-run-play'; delete summary.error; }
         }
+      }
+      if (command.type === 'board.deterministicApprove') {
+        const summary = command.taskId === undefined ? undefined : value.deterministic?.[command.taskId];
+        if (summary) { summary.phase = 'active'; delete summary.error; }
+        else if (command.taskId === undefined) approvedAuthoring.add(command.boardId + ':' + command.stageId + ':' + command.fingerprint);
       }
       const firstHub = value.state.hubs[0]!; const firstBoard = firstHub.boards[0]!;
       let receipt: KanbanSnapshot['commandReceipt'];
@@ -524,6 +555,30 @@ function deleteTarget(): HubTask {
 function failedDeleteReturn(): HubTask {
   const value = failedDelete();
   return { ...value, id: 'failed-delete-return', title: 'Failed return', position: 44, sessionIds: ['s-failed-delete-return'], operation: { ...value.operation!, id: 'failed-delete-return-op', archivedSessionIds: [], error: { code: 'SHARED_WORKTREE', message: 'Another DSH conversation is using this checkout.', details: { sessionId: 'child', path: '/worktrees/failed-delete', failedPhase: 'preflight' } } } };
+}
+function failedCreate(): HubTask {
+  return {
+    ...task('failed-create', 'Failed create', 'apply', 46), effectiveCwd: '/repo',
+    operation: {
+      id: 'failed-create-op', request: { kind: 'create', mode: 'new', path: '/worktrees/team/failed-create', branchName: 'failed-create' },
+      phase: 'failed', targetPath: '/worktrees/team/failed-create', previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false, createdAt: 'now',
+      error: { code: 'GIT_TIMEOUT', message: 'The Git operation exceeded its execution deadline.', details: { failedPhase: 'git', gitAttempted: true } },
+      createAttempt: {
+        operationId: 'failed-create-op', path: '/worktrees/team/failed-create', gitRootPath: '/repo', branchName: 'failed-create', mode: 'new', absentBefore: true, sourceCommit: 'abc1234',
+        observed: { directory: 'present', registration: 'none', at: 'now', parentCandidates: ['/worktrees/team'] },
+      },
+    },
+  };
+}
+function slowCreate(): HubTask {
+  return {
+    ...task('slow-create', 'Creating checkout', 'apply', 47), effectiveCwd: '/repo',
+    operation: {
+      id: 'slow-create-op', request: { kind: 'create', mode: 'new', path: '/worktrees/slow-create', branchName: 'slow-create' },
+      phase: 'git', targetPath: '/worktrees/slow-create', previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false, createdAt: 'now',
+      createAttempt: { operationId: 'slow-create-op', path: '/worktrees/slow-create', gitRootPath: '/repo', branchName: 'slow-create', mode: 'new', absentBefore: true, sourceCommit: 'abc1234', reusedBranch: true },
+    },
+  };
 }
 function failedDelete(): HubTask {
   return { ...task('failed-delete', 'Failed delete', 'apply', 43), effectiveCwd: '/worktrees/failed-delete', worktree: { path: '/worktrees/failed-delete', branch: 'failed-delete', owned: true, status: 'ready' }, operation: { id: 'failed-delete-op', request: { kind: 'delete', discardChanges: false, expectedWorktreePath: '/worktrees/failed-delete' }, phase: 'failed', targetPath: '/worktrees/failed-delete', previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: ['s-failed-delete'], gitCompleted: true, createdAt: 'now', error: { code: 'SHARED_WORKTREE', message: 'Another DSH conversation is using this checkout.', details: { sessionId: 'child', path: '/worktrees/failed-delete', failedPhase: 'archiving' } } } };

@@ -1,3 +1,5 @@
+import { realpathSync } from 'node:fs';
+import path from 'node:path';
 import type { HubState, Project, Task } from '../shared/types.js';
 
 import type { HubRepository, LocatedTask, TaskSummary, WorktreeBinding } from './hub-repository.js';
@@ -41,4 +43,11 @@ export class RepositoryWorktreeStore implements WorktreeStore {
 
   worktreeBindings(): readonly WorktreeBinding[] { return this.hubs.worktreeBindings(); }
   hasOperations(): boolean { return this.hubs.taskSummaries().some(summary => summary.hasOperation); }
+  worktreeBasePath(): string | undefined {
+    const value = this.hubs.snapshot().settings.worktreeBasePath;
+    if (value === undefined) return undefined;
+    // The stored setting is a real path today; resolving it here keeps the
+    // discard's parent walk correct for any other writer of the setting.
+    try { return realpathSync.native(value); } catch { return path.resolve(value); }
+  }
 }

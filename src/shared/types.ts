@@ -1,5 +1,5 @@
-import type { DeterministicDefinition, DeterministicControl, DeterministicHandoff, DeterministicReview, DeterministicSummary, TaskStageEntry } from './deterministic.js';
-export type { DeterministicDefinition, DeterministicControl, DeterministicHandoff, DeterministicReview, DeterministicSummary, TaskStageEntry } from './deterministic.js';
+import type { DeterministicDefinition, DeterministicControl, DeterministicHandoff, DeterministicStageReview, DeterministicSummary, DeterministicVariablesView, TaskStageEntry } from './deterministic.js';
+export type { DeterministicDefinition, DeterministicControl, DeterministicHandoff, DeterministicStageReview, DeterministicSummary, DeterministicVariablesView, TaskStageEntry } from './deterministic.js';
 import type { NewTask } from './task-creation.js';
 import type { TaskHistoryEntry } from './task-history.js';
 
@@ -132,7 +132,30 @@ export interface ContextOperation {
   retainedCheckoutReason?: RetainedCheckoutReason;
   previousDirectories: Record<string, string>; switchedSessionIds: string[];
   archivedSessionIds: string[]; gitCompleted: boolean; error?: Problem; createdAt: string;
-  createAttempt?: { operationId: string; path: string; gitRootPath: string; branchName: string; mode: 'new' | 'existing'; absentBefore: true };
+  createAttempt?: CreateAttemptRecord;
+}
+/** What a failed creation left at its destination, as the host last observed it. */
+export type CheckoutDirectoryState = 'absent' | 'empty' | 'present';
+export type CheckoutRegistrationState = 'none' | 'orphan' | 'registered';
+export interface CheckoutObservation {
+  directory: CheckoutDirectoryState;
+  registration: CheckoutRegistrationState;
+  at: string;
+  /** Ancestors the discard may remove, deepest first; empty without a configured base path. */
+  parentCandidates: string[];
+}
+/**
+ * The durable proof that this host invoked a worktree write at a destination that
+ * was absent. It proves the write, never the registration.
+ */
+export interface CreateAttemptRecord {
+  operationId: string; path: string; gitRootPath: string; branchName: string; mode: 'new' | 'existing'; absentBefore: true;
+  /** The commit the attempt resolved before invoking Git; absent on an older journal. */
+  sourceCommit?: string;
+  /** The destination as the host last observed a failure. */
+  observed?: CheckoutObservation;
+  /** The retry reused the branch this attempt left instead of creating it again. */
+  reusedBranch?: boolean;
 }
 /** Why a host advance exists: auto mode armed the completed turn, or the agent declared the transition it ends in. */
 export type AdvanceOrigin = 'auto' | 'agent';
@@ -486,6 +509,7 @@ export type Command =
   /** Start a new execution of the current entry; the only action that captures and runs again. */
   | { type: 'task.deterministicRunAgain'; taskId: string; entryId: string }
   | { type: 'task.deterministicStop'; taskId: string; executionId?: string }
+  | { type: 'board.deterministicApprove'; boardId: string; stageId: string; fingerprint: string; stageGeneration: string; taskId?: string }
   /** Cancel the background job named by the current delivery hold. */
   | { type: 'task.deterministicCancelJob'; taskId: string; jobId: string }
   | { type: 'task.deterministicApprove'; taskId: string; executionId: string; fingerprint: string }
@@ -528,7 +552,10 @@ export type Command =
   | { type: 'worktree.attach'; hubId?: string; taskId: string; path: string }
   | { type: 'worktree.dismiss'; hubId?: string; taskId: string }
   | { type: 'worktree.remove'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; force?: boolean }
-  | { type: 'operation.retry' | 'operation.return'; hubId?: string; taskId: string }
+  | { type: 'worktree.discardCreate'; hubId?: string; taskId: string; confirmed: boolean }
+  | { type: 'operation.retry'; hubId?: string; taskId: string }
+  | { type: 'operation.return'; hubId?: string; taskId: string }
+  | { type: 'operation.cancel'; hubId?: string; taskId: string }
   | { type: 'operation.dismiss'; hubId?: string; taskId: string }
   | { type: 'retainedCheckout.dismiss'; paths: string[] }
   | { type: 'note.save'; hubId?: string; taskId: string; noteId?: string; content?: string; tags?: string[] }
@@ -539,7 +566,8 @@ export type Command =
   | { type: 'schedule.runNow'; hubId: string; scheduleId: string };
 export type Outcome<T> = { ok: true; value: T } | { ok: false; error: Problem };
 export interface ClientApi {
-  deterministicReview?(taskId: string): Promise<DeterministicReview>;
+  deterministicReview?(request: { boardId: string; stageId: string; taskId?: string }): Promise<DeterministicStageReview>;
+  deterministicVariables?(taskId: string): Promise<DeterministicVariablesView>;
   snapshot(request?: SnapshotRequest): Promise<KanbanSnapshot>;
   command(command: Command): Promise<KanbanSnapshot>;
   sharing(command: SharingCommand): Promise<KanbanSnapshot>;

@@ -8,7 +8,7 @@ import { assertBoardWriteAllowed } from './scope.js';
 
 const intent = 'Use ONLY when the user explicitly requests this board change. ';
 
-const reportNote = ' The result carries the write report: the per-stage difference, the graph warnings, the reviewed authorization of every deterministic stage in each allowed project, and the affected cards. A refused write saves nothing and returns the same report instead of changing the board.';
+const reportNote = ' The result carries the write report: the per-stage difference, the graph warnings, the board-level reviewed authorization of every deterministic stage, and the affected cards. A refused write saves nothing and returns the same report instead of changing the board.';
 
 export function boardTools(app: KanbanApp, boards: BoardAdministration): ToolDefinition[] {
   return [

@@ -44,11 +44,15 @@ export async function cleanup(): Promise<void> {
 export class LocalExecutor implements GitExecutor {
   calls: string[][] = [];
   writes: boolean[] = [];
+  deadlines: Array<string | undefined> = [];
   policies: Array<{ paths: string[]; ids: string[]; write: boolean }> = [];
   deny: ((paths: string[], write: boolean) => boolean) | undefined;
   fail: ((args: string[]) => CommandResult | undefined) | undefined;
-  async run(project: GitProject, args: string[], _ids: string[], signal?: AbortSignal, write = false): Promise<CommandResult> {
-    this.calls.push([...args]); this.writes.push(write);
+  /** A hold the test can release or abort, used to observe cancellation. */
+  gate: ((args: string[], signal?: AbortSignal) => Promise<void>) | undefined;
+  async run(project: GitProject, args: string[], _ids: string[], signal?: AbortSignal, write = false, deadline?: string): Promise<CommandResult> {
+    this.calls.push([...args]); this.writes.push(write); this.deadlines.push(deadline);
+    await this.gate?.(args, signal);
     return this.fail?.(args) ?? git(project.gitRootPath, args, signal);
   }
   async assertPolicy(_project: GitProject, paths: string[], ids: string[], write: boolean): Promise<void> {
@@ -58,7 +62,10 @@ export class LocalExecutor implements GitExecutor {
 }
 export class MemoryStore {
   private chain: Promise<unknown> = Promise.resolve();
+  /** The configured worktree base path, read dynamically by the coordinator. */
+  basePath: string | undefined;
   constructor(public state: HubState) {}
+  worktreeBasePath(): string | undefined { return this.basePath; }
   snapshot(): HubState { return structuredClone(this.state); }
   transact(change: (draft: HubState) => void): Promise<void> {
     const result = this.chain.then(() => { const next = this.snapshot(); change(next); next.revision++; this.state = next; });

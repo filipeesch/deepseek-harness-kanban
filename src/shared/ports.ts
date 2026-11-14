@@ -67,7 +67,12 @@ export interface SessionPort extends SessionTopologyPort {
 }
 export interface GitTree { path: string; branch: string; dirty: boolean; commonDirectory: string }
 /** One registered linked worktree of a repository, as Git currently reports it. */
-export interface RegisteredWorktree { path: string; locked: boolean }
+export interface RegisteredWorktree {
+  path: string;
+  locked: boolean;
+  /** Git reports the registration as prunable: its directory no longer exists. */
+  prunable: boolean;
+}
 /**
  * One operation's resolved repository facts: the Git root, the project path inside
  * it, the common directory, and the registered worktrees. An operation reuses it
@@ -87,6 +92,12 @@ export interface GitPort {
   /** Resolve one operation's repository facts. */
   resolve(project: GitProject, sessionIds: string[], signal?: AbortSignal): Promise<GitRepository>;
   branches(project: GitProject, sessionIds: string[], repository?: GitRepository): Promise<string[]>;
+  /** The commit a creation will check out for a source ref, resolved before the write is armed. */
+  sourceCommit(project: GitProject, sourceBranch: string, sessionIds: string[], repository?: GitRepository): Promise<string>;
+  /** The commit a local branch points at, or undefined when the branch does not exist. */
+  branchTip(project: GitProject, branchName: string, sessionIds: string[], repository?: GitRepository): Promise<string | undefined>;
+  /** Clear a registration whose directory is gone, targeting that exact path only. */
+  clearRegistration(project: GitProject, path: string, sessionIds: string[], repository?: GitRepository): Promise<void>;
   inspect(project: GitProject, path: string, sessionIds: string[], repository?: GitRepository): Promise<GitTree>;
   /** Whether the checkout has tracked or untracked local changes. */
   localChanges(project: GitProject, path: string, sessionIds: string[], repository?: GitRepository): Promise<boolean>;
@@ -96,7 +107,7 @@ export interface GitPort {
    * refusal a destructive operation decides before it mutates anything else.
    */
   assertRemovable(project: GitProject, path: string, sessionIds: string[], repository?: GitRepository): Promise<void>;
-  create(project: GitProject, request: CreateWorktree, sessionIds: string[], signal?: AbortSignal, repository?: GitRepository): Promise<GitTree>;
+  create(project: GitProject, request: CreateWorktree, sessionIds: string[], signal?: AbortSignal, repository?: GitRepository, options?: { sourceCommit?: string; beforeWrite?: () => void }): Promise<GitTree>;
   remove(project: GitProject, path: string, discardChanges: boolean, sessionIds: string[], signal?: AbortSignal, repository?: GitRepository, options?: { verifiedClean?: boolean }): Promise<void>;
   /** Best-effort repair of moved linked worktrees; returns after the repository admin files were repaired. */
   repair(project: GitProject, worktreePaths: string[], sessionIds: string[], signal?: AbortSignal, repository?: GitRepository): Promise<void>;
@@ -108,8 +119,14 @@ export interface ProjectProbe {
   inspect(path: string): Promise<ProjectLocation>;
 }
 export interface CommandResult { exitCode: number; stdout: string; stderr: string }
+/**
+ * How long one Git invocation may run. The executor owns the values: a ref read is
+ * short, while a command that touches a checkout's working tree costs what the
+ * repository costs.
+ */
+export type GitDeadline = 'read' | 'tree' | 'write';
 export interface GitExecutor {
-  run(project: GitProject, args: string[], sessionIds: string[], signal?: AbortSignal, write?: boolean): Promise<CommandResult>;
+  run(project: GitProject, args: string[], sessionIds: string[], signal?: AbortSignal, write?: boolean, deadline?: GitDeadline): Promise<CommandResult>;
   assertPolicy(project: GitProject, paths: string[], sessionIds: string[], write: boolean): Promise<void>;
 }
 

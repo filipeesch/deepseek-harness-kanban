@@ -1,13 +1,18 @@
 import { createHash } from 'node:crypto';
 import { credentialKey } from '@deepseek-ai/dsh-credentials';
 import type { CredentialStore } from '../sharing/credentials.js';
-import type { DeterministicScope, DeterministicVariables } from './ports.js';
+import type { DeterministicApprovalScope, DeterministicScope, DeterministicVariables } from './ports.js';
 import { failure } from './ports.js';
 import { validateVariableName } from './safety.js';
 
 export function scopeKey(scope: DeterministicScope): string {
   if (![scope.hubId, scope.boardId, scope.projectId, scope.stageIdentity].every(value => typeof value === 'string' && value.length > 0)) failure('INVALID_SCOPE', 'A local Hub, project, and stable stage identity are required.');
   return createHash('sha256').update(JSON.stringify([scope.hubId, scope.boardId, scope.projectId, scope.stageIdentity])).digest('hex');
+}
+/** Approval is board-and-stage scoped: every project the board allows shares it. */
+export function approvalScopeKey(scope: DeterministicApprovalScope): string {
+  if (![scope.hubId, scope.boardId, scope.stageIdentity].every(value => typeof value === 'string' && value.length > 0)) failure('INVALID_SCOPE', 'A local Hub, board, and stable stage identity are required.');
+  return createHash('sha256').update(JSON.stringify([scope.hubId, scope.boardId, scope.stageIdentity])).digest('hex');
 }
 /** Owner records do not resolve ambient credential-reference fallbacks. */
 export function createDeterministicVariables(source: CredentialStore | undefined | (() => CredentialStore | undefined)): DeterministicVariables {

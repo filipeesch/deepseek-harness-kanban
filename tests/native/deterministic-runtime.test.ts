@@ -19,6 +19,7 @@ let ctx: Context;
 let runtime: DeterministicRuntime;
 let originalEnvironment: { HOME?: string; DSH_HOME?: string };
 const scope = { hubId: 'synthetic-hub', boardId: 'synthetic-board', projectId: 'synthetic-project', stageIdentity: 'synthetic-stage' };
+const approvalScope = { hubId: scope.hubId, boardId: scope.boardId, stageIdentity: scope.stageIdentity };
 beforeEach(async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), 'kanban-native-runtime-')));
   originalEnvironment = { HOME: process.env.HOME, DSH_HOME: process.env.DSH_HOME };
@@ -44,8 +45,8 @@ afterEach(async () => {
 });
 async function run(language: 'bash' | 'typescript', code: string, signal = new AbortController().signal) {
   const capture = await runtime.capture({ definition: { language, code, directory: 'project', exits: { passed: 'review' } }, projectDirectory: root, exits: { passed: { columnId: 'review', stageIdentity: 'stable-review' } } });
-  await runtime.trust.approve(scope, capture.fingerprint);
-  const outcome = await runtime.execute({ executionId: 'run-' + capture.sourceRef, taskId: 'task', capture, input: { title: 'untrusted $(no-execution)', startedAt: '2020-01-01T00:00:00Z' }, scope, signal });
+  await runtime.trust.approve(approvalScope, capture.fingerprint);
+  const outcome = await runtime.execute({ executionId: 'run-' + capture.sourceRef, taskId: 'task', capture, input: { title: 'untrusted $(no-execution)', startedAt: '2020-01-01T00:00:00Z' }, scope, approvalScope, signal });
   if (outcome.kind === 'failed') throw new Error(JSON.stringify(outcome.diagnostic));
   return outcome;
 }
@@ -79,8 +80,8 @@ describe('actual native deterministic ABI without profiles or models', () => {
   });
   it('bounds shell output inside the guarded process before native spill collection', async () => {
     const capture = await runtime.capture({ definition: { language: 'bash', code: 'yes synthetic-secret | head -c 100000', directory: 'project', exits: { passed: 'review' } }, projectDirectory: root, exits: { passed: { columnId: 'review', stageIdentity: 'stable-review' } } });
-    await runtime.trust.approve(scope, capture.fingerprint);
-    const outcome = await runtime.execute({ executionId: 'overflow-test', taskId: 'task', capture, input: {}, scope, signal: new AbortController().signal });
+    await runtime.trust.approve(approvalScope, capture.fingerprint);
+    const outcome = await runtime.execute({ executionId: 'overflow-test', taskId: 'task', capture, input: {}, scope, approvalScope, signal: new AbortController().signal });
     expect(outcome.kind).toBe('failed');
     // The provider's test-owned temporary directory must not contain a raw spill.
     const { readdir } = await import('node:fs/promises');
@@ -102,13 +103,13 @@ describe('actual native deterministic ABI without profiles or models', () => {
   it('passes declared parameter values to both languages as structured data', async () => {
     const exits = { passed: { columnId: 'review', stageIdentity: 'stable-review' } };
     const typescript = await runtime.capture({ definition: { language: 'typescript', code: 'return { exit: "passed", message: input.params.pipeline + ":" + input.params.app };', directory: 'project', params: [{ name: 'pipeline' }, { name: 'app' }], exits: { passed: 'review' } }, projectDirectory: root, exits });
-    await runtime.trust.approve(scope, typescript.fingerprint);
-    expect(await runtime.execute({ executionId: 'params-typescript', taskId: 'task', capture: typescript, input: { params: { pipeline: 'ci-main', app: 'checkout $(no-exec)' } }, scope, signal: new AbortController().signal }))
+    await runtime.trust.approve(approvalScope, typescript.fingerprint);
+    expect(await runtime.execute({ executionId: 'params-typescript', taskId: 'task', capture: typescript, input: { params: { pipeline: 'ci-main', app: 'checkout $(no-exec)' } }, scope, approvalScope, signal: new AbortController().signal }))
       .toMatchObject({ kind: 'completed', completion: { message: 'ci-main:checkout $(no-exec)' } });
     const bashCode = `node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const i=JSON.parse(s);process.stdout.write(JSON.stringify({exit:"passed",message:i.params.app}))})'`;
     const bash = await runtime.capture({ definition: { language: 'bash', code: bashCode, directory: 'project', params: [{ name: 'app' }], exits: { passed: 'review' } }, projectDirectory: root, exits });
-    await runtime.trust.approve(scope, bash.fingerprint);
-    expect(await runtime.execute({ executionId: 'params-bash', taskId: 'task', capture: bash, input: { params: { app: 'checkout' } }, scope, signal: new AbortController().signal }))
+    await runtime.trust.approve(approvalScope, bash.fingerprint);
+    expect(await runtime.execute({ executionId: 'params-bash', taskId: 'task', capture: bash, input: { params: { app: 'checkout' } }, scope, approvalScope, signal: new AbortController().signal }))
       .toMatchObject({ kind: 'completed', completion: { message: 'checkout' } });
   });
 

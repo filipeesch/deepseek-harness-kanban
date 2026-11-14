@@ -216,6 +216,13 @@ export function saveBoardWorkflow(hub: HubState, boardId: string, yaml: string, 
   reconcileLocalStageIdentities(board, workflow);
   board.workflowYaml = yaml;
   board.workflow = workflow;
+  // A saved deterministic stage can be reviewed before any card enters, so the
+  // write freezes its stable identity and its destinations' identities.
+  for (const column of workflow.columns) {
+    if (column.deterministic === undefined) continue;
+    ensureLocalStageIdentity(board, column.id, deps.id);
+    for (const destination of Object.values(column.deterministic.exits)) ensureLocalStageIdentity(board, destination, deps.id);
+  }
   board.updatedAt = timestamp(deps);
   hub.updatedAt = timestamp(deps);
   return workflow;

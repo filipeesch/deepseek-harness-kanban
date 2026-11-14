@@ -11,7 +11,7 @@ import { setDiagnostics, type Diagnostic } from '@codemirror/lint';
 import { yaml } from '@codemirror/lang-yaml';
 import { tags } from '@lezer/highlight';
 
-const editorTheme = EditorView.theme({
+export const editorTheme = EditorView.theme({
   '&': { height: '100%', color: 'inherit', backgroundColor: 'transparent', fontSize: '13px' },
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace', lineHeight: '1.55', overflow: 'auto' },
@@ -29,7 +29,7 @@ const editorTheme = EditorView.theme({
   '.cm-tooltip': { backgroundColor: 'var(--kb-surface, Canvas)', color: 'inherit', border: '1px solid color-mix(in srgb, currentColor 20%, transparent)' },
 });
 
-const highlightStyle = HighlightStyle.define([
+export const highlightStyle = HighlightStyle.define([
   { tag: tags.comment, color: 'color-mix(in srgb, currentColor 54%, #6b7280)', fontStyle: 'italic' },
   { tag: [tags.propertyName, tags.definition(tags.propertyName)], color: 'color-mix(in srgb, currentColor 70%, #2563eb)' },
   { tag: [tags.string, tags.special(tags.string)], color: 'color-mix(in srgb, currentColor 64%, #15803d)' },

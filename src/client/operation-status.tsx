@@ -1,17 +1,21 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { Task } from '../shared/types.js';
 import { describeOperation } from './operation-description.js';
 import { OperationRecoveryActions } from './operation-actions.js';
+import { DiscardCheckoutDialog } from './destructive-dialogs.js';
 import { ProblemNotice, useAction, type RunCommand } from './ui.js';
 
-export function OperationStatus({ task, run, sessionTitles, onForce }: {
+export function OperationStatus({ task, run, sessionTitles, onForce, worktreeBasePath }: {
   task: Task;
   run: RunCommand;
   sessionTitles?: { title(sessionId: string): string | undefined };
   onForce?: (taskId: string) => void;
+  /** The configured base, so a stale persisted candidate is never shown as removable. */
+  worktreeBasePath?: string;
 }) {
   const action = useAction(run);
   const operation = task.operation;
+  const [discarding, setDiscarding] = useState(false);
   if (!operation) return null;
   const description = describeOperation(task, operation);
   const stateLabel = operation.phase === 'queued' ? 'Queued' : operation.phase === 'waiting' ? 'Waiting' : operation.phase === 'failed' ? 'Failed' : 'In progress';
@@ -21,13 +25,16 @@ export function OperationStatus({ task, run, sessionTitles, onForce }: {
     <p className="kb-hint">{description.detail}</p>
     {description.facts.length > 0 && <dl className="kb-operation-facts">{description.facts.map(fact => <div key={fact.label}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl>}
     <ProblemNotice problem={operation.error ?? null} title={description.title} sessionTitles={sessionTitles} />
-    {!duplicateActionError && <ProblemNotice problem={action.error} title={description.title} sessionTitles={sessionTitles} />}
+    {!duplicateActionError && <ProblemNotice problem={action.error} title="Last action failed (not saved)" sessionTitles={sessionTitles} />}
     <OperationRecoveryActions
       description={description}
       pending={action.pending}
       onRetry={() => void action.execute({ type: 'operation.retry', taskId: task.id })}
       onReturn={() => void action.execute({ type: 'operation.return', taskId: task.id })}
+      onDiscard={() => setDiscarding(true)}
+      onCancel={() => void action.execute({ type: 'operation.cancel', taskId: task.id })}
       {...(onForce ? { onForce: () => onForce(task.id) } : {})}
     />
+    {discarding && <DiscardCheckoutDialog task={task} operation={operation} run={run} onClose={() => setDiscarding(false)} {...(worktreeBasePath === undefined ? {} : { worktreeBasePath })} />}
   </div>;
 }

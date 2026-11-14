@@ -58,9 +58,10 @@ import { resolveCanonicalPath } from './path-resolution.js';
 import type { ScheduleRuntimePort } from './schedule-port.js';
 import type { ModelCatalog } from '../shared/types.js';
 import type { DeterministicRuntime } from './deterministic/ports.js';
-import type { DeterministicReview, DeterministicSummary } from '../shared/deterministic.js';
+import type { DeterministicStageReview, DeterministicSummary } from '../shared/deterministic.js';
 import { DeterministicSupervisor } from './deterministic-supervisor.js';
 import { createNativeSupervisorPorts } from './deterministic-control.js';
+import { DeterministicApprovalService } from './deterministic-approval.js';
 import { createDeterministicRouter } from './deterministic-routing.js';
 import { createDeterministicImpact } from './deterministic-impact.js';
 import { deterministicEqual } from '../domain/deterministic-definition.js';
@@ -134,6 +135,7 @@ export class KanbanApp {
  private readonly workspaceCoordinator?:WorkspaceCoordinator;
  private scheduleRuntime:ScheduleRuntimePort|undefined;
  private deterministicRuntime:DeterministicSupervisor|undefined;
+ private deterministicApproval:DeterministicApprovalService|undefined;
  /** The native runtime a write report asks for the fingerprint of a proposed executable. */
  private nativeDeterministic:DeterministicRuntime|undefined;
  private initialized=false;
@@ -196,17 +198,28 @@ export class KanbanApp {
  attachDeterministicRuntime(nativeRuntime:DeterministicRuntime):()=>Promise<void>{
   this.nativeDeterministic=nativeRuntime;
   const route=createDeterministicRouter({hubs:this.hubs,sessions:this.sessions,pending:task=>readPendingUserWork(this.factsSource,task.sessionIds),reserved:id=>this.handoffAdmissions.has(id)||this.contextAdmissions.has(id),notify:()=>{void this.dispatchDeterministicHandoffs().catch(error=>this.options.report?.(error));}});
+  const transact=<T>(taskId:string,change:(task:HubTask,located:LocatedTask)=>T):Promise<T>=>{
+   const found=this.locatedTask(taskId);
+   return this.hubs.hub(found.hubId).transact(draft=>{const task=draft.tasks.find(value=>value.id===taskId);invariant(task,'TASK_NOT_FOUND','The task no longer exists.');const board=draft.boards.find(value=>value.id===task.boardId)!;const project=draft.projects.find(value=>value.id===task.projectId)!;return change(task,{hubId:draft.id,hub:draft,board,project,task});});
+  };
   this.deterministicRuntime=new DeterministicSupervisor(createNativeSupervisorPorts({nativeRuntime,
-   locate:id=>this.locator.byTask(id),all:()=>this.locator.all(),
-   transact:<T>(taskId:string,change:(task:HubTask,located:LocatedTask)=>T):Promise<T>=>{
-    const found=this.locatedTask(taskId);
-    return this.hubs.hub(found.hubId).transact(draft=>{const task=draft.tasks.find(value=>value.id===taskId);invariant(task,'TASK_NOT_FOUND','The task no longer exists.');const board=draft.boards.find(value=>value.id===task.boardId)!;const project=draft.projects.find(value=>value.id===task.projectId)!;return change(task,{hubId:draft.id,hub:draft,board,project,task});});
-   },route,canStart:id=>!this.contextAdmissions.has(id),report:error=>this.options.report?.(error),notify:()=>this.markChanged(),id:()=>randomUUID(),now:()=>new Date().toISOString(),
+   locate:id=>this.locator.byTask(id),all:()=>this.locator.all(),transact,
+   route,canStart:id=>!this.contextAdmissions.has(id),report:error=>this.options.report?.(error),notify:()=>this.markChanged(),id:()=>randomUUID(),now:()=>new Date().toISOString(),
   }));
   const attached=this.deterministicRuntime;
-  if(this.initialized)attached.start();this.markChanged();
-  return async()=>{attached.dispose();await attached.settle();if(this.deterministicRuntime===attached){this.deterministicRuntime=undefined;if(this.nativeDeterministic===nativeRuntime)this.nativeDeterministic=undefined;this.markChanged();}};
+  const approval=new DeterministicApprovalService({runtime:()=>this.nativeDeterministic,findBoard:boardId=>this.hubs.findBoard(boardId),locate:taskId=>this.locator.byTask(taskId),all:()=>this.locator.all(),transact,wake:filter=>this.deterministicRuntime?.wakeWaiting(filter)});
+  this.deterministicApproval=approval;
+  if(this.initialized){
+    // Late native attachment: normalize legacy captures before supervision starts.
+    void this.migrateDeterministicCaptures().then(
+      ()=>{if(!this.disposed&&this.deterministicRuntime===attached)attached.start();this.markChanged();},
+      error=>{this.options.report?.(error);if(!this.disposed&&this.deterministicRuntime===attached)attached.start();},
+    );
+  }
+  this.markChanged();
+  return async()=>{attached.dispose();await attached.settle();if(this.deterministicRuntime===attached){this.deterministicRuntime=undefined;if(this.deterministicApproval===approval)this.deterministicApproval=undefined;if(this.nativeDeterministic===nativeRuntime)this.nativeDeterministic=undefined;this.markChanged();}};
  }
+ private requireApproval():DeterministicApprovalService{invariant(this.deterministicApproval,'DETERMINISTIC_UNAVAILABLE','This host does not expose isolated deterministic execution.');return this.deterministicApproval;}
  private requireDeterministic():DeterministicSupervisor{invariant(this.deterministicRuntime,'DETERMINISTIC_UNAVAILABLE','This host does not expose isolated deterministic execution.');return this.deterministicRuntime;}
  private async ensureDeterministicEntry(taskId:string):Promise<HubTask>{
   const found=this.locatedTask(taskId);if(found.task.stageEntry)return found.task;
@@ -215,8 +228,20 @@ export class KanbanApp {
    task.stageEntry={id:randomUUID(),columnId:task.columnId,stageIdentity,enteredAt:task.createdAt};
   });return this.locatedTask(taskId).task;
  }
- async deterministicReview(taskId:string):Promise<DeterministicReview>{
-  await this.ensureDeterministicEntry(taskId);return this.requireDeterministic().review(taskId);
+ async deterministicReview(request:{boardId?:string;stageId?:string;taskId?:string}|string):Promise<DeterministicStageReview>{
+  if(typeof request==='string'){
+   const located=this.locatedTask(request);
+   return this.requireApproval().review({boardId:located.board.id,stageId:located.task.columnId,taskId:request});
+  }
+  if(request.taskId!==undefined&&(request.boardId===undefined||request.stageId===undefined)){
+   const located=this.locatedTask(request.taskId);
+   return this.requireApproval().review({boardId:located.board.id,stageId:located.task.columnId,taskId:request.taskId});
+  }
+  invariant(request.boardId!==undefined&&request.stageId!==undefined,'BOARD_NOT_FOUND','The board does not exist.');
+  return this.requireApproval().review({boardId:request.boardId,stageId:request.stageId,...(request.taskId===undefined?{}:{taskId:request.taskId})});
+ }
+ async deterministicVariables(taskId:string):Promise<{env:string[];variables:Array<{name:string;configured:boolean}>}>{
+  return this.requireApproval().variables(taskId);
  }
  private deterministicSummaries():Record<string,DeterministicSummary>{
   const result:Record<string,DeterministicSummary>={};
@@ -390,8 +415,27 @@ export class KanbanApp {
   await this.dispatchPending();
   this.scheduleStartupReconciliation(summaries);
   this.startup.run([() => this.runDraftRetention()]);
+  await this.migrateDeterministicCaptures();
   this.initialized=true;this.deterministicRuntime?.start();
   await this.dispatchDeterministicHandoffs();
+ }
+ /** Rewrite verified pre-upgrade captures under the current version authority. */
+ private async migrateDeterministicCaptures():Promise<void>{
+  const runtime=this.nativeDeterministic;if(!runtime)return;
+  let changed=false;
+  for(const located of this.locator.all()){
+   const control=located.task.deterministic;if(!control?.capture)continue;
+   try{
+    const normalized=await runtime.normalizeCapture(control.capture,control.definition);
+    const acquired=normalized.sourceRef!==control.capture.sourceRef;
+    try{
+      if(!acquired)continue;
+      await this.hubs.hub(located.hubId).transact(draft=>{const task=draft.tasks.find(value=>value.id===located.task.id);if(!task?.deterministic||task.deterministic.entryId!==control.entryId||task.deterministic.executionId!==control.executionId)return;task.deterministic.capture=normalized;});
+      changed=true;
+    }finally{if(acquired)runtime.releaseCapture(normalized);}
+   }catch(error){this.options.report?.(error);}
+  }
+  if(changed)this.markChanged();
  }
  /** Resolves when the background startup reconciliation and any retained checkout check have finished. */
  async whenSettled():Promise<void>{await this.startup.whenSettled();await this.retainedPrune;}
@@ -937,13 +981,22 @@ export class KanbanApp {
   await admitStageInstruction(this.stageInstructionDeps(),{taskId,columnId,instruction,expectedEnteredAt,sessionId:prepared.sessionId});
   return {...prepared,sent:true};
  }
+ /** Refuse an unknown task, then abort that task's pass without joining its serial lane. */
+ private async cancelOperation(command:Extract<Command,{type:'operation.cancel'}>):Promise<FullHostSnapshot>{
+  this.locatedTask(command.taskId);
+  await this.worktrees.cancel(command.taskId);
+  return this.snapshot();
+ }
  saveNote(input:Extract<Command,{type:'note.save'}>){return this.serial(()=>this.saveNoteNow(input));}
  private async saveNoteNow(input:Extract<Command,{type:'note.save'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).saveNote(input.taskId,{id:input.noteId,content:input.content,tags:input.tags});}
  private async deleteNoteNow(input:Extract<Command,{type:'note.delete'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).deleteNote(input.taskId,input.noteId);}
  async command(command:Command):Promise<FullHostSnapshot>{
   if(command.type.startsWith('task.deterministic'))return this.execute(command);
+  // Cancellation interrupts a pass that is still awaiting Git, so it cannot queue
+  // behind the serial lane that pass holds.
+  if(command.type==='operation.cancel')return this.cancelOperation(command);
   const ids=command.type==='project.relocate'&&command.confirmed?this.locator.all().filter(value=>value.project.id===command.project.id).map(value=>value.task.id)
-   :((command.type==='task.delete'||command.type==='worktree.remove')&&command.confirmed)||command.type==='worktree.create'||command.type==='worktree.attach'||command.type==='operation.return'?[command.taskId]:[];
+   :((command.type==='task.delete'||command.type==='worktree.remove')&&command.confirmed)||command.type==='worktree.create'||command.type==='worktree.attach'||command.type==='worktree.discardCreate'||command.type==='operation.return'?[command.taskId]:[];
   for(const id of ids)invariant(!this.contextAdmissions.has(id),'CONTEXT_ADMISSION_PENDING','Another operation is changing this task context.');
   for(const id of ids)this.contextAdmissions.add(id);
   try { const preparing=this.prepareDeterministicContext(command); if(preparing)await preparing; return await this.serial(()=>this.execute(command)); }
@@ -957,7 +1010,7 @@ export class KanbanApp {
   else if(command.type==='task.delete'||command.type==='worktree.remove'){
    if(!command.confirmed)return undefined;
    this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,command.type==='task.delete'?'delete':'remove');taskIds=[command.taskId];
-  }else if(command.type==='worktree.create'||command.type==='worktree.attach'||command.type==='operation.return')taskIds=[command.taskId];
+  }else if(command.type==='worktree.create'||command.type==='worktree.attach'||command.type==='worktree.discardCreate'||command.type==='operation.return')taskIds=[command.taskId];
   for(const id of taskIds)this.assertNoHandoffAdmission(id);
   if(taskIds.length===0)return undefined;
   // A replaced entry can leave a native lease even when the current task has no control.
@@ -1043,7 +1096,15 @@ export class KanbanApp {
     invariant(cancelled!==undefined,'JOB_NOT_OWNED','The background job does not belong to this task conversation.');
     this.requireDeterministic().wake(task.id);break;}
    case 'task.deterministicStop':{const task=this.locatedTask(command.taskId).task;invariant(task.deterministic,'EXECUTION_NOT_FOUND','This task has no deterministic execution.');await this.requireDeterministic().stop({taskId:task.id,entryId:task.deterministic.entryId,executionId:command.executionId??task.deterministic.executionId});break;}
-   case 'task.deterministicApprove':await this.requireDeterministic().approve(command.taskId,command.executionId,command.fingerprint);break;
+   case 'board.deterministicApprove':await this.requireApproval().approve({boardId:command.boardId,stageId:command.stageId,fingerprint:command.fingerprint,stageGeneration:command.stageGeneration,...(command.taskId===undefined?{}:{taskId:command.taskId})});break;
+   case 'task.deterministicApprove':{
+    const located=this.locator.byTask(command.taskId);invariant(located,'TASK_NOT_FOUND','Task does not exist.');
+    if(located.task.deterministic?.executionId!==command.executionId)throw new KanbanError('STALE_VERSION','The captured execution changed before approval. Review the current version.');
+    const review=await this.deterministicReview({boardId:located.task.boardId,stageId:located.task.columnId,taskId:command.taskId});
+    if(review.version.fingerprint!==command.fingerprint)throw new KanbanError('STALE_VERSION','The reviewed version changed before approval. Review the current version.');
+    await this.requireApproval().approve({boardId:located.task.boardId,stageId:located.task.columnId,fingerprint:review.version.fingerprint,stageGeneration:review.version.stageGeneration,taskId:command.taskId});
+    break;
+   }
    case 'task.deterministicVariable':{const located=this.locatedTask(command.taskId);invariant(located.project.id===command.projectId,'STALE_STAGE','The task project changed before this value could be saved.');await this.ensureDeterministicEntry(command.taskId);const current=this.locatedTask(command.taskId).task;invariant(current.stageEntry?.stageIdentity===command.stageIdentity,'STALE_STAGE','The task moved to another stage before this value could be saved.');await this.requireDeterministic().variable(command.taskId,command.name,command.value??null,command.stageIdentity);break;}
    case 'task.deterministicRetryDelivery':{const task=this.locatedTask(command.taskId).task;invariant(task.deterministic?.entryId===command.entryId&&task.deterministic.executionId===command.executionId,'STALE_EXECUTION','This saved result no longer owns the stage entry.');await this.requireDeterministic().retryDelivery({taskId:task.id,entryId:command.entryId,executionId:command.executionId});break;}
    case 'task.deterministicParameters':await this.requireDeterministic().parameters(command.taskId,command.entryId,command.values);break;
@@ -1056,6 +1117,7 @@ export class KanbanApp {
    case 'task.delete':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm task data/worktree removal and native conversation archiving.');this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'delete');this.assertScriptContextStopped(command.taskId);await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'delete',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true});break;
    case 'worktree.create':this.assertScriptContextStopped(command.taskId);this.assertContext(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'create',mode:command.mode,path:command.path,branchName:command.branchName,sourceBranch:command.sourceBranch});break;
    case 'worktree.attach':this.assertScriptContextStopped(command.taskId);this.assertContext(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'attach',path:command.path});break;
+   case 'worktree.discardCreate':this.assertScriptContextStopped(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'recovering its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.discardCreate(command.taskId,command.confirmed);break;
    case 'worktree.dismiss':{this.assertContext(command.taskId);const located=this.locatedTask(command.taskId);invariant(isGitProject(located.project),'PROJECT_NOT_GIT','Worktree choices require a Git-backed project.');invariant(!located.task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');invariant(!located.task.worktree,'WORKTREE_EXISTS','The task already has a worktree.');if(located.task.worktreeDismissed!==true)await this.hubs.hub(located.hubId).dismissWorktree(command.taskId);break;}
    case 'worktree.remove':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm removal of the worktree while preserving the task and branch.');this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'remove');this.assertScriptContextStopped(command.taskId);await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'remove',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true});break;
    case 'operation.retry':{

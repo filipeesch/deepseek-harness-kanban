@@ -20,13 +20,13 @@ function summarySource(initial: Summaries) {
     },
   };
 }
-export interface DeterministicEnvironment { api: ClientApi; run: RunCommand; source: ReturnType<typeof summarySource> }
+export interface DeterministicEnvironment { api: ClientApi; run: RunCommand; source: ReturnType<typeof summarySource>; boardId?: string }
 const Context = createContext<DeterministicEnvironment | null>(null);
 /** Summary publication does not invalidate every memoized card on attention-only updates. */
-export function DeterministicProvider({ api, run, summaries, children }: { api: ClientApi; run: RunCommand; summaries: Summaries; children: React.ReactNode }) {
+export function DeterministicProvider({ api, run, summaries, boardId, children }: { api: ClientApi; run: RunCommand; summaries: Summaries; boardId?: string; children: React.ReactNode }) {
   const latestRun = useRef(run); latestRun.current = run;
   const source = useMemo(() => summarySource(summaries), [api]);
-  const value = useMemo(() => ({ api, run: (command: Parameters<RunCommand>[0]) => latestRun.current(command), source }), [api, source]);
+  const value = useMemo(() => ({ api, run: (command: Parameters<RunCommand>[0]) => latestRun.current(command), source, ...(boardId === undefined ? {} : { boardId }) }), [api, source, boardId]);
   useLayoutEffect(() => source.update(summaries), [source, summaries]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

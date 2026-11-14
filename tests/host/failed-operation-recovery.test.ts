@@ -87,6 +87,20 @@ describe('failed context operation recovery', () => {
     expect(await f.sessions.directory(task.sessionIds[0]!)).toBe(f.projectPath);
   });
 
+  it('refuses to cancel an unknown task and a task with no operation', async () => {
+    const f = await setup();
+    await expect(f.app.command({ type: 'operation.cancel', taskId: 'missing' })).rejects.toMatchObject({ code: 'TASK_NOT_FOUND' });
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Idle task', description: '' });
+    await expect(f.app.command({ type: 'operation.cancel', taskId: task.id })).rejects.toMatchObject({ code: 'NO_OPERATION' });
+  });
+
+  it('refuses an unconfirmed discard and a discard with nothing to discard', async () => {
+    const f = await setup();
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'No attempt', description: '' });
+    await expect(f.app.command({ type: 'worktree.discardCreate', taskId: task.id, confirmed: false })).rejects.toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
+    await expect(f.app.command({ type: 'worktree.discardCreate', taskId: task.id, confirmed: true })).rejects.toMatchObject({ code: 'NO_OPERATION' });
+  });
+
   it('still protects a failed create that owns an unclaimed attempt', async () => {
     const f = await setup();
     const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Protected create', description: '' });

@@ -1,9 +1,18 @@
 import { KanbanError } from '../shared/errors.js';
-import type { ContextOperation, HubState, Task } from '../shared/types.js';
+import type { ContextOperation, HubState, Problem, Task } from '../shared/types.js';
 
 /** The narrow write surface a journal needs, satisfied by the coordinator's store. */
 export interface JournalStore {
   transactTask<T>(taskId: string, change: (draft: HubState) => T): Promise<T>;
+}
+
+/**
+ * The diagnostic a waiting operation carries while a started Git write is still
+ * unverified, so the wait never hides that the checkout may exist.
+ */
+export function recoveryPendingError(operation: ContextOperation): Problem | undefined {
+  if (operation.phase !== 'git' || operation.gitCompleted) return undefined;
+  return { code: 'RECOVERY_PENDING', message: 'Waiting to inspect the previously started Git operation.', details: { failedPhase: 'git', gitAttempted: !!operation.createAttempt } };
 }
 
 export function requireTask(state: HubState, taskId: string): Task {

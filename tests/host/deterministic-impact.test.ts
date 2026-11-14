@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDeterministicImpact } from '../../src/host/deterministic-impact.js';
-import type { CapturePlan, DeterministicRuntime, DeterministicScope } from '../../src/host/deterministic/ports.js';
+import type { CapturePlan, DeterministicApprovalScope, DeterministicRuntime } from '../../src/host/deterministic/ports.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import type { Board, HubState, Project, Workflow } from '../../src/shared/types.js';
 
@@ -18,15 +18,16 @@ interface FakeOptions { readonly approved?: readonly string[] }
 
 function fakeRuntime(options: FakeOptions = {}) {
   const approved = new Set(options.approved ?? []);
-  const scopes: DeterministicScope[] = [];
+  const scopes: DeterministicApprovalScope[] = [];
   const runtime = {
     async plan(request: Parameters<DeterministicRuntime['plan']>[0]): Promise<CapturePlan> {
-      const fingerprint = JSON.stringify([request.definition, request.projectDirectory, request.exits]);
+      // The version excludes the execution directory; the project only supplies bytes.
+      const fingerprint = JSON.stringify([request.definition, request.exits]);
       return { content: { language: request.definition.language, directory: request.definition.directory, executionDirectory: request.projectDirectory, source: { kind: 'inline' }, env: [...(request.definition.env ?? [])], params: [], exits: request.exits }, code: request.definition.code ?? '', fingerprint };
     },
     trust: {
-      async isApproved(scope: DeterministicScope, fingerprint: string) { scopes.push(scope); return approved.has(scope.projectId + ':' + scope.stageIdentity + ':' + fingerprint); },
-      async approve() {}, async reject() {},
+      async isApproved(scope: DeterministicApprovalScope, fingerprint: string) { scopes.push(scope); return approved.has(scope.stageIdentity + ':' + fingerprint); },
+      async approve() {},
     },
   } as unknown as DeterministicRuntime;
   return { runtime, approved, scopes };
@@ -37,32 +38,29 @@ const hubOf = (projects: readonly Project[]): HubState => ({ id: 'hub', projects
 function impact(runtime: DeterministicRuntime, hub: HubState, board: Board, before: Workflow | null, after: Workflow) {
   return createDeterministicImpact(() => runtime).describe({ hub, board, before, after });
 }
+function approvedKey(definition: unknown, exits: unknown, stageIdentity = 'wait-key') {
+  return stageIdentity + ':' + JSON.stringify([definition, exits]);
+}
 
 describe('deterministic script impact', () => {
-  it('reports one verdict per allowed project', async () => {
+  it('reports one verdict per stage instead of one per project', async () => {
     const after = parseWorkflow(DEFINITION);
     const board = boardOf(DEFINITION, { wait: 'wait-key', review: 'review-key' });
     const { runtime } = fakeRuntime();
     const result = await impact(runtime, hubOf([projectOf('p1', '/project/one'), projectOf('p2', '/project/two')]), board, after, after);
-    expect(result.map(entry => entry.projectId)).toEqual(['p1', 'p2']);
-    expect(result.every(entry => entry.stage === 'wait')).toBe(true);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ stage: 'wait', verdict: 'changed', reasons: ['unapproved'] });
   });
 
-  it('reports an approved version as holding', async () => {
+  it('reports an approved version as holding once for the board', async () => {
     const after = parseWorkflow(DEFINITION);
     const board = boardOf(DEFINITION, { wait: 'wait-key', review: 'review-key' });
-    const { runtime } = fakeRuntime();
-    const probe = await impact(runtime, hubOf([projectOf('p1', '/project/one')]), board, after, after);
-    expect(probe[0]!.verdict).toBe('changed');
-    expect(probe[0]!.reasons).toEqual(['unapproved']);
-
     const definition = after.columns[0]!.deterministic!;
     const exits = { passed: { columnId: 'review', stageIdentity: 'review-key' } };
-    const fingerprint = JSON.stringify([definition, '/project/one', exits]);
-    const approved = fakeRuntime({ approved: ['p1:wait-key:' + fingerprint] });
-    const result = await impact(approved.runtime, hubOf([projectOf('p1', '/project/one')]), board, after, after);
+    const approved = fakeRuntime({ approved: [approvedKey(definition, exits)] });
+    const result = await impact(approved.runtime, hubOf([projectOf('p1', '/project/one'), projectOf('p2', '/project/two')]), board, after, after);
     expect(result[0]).toMatchObject({ verdict: 'holds', reasons: [] });
-    expect(approved.scopes).toEqual([{ hubId: 'hub', boardId: 'board', projectId: 'p1', stageIdentity: 'wait-key' }]);
+    expect(approved.scopes).toEqual([{ hubId: 'hub', boardId: 'board', stageIdentity: 'wait-key' }]);
   });
 
   it('names the exits as the reason a retargeted destination no longer holds', async () => {
@@ -92,6 +90,15 @@ describe('deterministic script impact', () => {
     expect(result[0]).toMatchObject({ verdict: 'changed', reasons: ['environment'] });
   });
 
+  it('names a changed parameter declaration as the reason it no longer holds', async () => {
+    const before = parseWorkflow(DEFINITION);
+    const after = parseWorkflow(DEFINITION.replace('code: exit 0', 'code: exit 0\n      params: [{name: pipeline}]'));
+    const board = boardOf(DEFINITION, { wait: 'wait-key', review: 'review-key' });
+    const { runtime } = fakeRuntime();
+    const result = await impact(runtime, hubOf([projectOf('p1', '/project/one')]), board, before, after);
+    expect(result[0]).toMatchObject({ verdict: 'changed', reasons: ['parameters'] });
+  });
+
   it('names the working-directory choice as the reason it no longer holds', async () => {
     const before = parseWorkflow(DEFINITION.replace('directory: project', 'directory: task'));
     const after = parseWorkflow(DEFINITION);
@@ -106,26 +113,20 @@ describe('deterministic script impact', () => {
     const rekeyed = DEFINITION.replace('    label: Wait', '    label: Wait\n    key: new-wait');
     const before = parseWorkflow(keyed);
     const after = parseWorkflow(rekeyed);
-    // The previous board associated the stage with its old authored key.
     const board = { id: 'board', allowedProjectKeys: undefined, workflow: before, localStageIdentities: { wait: 'old-wait', review: 'review-key' } } as unknown as Board;
-    const definition = before.columns[0]!.deterministic!;
-    const exits = { passed: { columnId: 'review', stageIdentity: 'review-key' } };
-    const fingerprint = JSON.stringify([definition, '/project/one', exits]);
-    void fingerprint;
-    // Approving the old identity does not approve the new one.
     const approved = fakeRuntime({ approved: [] });
     const result = await impact(approved.runtime, hubOf([projectOf('p1', '/project/one')]), board, before, after);
     expect(result[0]).toMatchObject({ verdict: 'changed', reasons: ['unapproved'] });
-    expect(approved.scopes).toEqual([{ hubId: 'hub', boardId: 'board', projectId: 'p1', stageIdentity: 'new-wait' }]);
+    expect(approved.scopes).toEqual([{ hubId: 'hub', boardId: 'board', stageIdentity: 'new-wait' }]);
   });
 
-  it('reports a task-scoped stage as unverifiable instead of claiming a project result', async () => {
-    const yaml = DEFINITION.replace('directory: project', 'directory: task');
+  it('reports a relative external source as directory-dependent instead of claiming a board result', async () => {
+    const yaml = DEFINITION.replace('code: exit 0', 'file: wait.sh');
     const after = parseWorkflow(yaml);
     const board = boardOf(yaml, { wait: 'wait-key', review: 'review-key' });
     const { runtime } = fakeRuntime();
     const result = await impact(runtime, hubOf([projectOf('p1', '/project/one')]), board, after, after);
-    expect(result[0]).toMatchObject({ verdict: 'unverifiable', reasons: ['execution-directory'] });
+    expect(result[0]).toMatchObject({ verdict: 'unverifiable', reasons: ['directory-dependent'] });
   });
 
   it('reports a project without a directory as unverifiable', async () => {
