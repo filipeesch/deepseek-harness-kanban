@@ -5,6 +5,8 @@ import { canTransition, transitionAccess } from '../domain/transitions.js';
 import { resolveTaskConversationModel } from '../domain/model-preference.js';
 import type { SessionModelPort } from './session-model.js';
 import { conversationStageActivity, persistedStageActivity } from '../shared/stage-activity.js';
+import { openSessionIds } from '../shared/conversations.js';
+import { aggregateTaskActivity, UNAVAILABLE_TASK_ACTIVITY, type TaskActivity, type TaskActivityOptions, type TaskActivityScope } from '../domain/task-activity.js';
 import { entryInstruction, nextEnteredAt } from '../domain/stage-entry.js';
 import { placementFromAnchor } from '../domain/placement.js';
 import { TURN_ADVANCE_SETTLE_MS, TurnAdvanceCoordinator } from './turn-advance.js';
@@ -654,6 +656,23 @@ export class KanbanApp {
  activityChanged():void{if(this.disposed)return;this.attention.touch();this.markChanged();}
  /** The question-aware conversation facts shared by attention and scheduled archiving. */
  conversationFacts(sessionId:string):Promise<ConversationFacts>{return this.factsSource.read(sessionId);}
+ /**
+  * One task's native execution facts, aggregated over its OPEN conversations. With
+  * `wait`, the read is durable and any conversation that cannot be read makes the
+  * value unavailable; without it, only facts the host already resolved are used, so
+  * a listing never waits on a cold native read. Neither mode reports a failure as
+  * an idle task.
+  */
+ async taskActivity(task:TaskActivityScope,options:TaskActivityOptions={}):Promise<TaskActivity>{
+  const sessionIds=openSessionIds({sessionIds:task.sessionIds,closedSessionIds:task.closedSessionIds??[]});
+  if(sessionIds.length===0)return aggregateTaskActivity([]);
+  try{
+   if(options.wait!==true){const resolved=this.attention.resolved(sessionIds);const entries=sessionIds.flatMap(sessionId=>{const facts=resolved[sessionId];return facts===undefined?[]:[{sessionId,facts}];});return entries.length===sessionIds.length?aggregateTaskActivity(entries):{...aggregateTaskActivity(entries),available:false};}
+   const entries=await Promise.all(sessionIds.map(async sessionId=>({sessionId,facts:await this.attention.readResolved(sessionId)})));
+   if(entries.some(entry=>entry.facts===undefined))return UNAVAILABLE_TASK_ACTIVITY;
+   return aggregateTaskActivity(entries.filter((entry):entry is {sessionId:string;facts:ConversationFacts}=>entry.facts!==undefined));
+  }catch{return UNAVAILABLE_TASK_ACTIVITY;}
+ }
  /** The in-flight reasons one board reports: persisted task state plus the facts only the host can read. */
  private async boardActivity(hubId:string,boardId:string):Promise<readonly string[]>{
   const hub=this.hubs.requireHub(hubId);

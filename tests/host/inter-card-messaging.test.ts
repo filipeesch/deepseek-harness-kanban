@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { InterCardMessaging } from '../../src/host/inter-card-messaging.js';
+import { InterCardMessaging, type InterCardMessagingDeps } from '../../src/host/inter-card-messaging.js';
 import type { LocatedTask } from '../../src/host/hub-repository.js';
+import type { TaskActivity } from '../../src/shared/types.js';
 import { fakeLocatedTask } from './helpers.js';
 
-function setup(options: { hubId?: string; targetOpen?: string[] } = {}) {
+function setup(options: { hubId?: string; targetOpen?: string[]; activity?: InterCardMessagingDeps['activity'] } = {}) {
   const sender = fakeLocatedTask({ taskId: 'sender', title: 'Sender', open: ['sender-session'] });
   const targets = new Map<string, LocatedTask>([
     ['sender', sender],
@@ -16,6 +17,7 @@ function setup(options: { hubId?: string; targetOpen?: string[] } = {}) {
     locate: id => targets.get(id),
     prepare,
     delivery,
+    ...(options.activity === undefined ? {} : { activity: options.activity }),
   });
   return { service, sender, targets, delivery, prepare, setTarget: (next: LocatedTask) => { targets.set('target', next); } };
 }
@@ -28,7 +30,10 @@ describe('inter-card messaging service', () => {
       delivered: true,
       requestId: 'task-message:sender-session:call-1',
       senderTaskId: 'sender',
-      target: { taskId: 'target', title: 'Target', sessionId: 'target-session' },
+      target: {
+        taskId: 'target', title: 'Target', sessionId: 'target-session', columnId: 'todo',
+        activity: { available: false, running: false, pending: [], queuedPrompts: 0, backgroundCount: 0, settledTurns: [] },
+      },
       createdConversation: false,
     });
     expect(f.prepare).not.toHaveBeenCalled();
@@ -46,6 +51,28 @@ describe('inter-card messaging service', () => {
     expect(sent.text).toContain('Hub');
     expect(sent.text).toContain('Board');
     expect(sent.text).toContain('Ship it.');
+  });
+
+  it('reports the target stage and activity at delivery', async () => {
+    const running: TaskActivity = { available: true, running: true, pending: ['approval'], queuedPrompts: 0, backgroundCount: 0, settledTurns: [] };
+    const activity: InterCardMessagingDeps['activity'] = vi.fn(async () => running);
+    const f = setup({ targetOpen: ['target-session'], activity });
+    const result = await f.service.send({ senderSessionId: 'sender-session', targetTaskId: 'target', body: 'Check the build.', callId: 'call-1' });
+    expect(result.target).toMatchObject({
+      columnId: 'todo',
+      activity: { available: true, running: true, pending: ['approval'] },
+    });
+    // The target's open conversations are the ones read, never the closed ones.
+    expect(activity).toHaveBeenCalledWith(expect.objectContaining({ sessionIds: ['target-session'] }));
+  });
+
+  it('delivers even when the target activity cannot be read', async () => {
+    const activity: InterCardMessagingDeps['activity'] = vi.fn(async () => { throw new Error('native facts lost'); });
+    const f = setup({ targetOpen: ['target-session'], activity });
+    const result = await f.service.send({ senderSessionId: 'sender-session', targetTaskId: 'target', body: 'Check the build.', callId: 'call-1' });
+    expect(result.delivered).toBe(true);
+    expect(f.delivery.deliver).toHaveBeenCalledTimes(1);
+    expect(result.target.activity).toMatchObject({ available: false, running: false });
   });
 
   it('prepares the first conversation and reports the created resources', async () => {

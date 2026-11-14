@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { AutoModePause, Board, BoardSettings, ContextOperation, HubSchedule, HubState, HubTask, KanbanMeta, KanbanState, NewTask, Note, OperationRequest, Project, ProjectInput, Workflow } from '../shared/types.js';
+import type { AutoModePause, Board, BoardSettings, ContextOperation, HubRelation, HubSchedule, HubState, HubTask, KanbanMeta, KanbanState, NewTask, Note, OperationRequest, Project, ProjectInput, Workflow } from '../shared/types.js';
 import { repositoryLane } from './repository-lane.js';
 import type { HubStorage } from '../shared/ports.js';
 import { HubStateSchema, initialHubState, defaultHubState } from '../domain/hub-schema.js';
@@ -13,6 +13,11 @@ import { withProjectKeys } from '../domain/project-key.js';
 
 export interface HubRepositoryOptions { id?: () => string; now?: () => string }
 export interface LocatedTask { hubId: string; hub: HubState; board: Board; project: Project; task: HubTask }
+/**
+ * One task resolved to its Hub without cloning it. The references belong to the
+ * stored snapshot, so a caller MUST treat them as read-only.
+ */
+export interface LocatedTaskRef { readonly hubId: string; readonly hub: HubState; readonly task: HubTask }
 /** One project's identity and whether it holds a relocation journal. */
 export interface ProjectSummary { readonly hubId: string; readonly projectId: string; readonly hasOperation: boolean }
 /**
@@ -303,6 +308,33 @@ export class HubRepository {
       return { hubId: hub.id, hub: structuredClone(hub), board: structuredClone(board), project: structuredClone(project), task: structuredClone(task) };
     }
     return undefined;
+  }
+
+  /** Resolve many tasks in one pass over the Hubs, for a batch read that must stay cheap. */
+  locateMany(taskIds: readonly string[]): LocatedTaskRef[] {
+    const wanted = new Set(taskIds);
+    const found: LocatedTaskRef[] = [];
+    for (const hub of this.hubs.values()) {
+      for (const task of hub.tasks) {
+        if (!wanted.has(task.id)) continue;
+        if (!hub.boards.some(value => value.id === task.boardId) || !hub.projects.some(value => value.id === task.projectId)) continue;
+        found.push({ hubId: hub.id, hub, task });
+        wanted.delete(task.id);
+      }
+      if (wanted.size === 0) break;
+    }
+    return found;
+  }
+
+  /** The Hub that owns each of these relations, resolved in one pass; unknown ids are absent. */
+  relationOwners(relationIds: readonly string[]): Map<string, string> {
+    const wanted = new Set(relationIds);
+    const owners = new Map<string, string>();
+    for (const hub of this.hubs.values()) {
+      for (const relation of hub.relations ?? []) if (wanted.has(relation.id)) owners.set(relation.id, hub.id);
+      if (owners.size === wanted.size) break;
+    }
+    return owners;
   }
 
   findProject(projectId: string): { hubId: string; hub: HubState; project: Project } | undefined {
@@ -637,6 +669,12 @@ export class HubStore {
   }
   async deleteNote(taskId: string, noteId: string): Promise<Note> {
     return this.transact(draft => operations.deleteNote(draft, taskId, noteId, this.deps()));
+  }
+  async createRelations(inputs: readonly operations.RelationWriteInput[]): Promise<HubRelation[]> {
+    return this.transact(draft => operations.createRelations(draft, inputs, this.deps()));
+  }
+  async deleteRelations(relationIds: readonly string[]): Promise<HubRelation[]> {
+    return this.transact(draft => operations.deleteRelations(draft, relationIds, this.deps()));
   }
   async deleteTask(taskId: string): Promise<HubTask> {
     return this.transact(draft => operations.deleteTask(draft, taskId));

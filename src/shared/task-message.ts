@@ -1,3 +1,5 @@
+import type { TaskActivity } from '../domain/task-activity.js';
+
 /** One cross-card message prepared for delivery into a target task conversation. */
 export interface TaskMessageDelivery {
   /** Stable delivery identity; a repeated identity is never delivered twice. */
@@ -32,7 +34,15 @@ export interface TaskMessageResult {
   readonly delivered: true;
   readonly requestId: string;
   readonly senderTaskId: string;
-  readonly target: { readonly taskId: string; readonly title: string; readonly sessionId: string };
+  readonly target: {
+    readonly taskId: string;
+    readonly title: string;
+    readonly sessionId: string;
+    /** The target's stage at delivery, so the sender does not re-read the card to learn it. */
+    readonly columnId: string;
+    /** The target's activity at delivery; unavailable rather than omitted when it cannot be read. */
+    readonly activity: TaskActivity;
+  };
   readonly createdConversation: boolean;
   readonly createdWorktree?: { readonly path: string; readonly branch: string };
 }

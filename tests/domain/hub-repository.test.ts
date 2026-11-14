@@ -66,6 +66,27 @@ describe('HubRepository', () => {
     expect(hubs.requireHub(hubs.defaultHubId()).boards).toHaveLength(1);
   });
 
+  it('persists a relation batch in one revision and reopens it', async () => {
+    const { hubs, storage, store } = await repo();
+    const project = await store.saveProject({ name: 'Project', projectPath: '/repo/app' });
+    const epic = await store.createTask({ projectId: project.id, title: 'Epic', description: '' });
+    const child = await store.createTask({ projectId: project.id, title: 'Child', description: '' });
+    const writesBefore = storage.writes.length;
+    const revisionBefore = store.snapshot().revision;
+    const written = await store.createRelations([{ type: 'epic', from: epic.id, to: child.id }]);
+    expect(written).toHaveLength(1);
+    expect(storage.writes.length).toBe(writesBefore + 1);
+    expect(store.snapshot().revision).toBe(revisionBefore + 1);
+    expect(store.snapshot().relations).toHaveLength(1);
+    await hubs.close();
+    const reopened = await HubRepository.open(storage, operationDeps());
+    expect(reopened.defaultHub().snapshot().relations?.[0]?.type).toBe('epic');
+    const reopenedStore = reopened.defaultHub();
+    const removed = await reopenedStore.deleteRelations([written[0]!.id]);
+    expect(removed).toHaveLength(1);
+    expect(reopenedStore.snapshot().relations).toEqual([]);
+  });
+
   it('serializes concurrent writers, notifies subscribers, and returns snapshot clones', async () => {
     const { store } = await repo();
     const listener = vi.fn(); const off = store.subscribe(listener);

@@ -84,7 +84,7 @@ describe('Hub-scoped host commands', () => {
     const edited = await tool(f, 'edit_card').execute({ task_id: created.id, title: 'Edited tool task' }, execution()) as { id: string; hubId: string };
     expect(edited).toMatchObject({ id: created.id, hubId: second.hubId });
     const card = await tool(f, 'get_card').execute({ task_id: created.id }, execution());
-    expect(card).toMatchObject({ task: expect.objectContaining({ id: created.id }), board: expect.objectContaining({ id: second.boardId }), hub: expect.objectContaining({ id: second.hubId }) });
+    expect(card).toMatchObject({ id: created.id, board: expect.objectContaining({ id: second.boardId }), hub: expect.objectContaining({ id: second.hubId }) });
   });
 
   it('projects execution attention from tasks in every Hub', async () => {

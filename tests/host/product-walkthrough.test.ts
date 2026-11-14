@@ -128,10 +128,24 @@ async function waitForReady(f: Awaited<ReturnType<typeof setup>>, taskId: string
   expect(f.app.store.requireTask(taskId).worktree?.status).toBe('ready');
 }
 
-/** A task payload without its flow record, which task tools never return. */
-function withoutHistory<T extends { history?: unknown }>(task: T): Omit<T, 'history'> {
-  const { history: _history, ...rest } = task;
-  return rest;
+/** The activity a task with no busy conversation reports: known and idle. */
+const IDLE_ACTIVITY = { available: true, running: false, pending: [], queuedPrompts: 0, backgroundCount: 0, settledTurns: [] };
+
+/**
+ * A compact card payload: no description and no flow record, with activity and
+ * relation references. A listing never waits on a cold native read, so a task whose
+ * conversation is not resolved yet reports its activity as unavailable.
+ */
+function compactCardOf<T extends { history?: unknown; deterministic?: unknown; description?: string; sessionIds: string[]; closedSessionIds: string[] }>(task: T, hubId: string) {
+  const { history: _history, deterministic: _ledger, description: _description, ...rest } = task;
+  const open = task.sessionIds.filter(id => !task.closedSessionIds.includes(id));
+  return { ...rest, hubId, activity: open.length === 0 ? IDLE_ACTIVITY : { ...IDLE_ACTIVITY, available: false }, relations: [] };
+}
+
+/** A detail card payload: the compact fields plus the description, context, and relations. */
+function detailCardOf<T extends { history?: unknown; deterministic?: unknown; description: string; boardId: string }>(task: T, hubId: string, project: unknown, hubName: string) {
+  const { history: _history, deterministic: _ledger, ...rest } = task;
+  return { ...rest, hubId, activity: IDLE_ACTIVITY, relations: [], project, board: { id: task.boardId, name: 'Kanban' }, hub: { id: hubId, name: hubName } };
 }
 
 async function addSharedNote(f: Awaited<ReturnType<typeof setup>>, task: { id: string; a: string; b: string }) {
@@ -288,11 +302,11 @@ describe('bounded integrated product walkthrough', () => {
     expect(await f.tool('list_boards', {}, a.b)).toEqual(await f.tool('list_boards', {}));
     expect(await f.tool('get_board_summary', {})).toMatchObject({ id: boardId, hubId, columns: expect.arrayContaining([expect.objectContaining({ id: 'backlog', count: 2 })]) });
     expect(await f.tool('get_board_summary', {}, a.a)).toEqual(await f.tool('get_board_summary', {}));
-    expect(await f.tool('list_cards', { project_id: f.project.id, query: 'PRODUCT WALKTHROUGH', limit: 1 })).toEqual([{ ...withoutHistory(f.app.store.requireTask(a.id)), hubId }]);
-    expect(await f.tool('list_cards', { project_id: 'root-project', limit: 1 }, a.b)).toEqual([{ ...withoutHistory(b), hubId }]);
+    expect(await f.tool('list_cards', { project_id: f.project.id, query: 'PRODUCT WALKTHROUGH', limit: 1 })).toEqual([compactCardOf(f.app.store.requireTask(a.id), hubId)]);
+    expect(await f.tool('list_cards', { project_id: 'root-project', limit: 1 }, a.b)).toEqual([compactCardOf(b, hubId)]);
     expect(await f.tool('list_cards', { query: 'does not match', limit: 1 })).toEqual([]);
     expect(await f.tool('list_cards', {})).toHaveLength(2); expect(await f.tool('list_cards', { limit: 1 })).toHaveLength(1);
-    expect(await f.tool('get_card', { task_id: a.id })).toEqual(expect.objectContaining({ task: withoutHistory(f.app.store.requireTask(a.id)), project: f.app.store.requireProject(f.project.id), board: expect.objectContaining({ id: boardId, name: 'Kanban' }), hub: expect.objectContaining({ id: hubId, name: 'My Hub' }) }));
+    expect(await f.tool('get_card', { task_id: a.id })).toEqual(detailCardOf(f.app.store.requireTask(a.id), hubId, f.app.store.requireProject(f.project.id), 'My Hub'));
     expect(await f.tool('get_card', { task_id: a.id }, a.b)).toEqual(await f.tool('get_card', { task_id: a.id }));
     expect(await f.tool('list_notes', { task_id: a.id })).toEqual([note]);
     expect(await f.tool('list_notes', {}, b.sessionIds[0]!)).toEqual([]);

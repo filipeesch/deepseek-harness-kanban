@@ -86,7 +86,10 @@ describe('task payloads', () => {
     const listed = await run(f, 'list_cards', { board_id: f.board.id });
     expect(listed.find((value: { id: string }) => value.id === task.id).history).toBeUndefined();
     const read = await run(f, 'get_card', { task_id: task.id });
-    expect(read.task.history).toBeUndefined();
+    expect(read.history).toBeUndefined();
+    const batch = await run(f, 'get_cards', { task_ids: [task.id] });
+    expect(batch.cards[0].history).toBeUndefined();
+    expect(batch.cards[0].deterministic).toBeUndefined();
     const created = await run(f, 'create_card', { board_id: f.board.id, project_id: f.project.id, title: 'Another', description: '' });
     expect(created.history).toBeUndefined();
     const edited = await run(f, 'edit_card', { task_id: task.id, title: 'Renamed' });

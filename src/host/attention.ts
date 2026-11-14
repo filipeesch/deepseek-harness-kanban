@@ -119,6 +119,21 @@ export class AttentionCoordinator {
     return this.facts.read(sessionId);
   }
 
+  /**
+   * One conversation's durable read, or undefined when it failed after its retries.
+   * A caller that must not present a failure as "idle" reads through this instead
+   * of accepting the empty facts a failed read resolves to.
+   */
+  async readResolved(sessionId: string): Promise<ConversationFacts | undefined> {
+    const facts = await this.facts.read(sessionId);
+    return this.facts.current(sessionId) ? facts : undefined;
+  }
+
+  /** The facts already resolved for these conversations; never starts a read. */
+  resolved(sessionIds: readonly string[]): Record<string, ConversationFacts> {
+    return this.facts.resolvedFor(sessionIds);
+  }
+
   /** Drop one conversation's cached facts, or every conversation's facts, for the next tick. */
   invalidate(sessionId?: string): void {
     this.facts.invalidate(sessionId);

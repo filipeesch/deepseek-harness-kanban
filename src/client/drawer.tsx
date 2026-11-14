@@ -5,6 +5,7 @@ import { requiresWorktreeDecision } from '../shared/worktree-decision.js';
 import { InfoPanel } from './forms.js';
 import { NotesPanel } from './notes/notes-panel.js';
 import { HistoryPanel } from './history/history-panel.js';
+import { RelationsPanel } from './relations/relations-panel.js';
 import { GitPanel, PendingTransitionStatus } from './git.js';
 import { OperationStatus } from './operation-status.js';
 import { WorktreeNotice } from './worktree-notice.js';
@@ -81,7 +82,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
   const autoMode = autoModeView(task, state.workflow, attention.pending, script !== undefined);
   const gitBacked = project !== undefined && isGitProject(project);
   const worktreeDecisionRequired = requiresWorktreeDecision(task, project);
-  const sections: DrawerSection[] = gitBacked ? ['Conversations', 'Info', 'Git', 'Notes', 'History'] : ['Conversations', 'Info', 'Notes', 'History'];
+  const sections: DrawerSection[] = gitBacked ? ['Conversations', 'Info', 'Git', 'Notes', 'Relations', 'History'] : ['Conversations', 'Info', 'Notes', 'Relations', 'History'];
   const destinations = transitionDestinations(state.workflow, task.columnId);
   // The next-stage action follows a recorded transition; without one it still
   // steps to the adjacent stage, so the manual action keeps its meaning.
@@ -140,6 +141,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
       {section === 'Info' && <InfoPanel task={task} state={state} run={run} viewState={preferences} />}
       {section === 'Git' && gitBacked && <GitPanel task={task} project={project} api={api} run={run} worktreeBasePath={state.settings?.worktreeBasePath} draft={worktreeDraft} />}
       {section === 'Notes' && <NotesPanel task={task} state={state} run={run} viewState={preferences} />}
+      {section === 'Relations' && <RelationsPanel taskId={task.id} taskBoardId={state.boardId ?? ''} relations={state.relations ?? []} />}
       {section === 'History' && <HistoryPanel history={task.history} columns={state.workflow.columns} />}
     </section>
   </aside>;

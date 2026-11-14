@@ -76,7 +76,7 @@ describe('the History section in the task drawer', () => {
     await screen.findByRole('button', { name: 'Open task Alpha task' });
     await user.click(screen.getByRole('button', { name: 'Open task Alpha task' }));
     const sections = within(screen.getByRole('tablist', { name: 'Task sections' })).getAllByRole('tab');
-    expect(sections.map(tab => tab.id.replace(/^.*-tab-/, ''))).toEqual(['Conversations', 'Info', 'Git', 'Notes', 'History']);
+    expect(sections.map(tab => tab.id.replace(/^.*-tab-/, ''))).toEqual(['Conversations', 'Info', 'Git', 'Notes', 'Relations', 'History']);
     await user.click(screen.getByRole('tab', { name: 'History' }));
     expect(screen.getByRole('heading', { name: 'Alpha task', level: 2 })).toBeTruthy();
     const table = screen.getByRole('table', { name: 'Task history' });

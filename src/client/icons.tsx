@@ -1,6 +1,7 @@
 import React, { type ComponentType } from 'react';
 import {
   ArrowLeft as ArrowLeftGlyph,
+  Link as LinkGlyph,
   CheckCheck as CheckCheckGlyph,
   ChevronRight as ChevronRightGlyph,
   ChevronsRight as ChevronsRightGlyph,
@@ -84,6 +85,8 @@ export const MessageIcon = icon(MessagesSquareGlyph);
 export const NoteIcon = icon(NotebookPenGlyph);
 /** History section navigation: the task's recorded flow. */
 export const HistoryIcon = icon(HistoryGlyph);
+/** Relations section navigation: the cards this task is linked to. */
+export const RelationIcon = icon(LinkGlyph);
 /** The header action that advances the task to the next workflow stage. */
 export const AdvanceStageIcon = icon(ChevronsRightGlyph);
 

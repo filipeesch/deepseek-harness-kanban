@@ -2,7 +2,8 @@ import { z } from 'zod';
 import { localStageIdentitiesSchema } from './deterministic-state.js';
 import type { Board, HubSchedule, HubState, HubTask, KanbanMeta, KanbanSettings } from '../shared/types.js';
 import { DEFAULT_WORKFLOW_YAML, parseWorkflow } from './workflow.js';
-import { absolutePath, baseTask, canonicalWorkflow, createTaskInvariantChecker, id, modelSelection, nonempty, note, project, projectKey, revision, storedProject, timestamp, workflow } from './schema-parts.js';
+import { absolutePath, baseTask, canonicalWorkflow, createTaskInvariantChecker, hubRelation, id, modelSelection, nonempty, note, project, projectKey, revision, storedProject, timestamp, workflow } from './schema-parts.js';
+import { relationIssues } from './card-relation.js';
 import { isTimeZone, parseCron } from './cron.js';
 
 export { canonicalWorkflow } from './schema-parts.js';
@@ -36,7 +37,7 @@ export const KanbanSettingsSchema: z.ZodType<KanbanSettings> = z.strictObject({
 });
 
 /** The fields a stored Hub record and an opened Hub aggregate share. */
-const hubFields = { id, name: nonempty, revision, boards: z.array(board), tasks: z.array(task), notes: z.array(note), schedules: z.array(scheduleSchema).optional(), createdAt: timestamp, updatedAt: timestamp };
+const hubFields = { id, name: nonempty, revision, boards: z.array(board), tasks: z.array(task), notes: z.array(note), schedules: z.array(scheduleSchema).optional(), relations: z.array(hubRelation).optional(), createdAt: timestamp, updatedAt: timestamp };
 /**
  * The shape the storage domain reads and writes. It deliberately tolerates a project
  * that predates project keys: the storage facility validates every record before the
@@ -91,6 +92,10 @@ export const HubStateSchema = z.strictObject({
   for (const [index, value] of state.notes.entries()) {
     if (!taskIds.has(value.taskId)) issue(['notes', index, 'taskId'], 'Note task does not exist.');
   }
+  unique((state.relations ?? []).map(value => value.id), ['relations']);
+  // A relation names two tasks of this Hub and must not close an epic cycle. The
+  // rule needs the whole graph, so it lives in this pass rather than the per-task one.
+  for (const relationIssue of relationIssues(taskIds, state.relations ?? [])) issue(['relations', ...relationIssue.path], relationIssue.message);
   unique((state.schedules ?? []).map(value => value.id), ['schedules']);
   for (const [index, value] of (state.schedules ?? []).entries()) {
     if (!projectIds.has(value.projectId)) issue(['schedules', index, 'projectId'], 'Schedule project does not exist.');

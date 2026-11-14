@@ -6,7 +6,7 @@ import { STAGE_MIN_SIZE, STAGE_SIZE_LIMIT } from './stage-size.js';
 import { PROJECT_KEY_PATTERN } from './project-key.js';
 import { transitionRule as normalizeTransitionRule } from './transition-rule.js';
 import { isAbsolutePath, isDomainId } from './validation.js';
-import { AUTO_MODE_PAUSE_REASONS } from '../shared/types.js';
+import { AUTO_MODE_PAUSE_REASONS, HUB_RELATION_TYPES } from '../shared/types.js';
 import { ANCHOR_POINTS_PER_SIDE, CONNECTION_OFFSET_LIMIT } from './connection-anchor.js';
 import { taskHistorySchema } from './task-history/entry.js';
 
@@ -114,6 +114,8 @@ export const workflow = z.strictObject({
 export const note = z.strictObject({
   id, taskId: id, content: nonempty, createdAt: timestamp, updatedAt: timestamp, tags: z.array(nonempty).optional(),
 });
+/** One recorded relation between two tasks; the Hub aggregate owns its cross-record rules. */
+export const hubRelation = z.strictObject({ id, type: z.enum(HUB_RELATION_TYPES), from: id, to: id });
 const relocationLocationShape = { projectPath: absolutePath, gitRootPath: absolutePath.optional(), defaultBranch: nonempty.optional() };
 const relocationFrom = z.strictObject(relocationLocationShape).superRefine((value, context) => {
   if (value.defaultBranch !== undefined && value.gitRootPath === undefined) context.addIssue({ code: 'custom', path: ['defaultBranch'], message: 'A default branch requires a Git root.' });
