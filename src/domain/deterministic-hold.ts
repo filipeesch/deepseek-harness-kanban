@@ -128,3 +128,25 @@ export function sameDeterministicHold(left: DeterministicHold | undefined, right
     return fact.kind === other.kind && fact.id === other.id && fact.label === other.label;
   });
 }
+
+/**
+ * The action that clears a hold, or the wait it explains. One authority for the
+ * drawer notice and an agent's diagnostic read, so the two cannot disagree.
+ */
+export function holdAction(hold: DeterministicHold): string {
+  if (hold.code === 'background-work') {
+    const jobs = (hold.background ?? []).filter(fact => fact.kind === 'job' && fact.id !== undefined);
+    return jobs.length > 0 ? 'Cancel the blocking job to deliver now, or wait for it to finish.' : 'Delivery resumes when the schedule is idle.';
+  }
+  if (hold.code === 'pending-user-work') return 'Answer the pending work; delivery resumes then.';
+  if (hold.code === 'auto-mode-hold') return 'Resume the task to deliver this result.';
+  if (hold.code === 'pending-transition') return 'Resolve the recorded transition; delivery resumes then.';
+  if (hold.code === 'conversation-active') return 'Delivery resumes when the turn ends.';
+  if (hold.code === 'stale-authority') return 'This saved result no longer owns the stage entry; start the script again from the current stage.';
+  if (hold.code === 'task-operation' || hold.code === 'project-operation' || hold.code === 'context-reserved') return 'Delivery resumes when that operation finishes.';
+  if (hold.code === 'worktree-not-ready') return 'Resolve the task worktree in the Git section; delivery resumes then.';
+  if (hold.code === 'project-directory-missing') return 'Adopt the project directory; delivery resumes then.';
+  if (hold.code === 'execution-directory-changed') return 'Repair the execution directory binding; delivery resumes then.';
+  if (hold.code === 'conversation-unreadable') return 'Delivery is retried when the conversation reports activity.';
+  return 'Delivery resumes when this condition clears.';
+}

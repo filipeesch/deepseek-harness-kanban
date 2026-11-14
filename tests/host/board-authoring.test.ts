@@ -73,7 +73,7 @@ async function run(f: F, name: string, args: Record<string, unknown>): Promise<a
 
 async function boardWith(f: F, yaml: string): Promise<string> {
   const created = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Authored ' + Math.random().toString(36).slice(2, 8), workflow_yaml: yaml });
-  expect(created.saved).toBeUndefined();
+  expect(created.saved).toBe(true);
   return created.id;
 }
 
@@ -168,23 +168,38 @@ describe('stage instructions', () => {
     const f = await setup();
     const boardId = await boardWith(f, COMMENTED);
     const set = await run(f, 'set_stage_prompt', { board_id: boardId, stage_id: 'todo', prompt: 'Do it carefully.' });
-    expect(set.saved).toBeUndefined();
+    expect(set.saved).toBe(true);
     expect(set.report.valid).toBe(true);
     let text = await authoredDocument(f, boardId);
     expect(text).toContain('# the first stage keeps its note');
     expect(text).toContain('on_enter_prompt: Do it carefully.');
     const cleared = await run(f, 'set_stage_prompt', { board_id: boardId, stage_id: 'todo', prompt: null });
-    expect(cleared.report.difference?.stages).toContainEqual({ stage: 'todo', change: 'changed', fields: [{ field: 'onEnterPrompt', from: 'Do it carefully.', to: null }] });
+    expect(cleared.report.stages).toContainEqual({ stage: 'todo', change: 'changed', fields: ['onEnterPrompt'] });
+    expect(cleared.report.mode).toBe('summary');
     text = await authoredDocument(f, boardId);
     expect(text).not.toContain('on_enter_prompt');
     expect(text).toContain('# the first stage keeps its note');
   });
 
-  it('rejects a stale revision without changing the document', async () => {
+  it('reapplies a composed write over a stale revision when its anchor still matches', async () => {
+    const f = await setup();
+    const boardId = await boardWith(f, COMMENTED);
+    const stale = (await run(f, 'get_board_yaml', { board_id: boardId })).hubRevision;
+    await run(f, 'set_stage_prompt', { board_id: boardId, stage_id: 'todo', prompt: 'Other.' });
+    const value = await run(f, 'set_stage_prompt', { board_id: boardId, stage_id: 'todo', prompt: 'x', expected_revision: stale });
+    expect(value.saved).toBe(true);
+    const text = await authoredDocument(f, boardId);
+    expect(text).toContain('prompt: x');
+    expect(text).toContain('label: Review');
+  });
+
+  it('rejects a whole-document replacement with a stale revision without changing the document', async () => {
     const f = await setup();
     const boardId = await boardWith(f, COMMENTED);
     const before = await authoredDocument(f, boardId);
-    await expect(run(f, 'set_stage_prompt', { board_id: boardId, stage_id: 'todo', prompt: 'x', expected_revision: 0 })).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+    const value = await run(f, 'update_board', { board_id: boardId, workflow_yaml: before.replace('label: Review', 'label: Peer review'), expected_revision: 0 });
+    // A conflict is a refusal with its report, not a bare thrown error.
+    expect(value).toMatchObject({ saved: false, error: { code: 'REVISION_CONFLICT' }, details: { staleRevision: 0 } });
     expect(await authoredDocument(f, boardId)).toBe(before);
   });
 });
@@ -285,7 +300,7 @@ describe('adding and removing stages', () => {
     const boardId = await boardWith(f, LINKED);
     const value = await run(f, 'add_stage', { board_id: boardId, after: 'review', stage_yaml: 'id: deploy\nlabel: Deploy\nallowed_transitions: [done]' });
     expect(value.report.valid).toBe(true);
-    expect(value.report.difference?.stages).toContainEqual({ stage: 'deploy', change: 'added' });
+    expect(value.report.stages).toContainEqual({ stage: 'deploy', change: 'added' });
     const workflow = (await run(f, 'get_board_summary', { board_id: boardId, include_workflow: true })).workflow;
     expect(workflow.columns.map((column: { id: string }) => column.id)).toEqual(['todo', 'review', 'deploy', 'done']);
   });

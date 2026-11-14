@@ -64,11 +64,13 @@ import { DeterministicSupervisor } from './deterministic-supervisor.js';
 import { createNativeSupervisorPorts } from './deterministic-control.js';
 import { DeterministicApprovalService } from './deterministic-approval.js';
 import { createDeterministicRouter } from './deterministic-routing.js';
+import { DeterministicSurface } from './deterministic-surface.js';
 import { createDeterministicImpact } from './deterministic-impact.js';
 import { deterministicEqual } from '../domain/deterministic-definition.js';
 import { declaredParameterNames, validateParameterValues } from '../domain/deterministic-parameters.js';
 import { ensureLocalStageIdentity } from '../domain/deterministic-state.js';
 import { recordDeterministicHandoff } from '../domain/task-history/record.js';
+import { testStageScript, type ScriptTestInput, type ScriptTestResult } from './script-test.js';
 
 async function pathExists(value:string):Promise<boolean>{try{await lstat(value);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}}
 function isEvent(value:unknown):value is {type:string;seq:number;data:unknown}{return Boolean(value&&typeof value==='object'&&'type'in value&&typeof value.type==='string'&&'seq'in value&&typeof value.seq==='number'&&Number.isSafeInteger(value.seq)&&'data'in value);}
@@ -141,11 +143,22 @@ export class KanbanApp {
  private nativeDeterministic:DeterministicRuntime|undefined;
  private initialized=false;
  private closing=false;
- private readonly handoffAdmissions=new Map<string,{entryId:string;deliveryId:string}>();
+ private readonly deterministicSurface:DeterministicSurface;
  private readonly contextAdmissions=new Set<string>();
- private readonly handoffDeliveries=new Map<string,Promise<void>>();
  constructor(readonly hubs:HubRepository,readonly sessions:SessionPort,readonly git:GitPort,private readonly options:AppOptions={},private readonly workspaces?:WorkspacePort){
   this.locator=new TaskLocator(hubs);
+  this.deterministicSurface=new DeterministicSurface({
+   all:()=>this.locator.all(),
+   locate:taskId=>this.locator.byTask(taskId),
+   supervisor:()=>this.deterministicRuntime,
+   transact:async(taskId,mutate)=>{const located=this.locator.byTask(taskId);if(!located)return;await this.hubs.hub(located.hubId).transact(draft=>mutate(draft.tasks.find(task=>task.id===taskId)));},
+   ensureConversation:async taskId=>(await this.createConversationNow(taskId,{allowUndecided:true})).sessionId,
+   admit:async input=>{await admitStageInstruction(this.stageInstructionDeps(),{taskId:input.taskId,columnId:input.columnId,instruction:input.instruction,sessionId:input.sessionId,requestId:input.requestId,expectedEntryId:input.entryId,isCurrent:()=>!this.closing});},
+   dispatchPending:()=>{void this.dispatchPending().catch(error=>this.options.report?.(error));},
+   live:()=>!this.disposed&&this.initialized,
+   closing:()=>this.closing,
+   ...(this.options.report?{report:this.options.report}:{}),
+  });
   this.retainedCheckoutExists=options.retainedCheckoutExists??entryExists;
   this.retainedCheckoutPruneIntervalMs=options.retainedCheckoutPruneIntervalMs??15000;
   if(options.teamFiles)this.teamFiles=options.teamFiles;
@@ -198,7 +211,7 @@ export class KanbanApp {
  /** Attach isolated execution after composition; task records remain the only authority. */
  attachDeterministicRuntime(nativeRuntime:DeterministicRuntime):()=>Promise<void>{
   this.nativeDeterministic=nativeRuntime;
-  const route=createDeterministicRouter({hubs:this.hubs,sessions:this.sessions,pending:task=>readPendingUserWork(this.factsSource,task.sessionIds),reserved:id=>this.handoffAdmissions.has(id)||this.contextAdmissions.has(id),notify:()=>{void this.dispatchDeterministicHandoffs().catch(error=>this.options.report?.(error));}});
+  const route=createDeterministicRouter({hubs:this.hubs,sessions:this.sessions,pending:task=>readPendingUserWork(this.factsSource,task.sessionIds),reserved:id=>this.deterministicSurface.isReserved(id)||this.contextAdmissions.has(id),notify:()=>{void this.dispatchDeterministicHandoffs().catch(error=>this.options.report?.(error));}});
   const transact=<T>(taskId:string,change:(task:HubTask,located:LocatedTask)=>T):Promise<T>=>{
    const found=this.locatedTask(taskId);
    return this.hubs.hub(found.hubId).transact(draft=>{const task=draft.tasks.find(value=>value.id===taskId);invariant(task,'TASK_NOT_FOUND','The task no longer exists.');const board=draft.boards.find(value=>value.id===task.boardId)!;const project=draft.projects.find(value=>value.id===task.projectId)!;return change(task,{hubId:draft.id,hub:draft,board,project,task});});
@@ -220,6 +233,8 @@ export class KanbanApp {
   this.markChanged();
   return async()=>{attached.dispose();await attached.settle();if(this.deterministicRuntime===attached){this.deterministicRuntime=undefined;if(this.deterministicApproval===approval)this.deterministicApproval=undefined;if(this.nativeDeterministic===nativeRuntime)this.nativeDeterministic=undefined;this.markChanged();}};
  }
+ /** Run one stage program against a simulated shell; never captures, approves, routes, or moves a task. */
+ async testStageScript(input:ScriptTestInput,signal:AbortSignal):Promise<ScriptTestResult>{return testStageScript({hubs:this.hubs,runtime:()=>this.nativeDeterministic},input,signal);}
  private requireApproval():DeterministicApprovalService{invariant(this.deterministicApproval,'DETERMINISTIC_UNAVAILABLE','This host does not expose isolated deterministic execution.');return this.deterministicApproval;}
  private requireDeterministic():DeterministicSupervisor{invariant(this.deterministicRuntime,'DETERMINISTIC_UNAVAILABLE','This host does not expose isolated deterministic execution.');return this.deterministicRuntime;}
  private async ensureDeterministicEntry(taskId:string):Promise<HubTask>{
@@ -244,60 +259,14 @@ export class KanbanApp {
  async deterministicVariables(taskId:string):Promise<{env:string[];variables:Array<{name:string;configured:boolean}>}>{
   return this.requireApproval().variables(taskId);
  }
- private deterministicSummaries():Record<string,DeterministicSummary>{
-  const result:Record<string,DeterministicSummary>={};
-  for(const {task,board} of this.locator.all()){
-   const value=task.deterministic;if(!value||task.stageEntry?.id!==value.entryId)continue;
-   const saved=board.workflow.columns.find(column=>column.id===task.columnId)?.deterministic;
-   const unavailable=!this.deterministicRuntime;
-   result[task.id]={entryId:value.entryId,executionId:value.executionId,phase:unavailable?'failed':value.phase,startedAt:value.startedAt,attempt:value.attempt,restartCount:value.restartCount,...(value.parameters===undefined?{}:{parameters:{...value.parameters}}),
-    ...(unavailable?{error:{code:'DETERMINISTIC_UNAVAILABLE',message:'Mount the native filesystem, sandbox, shell, and function-body TypeScript capabilities to run deterministic steps.'}}:value.error?{error:value.error}:{}),...(value.result?{exit:value.result.exit,message:value.result.message,...(value.result.deliveryStatus?{deliveryStatus:value.result.deliveryStatus}:{})}:{}),...(value.hold===undefined?{}:{hold:value.hold}),...(value.capture?{fingerprint:value.capture.fingerprint}:{}),savedVersionChanged:!saved||!deterministicEqual(saved,value.definition)};
-  }return result;
- }
- private assertNoHandoffAdmission(taskId:string):void{invariant(!this.handoffAdmissions.has(taskId),'NATIVE_ADMISSION_PENDING','Wait for native context admission before moving this task or changing its directory.');}
+ /** Whether the host exposes scripted execution; a read reports the stored phase either way. */
+ get scriptedExecutionAvailable():boolean{return this.deterministicRuntime!==undefined;}
+ private deterministicSummaries():Record<string,DeterministicSummary>{return this.deterministicSurface.summaries();}
+ private assertNoHandoffAdmission(taskId:string):void{this.deterministicSurface.assertUnreserved(taskId);}
  /** Reserve only native context admission, never an agent turn or the global command lane. */
- reserveDeterministicHandoff(taskId:string,entryId:string,deliveryId:string):()=>void{
-  const task=this.locatedTask(taskId).task;
-  invariant(task.stageEntry?.id===entryId&&task.deterministicHandoff?.id===deliveryId&&!task.pendingTransition&&!task.operation,'STALE_HANDOFF','The destination entry was replaced before context admission.');
-  invariant(!this.handoffAdmissions.has(taskId),'NATIVE_ADMISSION_PENDING','Another conversation is admitting context for this task.');
-  const token={entryId,deliveryId};this.handoffAdmissions.set(taskId,token);
-  return ()=>{if(this.handoffAdmissions.get(taskId)===token){this.handoffAdmissions.delete(taskId);this.deterministicRuntime?.reconcile(taskId);void this.dispatchPending().catch(error=>this.options.report?.(error));}};
- }
- async acceptDeterministicHandoff(taskId:string,entryId:string,deliveryId:string):Promise<void>{
-  const found=this.locator.byTask(taskId);if(!found)return;
-  await this.hubs.hub(found.hubId).transact(draft=>{const task=draft.tasks.find(value=>value.id===taskId);const handoff=task?.deterministicHandoff;
-   if(!task||task.stageEntry?.id!==entryId||handoff?.id!==deliveryId||handoff.acceptedAt)return;
-   handoff.acceptedAt=new Date().toISOString();delete handoff.error;
-   recordDeterministicHandoff(task,{at:handoff.acceptedAt,deliveryId:handoff.id,executionId:handoff.executionId,fromColumnId:handoff.fromColumnId,columnId:task.columnId,outcome:'accepted',exit:handoff.exit,message:handoff.message,...(handoff.params===undefined?{}:{parameters:handoff.params})});
-  });
- }
- private async dispatchDeterministicHandoffs():Promise<void>{
-  if(this.disposed||!this.initialized)return;
-  const jobs:Promise<void>[]=[];
-  for(const {task} of this.locator.all()){
-   const handoff=task.deterministicHandoff;
-   if(!handoff?.instruction||handoff.acceptedAt||handoff.error||task.stageEntry?.id!==handoff.entryId||task.operation||this.handoffAdmissions.has(task.id))continue;
-   const existing=this.handoffDeliveries.get(task.id);if(existing){jobs.push(existing);continue;}
-   const done=Promise.resolve().then(async()=>{
-    try{
-     let current=this.locatedTask(task.id);if(current.task.stageEntry?.id!==handoff.entryId||current.project.operation)return;
-     const sessionId=handoff.sessionId??firstOpenSessionId(current.task)??(await this.createConversationNow(task.id,{allowUndecided:true})).sessionId;
-     current=this.locatedTask(task.id);if(current.task.stageEntry?.id!==handoff.entryId)return;
-     await this.hubs.hub(current.hubId).transact(draft=>{const value=draft.tasks.find(t=>t.id===task.id);if(value?.stageEntry?.id===handoff.entryId&&value.deterministicHandoff?.id===handoff.id)value.deterministicHandoff.sessionId=sessionId;});
-     await admitStageInstruction(this.stageInstructionDeps(),{taskId:task.id,columnId:current.task.columnId,instruction:handoff.instruction!,sessionId,requestId:handoff.id,expectedEntryId:handoff.entryId,isCurrent:()=>!this.closing});
-     await this.acceptDeterministicHandoff(task.id,handoff.entryId,handoff.id);
-    }catch(error){
-     if(this.closing)return;
-     const current=this.locator.byTask(task.id);if(!current)return;
-     await this.hubs.hub(current.hubId).transact(draft=>{const value=draft.tasks.find(t=>t.id===task.id);const h=value?.deterministicHandoff;
-      if(!value||value.stageEntry?.id!==handoff.entryId||h?.id!==handoff.id||h.acceptedAt)return;
-      h.error=problem(error);recordDeterministicHandoff(value,{at:new Date().toISOString(),deliveryId:h.id,executionId:h.executionId,fromColumnId:h.fromColumnId,columnId:h.columnId,outcome:'failed',exit:h.exit,message:h.message,...(h.params===undefined?{}:{parameters:h.params}),error:h.error});
-     });this.options.report?.(error);
-    }
-   }).finally(()=>{this.handoffDeliveries.delete(task.id);});
-   this.handoffDeliveries.set(task.id,done);jobs.push(done);
-  }await Promise.all(jobs);
- }
+ reserveDeterministicHandoff(taskId:string,entryId:string,deliveryId:string):()=>void{return this.deterministicSurface.reserve(taskId,entryId,deliveryId);}
+ async acceptDeterministicHandoff(taskId:string,entryId:string,deliveryId:string):Promise<void>{await this.deterministicSurface.accept(taskId,entryId,deliveryId);}
+ private async dispatchDeterministicHandoffs():Promise<void>{await this.deterministicSurface.dispatch();}
  /** The first/default Hub facade retained for single-Hub callers and tests. */
  get store():HubStore{return this.hubs.defaultHub();}
  private hubStore(hubId?:string):HubStore{return this.hubs.hub(this.hubs.resolveHubId(hubId));}
@@ -417,9 +386,23 @@ export class KanbanApp {
   this.scheduleStartupReconciliation(summaries);
   this.startup.run([() => this.runDraftRetention()]);
   await this.migrateDeterministicCaptures();
+  await this.reconcileRevisionLogs();
   this.initialized=true;this.deterministicRuntime?.start();
   await this.dispatchDeterministicHandoffs();
  }
+ /** Append a recovery revision for every board whose log no longer describes its document. */
+ private async reconcileRevisionLogs():Promise<void>{
+  const revisions=this.options.revisions;
+  if(revisions?.reconcile===undefined)return;
+  for(const hub of this.hubs.list())for(const board of hub.boards){
+   try{await revisions.reconcile({hubId:hub.id,boardId:board.id,storedText:board.workflowYaml});}
+   catch(error){this.options.report?.(error);}
+  }
+ }
+ /** The workflow this installation last applied for one board, when the Hub is connected. */
+ publishedWorkflow(hubId:string,boardId:string):string|undefined{return this.options.sharing?.publishedWorkflow(hubId,boardId);}
+ /** Whether this board is part of the team's shared configuration. */
+ boardShared(hubId:string,boardId:string):boolean{return this.options.sharing?.isBound(hubId,boardId)===true;}
  /** Rewrite verified pre-upgrade captures under the current version authority. */
  private async migrateDeterministicCaptures():Promise<void>{
   const runtime=this.nativeDeterministic;if(!runtime)return;
@@ -1274,7 +1257,7 @@ export class KanbanApp {
  }
  private async drainPending():Promise<void>{
   if(this.disposed)return;if(this.driving){this.driveAgain=true;return;}this.driving=true;
-  try{do{this.driveAgain=false;this.pendingTransitions.refresh(this.locator.summaries());for(const taskId of [...this.pendingTransitions.list()]){const located=this.locator.byTask(taskId);const task=located?.task;const pending=task?.pendingTransition;if(!located||!task||!pending||pending.status!=='waiting'||task.operation||this.handoffAdmissions.has(task.id)||(pending.worktreeRequest&&task.worktree?.status!=='ready'))continue;const store=this.hubs.hub(located.hubId);
+  try{do{this.driveAgain=false;this.pendingTransitions.refresh(this.locator.summaries());for(const taskId of [...this.pendingTransitions.list()]){const located=this.locator.byTask(taskId);const task=located?.task;const pending=task?.pendingTransition;if(!located||!task||!pending||pending.status!=='waiting'||task.operation||this.deterministicSurface.isReserved(task.id)||(pending.worktreeRequest&&task.worktree?.status!=='ready'))continue;const store=this.hubs.hub(located.hubId);
    // The pending transition distinguishes a declared transition from an automatic
    // advance; an absent origin is the operator's own move.
    const origin:StageEntryOrigin=pending.origin==='agent'?'agent':pending.origin==='auto'?'auto':'manual';

@@ -111,6 +111,14 @@ export class HubSharingService {
       .map(record => ({ hubId: record.hubId, intervalMinutes: record.binding.intervalMinutes }));
   }
 
+  /** The workflow this installation last applied for one board, when the Hub is connected to a team storage. */
+  publishedWorkflow(hubId: string, boardId: string): string | undefined {
+    const record = this.options.store.load(hubId);
+    const key = record?.bindings[boardId];
+    if (record === undefined || key === undefined) return undefined;
+    return record.boards[key]?.workflow ?? undefined;
+  }
+
   isBound(hubId: string, boardId: string): boolean {
     return this.options.store.load(hubId)?.bindings[boardId] !== undefined;
   }

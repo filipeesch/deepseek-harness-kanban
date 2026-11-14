@@ -7,12 +7,22 @@ import { diffWorkflow } from '../workflow-difference.js';
 import { parseWorkflow } from '../workflow.js';
 
 /** The format this installation writes for a board's local revision log. */
-export const REVISION_LOG_VERSION = 1;
+export const REVISION_LOG_VERSION = 2;
+/** Every format version this installation can read; a record outside it is unreadable, never absent. */
+export const REVISION_LOG_COMPATIBLE_VERSIONS: readonly number[] = [1, 2];
 /** How many revisions one board keeps before the oldest fold into the checkpoint. */
 export const RETAINED_REVISIONS = 100;
 
+/** Where a board's retained history starts. */
+export type RevisionBaselineKind = 'created' | 'recovered';
+/** The moment and the kind of event a board's history starts at. */
+export interface RevisionBaseline {
+  readonly kind: RevisionBaselineKind;
+  readonly at: string;
+}
+
 /** Where a revision came from. */
-export type RevisionOrigin = 'editor' | 'tool' | 'team';
+export type RevisionOrigin = 'editor' | 'tool' | 'team' | 'recovery';
 
 /** Who authored a revision. */
 export type RevisionActor =
@@ -24,7 +34,7 @@ export type RevisionActor =
 export interface RevisionCommit {
   /** The first event sequence this write appended. */
   readonly from: number;
-  /** The last event sequence this write appended; the revision's identity. */
+  /** The last event sequence this write appended. Never a revision identity. */
   readonly to: number;
   readonly at: string;
   readonly actor: RevisionActor;
@@ -40,16 +50,42 @@ export interface BoardRevisionLog {
   readonly commits: readonly RevisionCommit[];
   /** Revisions folded out of the log since it was created. */
   readonly dropped: number;
+  /** Where this history starts; a log written before baselines existed reads as created. */
+  readonly baseline?: RevisionBaseline;
+}
+
+/**
+ * A revision's identity: its position in the board's whole history.
+ *
+ * It is derived from how many revisions were folded out and the commit's position,
+ * so folding never renumbers a retained revision: the sequence a caller read stays
+ * the same document for as long as the log retains it.
+ */
+export function revisionOf(log: BoardRevisionLog, index: number): number {
+  return log.dropped + index + 1;
+}
+
+/** The commit one revision identity names, when the log still retains it. */
+export function commitOf(log: BoardRevisionLog, revision: number): RevisionCommit | undefined {
+  const index = revision - log.dropped - 1;
+  return Number.isInteger(index) && index >= 0 ? log.commits[index] : undefined;
 }
 
 /** A log for a board's current document, as its first checkpoint. */
-export function createRevisionLog(input: { readonly hubId: string; readonly boardId: string; readonly text: string; readonly at: string }): BoardRevisionLog {
+export function createRevisionLog(input: {
+  readonly hubId: string;
+  readonly boardId: string;
+  readonly text: string;
+  readonly at: string;
+  readonly baseline?: RevisionBaseline;
+}): BoardRevisionLog {
   return {
     hubId: input.hubId,
     boardId: input.boardId,
     log: appendEvents([], [{ kind: 'workflow.replaced', text: input.text }], input.at),
     commits: [],
     dropped: 0,
+    ...(input.baseline === undefined ? {} : { baseline: input.baseline }),
   };
 }
 
@@ -66,13 +102,19 @@ export function headSequence(log: BoardRevisionLog): number {
   return lastSequence(log.log);
 }
 
-/** The document as it stood after the given revision, when the log still holds it. */
-export function textAtRevision(log: BoardRevisionLog, seq: number): string | undefined {
+/** The document as it stood after the given journal sequence, when the log holds it. */
+export function textAtSequence(log: BoardRevisionLog, seq: number): string | undefined {
   if (!Number.isInteger(seq) || seq < 0 || seq > headSequence(log)) return undefined;
   const prefix = log.log.filter(event => event.seq <= seq);
   if (prefix.length === 0) return undefined;
   const recovered = replay(prefix, null);
   return recovered.ok ? recovered.text : undefined;
+}
+
+/** The document as it stood after the given revision, when the log retains it. */
+export function textAtRevision(log: BoardRevisionLog, revision: number): string | undefined {
+  const commit = commitOf(log, revision);
+  return commit === undefined ? undefined : textAtSequence(log, commit.to);
 }
 
 /**
@@ -112,13 +154,13 @@ export function describeChange(previous: string, next: string): string {
   }
 }
 
-/** Fold the oldest revisions into a fresh checkpoint, keeping the log append-only. */
+/** Fold the oldest revisions into a fresh checkpoint, keeping every retained revision identity. */
 function prune(log: BoardRevisionLog): BoardRevisionLog {
   const excess = log.commits.length - RETAINED_REVISIONS;
   if (excess <= 0) return log;
   const dropped = log.commits.slice(0, excess);
   const boundary = dropped[dropped.length - 1]!.to;
-  const text = textAtRevision(log, boundary);
+  const text = textAtSequence(log, boundary);
   const checkpoint = log.log.find(event => event.seq === boundary);
   if (text === undefined || checkpoint === undefined) return log;
   const retained = log.log.filter(event => event.seq > boundary).map((event, index) => ({ ...event, seq: index + 1 }));
@@ -152,41 +194,74 @@ const commitSchema = z.strictObject({
   to: z.number().int().nonnegative(),
   at: z.string().min(1),
   actor: actorSchema,
-  origin: z.enum(['editor', 'tool', 'team']),
+  origin: z.enum(['editor', 'tool', 'team', 'recovery']),
   summary: z.string().min(1),
 });
+const baselineSchema = z.strictObject({ kind: z.enum(['created', 'recovered']), at: z.string().min(1) });
 
 /** One revision log as storage writes it. The board log keeps the journal's own JSONL envelope. */
 export const encodedRevisionLogSchema = z.strictObject({
-  version: z.literal(REVISION_LOG_VERSION),
+  version: z.number().int().positive(),
   hubId: z.string().min(1),
   boardId: z.string().min(1),
   dropped: z.number().int().nonnegative(),
   board: z.string().min(1),
   commits: z.array(commitSchema),
+  /** The format versions this writer can read, so a reader can tell a future record apart. */
+  formatVersions: z.array(z.number().int().positive()).optional(),
+  baseline: baselineSchema.optional(),
 });
 export type EncodedRevisionLog = z.infer<typeof encodedRevisionLogSchema>;
 
-/** Read one stored revision log, or undefined when the record is not one this installation understands. */
+/**
+ * Read one stored revision log.
+ *
+ * A record this installation can read answers with its log; a record written in a
+ * future format answers undefined, and the reader must report it as unreadable
+ * instead of treating the board as having no history.
+ */
 export function decodeRevisionLog(raw: unknown): BoardRevisionLog | undefined {
   const parsed = encodedRevisionLogSchema.safeParse(raw);
   if (!parsed.success) return undefined;
+  if (!REVISION_LOG_COMPATIBLE_VERSIONS.includes(parsed.data.version)) return undefined;
   const decoded = decodeBoardLog(parsed.data.board);
   if (!decoded.ok) return undefined;
-  return { hubId: parsed.data.hubId, boardId: parsed.data.boardId, log: decoded.log, commits: parsed.data.commits, dropped: parsed.data.dropped };
+  const first = parsed.data.commits[0];
+  return {
+    hubId: parsed.data.hubId,
+    boardId: parsed.data.boardId,
+    log: decoded.log,
+    commits: parsed.data.commits,
+    dropped: parsed.data.dropped,
+    // A record written before baselines existed can only prove where its history starts.
+    baseline: parsed.data.baseline ?? { kind: 'created', at: first?.at ?? new Date(0).toISOString() },
+  };
 }
 
 /** One stored revision log, validated and decoded into the journal's own shape. */
 export const revisionLogSchema: z.ZodType<BoardRevisionLog> = encodedRevisionLogSchema.transform((value, context) => {
+  if (!REVISION_LOG_COMPATIBLE_VERSIONS.includes(value.version)) {
+    context.addIssue({ code: 'custom', path: ['version'], message: 'The revision log was written in a format this installation cannot read.' });
+    return z.NEVER;
+  }
   const decoded = decodeBoardLog(value.board);
   if (!decoded.ok) {
     context.addIssue({ code: 'custom', path: ['board'], message: 'The board log this revision log carries is invalid.' });
     return z.NEVER;
   }
-  return { hubId: value.hubId, boardId: value.boardId, log: decoded.log, commits: value.commits, dropped: value.dropped };
+  const first = value.commits[0];
+  return {
+    hubId: value.hubId, boardId: value.boardId, log: decoded.log, commits: value.commits, dropped: value.dropped,
+    baseline: value.baseline ?? { kind: 'created', at: first?.at ?? new Date(0).toISOString() },
+  };
 });
 
 /** Serialize one revision log as the storage domain stores it. */
 export function encodeRevisionLog(log: BoardRevisionLog): EncodedRevisionLog {
-  return { version: REVISION_LOG_VERSION, hubId: log.hubId, boardId: log.boardId, dropped: log.dropped, board: encodeBoardLog(log.log), commits: log.commits.map(commit => ({ ...commit })) };
+  return {
+    version: REVISION_LOG_VERSION, hubId: log.hubId, boardId: log.boardId, dropped: log.dropped,
+    board: encodeBoardLog(log.log), commits: log.commits.map(commit => ({ ...commit })),
+    formatVersions: [...REVISION_LOG_COMPATIBLE_VERSIONS],
+    ...(log.baseline === undefined ? {} : { baseline: { ...log.baseline } }),
+  };
 }

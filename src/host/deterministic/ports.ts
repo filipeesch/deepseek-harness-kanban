@@ -69,10 +69,40 @@ export interface DeterministicRuntime {
   reclaim(executionId: string): Promise<void>;
   reclaimTask?(scope: DeterministicScope, taskId: string): Promise<void>;
   execute(request: ExecuteRequest): Promise<ExecutionOutcome>;
+  /** Run one authored program against a simulated shell; absent when the host cannot test. */
+  test?(request: TestProgramRequest): Promise<TestProgramOutcome>;
   trust: DeterministicTrust;
   variables: DeterministicVariables;
 }
 export type NativePtcPort = Pick<PtcRuntime, 'language' | 'isolation' | 'programFormat' | 'retainsState' | 'sandboxMode' | 'resolve' | 'run'>;
+
+/** One declared answer to a command a tested program may run. */
+export interface SimulatedShellResponse {
+  /** A substring the requested command must contain to take this answer. */
+  readonly match: string;
+  readonly exitCode?: number;
+  readonly stdout?: string;
+  readonly stderr?: string;
+}
+/** One command a tested program ran, and the answer that resolved it. */
+export interface SimulatedShellCall {
+  readonly command: string;
+  readonly matched: string | null;
+  readonly exitCode: number;
+}
+/** Everything one isolated test execution needs; nothing here is durable. */
+export interface TestProgramRequest {
+  readonly definition: DeterministicDefinition;
+  readonly code: string;
+  readonly input: PtcJsonValue;
+  readonly directory: string;
+  readonly responses: readonly SimulatedShellResponse[];
+  readonly defaultResponse?: SimulatedShellResponse;
+  readonly signal: AbortSignal;
+}
+export type TestProgramOutcome =
+  | { readonly kind: 'completed'; readonly completion: StepCompletion; readonly calls: readonly SimulatedShellCall[]; readonly callsOmitted?: number; readonly diagnostics: string[] }
+  | { readonly kind: 'failed'; readonly diagnostic: Problem; readonly calls: readonly SimulatedShellCall[]; readonly callsOmitted?: number };
 export type NativeShellPort = Pick<ShellExecutor, 'sandboxMode' | 'resolve' | 'execute'>;
 export class DeterministicRuntimeError extends Error {
   constructor(readonly code: string, message: string, readonly detail?: Record<string, unknown>) { super(message); this.name = 'DeterministicRuntimeError'; }

@@ -2,6 +2,7 @@ import type { DeterministicHold, DeterministicSummary } from '../shared/determin
 import type { Task } from '../shared/types.js';
 import { FAILURE_ORIGIN_LABELS, type FailureOrigin } from '../shared/deterministic-failure.js';
 import { failureDetail } from '../domain/deterministic-failure.js';
+import { holdAction } from '../domain/deterministic-hold.js';
 
 /** An execution belongs to an entry, never merely to a stage with a matching name. */
 export function ownedScript(task: Pick<Task, 'stageEntry'> & Partial<Pick<Task, 'columnId'>>, summary?: DeterministicSummary): DeterministicSummary | undefined {
@@ -89,14 +90,7 @@ export function holdJobs(hold: DeterministicHold): Array<{ id: string; label: st
   return (hold.background ?? []).flatMap(fact => fact.kind === 'job' && fact.id !== undefined ? [{ id: fact.id, label: fact.label }] : []);
 }
 /** What the user can do about this hold, or the wait it explains. */
-export function holdNextStep(hold: DeterministicHold): string {
-  if (hold.code === 'background-work') return holdJobs(hold).length > 0 ? 'Cancel the blocking job to deliver now, or wait for it to finish.' : 'Delivery resumes when the schedule is idle.';
-  if (hold.code === 'pending-user-work') return 'Answer the pending work; delivery resumes then.';
-  if (hold.code === 'auto-mode-hold') return 'Resume the task to deliver this result.';
-  if (hold.code === 'pending-transition') return 'Resolve the recorded transition; delivery resumes then.';
-  if (hold.code === 'conversation-active') return 'Delivery resumes when the turn ends.';
-  return 'Delivery resumes when this condition clears.';
-}
+export function holdNextStep(hold: DeterministicHold): string { return holdAction(hold); }
 
 /** One labeled fact the script panel shows beside the failure message. */
 export interface ScriptFailureFact { readonly label: string; readonly value: string }

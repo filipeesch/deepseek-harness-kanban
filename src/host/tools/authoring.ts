@@ -3,10 +3,11 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { KanbanApp } from '../app.js';
-import type { BoardAdministration, BoardPublishingPolicy, BoardView, BoardWriteResult, ComposeBoardWorkflowInput } from '../board-administration.js';
+import type { BoardAdministration, BoardPublishingPolicy, BoardView, BoardWriteResult, ComposeBoardWorkflowInput, WorkflowWriteDetail, WorkflowWriteOutcome } from '../board-administration.js';
 import type { ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset, StagePatch, StagePosition, StageSize, TransitionRule, Workflow } from '../../shared/types.js';
+import type { DeterministicDefinition } from '../../shared/deterministic.js';
 import type { WorkflowCardReference, WorkflowWriteReport } from '../../domain/workflow-report.js';
-import { composeWorkflowReport } from '../../domain/workflow-report.js';
+import { composeWorkflowReport, summarizeWorkflowReport } from '../../domain/workflow-report.js';
 import { invariant } from '../../shared/errors.js';
 import { parseWorkflow } from '../../domain/workflow.js';
 import { updateStage } from '../../domain/stage-update.js';
@@ -17,7 +18,7 @@ import { readStageSizes, setStageSizes, type StageSizes } from '../../domain/wor
 import { readConnections, setConnections } from '../../domain/workflow-connections.js';
 import { connectionKey } from '../../domain/connection-anchor.js';
 import { isDomainId } from '../../domain/validation.js';
-import { actorOf, flag, normal, refusal, text, written } from './support.js';
+import { actorOf, digestRefusal, flag, normal, refusal, text, written } from './support.js';
 import { assertBoardWriteAllowed, resolveBoard, type ToolArgs } from './scope.js';
 
 /** How many lines of an authored document one read returns before the caller asks for more. */
@@ -27,16 +28,35 @@ const intent = 'Use ONLY when the user explicitly requests this board change. ';
 
 const preserveNote = ' Only the named fields are rewritten; comments, key order, quoting, and every other authored character stay as they are.';
 
-const reportNote = ' The result carries the write report: the per-stage difference, the graph warnings, the board-level reviewed authorization of every deterministic stage, and the affected cards. A refused write saves nothing and returns the same report.';
+/** The one revision parameter every board write names, with the rebase rule it obeys. */
+export const revisionParameter = { type: 'integer', description: 'Hub revision from a prior read. A composed write is reapplied to the current document when every anchor still matches; a whole-document replacement refuses a stale revision.' } as const;
+
+const reportNote = ' The change is local; publishing it to a team stays a manual action in the interface. The result carries the digest of the exact document stored and a write report: the changed stages and their changed field names, the graph warnings, the reviewed authorization of every deterministic stage for the board, and the affected cards. The report is a summary by default and the per-field values only when detail is full. A refused write saves nothing and returns the same report.';
 
 /** The document, stage, and write surface the authoring tools need. */
 export interface WorkflowAuthoringPort {
   read(boardId: string, hubId?: string): BoardView;
   cards(boardId: string, hubId?: string): WorkflowCardReference[];
-  saveWorkflowReviewed(input: ComposeBoardWorkflowInput, policy?: BoardPublishingPolicy): Promise<BoardWriteResult & { report: WorkflowWriteReport }>;
+  saveWorkflowReviewed(input: ComposeBoardWorkflowInput, policy?: BoardPublishingPolicy): Promise<WorkflowWriteOutcome>;
 }
 
-interface WriteArgs extends ToolArgs { readonly board_id: string; readonly expected_revision?: number }
+interface WriteArgs extends ToolArgs {
+  readonly board_id: string;
+  readonly expected_revision?: number;
+  readonly expect_sha256?: string;
+  readonly dry_run?: boolean;
+  readonly detail?: WorkflowWriteDetail;
+}
+
+/**
+ * The three controls every workflow write accepts. They are listed once so no
+ * write tool can drift from the others in name, wording, or default.
+ */
+export const workflowWriteControls = {
+  expect_sha256: text('The sha256 digest of the exact document this write must store. A mismatch refuses the write and saves nothing.'),
+  dry_run: flag('Review exactly as a write does and persist nothing; no document, revision, or publishing change.'),
+  detail: { type: 'string', enum: ['summary', 'full'], description: 'Report shape. The summary is the default and names the changed stages and fields without their text.' },
+} as const;
 
 function record(value: unknown, label: string): Record<string, unknown> {
   invariant(typeof value === 'object' && value !== null && !Array.isArray(value), 'INVALID_INPUT', label + ' must be a mapping.');
@@ -84,6 +104,42 @@ function ruleOf(value: unknown, label: string): TransitionRule {
   return map.when === undefined ? { to } : { to, when: typeof map.when === 'string' ? map.when : String(map.when) };
 }
 
+/** The parts of one stage's deterministic configuration a patch may name. */
+interface ScriptPatch {
+  readonly language?: 'bash' | 'typescript';
+  readonly code?: string;
+  readonly file?: string;
+  readonly directory?: 'task' | 'project';
+  readonly env?: readonly string[];
+  readonly params?: ReadonlyArray<{ readonly name: string; readonly description?: string }>;
+  readonly exits?: Readonly<Record<string, string>>;
+}
+
+/**
+ * One stage's deterministic configuration after a partial write: the named parts
+ * replaced, every other part kept as authored, and a source swap never leaving two.
+ */
+function mergeScriptPatch(current: DeterministicDefinition | undefined, patch: ScriptPatch): DeterministicDefinition {
+  invariant(current !== undefined || patch.language !== undefined, 'INVALID_INPUT', 'A stage with no script requires a language.');
+  invariant(!(patch.code !== undefined && patch.file !== undefined), 'INVALID_INPUT', 'Name one source: inline code or an external file, not both.');
+  invariant(current !== undefined || (patch.code === undefined) !== (patch.file === undefined), 'INVALID_INPUT', 'A stage with no script requires exactly one of code or file.');
+  invariant(current !== undefined || patch.exits !== undefined, 'INVALID_INPUT', 'A stage with no script requires its named exits.');
+  const next: DeterministicDefinition = current === undefined
+    ? { language: patch.language!, directory: patch.directory ?? 'task', exits: {} }
+    : structuredClone(current);
+  if (patch.language !== undefined) next.language = patch.language;
+  if (patch.code !== undefined) { next.code = patch.code; delete next.file; }
+  if (patch.file !== undefined) { next.file = patch.file; delete next.code; }
+  if (patch.directory !== undefined) next.directory = patch.directory;
+  if (patch.env !== undefined) { if (patch.env.length === 0) delete next.env; else next.env = [...patch.env]; }
+  if (patch.params !== undefined) {
+    if (patch.params.length === 0) delete next.params;
+    else next.params = patch.params.map(parameter => ({ name: parameter.name, ...(parameter.description === undefined ? {} : { description: parameter.description }) }));
+  }
+  if (patch.exits !== undefined) next.exits = { ...patch.exits };
+  return next;
+}
+
 /** The authored document one write is composed from, as the port reports it. */
 function authored(port: WorkflowAuthoringPort, args: WriteArgs): { view: BoardView; workflow: Workflow } {
   const view = port.read(args.board_id, args.hub_id);
@@ -93,11 +149,21 @@ function authored(port: WorkflowAuthoringPort, args: WriteArgs): { view: BoardVi
 /** Run one reviewed write, returning the report on success and on refusal alike. */
 async function write(port: WorkflowAuthoringPort, args: WriteArgs, exec: ToolRunContext, compose: (current: string) => string): Promise<unknown> {
   try {
-    const value = await port.saveWorkflowReviewed({ boardId: args.board_id, ...(args.hub_id === undefined ? {} : { hubId: args.hub_id }), ...(args.expected_revision === undefined ? {} : { expectedRevision: args.expected_revision }), actor: actorOf(exec), origin: 'tool', compose });
+    const value = await port.saveWorkflowReviewed({
+      boardId: args.board_id,
+      ...(args.hub_id === undefined ? {} : { hubId: args.hub_id }),
+      ...(args.expected_revision === undefined ? {} : { expectedRevision: args.expected_revision }),
+      ...(args.expect_sha256 === undefined ? {} : { expectSha256: args.expect_sha256 }),
+      ...(args.dry_run === true ? { dryRun: true } : {}),
+      ...(args.detail === undefined ? {} : { detail: args.detail }),
+      actor: actorOf(exec), origin: 'tool', compose,
+    });
     return written(value);
   } catch (error) {
     const refused = refusal(error);
     if (refused !== undefined) return refused;
+    const digest = digestRefusal(error);
+    if (digest !== undefined) return digest;
     throw error;
   }
 }
@@ -187,7 +253,8 @@ export function authoringTools(app: KanbanApp, port: WorkflowAuthoringPort = app
       stage_id: text('Stage ID.', true),
       prompt: { oneOf: [{ type: 'string' }, { type: 'null' }], required: true, description: 'The entry instruction; null or an empty string clears it.' },
       hub_id: text('Hub ID. Optional when the board identifier is enough.'),
-      expected_revision: { type: 'integer', description: 'Hub revision from a prior read; stale values are rejected.' },
+      expected_revision: revisionParameter,
+      ...workflowWriteControls,
     }, async (args, exec) => {
       await assertBoardWriteAllowed(app, exec);
       const prompt = args.prompt ?? null;
@@ -201,7 +268,8 @@ export function authoringTools(app: KanbanApp, port: WorkflowAuthoringPort = app
       permit_any: flag('Author no transition list, so the stage permits any other stage.'),
       exits: { type: 'object', additionalProperties: true, description: 'Named exits mapped to destination stage ids, for a deterministic stage. Every exit must name a destination.' },
       hub_id: text('Hub ID. Optional when the board identifier is enough.'),
-      expected_revision: { type: 'integer', description: 'Hub revision from a prior read; stale values are rejected.' },
+      expected_revision: revisionParameter,
+      ...workflowWriteControls,
     }, async (args, exec) => {
       await assertBoardWriteAllowed(app, exec);
       const { workflow } = authored(port, args as WriteArgs);
@@ -226,13 +294,38 @@ export function authoringTools(app: KanbanApp, port: WorkflowAuthoringPort = app
       return write(port, args as WriteArgs, exec, current => updateStage({ text: current, stageId: args.stage_id, patch }).text);
     }),
 
+    normal('set_stage_script', intent + 'Write one stage deterministic configuration in parts. Only the parts the call names are rewritten; every other authored character of the stage, including comments beside the script, stays as written. A stage that authors no script needs the language, one source, and its named exits; a stage that already runs a script accepts any subset.' + preserveNote + reportNote, {
+      board_id: text('Board ID.', true),
+      stage_id: text('Stage ID.', true),
+      language: { type: 'string', enum: ['bash', 'typescript'], description: 'Program language.' },
+      code: text('Inline program source. Naming it removes an authored file reference.'),
+      file: text('External program file, resolved inside the directory choice. Naming it removes authored inline code.'),
+      directory: { type: 'string', enum: ['task', 'project'], description: 'Directory the program runs in: the task directory, including a bound worktree, or the base project directory.' },
+      env: { type: 'array', items: { type: 'string' }, description: 'Authorized local variable names, never values. An empty list clears them.' },
+      params: { type: 'array', description: 'Declared parameters the origin stage must supply, in authored order. An empty list clears them.', items: { type: 'object', additionalProperties: false, properties: { name: { type: 'string', required: true }, description: { type: 'string' } } } },
+      exits: { type: 'object', additionalProperties: true, description: 'Named exits mapped to destination stage ids. Replaces the whole mapping; every exit must name a destination.' },
+      hub_id: text('Hub ID. Optional when the board identifier is enough.'),
+      expected_revision: revisionParameter,
+      ...workflowWriteControls,
+    }, async (args, exec) => {
+      await assertBoardWriteAllowed(app, exec);
+      return write(port, args as WriteArgs, exec, current => {
+        const workflow = parseWorkflow(current);
+        const stage = workflow.columns.find(column => column.id === args.stage_id);
+        invariant(stage !== undefined, 'STAGE_NOT_FOUND', 'The workflow has no stage ' + args.stage_id + '.');
+        const next = mergeScriptPatch(stage.deterministic, args as unknown as ScriptPatch);
+        return updateStage({ text: current, stageId: args.stage_id, patch: { deterministic: next } }).text;
+      });
+    }),
+
     normal('set_layout', intent + 'Set stage placements, stage sizes, and connection layouts. Each named value is written and each value set to null or removed clears its entry; everything not named keeps its authored value.' + preserveNote + reportNote, {
       board_id: text('Board ID.', true),
       positions: { type: 'object', additionalProperties: true, description: 'Stage id mapped to {x, y}, or to null to clear its placement.' },
       sizes: { type: 'object', additionalProperties: true, description: 'Stage id mapped to {width, height}, or to null to clear its size.' },
       connections: { type: 'array', description: 'Connection layouts to write or remove, each with from and to, optional source and target anchors, optional segments, and remove to clear the entry.', items: { type: 'object', additionalProperties: false, properties: { from: { type: 'string', required: true }, to: { type: 'string', required: true }, source: { type: 'object', additionalProperties: false, properties: { side: { type: 'string', enum: ['top', 'right', 'bottom', 'left'], required: true }, at: { type: 'integer', required: true } } }, target: { type: 'object', additionalProperties: false, properties: { side: { type: 'string', enum: ['top', 'right', 'bottom', 'left'], required: true }, at: { type: 'integer', required: true } } }, segments: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { axis: { type: 'string', enum: ['x', 'y'], required: true }, offset: { type: 'number', required: true } } } }, remove: { type: 'boolean' } } } },
       hub_id: text('Hub ID. Optional when the board identifier is enough.'),
-      expected_revision: { type: 'integer', description: 'Hub revision from a prior read; stale values are rejected.' },
+      expected_revision: revisionParameter,
+      ...workflowWriteControls,
     }, async (args, exec) => {
       await assertBoardWriteAllowed(app, exec);
       invariant(args.positions !== undefined || args.sizes !== undefined || args.connections !== undefined, 'INVALID_INPUT', 'Provide positions, sizes, or connections.');
@@ -251,7 +344,8 @@ export function authoringTools(app: KanbanApp, port: WorkflowAuthoringPort = app
       stage_yaml: text('The stage definition as YAML mapping lines, beginning with its id.', true),
       after: text('The stage the new one follows. Omit to append it at the end.'),
       hub_id: text('Hub ID. Optional when the board identifier is enough.'),
-      expected_revision: { type: 'integer', description: 'Hub revision from a prior read; stale values are rejected.' },
+      expected_revision: revisionParameter,
+      ...workflowWriteControls,
     }, async (args, exec) => {
       await assertBoardWriteAllowed(app, exec);
       return write(port, args as WriteArgs, exec, current => addStage({ text: current, stageYaml: args.stage_yaml, ...(args.after === undefined ? {} : { after: args.after }) }));
@@ -263,14 +357,17 @@ export function authoringTools(app: KanbanApp, port: WorkflowAuthoringPort = app
       confirmed: flag('Explicit confirmation of the removal; the removal is refused without it.'),
       replacement_initial: text('Stage that becomes the initial stage, required when the removed stage is the initial one.'),
       hub_id: text('Hub ID. Optional when the board identifier is enough.'),
-      expected_revision: { type: 'integer', description: 'Hub revision from a prior read; stale values are rejected.' },
+      expected_revision: revisionParameter,
+      ...workflowWriteControls,
     }, async (args, exec) => {
       await assertBoardWriteAllowed(app, exec);
       invariant(args.confirmed === true, 'CONFIRMATION_REQUIRED', 'Confirm removing the stage.');
       const cards = port.cards(args.board_id, args.hub_id).filter(card => card.columnId === args.stage_id || card.pendingTransition?.columnId === args.stage_id);
       if (cards.length > 0) {
         const message = 'Stage ' + args.stage_id + ' still holds ' + cards.length + ' card' + (cards.length === 1 ? '' : 's') + '; move or delete them first.';
-        return { saved: false, error: { code: 'STAGE_HAS_CARDS', message }, report: composeWorkflowReport({ valid: false, problems: [{ message }], difference: null, warnings: [], affectedCards: cards.map(card => ({ taskId: card.id, stage: args.stage_id, reason: 'stage-removed' as const })), workflow: null, previous: null }) };
+        const full = composeWorkflowReport({ valid: false, problems: [{ message }], difference: null, warnings: [], affectedCards: cards.map(card => ({ taskId: card.id, stage: args.stage_id, reason: 'stage-removed' as const })), workflow: null, previous: null });
+        // The one refusal an author most often hits keeps the documented report shape.
+        return { saved: false, error: { code: 'STAGE_HAS_CARDS', message }, report: args.detail === 'full' ? full : summarizeWorkflowReport(full, null) };
       }
       return write(port, args as WriteArgs, exec, current => removeStage({ text: current, stageId: args.stage_id, ...(args.replacement_initial === undefined ? {} : { replacementInitial: args.replacement_initial }) }).text);
     }),

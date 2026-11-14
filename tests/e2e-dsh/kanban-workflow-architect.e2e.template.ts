@@ -90,8 +90,9 @@ it('mounts the installed architect preset, scopes its persona and skill, and reu
   ]));
   // The workflow design tools are registered globally but admitted only to the
   // Architect; another agent shares the registry without ever being offered them.
-  const designTools = ['get_board_yaml', 'get_stage', 'set_stage_prompt', 'set_stage_routes', 'set_layout', 'add_stage', 'remove_stage',
-    'get_route_stats', 'render_workflow_diagram', 'layout_metrics', 'list_board_revisions', 'diff_board_revisions', 'revert_board'];
+  const designTools = ['get_board_yaml', 'get_stage', 'set_stage_prompt', 'set_stage_routes', 'set_stage_script', 'set_layout', 'add_stage', 'remove_stage',
+    'get_route_stats', 'render_workflow_diagram', 'layout_metrics', 'list_board_revisions', 'diff_board_revisions', 'revert_board',
+    'get_script_execution', 'test_script', 'validate_workflow', 'diff_published_board'];
   expect(architectAdmitted).toEqual(expect.arrayContaining(designTools));
   for (const name of designTools) expect(standardAdmitted).not.toContain(name);
   expect(architectTools).toContain(process.platform === 'win32' ? 'pwsh' : 'bash');
