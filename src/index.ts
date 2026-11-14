@@ -216,7 +216,7 @@ export async function apply(ctx:Context):Promise<void>{
   });
   ctx.effect(()=>()=>runtimeFiber.dispose(),'kanban.optionalDeterministicRuntime');
  }
- const taskMessages=new InterCardMessaging({locateBySession:id=>app.locator.bySession(id),locate:id=>app.locator.byTask(id),prepare:id=>app.prepareMessageConversation(id),delivery:createNativeTaskMessageDelivery(ctx,history)});
+ const taskMessages=new InterCardMessaging({locateBySession:id=>app.locator.bySession(id),locate:id=>app.locator.byTask(id),prepare:id=>app.prepareMessageConversation(id),delivery:createNativeTaskMessageDelivery(ctx,history),activity:task=>app.taskActivity(task)});
  sharing.setNotify(()=>app.sharingChanged());
  const scheduleRuns=new ScheduleRunRegistry({storage:schedules.storage,now:()=>new Date().toISOString(),onChange:()=>app.activityChanged(),report});
  const scheduleWatcher=new ScheduleArchiveWatcher({

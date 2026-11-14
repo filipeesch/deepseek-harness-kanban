@@ -10,6 +10,7 @@ import {
   type TaskMessageResult,
 } from '../shared/task-message.js';
 import type { LocatedTask } from './hub-repository.js';
+import { UNAVAILABLE_TASK_ACTIVITY, type TaskActivity, type TaskActivityScope } from '../domain/task-activity.js';
 
 /** The host reads and preparation one cross-card message needs, injected by composition. */
 export interface InterCardMessagingDeps {
@@ -17,6 +18,8 @@ export interface InterCardMessagingDeps {
   locate(taskId: string): LocatedTask | undefined;
   prepare(taskId: string): Promise<TaskMessagePreparation>;
   delivery: TaskMessageDeliveryPort;
+  /** The target's activity at delivery; absent reports it as unavailable. */
+  activity?(task: TaskActivityScope): Promise<TaskActivity>;
 }
 
 export interface SendTaskMessageInput {
@@ -76,11 +79,18 @@ export class InterCardMessaging {
       summary,
     };
     await this.deps.delivery.deliver(sessionId, delivery);
+    // The delivery already happened; an unreadable activity must not turn a
+    // delivered message into a failed call.
+    let activity: TaskActivity = UNAVAILABLE_TASK_ACTIVITY;
+    if (this.deps.activity !== undefined) {
+      try { activity = await this.deps.activity(current.task); }
+      catch { activity = UNAVAILABLE_TASK_ACTIVITY; }
+    }
     return {
       delivered: true,
       requestId: delivery.requestId,
       senderTaskId: sender.task.id,
-      target: { taskId: current.task.id, title: current.task.title, sessionId },
+      target: { taskId: current.task.id, title: current.task.title, sessionId, columnId: current.task.columnId, activity },
       createdConversation,
       ...(prepared.createdWorktree === undefined ? {} : { createdWorktree: prepared.createdWorktree }),
     };

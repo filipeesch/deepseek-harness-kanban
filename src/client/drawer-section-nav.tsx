@@ -2,7 +2,7 @@ import React, { type ReactNode } from 'react';
 import { IconTabs, type IconTabItem } from './ui.js';
 import type { DrawerSection } from './page-state.js';
 import { ActivityDot, sectionTabName, type ActivityFacts } from './activity-dot.js';
-import { GitBranchIcon, HistoryIcon, InfoIcon, MessageIcon, NoteIcon } from './icons.js';
+import { GitBranchIcon, HistoryIcon, InfoIcon, MessageIcon, NoteIcon, RelationIcon } from './icons.js';
 
 /** The section navigation entries that carry the activity facts. */
 function sectionIcon(section: DrawerSection): ReactNode {
@@ -11,6 +11,7 @@ function sectionIcon(section: DrawerSection): ReactNode {
     case 'Info': return <InfoIcon size={17} />;
     case 'Git': return <GitBranchIcon size={17} />;
     case 'Notes': return <NoteIcon size={17} />;
+    case 'Relations': return <RelationIcon size={17} />;
     case 'History': return <HistoryIcon size={17} />;
     default: { const exhaustive: never = section; return exhaustive; }
   }

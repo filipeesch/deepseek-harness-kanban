@@ -3,8 +3,10 @@ import type { ToolActivationContext, ToolDefinition } from '@deepseek-ai/dsh-too
 import type { KanbanApp } from '../app.js';
 import type { BoardAdministration } from '../board-administration.js';
 import { KanbanError } from '../../shared/errors.js';
+import type { TaskActivitySource } from '../../domain/task-activity.js';
 import { discoveryTools } from './discovery.js';
 import { cardTools } from './cards.js';
+import { relationTools } from './relations.js';
 import { noteTools } from './notes.js';
 import { boardTools } from './boards.js';
 import { questionTools } from './questions.js';
@@ -25,11 +27,14 @@ export interface ProductToolExtras {
  readonly revisions?:BoardRevisions;
  readonly images?:WorkflowImagePort;
  readonly rasterizer?:Rasterizer;
+ /** The native activity source a card read reports; absent falls back to the app's own facts. */
+ readonly activity?:TaskActivitySource;
 }
 export function productToolDefinitions(app:KanbanApp,boards:BoardAdministration=app.boards,messaging?:InterCardMessaging,extras:ProductToolExtras={}):ToolDefinition[]{
  return [
   ...discoveryTools(app,boards),
-  ...cardTools(app),
+  ...cardTools(app,extras.activity),
+  ...relationTools(app),
   ...noteTools(app),
   ...boardTools(app,boards),
   ...authoringTools(app,boards),

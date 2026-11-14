@@ -1,7 +1,7 @@
 import { captureDeterministicTargets, establishStageEntry, ensureLocalStageIdentity, reconcileLocalStageIdentities } from './deterministic-state.js';
 import { declaredParameterNames, validateParameterValues } from './deterministic-parameters.js';
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { AutoModePause, AutoModeState, Board, BoardSettings, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ModelSelection, StagePatch, Workflow } from '../shared/types.js';
+import type { AutoModePause, AutoModeState, Board, BoardSettings, HubRelation, HubRelationType, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ModelSelection, StagePatch, Workflow } from '../shared/types.js';
 import { assertId, isAbsolutePath } from './validation.js';
 import { assertSchedulable } from './cron.js';
 import { isPublishedProject, requireProjectPath } from '../shared/project.js';
@@ -23,6 +23,8 @@ import { compareTaskOrder } from './task-order.js';
 import { recordAutoModeChange, recordCreation, recordIntent, type AutoModeChange } from './task-history/record.js';
 import type { StageEntryOrigin } from '../shared/task-history.js';
 import { placeTaskIn } from './task-placement.js';
+import { HUB_RELATION_TYPES } from '../shared/types.js';
+import { canonicalEndpoints, findExistingRelation, firstRelationProblem, MAX_RELATIONS_PER_WRITE } from './card-relation.js';
 
 export type { NoteInput } from './note.js';
 export interface TaskTextPatch { title?: string; description?: string }
@@ -606,7 +608,69 @@ export function deleteTask(hub: HubState, taskId: string): HubTask {
   const task = requireTask(hub, taskId);
   hub.tasks = hub.tasks.filter(value => value.id !== taskId);
   hub.notes = hub.notes.filter(note => note.taskId !== taskId);
+  // A relation whose endpoint is gone would be invalid state, so the delete that
+  // removes the task removes its relations in the same mutation.
+  if (hub.relations !== undefined) hub.relations = hub.relations.filter(relation => relation.from !== taskId && relation.to !== taskId);
   return task;
+}
+
+/** One requested relation; the aggregate normalizes its endpoints and allocates its identity. */
+export interface RelationWriteInput { type: HubRelationType; from: string; to: string }
+
+/**
+ * Record a batch of relations all or nothing. Both endpoints must be tasks of this
+ * Hub, an epic batch must not close a cycle, and a symmetric pair that already
+ * exists is returned instead of stored twice.
+ */
+export function createRelations(hub: HubState, inputs: readonly RelationWriteInput[], deps: OperationDeps): HubRelation[] {
+  invariantArray(inputs, 'relations');
+  const stored = [...(hub.relations ?? [])];
+  const written: HubRelation[] = [];
+  const taskIds = new Set(hub.tasks.map(value => value.id));
+  for (const input of inputs) {
+    invariant(input !== null && typeof input === 'object' && !Array.isArray(input), 'INVALID_INPUT', 'Every relation must be a mapping.');
+    invariant(HUB_RELATION_TYPES.includes(input.type), 'INVALID_INPUT', 'Relation type must be epic or related.');
+    assertId(input.from, 'Source task ID');
+    assertId(input.to, 'Target task ID');
+    requireTask(hub, input.from);
+    requireTask(hub, input.to);
+    invariant(input.from !== input.to, 'INVALID_RELATION', 'A relation cannot target its own task.');
+    const existing = findExistingRelation(stored, input.type, input.from, input.to);
+    if (existing !== undefined) { written.push(existing); continue; }
+    const endpoints = canonicalEndpoints(input.type, input.from, input.to);
+    const relation: HubRelation = { id: nextId(stored, deps.id), type: input.type, ...endpoints };
+    stored.push(relation);
+    written.push(relation);
+  }
+  const problem = firstRelationProblem(taskIds, stored);
+  invariant(problem === undefined, 'INVALID_RELATION', problem ?? 'The relation collection is invalid.');
+  hub.relations = stored;
+  hub.updatedAt = timestamp(deps);
+  return written;
+}
+
+/** Remove a batch of relations by identifier, all or nothing. */
+export function deleteRelations(hub: HubState, relationIds: readonly string[], deps: OperationDeps): HubRelation[] {
+  invariantArray(relationIds, 'relation identifiers');
+  const stored = hub.relations ?? [];
+  const unique = [...new Set(relationIds)];
+  const removed: HubRelation[] = [];
+  for (const relationId of unique) {
+    assertId(relationId, 'Relation ID');
+    const relation = stored.find(value => value.id === relationId);
+    invariant(relation, 'RELATION_NOT_FOUND', 'Relation does not exist.');
+    removed.push(relation);
+  }
+  const removedIds = new Set(unique);
+  hub.relations = stored.filter(value => !removedIds.has(value.id));
+  hub.updatedAt = timestamp(deps);
+  return removed;
+}
+
+/** A bounded, nonempty collection of relation writes or identifiers. */
+function invariantArray(value: readonly unknown[], label: string): void {
+  invariant(Array.isArray(value) && value.length > 0, 'INVALID_INPUT', 'Provide at least one of the ' + label + '.');
+  invariant(value.length <= MAX_RELATIONS_PER_WRITE, 'TOO_MANY_RELATIONS', 'At most ' + MAX_RELATIONS_PER_WRITE + ' may be written in one call.');
 }
 
 export function normalizeSettings(input: BoardSettings): BoardSettings {

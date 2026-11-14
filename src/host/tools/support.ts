@@ -1,19 +1,9 @@
 import { defineTool, type ParameterSchemaSpec, type InferArgs, type ToolRunContext, type ToolDefinition } from '@deepseek-ai/dsh-tools';
 import { json } from '../../shared/json.js';
-import type { TaskHistoryEntry } from '../../shared/task-history.js';
 import { KanbanError, problem } from '../../shared/errors.js';
 import type { BoardWriteResult } from '../board-administration.js';
 import type { WorkflowWriteReport } from '../../domain/workflow-report.js';
 import type { RevisionActor } from '../../domain/revisions/log.js';
-
-/**
- * One task as a tool returns it. The flow record stays out of a model's context:
- * it grows with the task, and the drawer is the surface that presents it.
- */
-export function withoutHistory<T extends { history?: TaskHistoryEntry[]; deterministic?: unknown }>(task: T): Omit<T, 'history' | 'deterministic'> {
-  const { history: _history, deterministic: _execution, ...rest } = task;
-  return rest;
-}
 
 export function text(description:string,required:true):{type:'string';description:string;required:true};
 export function text(description:string,required?:undefined):{type:'string';description:string};

@@ -193,6 +193,15 @@ export interface Task {
   createdAt: string; updatedAt: string;
 }
 export interface Note { id: string; taskId: string; content: string; createdAt: string; updatedAt: string; tags?: string[] }
+/** The relation types this version records between cards of one Hub. */
+export const HUB_RELATION_TYPES = ['epic', 'related'] as const;
+export type HubRelationType = (typeof HUB_RELATION_TYPES)[number];
+/**
+ * One recorded relation between two tasks of the same Hub. An `epic` relation is
+ * directed: `from` is the epic and `to` belongs to it. A `related` relation has no
+ * direction and is stored once with its endpoints in canonical order.
+ */
+export interface HubRelation { id: string; type: HubRelationType; from: string; to: string }
 export interface BoardSettings { worktreeBasePath?: string }
 export interface Board {
   /** Local-only stable associations; configuring a stage never publishes an identity. */
@@ -209,6 +218,8 @@ export interface HubState {
   projects: Project[]; boards: Board[]; tasks: HubTask[]; notes: Note[];
   /** Local session schedules; absent on a Hub stored before the capability existed. */
   schedules?: HubSchedule[];
+  /** Local card relations; absent on a Hub stored before the capability existed. */
+  relations?: HubRelation[];
   createdAt: string; updatedAt: string;
 }
 /** One model route the host can name: a provider, a model, and optionally the effort to run it with. */
@@ -260,7 +271,20 @@ export interface KanbanSettings { revision: number; worktreeBasePath?: string }
 export interface KanbanMeta { initializedAt?: string; settingsRevision: number; worktreeBasePath?: string }
 export interface KanbanState { hubs: HubState[]; settings: KanbanSettings }
 /** Legacy single-board state, read only by the migration path. */
-export interface BoardState { localStageIdentities?: Record<string, string>; schemaVersion: 2; revision: number; workflowYaml: string; workflow: Workflow; projects: Project[]; tasks: Task[]; notes: Note[]; settings?: BoardSettings }
+/**
+ * The board view the interface reads. It is projected from a Hub on every snapshot and
+ * never persisted, so it may carry derived fields the stored board does not keep.
+ */
+export interface BoardState { boardId?: string; localStageIdentities?: Record<string, string>; schemaVersion: 2; revision: number; workflowYaml: string; workflow: Workflow; projects: Project[]; tasks: Task[]; notes: Note[]; relations?: BoardRelation[]; settings?: BoardSettings }
+/**
+ * One relation as the interface reads it. Both endpoints are resolved here so the
+ * drawer can name a card on another board without holding that board's task list.
+ */
+export interface BoardRelation {
+  id: string; type: HubRelationType; from: string; to: string;
+  fromTitle?: string; fromStageName?: string; fromBoardId?: string; fromBoardName?: string;
+  toTitle?: string; toStageName?: string; toBoardId?: string; toBoardName?: string;
+}
 export type BackgroundKind = 'job' | 'schedule';
 /** One unsettled activity that outlives the turn, owned by a task conversation. */
 export interface BackgroundActivity { kind: BackgroundKind; label: string }
@@ -271,6 +295,21 @@ export type PendingUserWorkKind = 'decision-question' | 'native-question' | 'app
 /** Everything a conversation still owes the user before an automatic advance may be admitted. */
 export interface PendingUserWork { readonly kinds: readonly PendingUserWorkKind[]; readonly queuedPrompts: number }
 export const NO_PENDING_USER_WORK: PendingUserWork = { kinds: [], queuedPrompts: 0 };
+/** One conversation's last settled turn, as a card read reports it. */
+export interface SettledTurnActivity { sessionId: string; outcome: 'ok' | 'error' }
+/**
+ * One task's native execution facts, aggregated over its open conversations. The
+ * value is derived on read and never stored: `available` says whether the host
+ * could be asked, so an unreadable fact is never presented as an idle task.
+ */
+export interface TaskActivity {
+  available: boolean;
+  running: boolean;
+  pending: PendingUserWorkKind[];
+  queuedPrompts: number;
+  backgroundCount: number;
+  settledTurns: SettledTurnActivity[];
+}
 /** One conversation's native execution facts as the host owns them. */
 export interface ConversationFacts {
   /** At least one owned agent is running: this conversation's own turn or a subagent descendant. */
