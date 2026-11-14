@@ -170,6 +170,7 @@ test('shows both banner directions and a count on both tab rows', async ({ page 
 
 test('Save and share publishes the board after the local save', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=workflow&sharing=published');
+  await page.getByRole('tablist', { name: 'Board configuration sections' }).getByRole('tab', { name: 'Workflow' }).click();
   await expect(page.getByRole('button', { name: 'Save and share' })).toBeVisible();
   const editor = page.locator('.cm-content');
   await editor.click();
@@ -186,6 +187,7 @@ test('Save and share publishes the board after the local save', async ({ page })
 
 test('a failed share keeps the local save and reports the failure', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=workflow&sharing=share-fail');
+  await page.getByRole('tablist', { name: 'Board configuration sections' }).getByRole('tab', { name: 'Workflow' }).click();
   const editor = page.locator('.cm-content');
   await editor.click();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');

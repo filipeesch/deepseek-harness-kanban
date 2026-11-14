@@ -63,8 +63,16 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
   // and coming back does not resurrect a notice the person already dismissed. Closing
   // the conversation forgets it, and closing the drawer forgets all of them.
   const [modelNoticeDismissed, setModelNoticeDismissed] = useState<string[]>([]);
+  // The preset fallback keeps its own dismissal, for the same reasons and with the
+  // same lifetime as the model notice.
+  const [presetNoticeDismissed, setPresetNoticeDismissed] = useState<string[]>([]);
   useEffect(() => {
     setModelNoticeDismissed(previous => {
+      const open = openSessionIds(task);
+      const kept = previous.filter(sessionId => open.includes(sessionId));
+      return kept.length === previous.length ? previous : kept;
+    });
+    setPresetNoticeDismissed(previous => {
       const open = openSessionIds(task);
       const kept = previous.filter(sessionId => open.includes(sessionId));
       return kept.length === previous.length ? previous : kept;
@@ -137,7 +145,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
     <ScriptPanel task={task} column={state.workflow.columns.find(column => column.id === task.columnId)} projectName={projectName} api={api} run={run} />
     {autoRun && !script && <DrawerAutoRunNotice task={task} controller={autoRun} columns={state.workflow.columns} sessionTitles={sessionTitles} />}
     <section className={'kb-drawer-panel ' + (section === 'Conversations' ? 'kb-chat-panel' : '')} role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>
-      {section === 'Conversations' && <>{!gitBacked && task.worktree && <p className="kb-hint" role="note" aria-label="Plain checkout">This checkout is no longer Git-managed. Git actions are unavailable and the directory is kept when the task is deleted.</p>}{gitBacked && !task.worktree && !task.worktreeDismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} />}<DrawerConversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} worktreeDecisionRequired={worktreeDecisionRequired} projectUnavailable={project === undefined} conversationAttention={conversationAttention} modelNoticeDismissed={modelNoticeDismissed} onDismissModelNotice={sessionId => setModelNoticeDismissed(current => current.includes(sessionId) ? current : [...current, sessionId])} /></>}
+      {section === 'Conversations' && <>{!gitBacked && task.worktree && <p className="kb-hint" role="note" aria-label="Plain checkout">This checkout is no longer Git-managed. Git actions are unavailable and the directory is kept when the task is deleted.</p>}{gitBacked && !task.worktree && !task.worktreeDismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} />}<DrawerConversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} worktreeDecisionRequired={worktreeDecisionRequired} projectUnavailable={project === undefined} conversationAttention={conversationAttention} modelNoticeDismissed={modelNoticeDismissed} onDismissModelNotice={sessionId => setModelNoticeDismissed(current => current.includes(sessionId) ? current : [...current, sessionId])} boardDefaultPreset={state.workflow.agentPreset} presetNoticeDismissed={presetNoticeDismissed} onDismissPresetNotice={sessionId => setPresetNoticeDismissed(current => current.includes(sessionId) ? current : [...current, sessionId])} /></>}
       {section === 'Info' && <InfoPanel task={task} state={state} run={run} viewState={preferences} />}
       {section === 'Git' && gitBacked && <GitPanel task={task} project={project} api={api} run={run} worktreeBasePath={state.settings?.worktreeBasePath} draft={worktreeDraft} />}
       {section === 'Notes' && <NotesPanel task={task} state={state} run={run} viewState={preferences} />}

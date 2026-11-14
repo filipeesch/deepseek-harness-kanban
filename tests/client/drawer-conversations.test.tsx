@@ -172,6 +172,44 @@ describe('drawer conversation tabs and close action', () => {
     await waitFor(() => expect(document.activeElement).toBe(agentTabs().getByRole('tab', { name: 'Agent 3' })));
   });
 
+  it('marks and focuses the board default card and still selects it explicitly', async () => {
+    const data = fixture();
+    data.state.hubs[0]!.boards[0]!.workflow = { ...data.state.hubs[0]!.boards[0]!.workflow, agentPreset: 'ptc' };
+    const select = vi.fn(async () => ({ ok: true }));
+    const { command } = mount({ data, preset: presetPort({ select }) });
+    await screen.findByRole('tab', { name: 'Agent 1' });
+    fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+    const card = await screen.findByRole('button', { name: /PTC/ });
+    await waitFor(() => expect(document.activeElement).toBe(card));
+    expect(card.getAttribute('data-default')).toBe('true');
+    fireEvent.click(card);
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'conversation.create', taskId: 't1' }));
+    await waitFor(() => expect(select).toHaveBeenCalledWith('s3', 'ptc'));
+  });
+
+  it('does not re-select the host default preset', async () => {
+    const select = vi.fn(async () => ({ ok: true }));
+    const { command } = mount({ preset: presetPort({ select }) });
+    await screen.findByRole('tab', { name: 'Agent 1' });
+    fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Standard/ }));
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'conversation.create', taskId: 't1' }));
+    expect(select).not.toHaveBeenCalled();
+  });
+
+  it('keeps the created conversation when the board default card selection fails', async () => {
+    const data = fixture();
+    data.state.hubs[0]!.boards[0]!.workflow = { ...data.state.hubs[0]!.boards[0]!.workflow, agentPreset: 'ptc' };
+    const select = vi.fn(async () => ({ ok: false, message: 'That preset is unavailable.' }));
+    const { command, get } = mount({ data, preset: presetPort({ select }) });
+    await screen.findByRole('tab', { name: 'Agent 1' });
+    fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+    fireEvent.click(await screen.findByRole('button', { name: /PTC/ }));
+    expect(await screen.findByText('That preset is unavailable.')).toBeTruthy();
+    expect(command.mock.calls.filter(([value]) => value.type === 'conversation.create')).toHaveLength(1);
+    expect(get().state.tasks[0]!.sessionIds).toContain('s3');
+  });
+
   it('cancels the plus choice without creating a conversation', async () => {
     const { command } = mount();
     await screen.findByRole('tab', { name: 'Agent 1' });

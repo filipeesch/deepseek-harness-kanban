@@ -143,7 +143,7 @@ export function parseWorkflow(yaml: string): Workflow {
     invalidWorkflow('Invalid workflow YAML: ' + (error instanceof Error ? error.message : String(error)));
   }
   const input = record(raw, 'Workflow');
-  keys(input, ['id', 'name', 'initial_column', 'default_view', 'columns', 'groups', 'model', 'connections'], 'workflow', COLUMN_NOTE);
+  keys(input, ['id', 'name', 'initial_column', 'default_view', 'columns', 'groups', 'model', 'agent_preset', 'connections'], 'workflow', COLUMN_NOTE);
   if (input.id !== undefined) id(input.id, 'Workflow ID');
   const name = input.name === undefined ? 'Workflow' : text(input.name, 'Workflow name');
   if (!Array.isArray(input.columns) || input.columns.length === 0) invalidWorkflow('Workflow requires at least one column.');
@@ -204,6 +204,7 @@ export function parseWorkflow(yaml: string): Workflow {
   const workflow: Workflow = { name, initialColumnId, columns, groups };
   if (input.default_view !== undefined) workflow.defaultView = view(input.default_view);
   if (input.model !== undefined) workflow.model = modelSelection(input.model, 'Workflow model');
+  if (input.agent_preset !== undefined) workflow.agentPreset = text(input.agent_preset, 'Workflow agent_preset');
   if (input.connections !== undefined) {
     if (!Array.isArray(input.connections)) invalidWorkflow('Workflow connections must be an array.');
     const parsed = input.connections.map((item, index) => connectionLayout(item, 'Connection ' + index));

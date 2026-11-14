@@ -1,15 +1,10 @@
 import React, { useCallback, type ReactNode } from 'react';
-import { NativeSlotHost, type NativeLocaleSource, type NativeSlotSource } from '../native-slot-host.js';
+import { NativeSlotHost, MODEL_SELECTION_SLOT, type NativeSeat } from '../native-slot-host.js';
 
-/** DSH's composer model seat and its optional label child slot. */
-export const MODEL_SELECTION_SLOT = 'conversation.input.model';
-export const MODEL_SELECTION_LABEL_SLOT = 'conversation.input.model.label';
+export { MODEL_SELECTION_SLOT, MODEL_SELECTION_LABEL_SLOT } from '../native-slot-host.js';
 
 /** The native slot registry and locale the preparation borrows from the client generation. */
-export interface PreparationSeat {
-  readonly slots: NativeSlotSource;
-  readonly locale: NativeLocaleSource;
-}
+export type PreparationSeat = NativeSeat;
 
 interface LabelFallbackOptions { fallback?: ReactNode }
 

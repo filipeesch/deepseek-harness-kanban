@@ -3,13 +3,14 @@ import type { Attention, Command, Problem, Task } from '../shared/types.js';
 import { EMPTY_ATTENTION } from '../shared/types.js';
 import { closedSessionIds, openSessionIds } from '../shared/conversations.js';
 import { AttentionDots, AttentionStatusText } from './attention-dots.js';
-import { creationModelOutcome, creationReceiptId, useAction, type RunCommand } from './ui.js';
+import { creationModelOutcome, creationPresetOutcome, creationReceiptId, useAction, type RunCommand } from './ui.js';
 import { resolveActiveConversation, usePageField, type TaskPageState } from './page-state.js';
 import { conversationLabel, type SessionTitles } from './conversation-label.js';
 import { ClosedConversationsMenu } from './closed-conversations.js';
 import { ConversationActionsProvider, ConversationCloseAction, type ConversationActions } from './conversation-actions.js';
-import { ConversationModelNotice, ConversationNotices } from './conversation-notices.js';
+import { ConversationModelNotice, ConversationNotices, ConversationPresetNotice } from './conversation-notices.js';
 import { useOptionalModelFallbacks } from './model-fallbacks.js';
+import { useOptionalPresetFallbacks } from './preset-fallbacks.js';
 import { useOptionalConversationLeases } from './conversation-lease-context.js';
 import { AgentPresetCards } from './agent-preset-cards.js';
 import { useAgentPresetPort } from './agent-preset-context.js';
@@ -33,13 +34,19 @@ export interface DrawerConversationsProps {
   modelNoticeDismissed?: readonly string[];
   /** Record that the person read the notice of one conversation. */
   onDismissModelNotice?: (sessionId: string) => void;
+  /** The preset the task's board names for new conversations, when it names one. */
+  boardDefaultPreset?: string;
+  /** The conversations whose preset-fallback notice was dismissed in this drawer. */
+  presetNoticeDismissed?: readonly string[];
+  /** Record that the person read the preset-fallback notice of one conversation. */
+  onDismissPresetNotice?: (sessionId: string) => void;
 }
 
 type CommandScope = 'create' | 'close' | 'reopen';
 
 const NO_DISMISSED_NOTICES: readonly string[] = [];
 
-export function DrawerConversations({ task, run, renderConversation, viewState, sessionTitles, conversationAttention = {}, worktreeDecisionRequired = false, projectUnavailable = false, modelNoticeDismissed = NO_DISMISSED_NOTICES, onDismissModelNotice }: DrawerConversationsProps) {
+export function DrawerConversations({ task, run, renderConversation, viewState, sessionTitles, conversationAttention = {}, worktreeDecisionRequired = false, projectUnavailable = false, modelNoticeDismissed = NO_DISMISSED_NOTICES, onDismissModelNotice, boardDefaultPreset, presetNoticeDismissed = NO_DISMISSED_NOTICES, onDismissPresetNotice }: DrawerConversationsProps) {
   const open = openSessionIds(task);
   const closed = closedSessionIds(task);
   const noConversations = task.sessionIds.length === 0;
@@ -50,6 +57,7 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
   const action = useAction(run);
   const leases = useOptionalConversationLeases();
   const modelFallbacks = useOptionalModelFallbacks();
+  const presetFallbacks = useOptionalPresetFallbacks();
   const { port: presetPort, translate: presetTranslate } = useAgentPresetPort();
   const id = useId();
   const [commandScope, setCommandScope] = useState<CommandScope | null>(null);
@@ -111,7 +119,10 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
       const sessionId = creationReceiptId(result, 'conversation');
       // What the host did with the board's model travels on the same receipt, so the
       // notice needs no extra read and can be shown when this conversation is opened.
-      if (sessionId !== undefined) modelFallbacks?.record(sessionId, creationModelOutcome(result));
+      if (sessionId !== undefined) {
+        modelFallbacks?.record(sessionId, creationModelOutcome(result));
+        presetFallbacks?.record(sessionId, creationPresetOutcome(result));
+      }
       const createdTask = result.state.hubs.flatMap(hub => hub.tasks).find(value => value.id === task.id);
       if (!sessionId || !createdTask?.sessionIds.includes(sessionId) || createdTask.closedSessionIds.includes(sessionId)) {
         setSelectionRequired(true);
@@ -218,6 +229,9 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
   // conversation announces the same fallback again.
   const fallbackSession = viewed !== undefined && modelFallbacks !== null && !modelNoticeDismissed.includes(viewed) ? viewed : null;
   const viewedFallback = fallbackSession === null ? null : modelFallbacks?.of(fallbackSession) ?? null;
+  // The preset fallback is a separate notice with its own dismissal, on the same terms.
+  const presetFallbackSession = viewed !== undefined && presetFallbacks !== null && !presetNoticeDismissed.includes(viewed) ? viewed : null;
+  const viewedPresetFallback = presetFallbackSession === null ? null : presetFallbacks?.of(presetFallbackSession) ?? null;
   const cancelPreset = presetBusy || creationPending || (noOpenConversations && pendingConversation === null)
     ? undefined
     : cancelPresetChoice;
@@ -249,6 +263,9 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
     {viewedFallback === null || fallbackSession === null ? null : <ConversationModelNotice
       outcome={viewedFallback}
       onDismiss={() => { onDismissModelNotice?.(fallbackSession); }} />}
+    {viewedPresetFallback === null || presetFallbackSession === null ? null : <ConversationPresetNotice
+      outcome={viewedPresetFallback}
+      onDismiss={() => { onDismissPresetNotice?.(presetFallbackSession); }} />}
     {selectionRequired && creationError === null && viewed !== undefined && <p className="kb-hint" role="status">Select a conversation tab explicitly before creating another conversation.</p>}
     {choosingPreset || noOpenConversations || pendingConversation !== null
       ? <AgentPresetCards
@@ -260,6 +277,7 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
         error={presetError}
         onPick={(presetId, isDefault) => void pickPreset(presetId, isDefault)}
         {...(cancelPreset === undefined ? {} : { onCancel: cancelPreset })}
+        {...(boardDefaultPreset === undefined ? {} : { defaultPresetId: boardDefaultPreset })}
       />
       : viewed
         ? <ConversationBody active={viewed} root={active} id={id} renderConversation={renderConversation} />

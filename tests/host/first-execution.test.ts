@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import { KanbanError } from '../../src/shared/errors.js';
 import type { ModelSelection } from '../../src/shared/types.js';
 import type { SessionModelPort } from '../../src/host/session-model.js';
+import type { SessionPresetPort } from '../../src/host/session-preset.js';
 import { fixture } from './helpers.js';
 
 let active: Array<Awaited<ReturnType<typeof fixture>>> = [];
@@ -231,6 +232,20 @@ describe('prepareFirstExecution', () => {
     expect(snapshot.commandReceipt).toEqual({ kind: 'conversation', id: existing });
     // The board model was installed once, by the conversation that was made for it.
     expect(h.applied.map(entry => entry.sessionId)).toEqual([existing]);
+  });
+
+  it('announces the board agent preset it installed on the conversation it created', async () => {
+    const applied: Array<{ sessionId: string; presetId: string }> = [];
+    const port: SessionPresetPort = { apply: async (sessionId, presetId) => { applied.push({ sessionId, presetId }); return { applied: true }; } };
+    const f = await fixture({ presets: port }); active.push(f);
+    await f.store.saveBoardWorkflow(f.board.id, INSTRUCTED_WORKFLOW + 'agent_preset: standard' + String.fromCharCode(10));
+    const instruction = f.store.snapshot().workflow.columns.find(column => column.id === 'backlog')!.onEnterPrompt!;
+    const task = await created(f);
+    const marker = f.store.requireTask(task.id).instructionPending!;
+    const snapshot = await f.app.command({ type: 'task.prepareFirstExecution', taskId: task.id, columnId: 'backlog', expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
+    const conversation = f.store.requireTask(task.id).sessionIds[0]!;
+    expect(applied).toEqual([{ sessionId: conversation, presetId: 'standard' }]);
+    expect(snapshot.commandReceipt).toEqual({ kind: 'conversation', id: conversation, preset: { requested: 'standard', applied: true } });
   });
 
   it('runs through the task.prepareFirstExecution command with its receipt', async () => {

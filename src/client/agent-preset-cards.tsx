@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import type { AgentPresetOption, AgentPresetPort } from './agent-preset-port.js';
+import React, { useEffect, useRef } from 'react';
+import type { AgentPresetPort } from './agent-preset-port.js';
 import type { AgentPresetTranslate } from './agent-preset-context.js';
+import { displayPreset, useAgentPresetRoster } from './agent-preset-roster.js';
 
 /** Props for the agent-preset card picker that starts a task conversation. */
 export interface AgentPresetCardsProps {
@@ -20,54 +21,10 @@ export interface AgentPresetCardsProps {
   onPick(presetId: string, isDefault: boolean): void;
   /** Dismiss the plus action's choice; absent in the no-conversation state. */
   onCancel?: (() => void) | undefined;
+  /** The preset the task's board names as its default, when it names one. */
+  defaultPresetId?: string | undefined;
 }
 
-interface RosterState {
-  status: 'loading' | 'ready' | 'error';
-  options: readonly AgentPresetOption[];
-  error: string | null;
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-const BUILT_IN_KEYS: Readonly<Record<string, { name: string; description: string }>> = {
-  standard: { name: 'presetStandardName', description: 'presetStandardDescription' },
-  ptc: { name: 'presetPtcName', description: 'presetPtcDescription' },
-  minimal: { name: 'presetMinimalName', description: 'presetMinimalDescription' },
-  cordis: { name: 'presetCordisName', description: 'presetCordisDescription' },
-};
-
-function displayPreset(option: AgentPresetOption, translate: AgentPresetTranslate | undefined): { name: string; description: string | undefined } {
-  const keys = BUILT_IN_KEYS[option.id];
-  const name = keys === undefined ? undefined : translate?.(keys.name);
-  const description = keys === undefined ? undefined : translate?.(keys.description);
-  return {
-    name: name ?? option.name ?? option.id,
-    description: description ?? option.description,
-  };
-}
-
-function useAgentPresetRoster(port: AgentPresetPort | null): { state: RosterState; retry: () => void } {
-  const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<RosterState>({ status: 'loading', options: [], error: null });
-  useEffect(() => {
-    if (port === null) {
-      setState({ status: 'error', options: [], error: 'The native agent-preset roster is unavailable.' });
-      return undefined;
-    }
-    let active = true;
-    setState({ status: 'loading', options: [], error: null });
-    void port.list().then(
-      options => { if (active) setState({ status: 'ready', options, error: null }); },
-      error => { if (active) setState({ status: 'error', options: [], error: messageOf(error) }); },
-    );
-    return () => { active = false; };
-  }, [port, attempt]);
-  const retry = useCallback(() => setAttempt(value => value + 1), []);
-  return { state, retry };
-}
 
 /**
  * Present the host's native agent-preset roster as the start choice for a task
@@ -76,9 +33,19 @@ function useAgentPresetRoster(port: AgentPresetPort | null): { state: RosterStat
  * @param props - roster port, availability, failure state, and the chosen card.
  * @returns the card grid, or its loading/error state.
  */
-export function AgentPresetCards({ port, translate, disabled, hint, busy, error, onPick, onCancel }: AgentPresetCardsProps) {
+export function AgentPresetCards({ port, translate, disabled, hint, busy, error, onPick, onCancel, defaultPresetId }: AgentPresetCardsProps) {
   const { state, retry } = useAgentPresetRoster(port);
   const locked = disabled || busy;
+  const defaultCard = useRef<HTMLButtonElement | null>(null);
+  // The board's default is pre-selected in the only sense this picker allows: the
+  // card is focused and marked, while activation is still required to create.
+  useEffect(() => {
+    if (locked || state.status !== 'ready' || defaultPresetId === undefined) return;
+    // Focus after the drawer's own mount focus settles, so the marked card is the
+    // one the keyboard starts on rather than the surface that hosted it.
+    const frame = requestAnimationFrame(() => defaultCard.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [locked, state.status, defaultPresetId]);
   return <div className="kb-preset-cards" role="group" aria-label="Start a conversation">
     <div className="kb-preset-cards-header">
       <h3>Choose an agent preset</h3>
@@ -98,15 +65,21 @@ export function AgentPresetCards({ port, translate, disabled, hint, busy, error,
     {state.status === 'ready' && state.options.length > 0 ? <div className="kb-preset-grid">
       {state.options.map(option => {
         const display = displayPreset(option, translate);
+        const isDefault = option.id === defaultPresetId;
         return <button
           key={option.id}
+          ref={isDefault ? defaultCard : undefined}
           type="button"
-          className="kb-preset-card"
+          className={'kb-preset-card' + (isDefault ? ' is-default' : '')}
+          data-default={isDefault ? 'true' : undefined}
+          data-preset-id={option.id}
+          autoFocus={isDefault}
           disabled={locked}
           onClick={() => onPick(option.id, option.isDefault === true)}
         >
           <span className="kb-preset-card-name">{display.name}</span>
           {display.description === undefined ? null : <span className="kb-preset-card-description">{display.description}</span>}
+          {isDefault ? <span className="kb-preset-card-badge">Board default</span> : null}
         </button>;
       })}
     </div> : null}

@@ -1,24 +1,41 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
+import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots';
 import type { ClientApi, KanbanSnapshot, ModelCatalog } from '../../src/shared/types.js';
 import { ScheduleEditorDialog } from '../../src/client/settings/schedules/schedule-editor-dialog.js';
+import { MODEL_SELECTION_SLOT, type NativeSeat } from '../../src/client/native-slot-host.js';
 
 afterEach(cleanup);
 
-/** The shared picker names the current route and opens a searchable list. */
-async function chooseModel(user: ReturnType<typeof userEvent.setup>, name: RegExp): Promise<void> {
-  await user.click(screen.getByRole('button', { name: /^Model:/ }));
-  const dialog = screen.getByRole('dialog', { name: 'Choose the model' });
-  await user.click(await within(dialog).findByRole('option', { name }));
+/** A stand-in for DSH's native selector: it reads the adapter's directory and submits a route. */
+function stubSeat(): NativeSeat {
+  const Stub = (props: Record<string, unknown>) => {
+    const directory = props.directory as { getSnapshot(): { current: { provider: string; model: string; reasoningEffort?: string } | null; status: string; error: string | null } };
+    const state = directory.getSnapshot();
+    const current = state.current === null ? 'none'
+      : state.current.provider + ' · ' + state.current.model + (state.current.reasoningEffort === undefined ? '' : ' · ' + state.current.reasoningEffort);
+    const select = props.select as (value: unknown) => Promise<unknown>;
+    return <div>
+      <span data-testid="native-current">{current}</span>
+      <button type="button" onClick={() => void select({ provider: 'deepseek', model: 'chat' })}>Choose Chat</button>
+      <button type="button" onClick={() => void select({ provider: 'deepseek', model: 'reason', reasoningEffort: 'low' })}>Choose Reason low</button>
+      {state.status === 'error' ? <span data-testid="native-error">{state.error}</span> : null}
+    </div>;
+  };
+  const entry = { component: Stub, options: { id: 'model' }, locale: 'model', inject: () => ({}) } as unknown as StoredEntry;
+  return {
+    slots: { entriesOfSlot: key => key === MODEL_SELECTION_SLOT ? [entry] : [], subscribe: () => () => {} },
+    locale: { bind: () => key => key, getSnapshot: () => ({ revision: 0 }), subscribe: () => () => {} },
+  };
 }
 
 const projects = [{ id: 'p1', projectKey: 'web', name: 'Web', projectPath: '/web' }];
 const catalog: ModelCatalog = { default: { provider: 'deepseek', model: 'chat' }, providers: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'chat', name: 'Chat' }, { id: 'reason', name: 'Reason', reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'low' } }] }], failures: [] };
 
-function harness(options: { catalogFailure?: boolean; schedule?: Parameters<typeof ScheduleEditorDialog>[0]['schedule'] } = {}) {
+function harness(options: { catalogFailure?: boolean } = {}) {
   const run = vi.fn(async (_command: unknown) => ({}) as KanbanSnapshot);
   const onSaved = vi.fn();
   const onClose = vi.fn();
@@ -28,8 +45,8 @@ function harness(options: { catalogFailure?: boolean; schedule?: Parameters<type
   return { run, onSaved, onClose, api };
 }
 
-function mount(harnessed: ReturnType<typeof harness>, schedule?: Parameters<typeof ScheduleEditorDialog>[0]['schedule'], revision = 4) {
-  return render(<ScheduleEditorDialog hubId="hub" expectedRevision={revision} projects={projects} api={harnessed.api} run={harnessed.run} onClose={harnessed.onClose} onSaved={harnessed.onSaved} {...(schedule === undefined ? {} : { schedule })} />);
+function mount(harnessed: ReturnType<typeof harness>, schedule?: Parameters<typeof ScheduleEditorDialog>[0]['schedule'], revision = 4, nativeSeat: NativeSeat | null = stubSeat()) {
+  return render(<ScheduleEditorDialog hubId="hub" expectedRevision={revision} projects={projects} api={harnessed.api} run={harnessed.run} onClose={harnessed.onClose} onSaved={harnessed.onSaved} {...(schedule === undefined ? {} : { schedule })} {...(nativeSeat === null ? {} : { nativeSeat })} />);
 }
 
 function storedSchedule(overrides: Partial<Parameters<typeof ScheduleEditorDialog>[0]['schedule'] & object> = {}) {
@@ -50,7 +67,7 @@ describe('ScheduleEditorDialog', () => {
     expect(screen.getByText(/^Next: /)).toBeTruthy();
   });
 
-  it('saves a valid schedule and closes through the callback', async () => {
+  it('saves a valid schedule on the host default and sends no model', async () => {
     const user = userEvent.setup();
     const harnessed = harness();
     mount(harnessed);
@@ -63,6 +80,7 @@ describe('ScheduleEditorDialog', () => {
       type: 'schedule.save', hubId: 'hub', title: 'Morning review', prompt: 'Summarize the pull requests.',
       cron: '0 9 * * *', projectId: 'p1', newConversation: true, archiveWhenIdle: true, expectedRevision: 4,
     }));
+    expect((harnessed.run.mock.calls[0]![0] as { model?: unknown }).model).toBeUndefined();
     expect(harnessed.onSaved).toHaveBeenCalled();
   });
 
@@ -104,19 +122,29 @@ describe('ScheduleEditorDialog', () => {
   it('keeps a stored selection and selects a catalog model', async () => {
     const user = userEvent.setup();
     const harnessed = harness();
-    mount(harnessed, {
-      id: 'schedule', title: 'Stored', prompt: 'Do it', cron: '0 9 * * *', timeZone: 'UTC', projectId: 'p1',
-      model: { provider: 'deepseek', model: 'reason' }, newConversation: true, archiveWhenIdle: true, enabled: true,
-      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
-    });
-    // The stored route is named as soon as the catalog arrives, which is what the old
-    // select only did by being disabled until then.
-    await waitFor(() => expect(screen.getByRole('button', { name: /^Model:/ }).getAttribute('aria-label')).toBe('Model: DeepSeek · Reason'));
-    await chooseModel(user, /Chat/);
+    mount(harnessed, storedSchedule({ model: { provider: 'deepseek', model: 'reason' } }));
+    await waitFor(() => expect(screen.getByTestId('native-current').textContent).toBe('deepseek · reason'));
+    await user.click(screen.getByRole('button', { name: 'Choose Chat' }));
     await user.click(screen.getByRole('button', { name: 'Save schedule' }));
     await waitFor(() => expect(harnessed.run).toHaveBeenCalledWith(expect.objectContaining({ model: { provider: 'deepseek', model: 'chat' }, scheduleId: 'schedule' })));
   });
 
+  it('carries the stored reasoning effort and replaces it with the selected route', async () => {
+    const user = userEvent.setup();
+    const harnessed = harness();
+    mount(harnessed, storedSchedule({ model: { provider: 'deepseek', model: 'reason', reasoningEffort: 'high' } }));
+    await waitFor(() => expect(screen.getByTestId('native-current').textContent).toBe('deepseek · reason · high'));
+    await user.click(screen.getByRole('button', { name: 'Choose Reason low' }));
+    await user.click(screen.getByRole('button', { name: 'Save schedule' }));
+    await waitFor(() => expect(harnessed.run).toHaveBeenCalledWith(expect.objectContaining({ model: { provider: 'deepseek', model: 'reason', reasoningEffort: 'low' } })));
+    cleanup();
+    const second = harness();
+    mount(second, storedSchedule({ model: { provider: 'deepseek', model: 'reason', reasoningEffort: 'high' } }));
+    await waitFor(() => expect(screen.getByTestId('native-current').textContent).toBe('deepseek · reason · high'));
+    await user.click(screen.getByRole('button', { name: 'Choose Chat' }));
+    await user.click(screen.getByRole('button', { name: 'Save schedule' }));
+    await waitFor(() => expect(second.run).toHaveBeenCalledWith(expect.objectContaining({ model: { provider: 'deepseek', model: 'chat' } })));
+  });
 
   it('keeps the revision captured when the editor opened', async () => {
     const user = userEvent.setup();
@@ -128,23 +156,6 @@ describe('ScheduleEditorDialog', () => {
     view.rerender(<ScheduleEditorDialog hubId="hub" expectedRevision={9} projects={projects} api={harnessed.api} run={harnessed.run} onClose={harnessed.onClose} onSaved={harnessed.onSaved} />);
     await user.click(screen.getByRole('button', { name: 'Save schedule' }));
     await waitFor(() => expect(harnessed.run).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: 4 })));
-  });
-
-  it('preserves and edits the stored reasoning effort and clears it on a route change', async () => {
-    const user = userEvent.setup();
-    const harnessed = harness();
-    mount(harnessed, storedSchedule({ model: { provider: 'deepseek', model: 'reason', reasoningEffort: 'high' } }));
-    await waitFor(() => expect((screen.getByLabelText('Reasoning effort') as HTMLSelectElement).value).toBe('high'));
-    await user.selectOptions(screen.getByLabelText('Reasoning effort'), 'low');
-    await user.click(screen.getByRole('button', { name: 'Save schedule' }));
-    await waitFor(() => expect(harnessed.run).toHaveBeenCalledWith(expect.objectContaining({ model: { provider: 'deepseek', model: 'reason', reasoningEffort: 'low' } })));
-    cleanup();
-    const second = harness();
-    mount(second, storedSchedule({ model: { provider: 'deepseek', model: 'reason', reasoningEffort: 'high' } }));
-    await chooseModel(user, /Chat/);
-    expect(screen.queryByLabelText('Reasoning effort')).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Save schedule' }));
-    await waitFor(() => expect(second.run).toHaveBeenCalledWith(expect.objectContaining({ model: { provider: 'deepseek', model: 'chat' } })));
   });
 
   it('refreshes the catalog when it opens and blocks a model outside it', async () => {
@@ -162,5 +173,37 @@ describe('ScheduleEditorDialog', () => {
     const harnessed = harness({ catalogFailure: true });
     mount(harnessed);
     await waitFor(() => expect(screen.getByText(/The model catalog is unavailable/)).toBeTruthy());
+  });
+
+  it('presents the stored model read-only when the selector is unavailable', async () => {
+    const harnessed = harness();
+    mount(harnessed, storedSchedule({ model: { provider: 'deepseek', model: 'reason' } }), 4, null);
+    expect(await screen.findByText(/The native model selector is unavailable/)).toBeTruthy();
+    expect(screen.getByText(/deepseek · reason/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Choose / })).toBeNull();
+  });
+
+  it('switches between the host default and a specific model explicitly', async () => {
+    const user = userEvent.setup();
+    const harnessed = harness();
+    mount(harnessed, storedSchedule({ model: { provider: 'deepseek', model: 'reason' } }));
+    await user.click(screen.getByRole('radio', { name: 'Host default' }));
+    expect(screen.queryByTestId('native-current')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Save schedule' }));
+    await waitFor(() => expect((harnessed.run.mock.calls[0]![0] as { model?: unknown }).model).toBeUndefined());
+  });
+
+  it('requires a route for a specific model choice', async () => {
+    const user = userEvent.setup();
+    const harnessed = harness();
+    mount(harnessed);
+    await user.type(screen.getByLabelText('Schedule title'), 'Needs a model');
+    await user.type(screen.getByLabelText('Prompt'), 'Do it');
+    await user.selectOptions(screen.getByLabelText('Project'), 'p1');
+    await user.click(screen.getByRole('radio', { name: 'Specific model' }));
+    expect(screen.getAllByText(/Choose a model or use the host default/).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole('button', { name: 'Save schedule' }));
+    expect(harnessed.run).not.toHaveBeenCalled();
+    expect(screen.getAllByText(/Choose a model or use the host default/).length).toBeGreaterThan(0);
   });
 });

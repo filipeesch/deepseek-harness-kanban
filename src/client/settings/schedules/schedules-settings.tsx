@@ -3,6 +3,7 @@ import type { ClientApi, Command, HubSchedule, HubScheduleRuntime, HubState, Pro
 import { describeCron, nextOccurrence } from '../../../domain/cron.js';
 import { asProblem, ErrorNotice, type RunCommand } from '../../ui.js';
 import { ScheduleEditorDialog } from './schedule-editor-dialog.js';
+import type { NativeSeat } from '../../native-slot-host.js';
 import { formatOccurrence } from './schedule-draft.js';
 import { ScheduleLastRun } from './last-run.js';
 
@@ -22,12 +23,14 @@ function modelLabel(schedule: HubSchedule): string {
 }
 
 /** The Hub's Schedules section: the list, its row actions, and the editor overlay. */
-export function SchedulesSettings({ hub, runtime, api, run, onOpenSession }: {
+export function SchedulesSettings({ hub, runtime, api, run, onOpenSession, nativeSeat }: {
   hub: HubState;
   runtime?: HubScheduleRuntime;
   api?: ClientApi;
   run: RunCommand;
   onOpenSession?: (sessionId: string) => void;
+  /** The native slot registry the model selector borrows; absent outside the real client. */
+  nativeSeat?: NativeSeat;
 }) {
   const [editing, setEditing] = useState<{ schedule?: HubSchedule } | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -94,6 +97,7 @@ export function SchedulesSettings({ hub, runtime, api, run, onOpenSession }: {
       expectedRevision={hub.revision}
       projects={projects}
       {...(api === undefined ? {} : { api })}
+      {...(nativeSeat === undefined ? {} : { nativeSeat })}
       run={run}
       onClose={() => setEditing(null)}
       onSaved={() => setEditing(null)}

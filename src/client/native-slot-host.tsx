@@ -2,10 +2,20 @@ import React, { Component, useCallback, useEffect, useMemo, useState, useSyncExt
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots';
 import { nativeHookPropName, renderableNativeEntries, type NativeSlotKind } from './native-slot-descriptors.js';
 
+/** DSH's composer model seat and its optional label child slot. */
+export const MODEL_SELECTION_SLOT = 'conversation.input.model';
+export const MODEL_SELECTION_LABEL_SLOT = 'conversation.input.model.label';
+
 /** The subset of the native slot registry a manual host reads. */
 export interface NativeSlotSource {
   entriesOfSlot(key: string): readonly StoredEntry[];
   subscribe(key: string, listener: () => void): () => void;
+}
+
+/** The native slot registry and locale one manual host needs. */
+export interface NativeSeat {
+  readonly slots: NativeSlotSource;
+  readonly locale: NativeLocaleSource;
 }
 
 /** The locale service face the host binds to native entry namespaces. */

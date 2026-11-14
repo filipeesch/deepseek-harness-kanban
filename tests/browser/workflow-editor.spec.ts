@@ -4,6 +4,7 @@ const HARNESS = new URL('./.tmp/index.html', import.meta.url).href;
 
 test('real CodeMirror validates YAML, saves, and expands', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=workflow');
+  await page.getByRole('tablist', { name: 'Board configuration sections' }).getByRole('tab', { name: 'Workflow' }).click();
   const editor = page.locator('.cm-content');
   await expect(editor).toHaveAttribute('contenteditable', 'true');
   await expect(editor).toHaveAttribute('aria-label', 'Workflow YAML');

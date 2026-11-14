@@ -15,7 +15,7 @@ export function boardTools(app: KanbanApp, boards: BoardAdministration): ToolDef
     normal('create_board', intent + 'Create a board in a Hub with the default workflow or a supplied complete workflow YAML. Use list_hubs to discover the Hub. A bound Hub publishes the change automatically.' + reportNote, {
       hub_id: text('Hub ID. Optional when exactly one Hub exists.'),
       name: text('Board name.', true),
-      workflow_yaml: text('Complete workflow YAML. Omit for the default workflow. A root model mapping with provider, model, and optional reasoning_effort names the board default model every new conversation of this board starts on; omit it to keep the DSH default.'),
+      workflow_yaml: text('Complete workflow YAML. Omit for the default workflow. A root model mapping with provider, model, and optional reasoning_effort names the board default model every new conversation of this board starts on, and a root agent_preset scalar names the agent preset they start on; omit either to keep the host default.'),
     }, async (args, exec) => {
       await assertBoardWriteAllowed(app, exec);
       try {
@@ -31,7 +31,7 @@ export function boardTools(app: KanbanApp, boards: BoardAdministration): ToolDef
       board_id: text('Board ID.', true),
       hub_id: text('Hub ID. Optional when the board identifier is enough.'),
       name: text('Replacement board name.'),
-      workflow_yaml: text('Complete replacement workflow YAML. Keep, add, or drop the root model mapping (provider, model, and optional reasoning_effort) to set or clear the board default model; read the current one from get_board_summary include_workflow as defaultModel, or as the root mapping in get_board_yaml.'),
+      workflow_yaml: text('Complete replacement workflow YAML. Keep, add, or drop the root model mapping (provider, model, and optional reasoning_effort) and the root agent_preset scalar to set or clear the board default model and default agent preset; read the current ones from get_board_summary include_workflow as defaultModel and defaultAgentPreset, or as the root fields in get_board_yaml.'),
       expected_revision: { type: 'integer', description: 'Hub revision from a prior read; stale values are rejected.' },
     }, async (args, exec) => {
       await assertBoardWriteAllowed(app, exec);

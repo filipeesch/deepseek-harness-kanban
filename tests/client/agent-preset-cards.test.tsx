@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AgentPresetCards } from '../../src/client/agent-preset-cards.js';
 import { presetPort } from './agent-preset-fixture.js';
 
@@ -26,6 +26,21 @@ describe('AgentPresetCards', () => {
     expect(await screen.findByRole('button', { name: /Standard/ })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /PTC/ }));
     expect(onPick).toHaveBeenCalledWith('ptc', false);
+  });
+
+  it('marks and focuses the board default card', async () => {
+    cards({ defaultPresetId: 'ptc' });
+    const card = await screen.findByRole('button', { name: /PTC/ });
+    await waitFor(() => expect(document.activeElement).toBe(card));
+    expect(card.getAttribute('data-default')).toBe('true');
+    expect(within(card).getByText('Board default')).toBeTruthy();
+  });
+
+  it('marks no card when the roster does not offer the board default', async () => {
+    cards({ defaultPresetId: 'retired' });
+    await screen.findByRole('button', { name: /Standard/ });
+    expect(document.querySelectorAll('[data-default="true"]')).toHaveLength(0);
+    expect(screen.queryByText('Board default')).toBeNull();
   });
 
   it('reports a roster failure and retries the read', async () => {

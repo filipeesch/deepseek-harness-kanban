@@ -14,7 +14,9 @@ import { parseWorkflow } from '../../src/domain/workflow.js';
 import { themeFixture } from './theme-fixture.js';
 import { DeterministicHandoffNodeView } from '../../src/client/deterministic-handoff-node.js';
 import { TaskMessageNodeView, TASK_MESSAGE_NODE_KIND } from '../../src/client/task-message-node.js';
-import type { NativeSlotSource } from '../../src/client/native-slot-host.js';
+import type { NativeLocaleSource, NativeSeat, NativeSlotSource } from '../../src/client/native-slot-host.js';
+import { MODEL_SELECTION_SLOT } from '../../src/client/native-slot-host.js';
+import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots';
 
 const scenario = new URLSearchParams(window.location.search).get('scenario') ?? 'board';
 const sharingCase = new URLSearchParams(window.location.search).get('sharing');
@@ -33,7 +35,9 @@ const scheduleRuntimeFixture = {
   schedule: { running: false, lastRun: { status: 'sent' as const, at: '2026-10-21T09:00:00Z', manual: false, sessionId: 's-schedule' } },
   'schedule-2': { running: false },
 };
-const boardModel = scenario === 'board-model'
+const presetScenario = scenario === 'board-preset' || scenario === 'board-preset-notice';
+const presetOptions = presetScenario ? { boardPreset: 'standard', ...(scenario === 'board-preset-notice' ? { conversationPreset: { requested: 'standard', applied: false as const, reason: 'unavailable' as const } } : {}) } : {};
+const boardModel = scenario === 'board-model' || scenario === 'board-model-no-seat'
   ? { model: query.get('route') === 'stale'
     ? { provider: 'deepseek', model: 'retired', reasoningEffort: 'high' }
     : { provider: 'deepseek', model: 'reason', reasoningEffort: 'high' } }
@@ -43,7 +47,7 @@ const boardModel = scenario === 'board-model'
       fallback: { requested: { provider: 'deepseek', model: 'reason', reasoningEffort: 'high' }, applied: false as const, reason: 'unavailable' as const, inUse: { provider: 'deepseek', model: 'chat' } },
     }
     : undefined;
-const harness = createHarnessApi({ ...(scenario === 'deterministic' ? { deterministic: (query.get('phase') ?? 'active') as import('../../src/shared/deterministic.js').DeterministicPhase, ...(query.get('delivery') === 'failed' ? { deterministicDelivery: 'failed' as const } : {}), ...(query.get('refusal') === 'parameters' ? { deterministicRefusal: true } : {}), ...(query.get('params') === 'many' ? { deterministicManyParameters: true } : {}), ...(query.get('failure') === 'infrastructure' ? { deterministicFailure: 'infrastructure' as const } : {}), ...(query.get('failure') === 'diagnostic' ? { deterministicFailure: 'diagnostic' as const } : {}), ...(query.get('hold') === 'job' ? { deterministicHold: 'job' as const } : query.get('hold') === 'pending' ? { deterministicHold: 'pending' as const } : {}) } : {}), idle: scenario === 'stage-idle', history: scenario === 'history' ? 'short' : scenario === 'history-long' ? 'long' : scenario === 'relations' ? 'short' : undefined, relations: scenario === 'relations', ...(boardModel === undefined ? {} : { boardModel }), ...(scenario === 'schedules' ? { schedules: scheduleFixtures, scheduleRuntime: scheduleRuntimeFixture } : {}), recorded: scenario === 'routed', staleRoute: scenario === 'stale-route', attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs' || scenario === 'project-relocation' || scenario === 'flow-presence' || scenario === 'presence',
+const harness = createHarnessApi({ ...presetOptions, ...(scenario === 'deterministic' ? { deterministic: (query.get('phase') ?? 'active') as import('../../src/shared/deterministic.js').DeterministicPhase, ...(query.get('delivery') === 'failed' ? { deterministicDelivery: 'failed' as const } : {}), ...(query.get('refusal') === 'parameters' ? { deterministicRefusal: true } : {}), ...(query.get('params') === 'many' ? { deterministicManyParameters: true } : {}), ...(query.get('failure') === 'infrastructure' ? { deterministicFailure: 'infrastructure' as const } : {}), ...(query.get('failure') === 'diagnostic' ? { deterministicFailure: 'diagnostic' as const } : {}), ...(query.get('hold') === 'job' ? { deterministicHold: 'job' as const } : query.get('hold') === 'pending' ? { deterministicHold: 'pending' as const } : {}) } : {}), idle: scenario === 'stage-idle', history: scenario === 'history' ? 'short' : scenario === 'history-long' ? 'long' : scenario === 'relations' ? 'short' : undefined, relations: scenario === 'relations', ...(boardModel === undefined ? {} : { boardModel }), ...(scenario === 'schedules' ? { schedules: scheduleFixtures, scheduleRuntime: scheduleRuntimeFixture } : {}), recorded: scenario === 'routed', staleRoute: scenario === 'stale-route', attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs' || scenario === 'project-relocation' || scenario === 'flow-presence' || scenario === 'presence',
   presence: scenario === 'presence', hubs: scenario === 'hubs' ? 2 : 1, initialInstruction: scenario === 'create', restricted: scenario === 'move' || scenario === 'prepare-restricted' || scenario === 'flow-restricted', ...(scenario === 'restricted-next' || scenario === 'flow-restricted-next' ? { restrictedNext: true } : {}), persist: scenario === 'board' || scenario === 'relocation-board', pending: scenario === 'appearance', auto: scenario === 'auto' || scenario === 'agent-pause', declared: scenario === 'declared' || scenario === 'declared-failed', declaredFailed: scenario === 'declared-failed', ...(scenario === 'agent-pause' ? { agentPause: true } : {}), detect: scenario === 'project-editor' || scenario === 'project-relocation' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, ...(driveCase === null ? {} : { drive: driveCase }), shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', folderRefusal: refuse === 'folder', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}), ...(scenario === 'retained' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo', reason: 'unresolved' as const }] } : scenario === 'retained-many' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo', reason: 'unresolved' as const }, { path: '/worktrees/plain', projectId: 'p', taskTitle: 'Plain task', reason: 'folder' as const }] } : {}), ...(scenario === 'relocation-list' ? { relocation: ['waiting', 'failed', 'waiting'] as Array<'waiting' | 'failed' | null> } : scenario === 'relocation-board' ? { relocation: ['waiting', 'failed'] as Array<'waiting' | 'failed' | null> } : {}), ...(scenario === 'relocation-list' ? { extraProject: true } : {}), ...(scenario === 'flow-refused' ? { stageUpdateFailure: true } : {}) });
 
 function harnessSharing(kind: string): HubSharingView {
@@ -91,6 +95,13 @@ function harnessSharing(kind: string): HubSharingView {
   return view;
 }
 (window as unknown as { __harness: unknown }).__harness = { commands: harness.commands, snapshot: harness.snapshot, sharingCommands: harness.sharingCommands, mutate: harness.mutate };
+if (presetScenario) {
+  // The preset scenarios open a task without a conversation, so the cards are presented.
+  harness.mutate(state => {
+    const task = state.hubs[0]!.tasks.find(value => value.id === 'short');
+    if (task) { task.sessionIds = []; task.closedSessionIds = []; task.worktreeDismissed = true; }
+  });
+}
 if (flowScenario) {
   harness.mutate(state => {
     const board = state.hubs[0]!.boards[0]!;
@@ -122,7 +133,25 @@ if (flowScenario) {
 }
 
 /** The drawer creates a conversation from a preset card, so the notice scenario supplies a host roster. */
-const harnessPresetPort = { list: async () => [{ id: 'standard', name: 'Standard', description: 'Balanced coding agent', isDefault: true }], select: async () => ({ ok: true }) };
+const harnessPresetPort = { list: async () => [{ id: 'standard', name: 'Standard', description: 'Balanced coding agent', isDefault: true }, { id: 'ptc', name: 'PTC', description: 'Plan, test, and check' }], select: async () => ({ ok: true }) };
+
+/** A stand-in for DSH's native selector, so the adapter's face and selection are exercisable. */
+function StubModelSeat(props: Record<string, unknown>) {
+  const directory = props.directory as { getSnapshot(): { current: { provider: string; model: string; reasoningEffort?: string } | null; status: string; error: string | null } };
+  const state = directory.getSnapshot();
+  const select = props.select as (value: unknown) => Promise<unknown>;
+  return <div data-stub-model-seat="">
+    <span data-stub-current>{state.current === null ? 'none' : state.current.provider + ' · ' + state.current.model + (state.current.reasoningEffort === undefined ? '' : ' · ' + state.current.reasoningEffort)}</span>
+    <button type="button" onClick={() => void select({ provider: 'deepseek', model: 'chat' })}>Choose Chat</button>
+    <button type="button" onClick={() => void select({ provider: 'deepseek', model: 'reason', reasoningEffort: 'high' })}>Choose Reason high</button>
+  </div>;
+}
+const stubSeatEntry = { component: StubModelSeat, options: { id: 'model' }, locale: 'model', inject: () => ({}) } as unknown as StoredEntry;
+function stubNativeSeat(): NativeSeat {
+  const locale: NativeLocaleSource = { bind: () => key => key, getSnapshot: () => ({ revision: 0 }), subscribe: () => () => {} };
+  const slots: NativeSlotSource = { entriesOfSlot: key => key === MODEL_SELECTION_SLOT ? [stubSeatEntry] : [], subscribe: () => () => {} };
+  return { slots, locale };
+}
 
 function BoardModelNoticeScenario() {
   // One stored snapshot: a fresh object per read would spin React's store.
@@ -130,10 +159,13 @@ function BoardModelNoticeScenario() {
   return <AgentPresetProvider source={source}><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></AgentPresetProvider>;
 }
 
-function WorkflowScenario() {
+function WorkflowScenario({ seat }: { seat?: NativeSeat }) {
   const [snapshot, setSnapshot] = useState<TestSnapshot>(harness.snapshot());
+  const [open, setOpen] = useState(true);
+  const source = useMemo<AgentPresetPortSource>(() => ({ getSnapshot: () => harnessPresetPort, subscribe: () => () => {} }), []);
   const run = async (command: Command) => { const next = await harness.api.command(command); setSnapshot(next as TestSnapshot); return next; };
-  return <Configuration state={snapshot.state} hub={snapshot.state.hubs[0]!} board={snapshot.state.hubs[0]!.boards[0]!} hubCount={1} settings={snapshot.state.settings} settingsRevision={snapshot.state.settings.revision} run={run} api={harness.api} {...(sharingViews.hub === undefined ? {} : { sharing: sharingViews.hub })} initial="Board" onClose={() => {}} />;
+  if (!open) return <p role="status">Configuration closed.</p>;
+  return <AgentPresetProvider source={source}><Configuration state={snapshot.state} hub={snapshot.state.hubs[0]!} board={snapshot.state.hubs[0]!.boards[0]!} hubCount={1} settings={snapshot.state.settings} settingsRevision={snapshot.state.settings.revision} run={run} api={harness.api} {...(sharingViews.hub === undefined ? {} : { sharing: sharingViews.hub })} {...(seat === undefined ? {} : { nativeSeat: seat })} initial="Board" onClose={() => setOpen(false)} /></AgentPresetProvider>;
 }
 
 
@@ -198,6 +230,7 @@ function SchedulesScenario() {
       api={harness.api}
       scheduleRuntime={snapshot.scheduleRuntime?.[hub.id]}
       onOpenSession={sessionId => setOpened(sessionId)}
+      nativeSeat={stubNativeSeat()}
       initial="Schedules"
       onClose={() => {}}
     />
@@ -320,7 +353,9 @@ function App() {
   if (scenario === 'schedules') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><SchedulesScenario /></>;
   if (scenario === 'project-editor') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><ProjectEditorScenario /></div></>;
   if (scenario === 'workflow') return <><style>{styles}</style><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario /></div></>;
-  if (scenario === 'board-model') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario /></div></>;
+  if (scenario === 'board-model') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario seat={stubNativeSeat()} /></div></>;
+  if (scenario === 'board-model-no-seat') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario /></div></>;
+  if (scenario === 'board-preset' || scenario === 'board-preset-notice') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><BoardModelNoticeScenario /></>;
   if (scenario === 'board-model-notice') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><BoardModelNoticeScenario /></>;
   if (flowScenario) return themed
     ? <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} onMarkAllRead={() => {}} /></div></>

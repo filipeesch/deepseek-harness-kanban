@@ -1,5 +1,5 @@
 import React from 'react';
-import type { ConversationModelOutcome, ModelSelection, Problem } from '../shared/types.js';
+import type { ConversationModelOutcome, ConversationPresetOutcome, ModelSelection, Problem } from '../shared/types.js';
 import { ErrorNotice } from './ui.js';
 
 export interface ConversationNotice {
@@ -41,6 +41,30 @@ export function ConversationModelNotice({ outcome, onDismiss }: { outcome: Conve
     <strong>Board model unavailable</strong>
     <div className="kb-model-notice-body">
       <p>{cause} This conversation started on {inUse}.</p>
+      <button type="button" className="kb-button" onClick={onDismiss}>Dismiss</button>
+    </div>
+  </div>;
+}
+
+/**
+ * Tell the person opening one conversation that it did not start on the agent
+ * preset its board names. Like the model notice, this is a hint and never a
+ * blocker, and its dismissal belongs to the open drawer alone.
+ */
+export function ConversationPresetNotice({ outcome, onDismiss }: { outcome: ConversationPresetOutcome; onDismiss: () => void }) {
+  const requested = outcome.requested;
+  // Each cause is a different fact: a preset this host does not offer, a host
+  // that cannot scope a preset to one conversation, and a host that could not be
+  // asked at all.
+  const cause = outcome.reason === 'unsupported'
+    ? 'This host cannot apply ' + requested + ' to one conversation.'
+    : outcome.reason === 'failed'
+      ? 'The host could not be asked to apply ' + requested + ' to this conversation.'
+      : 'This host does not offer ' + requested + '.';
+  return <div className="kb-model-notice kb-preset-notice" role="status">
+    <strong>Board preset unavailable</strong>
+    <div className="kb-model-notice-body">
+      <p>{cause} This conversation started on the host default preset.</p>
       <button type="button" className="kb-button" onClick={onDismiss}>Dismiss</button>
     </div>
   </div>;

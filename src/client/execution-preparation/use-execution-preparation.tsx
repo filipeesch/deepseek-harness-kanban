@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import type { ClientApi, ConversationModelOutcome } from '../../shared/types.js';
+import type { ClientApi, ConversationCreationOutcome } from '../../shared/types.js';
 import { ConversationLeaseRegistry, type ConversationLeaseEnvironment } from '../conversation-leases.js';
-import { creationModelOutcome, creationReceiptId, type RunCommand } from '../ui.js';
+import { creationModelOutcome, creationPresetOutcome, creationReceiptId, type RunCommand } from '../ui.js';
 import type { PrepareExecution, PreparationRequest } from './contract.js';
 import { ExecutionPreparationController } from './controller.js';
 import { ExecutionPreparationDialog } from './dialog.js';
@@ -14,8 +14,8 @@ export interface ExecutionPreparationOptions {
   seat?: PreparationSeat;
   /** The client session services; absent in isolated render harnesses. */
   leases?: ConversationLeaseEnvironment;
-  /** Report what became of the board's model on the conversation this preparation created. */
-  onConversationCreated?: (sessionId: string, outcome: ConversationModelOutcome | undefined) => void;
+  /** Report what became of the board's model and preset on the conversation this preparation created. */
+  onConversationCreated?: (sessionId: string, outcome: ConversationCreationOutcome) => void;
 }
 
 export interface ExecutionPreparation {
@@ -79,8 +79,10 @@ export function useExecutionPreparation({ api, run, seat, leases, onConversation
         const sessionId = creationReceiptId(result, 'conversation');
         if (sessionId === undefined) throw new Error('The created conversation could not be identified from its creation receipt.');
         // The preparation itself is not the place to announce a fallback: it reports
-        // the outcome and the conversation presents it, so the move is never blocked.
-        latest.current.onConversationCreated?.(sessionId, creationModelOutcome(result));
+        // the outcomes and the conversation presents them, so the move is never blocked.
+        const model = creationModelOutcome(result);
+        const preset = creationPresetOutcome(result);
+        latest.current.onConversationCreated?.(sessionId, { ...(model === undefined ? {} : { model }), ...(preset === undefined ? {} : { preset }) });
         return sessionId;
       },
       retainSession: sessionId => retained(latest.current.registry, sessionId, latest.current.lifetime),

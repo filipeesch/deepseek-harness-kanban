@@ -326,3 +326,29 @@ describe('workflow connection layout identity', () => {
     expect(canonicalWorkflow(forward)).toBe(canonicalWorkflow(reversed));
   });
 });
+
+describe('the persisted board default agent preset', () => {
+  const yaml = 'name: Flow' + String.fromCharCode(10) + 'columns:' + String.fromCharCode(10) + '  - id: backlog' + String.fromCharCode(10) + '    label: Backlog' + String.fromCharCode(10) + 'agent_preset: standard' + String.fromCharCode(10);
+
+  it('round-trips a stored preset through the persisted workflow', () => {
+    const state = populatedState();
+    state.workflowYaml = yaml;
+    state.workflow = parseWorkflow(yaml);
+    expect(state.workflow.agentPreset).toBe('standard');
+    expect(BoardStateSchema.safeParse(state).success).toBe(true);
+  });
+
+  it('rejects a parsed workflow whose preset does not match the authored YAML', () => {
+    const state = populatedState();
+    state.workflowYaml = yaml;
+    state.workflow = { ...parseWorkflow(yaml), agentPreset: 'other' };
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+
+  it('rejects an empty stored preset', () => {
+    const state = populatedState();
+    state.workflowYaml = yaml;
+    state.workflow = { ...parseWorkflow(yaml), agentPreset: '' };
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+});
