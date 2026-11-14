@@ -113,7 +113,7 @@ export async function admitStageInstruction(deps: StageInstructionDeps, request:
     if (!current || (entryId !== undefined && current.stageEntry?.id !== entryId)) return;
     if (handoff && current.deterministicHandoff?.id === handoff.id) {
       const accepted = current.deterministicHandoff; accepted.acceptedAt = new Date().toISOString(); delete accepted.error;
-      recordDeterministicHandoff(current,{at:accepted.acceptedAt,deliveryId:accepted.id,executionId:accepted.executionId,fromColumnId:accepted.fromColumnId,columnId:current.columnId,outcome:'accepted',exit:accepted.exit,message:accepted.message});
+      recordDeterministicHandoff(current,{at:accepted.acceptedAt,deliveryId:accepted.id,executionId:accepted.executionId,fromColumnId:accepted.fromColumnId,columnId:current.columnId,outcome:'accepted',exit:accepted.exit,message:accepted.message,...(accepted.params===undefined?{}:{parameters:accepted.params})});
     }
     if (!marker || marker.columnId !== request.columnId) return;
     if (request.expectedEnteredAt !== undefined && marker.enteredAt !== request.expectedEnteredAt) return;

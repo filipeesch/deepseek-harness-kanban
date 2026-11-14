@@ -29,14 +29,14 @@ export const deterministicHoldSchema = z.strictObject({
   background: z.array(z.strictObject({ kind: z.enum(['job', 'schedule']), id: z.string().min(1).max(128).optional(), label: z.string().min(1).max(200) })).max(3).optional(),
   pending: z.array(z.enum(PENDING_USER_WORK_KINDS)).max(PENDING_USER_WORK_KINDS.length).optional(),
 });
-export const deterministicResultSchema = z.strictObject({ id, exit: z.string(), message: z.string(), at: timestamp, target: deterministicTargetSchema.optional(), synthetic: z.boolean().optional(), deliveryId: id.optional(), deliveryStatus: z.enum(['pending', 'accepted', 'failed']).optional(), error: problem.optional() });
+export const deterministicResultSchema = z.strictObject({ id, exit: z.string(), message: z.string(), at: timestamp, params: parameterValuesSchema.optional(), target: deterministicTargetSchema.optional(), synthetic: z.boolean().optional(), deliveryId: id.optional(), deliveryStatus: z.enum(['pending', 'accepted', 'failed']).optional(), error: problem.optional() });
 export const deterministicControlSchema = z.strictObject({
   entryId: id, executionId: id, stageIdentity: id, definition: deterministicDefinitionSchema, targets: z.record(z.string(), deterministicTargetSchema).optional(),
   parameters: parameterValuesSchema.optional(),
   phase: z.enum(DETERMINISTIC_PHASES), startedAt: timestamp, attempt: z.number().int().nonnegative(), restartCount: z.number().int().nonnegative(),
   attemptId: id.optional(), capture: deterministicCaptureSchema.optional(), result: deterministicResultSchema.optional(), error: problem.optional(), hold: deterministicHoldSchema.optional(),
 });
-export const deterministicHandoffSchema = z.strictObject({ id, entryId: id, executionId: id, fromColumnId: id, columnId: id, exit: z.string(), message: z.string(), at: timestamp, acceptedAt: timestamp.optional(), error: problem.optional(), instruction: z.string().optional(), sessionId: id.optional() });
+export const deterministicHandoffSchema = z.strictObject({ id, entryId: id, executionId: id, fromColumnId: id, columnId: id, exit: z.string(), message: z.string(), at: timestamp, params: parameterValuesSchema.optional(), acceptedAt: timestamp.optional(), error: problem.optional(), instruction: z.string().optional(), sessionId: id.optional() });
 
 /** Durable entry ownership outlives edits to the stage's saved execution mode. */
 export function ownsDeterministicEntry(task: Pick<Task, 'stageEntry' | 'deterministic'> & Partial<Pick<Task, 'columnId'>>): boolean {

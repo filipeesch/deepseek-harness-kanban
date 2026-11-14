@@ -11,6 +11,19 @@ columns:
         - name: pipeline
           description: Local CI pipeline identifier.
       exits:
+        passed: deploy
+        rejected: fix
+        error: repair
+  - id: deploy
+    label: Deploy the checked artifact
+    deterministic:
+      language: typescript
+      directory: task
+      file: wait-ci.ts
+      params:
+        - name: pipeline
+          description: Pipeline forwarded by the previous script step.
+      exits:
         passed: review
         rejected: fix
         error: repair

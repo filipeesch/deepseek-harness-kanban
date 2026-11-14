@@ -128,6 +128,15 @@ function failureEvidence(error: Problem | undefined): string | undefined {
   return lines.length === 0 ? undefined : lines.join('\n');
 }
 
+/** One bounded value set as Detail text; an absent or empty map adds nothing. */
+function parameterText(parameters: Readonly<Record<string, string>> | undefined, label: string): string {
+  if (parameters === undefined) return '';
+  const entries = Object.entries(parameters);
+  if (entries.length === 0) return '';
+  const joined = entries.map(([name, value]) => name + '=' + value).join(', ');
+  return ' · ' + label + ' ' + (joined.length > 4096 ? joined.slice(0, 4093) + '…' : joined);
+}
+
 /** The stage name the board defines now, or the identifier a removed stage left behind. */
 function stageName(columns: readonly Pick<Column, 'id' | 'name'>[], id: string): string {
   return columns.find(column => column.id === id)?.name ?? id;
@@ -181,9 +190,9 @@ function present(entry: TaskHistoryEntry, columns: readonly Pick<Column, 'id' | 
       // it once instead of repeating it inside the same row.
       const repeated = entry.message !== undefined && entry.error !== undefined && entry.message === entry.error.message;
       const evidence = failureEvidence(entry.error);
-      return { event: 'Script ' + entry.outcome, detail: stageName(columns, entry.columnId) + ' · Execution ' + entry.executionId + (entry.exit ? ' · Exit ' + entry.exit : '') + (entry.parameters && Object.keys(entry.parameters).length > 0 ? ' · Parameters ' + Object.entries(entry.parameters).map(([name, value]) => name + '=' + value).join(', ').slice(0, 4096) : '') + (entry.message !== undefined && !repeated ? ' — ' + entry.message : '') + failureText(entry.error), tone: entry.outcome === 'failed' ? 'warning' : 'neutral', ...(evidence === undefined ? {} : { evidence }) };
+      return { event: 'Script ' + entry.outcome, detail: stageName(columns, entry.columnId) + ' · Execution ' + entry.executionId + (entry.exit ? ' · Exit ' + entry.exit : '') + parameterText(entry.parameters, 'Parameters') + (entry.message !== undefined && !repeated ? ' — ' + entry.message : '') + failureText(entry.error), tone: entry.outcome === 'failed' ? 'warning' : 'neutral', ...(evidence === undefined ? {} : { evidence }) };
     }
-    case 'deterministic-handoff': return { event: 'Script handoff ' + entry.outcome, detail: transition(entry.fromColumnId, entry.columnId, columns) + ' · Execution ' + entry.executionId + ' · Delivery ' + entry.deliveryId + ' · Exit ' + entry.exit + ' — ' + entry.message + (entry.error ? ' — ' + entry.error.message : ''), tone: entry.outcome === 'failed' ? 'warning' : 'neutral' };
+    case 'deterministic-handoff': return { event: 'Script handoff ' + entry.outcome, detail: transition(entry.fromColumnId, entry.columnId, columns) + ' · Execution ' + entry.executionId + ' · Delivery ' + entry.deliveryId + ' · Exit ' + entry.exit + parameterText(entry.parameters, 'Sent parameters') + ' — ' + entry.message + (entry.error ? ' — ' + entry.error.message : ''), tone: entry.outcome === 'failed' ? 'warning' : 'neutral' };
     case 'created': return { event: 'Created', detail: stageName(columns, entry.columnId), tone: 'accent' };
     case 'stage': return { event: 'Stage changed', detail: transition(entry.fromColumnId, entry.columnId, columns) + ' · ' + stageOrigin(entry.origin), tone: 'accent' };
     case 'intent': return { event: 'Next stage recorded', detail: transition(entry.fromColumnId, entry.columnId, columns), tone: 'neutral' };

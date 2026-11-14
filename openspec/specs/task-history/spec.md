@@ -24,6 +24,7 @@ Every task SHALL carry an ordered record of the flow facts that happened to it. 
 
 - **WHEN** the board a task belongs to is published to a team storage
 - **THEN** the published content contains no task flow record
+
 ### Requirement: Flow facts recorded
 The record SHALL include, as separate entries: the task's creation together with the stage it was created in; every stage entry, naming the origin stage, the destination stage, and the origin of the transition that produced it; every next-stage intent recorded on the task; every auto mode change, naming whether auto mode was enabled, disabled, paused with its reason, paused by the agent, or resumed; and the settled outcome of every worktree creation, attachment, and removal, and of every failed context operation, naming the path and branch the operation acted on and the failure reason when it failed.
 
@@ -119,6 +120,7 @@ The record SHALL additionally include the settled outcome of each deterministic 
 - **WHEN** a parameterized execution settles after running with a pipeline and an app value
 - **THEN** its settled outcome carries those names and values
 - **AND** a later execution of the same entry that runs with a different value records its own values
+
 ### Requirement: Only settled facts are recorded
 The record SHALL NOT include state that is still in progress or that an existing surface already presents as current state. A phase of an operation that has not settled, a transition awaiting delivery, and the current stage itself SHALL NOT produce an entry. Attaching or closing a conversation, delivering a stage instruction, saving or deleting a note, and editing the task's title or description SHALL NOT produce an entry. Clearing a next-stage intent SHALL NOT produce an entry.
 
@@ -168,6 +170,7 @@ An active deterministic program, a sleeping loop, individual external checks, re
 - **WHEN** an admission is refused for a missing parameter and the user later edits that value
 - **THEN** neither the refusal nor the edit adds a task-history entry
 - **AND** the next settled execution records the values it used
+
 ### Requirement: Every occurrence is recorded
 A settled fact SHALL append an entry every time it happens, including when it repeats the previous entry's content. The record SHALL NOT collapse consecutive duplicate facts.
 
@@ -180,6 +183,7 @@ A settled fact SHALL append an entry every time it happens, including when it re
 
 - **WHEN** a task leaves a stage and later enters that same stage again
 - **THEN** the record gains an entry for each entry into that stage
+
 ### Requirement: A stage entry requires a stage change
 An entry for a stage change SHALL be appended only when the task's stage actually changes. A placement within the current stage, a move that is refused or canceled, an automatic advance that fails without moving the task, and renaming a stage SHALL NOT produce a stage entry.
 
@@ -211,6 +215,7 @@ Stop, Play, correction of saved script configuration, and restart recovery withi
 - **WHEN** a deterministic execution is stopped, its script is corrected, and Play starts a new run in the same stage
 - **THEN** history gains no stage-change entry for Stop, the edit, or Play
 - **AND** the current stage duration continues from the actual stage entry
+
 ### Requirement: The record follows a renamed stage
 The record SHALL reference stages by their identifier and resolve their names from the board's current workflow. Renaming a stage identifier SHALL carry that identifier into every entry that references it, preserving each entry's moment, order, and kind. An entry that references a stage the workflow no longer defines SHALL remain present and identifiable.
 
@@ -230,6 +235,7 @@ The record SHALL reference stages by their identifier and resolve their names fr
 
 - **WHEN** an entry references a stage the board's workflow no longer defines
 - **THEN** the entry remains in the record and is identifiable as that stage
+
 ### Requirement: No history before the feature
 A task that has no recorded entry SHALL present an empty record. The plugin SHALL NOT infer, backfill, or invent entries for time before the record existed.
 
@@ -238,6 +244,7 @@ A task that has no recorded entry SHALL present an empty record. The plugin SHAL
 - **WHEN** a task with no recorded entry is opened
 - **THEN** its record is empty
 - **AND** its next settled fact becomes the first entry
+
 ### Requirement: History table in the task drawer
 The History section SHALL present the record as a table with the columns **When**, **Event**, **Detail**, and **In stage**. The When column SHALL present the moment in the reader's local date and time and SHALL expose the same moment as a machine-readable timestamp. The Event column SHALL name the kind of fact. The Detail column SHALL carry the fact's own detail: the origin and destination for a stage entry, the recorded destination for an intention, the checkout path and branch for a worktree outcome, and the reason for a pause. Rows SHALL be ordered newest first and SHALL present the whole record without a cap, scrolling within the section when it exceeds the available height.
 
@@ -283,6 +290,7 @@ A deterministic execution row SHALL identify the settled outcome as script execu
 - **WHEN** an execution failed inside the isolated Bash guard
 - **THEN** its row names the failure origin, the root-cause code and the attempt count
 - **AND** it presents the bounded guard facts, redacted, without a full diagnostic stream
+
 ### Requirement: Time spent in a stage
 The In stage column SHALL present the time between a stage entry and the next later stage entry, and for the most recent stage entry the time since it happened. The value SHALL be refreshed while the section is open. Rows that are not stage entries SHALL present a placeholder instead of a duration.
 
@@ -301,6 +309,7 @@ The In stage column SHALL present the time between a stage entry and the next la
 
 - **WHEN** a row presents an auto mode change or a worktree outcome
 - **THEN** its In stage cell presents a placeholder rather than a duration
+
 ### Requirement: Empty history
 A task with no recorded entry SHALL present the History section with a statement that nothing has been recorded yet, and SHALL NOT present an empty table.
 
@@ -309,6 +318,7 @@ A task with no recorded entry SHALL present the History section with a statement
 - **WHEN** the user opens the History section of a task with no entries
 - **THEN** the section states that nothing has been recorded yet
 - **AND** no empty table is presented
+
 ### Requirement: History stays out of task tool payloads
 Tool payloads that read or list tasks SHALL omit the flow record, so browsing tasks never carries a task's whole history into a model's context.
 
@@ -321,3 +331,30 @@ Tool payloads that read or list tasks SHALL omit the flow record, so browsing ta
 
 - **WHEN** a single task is requested through a tool
 - **THEN** the returned task omits its flow record
+
+### Requirement: Handoff parameter values are recorded and presented
+
+The flow record SHALL include, on the logical deterministic handoff entry for that delivery, the bounded and redacted parameter values the source script sent with its result. The values SHALL be recorded when the handoff's acceptance or failure settles, SHALL NOT be rewritten by a later delivery retry that reuses the same delivery identity, and SHALL NOT be attributed to the destination's execution. The destination's own execution entry SHALL continue to record only the parameter values that execution received and used. The History section SHALL present those sent values on the handoff row's Detail, identified as values sent by the source, without presenting them as values the destination executed with and without claiming a stage change that did not happen. A handoff row recorded before this capability SHALL remain present and SHALL read without sent values rather than being backfilled. The row SHALL remain a non-stage row and SHALL NOT expose configured secret values.
+
+#### Scenario: Record the values a handoff carried
+
+- **WHEN** a script result carrying parameter values is accepted by its destination entry
+- **THEN** its handoff entry stores those values bounded and redacted
+- **AND** the destination execution entry records only the values that execution actually received
+
+#### Scenario: Record a failed handoff without a destination execution
+
+- **WHEN** a script result carrying parameter values is recorded as failed delivery
+- **THEN** the handoff entry retains the sent values and the failure diagnostic
+- **AND** no destination execution entry is invented
+
+#### Scenario: Read the values a handoff carried
+
+- **WHEN** the user opens the History section of a task whose handoff carried parameter values
+- **THEN** that handoff row's Detail names the sent values with their names
+- **AND** the row does not present them as the destination's execution values
+
+#### Scenario: Omit sent values when none were sent
+
+- **WHEN** a handoff carried no parameter values
+- **THEN** the row presents only its existing message and routing detail

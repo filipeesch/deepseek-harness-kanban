@@ -58,6 +58,35 @@ export function declaredParameterValues(declared: readonly string[], values: Rea
   return result;
 }
 
+/** A sent value set bound to one destination declaration: matching values plus the declared names still missing. */
+export type HandoffParameterBinding =
+  | { readonly ok: true; readonly values: Record<string, string>; readonly missing: string[] }
+  | { readonly ok: false; readonly message: string };
+
+/**
+ * Bind one result's sent values to a destination's declared parameters by exact
+ * name. A sent name the destination does not declare is an extra and never binds;
+ * a declared name the result did not send stays missing so admission can report it.
+ * The durable value-set bounds are rechecked here, so a corrupt record fails closed.
+ */
+export function bindHandoffParameterValues(declared: readonly string[], sent: Readonly<Record<string, string>> | undefined): HandoffParameterBinding {
+  if (sent !== undefined) {
+    const problem = parameterValuesProblem(sent);
+    if (problem !== null) return { ok: false, message: problem };
+  }
+  return { ok: true, values: declaredParameterValues(declared, sent), missing: missingParameterNames(declared, sent) };
+}
+
+/**
+ * Redaction can make a value longer. Keep the map only while it still satisfies
+ * the durable value bounds; otherwise drop the sent values rather than persist a
+ * record the strict task schema would reject on the next read.
+ */
+export function boundedRedactedParameters(values: Readonly<Record<string, string>> | undefined): Record<string, string> | undefined {
+  if (values === undefined) return undefined;
+  return parameterValuesProblem(values) === null ? { ...values } : undefined;
+}
+
 /** One value set as the durable schemas accept it: declared-shaped keys within the bounds. */
 export function parameterValuesProblem(values: Readonly<Record<string, string>>): string | null {
   const names = Object.keys(values);

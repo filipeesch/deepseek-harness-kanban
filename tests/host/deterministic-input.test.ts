@@ -31,6 +31,21 @@ describe('deterministic program input', () => {
     expect(buildDeterministicInput(located({ task }), control, capture)).toMatchObject({ worktree: { path: '/repo/wt', branch: 'feature/ci' }, handoff: { id: 'handoff' } });
     expect(buildDeterministicInput(located({ task: { ...task, deterministicHandoff: { ...task.deterministicHandoff, entryId: 'other-entry' } } }), control, capture)).not.toHaveProperty('handoff');
   });
+  it('keeps the raw sent map out of the handoff while preserving declared values', () => {
+    const task = { deterministicHandoff: { id: 'handoff', entryId: 'entry', executionId: 'source', fromColumnId: 'before', columnId: 'wait', exit: 'ready', message: 'incoming', at, params: { pipeline: 'incoming', extra: 'context-only' } } };
+    const input = buildDeterministicInput(located({ task }), control, capture);
+    expect(input.params).toEqual({ pipeline: 'ci-main', app: 'checkout' });
+    expect(input.handoff).toMatchObject({ id: 'handoff', exit: 'ready', message: 'incoming' });
+    expect(input.handoff).not.toHaveProperty('params');
+  });
+
+  it('keeps the same boundary for a destination that declares no parameters', () => {
+    const task = { deterministicHandoff: { id: 'handoff', entryId: 'entry', executionId: 'source', fromColumnId: 'before', columnId: 'wait', exit: 'ready', message: 'incoming', at, params: { pipeline: 'incoming' } } };
+    const input = buildDeterministicInput(located({ task }), { ...control, parameters: undefined }, { ...capture, params: [] });
+    expect(input.params).toEqual({});
+    expect(input.handoff).not.toHaveProperty('params');
+  });
+
   it('omits a stored value the capture no longer declares and a missing declared value', () => {
     const input = buildDeterministicInput(located(), { ...control, parameters: { pipeline: 'ci-main', extra: 'ignored' } }, capture);
     expect(input.params).toEqual({ pipeline: 'ci-main' });

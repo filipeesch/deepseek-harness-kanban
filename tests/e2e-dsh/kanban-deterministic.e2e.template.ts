@@ -78,6 +78,7 @@ it('runs local Bash/TypeScript loops, repairs via Play, reloads captures, and ha
     '      params:', '        - name: pipeline', '          description: Local CI pipeline identifier.',
     '      exits: { passed: wait_ts, rejected: fix, error: repair }',
     '  - id: wait_ts', '    label: Wait TypeScript', '    deterministic:', '      language: typescript', '      directory: task', '      file: wait-review.ts',
+    '      params:', '        - name: pipeline', '          description: Pipeline forwarded by the previous script step.',
     '      exits: { passed: review, rejected: fix, error: repair }',
     '  - id: review', '    label: Review', '    on_enter_prompt: Review the deterministic result.', '    allowed_transitions: []',
     '  - id: fix', '    label: Fix', '  - id: repair', '    label: Repair', '',
@@ -164,6 +165,8 @@ it('runs local Bash/TypeScript loops, repairs via Play, reloads captures, and ha
   expect(content).toContain('Review the deterministic result.');
   expect(content).toContain('Local CI passed.');
   expect(content).toContain('passed');
+  expect(content).toContain('Sent parameters');
+  expect(content).toContain('pipeline: local-ci');
   expect(events.filter(event => event.type === 'user/message' && event.data.source?.kind === 'user')).toHaveLength(0);
   expect(events.filter(event => event.type === 'turn/start')).toHaveLength(1);
   expect(events.filter(event => event.type === 'user/message' && event.data.source?.kind === 'kanban-task')).toHaveLength(1);
@@ -174,7 +177,7 @@ it('runs local Bash/TypeScript loops, repairs via Play, reloads captures, and ha
   await writeFile(join(ROOT, '.verification/deterministic-e2e-report.json'), JSON.stringify({
     status: 'passed', nativeBundleActivated: true, bashLoop: true, typeScriptLoop: true,
     stoppedAcrossReload: true, activeRestartPreservedStart: true, changedPrimaryIgnored: true, interruptedNativeAdmissionRecovered: true,
-    errorRoute: true, playInPlace: true, parameterRefusalRepairedInPlace: true, scriptChainWithoutConversation: true, downstreamReplayTurns: 1, handoffContexts: 1,
+    errorRoute: true, playInPlace: true, parameterRefusalRepairedInPlace: true, scriptChainWithoutConversation: true, chainedParameters: true, sentParameterContext: true, downstreamReplayTurns: 1, handoffContexts: 1,
     boundary: 'Native profile/plugin reload; abrupt process loss is separately verified by deterministic-ownership.test.ts.',
   }, null, 2) + '\n');
 });

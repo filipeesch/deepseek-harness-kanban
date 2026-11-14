@@ -127,6 +127,24 @@ describe('task history rows', () => {
     expect(value[0]?.detail).not.toContain('failure · EXECUTOR_FAILED');
   });
 
+  it('presents the values a script handoff sent, separate from the destination execution values', () => {
+    const value = rows([{ kind: 'deterministic-handoff', at: FIRST, deliveryId: 'delivery', executionId: 'run', fromColumnId: 'backlog', columnId: 'plan', outcome: 'accepted', exit: 'passed', message: 'CI passed', parameters: { pipeline: 'ci-main' } }]);
+    expect(value[0]).toMatchObject({ event: 'Script handoff accepted', tone: 'neutral' });
+    expect(value[0]?.detail).toContain('Sent parameters pipeline=ci-main');
+    expect(value[0]?.detail).toContain('— CI passed');
+    expect(value[0]?.detail).not.toContain('· Parameters pipeline=');
+  });
+
+  it('marks a truncated sent-parameter set instead of cutting it silently', () => {
+    const value = rows([{ kind: 'deterministic-handoff', at: FIRST, deliveryId: 'delivery', executionId: 'run', fromColumnId: 'backlog', columnId: 'plan', outcome: 'accepted', exit: 'passed', message: 'CI passed', parameters: { pipeline: 'x'.repeat(4096), app: 'checkout' } }]);
+    expect(value[0]?.detail).toContain('…');
+  });
+
+  it('omits the sent values when the handoff carried none', () => {
+    const value = rows([{ kind: 'deterministic-handoff', at: FIRST, deliveryId: 'delivery', executionId: 'run', fromColumnId: 'backlog', columnId: 'plan', outcome: 'accepted', exit: 'passed', message: 'CI passed' }]);
+    expect(value[0]?.detail).not.toContain('Sent parameters');
+  });
+
   it('returns no rows for a task that recorded nothing', () => {
     expect(rows([])).toEqual([]);
     expect(buildHistoryRows({ history: undefined, columns: COLUMNS, now: 0 })).toEqual([]);
