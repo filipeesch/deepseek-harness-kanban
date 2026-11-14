@@ -160,7 +160,7 @@ describe('board creation tools', () => {
   it('creates a board with the default workflow', async () => {
     const f = await setup();
     const value = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Second' });
-    expect(value).toMatchObject({ hubId: f.hub.id, name: 'Second', sharing: { status: 'not-bound' } });
+    expect(value).toMatchObject({ hubId: f.hub.id, name: 'Second', sharing: { status: 'not-published', reason: 'manual' } });
     // The write result stays compact; the document is read through its own tool.
     expect(value.workflowYaml).toBeUndefined();
     expect(boards(f).map(board => board.name)).toEqual(['Kanban', 'Second']);
@@ -368,43 +368,27 @@ describe('board deletion tools', () => {
     expect(boards(f)).toHaveLength(1);
   });
 
-  it('requires a scope for a team-bound board', async () => {
-    const sharing = new FakeSharing();
-    sharing.bound.add('board');
-    const f = await setup({ sharing });
-    await expect(run(f, 'delete_board', { board_id: f.board.id, confirmed: true })).rejects.toMatchObject({ code: 'SHARING_SCOPE_REQUIRED' });
-  });
-
-  it('removes a bound board locally without publishing', async () => {
+  it('refuses to remove a board shared with the team', async () => {
     const sharing = new FakeSharing();
     sharing.bound.add('board');
     sharing.viewValue = sharingView();
     const f = await setup({ sharing });
-    const value = await run(f, 'delete_board', { board_id: f.board.id, confirmed: true, sharing: 'local' });
-    expect(value.sharing).toEqual({ status: 'local-only' });
-    expect(sharing.removed[0]?.scope).toBe('local');
+    // A tool never decides whether a team removal is published; the operator removes it
+    // in the interface, where the local or team scope is that publishing decision.
+    await expect(run(f, 'delete_board', { board_id: f.board.id, confirmed: true })).rejects.toMatchObject({ code: 'BOARD_REMOVAL_REQUIRES_INTERFACE' });
+    expect(boards(f).some(board => board.id === f.board.id)).toBe(true);
+    expect(sharing.removed).toEqual([]);
     expect(sharing.published).toEqual([]);
   });
 
-  it('removes a bound board for the team through the sharing layer', async () => {
-    const sharing = new FakeSharing();
-    sharing.bound.add('board');
-    sharing.viewValue = sharingView();
-    const f = await setup({ sharing });
-    const value = await run(f, 'delete_board', { board_id: f.board.id, confirmed: true, sharing: 'team' });
-    expect(value.sharing).toEqual({ status: 'published' });
-    // The sharing layer appends the removal event itself; no board write is published.
-    expect(sharing.removed[0]?.scope).toBe('team');
-    expect(sharing.published).toEqual([]);
-  });
-
-  it('keeps an unbound board removal local on a published Hub', async () => {
+  it('removes an unbound board locally and reports no publishing attempt', async () => {
     const sharing = new FakeSharing();
     sharing.viewValue = sharingView();
     const f = await setup({ sharing });
     const value = await run(f, 'delete_board', { board_id: f.board.id, confirmed: true });
-    expect(value.sharing).toEqual({ status: 'local-only' });
+    expect(value.sharing).toEqual({ status: 'not-published', reason: 'manual' });
     expect(sharing.published).toEqual([]);
+    expect(boards(f).some(board => board.id === f.board.id)).toBe(false);
   });
 });
 
@@ -458,50 +442,40 @@ describe('board write guard', () => {
 });
 
 describe('board tool publishing', () => {
-  it('reports an unbound Hub without publishing', async () => {
+  it('reports a local save on an unbound Hub without publishing', async () => {
     const f = await setup();
     const value = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Local' });
-    expect(value.sharing).toEqual({ status: 'not-bound' });
+    expect(value.sharing).toEqual({ status: 'not-published', reason: 'manual' });
   });
 
-  it('publishes after create, update, and edit on an explicit binding', async () => {
+  it('never publishes a create, a rename, or an edit, even on a bound Hub', async () => {
     const sharing = new FakeSharing();
     sharing.viewValue = sharingView();
     const f = await setup({ sharing });
-    await run(f, 'create_board', { hub_id: f.hub.id, name: 'Second' });
-    await run(f, 'update_board', { board_id: f.board.id, name: 'Renamed' });
-    await run(f, 'edit_board_yaml', { board_id: f.board.id, edits: [{ old: '    label: Done', new: '    label: Complete' }] });
-    expect(sharing.published).toEqual([expect.any(String), f.board.id, f.board.id]);
+    const created = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Second' });
+    const renamed = await run(f, 'update_board', { board_id: f.board.id, name: 'Renamed' });
+    const edited = await run(f, 'edit_board_yaml', { board_id: f.board.id, edits: [{ old: '    label: Done', new: '    label: Complete' }] });
+    for (const value of [created, renamed, edited]) expect(value.sharing).toEqual({ status: 'not-published', reason: 'manual' });
+    expect(sharing.published).toEqual([]);
+    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).toContain('label: Complete');
   });
 
-  it('publishes a new board even when another board is behind', async () => {
-    const sharing = new FakeSharing();
-    sharing.viewValue = sharingView({ updates: 1, boards: [{ boardId: 'board', name: 'Kanban', state: 'updates-available', bound: true, draft: false }] });
-    const f = await setup({ sharing });
-    const value = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Fresh' });
-    // A new board writes only its own log, so another board's pending events do not
-    // block it; that board's own writes stay blocked.
-    expect(value.sharing).toMatchObject({ status: 'published' });
-    expect(boards(f).some(board => board.name === 'Fresh')).toBe(true);
-    expect(sharing.published).toHaveLength(1);
-  });
-
-  it('keeps a blocked edit local and reports the blocker', async () => {
+  it('keeps a save local while another board is behind', async () => {
     const sharing = new FakeSharing();
     sharing.viewValue = sharingView({ updates: 1, boards: [{ boardId: 'board', name: 'Kanban', state: 'updates-available', bound: true, draft: false }] });
     const f = await setup({ sharing });
     const value = await run(f, 'edit_board_yaml', { board_id: f.board.id, edits: [{ old: '    label: Done', new: '    label: Complete' }] });
-    expect(value.sharing).toMatchObject({ status: 'blocked' });
-    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).toContain('label: Complete');
+    expect(value.sharing).toEqual({ status: 'not-published', reason: 'manual' });
     expect(sharing.published).toEqual([]);
+    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).toContain('label: Complete');
   });
 
-  it('reports a Hub awaiting review without publishing', async () => {
+  it('reports a local save while the Hub awaits review', async () => {
     const sharing = new FakeSharing();
     sharing.viewValue = sharingView({ status: 'preview' });
     const f = await setup({ sharing });
     const value = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Preview' });
-    expect(value.sharing).toEqual({ status: 'preview' });
+    expect(value.sharing).toEqual({ status: 'not-published', reason: 'manual' });
     expect(sharing.published).toEqual([]);
   });
 });

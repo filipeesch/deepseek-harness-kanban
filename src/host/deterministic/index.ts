@@ -7,14 +7,22 @@ import { NativeExecutionOwnership, type OwnershipLease } from './ownership.js';
 import { clearGuardConfigurations, createNativeLifetime, type NativeLifetime } from './lifetime.js';
 import { createProcessOwnership } from './process/index.js';
 import { createDeterministicVariables } from './variables.js';
-import { executeCapturedProgram, verifyExecutors } from './executor.js';
+import { TYPESCRIPT_PRELUDE, executeCapturedProgram, verifyExecutors, verifyProgramRuntime } from './executor.js';
 import { createBashRetry, type BashRetryOptions } from './retry.js';
-import type { DeterministicPolicyPort, DeterministicRuntime, ExecuteRequest, ExecutionOutcome, NativePtcPort, NativeShellPort } from './ports.js';
+import type { DeterministicPolicyPort, DeterministicRuntime, ExecuteRequest, ExecutionOutcome, NativePtcPort, NativeShellPort, SimulatedShellCall, SimulatedShellResponse, TestProgramOutcome, TestProgramRequest } from './ports.js';
 import { DeterministicRuntimeError, failure } from './ports.js';
-import { bounded } from './safety.js';
+import { bounded, parseCompletion } from './safety.js';
+import type { PtcBindingNamespace, PtcJsonValue } from '@deepseek-ai/dsh-ptc-runtime';
 export * from './ports.js';
 export { createNativeDeterministicPolicy } from './native-policy.js';
 export { SecretRedactor, parseCompletion } from './safety.js';
+
+/** How many simulated shell calls one test result lists before it counts the rest. */
+const TEST_CALL_LIMIT = 50;
+/** The longest command or match string one test result quotes back. */
+const TEST_COMMAND_LIMIT = 200;
+/** The bounded total of a test program's own diagnostics. */
+const TEST_LOG_LIMIT = 64 * 1024;
 
 export interface DeterministicRuntimeOptions {
   context: unknown;
@@ -46,6 +54,75 @@ export function createDeterministicRuntime(options: DeterministicRuntimeOptions)
     const { shell, runtime } = services();
     verifyExecutors(shell, runtime, capture, executionPolicy, signal);
     return executionPolicy;
+  };
+  /**
+   * Run one authored program against a simulated shell.
+   *
+   * This path never captures, approves, stores, routes, or touches a task: it is the
+   * debug surface. The program body runs in the same fresh isolated function-body
+   * runtime a real execution uses, while every shell command resolves against the
+   * responses the caller declared; a command no response covers fails instead of
+   * reaching the native shell.
+   */
+  const test = async (request: TestProgramRequest): Promise<TestProgramOutcome> => {
+    const calls: SimulatedShellCall[] = [];
+    let callsOmitted = 0;
+    const record = (call: SimulatedShellCall): void => {
+      if (calls.length < TEST_CALL_LIMIT) calls.push(call); else callsOmitted += 1;
+    };
+    try {
+      request.signal.throwIfAborted();
+      if (request.definition.language !== 'typescript') failure('TEST_LANGUAGE_UNSUPPORTED', 'A Bash program is the shell script itself; run it from a card to test it.');
+      const { runtime } = services();
+      if (!runtime) failure('TYPESCRIPT_UNAVAILABLE', 'Mount a fresh native TypeScript function-body runtime to test a program.');
+      const answer = (command: string): SimulatedShellResponse | undefined =>
+        request.responses.find(response => command.includes(response.match)) ?? request.defaultResponse;
+      const bash = async (args: unknown): Promise<PtcJsonValue> => {
+        const object = args as { command?: unknown } | null;
+        if (object === null || typeof object !== 'object' || typeof object.command !== 'string' || object.command.length === 0) failure('BASH_ARGUMENTS', 'tools.bash expects {command}.');
+        const command = bounded(object.command, TEST_COMMAND_LIMIT);
+        const response = answer(object.command);
+        if (response === undefined) {
+          record({ command, matched: null, exitCode: 127 });
+          failure('TEST_BASH_UNCOVERED', 'No simulated response covers this command: ' + command);
+        }
+        const exitCode = response.exitCode ?? 0;
+        record({ command, matched: bounded(response.match, TEST_COMMAND_LIMIT), exitCode });
+        return {
+          exitCode, signal: null, timedOut: false, aborted: false,
+          stdout: { text: bounded(response.stdout ?? ''), truncated: false },
+          stderr: { text: bounded(response.stderr ?? ''), truncated: false },
+        };
+      };
+      const bindings: PtcBindingNamespace[] = [
+        { global: 'tools', functions: { bash: async (args: unknown) => bash(args) } },
+        { global: 'stepContext', functions: { read: async () => structuredClone(request.input) } },
+        { global: 'authorizedEnvironment', functions: { get: async () => null } },
+      ];
+      const executionPolicy = runtime.sandboxMode === undefined ? undefined : await policy.execution(request.directory, request.signal);
+      // Agent-authored code runs with no approval here, so the runtime contract is the guard.
+      verifyProgramRuntime(runtime, executionPolicy, request.directory, request.signal);
+      const result = await runtime.run(runtime.resolve({
+        program: TYPESCRIPT_PRELUDE + request.code, bindings, cwd: request.directory, timeoutMs: null,
+        sandboxPolicy: executionPolicy, signal: request.signal,
+      }));
+      if (request.signal.aborted) return { kind: 'failed', diagnostic: { code: 'TEST_ABORTED', message: 'The test execution was cancelled.' }, calls, ...(callsOmitted === 0 ? {} : { callsOmitted }) };
+      if (result.error) failure('TYPESCRIPT_' + result.error.kind.toUpperCase().replaceAll('-', '_'), result.error.message);
+      const completion = parseCompletion(result.value);
+      if (!Object.hasOwn(request.definition.exits, completion.exit)) failure('UNMAPPED_EXIT', 'The returned exit is not present in the authored exit mapping.');
+      // A program that logs in a loop must not inflate the tool result this session reads.
+      if (result.logs.reduce((sum, text) => sum + Buffer.byteLength(text), 0) > TEST_LOG_LIMIT) failure('OUTPUT_LIMIT', 'Test diagnostics exceeded the bounded output limit.');
+      return { kind: 'completed', completion, calls, diagnostics: result.logs.map(text => bounded(text)), ...(callsOmitted === 0 ? {} : { callsOmitted }) };
+    } catch (error) {
+      return {
+        kind: 'failed', calls, ...(callsOmitted === 0 ? {} : { callsOmitted }),
+        diagnostic: {
+          code: error instanceof DeterministicRuntimeError ? error.code : 'TEST_EXECUTION_FAILED',
+          message: bounded(error instanceof Error ? error.message : String(error)),
+          ...(error instanceof DeterministicRuntimeError && error.detail !== undefined ? { details: error.detail } : {}),
+        },
+      };
+    }
   };
   const execute = async (request: ExecuteRequest): Promise<ExecutionOutcome> => {
     const key = request.executionId ?? randomUUID();
@@ -110,7 +187,7 @@ export function createDeterministicRuntime(options: DeterministicRuntimeOptions)
   };
   return {
     capture: request => captures.capture(request), plan: request => captures.plan(request), loadCapture: capture => captures.load(capture),
-    normalizeCapture: (capture, definition) => captures.normalize(capture, definition), releaseCapture: capture => captures.releaseSource(capture.sourceRef), trust, variables, execute,
+    normalizeCapture: (capture, definition) => captures.normalize(capture, definition), releaseCapture: capture => captures.releaseSource(capture.sourceRef), trust, variables, execute, test,
     collectSources: referenced => captures.collectSources(referenced),
     releaseSource: reference => captures.releaseSource(reference),
     async verify(capture, signal) { await captures.load(capture); await verify(capture, signal); },

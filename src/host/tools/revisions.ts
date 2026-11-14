@@ -1,14 +1,14 @@
 import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools';
 import type { KanbanApp } from '../app.js';
 import type { BoardRevisions } from '../revisions.js';
-import type { WorkflowAuthoringPort } from './authoring.js';
+import { workflowWriteControls, type WorkflowAuthoringPort } from './authoring.js';
 import { parseWorkflow } from '../../domain/workflow.js';
 import { diffWorkflow } from '../../domain/workflow-difference.js';
 import { KanbanError, invariant } from '../../shared/errors.js';
-import { actorOf, flag, normal, refusal, text, written } from './support.js';
+import { actorOf, digestRefusal, flag, normal, refusal, text, written } from './support.js';
 import { assertBoardWriteAllowed, resolveBoard, type ToolArgs } from './scope.js';
 
-const reportNote = ' The result carries the write report: the per-stage difference, the graph warnings, the board-level reviewed authorization of every deterministic stage, and the affected cards. A refused write saves nothing and returns the same report.';
+const reportNote = ' The result carries the digest of the exact document stored and a write report: the changed stages and their changed field names, the graph warnings, the board-level reviewed authorization of every deterministic stage, and the affected cards. The report is a summary by default and the per-field values only when detail is full. A refused write saves nothing.';
 
 function requireRevisions(revisions: BoardRevisions | undefined): BoardRevisions {
   invariant(revisions !== undefined, 'REVISIONS_UNAVAILABLE', 'This host does not keep a local board revision log.');
@@ -49,6 +49,7 @@ export function revisionTools(app: KanbanApp, revisions: BoardRevisions | undefi
       confirmed: flag('Explicit confirmation of the restore; it is refused without it.'),
       expected_revision: { type: 'integer', required: true, description: 'Hub revision the caller observed; a stale value is rejected.' },
       hub_id: text('Hub ID. Optional when the board identifier is enough.'),
+      ...workflowWriteControls,
     }, async (args, exec) => {
       await assertBoardWriteAllowed(app, exec);
       const port = requireRevisions(revisions);
@@ -57,11 +58,19 @@ export function revisionTools(app: KanbanApp, revisions: BoardRevisions | undefi
       const target = await port.textAt(board.id, args.to_revision);
       invariant(target !== undefined, 'REVISION_NOT_RETAINED', 'The board no longer retains revision ' + args.to_revision + '.');
       try {
-        const value = await authoring.saveWorkflowReviewed({ boardId: board.id, ...(args.hub_id === undefined ? {} : { hubId: args.hub_id }), expectedRevision: args.expected_revision, actor: actorOf(exec), origin: 'tool', compose: () => target });
+        const value = await authoring.saveWorkflowReviewed({
+          boardId: board.id, ...(args.hub_id === undefined ? {} : { hubId: args.hub_id }),
+          expectedRevision: args.expected_revision, actor: actorOf(exec), origin: 'tool', replace: true, compose: () => target,
+          ...(args.expect_sha256 === undefined ? {} : { expectSha256: args.expect_sha256 }),
+          ...(args.dry_run === true ? { dryRun: true } : {}),
+          ...(args.detail === undefined ? {} : { detail: args.detail }),
+        });
         return written(value);
       } catch (error) {
         const refused = refusal(error);
         if (refused !== undefined) return refused;
+        const digest = digestRefusal(error);
+        if (digest !== undefined) return digest;
         throw error;
       }
     }),

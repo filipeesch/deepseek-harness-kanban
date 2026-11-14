@@ -101,7 +101,7 @@ describe('board revisions', () => {
   it('reports a board that was never written', async () => {
     const f = await setup();
     const list = await run(f, 'list_board_revisions', { board_id: f.board.id });
-    expect(list).toEqual({ boardId: f.board.id, revisions: [], olderNotRetained: 0 });
+    expect(list).toEqual({ boardId: f.board.id, revisions: [], olderNotRetained: 0, historyStarts: expect.objectContaining({ kind: 'created' }) });
   });
 
   it('compares two revisions by stage', async () => {
@@ -171,7 +171,8 @@ describe('board revisions', () => {
     const before = (await run(f, 'get_board_yaml', { board_id: boardId })).yaml;
     await run(f, 'set_stage_prompt', { board_id: boardId, stage_id: 'todo', prompt: 'Changed.' });
     const after = (await run(f, 'get_board_yaml', { board_id: boardId })).yaml;
-    await expect(run(f, 'revert_board', { board_id: boardId, to_revision: 0, confirmed: true, expected_revision: 0 })).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+    const value = await run(f, 'revert_board', { board_id: boardId, to_revision: 1, confirmed: true, expected_revision: 0 });
+    expect(value).toMatchObject({ saved: false, error: { code: 'REVISION_CONFLICT' }, details: { staleRevision: 0 } });
     expect((await run(f, 'get_board_yaml', { board_id: boardId })).yaml).toBe(after);
     expect(after).not.toBe(before);
   });

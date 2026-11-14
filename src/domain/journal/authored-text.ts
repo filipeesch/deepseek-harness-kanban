@@ -279,6 +279,25 @@ export function sequenceItemText(input: {
   return authored.endsWith(NEWLINE) ? authored.slice(0, -1) : authored;
 }
 
+/** The authored span of one sequence entry, so a caller can scope a text match to it. */
+export function sequenceItemSpan(input: {
+  readonly text: string;
+  readonly sequenceKey: string;
+} & EntryLocator): ItemSpan | undefined {
+  const { node } = sequenceOf(input.text, input.sequenceKey);
+  const index = locateIndex(node, input);
+  if (index === undefined) return undefined;
+  const entry = items(node)[index];
+  if ((node as { flow?: boolean }).flow === true) {
+    const range = nodeRange(entry);
+    return range === undefined ? undefined : { start: range[0], end: range[1] };
+  }
+  const entries = items(node);
+  const boundary = sequenceBoundary(input.text, input.sequenceKey);
+  const nextStart = index + 1 < entries.length ? itemStart(input.text, entries[index + 1]) : undefined;
+  return spanOf(input.text, entry, boundary, nextStart);
+}
+
 /**
  * Insert one entry after a located entry of an authored sequence, keeping every
  * other character. A flow-style sequence keeps its one-line form.

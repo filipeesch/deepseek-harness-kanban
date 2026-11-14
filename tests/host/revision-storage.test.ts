@@ -48,7 +48,13 @@ describe('revision storage', () => {
   it('reports a broken record instead of returning a partial log', async () => {
     const table = new MemoryTable();
     table.records.set('board', { version: 1, hubId: 'hub', boardId: 'board', dropped: 0, board: { version: 99 }, commits: [] } as unknown as EncodedRevisionLog);
-    await expect(revisions(table).read('board')).rejects.toMatchObject({ code: 'INVALID_STATE' });
+    await expect(revisions(table).read('board')).rejects.toMatchObject({ code: 'REVISION_LOG_UNREADABLE' });
+  });
+
+  it('reports a record written in a format version this installation cannot read', async () => {
+    const table = new MemoryTable();
+    table.records.set('board', { version: 99, hubId: 'hub', boardId: 'board', dropped: 0, board: { version: 1 }, commits: [] } as unknown as EncodedRevisionLog);
+    await expect(revisions(table).read('board')).rejects.toMatchObject({ code: 'REVISION_LOG_UNREADABLE' });
   });
 
   it('reports a failed save and keeps the previous record', async () => {

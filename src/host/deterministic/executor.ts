@@ -19,18 +19,26 @@ function samePolicy(actual: SandboxExecutionPolicy | undefined, expected: Sandbo
 function shellPolicy(shell: NativeShellPort, policy: SandboxExecutionPolicy): void {
   if (policy.mode !== 'danger-full-access' && shell.sandboxMode === undefined) failure('POLICY_UNSUPPORTED', 'Mount a native sandboxing Bash executor for the selected file policy.');
 }
+/**
+ * Verify the program-runtime half of the execution contract, without a shell.
+ *
+ * A test execution runs agent-authored code with no approval step, so it must hold
+ * the same isolated function-body runtime contract a real execution requires.
+ */
+export function verifyProgramRuntime(runtime: NativePtcPort | undefined, policy: SandboxExecutionPolicy | undefined, directory: string, signal?: AbortSignal): void {
+  if (!runtime) failure('TYPESCRIPT_UNAVAILABLE', 'Mount a fresh native TypeScript PTC runtime with function-body support.');
+  if (runtime.language !== 'typescript' || runtime.programFormat !== 'function-body' || runtime.retainsState || !['process', 'container'].includes(runtime.isolation)) failure('TYPESCRIPT_FORMAT_UNSUPPORTED', 'Select a fresh isolated function-body TypeScript provider; REPL, Script, retained state, and in-process evaluation are unsupported.');
+  if (policy !== undefined && policy.mode !== 'danger-full-access' && runtime.sandboxMode === undefined) failure('POLICY_UNSUPPORTED', 'The TypeScript provider must enforce the selected native file policy.');
+  const resolved = runtime.resolve({ program: 'return null;', bindings: [], cwd: directory, timeoutMs: null, sandboxPolicy: runtime.sandboxMode === undefined ? undefined : policy, signal });
+  if (resolved.timeoutMs !== null || resolved.cwd !== directory || (runtime.sandboxMode !== undefined && policy !== undefined && !samePolicy(resolved.sandboxPolicy, policy))) failure('TYPESCRIPT_LIFETIME_UNSUPPORTED', 'The TypeScript provider must preserve no deadline and the selected native policy/directory.');
+}
+
 export function verifyExecutors(shell: NativeShellPort | undefined, runtime: NativePtcPort | undefined, capture: DeterministicCapture, policy: SandboxExecutionPolicy, signal?: AbortSignal): void {
   if (!shell) failure('BASH_UNAVAILABLE', 'Mount the public native Bash execution capability before running deterministic steps.');
   shellPolicy(shell, policy);
   const spec = shell.resolve({ command: ':', workdir: capture.executionDirectory, onExpiry: 'none', sandboxPolicy: policy, stdoutMaxBytes: 256 * 1024, signal });
   if (spec.onExpiry !== 'none' || spec.stdoutMaxBytes < 256 * 1024 || spec.workdir !== capture.executionDirectory || !samePolicy(spec.sandboxPolicy, policy)) failure('BASH_LIFETIME_UNSUPPORTED', 'The Bash provider must preserve explicit no-deadline execution, directory, and native policy.');
-  if (capture.language === 'typescript') {
-    if (!runtime) failure('TYPESCRIPT_UNAVAILABLE', 'Mount a fresh native TypeScript PTC runtime with function-body support.');
-    if (runtime.language !== 'typescript' || runtime.programFormat !== 'function-body' || runtime.retainsState || !['process', 'container'].includes(runtime.isolation)) failure('TYPESCRIPT_FORMAT_UNSUPPORTED', 'Select a fresh isolated function-body TypeScript provider; REPL, Script, retained state, and in-process evaluation are unsupported.');
-    if (policy.mode !== 'danger-full-access' && runtime.sandboxMode === undefined) failure('POLICY_UNSUPPORTED', 'The TypeScript provider must enforce the selected native file policy.');
-    const resolved = runtime.resolve({ program: 'return null;', bindings: [], cwd: capture.executionDirectory, timeoutMs: null, sandboxPolicy: runtime.sandboxMode === undefined ? undefined : policy, signal });
-    if (resolved.timeoutMs !== null || resolved.cwd !== capture.executionDirectory || runtime.sandboxMode !== undefined && !samePolicy(resolved.sandboxPolicy, policy)) failure('TYPESCRIPT_LIFETIME_UNSUPPORTED', 'The TypeScript provider must preserve no deadline and the selected native policy/directory.');
-  }
+  if (capture.language === 'typescript') verifyProgramRuntime(runtime, policy, capture.executionDirectory, signal);
 }
 function commandFacts(result: ShellRunResult): PtcJsonValue {
   return {

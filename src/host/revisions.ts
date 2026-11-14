@@ -1,5 +1,5 @@
-import type { RevisionActor, RevisionOrigin, BoardRevisionLog, RevisionCommit } from '../domain/revisions/log.js';
-import { appendRevision, createRevisionLog, headText, textAtRevision } from '../domain/revisions/log.js';
+import type { RevisionActor, RevisionBaseline, RevisionOrigin, BoardRevisionLog, RevisionCommit } from '../domain/revisions/log.js';
+import { appendRevision, commitOf, createRevisionLog, headText, revisionOf, textAtRevision } from '../domain/revisions/log.js';
 import type { RevisionStore } from './revision-storage.js';
 
 /** One write the revision log records, with the document it replaced. */
@@ -15,7 +15,7 @@ export interface RevisionRecordInput {
 
 /** One revision as a reader sees it. */
 export interface RevisionView {
-  /** The revision identity: the event sequence it ends at. */
+  /** The revision identity: its position in the board's whole history, stable across folding. */
   readonly revision: number;
   readonly at: string;
   readonly actor: RevisionActor;
@@ -28,6 +28,8 @@ export interface RevisionList {
   readonly revisions: readonly RevisionView[];
   /** How many older revisions the log no longer holds. */
   readonly olderNotRetained: number;
+  /** Where the retained history starts, and whether that start is the board's creation. */
+  readonly historyStarts: RevisionBaseline;
   /** The revision a follow-up page starts after. */
   readonly nextBefore?: number;
 }
@@ -43,8 +45,8 @@ export interface BoardRevisionsOptions {
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 200;
 
-function view(commit: RevisionCommit): RevisionView {
-  return { revision: commit.to, at: commit.at, actor: commit.actor, origin: commit.origin, summary: commit.summary };
+function view(commit: RevisionCommit, revision: number): RevisionView {
+  return { revision, at: commit.at, actor: commit.actor, origin: commit.origin, summary: commit.summary };
 }
 
 /**
@@ -77,11 +79,14 @@ export class BoardRevisions {
       const at = this.now();
       if (existing === undefined) {
         if (input.previous === null) {
-          const created = createRevisionLog({ hubId: input.hubId, boardId: input.boardId, text: input.next, at });
+          // A board created now starts its own history; nothing was lost.
+          const created = createRevisionLog({ hubId: input.hubId, boardId: input.boardId, text: input.next, at, baseline: { kind: 'created', at } });
           await this.options.store.save({ ...created, commits: [{ from: 0, to: 0, at, actor: input.actor, origin: input.origin, summary: 'Created the board workflow.' }] });
           return;
         }
-        const seeded = createRevisionLog({ hubId: input.hubId, boardId: input.boardId, text: input.previous, at });
+        // A board that already holds a document has a history this installation never saw.
+        // Recording the first write as its creation would be a lie.
+        const seeded = createRevisionLog({ hubId: input.hubId, boardId: input.boardId, text: input.previous, at, baseline: { kind: 'recovered', at } });
         await this.options.store.save(appendRevision(seeded, { text: input.next, at, actor: input.actor, origin: input.origin }));
         return;
       }
@@ -94,14 +99,17 @@ export class BoardRevisions {
     return this.options.store.load(boardId);
   }
 
-  /**
-   * The document a retained revision holds. Only a revision the log still lists
-   * answers: the snapshot boundary and the intermediate sequence of one write are
-   * not revisions a caller may read, diff, or restore.
-   */
+  /** The document the most recent recorded write replaced, when the log retains it. */
+  async previousText(boardId: string): Promise<string | undefined> {
+    const log = await this.options.store.load(boardId);
+    if (log === undefined || log.commits.length < 2) return undefined;
+    return textAtRevision(log, revisionOf(log, log.commits.length - 2));
+  }
+
+  /** The document a retained revision holds, by its stable revision identity. */
   async textAt(boardId: string, revision: number): Promise<string | undefined> {
     const log = await this.options.store.load(boardId);
-    if (log === undefined || !log.commits.some(commit => commit.to === revision)) return undefined;
+    if (log === undefined || commitOf(log, revision) === undefined) return undefined;
     return textAtRevision(log, revision);
   }
 
@@ -113,16 +121,33 @@ export class BoardRevisions {
 
   async list(boardId: string, options: { readonly limit?: number; readonly before?: number } = {}): Promise<RevisionList> {
     const log = await this.options.store.load(boardId);
-    if (log === undefined) return { revisions: [], olderNotRetained: 0 };
-    const newestFirst = [...log.commits].reverse();
-    const remaining = options.before === undefined ? newestFirst : newestFirst.filter(commit => commit.to < options.before!);
+    if (log === undefined) return { revisions: [], olderNotRetained: 0, historyStarts: { kind: 'created', at: this.now() } };
+    const numbered = log.commits.map((commit, index) => ({ commit, revision: revisionOf(log, index) }));
+    const newestFirst = [...numbered].reverse();
+    const remaining = options.before === undefined ? newestFirst : newestFirst.filter(entry => entry.revision < options.before!);
     const limit = Math.min(Math.max(options.limit ?? this.options.pageSize ?? DEFAULT_PAGE_SIZE, 1), MAX_PAGE_SIZE);
     const page = remaining.slice(0, limit);
     return {
-      revisions: page.map(view),
+      revisions: page.map(entry => view(entry.commit, entry.revision)),
       olderNotRetained: log.dropped,
-      ...(remaining.length > page.length ? { nextBefore: page[page.length - 1]!.to } : {}),
+      // A log written before baselines existed reads as recovered, never as a creation
+      // this installation cannot prove.
+      historyStarts: log.baseline ?? { kind: 'recovered', at: page[page.length - 1]?.commit.at ?? this.now() },
+      ...(remaining.length > page.length ? { nextBefore: page[page.length - 1]!.revision } : {}),
     };
+  }
+
+  /**
+   * Append a recovery revision when the stored workflow no longer matches the log
+   * head, so a history never continues from a document it no longer describes.
+   */
+  async reconcile(input: { readonly hubId: string; readonly boardId: string; readonly storedText: string }): Promise<void> {
+    await this.serial(input.hubId + '/' + input.boardId, async () => {
+      const log = await this.options.store.load(input.boardId);
+      if (log === undefined || headText(log) === input.storedText) return;
+      const at = this.now();
+      await this.options.store.save(appendRevision(log, { text: input.storedText, at, actor: { kind: 'operator' }, origin: 'recovery' }));
+    });
   }
 
   /** Remove one board's log, or every log a Hub held. */

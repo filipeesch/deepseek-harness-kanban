@@ -45,7 +45,7 @@ export function createRevisionStore(table: RevisionTablePort): RevisionStore {
       const value = table.get(boardId);
       if (value === undefined) return undefined;
       const decoded = decodeRevisionLog(value);
-      if (decoded === undefined) throw new KanbanError('INVALID_STATE', 'The stored board revision log is invalid.');
+      if (decoded === undefined) throw new KanbanError('REVISION_LOG_UNREADABLE', 'The stored board revision log was written in a format this installation cannot read; it is reported instead of being treated as an absent history.');
       return decoded;
     },
     async save(log) {

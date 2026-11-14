@@ -4,6 +4,7 @@ import { workflowProblems, type WorkflowProblem } from './workflow-diagnostics.j
 import { diffWorkflow, type WorkflowDifference } from './workflow-difference.js';
 import { workflowWarnings, type WorkflowWarning } from './workflow-warnings.js';
 import { transitionAccess } from './transitions.js';
+import { stageSize, type StageSizeFact } from './workflow-size.js';
 
 /** How many warnings and cards one report itemizes before it counts the rest. */
 export const REPORT_ITEM_LIMIT = 100;
@@ -29,8 +30,10 @@ export interface ScriptImpact {
 export interface WorkflowCardReference {
   readonly id: string;
   readonly columnId: string;
-  readonly recordedTransition?: { readonly columnId: string };
-  readonly pendingTransition?: { readonly fromColumnId: string; readonly columnId: string };
+  readonly recordedTransition?: { readonly columnId: string; readonly parameters?: Readonly<Record<string, string>> };
+  readonly pendingTransition?: { readonly fromColumnId: string; readonly columnId: string; readonly parameters?: Readonly<Record<string, string>> };
+  /** The parameter names this card holds a value for; never a value. */
+  readonly parameters?: readonly string[];
 }
 
 /** One task a composed workflow affects, named by its identity only. */
@@ -53,6 +56,8 @@ export interface WorkflowReview {
 
 /** The complete report a workflow write returns on refusal and on success. */
 export interface WorkflowWriteReport {
+  /** The complete report; the summary carries `summary` and never the field values. */
+  readonly mode: 'full';
   readonly valid: boolean;
   readonly problems: readonly WorkflowProblem[];
   readonly difference: WorkflowDifference | null;
@@ -132,7 +137,7 @@ export function reviewWorkflowText(input: WorkflowReviewInput): WorkflowReview {
     valid: true,
     problems: [],
     difference: diffWorkflow(previous, workflow),
-    warnings: workflowWarnings(workflow),
+    warnings: workflowWarnings(workflow, input.cards ?? []),
     affectedCards: affectedCards(previous, workflow, input.cards ?? []),
     workflow,
     previous,
@@ -149,6 +154,7 @@ export function composeWorkflowReport(review: WorkflowReview, scripts: readonly 
   const difference = review.difference === null ? null : { ...review.difference, stages: review.difference.stages.slice(0, REPORT_ITEM_LIMIT) };
   return {
     ...withScripts({
+      mode: 'full' as const,
       valid: review.valid,
       problems: review.problems,
       difference,
@@ -160,5 +166,89 @@ export function composeWorkflowReport(review: WorkflowReview, scripts: readonly 
       affectedCards: review.affectedCards.slice(0, REPORT_ITEM_LIMIT),
       affectedCardsOmitted: Math.max(0, review.affectedCards.length - REPORT_ITEM_LIMIT),
     }, scripts),
+  };
+}
+/** One changed field in the summary: its name only, never its text. */
+export interface WorkflowFieldSummary {
+  readonly field: string;
+}
+
+/** One stage in the summary: what happened and which fields changed. */
+export interface WorkflowStageSummary {
+  readonly stage: string;
+  readonly change: 'added' | 'removed' | 'changed';
+  readonly fields?: readonly string[];
+}
+
+/** One group or connection in the summary. */
+export interface WorkflowGroupSummary {
+  readonly group: string;
+  readonly change: 'added' | 'removed' | 'changed';
+  readonly fields?: readonly string[];
+}
+
+/** The bounded report a write returns by default: what changed, never the field text. */
+export interface WorkflowReportSummary {
+  readonly mode: 'summary';
+  readonly valid: boolean;
+  readonly problems: readonly WorkflowProblem[];
+  /** The root fields that changed, by name. */
+  readonly workflow: readonly string[];
+  readonly stages: readonly WorkflowStageSummary[];
+  readonly differenceOmitted: number;
+  readonly groups: readonly WorkflowGroupSummary[];
+  readonly connections: WorkflowDifference['connections'];
+  readonly warnings: readonly WorkflowWarning[];
+  readonly warningsOmitted: number;
+  readonly scripts: readonly ScriptImpact[];
+  readonly scriptsOmitted: number;
+  readonly affectedCards: readonly AffectedCard[];
+  readonly affectedCardsOmitted: number;
+  /** The authored size of every stage the difference names, so a long instruction is visible before it is saved. */
+  readonly sizes: readonly StageSizeFact[];
+}
+
+function fieldNames(fields: ReadonlyArray<{ readonly field: string }> | undefined): readonly string[] | undefined {
+  return fields === undefined ? undefined : fields.map(field => field.field);
+}
+
+/**
+ * The summary of a write report: the same facts, with every field value reduced to
+ * its name. A caller that needs the text asks for the full report or reads the
+ * document back, which is what keeps a large document out of the model's context.
+ */
+export function summarizeWorkflowReport(report: WorkflowWriteReport, workflow: Workflow | null): WorkflowReportSummary {
+  const difference = report.difference;
+  const changed = new Set<string>();
+  for (const stage of difference?.stages ?? []) if (stage.change !== 'removed') changed.add(stage.stage);
+  const sizes = workflow === null ? [] : workflow.columns.flatMap(column => {
+    if (!changed.has(column.id)) return [];
+    const fact = stageSize(column);
+    return fact === undefined ? [] : [fact];
+  });
+  return {
+    mode: 'summary',
+    valid: report.valid,
+    problems: report.problems,
+    workflow: (difference?.workflow ?? []).map(field => field.field),
+    stages: (difference?.stages ?? []).map(stage => ({
+      stage: stage.stage,
+      change: stage.change,
+      ...(stage.fields === undefined ? {} : { fields: fieldNames(stage.fields) }),
+    })),
+    differenceOmitted: report.differenceOmitted,
+    groups: (difference?.groups ?? []).map(group => ({
+      group: group.group,
+      change: group.change,
+      ...(group.fields === undefined ? {} : { fields: fieldNames(group.fields) }),
+    })),
+    connections: difference?.connections ?? [],
+    warnings: report.warnings,
+    warningsOmitted: report.warningsOmitted,
+    scripts: report.scripts,
+    scriptsOmitted: report.scriptsOmitted,
+    affectedCards: report.affectedCards,
+    affectedCardsOmitted: report.affectedCardsOmitted,
+    sizes,
   };
 }

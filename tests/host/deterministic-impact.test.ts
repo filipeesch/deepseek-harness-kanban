@@ -47,7 +47,7 @@ describe('deterministic script impact', () => {
     const after = parseWorkflow(DEFINITION);
     const board = boardOf(DEFINITION, { wait: 'wait-key', review: 'review-key' });
     const { runtime } = fakeRuntime();
-    const result = await impact(runtime, hubOf([projectOf('p1', '/project/one'), projectOf('p2', '/project/two')]), board, after, after);
+    const result = await impact(runtime, hubOf([projectOf('p1', '/project/one'), projectOf('p2', '/project/two'), projectOf('p3', '/project/three')]), board, after, after);
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({ stage: 'wait', verdict: 'changed', reasons: ['unapproved'] });
   });

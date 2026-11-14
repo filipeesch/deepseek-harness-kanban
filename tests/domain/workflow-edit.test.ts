@@ -131,3 +131,95 @@ describe('board workflow edits', () => {
     expect(value.boards[0]).toEqual(before);
   });
 });
+
+describe('edit failures and scoped edits', () => {
+  const TWO_STAGES = [
+    'name: Two',
+    'initial_column: a',
+    'columns:',
+    '  - id: a',
+    '    label: A',
+    '    on_enter_prompt: |',
+    '      Exit code 4 means the space is not configured.',
+    '  - id: b',
+    '    label: B',
+    '    on_enter_prompt: |',
+    '      Exit code 4 means the space is not configured.',
+    '',
+  ].join('\n');
+
+  function failure(run: () => unknown): any {
+    try { run(); } catch (error) { return error; }
+    throw new Error('The edit was expected to fail.');
+  }
+
+  it('reports the failing edit index and the closest line for a missing match', () => {
+    const error = failure(() => applyWorkflowEdits(TWO_STAGES, [
+      { old: 'label: A', new: 'label: Alpha' },
+      { old: 'Exit code 5 means the space is not configured.', new: 'x' },
+    ]));
+    expect(error).toMatchObject({ code: 'WORKFLOW_EDIT_NOT_FOUND' });
+    expect(error.details).toMatchObject({ index: 1, occurrences: 0 });
+    expect(error.details.closest.text).toBe('Exit code 4 means the space is not configured.');
+    expect(error.details.closest.line).toBe(7);
+  });
+
+  it('reports the occurrence lines and stages for an ambiguous match', () => {
+    const error = failure(() => applyWorkflowEdits(TWO_STAGES, [{ old: 'Exit code 4 means the space is not configured.', new: 'x' }]));
+    expect(error).toMatchObject({ code: 'WORKFLOW_EDIT_AMBIGUOUS' });
+    expect(error.details).toMatchObject({ index: 0, occurrences: 2, lineNumbers: [7, 11], stages: ['a', 'b'] });
+  });
+
+  it('scopes a match to one of two stages carrying the same text', () => {
+    const value = applyWorkflowEdits(TWO_STAGES, [{ old: 'Exit code 4 means the space is not configured.', new: 'Only here.', stage: 'b' }]);
+    const lines = value.split('\n');
+    expect(lines[6]).toContain('Exit code 4 means the space is not configured.');
+    expect(lines[10]).toContain('Only here.');
+  });
+
+  it('scopes a match to one authored field of a stage', () => {
+    const flow = [
+      'name: Fields',
+      'initial_column: a',
+      'columns:',
+      '  - id: a',
+      '    label: A',
+      '    description: deploy now',
+      '    on_enter_prompt: deploy now',
+      '',
+    ].join('\n');
+    const value = applyWorkflowEdits(flow, [{ old: 'deploy now', new: 'ship now', stage: 'a', field: 'description' }]);
+    expect(value).toContain('description: ship now');
+    expect(value).toContain('on_enter_prompt: deploy now');
+  });
+
+  it('does not treat a key-shaped line inside a block scalar as a stage field', () => {
+    const flow = [
+      'name: Scalars',
+      'initial_column: a',
+      'columns:',
+      '  - id: a',
+      '    label: A',
+      '    on_enter_prompt: |',
+      '      description: this is prose inside the instruction',
+      '  - id: done',
+      '    label: Done',
+      '',
+    ].join('\n');
+    const unknown = failure(() => applyWorkflowEdits(flow, [{ old: 'description: this is prose inside the instruction', new: 'x', stage: 'a', field: 'description' }]));
+    expect(unknown).toMatchObject({ code: 'WORKFLOW_EDIT_NOT_FOUND' });
+    expect(unknown.details).toMatchObject({ index: 0, scope: { stage: 'a', field: 'description' } });
+    // The same text stays editable through the stage scope.
+    const scoped = applyWorkflowEdits(flow, [{ old: 'this is prose inside the instruction', new: 'edited prose', stage: 'a' }]);
+    expect(scoped).toContain('edited prose');
+  });
+
+  it('rejects an unknown stage and an unknown field', () => {
+    const missing = failure(() => applyWorkflowEdits(TWO_STAGES, [{ old: 'label: A', new: 'x', stage: 'missing' }]));
+    expect(missing).toMatchObject({ code: 'STAGE_NOT_FOUND' });
+    expect(missing.details).toMatchObject({ index: 0, occurrences: 0 });
+    const unknown = failure(() => applyWorkflowEdits(TWO_STAGES, [{ old: 'label: A', new: 'x', stage: 'b', field: 'description' }]));
+    expect(unknown).toMatchObject({ code: 'WORKFLOW_EDIT_NOT_FOUND' });
+    expect(unknown.details).toMatchObject({ index: 0, scope: { stage: 'b', field: 'description' } });
+  });
+});

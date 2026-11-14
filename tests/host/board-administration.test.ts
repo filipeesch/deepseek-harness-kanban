@@ -136,7 +136,7 @@ describe('board administration create', () => {
     expect(value.board).toMatchObject({ name: 'Second' });
     expect(value.board.workflow.columns.map(column => column.id)).toEqual(['backlog', 'plan', 'in_progress', 'in_review', 'done']);
     expect(value.hubRevision).toBe(1);
-    expect(value.sharing).toEqual({ status: 'not-requested' });
+    expect(value.sharing).toEqual({ status: 'not-published', reason: 'manual' });
   });
 
   it('creates a board with a supplied workflow', async () => {
@@ -265,7 +265,7 @@ describe('board administration removal', () => {
     sharing.viewValue = sharingView();
     const { service, boardId } = await setup(sharing);
     const value = await service.remove({ boardId, confirmed: true, sharing: 'local' }, 'when-bound');
-    expect(value.sharing).toEqual({ status: 'local-only' });
+    expect(value.sharing).toEqual({ status: 'not-published', reason: 'manual' });
     expect(sharing.removed).toEqual([{ hubId: 'default', boardId, scope: 'local', name: 'Kanban' }]);
     expect(sharing.published).toEqual([]);
     expect(sharing.localChanges).toEqual([]);
@@ -289,7 +289,7 @@ describe('board administration removal', () => {
     sharing.viewValue = sharingView();
     const { service, boardId } = await setup(sharing);
     const value = await service.remove({ boardId, confirmed: true }, 'when-bound');
-    expect(value.sharing).toEqual({ status: 'local-only' });
+    expect(value.sharing).toEqual({ status: 'not-published', reason: 'manual' });
     expect(sharing.published).toEqual([]);
     expect(sharing.localChanges).toEqual([]);
   });
@@ -311,7 +311,7 @@ describe('board administration removal', () => {
     sharing.viewValue = sharingView({ provider: 'google-drive', providerLabel: 'Google Drive' });
     const { service, boardId } = await setup(sharing);
     const value = await service.remove({ boardId, confirmed: true, sharing: 'local' }, 'when-bound');
-    expect(value.sharing).toEqual({ status: 'local-only' });
+    expect(value.sharing).toEqual({ status: 'not-published', reason: 'manual' });
     expect(sharing.published).toEqual([]);
     expect(sharing.localChanges).toEqual([]);
   });
@@ -444,7 +444,7 @@ describe('board administration publishing policy', () => {
     sharing.viewValue = sharingView();
     const { service, hubId } = await setup(sharing);
     const value = await service.create({ hubId, name: 'Command' });
-    expect(value.sharing).toEqual({ status: 'not-requested' });
+    expect(value.sharing).toEqual({ status: 'not-published', reason: 'manual' });
     expect(sharing.published).toEqual([]);
   });
 });
@@ -454,8 +454,12 @@ describe('reviewed workflow writes', () => {
     const f = await setup();
     const before = f.service.read(f.boardId);
     const value = await f.service.saveWorkflowReviewed({ boardId: f.boardId, compose: current => current.replace('label: Plan', 'label: Planning') });
-    expect(value.report.valid).toBe(true);
-    expect(value.report.difference?.stages).toEqual([{ stage: 'plan', change: 'changed', fields: [{ field: 'name', from: 'Plan', to: 'Planning' }] }]);
+    expect(value.saved).toBe(true);
+    if (!value.saved) throw new Error('The write was expected to save.');
+    const report = value.report;
+    expect(report.mode).toBe('summary');
+    if (report.mode !== 'summary') throw new Error('The default report is the summary.');
+    expect(report.stages).toEqual([{ stage: 'plan', change: 'changed', fields: ['name'] }]);
     expect(value.board.workflow.columns.find(column => column.id === 'plan')?.name).toBe('Planning');
     expect(value.hubRevision).toBeGreaterThan(before.hubRevision);
   });
@@ -474,11 +478,67 @@ describe('reviewed workflow writes', () => {
     expect(after.hubRevision).toBe(before.hubRevision);
   });
 
-  it('rejects a stale revision before saving', async () => {
+  it('rejects a stale revision for a whole-document replacement', async () => {
     const f = await setup();
     const current = f.service.read(f.boardId).hubRevision;
     await f.service.saveWorkflowReviewed({ boardId: f.boardId, compose: current => current });
-    await expect(f.service.saveWorkflowReviewed({ boardId: f.boardId, compose: current => current, expectedRevision: current })).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+    await expect(f.service.saveWorkflowReviewed({ boardId: f.boardId, compose: current => current, expectedRevision: current, replace: true })).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+  });
+
+  it('rebases a composed write whose anchors still match after an unrelated change', async () => {
+    const f = await setup();
+    const stale = f.service.read(f.boardId).hubRevision;
+    const text = f.service.read(f.boardId).board.workflowYaml;
+    await f.service.saveWorkflowReviewed({ boardId: f.boardId, compose: () => text });
+    const value = await f.service.saveWorkflowReviewed({ boardId: f.boardId, expectedRevision: stale, compose: current => current.replace('label: Plan', 'label: Rebasing') });
+    expect(value.saved).toBe(true);
+    if (!value.saved) throw new Error('The rebased write was expected to save.');
+    expect(value.board.workflow.columns.find(column => column.id === 'plan')?.name).toBe('Rebasing');
+  });
+
+  it('refuses a rebase that no longer applies and reports what changed on the board', async () => {
+    const f = await setup();
+    const stale = f.service.read(f.boardId).hubRevision;
+    await f.service.saveWorkflowReviewed({ boardId: f.boardId, compose: current => current.replace('label: Plan', 'label: Planning') });
+    const error: any = await f.service.saveWorkflowReviewed({ boardId: f.boardId, expectedRevision: stale, compose: current => { if (!current.includes('label: Plan\n')) throw new KanbanError('WORKFLOW_EDIT_NOT_FOUND', 'The anchor is gone.'); return current.replace('label: Plan\n', 'label: Planned\n'); } }).catch(value => value);
+    expect(error).toMatchObject({ code: 'REVISION_CONFLICT' });
+    expect(error.details.hubRevision).toBeGreaterThan(stale);
+    expect(error.details.staleRevision).toBe(stale);
+  });
+
+  it('rebases when the hub revision advances while the write is reviewed', async () => {
+    const storage = new MemoryHubStorage();
+    const hubs = await HubRepository.open(storage, { id: () => 'racing', now: () => NOW });
+    repositories.push(hubs);
+    const hubId = hubs.resolveHubId();
+    const seeded = new BoardAdministration({ hubs });
+    const created = await seeded.create({ hubId, name: 'Raced', workflowYaml: FLOW });
+    const stale = hubs.requireHub(hubId).revision;
+    // The port models one concurrent Hub write landing between the review and the save.
+    let raced = 0;
+    const racing = new BoardAdministration({ hubs, impact: { async describe() { if (raced++ === 0) await hubs.hub(hubId).transact(() => {}); return []; } } });
+    const value = await racing.saveWorkflowReviewed({ boardId: created.board.id, expectedRevision: stale, compose: current => current.replace('label: Done', 'label: Complete') });
+    expect(value.saved).toBe(true);
+    if (!value.saved) throw new Error('The rebased write was expected to save.');
+    expect(value.board.workflow.columns.find(column => column.id === 'done')?.name).toBe('Complete');
+    expect(value.hubRevision).toBe(hubs.requireHub(hubId).revision);
+  });
+
+  it('reports the current revision and the change when the retry also conflicts', async () => {
+    const storage = new MemoryHubStorage();
+    const hubs = await HubRepository.open(storage, { id: () => 'racing-twice', now: () => NOW });
+    repositories.push(hubs);
+    const hubId = hubs.resolveHubId();
+    const seeded = new BoardAdministration({ hubs });
+    const created = await seeded.create({ hubId, name: 'Raced twice', workflowYaml: FLOW });
+    const stale = hubs.requireHub(hubId).revision;
+    const racing = new BoardAdministration({ hubs, impact: { async describe() { await hubs.hub(hubId).transact(() => {}); return []; } } });
+    const error: any = await racing.saveWorkflowReviewed({ boardId: created.board.id, expectedRevision: stale, compose: current => current.replace('label: Done', 'label: Complete') }).catch(value => value);
+    expect(error).toMatchObject({ code: 'REVISION_CONFLICT' });
+    expect(error.details.hubRevision).toBe(hubs.requireHub(hubId).revision);
+    expect(error.details.staleRevision).toBe(stale);
+    expect(error.details.changes).toEqual({ stages: [], workflow: [] });
+    expect(error.details.report).toMatchObject({ valid: true, mode: 'summary' });
   });
 
   it('asks the script-impact port about the composed document', async () => {
