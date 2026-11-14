@@ -26,9 +26,14 @@ async function mount(value: TestSnapshot) {
   return { ...mock, user };
 }
 
-async function openConfiguration(user: ReturnType<typeof userEvent.setup>, section: string) {
+async function openConfiguration(user: ReturnType<typeof userEvent.setup>, section: string, panel?: string) {
   await user.click(screen.getByRole('button', { name: 'Configuration' }));
-  await user.click(await screen.findByRole('tab', { name: section }));
+  const top = () => within(screen.getByRole('tablist', { name: 'Configuration sections' }));
+  await user.click(await top().findByRole('tab', { name: section }));
+  if (panel !== undefined) {
+    const board = within(screen.getByRole('tablist', { name: 'Board configuration sections' }));
+    await user.click(await board.findByRole('tab', { name: panel }));
+  }
 }
 
 describe('board project scope in the client', () => {
@@ -49,7 +54,7 @@ describe('board project scope in the client', () => {
 
   it('saves the selected projects for the board', async () => {
     const { user, command } = await mount(fixture());
-    await openConfiguration(user, 'Board');
+    await openConfiguration(user, 'Board', 'Projects');
     const scope = await screen.findByRole('group', { name: 'Board project scope' });
     await user.click(within(scope).getByRole('radio', { name: /Selected projects/ }));
     await user.click(within(scope).getByRole('checkbox', { name: /API/ }));
@@ -61,7 +66,7 @@ describe('board project scope in the client', () => {
 
   it('clears the restriction when every project is allowed', async () => {
     const { user, command } = await mount(restricted(['p1']));
-    await openConfiguration(user, 'Board');
+    await openConfiguration(user, 'Board', 'Projects');
     const scope = await screen.findByRole('group', { name: 'Board project scope' });
     await user.click(within(scope).getByRole('radio', { name: /All projects/ }));
     await user.click(within(scope).getByRole('button', { name: 'Save project scope' }));
@@ -72,7 +77,7 @@ describe('board project scope in the client', () => {
 
   it('warns when the selected scope allows no project', async () => {
     const { user } = await mount(restricted(['p1']));
-    await openConfiguration(user, 'Board');
+    await openConfiguration(user, 'Board', 'Projects');
     const scope = await screen.findByRole('group', { name: 'Board project scope' });
     await user.click(within(scope).getByRole('checkbox', { name: /API/ }));
     expect(within(scope).getByRole('status').textContent).toContain('accepts no new task');
@@ -93,7 +98,7 @@ describe('board project scope in the client', () => {
 describe('scope changes while the client is open', () => {
   it('does not let an open scope form overwrite a newer team change', async () => {
     const { user, publish } = await mount(restricted(['p1']));
-    await openConfiguration(user, 'Board');
+    await openConfiguration(user, 'Board', 'Projects');
     const scope = await screen.findByRole('group', { name: 'Board project scope' });
     await user.click(within(scope).getByRole('checkbox', { name: /Web/ }));
     // A synchronization lands while the form still holds the old selection.

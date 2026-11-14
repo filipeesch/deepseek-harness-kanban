@@ -31,6 +31,7 @@ it('edits a grouped workflow, grows columns, and animates the drawer', async () 
   await projectDialog.getByRole('button', { name: 'Save project' }).click();
   await expect(page.getByText('Project saved.')).toBeVisible();
   await page.getByRole('tab', { name: 'Board' }).click();
+  await page.getByRole('tablist', { name: 'Board configuration sections' }).getByRole('tab', { name: 'Workflow' }).click();
   const editor = page.locator('.cm-content');
   await editor.click();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
@@ -153,6 +154,7 @@ it('restricts which projects create tasks on a board and closes it to creation',
   // Restrict the board to one project.
   await page.getByRole('button', { name: 'Configuration' }).click();
   await page.getByRole('tab', { name: 'Board' }).click();
+  await page.getByRole('tablist', { name: 'Board configuration sections' }).getByRole('tab', { name: 'Projects' }).click();
   const scope = page.getByRole('group', { name: 'Board project scope' });
   await scope.getByRole('radio', { name: 'Selected projects' }).check();
   await scope.getByRole('checkbox', { name: 'Harness', exact: true }).check();
@@ -193,6 +195,7 @@ it('restricts which projects create tasks on a board and closes it to creation',
   // Selecting no project closes the board to creation.
   await page.getByRole('button', { name: 'Configuration' }).click();
   await page.getByRole('tab', { name: 'Board' }).click();
+  await page.getByRole('tablist', { name: 'Board configuration sections' }).getByRole('tab', { name: 'Projects' }).click();
   const reopened = page.getByRole('group', { name: 'Board project scope' });
   await reopened.getByRole('checkbox', { name: 'Harness', exact: true }).uncheck();
   await expect(reopened.getByRole('status')).toContainText('accepts no new task');

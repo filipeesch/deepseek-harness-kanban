@@ -10,7 +10,7 @@ Start each design/change with a bounded installed-version/tool-contract check. U
 
 - `get_board_yaml`: the exact authored document, in line ranges, with the Hub revision and a file path for ordinary file reading.
 - `get_stage`: one stage's authored block; inline script source is withheld as a digest and byte length unless requested.
-- `get_board_summary` with `include_workflow: true`: parsed workflow, default model, Hub revision, publishing state — never the authored text.
+- `get_board_summary` with `include_workflow: true`: parsed workflow, default model, default agent preset, Hub revision, publishing state.
 - `get_route_stats`: route and named-exit usage, parked cards, and loops. Origin exists only from the upgrade on; earlier entries read unrecorded.
 - `list_board_revisions` / `diff_board_revisions`: what changed and who changed it; the log is local and never published.
 

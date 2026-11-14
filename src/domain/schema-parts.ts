@@ -112,6 +112,7 @@ export const modelSelection = z.strictObject({ provider: nonempty, model: nonemp
 export const workflow = z.strictObject({
   name: nonempty, initialColumnId: id, defaultView: z.enum(['board', 'workflow']).optional(), columns: z.array(column).min(1), groups: z.array(group),
   model: modelSelection.optional(),
+  agentPreset: nonempty.optional(),
   connections: z.array(connectionLayout).optional(),
 }).superRefine((value, context) => {
   const ids = new Set(value.columns.map(column => column.id));
@@ -222,6 +223,7 @@ function workflowShape(value: Workflow, includeLayout: boolean, includeIdentity 
     })),
     groups: value.groups.map(item => ({ id: item.id, name: item.name, columnIds: item.columnIds })),
     model: value.model === undefined ? undefined : { provider: value.model.provider, model: value.model.model, reasoningEffort: value.model.reasoningEffort },
+    agentPreset: value.agentPreset,
     ...(includeLayout ? { connections: sortedConnections(value.connections).map(shapeConnection) } : {}),
   });
 }

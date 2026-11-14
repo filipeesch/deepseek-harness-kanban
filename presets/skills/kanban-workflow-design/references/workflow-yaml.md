@@ -1,31 +1,32 @@
 # Workflow YAML: authoring and preservation
 
-Load for one board's stages, instructions, routes, and presentation, not a job engine, multi-board graph, or Cordis composition. Verify against the installed parser.
+Load for one board's stages, instructions, routes, and presentation; verify against the installed parser.
 
 ## Accepted structure
 
-- Root: nonempty `columns` sequence; optional `id`, `name`, `initial_column`, `default_view`, `groups`, `model`, `connections`. Name defaults to `Workflow`; initial stage defaults to the first column. Root `id` is metadata, not a board selector.
+- Root: nonempty `columns` sequence; optional `id`, `name`, `initial_column`, `default_view`, `groups`, `model`, `agent_preset`, `connections`. Name defaults to `Workflow`; initial stage defaults to the first column. Root `id` is metadata, not a board selector.
 - Column: required `id` and `label` (alias `name`); optional `key`, `description`, `allowed_transitions`, `on_enter_prompt`, `position`, `size`. Both display aliases must agree if present. `description` is text, not an instruction; preserve it in exact YAML even though the parsed column payload omits it.
 - Group: `label` (alias `name`), nonempty `columns` IDs, optional `id` (otherwise `group-1`, etc.). Groups are presentation, not destinations. Each column belongs to at most one group; group IDs are unique and cannot equal column IDs.
 - `model`: nonempty `provider`, `model`, optional nonempty `reasoning_effort`. It sets the board default for **new conversations**, not a stage model, installation default, or existing conversations. Omission means DSH default. Check host routes: the parser validates shape, not availability; an unavailable route can fall back with a notice.
+- `agent_preset`: nonempty roster identity; the agent preset **new conversations** start on. Omission means the host default preset; shape, not roster membership, is validated, and a missing preset can fall back with a notice.
 
-IDs: 1–256 characters, ASCII letter/digit first, then letters/digits/`.`/`_`/`:`/`-`; `__proto__`, `prototype`, `constructor` are reserved. Prefer descriptive IDs; quote numeric/boolean-like scalars. Column IDs and authored keys are separately unique. `key` is stable stage identity for sharing: preserve across edits/renames; do not add keys merely to reformat unpublished workflows.
+IDs: 1–256 characters, ASCII letter/digit first, then letters/digits/`.`/`_`/`:`/`-`; `__proto__`, `prototype`, `constructor` are reserved. `key` is stable stage identity for sharing: preserve across edits/renames; do not add keys merely to reformat unpublished workflows.
 
-Unknown fields are rejected: no WIP limits, stage `auto_mode`, agent/preset/engine settings, dependencies, parent/child fields, retry/schedule settings, or arbitrary `metadata`. Use `on_enter_prompt`, not `prompt`; use `columns`, not `stages`. Criteria belong in instructions; coordination belongs in prose protocols.
+Unknown fields are rejected: no WIP limits, stage `auto_mode`, engine settings, per-stage agents or presets, dependencies, parent/child fields, retry/schedule settings, or arbitrary `metadata`. Use `on_enter_prompt`, not `prompt`; use `columns`, not `stages`. Criteria belong in instructions; coordination belongs in prose protocols.
 
 ## Routes and conditions
 
 `allowed_transitions` mixes bare column IDs and `{to, when}` mappings. `to` is required; `when` is optional text (null/blank means no condition). Targets must exist in this document and cannot repeat. Conditions guide models; the runtime does not evaluate their truth.
 
 - **Omitted:** human moves allow any other stage; default progression uses workflow order. The diagram draws only a dashed next-stage arrow. `set_next_transition` has no configured targets to choose.
-- **Nonempty:** configured destinations in authored order; the first is default when no route is declared, regardless of conditions. Avoid self-targets: accepted as same-stage reorders, they are not routing targets and stop default progression when first.
+- **Nonempty:** configured destinations in authored order; the first is default when no route is declared, regardless of conditions. Avoid self-targets: they are reorders, not routing targets.
 - **`[]`:** no permitted destinations/default advance; humans can still confirm restricted moves. This is terminal policy, not “wait until dependency.”
 
 A deterministic version is approved once per board and stable stage, never by saving YAML.
 
 A deterministic stage may declare required `params`. A value comes from the transition, the preceding script's completion, or the panel. Exact names bind; extras do not; a missing name repairs in place. Conversation destinations see the sent values as context; script destinations only declared names. Reserved exits: `error` takes script/completion failures, `infrastructure` guard/runtime failures (fallback `error`); configuration refusals follow none and no exit may self-target.
 
-No cross-board YAML transitions exist. Handoffs create separate tasks using an authorized [coordination protocol](coordination.md), not a cross-board move.
+No cross-board YAML transitions; handoffs create separate tasks through the [coordination protocol](coordination.md).
 
 ## Entry instructions and gates
 
@@ -35,7 +36,7 @@ Do not tell every stage to declare a route automatically: this arms a completed-
 
 ## Presentation fields
 
-Preserve these during business-rule edits:
+Preserve:
 
 - `default_view`: `board` or `workflow`; omission defaults to board until a local user choice.
 - Column `position`: `{x, y}`, finite, absolute values at most 1,000,000.

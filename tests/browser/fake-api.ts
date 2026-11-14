@@ -1,4 +1,4 @@
-import type { BoardState, ClientApi, Command, ConversationModelOutcome, ModelSelection, DriveBrowseView, DriveDiscoveryView, HubSchedule, HubScheduleRuntime, HubSharingView, HubState, HubTask, KanbanSnapshot, KanbanState, LocalDriveRequest, LocalDriveResult, Note, SharingCommand } from '../../src/shared/types.js';
+import type { BoardState, ClientApi, Command, ConversationModelOutcome, ConversationPresetOutcome, ModelSelection, DriveBrowseView, DriveDiscoveryView, HubSchedule, HubScheduleRuntime, HubSharingView, HubState, HubTask, KanbanSnapshot, KanbanState, LocalDriveRequest, LocalDriveResult, Note, SharingCommand } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { requireProjectPath } from '../../src/shared/project.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
@@ -7,6 +7,7 @@ import { applyInitialEntry, applyMove, applyRunInstruction, createEnteredAtSourc
 import { transitions } from '../support/transition-rules.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import { writeBoardModelField } from '../../src/domain/board-model-field.js';
+import { writeBoardAgentPresetField } from '../../src/domain/board-agent-preset-field.js';
 import { renameTaskStage, updateStage } from '../../src/domain/stage-update.js';
 import type { TaskHistoryEntry } from '../../src/shared/task-history.js';
 
@@ -22,7 +23,11 @@ export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardSta
 
 export interface HarnessOptions { deterministic?: import('../../src/shared/deterministic.js').DeterministicPhase; deterministicDelivery?: 'failed'; deterministicRefusal?: boolean; deterministicManyParameters?: boolean; deterministicFailure?: 'infrastructure' | 'diagnostic'; deterministicHold?: 'job' | 'pending'; stageUpdateFailure?: boolean; history?: 'short' | 'long'; relations?: boolean; recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; declared?: boolean; declaredFailed?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; agentPause?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string; reason: 'folder' | 'unresolved' }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean;
   /** Names the board's default model and what its conversations report back when it cannot be applied. */
-  boardModel?: { model: ModelSelection; fallback?: ConversationModelOutcome }; }
+  boardModel?: { model: ModelSelection; fallback?: ConversationModelOutcome };
+  /** Names the board's default agent preset, as the Defaults control writes it. */
+  boardPreset?: string;
+  /** What the board's default preset outcome is on every conversation this fake creates. */
+  conversationPreset?: ConversationPresetOutcome; }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -182,6 +187,11 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
     // The board names a default model, exactly as the workflow control writes it.
     const board = hub.boards[0]!;
     board.workflowYaml = writeBoardModelField(board.workflowYaml, options.boardModel.model);
+    board.workflow = parseWorkflow(board.workflowYaml);
+  }
+  if (options.boardPreset !== undefined) {
+    const board = hub.boards[0]!;
+    board.workflowYaml = writeBoardAgentPresetField(board.workflowYaml, options.boardPreset);
     board.workflow = parseWorkflow(board.workflowYaml);
   }
   if (options.extraProject) hub.projects.push({ id: 'p3', projectKey: 'p3', name: 'Relocation-only project', projectPath: '/repo/free', gitRootPath: '/repo', defaultBranch: 'main' });
@@ -385,14 +395,14 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
         const project = task ? hub?.projects.find(item => item.id === task.projectId) : undefined;
         if (task) {
           if (project?.gitRootPath && task.worktree === null && task.worktreeDismissed !== true) { task.worktree = { path: '/worktrees/' + task.id, branch: task.title, owned: true, status: 'ready' }; task.effectiveCwd = task.worktree.path; }
-          if (task.sessionIds.length === 0) { const id = 's-created-' + commands.length; task.sessionIds.push(id); receipt = { kind: 'conversation', id }; }
+          if (task.sessionIds.length === 0) { const id = 's-created-' + commands.length; task.sessionIds.push(id); receipt = { kind: 'conversation', id, ...(options.conversationPreset === undefined ? {} : { preset: structuredClone(options.conversationPreset) }) }; }
         }
       }
       if (command.type === 'worktree.create') { const task = firstHub.tasks.find(item => item.id === command.taskId); if (task) { const path = command.path ?? '/worktrees/derived'; task.worktree = { path, branch: command.branchName ?? 'derived', owned: true, status: 'ready' }; task.effectiveCwd = path; } }
       if (command.type === 'worktree.dismiss') { const task = firstHub.tasks.find(item => item.id === command.taskId); if (task) task.worktreeDismissed = true; }
       if (command.type === 'conversation.create') {
         const task = value.state.hubs.flatMap(item => item.tasks).find(item => item.id === command.taskId);
-        if (task) { const id = 's-created-' + task.sessionIds.length + '-' + commands.length; task.sessionIds.push(id); receipt = { kind: 'conversation', id, ...(options.boardModel?.fallback === undefined ? {} : { model: structuredClone(options.boardModel.fallback) }) }; }
+        if (task) { const id = 's-created-' + task.sessionIds.length + '-' + commands.length; task.sessionIds.push(id); receipt = { kind: 'conversation', id, ...(options.boardModel?.fallback === undefined ? {} : { model: structuredClone(options.boardModel.fallback) }), ...(options.conversationPreset === undefined ? {} : { preset: structuredClone(options.conversationPreset) }) }; }
       }
       if (command.type === 'note.save') {
         const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);

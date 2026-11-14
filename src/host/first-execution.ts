@@ -2,7 +2,7 @@ import { entryInstruction } from '../domain/stage-entry.js';
 import { planFirstExecution } from '../domain/first-execution.js';
 import { firstOpenSessionId } from '../shared/conversations.js';
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { ConversationModelOutcome, CreateWorktreeInput } from '../shared/types.js';
+import type { ConversationModelOutcome, ConversationPresetOutcome, CreateWorktreeInput } from '../shared/types.js';
 import type { LocatedTask } from './hub-repository.js';
 
 /** The task scope and ports one automatic first-execution preparation needs. */
@@ -14,13 +14,14 @@ export interface FirstExecutionPorts {
 }
 
 /**
- * What the creation of the first conversation reported. The model outcome is
- * transient — it belongs to the command receipt that announces a fallback, and is
- * never stored on the task or the conversation.
+ * What the creation of the first conversation reported. The model and preset
+ * outcomes are transient — they belong to the command receipt that announces a
+ * fallback, and are never stored on the task or the conversation.
  */
 export interface FirstExecutionConversation {
   sessionId: string;
   model?: ConversationModelOutcome;
+  preset?: ConversationPresetOutcome;
 }
 
 export interface FirstExecutionRequest {
@@ -39,6 +40,8 @@ export interface FirstExecutionPreparation {
    * announce: nobody changed that conversation's model.
    */
   model?: ConversationModelOutcome;
+  /** What became of the board's default agent preset, on the same terms. */
+  preset?: ConversationPresetOutcome;
 }
 
 /** The common entry guard: the stage, the persisted entry identity, and the task's busy state. */
@@ -86,7 +89,7 @@ export async function prepareFirstExecution(ports: FirstExecutionPorts, request:
     // runs, so the preparation never holds a copy that could go stale.
     await ports.createWorktree(located.task.id, { mode: 'new' });
   }
-  // The created conversation carries its own outcome, so nothing here decides
-  // what a refused model costs: the receipt announces it, the board decides.
+  // The created conversation carries its own outcomes, so nothing here decides
+  // what a refused model or preset costs: the receipt announces it, the board decides.
   return await ports.createConversation(located.task.id);
 }

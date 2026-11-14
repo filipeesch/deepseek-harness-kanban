@@ -274,3 +274,41 @@ describe('the board default model mapping', () => {
     expect(canonicalWorkflow(withModel)).not.toBe(canonicalWorkflow(without));
   });
 });
+
+describe('the board default agent preset', () => {
+  it('reads the authored root scalar into the workflow', () => {
+    expect(parseWorkflow(withModelBase + 'agent_preset: kanban-workflow-architect\n').agentPreset).toBe('kanban-workflow-architect');
+  });
+
+  it('omits the preset when the document authors none', () => {
+    expect(parseWorkflow(withModelBase).agentPreset).toBeUndefined();
+  });
+
+  it('trims the authored preset identity', () => {
+    expect(parseWorkflow(withModelBase + "agent_preset: '  standard  '\n").agentPreset).toBe('standard');
+  });
+
+  it.each([
+    'agent_preset: ""\n',
+    'agent_preset: "   "\n',
+    'agent_preset: 3\n',
+    'agent_preset: [standard]\n',
+    'agent_preset: {id: standard}\n',
+    'agent_preset: null\n',
+  ])('rejects a malformed agent preset %#', suffix => {
+    expect(() => parseWorkflow(withModelBase + suffix)).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+  });
+
+  it('counts the preset as flow meaning rather than diagram layout', () => {
+    const without = parseWorkflow(withModelBase);
+    const withPreset = parseWorkflow(withModelBase + 'agent_preset: standard\n');
+    expect(workflowMeaning(withPreset)).not.toBe(workflowMeaning(without));
+    expect(canonicalWorkflow(withPreset)).not.toBe(canonicalWorkflow(without));
+  });
+
+  it('keeps the model and the preset independent', () => {
+    const both = parseWorkflow(withModelBase + 'model:\n  provider: anthropic\n  model: claude\nagent_preset: standard\n');
+    expect(both.model).toEqual({ provider: 'anthropic', model: 'claude' });
+    expect(both.agentPreset).toBe('standard');
+  });
+});

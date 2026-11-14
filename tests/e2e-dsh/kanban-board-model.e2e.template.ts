@@ -48,7 +48,7 @@ function hidden(locator: Locator, timeout = 30_000): Promise<void> {
   return locator.waitFor({ state: 'hidden', timeout });
 }
 
-it('starts a board conversation on the model the board names', { timeout: 180_000 }, async () => {
+it('starts a board conversation on the model the board names', { timeout: 300_000 }, async () => {
   const scaffold = await launchWebScaffold({ profile: { packages: [{ dir: KANBAN_ROOT, enabled: true }] } });
   const browserPromise = chromium.launch();
   onTestFinished(async () => { try { await (await browserPromise).close(); } finally { await scaffold.close(); } });
@@ -73,15 +73,13 @@ it('starts a board conversation on the model the board names', { timeout: 180_00
   await projectDialog.getByRole('button', { name: 'Save project' }).click();
   await visible(page.getByText('Project saved.'));
 
-  // The workflow editor lives under Workflow on the pinned SDK and under Board on newer hosts.
   const openWorkflowEditor = async () => {
     // The project step above leaves the panel open; a second save reuses it.
     if (await page.getByRole('button', { name: 'Close Kanban configuration' }).count() === 0) {
       await page.getByRole('button', { name: 'Configuration', exact: true }).click();
     }
-    const workflowTab = page.getByRole('tab', { name: 'Workflow' });
-    if (await workflowTab.count() > 0) await workflowTab.click();
-    else await page.getByRole('tab', { name: 'Board' }).click();
+    await page.getByRole('tab', { name: 'Board' }).click();
+    await page.getByRole('tablist', { name: 'Board configuration sections' }).getByRole('tab', { name: 'Workflow' }).click();
     return page.locator('.cm-content');
   };
   const saveWorkflowWith = async (model: { provider: string; model: string; effort: string | undefined }) => {
@@ -159,4 +157,68 @@ it('starts a board conversation on the model the board names', { timeout: 180_00
   await hidden(modelDialog);
   await expect.poll(() => page.locator('.kb-agent-tabs .kb-tab').count(), { timeout: 30_000 }).toBe(1);
   await cancelCountdown();
+
+  // The Defaults panel uses the host's own model selector, and the board's
+  // default preset reaches a conversation created afterwards.
+  await page.getByRole('button', { name: 'Close task details' }).click();
+  await hidden(page.locator('.kb-drawer'));
+  await page.getByRole('button', { name: 'Configuration', exact: true }).click();
+  await page.getByRole('tab', { name: 'Board' }).click();
+  await page.getByRole('tablist', { name: 'Board configuration sections' }).getByRole('tab', { name: 'Defaults' }).click();
+  const defaults = page.getByRole('form', { name: 'Board defaults' });
+  await visible(defaults);
+  const modelTrigger = defaults.locator('[data-native-model-field] button').first();
+  await visible(modelTrigger);
+  await modelTrigger.click();
+  // A stored route the catalog does not offer opens the selector straight on the
+  // model pane; a route it offers opens the root pane first, whose Model cell drills in.
+  await expect.poll(async () => (await page.locator('[role="menuitem"]').count()) + (await page.locator('[role="menuitemradio"]').count()), { timeout: 10_000 }).toBeGreaterThan(0);
+  if (await page.locator('[role="menuitem"]').count() > 0) await page.locator('[role="menuitem"]').first().click();
+  const firstModel = page.locator('[role="menuitemradio"]').first();
+  await visible(firstModel);
+  await firstModel.click();
+  // A preset that differs from the host default proves the board choice reached the
+  // conversation; selecting the host default would be a no-op the host does not log.
+  const boardPreset = defaults.locator('input[type="radio"][data-host-default="false"]').first();
+  await visible(boardPreset);
+  const boardPresetId = await boardPreset.getAttribute('data-preset-id');
+  expect(boardPresetId).not.toBeNull();
+  await boardPreset.click();
+  await expect.poll(() => page.getByRole('button', { name: 'Save defaults' }).isEnabled(), { timeout: 10_000 }).toBe(true);
+  await page.getByRole('button', { name: 'Save defaults' }).click();
+  await visible(page.getByText('Defaults saved.'));
+  await page.screenshot({ path: join(KANBAN_ROOT, '.verification', 'e2e-board-defaults.png') });
+  await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
+
+  await createTask('Preset task');
+  if (await page.getByRole('button', { name: 'Close task details' }).isVisible()) await page.getByRole('button', { name: 'Close task details' }).click();
+  await hidden(page.locator('.kb-drawer'));
+  await openTask('Preset task');
+  // The explicit card start waits for the worktree choice; the base project is
+  // enough for this conversation and keeps the flow deterministic.
+  const continueInBase = page.getByRole('button', { name: 'Continue in base project' });
+  if (await continueInBase.isVisible()) {
+    await continueInBase.click();
+    await hidden(page.locator('[aria-label="Worktree not created"]'));
+  }
+  const cards = page.getByRole('group', { name: 'Start a conversation' });
+  await visible(cards);
+  const defaultCard = cards.locator('[data-default="true"]');
+  await expect.poll(() => defaultCard.isEnabled(), { timeout: 10_000 }).toBe(true);
+  await visible(defaultCard);
+  expect(await defaultCard.getAttribute('data-preset-id')).toBe(boardPresetId);
+  await expect.poll(() => defaultCard.evaluate(element => element.ownerDocument.activeElement === element), { timeout: 5_000 }).toBe(true);
+  await defaultCard.click();
+  await expect.poll(() => page.locator('.kb-agent-tabs .kb-tab').count(), { timeout: 30_000 }).toBe(1);
+  // The composed execution proves the board default reached the conversation,
+  // whether or not the host also logged an explicit selection event.
+  const sessionId = (await page.locator('.kb-agent-tabs .kb-tab[aria-selected="true"]').getAttribute('id'))?.split('-tab-')[1];
+  expect(sessionId).toBeTruthy();
+  const host = scaffold.ctx as unknown as {
+    agents: { get(id: string): { ctx: unknown } | undefined };
+    agentPresets: { composedPreset(ctx: unknown): string | undefined };
+  };
+  const agent = host.agents.get(sessionId!);
+  expect(agent).toBeDefined();
+  expect(host.agentPresets.composedPreset(agent!.ctx)).toBe(boardPresetId);
 });

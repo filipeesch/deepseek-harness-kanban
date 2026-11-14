@@ -5,6 +5,7 @@ import { CommandSchema, SnapshotSchema } from '../../src/remote.js';
 import { fixture, taskWithConversation } from './helpers.js';
 import { KanbanApp } from '../../src/host/app.js';
 import type { SessionModelPort } from '../../src/host/session-model.js';
+import type { SessionPresetPort } from '../../src/host/session-preset.js';
 import type { ModelSelection } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { KanbanStateSchema } from '../../src/domain/hub-schema.js';
@@ -538,6 +539,114 @@ describe('the board default model on a new conversation', () => {
     const t = await taskAwaitingFirstConversation(f);
     const result = await f.app.command({ type: 'conversation.create', taskId: t.id });
     expect(result.commandReceipt?.model).toBeUndefined();
+    expect(f.store.requireTask(t.id).sessionIds).toHaveLength(1);
+  });
+});
+
+describe('the board default agent preset on a new conversation', () => {
+  function presetHarness(options: { outcome?: 'unavailable' | 'unsupported' | 'failed'; throwing?: boolean; order?: string[] } = {}) {
+    const applied: Array<{ sessionId: string; presetId: string }> = [];
+    const port: SessionPresetPort = {
+      apply: async (sessionId, presetId) => {
+        options.order?.push('preset');
+        if (options.throwing) throw new Error('The host is unreachable.');
+        if (options.outcome !== undefined) return { applied: false, reason: options.outcome };
+        applied.push({ sessionId, presetId });
+        return { applied: true };
+      },
+    };
+    return { port, applied };
+  }
+  async function setupWith(port?: SessionPresetPort, models?: SessionModelPort) {
+    const f = await fixture({ ...(port === undefined ? {} : { presets: port }), ...(models === undefined ? {} : { models }) });
+    active.push(f);
+    return f;
+  }
+  async function authorBoardPreset(f: Awaited<ReturnType<typeof setup>>, preset?: string) {
+    const base = f.store.snapshot().workflowYaml.replace(/^agent_preset:.*\n/m, '');
+    await f.store.setWorkflow(preset === undefined ? base : base + 'agent_preset: ' + preset + '\n');
+  }
+  async function authorBoardModel(f: Awaited<ReturnType<typeof setup>>, selection?: ModelSelection) {
+    const base = f.store.snapshot().workflowYaml.replace(/^model:\n(?:[ \t]+[^\n]*\n)*/m, '');
+    await f.store.setWorkflow(selection === undefined ? base
+      : base + 'model:\n  provider: ' + selection.provider + '\n  model: ' + selection.model + '\n');
+  }
+  async function taskAwaitingFirstConversation(f: Awaited<ReturnType<typeof setup>>) {
+    const created = await f.app.createTask({ projectId: f.project.id, title: 'Board preset', description: '' });
+    await f.app.command({ type: 'worktree.dismiss', taskId: created.id });
+    return created;
+  }
+
+  it('starts the conversation on the preset the board named and receipts it', async () => {
+    const h = presetHarness(); const f = await setupWith(h.port);
+    await authorBoardPreset(f, 'standard');
+    const t = await taskAwaitingFirstConversation(f);
+    const result = await f.app.command({ type: 'conversation.create', taskId: t.id });
+    const created = f.store.requireTask(t.id).sessionIds[0]!;
+    expect(h.applied).toEqual([{ sessionId: created, presetId: 'standard' }]);
+    expect(result.commandReceipt).toEqual({ kind: 'conversation', id: created, preset: { requested: 'standard', applied: true } });
+    expect(SnapshotSchema.safeParse(result).success).toBe(true);
+  });
+
+  it('leaves a board without a preset on the host default and receipts no preset', async () => {
+    const h = presetHarness(); const f = await setupWith(h.port);
+    const t = await taskAwaitingFirstConversation(f);
+    const result = await f.app.command({ type: 'conversation.create', taskId: t.id });
+    const created = f.store.requireTask(t.id).sessionIds[0]!;
+    expect(h.applied).toEqual([]);
+    expect(result.commandReceipt).toEqual({ kind: 'conversation', id: created });
+  });
+
+  it('applies the board preset to every new conversation of the board', async () => {
+    const h = presetHarness(); const f = await setupWith(h.port);
+    await authorBoardPreset(f, 'standard');
+    const t = await taskAwaitingFirstConversation(f);
+    const first = await f.app.createConversation(t.id);
+    const second = await f.app.createConversation(t.id);
+    expect(h.applied.map(entry => entry.sessionId)).toEqual([first, second]);
+  });
+
+  it('selects the preset before the model', async () => {
+    const order: string[] = [];
+    const h = presetHarness({ order });
+    const models: SessionModelPort = {
+      catalog: async () => ({ default: { provider: 'deepseek', model: 'chat' }, providers: [], failures: [] }),
+      apply: async () => { order.push('model'); return { applied: true }; },
+    };
+    const f = await setupWith(h.port, models);
+    await authorBoardPreset(f, 'standard');
+    await authorBoardModel(f, { provider: 'anthropic', model: 'claude' });
+    const t = await taskAwaitingFirstConversation(f);
+    await f.app.command({ type: 'conversation.create', taskId: t.id });
+    expect(order).toEqual(['preset', 'model']);
+  });
+
+  it('keeps the conversation on the host default and receipts the refused preset', async () => {
+    const h = presetHarness({ outcome: 'unavailable' }); const f = await setupWith(h.port);
+    await authorBoardPreset(f, 'retired');
+    const t = await taskAwaitingFirstConversation(f);
+    const result = await f.app.command({ type: 'conversation.create', taskId: t.id });
+    const created = f.store.requireTask(t.id).sessionIds[0]!;
+    expect(f.sessions.dirs.size).toBe(1);
+    expect(result.commandReceipt).toEqual({ kind: 'conversation', id: created, preset: { requested: 'retired', applied: false, reason: 'unavailable' } });
+    expect(SnapshotSchema.parse(result).commandReceipt?.preset).toEqual({ requested: 'retired', applied: false, reason: 'unavailable' });
+  });
+
+  it('never lets a preset port that throws block the conversation someone asked for', async () => {
+    const h = presetHarness({ throwing: true }); const f = await setupWith(h.port);
+    await authorBoardPreset(f, 'standard');
+    const t = await taskAwaitingFirstConversation(f);
+    const result = await f.app.command({ type: 'conversation.create', taskId: t.id });
+    expect(f.store.requireTask(t.id).sessionIds).toHaveLength(1);
+    expect(result.commandReceipt?.preset).toEqual({ requested: 'standard', applied: false, reason: 'failed' });
+  });
+
+  it('applies no preset when the plugin runs on a host without the preset port', async () => {
+    const f = await setupWith(undefined);
+    await authorBoardPreset(f, 'standard');
+    const t = await taskAwaitingFirstConversation(f);
+    const result = await f.app.command({ type: 'conversation.create', taskId: t.id });
+    expect(result.commandReceipt?.preset).toBeUndefined();
     expect(f.store.requireTask(t.id).sessionIds).toHaveLength(1);
   });
 });

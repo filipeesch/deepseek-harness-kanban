@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
-import type { KanbanSnapshot, Command, ConversationModelOutcome, Problem } from '../shared/types.js';
+import type { KanbanSnapshot, Command, ConversationModelOutcome, ConversationPresetOutcome, Problem } from '../shared/types.js';
 import { asProblem } from './problem.js';
 
 export { asProblem };
@@ -18,6 +18,12 @@ export function creationReceiptId(snapshot: KanbanSnapshot, kind: NonNullable<Ka
 export function creationModelOutcome(snapshot: KanbanSnapshot): ConversationModelOutcome | undefined {
   const receipt = snapshot.commandReceipt;
   return receipt?.kind === 'conversation' && typeof receipt.id === 'string' ? receipt.model : undefined;
+}
+
+/** The preset outcome the creation receipt reported, when the board named a preset at all. */
+export function creationPresetOutcome(snapshot: KanbanSnapshot): ConversationPresetOutcome | undefined {
+  const receipt = snapshot.commandReceipt;
+  return receipt?.kind === 'conversation' && typeof receipt.id === 'string' ? receipt.preset : undefined;
 }
 
 export function ErrorNotice({ problem }: { problem: Problem | null }) {
@@ -78,7 +84,12 @@ function modalHost(): HTMLElement | null {
   return roots.at(-1) ?? document.body ?? null;
 }
 
-export function Modal({ title, children, onClose, busy = false, size = 'default', initialFocus = 'first', describedBy, headerActions }: { title: string; children: ReactNode; onClose: () => void; busy?: boolean; size?: 'default' | 'wide' | 'parameters'; initialFocus?: 'first' | 'cancel' | 'target'; describedBy?: string; headerActions?: ReactNode }) {
+export type ModalSize = 'default' | 'wide' | 'parameters' | 'settings' | 'settings-wide';
+const MODAL_SIZE_CLASS: Record<ModalSize, string> = {
+  default: '', wide: ' kb-dialog-wide', parameters: ' kb-dialog-parameters', settings: ' kb-dialog-settings', 'settings-wide': ' kb-dialog-settings-wide',
+};
+
+export function Modal({ title, children, onClose, busy = false, size = 'default', initialFocus = 'first', describedBy, headerActions }: { title: string; children: ReactNode; onClose: () => void; busy?: boolean; size?: ModalSize; initialFocus?: 'first' | 'cancel' | 'target'; describedBy?: string; headerActions?: ReactNode }) {
   const id = useId(); const ref = useRef<HTMLDivElement>(null);
   const [host, setHost] = useState<HTMLElement | null>(null);
   const state = useRef({ onClose, busy }); state.current = { onClose, busy };
@@ -105,7 +116,7 @@ export function Modal({ title, children, onClose, busy = false, size = 'default'
     dialog?.addEventListener('keydown', key);
     return () => { dialog?.removeEventListener('keydown', key); if (previous?.isConnected) previous.focus(); };
   }, [host, initialFocus, busy]);
-  const content = <div className="kb-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}><div className={'kb-dialog' + (size === 'wide' ? ' kb-dialog-wide' : size === 'parameters' ? ' kb-dialog-parameters' : '')} role="dialog" aria-modal="true" aria-labelledby={id} aria-describedby={describedBy} aria-busy={busy} ref={ref} tabIndex={-1}><header className="kb-dialog-header"><h2 id={id}>{title}</h2><div className="kb-dialog-header-actions">{headerActions}<button type="button" className="kb-button kb-icon-button" disabled={busy} onClick={onClose} aria-label={'Close ' + title}>×</button></div></header>{children}</div></div>;
+  const content = <div className="kb-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}><div className={'kb-dialog' + MODAL_SIZE_CLASS[size]} role="dialog" aria-modal="true" aria-labelledby={id} aria-describedby={describedBy} aria-busy={busy} ref={ref} tabIndex={-1}><header className="kb-dialog-header"><h2 id={id}>{title}</h2><div className="kb-dialog-header-actions">{headerActions}<button type="button" className="kb-button kb-icon-button" disabled={busy} onClick={onClose} aria-label={'Close ' + title}>×</button></div></header>{children}</div></div>;
   if (host === null) return null;
   return createPortal(host === document.body ? <div className="dsh-kanban kb-modal-scope">{content}</div> : content, host);
 }

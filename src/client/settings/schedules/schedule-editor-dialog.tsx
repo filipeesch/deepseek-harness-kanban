@@ -1,12 +1,13 @@
-import React from 'react';
+import React, { useId } from 'react';
 import type { ClientApi, HubSchedule, Project } from '../../../shared/types.js';
 import { ErrorNotice, Modal, type RunCommand } from '../../ui.js';
-import { ModelPickerField } from '../model-picker-field.js';
+import { NativeModelField } from '../../model/native-model-field.js';
+import type { NativeSeat } from '../../native-slot-host.js';
 import { COMMON_TIME_ZONES, CRON_PRESETS, draftCatalogModel, draftModel, presetFor } from './schedule-draft.js';
 import { useScheduleEditor } from './use-schedule-editor.js';
 
 /** The one overlay that creates and edits a schedule. */
-export function ScheduleEditorDialog({ hubId, schedule, expectedRevision, projects, api, run, onClose, onSaved }: {
+export function ScheduleEditorDialog({ hubId, schedule, expectedRevision, projects, api, run, onClose, onSaved, nativeSeat }: {
   hubId: string;
   schedule?: HubSchedule;
   expectedRevision?: number;
@@ -15,6 +16,8 @@ export function ScheduleEditorDialog({ hubId, schedule, expectedRevision, projec
   run: RunCommand;
   onClose: () => void;
   onSaved: () => void;
+  /** The native slot registry the model selector borrows; absent outside the real client. */
+  nativeSeat?: NativeSeat;
 }) {
   const editor = useScheduleEditor({
     ...(api === undefined ? {} : { api }), hubId, ...(schedule === undefined ? {} : { schedule }),
@@ -22,6 +25,7 @@ export function ScheduleEditorDialog({ hubId, schedule, expectedRevision, projec
   });
   const { draft } = editor;
   const title = schedule === undefined ? 'New schedule' : 'Edit schedule';
+  const id = useId();
   const zoneListId = 'kb-schedule-zone-list';
   const catalogModel = draftCatalogModel(draft, editor.catalog);
   return <Modal title={title} onClose={editor.cancel} busy={editor.pending}>
@@ -43,9 +47,17 @@ export function ScheduleEditorDialog({ hubId, schedule, expectedRevision, projec
         {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
       </select></label>
       {projects.length === 0 && <p className="kb-hint" role="status">Register a project in this Hub before scheduling a session.</p>}
-      <ModelPickerField value={draftModel(draft)} catalog={editor.catalog} disabled={editor.pending} onChange={editor.applyModel} />
+      <fieldset className="kb-fieldset" aria-label="Schedule model">
+        <legend>Model</legend>
+        <label className="kb-choice"><input type="radio" name={id + '-model'} disabled={editor.pending} checked={draft.modelMode === 'default'} onChange={() => editor.setModelMode('default')} /> Host default</label>
+        <label className="kb-choice"><input type="radio" name={id + '-model'} disabled={editor.pending} checked={draft.modelMode === 'custom'} onChange={() => editor.setModelMode('custom')} /> Specific model</label>
+        {draft.modelMode === 'custom' && <>
+          <NativeModelField seat={nativeSeat} value={draftModel(draft)} catalog={editor.catalog} catalogError={editor.catalogError} onChange={editor.applyModel} onRetry={editor.reloadCatalog} disabled={editor.pending} subject="schedule" />
+          {draftModel(draft) === undefined && <p className="kb-hint" role="status">Choose a model or use the host default before saving.</p>}
+          {editor.catalog !== null && catalogModel === undefined && <p className="kb-hint" role="status">This model is not in the host catalog. Choose a catalog model or the host default before saving.</p>}
+        </>}
+      </fieldset>
       {editor.catalogError !== null && <p className="kb-hint" role="status">The model catalog is unavailable: {editor.catalogError.message} The stored model, when present, is kept.</p>}
-      {editor.catalog !== null && draft.modelMode === 'custom' && catalogModel === undefined && <p className="kb-hint" role="status">This model is not in the host catalog. Choose a catalog model or the host default before saving.</p>}
       <label className="kb-choice"><input type="checkbox" aria-label="New conversation per run" disabled={editor.pending} checked={draft.newConversation} onChange={event => editor.change('newConversation', event.target.checked)} /> New conversation for each run</label>
       <label className="kb-choice"><input type="checkbox" aria-label="Archive when idle" disabled={editor.pending || !draft.newConversation} checked={draft.archiveWhenIdle} onChange={event => editor.change('archiveWhenIdle', event.target.checked)} /> Archive the conversation once it is idle</label>
       <p className="kb-hint">A schedule runs unattended while the host is open. Missed occurrences are skipped, and an occurrence is skipped while the previous run of the same schedule is still active.</p>

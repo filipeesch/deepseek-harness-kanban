@@ -71,6 +71,15 @@ export function draftModel(draft: ScheduleDraft): ModelSelection | undefined {
   return { provider, model, ...(reasoningEffort === '' ? {} : { reasoningEffort }) };
 }
 
+/** Choose between the host default and a specific route without discarding an entered route. */
+export function editScheduleDraftModelMode(draft: ScheduleDraft, mode: 'default' | 'custom'): ScheduleDraft {
+  return {
+    ...draft,
+    modelMode: mode,
+    ...(mode === 'default' ? { modelProvider: '', modelName: '', reasoningEffort: '' } : {}),
+  };
+}
+
 /** Move the draft onto one route, or back to the deployment default; the route key stays in the domain. */
 export function editScheduleDraftModel(draft: ScheduleDraft, selection: ModelSelection | undefined): ScheduleDraft {
   return {

@@ -9,6 +9,8 @@ const CUSTOM_FLOW = 'name: Custom\ninitial_column: todo\ncolumns:\n  - id: todo\
 const COMMENTED_FLOW = '# Keep this comment\nname: Commented\ninitial_column: todo\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
 const MODEL_FLOW = 'name: Modelled\ninitial_column: todo\nmodel:\n  provider: deepseek\n  model: chat\n  reasoning_effort: high\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
 const MALFORMED_MODEL_FLOW = 'name: Broken\ninitial_column: todo\nmodel:\n  provider: deepseek\n  temperature: 0.2\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
+const PRESET_FLOW = 'name: Preset\ninitial_column: todo\nagent_preset: standard\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
+const MALFORMED_PRESET_FLOW = 'name: Broken\ninitial_column: todo\nagent_preset: ""\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
 const GROUPED_FLOW = 'name: Grouped\ninitial_column: todo\ncolumns:\n  - id: todo\n    label: Todo\n    on_enter_prompt: Do it.\n    allowed_transitions: [done]\n  - id: done\n    label: Done\ngroups:\n  - id: flow\n    label: Flow\n    columns: [todo, done]\n';
 
 class FakeSharing {
@@ -553,7 +555,43 @@ describe('the board default model', () => {
     const described = (tool: ToolDefinition, parameter: string): string =>
       String((tool.parameters as { properties?: Record<string, { description?: string }> }).properties?.[parameter]?.description ?? '');
     expect(described(create, 'workflow_yaml')).toContain('board default model');
+    expect(described(create, 'workflow_yaml')).toContain('agent_preset');
     expect(described(update, 'workflow_yaml')).toContain('defaultModel');
+    expect(described(update, 'workflow_yaml')).toContain('defaultAgentPreset');
     expect(summary.description).toContain("board's default model");
+    expect(summary.description).toContain('default agent preset');
+  });
+});
+
+describe('the board default agent preset', () => {
+  it('states the preset a board names and the absence of one', async () => {
+    const f = await setup();
+    const named = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Preset', workflow_yaml: PRESET_FLOW });
+    const withPreset = await run(f, 'get_board_summary', { board_id: named.id, include_workflow: true });
+    expect(withPreset.defaultAgentPreset).toBe('standard');
+    expect(withPreset.workflow.agentPreset).toBe('standard');
+    const withoutPreset = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
+    expect(withoutPreset.defaultAgentPreset).toBeNull();
+    expect(withoutPreset.workflow.agentPreset).toBeUndefined();
+  });
+
+  it('sets and clears the preset through a replacement workflow', async () => {
+    const f = await setup();
+    await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: PRESET_FLOW });
+    expect((await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true })).defaultAgentPreset).toBe('standard');
+    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).toBe(PRESET_FLOW);
+    await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: CUSTOM_FLOW });
+    expect((await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true })).defaultAgentPreset).toBeNull();
+  });
+
+  it('rejects an empty preset and leaves the board unchanged', async () => {
+    const f = await setup();
+    await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: PRESET_FLOW });
+    const before = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
+    const value = await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MALFORMED_PRESET_FLOW });
+    expect(value.saved).toBe(false);
+    expect(value.report.problems[0].message).toContain('agent_preset');
+    expect(await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true })).toEqual(before);
+    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).toBe(PRESET_FLOW);
   });
 });

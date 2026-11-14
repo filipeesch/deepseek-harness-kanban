@@ -98,7 +98,7 @@ export interface ConnectionAnchor { side: StageSide; at: number }
 export interface ConnectionSegmentOffset { axis: ConnectionAxis; offset: number }
 /** One authored connection layout, identified by its source and target stage. */
 export interface ConnectionLayout { from: string; to: string; source?: ConnectionAnchor; target?: ConnectionAnchor; segments?: ConnectionSegmentOffset[] }
-export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[]; /** Absent means the board opens the column board. */ defaultView?: WorkflowView; /** The model every new conversation of the board starts on; absent keeps the deployment default. */ model?: ModelSelection; /** Authored connection layouts; an absent entry keeps the automatic route. */ connections?: ConnectionLayout[] }
+export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[]; /** Absent means the board opens the column board. */ defaultView?: WorkflowView; /** The model every new conversation of the board starts on; absent keeps the deployment default. */ model?: ModelSelection; /** The agent preset every new conversation of the board starts on; absent keeps the host default preset. */ agentPreset?: string; /** Authored connection layouts; an absent entry keeps the automatic route. */ connections?: ConnectionLayout[] }
 export interface Worktree { path: string; branch: string; owned: boolean; status: 'preparing' | 'ready' | 'error'; error?: Problem }
 export interface CreateWorktree { mode: 'new' | 'existing'; path: string; branchName: string; sourceBranch?: string }
 /**
@@ -233,6 +233,26 @@ export interface ModelSelection { provider: string; model: string; reasoningEffo
  * decide its own cost and the client can say something true about the cause.
  */
 export type ModelApplyReason = 'unavailable' | 'unsupported' | 'failed';
+/**
+ * Why the host declined to put one conversation on a requested agent preset.
+ * `unavailable` means the host does not offer that preset, `unsupported` means
+ * this host cannot select a preset for one conversation, and `failed` means the
+ * host could not be asked at all or refused the selection. The three stay
+ * distinct so each caller can decide its own cost and the client can say
+ * something true about the cause.
+ */
+export type PresetApplyReason = 'unavailable' | 'unsupported' | 'failed';
+/** What became of a board's default agent preset when one of its conversations was created. */
+export interface ConversationPresetOutcome {
+  /** The preset identity the board named for its conversations. */
+  requested: string;
+  /** Whether the conversation starts on that preset rather than on the host default preset. */
+  applied: boolean;
+  /** Why the preset was left for the host default; absent when it applied. */
+  reason?: PresetApplyReason;
+}
+/** The board defaults one conversation creation reported on its receipt. */
+export interface ConversationCreationOutcome { model?: ConversationModelOutcome; preset?: ConversationPresetOutcome }
 /** What became of a board's default model when one of its conversations was created. */
 export interface ConversationModelOutcome {
   /** The route the board named for its conversations. */
@@ -327,6 +347,8 @@ export interface CommandReceipt {
   id: string;
   /** How the board's default model fared while a conversation was created; absent when no board named one. */
   model?: ConversationModelOutcome;
+  /** How the board's default agent preset fared while a conversation was created; absent when no board named one. */
+  preset?: ConversationPresetOutcome;
 }
 /** One board's publishing state, projected from the stored sharing record. */
 export type SharingBoardState = 'in-sync' | 'draft' | 'updates-available' | 'needs-review' | 'update-required' | 'orphan';

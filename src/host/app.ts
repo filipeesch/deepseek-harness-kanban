@@ -4,6 +4,7 @@ import path from 'node:path';
 import { canTransition, transitionAccess } from '../domain/transitions.js';
 import { resolveTaskConversationModel } from '../domain/model-preference.js';
 import type { SessionModelPort } from './session-model.js';
+import type { SessionPresetPort } from './session-preset.js';
 import { conversationStageActivity, persistedStageActivity } from '../shared/stage-activity.js';
 import { openSessionIds } from '../shared/conversations.js';
 import { aggregateTaskActivity, UNAVAILABLE_TASK_ACTIVITY, type TaskActivity, type TaskActivityOptions, type TaskActivityScope } from '../domain/task-activity.js';
@@ -14,7 +15,7 @@ import type { AutoAdvancePlan } from '../domain/auto-advance.js';
 import { admitTurnAdvance } from './advance-admission.js';
 import { readPendingUserWork, withQuestionPending } from './pending-source.js';
 import type { ConversationFactsSource } from './native-facts.js';
-import type { AdvanceOrigin, AutoModePauseReason, Board, BoardSettings, Command, ConversationFacts, ConversationModelOutcome, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionDraftContent, QuestionRound, RetainedCheckout, RetainedCheckoutReason, SharingCommand, SnapshotRequest, StoredQuestionDraft, Task, WorktreeDefaults } from '../shared/types.js';
+import type { AdvanceOrigin, AutoModePauseReason, Board, BoardSettings, Command, ConversationFacts, ConversationModelOutcome, ConversationPresetOutcome, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionDraftContent, QuestionRound, RetainedCheckout, RetainedCheckoutReason, SharingCommand, SnapshotRequest, StoredQuestionDraft, Task, WorktreeDefaults } from '../shared/types.js';
 import type { TaskMessagePreparation } from '../shared/task-message.js';
 import type { StageEntryOrigin } from '../shared/task-history.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
@@ -92,9 +93,9 @@ function boardSharingPort(sharing:HubSharingService):BoardSharingPort{
   publishAll:hubId=>sharing.publishAll(hubId),
  };
 }
-/** One created conversation and, when its board named a default model, how that model fared. */
-export interface CreatedConversation { sessionId: string; model?: ConversationModelOutcome }
-export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; /** Records each accepted workflow write; absent keeps no local history. */ revisions?:BoardRevisionPort; questionStore?:QuestionStore; questionDraftStore?:QuestionDraftStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number }
+/** One created conversation and, when its board named defaults, how the model and preset fared. */
+export interface CreatedConversation { sessionId: string; model?: ConversationModelOutcome; preset?: ConversationPresetOutcome }
+export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; /** Records each accepted workflow write; absent keeps no local history. */ revisions?:BoardRevisionPort; questionStore?:QuestionStore; questionDraftStore?:QuestionDraftStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; /** Applies a board's default agent preset to one conversation; absent means no board preset is applied. */ presets?:SessionPresetPort; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number }
 /** Coordinates Hub-scoped commands while the host continues to own sessions and execution. */
 export class KanbanApp {
  readonly questions=new QuestionIndex();
@@ -908,6 +909,27 @@ export class KanbanApp {
  }
  private serial<T>(run:()=>Promise<T>):Promise<T>{const result=this.commandTail.then(run);this.commandTail=result.then(()=>undefined,()=>undefined);return result;}
  createConversation(taskId:string,options:{ensureFirst?:boolean}={}):Promise<string>{return this.serial(async()=>(await this.createConversationNow(taskId,options)).sessionId);}
+ /**
+  * Put a new conversation on the agent preset its board chose. A board default is
+  * a convenience and never a gate: whatever the host answers, the conversation
+  * someone asked for is still created, and the outcome rides on the receipt so
+  * the client can say which preset it actually starts on.
+  */
+ private async applyBoardDefaultPreset(board:Board,sessionId:string):Promise<ConversationPresetOutcome|undefined>{
+  const presets=this.options.presets;
+  const requested=board.workflow.agentPreset;
+  if(presets===undefined||requested===undefined)return undefined;
+  try{
+   const outcome=await presets.apply(sessionId,requested);
+   return {requested,...outcome};
+  }catch(error){
+   // The port reports every refusal as an outcome, so this is a defect guard and
+   // not a policy branch. Whatever it is, the conversation someone asked for is
+   // still created and the fallback is still reported.
+   this.options.report?.(error);
+   return {requested,applied:false,reason:'failed'};
+  }
+ }
  private async createConversationNow(taskId:string,options:{allowUndecided?:boolean;ensureFirst?:boolean}={}):Promise<CreatedConversation>{
   this.assertContext(taskId);const located=this.locatedTask(taskId);const store=this.hubs.hub(located.hubId);const before=located.task;const project=located.project;
   this.assertProjectRelocation(project,'creating a conversation');
@@ -919,9 +941,12 @@ export class KanbanApp {
   const projectDirectory=requireProjectPath(project);const workspaceId=await this.workspaceCoordinator?.ensureTaskWorkspace(located.hubId,before,project);const id=await this.sessions.create(projectDirectory,workspaceId);
   try{
    if(before.effectiveCwd!==projectDirectory)await this.sessions.setDirectory(id,before.effectiveCwd);
+   // The preset recomposes the Agent, so it is selected before the model, which is a
+   // per-session selection applied afterwards.
+   const preset=await this.applyBoardDefaultPreset(located.board,id);
    const model=await this.applyBoardDefaultModel(located.board,id);
    this.assertContext(taskId);const current=store.requireTask(taskId);invariant(current.effectiveCwd===before.effectiveCwd,'CONTEXT_CHANGED','Task directory changed while the conversation was being created.');await store.addSession(taskId,id);
-   return {...(model===undefined?{}:{model}),sessionId:id};}
+   return {...(preset===undefined?{}:{preset}),...(model===undefined?{}:{model}),sessionId:id};}
   catch(error){try{await this.sessions.archive(id);}catch(archiveError){this.options.report?.(archiveError);}throw error;}
  }
  createTask(input:NewTask){return this.serial(()=>this.createTaskNow(input));}
@@ -965,7 +990,7 @@ export class KanbanApp {
   * creates the default worktree and the first conversation; `send` then dispatches
   * the stage instruction through the same admission as a user run action.
   */
- private async startFirstExecutionNow(taskId:string,request:{send:boolean;columnId:string;expectedEnteredAt?:number;expectedInstruction?:string}):Promise<{sessionId:string;sent:boolean;model?:ConversationModelOutcome}>{
+ private async startFirstExecutionNow(taskId:string,request:{send:boolean;columnId:string;expectedEnteredAt?:number;expectedInstruction?:string}):Promise<{sessionId:string;sent:boolean;model?:ConversationModelOutcome;preset?:ConversationPresetOutcome}>{
   const located=this.locatedTask(taskId);const marker=located.task.instructionPending;
   invariant(located.task.columnId===request.columnId,'TASK_MOVED','The task moved to another stage. Review the current stage before starting its first execution.');
   invariant(marker!==undefined&&marker.columnId===request.columnId,'INSTRUCTION_ALREADY_RESOLVED','The stage entry is no longer unresolved.');
@@ -1067,7 +1092,7 @@ export class KanbanApp {
    case 'project.delete':{const store=this.hubStore(command.hubId);invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the project registration.');const project=store.requireProject(command.projectId);invariant(!project.operation,'PROJECT_BUSY','Resolve the project relocation before deleting the project.');await store.deleteProject(command.projectId,command.expectedRevision);break;}
    case 'settings.save':await this.settings(command.settings,command.expectedRevision);break;
    case 'task.create':{const value=await this.createTaskNow(command);commandReceipt={kind:'task',id:value.id};break;}
-   case 'task.prepareFirstExecution':{const value=await this.startFirstExecutionNow(command.taskId,{send:false,columnId:command.columnId,expectedEnteredAt:command.expectedEnteredAt,...(command.expectedInstruction===undefined?{}:{expectedInstruction:command.expectedInstruction})});commandReceipt={kind:'conversation',id:value.sessionId,...(value.model===undefined?{}:{model:value.model})};break;}
+   case 'task.prepareFirstExecution':{const value=await this.startFirstExecutionNow(command.taskId,{send:false,columnId:command.columnId,expectedEnteredAt:command.expectedEnteredAt,...(command.expectedInstruction===undefined?{}:{expectedInstruction:command.expectedInstruction})});commandReceipt={kind:'conversation',id:value.sessionId,...(value.model===undefined?{}:{model:value.model}),...(value.preset===undefined?{}:{preset:value.preset})};break;}
    case 'task.deterministicPlay':{
     invariant(!this.contextAdmissions.has(command.taskId),'CONTEXT_ADMISSION_PENDING','A task context operation is being admitted.');
     const task=await this.ensureDeterministicEntry(command.taskId);invariant(task.stageEntry,'STAGE_ENTRY_REQUIRED','Move into this stage before starting a script.');
@@ -1109,7 +1134,7 @@ export class KanbanApp {
    case 'task.deterministicRetryDelivery':{const task=this.locatedTask(command.taskId).task;invariant(task.deterministic?.entryId===command.entryId&&task.deterministic.executionId===command.executionId,'STALE_EXECUTION','This saved result no longer owns the stage entry.');await this.requireDeterministic().retryDelivery({taskId:task.id,entryId:command.entryId,executionId:command.executionId});break;}
    case 'task.deterministicParameters':await this.requireDeterministic().parameters(command.taskId,command.entryId,command.values);break;
    case 'task.edit':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).editTask(command.taskId,{...(command.title!==undefined?{title:command.title}:{}),...(command.description!==undefined?{description:command.description}:{})},command.expectedRevision);break;}
-   case 'conversation.create':{const created=await this.createConversationNow(command.taskId,{ensureFirst:command.ensureFirst===true});commandReceipt={kind:'conversation',id:created.sessionId,...(created.model===undefined?{}:{model:created.model})};break;}
+   case 'conversation.create':{const created=await this.createConversationNow(command.taskId,{ensureFirst:command.ensureFirst===true});commandReceipt={kind:'conversation',id:created.sessionId,...(created.model===undefined?{}:{model:created.model}),...(created.preset===undefined?{}:{preset:created.preset})};break;}
    case 'conversation.close':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).closeSession(command.taskId,command.sessionId);break;}
    case 'conversation.reopen':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).reopenSession(command.taskId,command.sessionId);break;}
    case 'note.save':{const value=await this.saveNoteNow(command);commandReceipt={kind:'note',id:value.id};break;}

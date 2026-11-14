@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import type { Board, HubState, Problem } from '../../../shared/types.js';
 import { ErrorNotice, type RunCommand } from '../../ui.js';
+import { usePanelDirty } from './use-panel-dirty.js';
 
 /** The board's display name, which every presentation and the published entry use. */
-export function BoardIdentityForm({ hub, board, run }: { hub: HubState; board: Board; run: RunCommand }) {
+export function BoardIdentityForm({ hub, board, run, onDirtyChange }: { hub: HubState; board: Board; run: RunCommand; onDirtyChange?: (dirty: boolean) => void }) {
   const [name, setName] = useState(board.name);
+  usePanelDirty(name !== board.name, onDirtyChange);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<Problem | null>(null);
   async function save(event: React.FormEvent) {

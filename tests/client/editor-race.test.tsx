@@ -75,6 +75,7 @@ describe('editor save draft lifetime',()=>{
  });
  it('locks workflow text while its approved version is being saved',async()=>{
   const value=fixture(),p=pending(),user=userEvent.setup();render(<Configuration state={value.state} hub={value.state.hubs[0]!} board={value.state.hubs[0]!.boards[0]!} hubCount={1} settings={value.state.settings} settingsRevision={value.state.settings.revision} run={p.run} onClose={()=>{}} initial="Board"/>);
+  await user.click(await screen.findByRole('tab',{name:'Workflow'}));
   const editor=screen.getByRole('textbox',{name:'Workflow YAML'}) as HTMLTextAreaElement;await user.click(screen.getByRole('button',{name:'Save workflow'}));
   expect(editor.disabled).toBe(true);await user.type(editor,'NEW UNSAVED YAML');expect(editor.value).toBe(value.state.workflowYaml);
   await act(async()=>p.resolve(value));await waitFor(()=>expect(editor.disabled).toBe(false));

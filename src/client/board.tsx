@@ -49,6 +49,7 @@ import { batchRejectionProblem, useBatchDeletion } from './useBatchDeletion.js';
 import { useBoardMoves } from './board-moves.js';
 import { useExecutionPreparation } from './execution-preparation/use-execution-preparation.js';
 import { ModelFallbacksProvider, useModelFallbackRegistry } from './model-fallbacks.js';
+import { PresetFallbacksProvider, usePresetFallbackRegistry } from './preset-fallbacks.js';
 import type { PreparationSeat } from './execution-preparation/model-seat.js';
 import { createBoardPageState, taskPageState, usePageField, type BoardPageState } from './page-state.js';
 export { createBoardPageState } from './page-state.js';
@@ -182,12 +183,13 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   // One memory of what became of each conversation's board model, for as long as
   // this board is mounted: it feeds the notice, never the saved document.
   const modelFallbacks = useModelFallbackRegistry();
+  const presetFallbacks = usePresetFallbackRegistry();
   const preparation = useExecutionPreparation({
     api,
     run,
     ...(nativeSeat === undefined ? {} : { seat: nativeSeat }),
     ...(conversationLeases === undefined ? {} : { leases: conversationLeases }),
-    onConversationCreated: (sessionId, outcome) => modelFallbacks.record(sessionId, outcome),
+    onConversationCreated: (sessionId, outcome) => { modelFallbacks.record(sessionId, outcome.model); presetFallbacks.record(sessionId, outcome.preset); },
   });
   const moves = useBoardMoves({
     state: state ?? null,
@@ -269,7 +271,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     latest: () => latest.current,
     // The same memory serves both creation paths, so a task created straight into
     // an instructed stage announces its model exactly like the preparation does.
-    onConversationCreated: (sessionId, outcome) => modelFallbacks.record(sessionId, outcome),
+    onConversationCreated: (sessionId, outcome) => { modelFallbacks.record(sessionId, outcome.model); presetFallbacks.record(sessionId, outcome.preset); },
   });
   const containers = useCreationDialogs({
     activateHub: hubId => { setActiveHubIdState(hubId); writeStorage(ACTIVE_HUB_KEY, hubId); },
@@ -380,7 +382,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     requestCloseDrawer();
   }
 
-  return <DirectoryPickerProvider picker={picker}><ModelFallbacksProvider registry={modelFallbacks}><DeterministicProvider api={api} run={command => run(command, false)} summaries={snapshot?.deterministic ?? {}} boardId={activeBoard?.id}><section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style><ScriptReviewProvider api={api} run={command => run(command, false)}>
+  return <DirectoryPickerProvider picker={picker}><ModelFallbacksProvider registry={modelFallbacks}><PresetFallbacksProvider registry={presetFallbacks}><DeterministicProvider api={api} run={command => run(command, false)} summaries={snapshot?.deterministic ?? {}} boardId={activeBoard?.id}><section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style><ScriptReviewProvider api={api} run={command => run(command, false)}>
     <BoardHeader
       hubTabs={<HubTabRow
         hubs={snapshot?.state.hubs ?? []}
@@ -428,7 +430,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       onDismiss={signature => { if (activeHub) setDismissedTeamBanner(previous => ({ ...previous, [activeHub.id]: signature })); }}
       onFocusBoard={focusBoard}
     />
-    {configuration && <Configuration key={configuration} state={state ?? null} hub={activeHub ?? null} board={activeBoard ?? null} hubCount={snapshot?.state.hubs.length ?? 1} settings={snapshot?.state.settings} settingsRevision={snapshot?.state.settings?.revision ?? 0} run={run} api={api} sharing={activeHub ? snapshot?.sharing?.[activeHub.id] : undefined} sharingAuth={snapshot?.sharingAuth} conversationAttention={snapshot?.conversationAttention} scheduleRuntime={activeHub ? snapshot?.scheduleRuntime?.[activeHub.id] : undefined} {...(onOpenSession === undefined ? {} : { onOpenSession })} initial={configuration} onClose={() => setConfiguration(null)} onHubDeleted={() => { setConfiguration(null); setActiveHubIdState(null); writeStorage(ACTIVE_HUB_KEY, null); }} onBoardDeleted={() => { setConfiguration(null); }} onBoardCreated={id => { selectBoard(activeHub!.id, id); setConfiguration(null); }} />}
+    {configuration && <Configuration key={configuration} state={state ?? null} hub={activeHub ?? null} board={activeBoard ?? null} hubCount={snapshot?.state.hubs.length ?? 1} settings={snapshot?.state.settings} settingsRevision={snapshot?.state.settings?.revision ?? 0} run={run} api={api} sharing={activeHub ? snapshot?.sharing?.[activeHub.id] : undefined} sharingAuth={snapshot?.sharingAuth} conversationAttention={snapshot?.conversationAttention} scheduleRuntime={activeHub ? snapshot?.scheduleRuntime?.[activeHub.id] : undefined} {...(onOpenSession === undefined ? {} : { onOpenSession })} {...(nativeSeat === undefined ? {} : { nativeSeat })} initial={configuration} onClose={() => setConfiguration(null)} onHubDeleted={() => { setConfiguration(null); setActiveHubIdState(null); writeStorage(ACTIVE_HUB_KEY, null); }} onBoardDeleted={() => { setConfiguration(null); }} onBoardCreated={id => { selectBoard(activeHub!.id, id); setConfiguration(null); }} />}
     <NoticeStack
       loadError={loadError}
       onRetryLoad={() => setLoadAttempt(value => value + 1)}
@@ -508,5 +510,5 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     <BoardCreationDialogs hub={activeHub} run={run} taskDialog={creation.dialog} containers={containers} />
     {preparation.dialog === null && moves.overrideDialog}
     {preparation.dialog}
-  </ScriptReviewProvider></section></DeterministicProvider></ModelFallbacksProvider></DirectoryPickerProvider>;
+  </ScriptReviewProvider></section></DeterministicProvider></PresetFallbacksProvider></ModelFallbacksProvider></DirectoryPickerProvider>;
 }

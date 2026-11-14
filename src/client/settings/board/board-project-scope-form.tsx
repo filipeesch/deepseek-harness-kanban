@@ -2,6 +2,7 @@ import React, { useEffect, useId, useState } from 'react';
 import type { Board, BoardState, HubState } from '../../../shared/types.js';
 import { isPublishedProject } from '../../../shared/project.js';
 import { ErrorNotice, useAction, type RunCommand } from '../../ui.js';
+import { usePanelDirty } from './use-panel-dirty.js';
 
 /**
  * Which projects may create tasks on this board. The board records project keys; an
@@ -9,11 +10,12 @@ import { ErrorNotice, useAction, type RunCommand } from '../../ui.js';
  * form saves against the revision it was opened at, so an incoming team change can
  * never be overwritten by a stale selection.
  */
-export function BoardProjectScopeForm({ state, hub, board, run }: {
+export function BoardProjectScopeForm({ state, hub, board, run, onDirtyChange }: {
   state: BoardState;
   hub: HubState;
   board: Board;
   run: RunCommand;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const id = useId();
   const action = useAction(run);
@@ -30,6 +32,7 @@ export function BoardProjectScopeForm({ state, hub, board, run }: {
     setSelected([...(board.allowedProjectKeys ?? [])]);
     setBaseRevision(hub.revision);
   }, [board.allowedProjectKeys, hub.revision, dirty]);
+  usePanelDirty(dirty, onDirtyChange);
   const stale = dirty && hub.revision !== baseRevision;
   const counts = new Map<string, number>();
   for (const task of state.tasks) counts.set(task.projectId, (counts.get(task.projectId) ?? 0) + 1);

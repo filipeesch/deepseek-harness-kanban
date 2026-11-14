@@ -48,6 +48,7 @@ import { ScheduleArchiveWatcher } from './host/schedule-archive.js';
 import { ScheduleRunner } from './host/schedule-runner.js';
 import { ScheduleCoordinator, type ScheduledEntry } from './host/schedule-coordinator.js';
 import { createSessionModelPort } from './host/session-model.js';
+import { createSessionPresetPort } from './host/session-preset.js';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { abortableSleep, ForkAdopter } from './host/conversation-adoption.js';
 import type { TaskLocator } from './host/task-locator.js';
@@ -205,7 +206,8 @@ export async function apply(ctx:Context):Promise<void>{
  try{sharing=await openHubSharing(ctx,hubs,{report,revisions});}catch(error){await revisionStore.close();await schedules.close();await hubs.close();await questions.close();await storage.close();throw error;}
  const teamFiles=new TeamFiles({store:hubId=>sharing.service.fileStoreFor(hubId),exclusive:(hubId,operation)=>sharing.service.exclusive(hubId,operation)});
  const sessionModels=createSessionModelPort(ctx);
- const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,models:sessionModels,report,revisions,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
+ const sessionPresets=createSessionPresetPort(ctx);
+ const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,models:sessionModels,presets:sessionPresets,report,revisions,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
  const profile=ctx.get('profileContext') as {readonly dir:string}|undefined;
  if(profile&&isAbsolute(profile.dir)){
   // Optional child injection grants access without making conventional boards
