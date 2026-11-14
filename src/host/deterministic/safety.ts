@@ -1,10 +1,12 @@
 import type { StepCompletion } from '../../shared/deterministic.js';
 import { bounded as boundText, boundedTail } from '../../shared/bounded.js';
 import { redactExact, redactRecord } from '../../shared/redact.js';
+import { COMPLETION_MAX_BYTES, validateCompletion } from '../../domain/deterministic-completion.js';
+import { PARAMETER_LIMITS } from '../../domain/deterministic-definition.js';
 import { failure } from './ports.js';
 
+export { COMPLETION_MAX_BYTES };
 export const SOURCE_MAX_BYTES = 128 * 1024;
-export const COMPLETION_MAX_BYTES = 32 * 1024;
 export const DIAGNOSTIC_MAX_BYTES = 16 * 1024;
 export function bounded(text: string, maxBytes = DIAGNOSTIC_MAX_BYTES): string {
   return boundText(text, maxBytes);
@@ -25,6 +27,11 @@ export class SecretRedactor {
   text(text: string, maxBytes = DIAGNOSTIC_MAX_BYTES): string {
     return bounded(redactExact(text, [...this.values]), maxBytes);
   }
+  /** Redact one parameter value; a redaction that grows past the value bound becomes one marker. */
+  parameter(text: string): string {
+    const redacted = redactExact(text, [...this.values]);
+    return redacted.length > PARAMETER_LIMITS.valueLength ? '[REDACTED]' : redacted;
+  }
   /** The beginning of a stream after redaction, so a boundary cannot split a value. */
   head(text: string, maxBytes: number): string {
     return bounded(redactExact(text, [...this.values]), maxBytes);
@@ -39,13 +46,9 @@ export class SecretRedactor {
   }
 }
 export function parseCompletion(value: unknown): StepCompletion {
-  let encoded: string | undefined;
-  try { encoded = JSON.stringify(value); } catch { failure('INVALID_COMPLETION', 'Completion must be a lossless JSON object.'); }
-  if (encoded === undefined || Buffer.byteLength(encoded) > COMPLETION_MAX_BYTES) failure('INVALID_COMPLETION', 'Completion is missing or exceeds the completion byte limit.');
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) failure('INVALID_COMPLETION', 'Return exactly {exit, message}.');
-  const object = value as Record<string, unknown>;
-  if (Object.keys(object).length !== 2 || typeof object.exit !== 'string' || !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(object.exit) || typeof object.message !== 'string' || !object.message.trim()) failure('INVALID_COMPLETION', 'Return only a nonempty exit name and nonempty message.');
-  return { exit: object.exit as string, message: object.message as string };
+  const result = validateCompletion(value);
+  if (!result.ok) failure(result.code, result.message);
+  return result.completion;
 }
 export function validateVariableName(name: string): void {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || /^DSH_/i.test(name)) failure('INVALID_VARIABLE', 'Execution variables must be POSIX names outside the managed DSH_ namespace.');

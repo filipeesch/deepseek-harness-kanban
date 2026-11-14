@@ -27,6 +27,19 @@ The complete [local CI workflow fixture](<../tests/e2e-dsh/deterministic/workflo
       - name: pipeline
         description: Local CI pipeline identifier.
     exits:
+      passed: deploy
+      rejected: fix
+      error: repair
+- id: deploy
+  label: Deploy the checked artifact
+  deterministic:
+    language: typescript
+    directory: task
+    file: wait-ci.ts
+    params:
+      - name: pipeline
+        description: Pipeline forwarded by the previous script step.
+    exits:
       passed: review
       rejected: fix
       error: repair
@@ -45,35 +58,40 @@ The exit mapping is the only script routing declaration. Existing free-text tran
 
 A deterministic stage can declare parameters when the same script must monitor a different pipeline, app, or environment per task. The declaration is published with the workflow; the values are not. Every declared name is required: there is no default, optionality, or secret parameter, because local variables remain the credential channel. The accepted bounds are 32 parameters, a 64-character name, a 200-character description, a 4,096-character value, and 32 KiB across the value set.
 
-The values come from the transition that creates the entry. `list_allowed_transitions` reports each target's declared names and descriptions, and `set_next_transition` accepts a `parameters` object containing exactly those names as nonempty strings. A missing, unknown, empty, or oversized value is rejected with the accepted names, so the agent corrects before the task moves. Placement revalidates the recorded set against the destination's current declaration and fails that transition instead of creating a mismatched entry.
+The values normally come from the transition that creates the entry. `list_allowed_transitions` reports each target's declared names and descriptions, and `set_next_transition` accepts a `parameters` object containing exactly those names as nonempty strings. A missing, unknown, empty, or oversized value is rejected with the accepted names, so the agent corrects before the task moves. Placement revalidates the recorded set against the destination's current declaration and fails that transition instead of creating a mismatched entry.
 
-An entry created without a value, including by a manual move, task creation, an automatic advance, or a script exit, fails in place with a diagnostic that names the missing parameters. That failure is a configuration refusal, not an executor failure: it never follows the `error` exit, it adds no history entry, and the entry stays available for repair. The card and drawer script panel show the entry's values read-only and offer **Edit parameters** whenever the entry is not active or stopping. Saving values neither grants trust nor starts code; press **Play** afterwards. Play captures the latest saved declaration and revalidates against it, so a newly declared name must be filled before the new execution starts. Parameter values are task data: they are recorded on the execution that used them and are never published, resolved as credentials, or interpolated into source.
+A value can also come from the completion of the preceding deterministic step. The source returns a `params` object, and the host binds exactly the names the destination declares, comparing names one-to-one: an extra sent name is not an entry value, and a declared name the result did not send stays missing. A destination that runs a conversation receives the bounded sent map as model-facing context beside the handoff message, in the same position as a declared transition reason. A deterministic destination receives only its declared names in `input.params`; the raw map is not exposed on its handoff input. The sent values are recorded, bounded and redacted, on the logical handoff in History.
+
+An entry created without a value, including by a manual move, task creation, an automatic advance, a script exit, or a result that sent nothing for a declared name, fails in place with a diagnostic that names the missing parameters. That failure is a configuration refusal, not an executor failure: it never follows the `error` exit, it adds no history entry, and the entry stays available for repair. The card and drawer script panel show the entry's values read-only and offer **Edit parameters** whenever the entry is not active or stopping. Saving values neither grants trust nor starts code; press **Play** afterwards. Play captures the latest saved declaration and revalidates against it, so a newly declared name must be filled before the new execution starts. Parameter values are task data: they are recorded on the execution that used them and are never published, resolved as credentials, or interpolated into source.
 
 ## Script ABI
 
-A successful program produces exactly `{ exit: string, message: string }`, with nonempty values and no extra fields. Both source forms use the same ABI.
+A successful program produces exactly `{ exit: string, message: string, params?: Record<string, string> }`, with nonempty exit and message values, no other fields, and an optional bounded parameter map. The map accepts only safe names and nonempty string values within the accepted parameter count, name, per-value, and total-size limits; the whole completion must remain within the accepted 32 KiB completion size bound. A malformed or oversized map is an invalid completion, not a partial value set. Both source forms use the same ABI.
 
 ### TypeScript
 
 TypeScript is an asynchronous function body supporting top-level await/return. The host provides:
 
-- `input`: structured task/project metadata, entry and execution identity, original `startedAt`, attempt identity/restart count, the entry's declared parameter values as `params`, and an incoming deterministic handoff when applicable. It contains no resolved secrets and never an undeclared parameter name.
+- `input`: structured task/project metadata, entry and execution identity, original `startedAt`, attempt identity/restart count, the entry's declared parameter values as `params`, and an incoming deterministic handoff when applicable. The handoff carries the exit and message but not the raw sent parameter map: the program reads values only through its declared names. The input contains no resolved secrets and never an undeclared parameter name.
 - `await env.get("CI_TOKEN")`: read-only access to an explicitly authorized local variable, separate from metadata.
 - **Only** `tools.bash({ command, timeoutMs? })` in the tool namespace. The command deadline is optional and kills on expiry; it never creates a detached chat job. The result includes `exitCode`, `signal`, `timedOut`, `aborted`, and bounded `stdout/stderr: { text, truncated }`. A nonzero nested Bash exit is data that the program may handle; a host rejection is an exception, and leaving it uncaught reports the host cause rather than the exception.
 
 The [TypeScript CI fixture](<../tests/e2e-dsh/deterministic/wait-ci.ts>) checks a [local fake CI script](<../tests/e2e-dsh/deterministic/fake-ci.cjs>) and waits in its own loop:
 
 ```typescript
+if (input.params.pipeline !== 'local-ci') throw new Error('Missing the declared pipeline parameter.');
 const deadline = Date.parse(input.startedAt) + 60_000;
 while (Date.now() < deadline) {
   const check = await tools.bash({ command: 'node fake-ci.cjs', timeoutMs: 5_000 });
-  if (check.exitCode === 0) return { exit: 'passed', message: 'Local CI passed.' };
+  if (check.exitCode === 0) return { exit: 'passed', message: 'Local CI passed.', params: { pipeline: input.params.pipeline } };
   if (check.exitCode === 1) return { exit: 'rejected', message: 'Local CI rejected the change.' };
   if (check.exitCode !== 2) throw new Error('Local CI checker failed.');
   await tools.bash({ command: 'sleep 0.02', timeoutMs: 1_000 });
 }
 throw new Error('Local CI business deadline expired.');
 ```
+
+The same file can serve a second script stage: this fixture validates its declared `pipeline` value and forwards it in the completion, so the next stage receives it in `input.params` and names it in the handoff to the following conversation. The static fixture in `tests/e2e-dsh/deterministic/workflow.yaml` chains `wait_ci`, `deploy`, and `review`.
 
 No short interactive tool-call deadline bounds the whole program. Keep checks repeatable: primary code approval cannot prove arbitrary code read-only or make remote effects exactly once. Outstanding nested Bash calls are canceled and drained when the outer program returns, throws, or is stopped.
 
@@ -82,7 +100,7 @@ No short interactive tool-call deadline bounds the whole program. Keep checks re
 Standalone Bash receives one JSON input-context document on stdin. It must exit **zero** and write exactly one JSON completion document to stdout; use stderr for diagnostics. Logs followed by JSON, multiple documents, truncated/oversized data, extra fields, and missing completion are errors. A nonzero standalone Bash exit fails even when stdout resembles a valid completion.
 
 ```bash
-printf '%s\n' '{"exit":"passed","message":"Local CI passed."}'
+printf '%s\n' '{"exit":"passed","message":"Local CI passed.","params":{"pipeline":"local-ci"}}'
 ```
 
 The [equivalent looping Bash fixture](<../tests/e2e-dsh/deterministic/wait-ci.sh>) reads stdin and derives its deadline from the preserved start time. It needs only Node and Bash plus the local fake checker; it calls no real CI/CD account.
@@ -96,7 +114,7 @@ A valid exit selects exactly the destination in the trusted captured mapping, in
 Every settled failure is classified by origin before it is routed or reported:
 
 - **script** — the program threw, or returned an exit its captured mapping does not name.
-- **contract** — the returned completion violates `{exit, message}` or its size bound.
+- **contract** — the returned completion violates `{exit, message, params?}` or its size bound.
 - **infrastructure** — the guard, its transport, or the execution runtime failed while the program was running.
 - **configuration** — the run could not be attempted as configured: a changed entry context, a missing or out-of-scope variable, an unrecoverable capture, a missing host capability, or a file policy the host cannot establish.
 
@@ -108,7 +126,7 @@ A guarded Bash call can end without the guard's result envelope. The host repeat
 
 An infrastructure failure is delivered as one sentence carrying its origin, the number of attempts, and where the detail lives; it never contains a stack trace or a local filesystem path. A provider's own text is kept as the nested cause and the delivered sentence comes from the failure code, so arbitrary provider output cannot reach the destination stage. A configuration failure never reaches a destination: its summary stays on the card. The bounded guard facts — whether the command was admitted, its exit status or signal, how long it took, how much it wrote, and both retained windows of its diagnostic stream — are recorded on that execution and shown in the script panel and, behind an expandable **Evidence** block, in History. Redaction runs over the whole stream before a window is cut, so a secret that crosses that boundary is redacted as a whole value. A program that catches a host rejection and then finishes normally is not a failure; one that lets it escape reports the host cause with the program exception recorded as its nested cause.
 
-An agent destination receives its own instruction and one identified output/provenance block in the same native context message and turn; only that downstream instruction creates a conversation when needed. A script destination receives structured input, without a conversation. A manual destination retains the handoff for the next explicit native execution in that exact entry; merely opening or creating a conversation does not consume it or force a turn. Handoffs are not user input, composer text, queued user work, title text, or fake agent-declared reasons. Durable delivery identity prevents duplicate accepted context across retries/restart; a recorded delivery failure stays failed until an explicit delivery action retries it.
+An agent destination receives its own instruction and one identified output/provenance block in the same native context message and turn; that block includes the bounded sent parameter values as model-facing context, and only that downstream instruction creates a conversation when needed. A script destination receives structured input, without a conversation; only the names it declares enter `input.params`, and its handoff input does not expose the raw sent map. A manual destination retains the handoff and its sent values for the next explicit native execution in that exact entry; merely opening or creating a conversation does not consume it or force a turn. A destination that declares a name the result did not send still accepts the handoff; its own admission reports the missing name for repair instead of failing the route. Handoffs are not user input, composer text, queued user work, title text, or fake agent-declared reasons. Durable delivery identity prevents duplicate accepted context across retries/restart; a recorded delivery failure stays failed until an explicit delivery action retries it.
 
 ## Stop, Play, edits, and restart
 
@@ -136,6 +154,6 @@ Team journals share authored definitions and file references only, not file byte
 
 ## Safe rollback and verification
 
-Stop all active scripts explicitly; the guard drains its owned token-bearing processes before it reports a clean stop. Preserve/back up local records and native credentials, and review workflows plus a compatible shared-log backup before selecting an older plugin. Do not delete captures to force a downgrade, strip executable fields silently, or rewrite a v2 journal as v1. There is no automatic downgrade writer.
+Stop all active scripts explicitly; the guard drains its owned token-bearing processes before it reports a clean stop. Task records written by this version may carry the optional sent-parameter fields on results, handoffs, and history; an older plugin cannot read those fields, so restore the documented local-record backup before reverting. The shared board log and workflow grammar are unchanged; no shared log is rewritten on rollback. Preserve/back up local records and native credentials, and review workflows plus a compatible shared-log backup before selecting an older plugin. Do not delete captures to force a downgrade, strip executable fields silently, or rewrite a v2 journal as v1. There is no automatic downgrade writer.
 
-Fast gates are separate: `pnpm check`, `pnpm test:browser`, then the isolated [real-composition lane](<../tests/e2e-dsh/README.md>) against a built DSH checkout. The lane's deterministic fixture declares parameters so a run covers supplied values, the in-place refusal, and the repair overlay. The lane stages plugin tests in a temporary directory, uses a throwaway HOME/DSH_HOME/profile/workspace and replay-only model fixtures, and imports native scaffolding read-only. No acceptance check may use personal GUI/profile data, real model traffic, or real CI/CD credentials. Native admission and package installation checks do not by themselves prove bundle activation or process-ownership cleanup; retain those separate integration results.
+Fast gates are separate: `pnpm check`, `pnpm test:browser`, then the isolated [real-composition lane](<../tests/e2e-dsh/README.md>) against a built DSH checkout. The lane's deterministic fixture chains a second script stage, so a run covers supplied values, the in-place refusal, the repair overlay, and the conversation context of sent values. The lane stages plugin tests in a temporary directory, uses a throwaway HOME/DSH_HOME/profile/workspace and replay-only model fixtures, and imports native scaffolding read-only. No acceptance check may use personal GUI/profile data, real model traffic, or real CI/CD credentials. Native admission and package installation checks do not by themselves prove bundle activation or process-ownership cleanup; retain those separate integration results.

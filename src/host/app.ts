@@ -265,7 +265,7 @@ export class KanbanApp {
   await this.hubs.hub(found.hubId).transact(draft=>{const task=draft.tasks.find(value=>value.id===taskId);const handoff=task?.deterministicHandoff;
    if(!task||task.stageEntry?.id!==entryId||handoff?.id!==deliveryId||handoff.acceptedAt)return;
    handoff.acceptedAt=new Date().toISOString();delete handoff.error;
-   recordDeterministicHandoff(task,{at:handoff.acceptedAt,deliveryId:handoff.id,executionId:handoff.executionId,fromColumnId:handoff.fromColumnId,columnId:task.columnId,outcome:'accepted',exit:handoff.exit,message:handoff.message});
+   recordDeterministicHandoff(task,{at:handoff.acceptedAt,deliveryId:handoff.id,executionId:handoff.executionId,fromColumnId:handoff.fromColumnId,columnId:task.columnId,outcome:'accepted',exit:handoff.exit,message:handoff.message,...(handoff.params===undefined?{}:{parameters:handoff.params})});
   });
  }
  private async dispatchDeterministicHandoffs():Promise<void>{
@@ -288,7 +288,7 @@ export class KanbanApp {
      const current=this.locator.byTask(task.id);if(!current)return;
      await this.hubs.hub(current.hubId).transact(draft=>{const value=draft.tasks.find(t=>t.id===task.id);const h=value?.deterministicHandoff;
       if(!value||value.stageEntry?.id!==handoff.entryId||h?.id!==handoff.id||h.acceptedAt)return;
-      h.error=problem(error);recordDeterministicHandoff(value,{at:new Date().toISOString(),deliveryId:h.id,executionId:h.executionId,fromColumnId:h.fromColumnId,columnId:h.columnId,outcome:'failed',exit:h.exit,message:h.message,error:h.error});
+      h.error=problem(error);recordDeterministicHandoff(value,{at:new Date().toISOString(),deliveryId:h.id,executionId:h.executionId,fromColumnId:h.fromColumnId,columnId:h.columnId,outcome:'failed',exit:h.exit,message:h.message,...(h.params===undefined?{}:{parameters:h.params}),error:h.error});
      });this.options.report?.(error);
     }
    }).finally(()=>{this.handoffDeliveries.delete(task.id);});

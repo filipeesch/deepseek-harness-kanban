@@ -14,13 +14,16 @@ export function ScriptParametersDialog({ task, column, summary, run, onClose }: 
   const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(declared.map(parameter => [parameter.name, summary.parameters?.[parameter.name] ?? ''])));
   const action = useAction(run);
   const missing = declared.filter(parameter => (values[parameter.name] ?? '').trim().length === 0);
-  return <Modal title="Edit script parameters" onClose={onClose} busy={action.pending} initialFocus="target">
-    <div className="kb-form">
+  return <Modal title="Edit script parameters" size="parameters" onClose={onClose} busy={action.pending} initialFocus="target">
+    <div className="kb-form kb-script-parameters">
       <p className="kb-hint">Values apply to this stage entry only. Saving does not start the script; press Play afterwards. These values are task data, not secrets.</p>
-      {declared.map((parameter, index) => <label className="kb-field" key={parameter.name}>{parameter.name}
-        {parameter.description !== undefined && <span className="kb-hint">{parameter.description}</span>}
-        <input className="kb-input" aria-label={'Parameter ' + parameter.name} aria-required="true" required value={values[parameter.name] ?? ''} {...(index === 0 ? { 'data-kb-initial-focus': '' } : {})} onChange={event => setValues(current => ({ ...current, [parameter.name]: event.target.value }))} />
-      </label>)}
+      <div className="kb-script-parameter-list">
+        {declared.map((parameter, index) => <label className="kb-field kb-script-parameter" key={parameter.name}>
+          <span className="kb-script-parameter-name">{parameter.name}</span>
+          {parameter.description !== undefined && <span className="kb-hint">{parameter.description}</span>}
+          <textarea className="kb-input kb-script-parameter-value" aria-label={'Parameter ' + parameter.name} aria-required="true" required rows={2} value={values[parameter.name] ?? ''} {...(index === 0 ? { 'data-kb-initial-focus': '' } : {})} onChange={event => setValues(current => ({ ...current, [parameter.name]: event.target.value }))} />
+        </label>)}
+      </div>
       {missing.length > 0 && <p className="kb-hint" role="status">Every declared parameter is required.</p>}
       <ErrorNotice problem={action.error} />
       <div className="kb-actions">

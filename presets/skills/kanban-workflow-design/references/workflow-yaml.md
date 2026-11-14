@@ -23,7 +23,7 @@ Unknown fields are rejected: no WIP limits, stage `auto_mode`, agent/preset/engi
 
 A deterministic version is approved once per board and stable stage, never by saving YAML.
 
-A deterministic stage may declare required `params` (name + optional description). The declaring transition must supply every value; a missing, unknown, or empty value is rejected with accepted names. A value-less entry fails in place; the user repairs it in the script panel. Reserved exits: `error` takes a script or completion failure, `infrastructure` takes a guard or runtime failure and falls back to `error`, and a configuration refusal follows none; neither may target its own stage.
+A deterministic stage may declare required `params`. A value comes from the transition, the preceding script's completion, or the panel. Exact names bind; extras do not; a missing name repairs in place. Conversation destinations see the sent values as context; script destinations only declared names. Reserved exits: `error` takes script/completion failures, `infrastructure` guard/runtime failures (fallback `error`); configuration refusals follow none and no exit may self-target.
 
 No cross-board YAML transitions exist. Handoffs create separate tasks using an authorized [coordination protocol](coordination.md), not a cross-board move.
 
@@ -80,4 +80,4 @@ groups:
     columns: [intake, review]
 ```
 
-Display-label edits are not ID migrations. Literal/whole-document writes do not migrate tasks: removing/renaming an occupied ID or an admitted pending transition's reference is rejected. A declared but unadmitted route can instead become stale and block progression; inspect it rather than relying on orphan checks. Preserve IDs unless an approved supported migration is verified; do not promise UI stage-editor migration from text replacement.
+Display-label edits are not ID migrations. Literal/whole-document writes do not migrate tasks: removing or renaming an occupied ID, or an admitted pending transition's reference, is rejected. A declared but unadmitted route can become stale and block progression; inspect it rather than relying on orphan checks. Preserve IDs unless an approved migration is verified; do not promise UI stage-editor migration from text replacement.

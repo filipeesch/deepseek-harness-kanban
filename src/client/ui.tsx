@@ -1,4 +1,5 @@
-import React, { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import React, { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import type { KanbanSnapshot, Command, ConversationModelOutcome, Problem } from '../shared/types.js';
 import { asProblem } from './problem.js';
@@ -67,10 +68,25 @@ export function useAction(run: RunCommand) {
   return { pending, error, execute, clearError: () => setError(null) };
 }
 
-export function Modal({ title, children, onClose, busy = false, size = 'default', initialFocus = 'first', describedBy, headerActions }: { title: string; children: ReactNode; onClose: () => void; busy?: boolean; size?: 'default' | 'wide'; initialFocus?: 'first' | 'cancel' | 'target'; describedBy?: string; headerActions?: ReactNode }) {
+/** The plugin root keeps theme variables and sits outside the workflow canvas's transform. */
+function modalHost(): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+  const active = document.activeElement;
+  const nearest = active instanceof Element ? active.closest<HTMLElement>('.dsh-kanban:not(.kb-modal-scope)') : null;
+  if (nearest !== null) return nearest;
+  const roots = [...document.querySelectorAll<HTMLElement>('.dsh-kanban:not(.kb-modal-scope)')].filter(element => element.getClientRects().length > 0);
+  return roots.at(-1) ?? document.body ?? null;
+}
+
+export function Modal({ title, children, onClose, busy = false, size = 'default', initialFocus = 'first', describedBy, headerActions }: { title: string; children: ReactNode; onClose: () => void; busy?: boolean; size?: 'default' | 'wide' | 'parameters'; initialFocus?: 'first' | 'cancel' | 'target'; describedBy?: string; headerActions?: ReactNode }) {
   const id = useId(); const ref = useRef<HTMLDivElement>(null);
+  const [host, setHost] = useState<HTMLElement | null>(null);
   const state = useRef({ onClose, busy }); state.current = { onClose, busy };
+  // Resolve the mounting root after the first commit: the plugin root is not in the DOM yet
+  // during the first render, and switching targets later would remount the dialog subtree.
+  useLayoutEffect(() => { setHost(modalHost()); }, []);
   useEffect(() => {
+    if (host === null) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = ref.current;
     const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), summary, input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"], [contenteditable="true"]:not([aria-disabled="true"])') ?? []).filter(el => !el.hidden && el.getAttribute('aria-hidden') !== 'true');
@@ -88,8 +104,10 @@ export function Modal({ title, children, onClose, busy = false, size = 'default'
     };
     dialog?.addEventListener('keydown', key);
     return () => { dialog?.removeEventListener('keydown', key); if (previous?.isConnected) previous.focus(); };
-  }, [initialFocus, busy]);
-  return <div className="kb-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}><div className={'kb-dialog' + (size === 'wide' ? ' kb-dialog-wide' : '')} role="dialog" aria-modal="true" aria-labelledby={id} aria-describedby={describedBy} aria-busy={busy} ref={ref} tabIndex={-1}><header className="kb-dialog-header"><h2 id={id}>{title}</h2><div className="kb-dialog-header-actions">{headerActions}<button type="button" className="kb-button kb-icon-button" disabled={busy} onClick={onClose} aria-label={'Close ' + title}>×</button></div></header>{children}</div></div>;
+  }, [host, initialFocus, busy]);
+  const content = <div className="kb-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}><div className={'kb-dialog' + (size === 'wide' ? ' kb-dialog-wide' : size === 'parameters' ? ' kb-dialog-parameters' : '')} role="dialog" aria-modal="true" aria-labelledby={id} aria-describedby={describedBy} aria-busy={busy} ref={ref} tabIndex={-1}><header className="kb-dialog-header"><h2 id={id}>{title}</h2><div className="kb-dialog-header-actions">{headerActions}<button type="button" className="kb-button kb-icon-button" disabled={busy} onClick={onClose} aria-label={'Close ' + title}>×</button></div></header>{children}</div></div>;
+  if (host === null) return null;
+  return createPortal(host === document.body ? <div className="dsh-kanban kb-modal-scope">{content}</div> : content, host);
 }
 
 export function Tabs({ label, values, selected, onSelect, id }: { label: string; values: readonly string[]; selected: string; onSelect: (value: string) => void; id: string }) {

@@ -26,7 +26,7 @@ export type StageEntryOrigin = 'manual' | 'agent' | 'auto' | `script:${string}` 
 /** One settled fact about a task's flow, with the moment it happened. */
 export type TaskHistoryEntry =
   | { readonly kind: 'deterministic-execution'; readonly at: string; readonly executionId: string; readonly columnId: string; readonly outcome: 'completed' | 'stopped' | 'failed'; readonly exit?: string; readonly message?: string; readonly error?: Problem; /** Bounded values that execution used; absent when its stage declared none. */ readonly parameters?: Record<string, string> }
-  | { readonly kind: 'deterministic-handoff'; readonly at: string; readonly deliveryId: string; readonly executionId: string; readonly fromColumnId: string; readonly columnId: string; readonly outcome: 'accepted' | 'failed'; readonly exit: string; readonly message: string; readonly error?: Problem }
+  | { readonly kind: 'deterministic-handoff'; readonly at: string; readonly deliveryId: string; readonly executionId: string; readonly fromColumnId: string; readonly columnId: string; readonly outcome: 'accepted' | 'failed'; readonly exit: string; readonly message: string; /** Bounded values the source sent with the result; never the destination's execution values. */ readonly parameters?: Record<string, string>; readonly error?: Problem }
   | { readonly kind: 'created'; readonly at: string; readonly columnId: string }
   | { readonly kind: 'stage'; readonly at: string; readonly fromColumnId: string; readonly columnId: string; /** Absent on an entry recorded before origins were stored; never backfilled. */ readonly origin?: StageEntryOrigin }
   | { readonly kind: 'intent'; readonly at: string; readonly fromColumnId: string; readonly columnId: string }

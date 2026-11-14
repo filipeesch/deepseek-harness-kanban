@@ -341,6 +341,50 @@ describe('deterministic execution through the real app and durable repository', 
     else { expect(f.runtime.runs).toHaveLength(1); expect(f.sessions.sent).toEqual([]); expect(f.sessions.dirs.size).toBe(0); }
   });
 
+  it('passes sent values into the next script and keeps the raw map out of its input', async () => {
+    const yaml = 'name: Chain\ninitial_column: wait\ncolumns:\n'
+      + '  - id: wait\n    label: Wait\n    deterministic: {language: bash, code: "echo first", exits: {passed: next}}\n'
+      + '  - id: next\n    label: Next\n    deterministic: {language: bash, code: "echo second", params: [{name: pipeline}], exits: {done: done}}\n'
+      + '  - id: done\n    label: Done\n';
+    const f = await setup({ yaml }); const task = await create(f); const first = await attempt(f.runtime);
+    first.resolve({ kind: 'completed', completion: { exit: 'passed', message: 'CI passed', params: { pipeline: 'ci-main', extra: 'context-only' } }, diagnostics: [] });
+    await expect.poll(() => f.store.requireTask(task.id).columnId, POLL).toBe('next');
+    const current = f.store.requireTask(task.id);
+    expect(current.deterministic?.parameters).toEqual({ pipeline: 'ci-main' });
+    expect(current.deterministicHandoff).toMatchObject({ exit: 'passed', params: { pipeline: 'ci-main', extra: 'context-only' } });
+    const second = await attempt(f.runtime, 1);
+    expect((second.request.input as { params?: Record<string, string> }).params).toEqual({ pipeline: 'ci-main' });
+    expect((second.request.input as { handoff?: { message?: string; params?: unknown } }).handoff).toMatchObject({ message: 'CI passed' });
+    expect((second.request.input as { handoff?: { params?: unknown } }).handoff).not.toHaveProperty('params');
+    second.resolve({ kind: 'completed', completion: { exit: 'done', message: 'Next finished' }, diagnostics: [] });
+    await expect.poll(() => f.store.requireTask(task.id).columnId, POLL).toBe('done');
+    const accepted = f.store.requireTask(task.id).history?.find(value => value.kind === 'deterministic-handoff' && value.executionId === first.request.executionId);
+    expect(accepted).toMatchObject({ outcome: 'accepted', parameters: { pipeline: 'ci-main', extra: 'context-only' } });
+    expect(f.runtime.runs).toHaveLength(2);
+  });
+
+  it('keeps a missing sent value repairable in the next script instead of following the error exit', async () => {
+    const yaml = 'name: Chain\ninitial_column: wait\ncolumns:\n'
+      + '  - id: wait\n    label: Wait\n    deterministic: {language: bash, code: "echo first", exits: {passed: next, error: repair}}\n'
+      + '  - id: next\n    label: Next\n    deterministic: {language: bash, code: "echo second", params: [{name: pipeline}, {name: app}], exits: {done: done, error: repair}}\n'
+      + '  - id: repair\n    label: Repair\n'
+      + '  - id: done\n    label: Done\n';
+    const f = await setup({ yaml }); const task = await create(f); const first = await attempt(f.runtime);
+    first.resolve({ kind: 'completed', completion: { exit: 'passed', message: 'CI passed', params: { pipeline: 'ci-main' } }, diagnostics: [] });
+    await expect.poll(() => f.store.requireTask(task.id).columnId, POLL).toBe('next');
+    await expect.poll(() => f.store.requireTask(task.id).deterministic?.error?.code, POLL).toBe('PARAMETERS_REQUIRED');
+    const held = f.store.requireTask(task.id);
+    expect(held.columnId).toBe('next');
+    expect(held.deterministic?.parameters).toEqual({ pipeline: 'ci-main' });
+    expect(f.runtime.runs).toHaveLength(1);
+    await f.app.command({ type: 'task.deterministicParameters', taskId: task.id, entryId: held.deterministic!.entryId, values: { pipeline: 'ci-main', app: 'checkout' } });
+    await f.app.command({ type: 'task.deterministicPlay', taskId: task.id });
+    const second = await attempt(f.runtime, 1);
+    expect((second.request.input as { params?: Record<string, string> }).params).toEqual({ pipeline: 'ci-main', app: 'checkout' });
+    second.resolve({ kind: 'completed', completion: { exit: 'done', message: 'Next finished' }, diagnostics: [] });
+    await expect.poll(() => f.store.requireTask(task.id).columnId, POLL).toBe('done');
+  });
+
   it('retains a failed native handoff across restart and retries with its existing delivery identity', async () => {
     const f = await setup(); f.sessions.failSend = true; const task = await create(f); const run = await attempt(f.runtime); complete(run, 'agent', 'Review this synthetic result');
     await expect.poll(() => f.store.requireTask(task.id).deterministicHandoff?.error?.code, POLL).toBe('SEND_FAILED'); const failed = f.store.requireTask(task.id); const handoff = failed.deterministicHandoff!;

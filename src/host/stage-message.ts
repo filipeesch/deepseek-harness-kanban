@@ -2,6 +2,7 @@ import { boundContextSummary, createUserMessage, type UserMessage } from '@deeps
 import type { StageInstructionDelivery } from '../shared/ports.js';
 import type { Task, Workflow } from '../shared/types.js';
 import type { DeterministicHandoff } from '../shared/deterministic.js';
+import { bounded } from '../shared/bounded.js';
 import { defaultDestination } from '../domain/transitions.js';
 import { recordedTransition } from '../domain/transition-route.js';
 
@@ -77,12 +78,21 @@ export function transitionNoteBlock(note: DeclaredTransitionNote): string {
   return 'Transition reason (from ' + note.fromStageName + '):\n' + note.reason;
 }
 
+/** Bound for the model-facing sent-parameter section, separate from the accepted value limits. */
+export const HANDOFF_PARAMETER_CONTEXT_MAX_BYTES = 4 * 1024;
+
 /**
  * Compose the model-facing delivery: the instruction, then the declared reason
- * when this delivery follows one, then the briefing when one applies.
+ * when this delivery follows one, then the handoff when one applies. A handoff
+ * carries the values the source sent as bounded context; a deterministic
+ * destination reads only declared parameters and never this block.
  */
 export function deterministicHandoffBlock(handoff: DeterministicHandoff): string {
-  return `Deterministic result (from ${handoff.fromColumnId}; exit: ${handoff.exit}; execution: ${handoff.executionId}):\n${handoff.message}`;
+  const base = `Deterministic result (from ${handoff.fromColumnId}; exit: ${handoff.exit}; execution: ${handoff.executionId}):\n${handoff.message}`;
+  const entries = Object.entries(handoff.params ?? {});
+  if (entries.length === 0) return base;
+  const section = bounded('Sent parameters:\n' + entries.map(([name, value]) => name + ': ' + value).join('\n'), HANDOFF_PARAMETER_CONTEXT_MAX_BYTES);
+  return base + '\n\n' + section;
 }
 
 export function buildStageInstructionDelivery(input: StageInstructionInput): StageInstructionDelivery {

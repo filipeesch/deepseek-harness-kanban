@@ -45,6 +45,15 @@ describe('the history panel', () => {
     ]);
   });
 
+  it('presents the values a script handoff sent in the Detail cell', () => {
+    render(<HistoryPanel columns={COLUMNS} history={[
+      { kind: 'deterministic-handoff', at: MOVED, deliveryId: 'delivery', executionId: 'run', fromColumnId: 'intake', columnId: 'doing', outcome: 'accepted', exit: 'passed', message: 'CI passed', parameters: { pipeline: 'ci-main' } },
+    ]} />);
+    const row = within(screen.getByRole('table', { name: 'Task history' })).getAllByRole('row')[1]!;
+    expect(within(row).getAllByRole('cell')[2]!.textContent).toContain('Sent parameters pipeline=ci-main');
+    expect(within(row).getAllByRole('cell')[2]!.textContent).toContain('CI passed');
+  });
+
   it('refreshes the current stage duration while mounted and stops the refresh on unmount', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-11-11T10:05:00.000Z'));

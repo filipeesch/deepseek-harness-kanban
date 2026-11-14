@@ -188,6 +188,11 @@ test('pressing the action with layout editing unlocked moves nothing and answers
   // where the real canvas is listening for a drag and could steal the press.
   await page.getByRole('button', { name: 'Unlock layout editing', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Lock layout editing', exact: true })).toBeVisible();
+  // Let finite layout animations settle before measuring the action's hit area; a
+  // stale rectangle would send the press to the stage header instead.
+  await page.evaluate(() => Promise.all(document.getAnimations()
+    .filter(animation => (animation.effect?.getComputedTiming().iterations ?? 1) !== Infinity)
+    .map(animation => animation.finished.catch(() => {}))));
   const stage = page.locator('.kb-flow-stage[data-column-id="explore"]');
   const action = page.locator('.kb-flow-stage-create').first();
   const before = await stage.boundingBox();

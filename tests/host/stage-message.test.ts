@@ -4,6 +4,7 @@ import {
   buildStageInstructionDelivery,
   buildStageInstructionSummary,
   createStageInstructionMessage,
+  deterministicHandoffBlock,
   stageInstructionTarget,
 } from '../../src/host/stage-message.js';
 
@@ -60,6 +61,12 @@ describe('stage instruction message', () => {
       instruction: 'Review it.', stageName: 'REVIEW', task: { columnId: 'review' }, workflow: branched(), requestId: 'request-1',
     });
     expect(delivery.requestId).toBe('request-1');
+  });
+
+  it('appends the bounded sent parameters to a handoff context', () => {
+    const handoff = { id: 'handoff', entryId: 'entry', executionId: 'run', fromColumnId: 'ci', columnId: 'review', exit: 'passed', message: 'CI passed', at: '2026-11-14T00:00:00.000Z', params: { pipeline: 'ci-main' } };
+    expect(deterministicHandoffBlock(handoff)).toBe('Deterministic result (from ci; exit: passed; execution: run):\nCI passed\n\nSent parameters:\npipeline: ci-main');
+    expect(deterministicHandoffBlock({ ...handoff, params: undefined })).not.toContain('Sent parameters');
   });
 
   it('names the recorded transition while it resolves', () => {

@@ -11,7 +11,7 @@ const stageOrigin = z.string().regex(/^(?:manual|agent|auto|(?:script|error):[A-
 
 export const taskHistoryEntrySchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('deterministic-execution'), at: moment, executionId: identifier, columnId: identifier, outcome: z.enum(['completed', 'stopped', 'failed']), exit: z.string().optional(), message: z.string().optional(), error: failure.optional(), parameters: parameterValuesSchema.optional() }),
-  z.strictObject({ kind: z.literal('deterministic-handoff'), at: moment, deliveryId: identifier, executionId: identifier, fromColumnId: identifier, columnId: identifier, outcome: z.enum(['accepted', 'failed']), exit: z.string(), message: z.string(), error: failure.optional() }),
+  z.strictObject({ kind: z.literal('deterministic-handoff'), at: moment, deliveryId: identifier, executionId: identifier, fromColumnId: identifier, columnId: identifier, outcome: z.enum(['accepted', 'failed']), exit: z.string(), message: z.string(), parameters: parameterValuesSchema.optional(), error: failure.optional() }),
   z.strictObject({ kind: z.literal('created'), at: moment, columnId: identifier }),
   z.strictObject({ kind: z.literal('stage'), at: moment, fromColumnId: identifier, columnId: identifier, origin: stageOrigin.optional() }),
   z.strictObject({ kind: z.literal('intent'), at: moment, fromColumnId: identifier, columnId: identifier }),

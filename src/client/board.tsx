@@ -506,7 +506,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       onSaved={() => setStageEditor(null)}
     />}
     <BoardCreationDialogs hub={activeHub} run={run} taskDialog={creation.dialog} containers={containers} />
-    {moves.overrideDialog && <div hidden={preparation.dialog !== null}>{moves.overrideDialog}</div>}
+    {preparation.dialog === null && moves.overrideDialog}
     {preparation.dialog}
   </ScriptReviewProvider></section></DeterministicProvider></ModelFallbacksProvider></DirectoryPickerProvider>;
 }

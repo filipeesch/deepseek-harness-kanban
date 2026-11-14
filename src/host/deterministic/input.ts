@@ -1,7 +1,13 @@
-import type { DeterministicCapture, DeterministicControl, DeterministicInput } from '../../shared/deterministic.js';
+import type { DeterministicCapture, DeterministicControl, DeterministicHandoff, DeterministicInput, DeterministicInputHandoff } from '../../shared/deterministic.js';
 import { KanbanError } from '../../shared/errors.js';
 import { declaredParameterValues } from '../../domain/deterministic-parameters.js';
 import type { LocatedTask } from '../hub-repository.js';
+
+/** Strip the raw sent map: a program receives values only through its declared parameter input. */
+function programHandoff(handoff: DeterministicHandoff): DeterministicInputHandoff {
+  const { params: _params, ...rest } = handoff;
+  return structuredClone(rest);
+}
 
 /**
  * The one structured program input. Pure over the task, its entry, and its
@@ -28,6 +34,6 @@ export function buildDeterministicInput(located: LocatedTask, control: Determini
     attempt: control.attempt,
     restartCount: control.restartCount,
     params: declaredParameterValues(capture.params, control.parameters),
-    ...(task.deterministicHandoff?.entryId === control.entryId ? { handoff: structuredClone(task.deterministicHandoff) } : {}),
+    ...(task.deterministicHandoff?.entryId === control.entryId ? { handoff: programHandoff(task.deterministicHandoff) } : {}),
   };
 }

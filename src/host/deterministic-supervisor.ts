@@ -4,12 +4,14 @@ import type { HubTask, Problem } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
 import type { LocatedTask } from './hub-repository.js';
 import { captureDeterministicTargets } from '../domain/deterministic-state.js';
-import { declaredParameterNames, declaredParameterValues, missingParameterNames, validateParameterValues } from '../domain/deterministic-parameters.js';
+import { boundedRedactedParameters, declaredParameterNames, declaredParameterValues, missingParameterNames, validateParameterValues } from '../domain/deterministic-parameters.js';
 import { recordDeterministicExecution, recordDeterministicHandoff } from '../domain/task-history/record.js';
 import { classifyFailureCode, failureDetail, failureDetailValues } from '../domain/deterministic-failure.js';
 import type { FailureDetail } from '../shared/deterministic-failure.js';
 import { failureMessage, providerFailureMessage } from '../domain/deterministic-failure-message.js';
 import { settleFailureRoute } from '../domain/deterministic-failure-settlement.js';
+import { validateCompletion } from '../domain/deterministic-completion.js';
+import { PARAMETER_LIMITS } from '../domain/deterministic-definition.js';
 import { bounded } from '../shared/bounded.js';
 import { redactExact, redactRecord } from '../shared/redact.js';
 import { buildDeterministicInput } from './deterministic/input.js';
@@ -93,14 +95,14 @@ function holdDiagnostic(hold: DeterministicHold): string {
   return bounded('Saved result delivery held: ' + parts.join(' · '), MAX_DIAGNOSTIC);
 }
 function completion(value: unknown): StepCompletion {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new KanbanError('INVALID_COMPLETION', 'The program must return exactly { exit, message }.');
-  const record = value as Record<string, unknown>;
-  if (Object.keys(record).length !== 2 || typeof record.exit !== 'string' || !record.exit.trim()
-    || typeof record.message !== 'string' || !record.message.trim() || !Object.hasOwn(record, 'exit') || !Object.hasOwn(record, 'message')) {
-    throw new KanbanError('INVALID_COMPLETION', 'The program must return nonempty exit and message strings without extra fields.');
-  }
-  if (Buffer.byteLength(JSON.stringify(record)) > MAX_MESSAGE_BYTES) throw new KanbanError('INVALID_COMPLETION', 'The program completion exceeds the output limit.');
-  return { exit: record.exit, message: record.message };
+  const result = validateCompletion(value);
+  if (!result.ok) throw new KanbanError(result.code, result.message);
+  return result.completion;
+}
+/** Redact one sent value and keep it inside the accepted value bound. */
+function safeParameter(value: string, secrets: Readonly<Record<string, string>>): string {
+  const redacted = redactExact(value, Object.values(secrets));
+  return redacted.length > PARAMETER_LIMITS.valueLength ? '[REDACTED]' : redacted;
 }
 
 /** One owned lifetime per task; no long-lived work runs in the application command lane. */
@@ -449,7 +451,7 @@ export class DeterministicSupervisor {
         const handoff = task.deterministicHandoff;
         if (handoff && handoff.entryId === task.stageEntry?.id && handoff.acceptedAt === undefined) {
           handoff.acceptedAt = this.now();
-          recordDeterministicHandoff(task, { at: handoff.acceptedAt, deliveryId: handoff.id, executionId: handoff.executionId, fromColumnId: handoff.fromColumnId, columnId: task.columnId, outcome: 'accepted', exit: handoff.exit, message: handoff.message });
+          recordDeterministicHandoff(task, { at: handoff.acceptedAt, deliveryId: handoff.id, executionId: handoff.executionId, fromColumnId: handoff.fromColumnId, columnId: task.columnId, outcome: 'accepted', exit: handoff.exit, message: handoff.message, ...(handoff.params === undefined ? {} : { parameters: handoff.params }) });
         }
         return true;
       });
@@ -516,8 +518,9 @@ export class DeterministicSupervisor {
 
   private async saveResult(taskId: string, owner: Owner, output: StepCompletion, secrets: Readonly<Record<string, string>>, error?: Problem): Promise<void> {
     const capture = owner.control.capture!;
+    const params = output.params === undefined ? undefined : boundedRedactedParameters(Object.fromEntries(Object.entries(output.params).map(([name, value]) => [name, safeParameter(value, secrets)])));
     const result: DeterministicResult = { id: this.id(), deliveryId: this.id(), at: this.now(), exit: output.exit,
-      message: safeText(output.message, secrets, MAX_MESSAGE_BYTES), target: structuredClone(capture.exits[output.exit]!), deliveryStatus: 'pending', ...(error ? { synthetic: true, error } : {}) };
+      message: safeText(output.message, secrets, MAX_MESSAGE_BYTES), ...(params === undefined ? {} : { params }), target: structuredClone(capture.exits[output.exit]!), deliveryStatus: 'pending', ...(error ? { synthetic: true, error } : {}) };
     await this.ports.transact(taskId, (task, value) => {
       if (!current(value, owner.control) || !['active', 'awaiting-trust'].includes(task.deterministic!.phase) || task.deterministic!.result) return;
       task.deterministic!.result = result; task.deterministic!.phase = 'result-ready';
@@ -554,7 +557,7 @@ export class DeterministicSupervisor {
       } else {
         task.deterministic!.phase = 'failed'; task.deterministic!.result!.deliveryStatus = 'failed'; task.deterministic!.result!.error = outcome.error; task.deterministic!.error = outcome.error;
         delete task.deterministic!.hold;
-        recordDeterministicHandoff(task, { at: this.now(), deliveryId: control.result!.deliveryId ?? control.result!.id, executionId: control.executionId, fromColumnId: task.columnId, columnId: control.result!.target?.columnId ?? task.columnId, outcome: 'failed', exit: control.result!.exit, message: control.result!.message, error: outcome.error });
+        recordDeterministicHandoff(task, { at: this.now(), deliveryId: control.result!.deliveryId ?? control.result!.id, executionId: control.executionId, fromColumnId: task.columnId, columnId: control.result!.target?.columnId ?? task.columnId, outcome: 'failed', exit: control.result!.exit, message: control.result!.message, ...(control.result!.params === undefined ? {} : { parameters: control.result!.params }), error: outcome.error });
       }
     });
     if (changed !== undefined) this.ports.report?.(new KanbanError('DETERMINISTIC_DELIVERY_HELD', holdDiagnostic(changed)));

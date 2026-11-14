@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createTask, placeTask, saveBoardWorkflow, updateBoardStage } from '../../src/domain/hub-operations.js';
 import { HubStateSchema } from '../../src/domain/hub-schema.js';
-import { acceptsDeterministicResult, deterministicCurrent, ensureLocalStageIdentity, ownsDeterministicEntry, reconcileLocalStageIdentities, resolveDeterministicTarget } from '../../src/domain/deterministic-state.js';
+import { acceptsDeterministicResult, deterministicCurrent, deterministicHandoffSchema, deterministicResultSchema, ensureLocalStageIdentity, ownsDeterministicEntry, reconcileLocalStageIdentities, resolveDeterministicTarget } from '../../src/domain/deterministic-state.js';
+import { taskHistoryEntrySchema } from '../../src/domain/task-history/entry.js';
 import { advanceArmed, resolveAdvanceRoute } from '../../src/domain/transition-route.js';
 import { resolveAdvanceDecision } from '../../src/domain/auto-advance.js';
 import { hasUnresolvedEntry } from '../../src/domain/stage-entry.js';
@@ -29,6 +30,19 @@ describe('durable deterministic stage entry', () => {
     expect(board.workflowYaml).not.toContain('key:');
     expect(board.localStageIdentities?.wait).toBe(task.stageEntry?.stageIdentity);
   });
+  it('accepts and bounds optional sent values in the result, handoff, and history schemas', () => {
+    const at = '2026-11-14T00:00:00.000Z';
+    const result = { id: 'result', exit: 'passed', message: 'ok', at, params: { pipeline: 'ci-main' } };
+    expect(deterministicResultSchema.parse(result)).toMatchObject({ params: { pipeline: 'ci-main' } });
+    expect(() => deterministicResultSchema.parse({ ...result, params: { 'bad name': 'x' } })).toThrow();
+    const handoff = { id: 'handoff', entryId: 'entry', executionId: 'exec', fromColumnId: 'wait', columnId: 'review', exit: 'passed', message: 'ok', at, params: { pipeline: 'ci-main' } };
+    expect(deterministicHandoffSchema.parse(handoff)).toMatchObject({ params: { pipeline: 'ci-main' } });
+    expect(() => deterministicHandoffSchema.parse({ ...handoff, params: { pipeline: '' } })).toThrow();
+    const entry = { kind: 'deterministic-handoff' as const, at, deliveryId: 'delivery', executionId: 'exec', fromColumnId: 'wait', columnId: 'review', outcome: 'accepted' as const, exit: 'passed', message: 'ok', parameters: { pipeline: 'ci-main' } };
+    expect(taskHistoryEntrySchema.parse(entry)).toMatchObject({ parameters: { pipeline: 'ci-main' } });
+    expect(() => taskHistoryEntrySchema.parse({ ...entry, parameters: { 'bad name': 'x' } })).toThrow();
+  });
+
   it('binds declared parameter values to the entry and never to a later entry', () => {
     const hub = sampleHub(); const deps = operationDeps();
     saveBoardWorkflow(hub, 'board', 'columns:\n  - id: wait\n    label: Wait\n    deterministic: {language: bash, code: "echo ready", params: [{name: pipeline}], exits: {ok: done}}\n  - {id: done, label: Done}\n', deps);

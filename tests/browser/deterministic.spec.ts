@@ -82,6 +82,11 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await drawer.getByRole('button', { name: 'Edit deterministic script parameters' }).click();
     const dialog = page.getByRole('dialog', { name: 'Edit script parameters' });
     await expect(dialog.getByText('CI workflow')).toBeVisible();
+    await expect(page.locator('.kb-dialog-parameters')).toBeVisible();
+    expect(await page.evaluate(() => {
+      const value = document.querySelector('.kb-dialog-parameters');
+      return value !== null && value.closest('.kb-card') === null && value.closest('.kb-flow-stage') === null;
+    })).toBe(true);
     const input = dialog.getByLabel('Parameter pipeline');
     await expect(input).toHaveValue('ci-main');
     await input.fill('ci-other');
@@ -95,6 +100,59 @@ for (const colorScheme of ['light', 'dark'] as const) {
     const commands = await page.evaluate(() => (window as unknown as { __harnessCommands(): Array<{ type: string }> }).__harnessCommands());
     expect(commands.map(command => command.type)).toEqual(['task.deterministicParameters', 'task.deterministicPlay']);
     expect(commands[0]).toMatchObject({ entryId: 'script-entry', values: { pipeline: 'ci-other' } });
+  });
+
+  test('edits entry parameters from a card in the workflow diagram in ' + colorScheme, async ({ page }) => {
+    await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+    await page.goto(HARNESS + '?scenario=deterministic&theme=host&phase=failed&refusal=parameters');
+    if (colorScheme === 'dark') await expect(page.locator('body')).toHaveAttribute('data-ds-dark-theme', '');
+    else await expect(page.locator('body')).not.toHaveAttribute('data-ds-dark-theme');
+    await page.getByRole('button', { name: 'Workflow', exact: true }).click();
+    await expect(page.locator('.kb-flow-canvas')).toHaveAttribute('data-ready', 'true');
+    const card = page.locator('[data-task-id="long-0"]');
+    await expect(card).toBeVisible();
+    await card.getByRole('button', { name: 'Edit deterministic script parameters' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Edit script parameters' });
+    await expect(dialog).toBeVisible();
+    await expect(page.locator('.kb-dialog-parameters')).toBeVisible();
+    expect(await page.evaluate(() => {
+      const value = document.querySelector('.kb-dialog-parameters');
+      return value !== null && value.closest('.kb-flow-stage') === null && value.closest('.kb-card') === null;
+    })).toBe(true);
+    const box = await dialog.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.width).toBeGreaterThan(600);
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    await mkdir(OUT, { recursive: true });
+    await page.screenshot({ path: path.join(OUT, 'deterministic-parameters-workflow-' + colorScheme + '.png') });
+    await dialog.getByRole('button', { name: /Close/ }).click();
+    await expect(dialog).toBeHidden();
+  });
+
+  test('scrolls a tall parameter declaration and keeps the close action reachable in ' + colorScheme, async ({ page }) => {
+    await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+    await page.goto(HARNESS + '?scenario=deterministic&theme=host&phase=failed&refusal=parameters&params=many');
+    if (colorScheme === 'dark') await expect(page.locator('body')).toHaveAttribute('data-ds-dark-theme', '');
+    else await expect(page.locator('body')).not.toHaveAttribute('data-ds-dark-theme');
+    await page.getByRole('button', { name: 'Workflow', exact: true }).click();
+    const card = page.locator('[data-task-id="long-0"]');
+    const opener = card.getByRole('button', { name: 'Edit deterministic script parameters' });
+    await opener.click();
+    const dialog = page.getByRole('dialog', { name: 'Edit script parameters' });
+    await expect(dialog).toBeVisible();
+    const list = dialog.locator('.kb-script-parameter-list');
+    expect(await list.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+    await expect(dialog.getByRole('button', { name: 'Save values' })).toBeInViewport();
+    await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeInViewport();
+    await mkdir(OUT, { recursive: true });
+    await page.screenshot({ path: path.join(OUT, 'deterministic-parameters-many-' + colorScheme + '.png') });
+    await page.setViewportSize({ width: 1400, height: 400 });
+    await expect(dialog.getByRole('button', { name: /Close/ })).toBeInViewport();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(opener).toBeFocused();
+    await page.setViewportSize({ width: 1400, height: 900 });
   });
 
   test('delivers a failed saved result from the primary action in ' + colorScheme, async ({ page }) => {
