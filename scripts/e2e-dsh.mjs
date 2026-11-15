@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import semver from 'semver';
 import { join, resolve } from 'node:path';
@@ -17,7 +17,7 @@ if (args.includes('--only') && only === undefined) {
   process.exit(2);
 }
 if (!checkoutArg) {
-  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only background-delete|board|conversation|deletion|hubs|schedules|override|native-drawer|auto-run|auto-mode|declared|create-start|prepare|board-model|project|messages|history|workflow-architect|scripted|transit] [--skip-build]');
+  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only background-delete|board|conversation|deletion|hubs|schedules|override|native-drawer|sidebar|auto-run|auto-mode|declared|create-start|prepare|board-model|project|messages|history|workflow-architect|scripted|transit] [--skip-build]');
   process.exit(2);
 }
 const checkout = resolve(checkoutArg);
@@ -70,6 +70,7 @@ const scenarioTemplates = new Map([
   ['schedules', ['kanban-schedules.e2e.template.ts', 'kanban-schedules.e2e.ts']],
   ['override', ['kanban-move-override.e2e.template.ts', 'kanban-move-override.e2e.ts']],
   ['native-drawer', ['kanban-native-drawer.e2e.template.ts', 'kanban-native-drawer.e2e.ts']],
+  ['sidebar', ['kanban-sidebar.e2e.template.ts', 'kanban-sidebar.e2e.ts']],
   ['auto-run', ['kanban-auto-run.e2e.template.ts', 'kanban-auto-run.e2e.ts']],
   ['auto-mode', ['kanban-auto-mode.e2e.template.ts', 'kanban-auto-mode.e2e.ts']],
   ['declared', ['kanban-declared-transition.e2e.template.ts', 'kanban-declared-transition.e2e.ts']],
@@ -118,13 +119,48 @@ try {
     writeFileSync(destination, source);
     testFiles.push(destination);
   }
+  // The staged tests import the checkout's own scaffold, whose workspace
+  // packages live behind per-package links that the isolated stage cannot walk.
+  // Alias every workspace package (and its explicit subpath exports) to a real
+  // file in the checkout, so the same source the checkout built is used.
+  const workspaceAliases = {};
+  const packageDirs = [];
+  const directories = list => list.filter(dir => { try { return statSync(dir).isDirectory(); } catch { return false; } });
+  for (const [base, depth] of [['vendor', 1], ['packages', 2], ['apps', 1], ['native/system/packages', 1]]) {
+    const root = join(checkout, base);
+    if (!existsSync(root)) continue;
+    let dirs = directories(readdirSync(root).map(name => join(root, name)));
+    if (depth === 2) dirs = dirs.flatMap(group => directories(readdirSync(group).map(name => join(group, name))));
+    packageDirs.push(...dirs);
+  }
+  for (const dir of packageDirs) {
+    try {
+      const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+      if (typeof manifest.name !== 'string') continue;
+      const targets = [];
+      const rootExport = manifest.exports?.['.'] ?? manifest.module ?? manifest.main;
+      const value = typeof rootExport === 'string' ? rootExport : rootExport?.default ?? rootExport?.import;
+      if (typeof value === 'string') targets.push([manifest.name, join(dir, value)]);
+      for (const [key, entry] of Object.entries(manifest.exports ?? {})) {
+        if (!key.startsWith('./') || key.includes('*')) continue;
+        const path = typeof entry === 'string' ? entry : entry?.default ?? entry?.import;
+        if (typeof path === 'string' && !path.includes('*')) targets.push([manifest.name + key.slice(1), join(dir, path)]);
+      }
+      for (const [name, file] of targets) if (existsSync(file) && workspaceAliases[name] === undefined) workspaceAliases[name] = file;
+      if (workspaceAliases[manifest.name] === undefined) {
+        for (const fallback of ['lib/index.js', 'src/index.ts', 'src/index.tsx']) {
+          if (existsSync(join(dir, fallback))) { workspaceAliases[manifest.name] = join(dir, fallback); break; }
+        }
+      }
+    } catch { /* a directory without a usable manifest is not a package */ }
+  }
   writeFileSync(config, [
     "import { defineConfig } from 'vitest/config';",
     "import tsconfigPaths from 'vite-tsconfig-paths';",
     'import { standardDecoratorPlugin, vitestExecArgv } from ' + JSON.stringify(join(checkout, 'vitest.shared.ts')) + ';',
     'export default defineConfig({',
     'root:' + JSON.stringify(stage) + ', cacheDir:' + JSON.stringify(join(stage, 'cache')) + ',',
-    'resolve:{alias:{playwright:' + JSON.stringify(playwright) + '}},',
+    'resolve:{alias:[' + [{ find: 'playwright', replacement: playwright }, ...Object.entries(workspaceAliases).map(([name, file]) => ({ find: new RegExp('^' + name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&') + '$'), replacement: file }))].map(entry => `{find:${entry.find instanceof RegExp ? `new RegExp(${JSON.stringify(entry.find.source)})` : JSON.stringify(entry.find)},replacement:${JSON.stringify(entry.replacement)}}`).join(',') + ']},',
     'plugins:[tsconfigPaths({projects:[' + JSON.stringify(join(stage, 'tsconfig.json')) + ',' + JSON.stringify(join(checkout, 'tsconfig.base.json')) + ']}),standardDecoratorPlugin()],',
     'test:{execArgv:vitestExecArgv,include:["*.e2e.ts"],testTimeout:180000,hookTimeout:120000,fileParallelism:false}',
     '});',

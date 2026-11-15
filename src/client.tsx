@@ -30,6 +30,7 @@ import { TASK_CONTEXT_NODE_KIND, TaskContextNodeView, taskContextDefinition } fr
 import { STAGE_CONTEXT_NODE_KIND, StageInstructionNodeView, stageInstructionDefinition } from './client/stage-instruction-node.js';
 import { HANDOFF_CONTEXT_NODE_KIND, ScriptedHandoffNodeView, scriptedHandoffDefinition } from './client/scripted-handoff-node.js';
 import { TASK_MESSAGE_NODE_KIND, TaskMessageNodeView, taskMessageDefinition } from './client/task-message-node.js';
+import { createSidebarPanelPort } from './client/sidebar-panel-port.js';
 import type { ClientApi, KanbanSnapshot } from './shared/types.js';
 
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
@@ -43,6 +44,18 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 type ClientContext = Omit<Context, 'sessions'> & { sessions: ISessions };
 type MainProps = PropsRuntime<'main'> & PropsRenderSlots<'kanban.conversation'>;
 type ConversationSeatProps = PropsRuntime<'kanban.conversation'> & PropsRenderFactories;
+
+/**
+ * The embedded right Sidebar panel occurrence, typed locally until the pinned
+ * SDK declares the Factory. Runtime dispatch is the host's; remove this bridge
+ * when the release pin lands.
+ */
+type EmbeddedPanelFactoryRenderer = (
+  name: 'sidebar.right.panel',
+  input: { readonly variant: 'embedded' },
+  options: { readonly fallback: ReactNode },
+) => ReactNode;
+
 export const name = 'kanban-client';
 // Service keys, not package names. Mount our own namespace before any access to remote.kanban.
 export const inject = ['remote', 'slots', 'sessions', 'uiSession', 'locale', 'uiConversation', 'layout'];
@@ -154,11 +167,27 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   });
   const viewSession = (sessionId: string) => bridge.viewSession(sessionId);
   function ConversationWindowSeat(props: ConversationSeatProps) {
+    // The seat is the only place that knows the host Factory name; the workspace
+    // receives a plain render prop, so tests can render it without a host.
+    const renderPanel = useCallback(() => {
+      const render = props.renderFactorySlot as unknown as EmbeddedPanelFactoryRenderer;
+      return render('sidebar.right.panel', { variant: 'embedded' }, { fallback: null });
+    }, [props.renderFactorySlot]);
+    // The Sidebar service may be provided after this client generation applies,
+    // so the optional port is resolved on each seat mount, when the drawer first
+    // renders it, not at boot. A host without the capability keeps its markup.
+    const sidebar = useMemo(() => {
+      let raw: unknown;
+      try { raw = ctx.get('sidebarRight'); } catch { raw = undefined; }
+      const port = createSidebarPanelPort(raw);
+      return port === undefined ? undefined : { port, renderPanel };
+    }, [renderPanel]);
     return <TaskConversationWindow
       sessionId={props.sessionId}
       useSession={props.useSession as never}
       renderFactorySlot={props.renderFactorySlot}
       viewSession={viewSession}
+      {...(sidebar === undefined ? {} : { sidebar })}
     />;
   }
   function TaskContextChatNode(props: ChatNodeViewProps<'kanban-task-context'>) {

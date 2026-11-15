@@ -5,6 +5,9 @@ import type { RenderFactorySlot } from '@deepseek-ai/dsh-client-ui-slots';
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client';
 import { useConversationLeaseState } from './conversation-leases.js';
 import { useConversationLeases } from './conversation-lease-context.js';
+import { ConversationWorkspace } from './conversations/workspace.js';
+import { NativeSurfaceNotice } from './native-surface-notice.js';
+import type { SidebarPanelPort } from './sidebar-panel-port.js';
 
 /** How one conversation is presented: a task conversation, or a transient descendant peek. */
 export type ConversationSurfaceMode = 'conversation' | 'peek';
@@ -32,6 +35,11 @@ export interface TaskConversationWindowProps {
   useSession: (selector: (value: ConversationWindowSession) => unknown) => unknown;
   renderFactorySlot: RenderFactorySlot;
   viewSession(sessionId: string): (() => void) | undefined;
+  /** The drawer's right Sidebar port and occurrence renderer; omitted by isolated surfaces and older hosts. */
+  sidebar?: {
+    readonly port: SidebarPanelPort | undefined;
+    readonly renderPanel: () => ReactNode;
+  };
 }
 
 /**
@@ -47,10 +55,9 @@ type ConversationWindowRenderer = (
 
 /** Hosts older than the release that declares `conversation.window` render this notice. */
 function UnsupportedConversationWindow() {
-  return <div className="kanban-native-state" role="alert">
-    <strong>Native conversation unavailable</strong>
+  return <NativeSurfaceNotice title="Native conversation unavailable">
     <p>This DSH version does not provide the native conversation window. Update DSH to a release that exposes it, then reopen this conversation.</p>
-  </div>;
+  </NativeSurfaceNotice>;
 }
 
 /** The presentation of the occurrence currently rendering, provided by the retained area. */
@@ -68,7 +75,7 @@ export function useConversationSurfaceMode(): ConversationSurfaceMode {
  * @param props - retained Session identity, standard Session source, and renderer.
  * @returns the window occurrence, or the open-failure notice.
  */
-export function TaskConversationWindow({ sessionId, useSession, renderFactorySlot, viewSession }: TaskConversationWindowProps) {
+export function TaskConversationWindow({ sessionId, useSession, renderFactorySlot, viewSession, sidebar }: TaskConversationWindowProps) {
   const session = useSession(value => value) as ConversationWindowSession | undefined;
   const mode = useConversationSurfaceMode();
   useEffect(() => {
@@ -89,11 +96,15 @@ export function TaskConversationWindow({ sessionId, useSession, renderFactorySlo
     </div>;
   }
   const renderWindow = renderFactorySlot as unknown as ConversationWindowRenderer;
-  return <div className="kb-conversation-window">
+  const window = <div className="kb-conversation-window">
     <div data-kanban-conversation-window="">
       {renderWindow('conversation.window', { variant: 'embedded' }, { fallback: <UnsupportedConversationWindow /> })}
     </div>
   </div>;
+  // A peeked descendant is transient: it keeps the window alone. Older hosts
+  // have no panel port, so the drawer keeps exactly its previous markup.
+  if (mode === 'peek' || sidebar?.port === undefined) return window;
+  return <ConversationWorkspace sessionId={sessionId} port={sidebar.port} renderPanel={sidebar.renderPanel}>{window}</ConversationWorkspace>;
 }
 
 function RetainedConversationView({ id, owner, services, mode }: {
