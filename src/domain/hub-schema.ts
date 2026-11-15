@@ -5,6 +5,7 @@ import { DEFAULT_WORKFLOW_YAML, parseWorkflow } from './workflow.js';
 import { absolutePath, baseTask, canonicalWorkflow, createTaskInvariantChecker, hubRelation, id, modelSelection, nonempty, note, project, projectKey, revision, storedProject, timestamp, workflow } from './schema-parts.js';
 import { relationIssues } from './card-relation.js';
 import { isTimeZone, parseCron } from './cron.js';
+import { normalizeLegacyHubRecord } from './legacy-hub-record.js';
 
 export { canonicalWorkflow } from './schema-parts.js';
 
@@ -42,9 +43,12 @@ const hubFields = { id, name: nonempty, revision, boards: z.array(board), tasks:
  * The shape the storage domain reads and writes. It deliberately tolerates a project
  * that predates project keys: the storage facility validates every record before the
  * repository can open it, so the keyless shape has to be readable for the open
- * backfill to assign a key and persist the record once.
+ * backfill to assign a key and persist the record once. It tolerates the previous
+ * scripted field names for the same reason; the converted record is persisted by the
+ * next write.
  */
-export const StoredHubStateSchema = z.strictObject({ ...hubFields, projects: z.array(storedProject) });
+const storedHub = z.strictObject({ ...hubFields, projects: z.array(storedProject) });
+export const StoredHubStateSchema = z.preprocess(normalizeLegacyHubRecord, storedHub) as unknown as z.ZodType<HubState>;
 
 /** Validates one Hub aggregate after the key backfill. Cross-Hub ownership is enforced by the repository. */
 export const HubStateSchema = z.strictObject({
