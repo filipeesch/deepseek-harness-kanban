@@ -78,7 +78,8 @@ it('starts a board conversation on the model the board names', { timeout: 300_00
     if (await page.getByRole('button', { name: 'Close Kanban configuration' }).count() === 0) {
       await page.getByRole('button', { name: 'Configuration', exact: true }).click();
     }
-    await page.getByRole('tab', { name: 'Board' }).click();
+    await page.getByRole('tab', { name: 'Boards' }).click();
+    await page.getByRole('button', { name: /^Edit board / }).click();
     await page.getByRole('tablist', { name: 'Board configuration sections' }).getByRole('tab', { name: 'Workflow' }).click();
     return page.locator('.cm-content');
   };
@@ -91,6 +92,7 @@ it('starts a board conversation on the model the board names', { timeout: 300_00
     await expect.poll(() => save.isEnabled(), { timeout: 10_000 }).toBe(true);
     await save.click();
     await visible(page.getByText('Workflow saved.'));
+      await page.getByRole('button', { name: /^Close Board configuration · / }).click();
     await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
   };
 
@@ -163,7 +165,8 @@ it('starts a board conversation on the model the board names', { timeout: 300_00
   await page.getByRole('button', { name: 'Close task details' }).click();
   await hidden(page.locator('.kb-drawer'));
   await page.getByRole('button', { name: 'Configuration', exact: true }).click();
-  await page.getByRole('tab', { name: 'Board' }).click();
+  await page.getByRole('tab', { name: 'Boards' }).click();
+  await page.getByRole('button', { name: /^Edit board / }).click();
   await page.getByRole('tablist', { name: 'Board configuration sections' }).getByRole('tab', { name: 'Defaults' }).click();
   const defaults = page.getByRole('form', { name: 'Board defaults' });
   await visible(defaults);
@@ -188,6 +191,7 @@ it('starts a board conversation on the model the board names', { timeout: 300_00
   await page.getByRole('button', { name: 'Save defaults' }).click();
   await visible(page.getByText('Defaults saved.'));
   await page.screenshot({ path: join(KANBAN_ROOT, '.verification', 'e2e-board-defaults.png') });
+  await page.getByRole('button', { name: /^Close Board configuration · / }).click();
   await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
 
   await createTask('Preset task');

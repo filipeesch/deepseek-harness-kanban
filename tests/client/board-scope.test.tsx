@@ -29,8 +29,10 @@ async function mount(value: TestSnapshot) {
 async function openConfiguration(user: ReturnType<typeof userEvent.setup>, section: string, panel?: string) {
   await user.click(screen.getByRole('button', { name: 'Configuration' }));
   const top = () => within(screen.getByRole('tablist', { name: 'Configuration sections' }));
-  await user.click(await top().findByRole('tab', { name: section }));
+  // Board configuration lives behind the Boards list now: Edit opens it over the list.
+  await user.click(await top().findByRole('tab', { name: section === 'Board' ? 'Boards' : section }));
   if (panel !== undefined) {
+    await user.click(await screen.findByRole('button', { name: /^Edit board / }));
     const board = within(screen.getByRole('tablist', { name: 'Board configuration sections' }));
     await user.click(await board.findByRole('tab', { name: panel }));
   }

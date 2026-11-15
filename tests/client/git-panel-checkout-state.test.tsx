@@ -29,6 +29,23 @@ function operation(observed: { directory: 'absent' | 'empty' | 'present'; regist
   };
 }
 
+describe('GitPanel worktree policy', () => {
+  it('states the policy of a project that resolves the choice itself', () => {
+    const base = task('t1', 'Alpha task', 'p1', 'intake');
+    const { unmount } = render(<GitPanel task={base} project={{ ...project, worktreePolicy: 'never' }} api={api} run={vi.fn(async () => fixture()) as never} draft={draft} />);
+    expect(screen.getByText('This project never creates a worktree for its tasks; they run in the base project, and creating one here is explicit.')).toBeTruthy();
+    unmount();
+    render(<GitPanel task={base} project={{ ...project, worktreePolicy: 'always' }} api={api} run={vi.fn(async () => fixture()) as never} draft={draft} />);
+    expect(screen.getByText('This project creates a worktree for its tasks by default, so a first execution starts on the derived default.')).toBeTruthy();
+  });
+
+  it('says nothing about a policy the project does not set', () => {
+    const base = task('t1', 'Alpha task', 'p1', 'intake');
+    render(<GitPanel task={base} project={project} api={api} run={vi.fn(async () => fixture()) as never} draft={draft} />);
+    expect(screen.queryByText(/creates a worktree for its tasks by default/)).toBeNull();
+  });
+});
+
 describe('GitPanel checkout state', () => {
   it.each([
     { directory: 'absent' as const, registration: 'none' as const, value: 'Absent' },

@@ -1,12 +1,30 @@
 import type { Project, Task } from '../shared/types.js';
+import { isGitProject } from '../shared/project.js';
+import { worktreePolicy } from '../shared/worktree-policy.js';
 import { ErrorNotice, useAction, type RunCommand } from './ui.js';
 import { cleanWorktree, validWorktree, type WorktreeDraft } from './worktree-draft.js';
+
+/**
+ * Whether the conversation area shows the missing-worktree notice. A project that never
+ * creates worktrees has already answered the question, so it shows no notice.
+ */
+export function showsWorktreeNotice(task: Pick<Task, 'worktree' | 'worktreeDismissed'>, project: Project | undefined): boolean {
+  return project !== undefined
+    && isGitProject(project)
+    && task.worktree === null
+    && task.worktreeDismissed !== true
+    && worktreePolicy(project) !== 'never';
+}
 
 /** Conversation-area notice with a one-click create path and an explicit Git review path. */
 export function WorktreeNotice({ task, project, draft, run, disabled, onReview }: {
   task: Task; project?: Project; draft: WorktreeDraft; run: RunCommand; disabled: boolean; onReview: () => void;
 }) {
   const action = useAction(run);
+  const policy = worktreePolicy(project);
+  // A project that always creates its own worktree has settled the base-project question,
+  // so the notice keeps the create and review paths and drops that choice.
+  const offersBaseProject = policy !== 'always';
   const value = draft.value;
   const hasPath = Boolean(value.path.trim());
   const source = value.sourceBranch?.trim() || project?.defaultBranch?.trim() || 'HEAD';
@@ -40,6 +58,7 @@ export function WorktreeNotice({ task, project, draft, run, disabled, onReview }
         <code>{path}</code>
       </span>
     </div>
+    {policy === 'always' && <p className="kb-hint">This project creates a worktree for its tasks by default.</p>}
     {draft.suggestionPending && <p className="kb-hint" role="status">Resolving worktree defaults…</p>}
     <ErrorNotice problem={draft.suggestionError} />
     <ErrorNotice problem={action.error} />
@@ -49,7 +68,7 @@ export function WorktreeNotice({ task, project, draft, run, disabled, onReview }
         ? <button type="button" className="kb-button kb-primary" disabled={disabled || action.pending || !validWorktree(value)} onClick={() => void create()}>{action.pending ? 'Preparing…' : 'Create worktree'}</button>
         : <button type="button" className="kb-button kb-primary" onClick={onReview}>Set destination in Git</button>}
       {hasPath && <button type="button" className="kb-button" onClick={onReview}>Review in Git</button>}
-      <button type="button" className="kb-button" disabled={disabled || action.pending} onClick={() => void dismiss()}>Continue in base project</button>
+      {offersBaseProject && <button type="button" className="kb-button" disabled={disabled || action.pending} onClick={() => void dismiss()}>Continue in base project</button>}
     </div>
   </div>;
 }

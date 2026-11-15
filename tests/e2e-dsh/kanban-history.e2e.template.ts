@@ -53,7 +53,9 @@ async function registerProject(page: Page, name: string, projectPath: string): P
 }
 
 async function authorWorkflow(page: Page): Promise<void> {
-  await page.getByRole('tab', { name: 'Board' }).click();
+  await page.getByRole('tab', { name: 'Boards' }).click();
+  await page.getByRole('button', { name: /^Edit board / }).click();
+  await page.getByRole('tab', { name: 'Workflow' }).click();
   const editor = page.locator('.cm-content');
   await editor.click();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
@@ -117,6 +119,7 @@ async function launch(): Promise<{ scaffold: WebScaffold; page: Page; browser: B
   execFileSync('git', ['-C', gitRoot, '-c', 'user.email=e2e@example.test', '-c', 'user.name=E2E', 'commit', '-q', '--allow-empty', '-m', 'Initial commit']);
   await registerProject(page, 'Repo', gitRoot);
   await authorWorkflow(page);
+  await page.getByRole('button', { name: /^Close Board configuration · / }).click();
   await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
   return { scaffold, page, browser };
 }

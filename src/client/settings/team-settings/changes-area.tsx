@@ -20,7 +20,6 @@ export function ChangesArea({ hub, sharing, act, pending, api, run }: { hub: Hub
   // conflict does not, because publishing is isolated per board.
   const suspended = sharing.blockers.length > 0 || sharing.status === 'unavailable';
   return <section className="kb-share-area" aria-label="Changes">
-    <h4>Changes</h4>
     <p className="kb-share-meta">
       <span>{countLabel(sharing.drafts, 'board to publish', 'boards to publish')}</span>
       <span>{countLabel(sharing.updates, 'board to get', 'boards to get')}</span>

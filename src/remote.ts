@@ -14,7 +14,7 @@ import { scriptedDefinitionSchema } from './domain/scripted-definition.js';
 export const PACKAGE_NAME = 'dsh-kanban';
 const id=z.string().min(1).max(200);
 const revision=z.number().int().nonnegative().optional();
-const project=z.object({id:id.optional(),name:z.string().min(1),projectPath:z.string().min(1),gitRootPath:z.string().optional(),defaultBranch:z.string().optional(),projectKey:z.string().min(1).optional()}).strict();
+const project=z.object({id:id.optional(),name:z.string().min(1),projectPath:z.string().min(1),gitRootPath:z.string().optional(),defaultBranch:z.string().optional(),projectKey:z.string().min(1).optional(),worktreePolicy:z.enum(['ask','always','never']).optional()}).strict();
 const relocationProject=project.extend({id});
 const hubId=id.optional();
 const boardId=id.optional();

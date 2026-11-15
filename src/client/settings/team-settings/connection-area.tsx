@@ -19,8 +19,10 @@ const STORAGE_PANELS: Record<SharingStorage, React.ComponentType<{ hub: HubState
 const DISCONNECT_NOTE = 'Disconnecting stops automatic checks and removes the binding. Every local board, workflow, task, note, project, conversation, and worktree stays on this machine, and the team storage is unchanged.';
 
 /**
- * Where this Hub publishes: the storage, its location, its check interval, and the
- * actions that belong to the connection. Nothing here lists board changes.
+ * Where this Hub publishes. A Hub with no binding chooses a storage here; a bound Hub
+ * presents what the binding is in a Status group and what can be done with it in a
+ * Management group, with the storage's own surface below them. Nothing here lists
+ * board changes.
  */
 export function ConnectionArea({ hub, sharing, auth, api, act, pending }: { hub: HubState; sharing?: HubSharingView; auth?: SharingAuthView; api?: ClientApi; act: Act; pending: string | null }) {
   const [storage, setStorage] = useState<SharingStorage>(sharing?.provider ?? 'git');
@@ -28,7 +30,6 @@ export function ConnectionArea({ hub, sharing, auth, api, act, pending }: { hub:
   const Panel = STORAGE_PANELS[sharing?.provider ?? storage];
   if (sharing === undefined) {
     return <section className="kb-share-area" aria-label="Connection">
-      <h4>Connection</h4>
       <p className="kb-hint">Choose where this Hub publishes.</p>
       <StorageCards value={storage} onChange={setStorage} locked={false} busy={pending !== null} />
       <Panel hub={hub} act={act} pending={pending} api={api} />
@@ -36,27 +37,31 @@ export function ConnectionArea({ hub, sharing, auth, api, act, pending }: { hub:
   }
   if (sharing.status === 'preview') {
     return <section className="kb-share-area" aria-label="Connection">
-      <h4>Connection</h4>
       <Panel hub={hub} sharing={sharing} auth={auth} act={act} pending={pending} api={api} />
       {sharing.error && <ErrorNotice problem={sharing.error} />}
     </section>;
   }
   const meta = STORAGE_META[sharing.provider];
   return <section className="kb-share-area" aria-label="Connection">
-    <h4>Connection</h4>
-    <p className="kb-share-meta"><span className="kb-share-status">{meta.label}</span><span>{sharing.address}</span>{sharing.authorization !== undefined && auth?.email !== undefined && <span>{auth.email}</span>}</p>
-    <StatusLine sharing={sharing} />
-    {sharing.notice && <p className="kb-hint" role="status">{sharing.notice.message}</p>}
-    {sharing.supportsFiles
-      ? <p className="kb-hint">Team documents live in <code>team-files/</code> in this storage.</p>
-      : <p className="kb-hint">Team files are unavailable with {sharing.providerLabel}.</p>}
-    {sharing.error && <ErrorNotice problem={sharing.error} />}
-    <div className="kb-share-actions">
-      <button type="button" className="kb-button" disabled={pending !== null} onClick={() => void act('refresh', { type: 'sharing.check', hubId: hub.id })}>{pending === 'refresh' ? 'Checking…' : 'Refresh'}</button>
-      {sharing.provider === 'google-drive' && <button type="button" className="kb-button" disabled={pending !== null} onClick={() => void act('auth-switch', { type: 'sharing.auth.switch' })}>Switch account</button>}
-      <DisconnectAction hubId={hub.id} act={act} pending={pending} note={DISCONNECT_NOTE} />
-    </div>
+    <section className="kb-share-group" aria-label="Status">
+      <h4>Status</h4>
+      <p className="kb-share-meta"><span className="kb-share-status">{meta.label}</span><span>{sharing.address}</span>{sharing.authorization !== undefined && auth?.email !== undefined && <span>{auth.email}</span>}</p>
+      <StatusLine sharing={sharing} />
+      {sharing.notice && <p className="kb-hint" role="status">{sharing.notice.message}</p>}
+      {sharing.supportsFiles
+        ? <p className="kb-hint">Team documents live in <code>team-files/</code> in this storage.</p>
+        : <p className="kb-hint">Team files are unavailable with {sharing.providerLabel}.</p>}
+    </section>
+    <section className="kb-share-group" aria-label="Management">
+      <h4>Management</h4>
+      <div className="kb-share-actions">
+        <button type="button" className="kb-button" disabled={pending !== null} onClick={() => void act('refresh', { type: 'sharing.check', hubId: hub.id })}>{pending === 'refresh' ? 'Checking…' : 'Refresh'}</button>
+        {sharing.provider === 'google-drive' && <button type="button" className="kb-button" disabled={pending !== null} onClick={() => void act('auth-switch', { type: 'sharing.auth.switch' })}>Switch account</button>}
+        <DisconnectAction hubId={hub.id} act={act} pending={pending} note={DISCONNECT_NOTE} />
+      </div>
+      <IntervalSettings hubId={hub.id} sharing={sharing} act={act} pending={pending} />
+    </section>
     <Panel hub={hub} sharing={sharing} auth={auth} act={act} pending={pending} api={api} />
-    <IntervalSettings hubId={hub.id} sharing={sharing} act={act} pending={pending} />
+    {sharing.error && <ErrorNotice problem={sharing.error} />}
   </section>;
 }

@@ -1,5 +1,5 @@
 import { isAbsolutePath } from '../../domain/validation.js';
-import type { Project, ProjectInput, ProjectLocation } from '../../shared/types.js';
+import type { Project, ProjectInput, ProjectLocation, WorktreePolicy } from '../../shared/types.js';
 
 export interface ProjectDraft {
   id?: string;
@@ -9,6 +9,8 @@ export interface ProjectDraft {
   projectPath: string;
   gitRootPath: string;
   defaultBranch: string;
+  /** How the project answers the worktree decision its tasks face before their first execution. */
+  worktreePolicy: WorktreePolicy;
   /** Fields the user changed; detection never overwrites an edited field unless it still matches the last detection. */
   edited: { name: boolean; gitRootPath: boolean; defaultBranch: boolean };
   /** Last values produced by detection, used to keep pristine fields in sync. */
@@ -23,12 +25,13 @@ export function createProjectDraft(project?: Project): ProjectDraft {
     projectPath: project?.projectPath ?? '',
     gitRootPath: project?.gitRootPath ?? '',
     defaultBranch: project?.defaultBranch ?? '',
+    worktreePolicy: project?.worktreePolicy ?? 'ask',
     edited: { name: false, gitRootPath: false, defaultBranch: false },
     detected: { gitRootPath: project?.gitRootPath ?? '', defaultBranch: project?.defaultBranch ?? '' },
   };
 }
 
-export function editProjectDraft(draft: ProjectDraft, field: 'name' | 'projectKey' | 'projectPath' | 'gitRootPath' | 'defaultBranch', value: string): ProjectDraft {
+export function editProjectDraft(draft: ProjectDraft, field: 'name' | 'projectKey' | 'projectPath' | 'gitRootPath' | 'defaultBranch' | 'worktreePolicy', value: string): ProjectDraft {
   return { ...draft, [field]: value, edited: { ...draft.edited, [field]: true } };
 }
 
@@ -69,6 +72,7 @@ export function toProjectInput(draft: ProjectDraft): ProjectInput {
     name: draft.name.trim(),
     ...(projectKey ? { projectKey } : {}),
     projectPath: draft.projectPath.trim(),
+    worktreePolicy: draft.worktreePolicy,
     ...(gitRootPath ? { gitRootPath } : {}),
     ...(gitRootPath && defaultBranch ? { defaultBranch } : {}),
   };

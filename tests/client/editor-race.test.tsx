@@ -74,7 +74,8 @@ describe('editor save draft lifetime',()=>{
   await act(async()=>p.resolve(value));expect(editor.value).toBe('B NEW NOTE');expect(screen.getByRole('dialog')).not.toBeNull();
  });
  it('locks workflow text while its approved version is being saved',async()=>{
-  const value=fixture(),p=pending(),user=userEvent.setup();render(<Configuration state={value.state} hub={value.state.hubs[0]!} board={value.state.hubs[0]!.boards[0]!} hubCount={1} settings={value.state.settings} settingsRevision={value.state.settings.revision} run={p.run} onClose={()=>{}} initial="Board"/>);
+  const value=fixture(),p=pending(),user=userEvent.setup();const boardName=value.state.hubs[0]!.boards[0]!.name;render(<Configuration hub={value.state.hubs[0]!} hubCount={1} settings={value.state.settings} settingsRevision={value.state.settings.revision} run={p.run} onClose={()=>{}} initial="Boards"/>);
+  await user.click(await screen.findByRole('button',{name:'Edit board '+boardName}));
   await user.click(await screen.findByRole('tab',{name:'Workflow'}));
   const editor=screen.getByRole('textbox',{name:'Workflow YAML'}) as HTMLTextAreaElement;await user.click(screen.getByRole('button',{name:'Save workflow'}));
   expect(editor.disabled).toBe(true);await user.type(editor,'NEW UNSAVED YAML');expect(editor.value).toBe(value.state.workflowYaml);

@@ -3,6 +3,18 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { expectLegible } from './contrast.js';
 
+/** Team Settings presents Connection first; Changes is its own sub-tab. */
+async function openChanges(page: Page): Promise<void> {
+  await page.getByRole('tablist', { name: 'Team settings areas' }).getByRole('tab', { name: 'Changes' }).click();
+  await page.getByRole('region', { name: 'Changes' }).waitFor();
+}
+
+/** Board configuration is reached from the Boards section: Edit opens it over the list. */
+async function openBoard(page: Page): Promise<void> {
+  await page.getByRole('button', { name: /^Edit board / }).click();
+  await page.getByRole('tablist', { name: 'Board configuration sections' }).waitFor();
+}
+
 const HARNESS = new URL('./.tmp/index.html', import.meta.url).href;
 
 async function sharingCommands(page: Page): Promise<Array<Record<string, unknown>>> {
@@ -18,6 +30,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
   test('shows a safe update-required board in ' + colorScheme, async ({ page }) => {
     await page.emulateMedia({ colorScheme });
     await page.goto(HARNESS + '?scenario=publishing&sharing=update-required&theme=host');
+    await openChanges(page);
     if (colorScheme === 'dark') await expect(page.locator('body')).toHaveAttribute('data-ds-dark-theme', '');
     else await expect(page.locator('body')).not.toHaveAttribute('data-ds-dark-theme');
     const row = page.getByRole('list', { name: 'Published boards' }).getByRole('listitem').filter({ hasText: 'Harness board' });
@@ -33,7 +46,7 @@ test('connects an unpublished Hub through Team Settings', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing');
   await expect(page.getByRole('tab', { name: 'Team Settings' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('region', { name: 'Connection' })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Changes' })).toHaveCount(0);
+  await expect(page.getByRole('tablist', { name: 'Team settings areas' }).getByRole('tab', { name: 'Changes' })).toHaveCount(0);
   await page.getByLabel('Repository address').fill('https://example.test/team.git');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect.poll(async () => (await sharingCommands(page))[0]).toMatchObject({ type: 'sharing.connect', hubId: 'hub', provider: 'git', settings: { repository: 'https://example.test/team.git' } });
@@ -65,24 +78,30 @@ test('previews existing team boards and offers both first-connection choices', a
   await shot(page, 'team-settings-preview.png');
 });
 
-test('shows the connection and changes areas with connection details once', async ({ page }) => {
+test('presents the connection in status and management groups, with changes apart', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing&sharing=folder');
   const connection = page.getByRole('region', { name: 'Connection' });
-  const changes = page.getByRole('region', { name: 'Changes' });
+  const status = page.getByRole('region', { name: 'Status' });
+  const management = page.getByRole('region', { name: 'Management' });
   await expect(connection).toBeVisible();
-  await expect(changes).toBeVisible();
-  await expect(connection).toContainText('Local folder');
-  await expect(connection).toContainText('~/.dsh-kanban/hub');
+  await expect(status).toContainText('Local folder');
+  await expect(status).toContainText('~/.dsh-kanban/hub');
+  await expect(status).toContainText('Checked');
   await expect(connection.getByRole('radiogroup', { name: 'Team storage' })).toHaveCount(0);
-  const changesText = await changes.innerText();
+  await expect(management.getByRole('button', { name: 'Refresh' })).toBeVisible();
+  await expect(management.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+  await expect(management.getByRole('spinbutton', { name: 'Check interval in minutes' })).toBeVisible();
+  await shot(page, 'team-settings-connection-groups.png');
+  await openChanges(page);
+  const changesText = await page.getByRole('region', { name: 'Changes' }).innerText();
   expect(changesText).not.toContain('~/.dsh-kanban/hub');
   expect(changesText).not.toContain('Check every');
-  await expect(page.getByRole('button', { name: 'Refresh' })).toBeVisible();
-  await shot(page, 'team-settings-two-areas.png');
+  await shot(page, 'team-settings-changes.png');
 });
 
 test('publishes one board from its row', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing&sharing=draft');
+  await openChanges(page);
   const row = page.getByRole('list', { name: 'Published boards' }).getByRole('listitem').filter({ hasText: 'Harness board' });
   await expect(row.getByText('Changes not sent')).toBeVisible();
   await row.getByRole('button', { name: 'Publish', exact: true }).click();
@@ -91,12 +110,14 @@ test('publishes one board from its row', async ({ page }) => {
 
 test('publishes every pending board', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing&sharing=draft');
+  await openChanges(page);
   await page.getByRole('button', { name: 'Publish all' }).click();
   await expect.poll(async () => (await sharingCommands(page))[0]).toMatchObject({ type: 'sharing.publishAll', hubId: 'hub' });
 });
 
 test('gets one board updates from its row and every update from the Hub', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing&sharing=updates');
+  await openChanges(page);
   await expect(page.getByText(/New from the team: Team board/)).toBeVisible();
   const row = page.getByRole('list', { name: 'Published boards' }).getByRole('listitem').filter({ hasText: 'Harness board' });
   await row.getByRole('button', { name: 'Get updates', exact: true }).click();
@@ -107,6 +128,7 @@ test('gets one board updates from its row and every update from the Hub', async 
 
 test('shows the semantic change summary and resolves a board conflict', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing&sharing=review');
+  await openChanges(page);
   await expect(page.getByText('Needs a choice', { exact: true })).toBeVisible();
   await expect(page.getByText('Stage “explore” renamed to “discover”')).toBeVisible();
   await page.getByRole('button', { name: 'Use the team version' }).click();
@@ -118,11 +140,13 @@ test('shows the semantic change summary and resolves a board conflict', async ({
 
 test('publishes an orphan and restores a board removed only here', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing&sharing=orphan');
+  await openChanges(page);
   await expect(page.getByText('Removed by the team')).toBeVisible();
   await page.getByRole('button', { name: 'Publish as a new board' }).click();
   await expect.poll(async () => (await sharingCommands(page))[0]).toMatchObject({ type: 'sharing.publishOrphan', boardId: 'board' });
 
   await page.goto(HARNESS + '?scenario=publishing&sharing=removed');
+  await openChanges(page);
   await expect(page.getByText('Removed here')).toBeVisible();
   await page.getByRole('button', { name: 'Restore' }).click();
   await expect.poll(async () => (await sharingCommands(page))[0]).toMatchObject({ type: 'sharing.restore', boardId: 'old-board' });
@@ -170,6 +194,7 @@ test('shows both banner directions and a count on both tab rows', async ({ page 
 
 test('Save and share publishes the board after the local save', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=workflow&sharing=published');
+  await openBoard(page);
   await page.getByRole('tablist', { name: 'Board configuration sections' }).getByRole('tab', { name: 'Workflow' }).click();
   await expect(page.getByRole('button', { name: 'Save and share' })).toBeVisible();
   const editor = page.locator('.cm-content');
@@ -187,6 +212,7 @@ test('Save and share publishes the board after the local save', async ({ page })
 
 test('a failed share keeps the local save and reports the failure', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=workflow&sharing=share-fail');
+  await openBoard(page);
   await page.getByRole('tablist', { name: 'Board configuration sections' }).getByRole('tab', { name: 'Workflow' }).click();
   const editor = page.locator('.cm-content');
   await editor.click();
@@ -227,6 +253,7 @@ test('renders the Google Drive Local surface and its unavailable state', async (
 
 test('presents a conflict copy as a review', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=publishing&sharing=folder-review');
+  await openChanges(page);
   await expect(page.getByText(/Another copy of the team configuration is in this folder/).first()).toBeVisible();
   await expect(page.getByText('SHARING_CONFLICT_COPY').first()).toBeVisible();
   await page.goto(HARNESS + '?scenario=sharing&sharing=folder-review');

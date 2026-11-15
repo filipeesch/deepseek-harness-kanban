@@ -67,4 +67,5 @@ export const cardStyles = String.raw`
 .dsh-kanban .kb-code-view{border:1px solid var(--kb-line);border-radius:7px;background:color-mix(in srgb,currentColor 4%,var(--kb-surface));max-height:340px;overflow:auto}
 .dsh-kanban .kb-code-view .cm-editor{max-height:340px}
 .dsh-kanban .kb-code-view:focus-visible,.dsh-kanban .kb-code-view .cm-content:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:2px}
+.dsh-kanban .kb-git-policy{margin:0;padding:8px 14px}
 `;

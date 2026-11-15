@@ -3,8 +3,9 @@ import type { BoardSettings as BoardSettingsInput, KanbanSettings, Problem } fro
 import { worktreePathForBranch } from '../../shared/worktree-name.js';
 import { useDirectoryPicker } from '../services.js';
 import { asProblem, ErrorNotice, useAction, type RunCommand } from '../ui.js';
+import { usePanelDirty } from './board/use-panel-dirty.js';
 
-export function GeneralSettings({ settings, settingsRevision, run }: { settings?: BoardSettingsInput | KanbanSettings; settingsRevision: number; run: RunCommand }) {
+export function GeneralSettings({ settings, settingsRevision, run, onDirtyChange }: { settings?: BoardSettingsInput | KanbanSettings; settingsRevision: number; run: RunCommand; onDirtyChange?: (dirty: boolean) => void }) {
   const stored = settings?.worktreeBasePath ?? '';
   const [basePath, setBasePath] = useState(stored); const [revision, setRevision] = useState(settingsRevision); const [saved, setSaved] = useState(false); const [browseError, setBrowseError] = useState<Problem | null>(null); const action = useAction(run);
   const picker = useDirectoryPicker();
@@ -20,6 +21,7 @@ export function GeneralSettings({ settings, settingsRevision, run }: { settings?
     if (picked) change(picked);
   }
   function reload() { if (action.pending) return; draftGeneration.current++; setBasePath(stored); setRevision(settingsRevision); setSaved(false); action.clearError(); }
+  usePanelDirty(basePath.trim() !== stored.trim(), onDirtyChange);
   const example = worktreePathForBranch(basePath.trim(), 'fix-login');
   return <form className="kb-form" aria-label="General settings" onSubmit={async event => {
     event.preventDefault(); if (action.pending) return;

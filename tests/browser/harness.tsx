@@ -26,6 +26,7 @@ const flowScenario = scenario === 'flow' || scenario === 'flow-anchored' || scen
 const query = new URLSearchParams(window.location.search);
 const themed = query.get('theme') === 'host';
 const refuse = query.get('refuse');
+const policy = query.get('policy');
 const sharingViews: Record<string, HubSharingView> = sharingCase === null ? {} : { hub: harnessSharing(sharingCase) };
 const driveCase = query.get('drive') as 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error' | null;
 const sharingAuth = sharingCase?.startsWith('drive') === true && !sharingCase.startsWith('drive-local') ? { status: 'connected' as const, email: 'member@example.test' } : undefined;
@@ -49,7 +50,7 @@ const boardModel = scenario === 'board-model' || scenario === 'board-model-no-se
       fallback: { requested: { provider: 'deepseek', model: 'reason', reasoningEffort: 'high' }, applied: false as const, reason: 'unavailable' as const, inUse: { provider: 'deepseek', model: 'chat' } },
     }
     : undefined;
-const harness = createHarnessApi({ ...presetOptions, ...(scenario === 'scripted' ? { scripted: (query.get('phase') ?? 'active') as import('../../src/shared/scripted.js').ScriptedPhase, ...(query.get('delivery') === 'failed' ? { scriptedDelivery: 'failed' as const } : {}), ...(query.get('refusal') === 'parameters' ? { scriptedRefusal: true } : {}), ...(query.get('params') === 'many' ? { scriptedManyParameters: true } : {}), ...(query.get('failure') === 'infrastructure' ? { scriptedFailure: 'infrastructure' as const } : {}), ...(query.get('failure') === 'diagnostic' ? { scriptedFailure: 'diagnostic' as const } : {}), ...(query.get('hold') === 'job' ? { scriptedHold: 'job' as const } : query.get('hold') === 'pending' ? { scriptedHold: 'pending' as const } : {}) } : {}), idle: scenario === 'stage-idle', history: scenario === 'history' ? 'short' : scenario === 'history-long' ? 'long' : scenario === 'relations' ? 'short' : undefined, relations: scenario === 'relations', ...(boardModel === undefined ? {} : { boardModel }), ...(scenario === 'schedules' ? { schedules: scheduleFixtures, scheduleRuntime: scheduleRuntimeFixture } : {}), recorded: scenario === 'routed', staleRoute: scenario === 'stale-route', attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs' || scenario === 'project-relocation' || scenario === 'flow-presence' || scenario === 'presence',
+const harness = createHarnessApi({ ...presetOptions, ...(scenario === 'scripted' ? { scripted: (query.get('phase') ?? 'active') as import('../../src/shared/scripted.js').ScriptedPhase, ...(query.get('delivery') === 'failed' ? { scriptedDelivery: 'failed' as const } : {}), ...(query.get('refusal') === 'parameters' ? { scriptedRefusal: true } : {}), ...(query.get('params') === 'many' ? { scriptedManyParameters: true } : {}), ...(query.get('failure') === 'infrastructure' ? { scriptedFailure: 'infrastructure' as const } : {}), ...(query.get('failure') === 'diagnostic' ? { scriptedFailure: 'diagnostic' as const } : {}), ...(query.get('hold') === 'job' ? { scriptedHold: 'job' as const } : query.get('hold') === 'pending' ? { scriptedHold: 'pending' as const } : {}) } : {}), idle: scenario === 'stage-idle', history: scenario === 'history' ? 'short' : scenario === 'history-long' ? 'long' : scenario === 'relations' ? 'short' : undefined, relations: scenario === 'relations', ...(policy === 'always' || policy === 'never' || policy === 'ask' ? { projectPolicy: policy } : {}), ...(boardModel === undefined ? {} : { boardModel }), ...(scenario === 'schedules' ? { schedules: scheduleFixtures, scheduleRuntime: scheduleRuntimeFixture } : {}), recorded: scenario === 'routed', staleRoute: scenario === 'stale-route', attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs' || scenario === 'project-relocation' || scenario === 'flow-presence' || scenario === 'presence',
   presence: scenario === 'presence', hubs: scenario === 'hubs' ? 2 : 1, initialInstruction: scenario === 'create', restricted: scenario === 'move' || scenario === 'prepare-restricted' || scenario === 'flow-restricted', ...(scenario === 'restricted-next' || scenario === 'flow-restricted-next' ? { restrictedNext: true } : {}), persist: scenario === 'board' || scenario === 'relocation-board', pending: scenario === 'appearance', auto: scenario === 'auto' || scenario === 'agent-pause', declared: scenario === 'declared' || scenario === 'declared-failed', declaredFailed: scenario === 'declared-failed', ...(scenario === 'agent-pause' ? { agentPause: true } : {}), detect: scenario === 'project-editor' || scenario === 'project-relocation' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, ...(driveCase === null ? {} : { drive: driveCase }), shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', folderRefusal: refuse === 'folder', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}), ...(scenario === 'retained' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo', reason: 'unresolved' as const }] } : scenario === 'retained-many' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo', reason: 'unresolved' as const }, { path: '/worktrees/plain', projectId: 'p', taskTitle: 'Plain task', reason: 'folder' as const }] } : {}), ...(scenario === 'relocation-list' ? { relocation: ['waiting', 'failed', 'waiting'] as Array<'waiting' | 'failed' | null> } : scenario === 'relocation-board' ? { relocation: ['waiting', 'failed'] as Array<'waiting' | 'failed' | null> } : {}), ...(scenario === 'relocation-list' ? { extraProject: true } : {}), ...(scenario === 'flow-refused' ? { stageUpdateFailure: true } : {}) });
 
 function harnessSharing(kind: string): HubSharingView {
@@ -137,15 +138,27 @@ if (flowScenario) {
 /** The drawer creates a conversation from a preset card, so the notice scenario supplies a host roster. */
 const harnessPresetPort = { list: async () => [{ id: 'standard', name: 'Standard', description: 'Balanced coding agent', isDefault: true }, { id: 'ptc', name: 'PTC', description: 'Plan, test, and check' }], select: async () => ({ ok: true }) };
 
-/** A stand-in for DSH's native selector, so the adapter's face and selection are exercisable. */
+/**
+ * A stand-in for DSH's native selector: the same shape the real component presents — a
+ * trigger that states the current route and opens a menu — so the adapter's face, its
+ * locked state, and the screenshots of the surrounding layout stay faithful.
+ */
 function StubModelSeat(props: Record<string, unknown>) {
   const directory = props.directory as { getSnapshot(): { current: { provider: string; model: string; reasoningEffort?: string } | null; status: string; error: string | null } };
   const state = directory.getSnapshot();
   const select = props.select as (value: unknown) => Promise<unknown>;
-  return <div data-stub-model-seat="">
-    <span data-stub-current>{state.current === null ? 'none' : state.current.provider + ' · ' + state.current.model + (state.current.reasoningEffort === undefined ? '' : ' · ' + state.current.reasoningEffort)}</span>
-    <button type="button" onClick={() => void select({ provider: 'deepseek', model: 'chat' })}>Choose Chat</button>
-    <button type="button" onClick={() => void select({ provider: 'deepseek', model: 'reason', reasoningEffort: 'high' })}>Choose Reason high</button>
+  const locked = props.locked === true;
+  const [open, setOpen] = useState(false);
+  const route = state.current === null ? 'Default model' : state.current.provider + ' · ' + state.current.model + (state.current.reasoningEffort === undefined ? '' : ' · ' + state.current.reasoningEffort);
+  const choose = (value: unknown) => { setOpen(false); void select(value); };
+  return <div className="kb-stub-model-select" data-stub-model-seat="" data-locked={locked ? 'true' : 'false'}>
+    <button type="button" className="kb-stub-model-trigger" aria-label="Choose conversation model" aria-haspopup="menu" aria-expanded={open} disabled={locked} onClick={() => setOpen(value => !value)}>
+      <span data-stub-current>{route}</span><span aria-hidden="true">▾</span>
+    </button>
+    {open && <div className="kb-stub-model-menu" role="menu" aria-label="Model routes">
+      <button type="button" role="menuitem" onClick={() => choose({ provider: 'deepseek', model: 'chat' })}>Choose Chat</button>
+      <button type="button" role="menuitem" onClick={() => choose({ provider: 'deepseek', model: 'reason', reasoningEffort: 'high' })}>Choose Reason high</button>
+    </div>}
   </div>;
 }
 const stubSeatEntry = { component: StubModelSeat, options: { id: 'model' }, locale: 'model', inject: () => ({}) } as unknown as StoredEntry;
@@ -167,7 +180,7 @@ function WorkflowScenario({ seat }: { seat?: NativeSeat }) {
   const source = useMemo<AgentPresetPortSource>(() => ({ getSnapshot: () => harnessPresetPort, subscribe: () => () => {} }), []);
   const run = async (command: Command) => { const next = await harness.api.command(command); setSnapshot(next as TestSnapshot); return next; };
   if (!open) return <p role="status">Configuration closed.</p>;
-  return <AgentPresetProvider source={source}><Configuration state={snapshot.state} hub={snapshot.state.hubs[0]!} board={snapshot.state.hubs[0]!.boards[0]!} hubCount={1} settings={snapshot.state.settings} settingsRevision={snapshot.state.settings.revision} run={run} api={harness.api} {...(sharingViews.hub === undefined ? {} : { sharing: sharingViews.hub })} {...(seat === undefined ? {} : { nativeSeat: seat })} initial="Board" onClose={() => setOpen(false)} /></AgentPresetProvider>;
+  return <AgentPresetProvider source={source}><Configuration hub={snapshot.state.hubs[0]!} hubCount={1} settings={snapshot.state.settings} settingsRevision={snapshot.state.settings.revision} run={run} api={harness.api} {...(sharingViews.hub === undefined ? {} : { sharing: sharingViews.hub })} {...(seat === undefined ? {} : { nativeSeat: seat })} initial="Boards" onClose={() => setOpen(false)} /></AgentPresetProvider>;
 }
 
 
@@ -186,7 +199,7 @@ function PublishingScenario({ auth }: { auth?: { status: 'connected'; email: str
       return next;
     },
   };
-  return <Configuration state={snapshot.state} hub={snapshot.state.hubs[0]!} board={snapshot.state.hubs[0]!.boards[0]!} hubCount={1} settings={snapshot.state.settings} settingsRevision={snapshot.state.settings.revision} run={run} api={api} {...(sharing === undefined ? {} : { sharing })} {...(auth === undefined ? {} : { sharingAuth: auth })} initial="Team Settings" onClose={() => {}} />;
+  return <Configuration hub={snapshot.state.hubs[0]!} hubCount={1} settings={snapshot.state.settings} settingsRevision={snapshot.state.settings.revision} run={run} api={api} {...(sharing === undefined ? {} : { sharing })} {...(auth === undefined ? {} : { sharingAuth: auth })} initial="Team Settings" onClose={() => {}} />;
 }
 
 function RelocationEditorScenario() {
@@ -222,9 +235,7 @@ function SchedulesScenario() {
   const run = async (command: Command) => { const next = await harness.api.command(command); setSnapshot(next as TestSnapshot); return next; };
   return <div className="dsh-kanban" style={{ height: '100%' }}>
     <Configuration
-      state={snapshot.state as unknown as BoardState}
       hub={hub}
-      board={null}
       hubCount={1}
       settings={snapshot.state.settings}
       settingsRevision={snapshot.state.settings.revision}
@@ -246,9 +257,7 @@ function RelocationListScenario() {
   const run = async (command: Command) => { const next = await harness.api.command(command); setSnapshot(next as TestSnapshot); return next; };
   return <div className="dsh-kanban" style={{ height: '100%' }}>
     <Configuration
-      state={snapshot.state as unknown as BoardState}
       hub={hub}
-      board={null}
       hubCount={1}
       settingsRevision={1}
       run={run}

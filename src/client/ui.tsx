@@ -89,8 +89,49 @@ const MODAL_SIZE_CLASS: Record<ModalSize, string> = {
   default: '', wide: ' kb-dialog-wide', parameters: ' kb-dialog-parameters', settings: ' kb-dialog-settings', 'settings-wide': ' kb-dialog-settings-wide', stage: ' kb-dialog-stage',
 };
 
+/**
+ * The dialog layers that are open. A dialog rendered inside another one belongs to a
+ * deeper layer, and only the deepest one owns Escape, backdrop dismissal, and the
+ * focus trap; every layer below it is inert. Depth comes from the React tree rather
+ * than from DOM order, so a dialog opened from inside another can never be taken for
+ * its parent.
+ */
+const ModalLayerContext = React.createContext(0);
+const layerStack: Array<{ token: number; depth: number }> = [];
+const layerListeners = new Set<() => void>();
+let layerSequence = 0;
+function notifyLayers(): void { for (const listener of [...layerListeners]) listener(); }
+function topLayerToken(): number | null {
+  let top: { token: number; depth: number } | undefined;
+  for (const entry of layerStack) {
+    if (top === undefined || entry.depth > top.depth || (entry.depth === top.depth && entry.token > top.token)) top = entry;
+  }
+  return top?.token ?? null;
+}
+/** Register one dialog layer and report whether it is the topmost one. */
+function useDialogLayer(depth: number): boolean {
+  const [top, setTop] = useState(true);
+  useEffect(() => {
+    const entry = { token: ++layerSequence, depth };
+    layerStack.push(entry);
+    const listener = () => { const next = topLayerToken() === entry.token; setTop(previous => previous === next ? previous : next); };
+    layerListeners.add(listener);
+    notifyLayers();
+    return () => {
+      layerListeners.delete(listener);
+      const index = layerStack.indexOf(entry);
+      if (index >= 0) layerStack.splice(index, 1);
+      notifyLayers();
+    };
+  }, [depth]);
+  return top;
+}
+
 export function Modal({ title, children, onClose, busy = false, size = 'default', initialFocus = 'first', describedBy, headerActions }: { title: string; children: ReactNode; onClose: () => void; busy?: boolean; size?: ModalSize; initialFocus?: 'first' | 'cancel' | 'target'; describedBy?: string; headerActions?: ReactNode }) {
   const id = useId(); const ref = useRef<HTMLDivElement>(null);
+  const depth = React.useContext(ModalLayerContext) + 1;
+  const top = useDialogLayer(depth);
+  const topRef = useRef(top); topRef.current = top;
   const [host, setHost] = useState<HTMLElement | null>(null);
   const state = useRef({ onClose, busy }); state.current = { onClose, busy };
   // Resolve the mounting root after the first commit: the plugin root is not in the DOM yet
@@ -109,6 +150,8 @@ export function Modal({ title, children, onClose, busy = false, size = 'default'
     target?.focus();
     const key = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
+      // Only the topmost layer answers: a dialog below an open child must not close.
+      if (!topRef.current) return;
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (!state.current.busy) state.current.onClose(); }
       if (event.key !== 'Tab') return;
       const items = focusable(); const first = items[0]; const last = items.at(-1);
@@ -117,11 +160,25 @@ export function Modal({ title, children, onClose, busy = false, size = 'default'
       else if (!event.shiftKey && (document.activeElement === last || !dialog?.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
     };
     dialog?.addEventListener('keydown', key);
-    return () => { dialog?.removeEventListener('keydown', key); if (previous?.isConnected) previous.focus(); };
+    return () => {
+      dialog?.removeEventListener('keydown', key);
+      // A layer below this one regains focus only after the layer stack has settled: focusing
+      // while it is still inert would leave the document without a focused element.
+      if (previous === null) return;
+      window.setTimeout(() => { if (previous.isConnected) previous.focus(); }, 0);
+    };
   }, [host, initialFocus, busy]);
-  const content = <div className="kb-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}><div className={'kb-dialog' + MODAL_SIZE_CLASS[size]} role="dialog" aria-modal="true" aria-labelledby={id} aria-describedby={describedBy} aria-busy={busy} ref={ref} tabIndex={-1}><header className="kb-dialog-header"><h2 id={id}>{title}</h2><div className="kb-dialog-header-actions">{headerActions}<button type="button" className="kb-button kb-icon-button" disabled={busy} onClick={onClose} aria-label={'Close ' + title}>×</button></div></header>{children}</div></div>;
+  // A layer below an open child cannot take focus or pointer input.
+  useEffect(() => {
+    const dialog = ref.current;
+    if (dialog === null) return;
+    if (top) dialog.removeAttribute('inert'); else dialog.setAttribute('inert', '');
+    return () => { dialog.removeAttribute('inert'); };
+  }, [top]);
+  const content = <div className="kb-backdrop" style={{ zIndex: 1000 + depth * 10 }} onMouseDown={event => { if (event.target === event.currentTarget && !busy && topRef.current) onClose(); }}><div className={'kb-dialog' + MODAL_SIZE_CLASS[size]} role="dialog" aria-modal="true" aria-labelledby={id} aria-describedby={describedBy} aria-busy={busy} ref={ref} tabIndex={-1}><header className="kb-dialog-header"><h2 id={id}>{title}</h2><div className="kb-dialog-header-actions">{headerActions}<button type="button" className="kb-button kb-icon-button" disabled={busy} onClick={onClose} aria-label={'Close ' + title}>×</button></div></header>{children}</div></div>;
+  const layered = <ModalLayerContext.Provider value={depth}>{content}</ModalLayerContext.Provider>;
   if (host === null) return null;
-  return createPortal(host === document.body ? <div className="dsh-kanban kb-modal-scope">{content}</div> : content, host);
+  return createPortal(host === document.body ? <div className="dsh-kanban kb-modal-scope">{layered}</div> : layered, host);
 }
 
 /**

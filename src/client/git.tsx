@@ -3,6 +3,7 @@ import type { ClientApi, CreateWorktree, Project, Task } from '../shared/types.j
 import { asProblem, ErrorNotice, ProblemNotice, useAction, type RunCommand } from './ui.js';
 import { checkoutStateValue } from './operation-description.js';
 import { taskTitleSlug } from '../shared/worktree-name.js';
+import { worktreePolicy } from '../shared/worktree-policy.js';
 import { cleanWorktree, validWorktree, type WorktreeDraft } from './worktree-draft.js';
 
 export function useBranches(api: ClientApi, taskId: string) {
@@ -77,7 +78,7 @@ function UnclaimedWorktreesNotice({ task }: { task: Task }) {
 
 export function GitPanel({ task, project, api, run, worktreeBasePath, draft }: { task: Task; project?: Project; api: ClientApi; run: RunCommand; worktreeBasePath?: string; draft: WorktreeDraft }) {
   const branches = useBranches(api, task.id); const [createMode, setCreateMode] = useState<'create' | 'attach'>('create'); const [attachPath, setAttachPath] = useState(''); const [confirmRemove, setConfirmRemove] = useState(false); const action = useAction(run);
-  const blocked = Boolean(task.operation || task.pendingTransition); const tree = task.worktree;
+  const blocked = Boolean(task.operation || task.pendingTransition); const tree = task.worktree; const policy = worktreePolicy(project);
   const defaultBranchName = draft.suggestion?.branchName ?? taskTitleSlug(task.title);
   const stateLabel = !tree ? 'none' : tree.status === 'ready' ? 'ready' : tree.status === 'preparing' ? 'creating' : 'error';
   async function create() { if (blocked || !validWorktree(draft.value)) return; await action.execute({ type: 'worktree.create', taskId: task.id, ...cleanWorktree(draft.value) }); }
@@ -92,6 +93,9 @@ export function GitPanel({ task, project, api, run, worktreeBasePath, draft }: {
         <div className="kb-git-heading"><h3>Worktree</h3><span className={'kb-status kb-status-' + stateLabel} role="status"><span className="kb-status-dot" aria-hidden="true" />{statusLabel}</span></div>
         <button type="button" className="kb-button kb-button-subtle" disabled={branches.pending} onClick={branches.reload}>{branches.pending ? 'Loading…' : 'Refresh branches'}</button>
       </header>
+      {policy !== 'ask' && stateLabel === 'none' && <p className="kb-hint kb-git-policy" role="note">{policy === 'always'
+        ? 'This project creates a worktree for its tasks by default, so a first execution starts on the derived default.'
+        : 'This project never creates a worktree for its tasks; they run in the base project, and creating one here is explicit.'}</p>}
       {stateLabel === 'ready' && tree && <div className="kb-git-card-body">
         <dl className="kb-property-list">
           <div className="kb-property"><dt>Branch</dt><dd><code>{tree.branch}</code></dd></div>

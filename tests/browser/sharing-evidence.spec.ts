@@ -19,6 +19,7 @@ for (const scheme of schemes) {
   if (scheme === 'light') test('evidence: Team Settings per-board actions (light)', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'light' });
     await page.goto(HARNESS + '?scenario=publishing&sharing=review');
+    await page.getByRole('tablist', { name: 'Team settings areas' }).getByRole('tab', { name: 'Changes' }).click();
     const section = page.getByRole('region', { name: 'Changes' });
     await expect(section).toBeVisible();
     await page.screenshot({ path: '.verification/sharing-settings-light.png' });
@@ -30,6 +31,8 @@ for (const scheme of schemes) {
     if (scheme === 'dark') await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('');
     await page.getByRole('button', { name: 'Configuration' }).click();
     await page.getByRole('tab', { name: 'Team Settings' }).click();
+    await page.getByRole('tablist', { name: 'Team settings areas' }).getByRole('tab', { name: 'Changes' }).click();
+    await expect(page.getByRole('region', { name: 'Changes' })).toBeVisible();
     await page.screenshot({ path: `.verification/sharing-settings-mixed-${scheme}.png` });
   });
 }

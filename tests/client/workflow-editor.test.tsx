@@ -22,11 +22,15 @@ function snapshotFor(yaml: string): KanbanSnapshot {
   return { ...base, sequence: 2, state: { ...base.state, hubs: [{ ...base.state.hubs[0]!, revision: 2, boards: [{ ...base.state.hubs[0]!.boards[0]!, workflowYaml: yaml }] }] } };
 }
 async function mount(run: (command: Command) => Promise<KanbanSnapshot>, onClose = vi.fn()) {
-  const value = fixture(); value.state.workflowYaml = valid;
+  const value = fixture();
+  const hub = value.state.hubs[0]!;
+  const board = { ...hub.boards[0]!, workflowYaml: valid };
+  const hubValue = { ...hub, boards: [board, ...hub.boards.slice(1)] };
   const user = userEvent.setup();
-  render(<Configuration state={value.state} hub={value.state.hubs[0]!} board={value.state.hubs[0]!.boards[0]!} hubCount={1} settings={value.state.settings} settingsRevision={value.state.settings.revision} run={run} initial="Board" onClose={onClose} />);
+  render(<Configuration hub={hubValue} hubCount={1} settings={value.state.settings} settingsRevision={value.state.settings.revision} run={run} initial="Boards" onClose={onClose} />);
+  await user.click(await screen.findByRole('button', { name: 'Edit board ' + board.name }));
   await user.click(await screen.findByRole('tab', { name: 'Workflow' }));
-  return { user, onClose, value };
+  return { user, onClose, value, board };
 }
 const editor = () => screen.getByRole('textbox', { name: 'Workflow YAML' }) as HTMLTextAreaElement;
 const saveButton = () => screen.getByRole('button', { name: 'Save workflow' }) as HTMLButtonElement;
@@ -77,25 +81,35 @@ describe('workflow editor', () => {
   });
 
   it('requires a close confirmation for an unsaved workflow draft', async () => {
-    const { user, onClose } = await mount(vi.fn(async (command: Command) => snapshotFor((command as Extract<Command, { type: 'board.workflow.save' }>).yaml)));
+    const { user, onClose, board } = await mount(vi.fn(async (command: Command) => snapshotFor((command as Extract<Command, { type: 'board.workflow.save' }>).yaml)));
     await user.type(editor(), String.fromCharCode(10) + '# unsaved');
-    await user.click(screen.getByRole('button', { name: 'Close Kanban configuration' }));
-    expect(screen.getByRole('alertdialog', { name: 'Discard configuration changes' })).toBeTruthy();
+    const close = screen.getByRole('button', { name: 'Close Board configuration · ' + board.name });
+    await user.click(close);
+    expect(screen.getByRole('alertdialog', { name: 'Discard board configuration changes' })).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Keep editing' }));
-    expect(onClose).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: 'Close Kanban configuration' }));
+    expect(editor().value).toContain('# unsaved');
+    await user.click(close);
     await user.click(screen.getByRole('button', { name: 'Discard and close' }));
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('textbox', { name: 'Workflow YAML' })).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('preserves the draft across Configuration tabs', async () => {
+  it('preserves the draft across the board sub-sections', async () => {
     const { user } = await mount(vi.fn(async (command: Command) => snapshotFor((command as Extract<Command, { type: 'board.workflow.save' }>).yaml)));
     await user.type(editor(), String.fromCharCode(10) + '# tab draft');
-    const top = within(screen.getByRole('tablist', { name: 'Configuration sections' }));
-    await user.click(top.getByRole('tab', { name: 'General' }));
-    await user.click(top.getByRole('tab', { name: 'Board' }));
     const board = within(screen.getByRole('tablist', { name: 'Board configuration sections' }));
+    await user.click(board.getByRole('tab', { name: 'General' }));
     await user.click(board.getByRole('tab', { name: 'Workflow' }));
     expect(editor().value).toContain('# tab draft');
+  });
+
+  it('starts from the saved workflow after the overlay is reopened', async () => {
+    const { user, board } = await mount(vi.fn(async (command: Command) => snapshotFor((command as Extract<Command, { type: 'board.workflow.save' }>).yaml)));
+    await user.type(editor(), String.fromCharCode(10) + '# dropped');
+    await user.click(screen.getByRole('button', { name: 'Close Board configuration · ' + board.name }));
+    await user.click(screen.getByRole('button', { name: 'Discard and close' }));
+    await user.click(screen.getByRole('button', { name: 'Edit board ' + board.name }));
+    await user.click(within(screen.getByRole('tablist', { name: 'Board configuration sections' })).getByRole('tab', { name: 'Workflow' }));
+    expect(editor().value).toBe(valid);
   });
 });

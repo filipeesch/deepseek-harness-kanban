@@ -63,10 +63,10 @@ it('prepares the worktree and the first conversation before the first execution'
   await visible(projectDialog.getByText('Git repository'));
   await projectDialog.getByRole('button', { name: 'Save project' }).click();
   await visible(page.getByText('Project saved.'));
-  // The workflow editor lives under Workflow on the pinned SDK and under Board on newer hosts.
-  const workflowTab = page.getByRole('tab', { name: 'Workflow' });
-  if (await workflowTab.count() > 0) await workflowTab.click();
-  else await page.getByRole('tab', { name: 'Board' }).click();
+  // Board configuration is opened from the Boards list and carries the Workflow sub-tab.
+  await page.getByRole('tab', { name: 'Boards' }).click();
+  await page.getByRole('button', { name: /^Edit board / }).click();
+  await page.getByRole('tab', { name: 'Workflow' }).click();
   const editor = page.locator('.cm-content');
   await editor.click();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
@@ -75,6 +75,7 @@ it('prepares the worktree and the first conversation before the first execution'
   await expect.poll(() => saveWorkflow.isEnabled(), { timeout: 10_000 }).toBe(true);
   await saveWorkflow.click();
   await visible(page.getByText('Workflow saved.'));
+  await page.getByRole('button', { name: /^Close Board configuration · / }).click();
   await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
 
   const createTask = async (title: string) => {

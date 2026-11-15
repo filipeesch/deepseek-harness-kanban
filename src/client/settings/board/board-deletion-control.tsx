@@ -3,13 +3,15 @@ import type { Board, BoardState, HubSharingView, HubState, Problem } from '../..
 import { ErrorNotice, type RunCommand } from '../../ui.js';
 
 /** Deleting a board: empty boards only, and a bound board also needs a removal scope. */
-export function BoardDeletionControl({ state, hub, board, sharing, run, onDeleted }: {
+export function BoardDeletionControl({ state, hub, board, sharing, run, onDeleted, accessibleName = 'Delete board' }: {
   state: BoardState;
   hub: HubState;
   board: Board;
   sharing?: HubSharingView;
   run: RunCommand;
   onDeleted?: () => void;
+  /** Names the action for the surface that presents it, such as a boards-list row. */
+  accessibleName?: string;
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<Problem | null>(null);
@@ -24,13 +26,14 @@ export function BoardDeletionControl({ state, hub, board, sharing, run, onDelete
     } catch (failure) { setError(failure as Problem); }
     finally { setPending(false); }
   }
-  return <div className="kb-form">
+  return <div className="kb-form" {...(confirm ? { role: 'alertdialog', 'aria-label': 'Confirm deleting board ' + board.name } : {})}>
     <div className="kb-actions">
-      <button type="button" className="kb-button kb-danger" disabled={pending || inUse} title={inUse ? 'Delete every task before deleting the board.' : 'Delete this board'} onClick={() => { if (!bound && confirm) { void remove(); return; } setConfirm(true); }}>{!bound && confirm ? 'Confirm delete board' : 'Delete board'}</button>
+      <button type="button" className="kb-button kb-danger" {...(!bound && confirm ? {} : { 'aria-label': accessibleName })} disabled={pending || inUse} title={inUse ? 'Delete every task before deleting the board.' : 'Delete this board'} onClick={() => { if (!bound && confirm) { void remove(); return; } setConfirm(true); }}>{!bound && confirm ? 'Confirm delete board' : 'Delete board'}</button>
       {confirm && (bound
         ? <><button type="button" className="kb-button" disabled={pending} onClick={() => void remove('local')}>Remove only here</button><button type="button" className="kb-button kb-danger" disabled={pending} onClick={() => void remove('team')}>Remove for the team</button><button type="button" className="kb-button" onClick={() => setConfirm(false)}>Cancel</button></>
         : <button type="button" className="kb-button" onClick={() => setConfirm(false)}>Cancel</button>)}
     </div>
+    {confirm && <p className="kb-hint">{bound ? 'Remove ' : 'Delete '}<strong>{board.name}</strong>{bound ? ' only from this installation, or for the team as well?' : '? The board has no tasks; its workflow is removed with it.'}</p>}
     {bound && confirm && <p className="kb-hint">Remove only here keeps the team board published. Remove for the team sends the removal with the next synchronization or publish.</p>}
     <ErrorNotice problem={error} />
   </div>;

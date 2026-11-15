@@ -50,7 +50,9 @@ async function seedBoard(page: Page, workspaceCwd: string): Promise<void> {
   await expect(projectDialog.getByText('No Git repository found')).toBeVisible();
   await projectDialog.getByRole('button', { name: 'Save project' }).click();
   await expect(page.getByText('Project saved.')).toBeVisible();
-  await page.getByRole('tab', { name: 'Board' }).click();
+  await page.getByRole('tab', { name: 'Boards' }).click();
+  await page.getByRole('button', { name: /^Edit board / }).click();
+  await page.getByRole('tab', { name: 'Workflow' }).click();
   const editor = page.locator('.cm-content');
   await editor.click();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
@@ -58,6 +60,7 @@ async function seedBoard(page: Page, workspaceCwd: string): Promise<void> {
   await expect(page.getByRole('button', { name: 'Save workflow' })).toBeEnabled();
   await page.getByRole('button', { name: 'Save workflow' }).click();
   await expect(page.getByText('Workflow saved.')).toBeVisible();
+  await page.getByRole('button', { name: /^Close Board configuration · / }).click();
   await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
 }
 

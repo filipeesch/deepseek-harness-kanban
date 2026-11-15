@@ -70,7 +70,9 @@ it('advances on a declared transition with auto mode off and delivers its reason
   await projectDialog.getByRole('button', { name: 'Save project' }).click();
   await visible(page.getByText('Project saved.'));
 
-  await page.getByRole('tab', { name: 'Board' }).click();
+  await page.getByRole('tab', { name: 'Boards' }).click();
+  await page.getByRole('button', { name: /^Edit board / }).click();
+  await page.getByRole('tab', { name: 'Workflow' }).click();
   const editor = page.locator('.cm-content');
   await editor.click();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
@@ -84,6 +86,7 @@ it('advances on a declared transition with auto mode off and delivers its reason
   await save.click();
   // The rendered stage is the authoritative proof that the host accepted the workflow.
   await count(page.locator('[data-column-id="review"]'), 1);
+  await page.getByRole('button', { name: /^Close Board configuration · / }).click();
   await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
 
   await page.getByRole('button', { name: 'New task' }).first().click();

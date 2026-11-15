@@ -1,8 +1,21 @@
 import React from 'react';
-import type { ClientApi, Project, ProjectLocation, Task } from '../../shared/types.js';
+import type { ClientApi, Project, ProjectLocation, Task, WorktreePolicy } from '../../shared/types.js';
+import { SegmentedControl } from '../segmented.js';
 import { ErrorNotice, Modal, type RunCommand } from '../ui.js';
 import { canSaveProject, type ProjectDraft } from './project-draft.js';
 import { useProjectEditor } from './use-project-editor.js';
+
+/** What each policy means for the project's tasks, said in the editor where the choice is made. */
+const WORKTREE_POLICY_HINT: Record<WorktreePolicy, string> = {
+  ask: 'Each task asks once, before its first execution, whether to create a worktree.',
+  always: 'New tasks start on a worktree created from the title-derived defaults, without asking.',
+  never: 'Tasks use the project directory. The worktree notice is not shown and no worktree is created.',
+};
+const WORKTREE_POLICY_OPTIONS = [
+  { value: 'ask' as const, label: 'Ask' },
+  { value: 'always' as const, label: 'Always create' },
+  { value: 'never' as const, label: 'Never' },
+];
 
 /** Focused create/edit surface; the registry list never embeds a form. */
 export function ProjectEditorDialog({ api, hubId, expectedRevision, project, tasks, isConversationActive, run, onClose, onSaved }: {
@@ -38,6 +51,17 @@ export function ProjectEditorDialog({ api, hubId, expectedRevision, project, tas
       <label className="kb-field">Git root<input className="kb-input" aria-label="Git root" disabled={editor.pending} value={draft.gitRootPath} onChange={event => editor.change('gitRootPath', event.target.value)} /></label>
       <label className="kb-field">Default branch (optional)<input className="kb-input" aria-label="Default branch (optional)" disabled={editor.pending} value={draft.defaultBranch} onChange={event => editor.change('defaultBranch', event.target.value)} /></label>
       <p className="kb-hint">Detection only suggests the Git root and default branch; both stay editable. Leave the Git root empty to register a plain folder project. The project path can be a subdirectory of the Git root.</p>
+      <fieldset className="kb-fieldset">
+        <legend>Worktree</legend>
+        <SegmentedControl
+          label="Worktree policy"
+          value={draft.worktreePolicy}
+          options={WORKTREE_POLICY_OPTIONS}
+          disabled={editor.pending}
+          onChange={value => editor.change('worktreePolicy', value)}
+        />
+        <p className="kb-hint">{WORKTREE_POLICY_HINT[draft.worktreePolicy]}</p>
+      </fieldset>
       <ErrorNotice problem={editor.error} />
       <div className="kb-actions">
         <button type="button" className="kb-button" disabled={editor.pending} onClick={editor.cancel}>Cancel</button>

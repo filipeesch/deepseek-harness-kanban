@@ -33,7 +33,7 @@ export function NewTaskDialog({ state, projects, closedForCreation, run, onClose
     <label className="kb-field">Title<input className="kb-input" required value={title} onChange={event => setTitle(event.target.value)} /></label>
     <label className="kb-field">Description<textarea className="kb-input" rows={7} value={description} onChange={event => setDescription(event.target.value)} /></label>
     <label className="kb-field">Project<select className="kb-input" required disabled={closedForCreation} value={projectId} onChange={event => setProjectId(event.target.value)}><option value="" disabled>Select a project</option>{projects.map(project => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label>
-    {closedForCreation && <p className="kb-hint" role="status">This board allows no project, so it accepts no new task. Change its project scope in Configuration → Board to allow one.</p>}
+    {closedForCreation && <p className="kb-hint" role="status">This board allows no project, so it accepts no new task. Change its project scope in the board's configuration, from Configuration → Boards.</p>}
     {!closedForCreation && projects.length === 0 && <p className="kb-hint" role="status">No project of this Hub can create a task here yet. Register or adopt a project in Configuration → Projects, or widen this board's project scope.</p>}
     <label className="kb-choice"><input type="checkbox" checked={autoMode} onChange={event => setAutoMode(event.target.checked)} /> Auto mode</label>
     <p className="kb-hint">Advance this task to its next configured stage after each completed turn.</p>

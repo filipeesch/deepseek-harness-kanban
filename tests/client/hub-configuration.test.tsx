@@ -3,7 +3,6 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { Configuration } from '../../src/client/settings/configuration.js';
-import { boardView } from '../../src/client/board-projection.js';
 import type { HubState, KanbanSettings } from '../../src/shared/types.js';
 import { fixture, task } from './helpers.js';
 
@@ -18,7 +17,7 @@ describe('Hub configuration', () => {
     const otherTask = { ...task('other-task', 'Other board task', project.id, 'intake'), boardId: boardB.id };
     const hub: HubState = { ...base, boards: [boardA, boardB], tasks: [otherTask], projects: [project] };
     const settings: KanbanSettings = { revision: 0 };
-    render(<Configuration state={boardView(hub, boardA, settings)} hub={hub} board={boardA} hubCount={1} settings={settings} settingsRevision={0} run={vi.fn()} initial="Projects" onClose={() => {}} />);
+    render(<Configuration hub={hub} hubCount={1} settings={settings} settingsRevision={0} run={vi.fn()} initial="Projects" onClose={() => {}} />);
     const remove = screen.getByRole('button', { name: 'Delete project Shared project' });
     expect((remove as HTMLButtonElement).disabled).toBe(true);
     expect(remove.getAttribute('title')).toMatch(/tasks in this project/);
