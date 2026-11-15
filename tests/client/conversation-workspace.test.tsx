@@ -2,7 +2,7 @@
 import React, { type ReactNode } from 'react';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DrawerWidthProvider } from '../../src/client/drawer-width.js';
+import { DrawerWidthProvider, useDrawerWidth } from '../../src/client/drawer-width.js';
 import type { HostObservable, SidebarPanelPort, SidebarSessionFace } from '../../src/client/sidebar-panel-port.js';
 import { ConversationWorkspace } from '../../src/client/conversations/workspace.js';
 
@@ -58,6 +58,19 @@ function renderWith(faceValue: FakeFace, options: { baseWidth?: number; viewport
   );
   const result = render(tree({ s1: faceValue }));
   return { ...result, reserve, release, tree, panel };
+}
+
+/** A workspace hosted by the real drawer width controller, with its own edge. */
+function RealWidthHarness({ panel }: { panel: FakeFace }) {
+  const width = useDrawerWidth();
+  return <DrawerWidthProvider value={width}>
+    <div data-testid="drawer-edge" onPointerDown={width.beginResize} />
+    <output data-testid="drawer-width">{width.width}</output>
+    <output data-testid="drawer-base">{width.baseWidth}</output>
+    <ConversationWorkspace sessionId="s1" port={portOf({ s1: panel })} renderPanel={() => <div data-testid="panel" />}>
+      <div data-testid="conversation" />
+    </ConversationWorkspace>
+  </DrawerWidthProvider>;
 }
 
 describe('ConversationWorkspace', () => {
@@ -163,6 +176,31 @@ describe('ConversationWorkspace', () => {
     fail = false;
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(screen.getByTestId('panel')).toBeTruthy();
+  });
+
+  it('keeps the drawer width chosen with the panel open while the rail is resized', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1400 });
+    const held = face('s1', true);
+    render(<RealWidthHarness panel={held} />);
+    expect(screen.getByTestId('drawer-width').textContent).toBe('748');
+
+    // Choose a wider drawer while the panel is open: 748 -> 848.
+    const edge = screen.getByTestId('drawer-edge');
+    act(() => { edge.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 900 })); });
+    act(() => { window.dispatchEvent(new MouseEvent('pointermove', { clientX: 800 })); });
+    act(() => { window.dispatchEvent(new MouseEvent('pointerup')); });
+    expect(screen.getByTestId('drawer-width').textContent).toBe('848');
+    expect(screen.getByTestId('drawer-base').textContent).toBe('620');
+
+    // Widening the rail must not forget that choice or snap back to the base.
+    const divider = screen.getByRole('separator', { name: 'Resize right Sidebar' });
+    fireEvent.keyDown(divider, { key: 'ArrowLeft' });
+    expect(screen.getByTestId('drawer-width').textContent).toBe('848');
+    expect(screen.getByTestId('drawer-base').textContent).toBe('620');
+
+    // Collapsing the panel still returns to the persisted base width.
+    act(() => { held.source.set(false); });
+    expect(screen.getByTestId('drawer-width').textContent).toBe('620');
   });
 
   it('adds no tab chrome of its own', () => {
