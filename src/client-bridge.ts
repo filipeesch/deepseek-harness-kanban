@@ -1,7 +1,7 @@
 import { RemoteSnapshotStream, RemoteStreamCarrierError, type ClientRemote } from '@deepseek-ai/dsh-api-gateway/client';
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots';
-import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client';
+import type { NativeSessionStatusSource } from './client/session-status.js';
 import { AttentionProjector, RunningSessions } from './client/kanban-attention.js';
 import { allTasks } from './client/snapshot-normalize.js';
 import { mergeSnapshotFrame, type MergedHostSnapshot } from './client/snapshot-merge.js';
@@ -60,7 +60,7 @@ export class ClientBridge {
   private restarting: Promise<void> | undefined;
   private disposed = false;
   readonly api: ClientApi;
-  constructor(private readonly remote: BridgeRemote, private readonly nativeStatus: HostObservable<SessionStatusSnapshot>, options: { storage?: KeyValueStorage; report?: (error: unknown) => void } = {}) {
+  constructor(private readonly remote: BridgeRemote, private readonly nativeStatus: NativeSessionStatusSource, options: { storage?: KeyValueStorage; report?: (error: unknown) => void } = {}) {
     this.readState = new ConversationReadState(options.storage);
     this.draftState = new QuestionDraftState({
       transport: { save: async request => { unwrap(await this.remote.kanban.saveQuestionDraft(request)); } },

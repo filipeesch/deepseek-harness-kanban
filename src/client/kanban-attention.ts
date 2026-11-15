@@ -1,5 +1,5 @@
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
-import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client';
+import type { NativeSessionStatusSnapshot } from './session-status.js';
 import type { Attention, ConversationFacts, FullHostSnapshot } from '../shared/types.js';
 import { EMPTY_CONVERSATION_FACTS } from '../shared/types.js';
 import { samePendingUserWork } from '../domain/pending-user-work.js';
@@ -18,7 +18,7 @@ export interface TaskAttentionProjection {
  */
 export function projectTaskAttention(
   host: Pick<FullHostSnapshot, 'state' | 'conversations'>,
-  statuses: SessionStatusSnapshot,
+  statuses: NativeSessionStatusSnapshot,
   acknowledged: (sessionId: string) => number | undefined,
 ): TaskAttentionProjection {
   const tasks = allTasks(host);
@@ -60,7 +60,7 @@ export class AttentionProjector {
 
   project(
     host: Pick<FullHostSnapshot, 'state' | 'conversations'>,
-    statuses: SessionStatusSnapshot,
+    statuses: NativeSessionStatusSnapshot,
     acknowledged: (sessionId: string) => number | undefined,
   ): TaskAttentionProjection {
     const fresh = projectTaskAttention(host, statuses, acknowledged);
@@ -85,7 +85,7 @@ export class RunningSessions {
   private readonly sessions = new Set<string>();
 
   /** @returns the conversations that transitioned into running. */
-  sync(statuses: SessionStatusSnapshot): string[] {
+  sync(statuses: NativeSessionStatusSnapshot): string[] {
     const rising: string[] = [];
     const seen = new Set<string>();
     for (const [id, status] of statuses) {
