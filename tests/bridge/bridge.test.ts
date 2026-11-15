@@ -93,9 +93,39 @@ describe('real native stream bridge', () => {
     expect(() => unwrap({ ok: true, value: { ok: false, error: { code: 'BAD_COMMAND', message: 'Not allowed' } } })).toThrow('Not allowed');
     vi.mocked(f.remote.kanban.command).mockResolvedValue({ ok: true, value: { ok: false, error: { code: 'BAD_COMMAND', message: 'Not allowed' } } });
     await expect(f.bridge.api.command({ type: 'task.edit', taskId: 't1', title: 'Changed' })).rejects.toMatchObject({ code: 'BAD_COMMAND' });
-    expect(f.bridge.status.getSnapshot().error?.message).toBe('Not allowed');
     expect(await f.bridge.api.branches('t1')).toEqual(['main']);
     expect(f.remote.kanban.branches).toHaveBeenCalledWith({ taskId: 't1' });
+  });
+  it('reports a rejected command to its caller without replacing the board feed status', async () => {
+    const f = fixture();
+    vi.mocked(f.remote.kanban.command).mockResolvedValue({ ok: true, value: { ok: false, error: { code: 'FORK_LINEAGE_MISMATCH', message: 'Only a branch of a conversation of this task can be attached.' } } });
+    await expect(f.bridge.api.command({ type: 'conversation.attach', taskId: 't1', parentSessionId: 'a', sessionId: 'ordinary' })).rejects.toMatchObject({ code: 'FORK_LINEAGE_MISMATCH' });
+    expect(f.bridge.status.getSnapshot()).toEqual({ error: null });
+  });
+  it('keeps the board feed status when a requested read fails', async () => {
+    const f = fixture(); const accepted = vi.fn(); f.bridge.api.subscribe(accepted); f.bridge.start();
+    await vi.waitFor(() => expect(f.feeds).toHaveLength(1));
+    f.feeds[0]!.push(hostSnapshot(3)); await vi.waitFor(() => expect(accepted.mock.calls.at(-1)?.[0].sequence).toBe(3));
+    vi.mocked(f.remote.kanban.snapshot).mockResolvedValue({ ok: true, value: { ok: false, error: { code: 'SNAPSHOT_FAILED', message: 'The board could not be read.' } } });
+    await expect(f.bridge.api.snapshot()).rejects.toMatchObject({ code: 'SNAPSHOT_FAILED' });
+    // The failure is reported to the caller only; the board keeps the last received state.
+    expect(f.bridge.status.getSnapshot()).toEqual({ error: null });
+    expect(accepted.mock.calls.at(-1)?.[0].sequence).toBe(3);
+  });
+  it('keeps a terminal feed failure until the live feed delivers a frame again', async () => {
+    const f = fixture(); f.bridge.start();
+    await vi.waitFor(() => expect(f.feeds).toHaveLength(1));
+    f.feeds[0]!.push(hostSnapshot(1));
+    await vi.waitFor(() => expect(f.bridge.status.getSnapshot().error).toBeNull());
+    f.feeds[0]!.fail(new Error('Host stream ended'));
+    await vi.waitFor(() => expect(f.bridge.status.getSnapshot().error?.message).toBe('Host stream ended'));
+    // A successful command applies its snapshot but cannot report the feed as available.
+    await expect(f.bridge.api.command({ type: 'task.edit', taskId: 't1', title: 'Changed' })).resolves.toBeTruthy();
+    expect(f.bridge.status.getSnapshot().error?.message).toBe('Host stream ended');
+    // Only a frame from the restarted live feed clears it.
+    f.bridge.retry(); await vi.waitFor(() => expect(f.feeds).toHaveLength(2));
+    f.feeds[1]!.push(hostSnapshot(5));
+    await vi.waitFor(() => expect(f.bridge.status.getSnapshot().error).toBeNull());
   });
   it('forwards the worktree default lookup and unwraps its result', async () => {
     const f = fixture();
@@ -112,7 +142,7 @@ describe('real native stream bridge', () => {
     // A host process restart legitimately resets its sequence; a NEW baseline must replace it.
     f.bridge.retry(); await vi.waitFor(() => expect(f.feeds).toHaveLength(2));
     f.feeds[1]!.push(hostSnapshot(0)); await vi.waitFor(() => expect(accept.mock.calls.at(-1)?.[0].sequence).toBe(0));
-    expect(f.bridge.status.getSnapshot()).toEqual({ error: null, connected: true });
+    expect(f.bridge.status.getSnapshot()).toEqual({ error: null });
   });
   it('does not let stale unary snapshots overwrite newer stream state', async () => {
     const f = fixture(); f.bridge.start(); await vi.waitFor(() => expect(f.feeds).toHaveLength(1));
@@ -138,8 +168,11 @@ describe('real native stream bridge', () => {
   it('replays the snapshot it already holds to a late subscriber', async () => {
     const f = fixture(); f.bridge.start();
     await vi.waitFor(() => expect(f.feeds).toHaveLength(1));
+    // Subscribe before the frame so acceptance is observable; a late one then replays it.
+    const first = vi.fn();
+    f.bridge.api.subscribe(first);
     f.feeds[0]!.push(hostSnapshot(7));
-    await vi.waitFor(() => expect(f.bridge.status.getSnapshot().connected).toBe(true));
+    await vi.waitFor(() => expect(first).toHaveBeenCalled());
     const listener = vi.fn();
     f.bridge.api.subscribe(listener);
     expect(listener).toHaveBeenCalledOnce();
@@ -195,7 +228,7 @@ describe('real native stream bridge', () => {
     await vi.waitFor(() => expect(f.bridge.status.getSnapshot().error).not.toBeNull());
     f.bridge.retry(); await vi.waitFor(() => expect(f.feeds).toHaveLength(2));
     f.feeds[1]!.push(hostSnapshot(2)); await vi.waitFor(() => expect(accept.mock.calls.at(-1)?.[0].sequence).toBe(2));
-    expect(f.bridge.status.getSnapshot()).toEqual({ connected: true, error: null });
+    expect(f.bridge.status.getSnapshot()).toEqual({ error: null });
   });
   it('stamps epochs only for accepted physical baselines, not updates or local attention notifications', async () => {
     const f = fixture(); const accepted = vi.fn(); f.bridge.api.subscribe(accepted);
