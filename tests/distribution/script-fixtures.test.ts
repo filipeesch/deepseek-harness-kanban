@@ -12,11 +12,11 @@ import Subprocess from '@deepseek-ai/dsh-subprocess-local';
 import { LocalBashExecutor } from '@deepseek-ai/dsh-bash-local';
 import NodeRuntime from '@deepseek-ai/dsh-ptc-runtime-node';
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { createDeterministicRuntime } from '../../src/host/deterministic/index.js';
+import { createScriptedRuntime } from '../../src/host/scripted/index.js';
 import { guardArtifact } from '../support/guard-artifact.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 
-const fixture = fileURLToPath(new URL('../e2e-dsh/deterministic/', import.meta.url));
+const fixture = fileURLToPath(new URL('../e2e-dsh/scripted/', import.meta.url));
 async function setup() {
   const root = await mkdtemp(join(tmpdir(), 'kanban-doc-fixture-'));
   const ctx = new Context();
@@ -27,17 +27,17 @@ async function setup() {
   await ctx.plugin(LocalBashExecutor, { cwd: root, timeoutMs: 1, maxTimeoutMs: 600000, graceMs: 50 });
   await ctx.plugin(NodeRuntime, {});
   await copyFile(join(fixture, 'fake-ci.cjs'), join(root, 'fake-ci.cjs'));
-  return { root, runtime: createDeterministicRuntime({ context: ctx, privateDirectory: join(root, 'private'), guardPath: await guardArtifact() }) };
+  return { root, runtime: createScriptedRuntime({ context: ctx, privateDirectory: join(root, 'private'), guardPath: await guardArtifact() }) };
 }
 
-describe('documented deterministic examples', () => {
+describe('documented scripted examples', () => {
   it('keeps the TypeScript example byte-identical to its executable fixture', async () => {
-    const guide = await readFile(new URL('../../docs/deterministic-steps.md', import.meta.url), 'utf8');
+    const guide = await readFile(new URL('../../docs/scripted-steps.md', import.meta.url), 'utf8');
     const script = await readFile(join(fixture, 'wait-ci.ts'), 'utf8');
     expect(guide).toContain(script.trimEnd());
     const workflow = parseWorkflow(await readFile(join(fixture, 'workflow.yaml'), 'utf8'));
-    expect(workflow.columns[0]!.deterministic).toMatchObject({ language: 'typescript', file: 'wait-ci.ts', exits: { passed: 'deploy', rejected: 'fix', error: 'repair' } });
-    expect(workflow.columns.find(column => column.id === 'deploy')?.deterministic).toMatchObject({ file: 'wait-ci.ts', params: [{ name: 'pipeline' }], exits: { passed: 'review', rejected: 'fix', error: 'repair' } });
+    expect(workflow.columns[0]!.scripted).toMatchObject({ language: 'typescript', file: 'wait-ci.ts', exits: { passed: 'deploy', rejected: 'fix', error: 'repair' } });
+    expect(workflow.columns.find(column => column.id === 'deploy')?.scripted).toMatchObject({ file: 'wait-ci.ts', params: [{ name: 'pipeline' }], exits: { passed: 'review', rejected: 'fix', error: 'repair' } });
   });
 
   it.each(['bash', 'typescript'] as const)('executes the actual %s example through public native providers', async language => {
@@ -49,7 +49,7 @@ describe('documented deterministic examples', () => {
     const exits = { passed: { columnId: 'review', stageIdentity: 'review-key' }, rejected: { columnId: 'fix', stageIdentity: 'fix-key' }, error: { columnId: 'repair', stageIdentity: 'repair-key' } };
     const capture = await runtime.capture({ definition: { language, file, directory: 'task', params: [{ name: 'pipeline' }], exits: { passed: 'review', rejected: 'fix', error: 'repair' } },
       exits, projectDirectory: root, taskDirectory: root });
-    await runtime.trust.approve(approvalScope, capture.fingerprint);
+    await runtime.trust.approve(approvalScope, capture.fingerprint, 'review');
     for (const state of ['passed', 'rejected']) {
       await writeFile(join(root, '.fake-ci-state'), state);
       const result = await runtime.execute({ executionId: language + '-' + state, taskId: language, scope, approvalScope, capture,

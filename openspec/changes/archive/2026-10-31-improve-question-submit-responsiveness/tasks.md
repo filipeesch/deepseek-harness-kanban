@@ -31,4 +31,4 @@
 
 - [x] 5.1 Run `pnpm run typecheck` and `pnpm test` and resolve every failure, confirming no test references the removed unary `kanban/questions` or `questionRounds`.
 - [x] 5.2 Run `pnpm run build` and `pnpm test:browser` (both pass) and record the isolated-lane outcome: the only available DSH checkout is `0.2.2-alpha.2` and its own scaffold fails with `bundlePatchPaths is not a function` before exercising Kanban; the limitation and evidence are recorded in `.verification/improve-question-submit-responsiveness.md`.
-- [x] 5.3 Owner GUI acceptance was not run because the project instructions forbid smokes against the developer's running app and personal profile; the behavior is covered by the deterministic host, cache, bridge, form, and browser lanes recorded in `.verification/improve-question-submit-responsiveness.md`.
+- [x] 5.3 Owner GUI acceptance was not run because the project instructions forbid smokes against the developer's running app and personal profile; the behavior is covered by the scripted host, cache, bridge, form, and browser lanes recorded in `.verification/improve-question-submit-responsiveness.md`.

@@ -73,8 +73,8 @@ export function diagramScene(input: { readonly workflow: Workflow; readonly task
 export function connectionLabels(workflow: Workflow): Map<string, string[]> {
   const labels = new Map<string, string[]>();
   for (const column of workflow.columns) {
-    if (column.deterministic === undefined) continue;
-    for (const [exit, destination] of Object.entries(column.deterministic.exits)) {
+    if (column.scripted === undefined) continue;
+    for (const [exit, destination] of Object.entries(column.scripted.exits)) {
       const key = column.id + '\u0000' + destination;
       labels.set(key, [...(labels.get(key) ?? []), exit]);
     }

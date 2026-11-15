@@ -101,7 +101,7 @@ describe('task history rows', () => {
 
   it('names the failure origin, code, attempts and guard facts of one settled script failure', () => {
     const guard = { admission: 'not-admitted', exitCode: 125, signal: null, timedOut: false, aborted: false, elapsedMs: 20, stdoutBytes: 0, stdoutHead: '', stderrBytes: 0, stderrTail: '' };
-    const value = rows([{ kind: 'deterministic-execution', at: FIRST, columnId: 'plan', executionId: 'run', outcome: 'failed', error: {
+    const value = rows([{ kind: 'scripted-execution', at: FIRST, columnId: 'plan', executionId: 'run', outcome: 'failed', error: {
       code: 'BASH_PROTOCOL', message: 'Infrastructure failure: the guard did not admit the command.',
       details: { origin: 'infrastructure', attempts: [{ attempt: 1, code: 'BASH_PROTOCOL', guard }, { attempt: 2, code: 'BASH_PROTOCOL', guard }], guard },
     } }]);
@@ -114,7 +114,7 @@ describe('task history rows', () => {
   it('shows the synthetic result message once and keeps the deep facts expandable', () => {
     const message = 'Infrastructure failure: boom. Detail: the task History.';
     const guard = { admission: 'started', exitCode: 125, signal: null, timedOut: false, aborted: false, elapsedMs: 15, stdoutBytes: 3, stdoutHead: 'abc', stderrBytes: 23, stderrTail: 'NATIVE_LIFETIME_UNCLEAN: x' };
-    const value = rows([{ kind: 'deterministic-execution', at: FIRST, columnId: 'plan', executionId: 'run', outcome: 'failed', exit: 'error', message, error: { code: 'BASH_PROTOCOL', message, details: { origin: 'infrastructure', guard, cause: { code: 'BASH_PROTOCOL', message: 'The guard left no result.' } } } }]);
+    const value = rows([{ kind: 'scripted-execution', at: FIRST, columnId: 'plan', executionId: 'run', outcome: 'failed', exit: 'error', message, error: { code: 'BASH_PROTOCOL', message, details: { origin: 'infrastructure', guard, cause: { code: 'BASH_PROTOCOL', message: 'The guard left no result.' } } } }]);
     expect(value[0]?.detail.split(message)).toHaveLength(2);
     expect(value[0]?.evidence).toContain('Cause: BASH_PROTOCOL — The guard left no result.');
     expect(value[0]?.evidence).toContain('stderr: NATIVE_LIFETIME_UNCLEAN: x');
@@ -122,13 +122,13 @@ describe('task history rows', () => {
   });
 
   it('keeps a failure recorded before the vocabulary readable', () => {
-    const value = rows([{ kind: 'deterministic-execution', at: FIRST, columnId: 'plan', executionId: 'run', outcome: 'failed', error: { code: 'EXECUTOR_FAILED', message: 'legacy failure' } }]);
+    const value = rows([{ kind: 'scripted-execution', at: FIRST, columnId: 'plan', executionId: 'run', outcome: 'failed', error: { code: 'EXECUTOR_FAILED', message: 'legacy failure' } }]);
     expect(value[0]?.detail).toContain('— legacy failure');
     expect(value[0]?.detail).not.toContain('failure · EXECUTOR_FAILED');
   });
 
   it('presents the values a script handoff sent, separate from the destination execution values', () => {
-    const value = rows([{ kind: 'deterministic-handoff', at: FIRST, deliveryId: 'delivery', executionId: 'run', fromColumnId: 'backlog', columnId: 'plan', outcome: 'accepted', exit: 'passed', message: 'CI passed', parameters: { pipeline: 'ci-main' } }]);
+    const value = rows([{ kind: 'scripted-handoff', at: FIRST, deliveryId: 'delivery', executionId: 'run', fromColumnId: 'backlog', columnId: 'plan', outcome: 'accepted', exit: 'passed', message: 'CI passed', parameters: { pipeline: 'ci-main' } }]);
     expect(value[0]).toMatchObject({ event: 'Script handoff accepted', tone: 'neutral' });
     expect(value[0]?.detail).toContain('Sent parameters pipeline=ci-main');
     expect(value[0]?.detail).toContain('— CI passed');
@@ -136,12 +136,12 @@ describe('task history rows', () => {
   });
 
   it('marks a truncated sent-parameter set instead of cutting it silently', () => {
-    const value = rows([{ kind: 'deterministic-handoff', at: FIRST, deliveryId: 'delivery', executionId: 'run', fromColumnId: 'backlog', columnId: 'plan', outcome: 'accepted', exit: 'passed', message: 'CI passed', parameters: { pipeline: 'x'.repeat(4096), app: 'checkout' } }]);
+    const value = rows([{ kind: 'scripted-handoff', at: FIRST, deliveryId: 'delivery', executionId: 'run', fromColumnId: 'backlog', columnId: 'plan', outcome: 'accepted', exit: 'passed', message: 'CI passed', parameters: { pipeline: 'x'.repeat(4096), app: 'checkout' } }]);
     expect(value[0]?.detail).toContain('…');
   });
 
   it('omits the sent values when the handoff carried none', () => {
-    const value = rows([{ kind: 'deterministic-handoff', at: FIRST, deliveryId: 'delivery', executionId: 'run', fromColumnId: 'backlog', columnId: 'plan', outcome: 'accepted', exit: 'passed', message: 'CI passed' }]);
+    const value = rows([{ kind: 'scripted-handoff', at: FIRST, deliveryId: 'delivery', executionId: 'run', fromColumnId: 'backlog', columnId: 'plan', outcome: 'accepted', exit: 'passed', message: 'CI passed' }]);
     expect(value[0]?.detail).not.toContain('Sent parameters');
   });
 

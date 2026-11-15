@@ -80,7 +80,7 @@ function storageFailure(operation: 'load' | 'save' | 'delete', error: unknown): 
 function nameKey(value: string): string { return value.trim().toLocaleLowerCase(); }
 /**
  * Fill in the key a stored project record predates, before the Hub schema reads it.
- * The backfill is deterministic and runs once: a record whose projects already carry
+ * The backfill is scripted and runs once: a record whose projects already carry
  * keys is returned untouched, so the second open writes nothing.
  */
 function withHubProjectKeys(raw: unknown): unknown {

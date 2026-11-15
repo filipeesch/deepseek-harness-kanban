@@ -2,7 +2,7 @@
 
 ## Why
 
-Every routine pipeline transition on the board needs a human: drag the card, then run the new stage's instruction, then repeat in the next stage. The plugin already owns the pieces that make this mechanical — the persisted stage-entry marker, the durable confirmed-transition record, the host's observation of every session event, and a deterministic instruction target — but nothing connects a finished turn to the next stage.
+Every routine pipeline transition on the board needs a human: drag the card, then run the new stage's instruction, then repeat in the next stage. The plugin already owns the pieces that make this mechanical — the persisted stage-entry marker, the durable confirmed-transition record, the host's observation of every session event, and a scripted instruction target — but nothing connects a finished turn to the next stage.
 
 This change adds an opt-in per-task auto mode: when the task's agent turn completes, the task advances to its next configured stage and the next stage's instruction is dispatched automatically, so a multi-stage pipeline can run without a drag and a play click between stages.
 
@@ -33,5 +33,5 @@ None.
 - **Host:** new auto-advance coordinator fed by `KanbanApp.observe` with injected tasks, facts, target resolution, admission, dispatch, scheduler, and report ports; new shared stage-instruction admission service used by `runInstruction`, the confirmed-transition drain, and the advance; `app.ts` gains wiring only. A new `task.autoMode` command and its remote schema.
 - **Client:** new auto-mode control, derived card/drawer state, and drawer notice; `TaskCard` composes the extracted control; `board.tsx` and `drawer.tsx` pass the toggle command through the existing run path. Existing five-second countdown behavior is unchanged.
 - **Contracts:** no data-version bump; legacy board states and Hub states without the new optional fields remain valid. Reading a conversation does not clear the pause reason.
-- **Tests:** domain coverage for destination, cascade, cycle, terminal stage, and instruction capture; host coverage for every turn-end reason, the idle gate, admission guards, failure, no catch-up, and persisted-transition resume; client coverage for the chip, status strip, drawer toggle and notice; the existing browser harness and a deterministic real-composition lane extended for the automatic path.
+- **Tests:** domain coverage for destination, cascade, cycle, terminal stage, and instruction capture; host coverage for every turn-end reason, the idle gate, admission guards, failure, no catch-up, and persisted-transition resume; client coverage for the chip, status strip, drawer toggle and notice; the existing browser harness and a scripted real-composition lane extended for the automatic path.
 - **Docs:** `README.md` board and drawer sections and the relevant specs.

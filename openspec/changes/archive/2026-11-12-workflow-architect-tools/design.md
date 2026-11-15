@@ -5,8 +5,8 @@
 - Product tools are registered once on the root context, so every session sees every tool. The pinned DSH build (0.2.2-rc.1) accepts a step-time activation predicate on `tools.register`, and a false result removes the tool from the declarations as well as from dispatch.
 - Every board workflow write funnels through `BoardAdministration` into one serialized transaction and then into `saveBoardWorkflow`. Publishing happens after the local commit and never rolls it back.
 - `parseWorkflow` throws the first problem and disables the parser's line-position output. It is the accepting path; nothing produces a report today.
-- The deterministic fingerprint hashes canonical `{language, directory, executionDirectory, source, env, params, exits, code}`. Exits carry `{columnId, stageIdentity}`, so retargeting an exit changes the fingerprint without touching source. Review authorization is keyed by Hub, board, project, and stage identity, and the capture store both plans and persists, in one method.
-- A stage entry records only origin stage, destination stage, and moment. The move's own origin exists at the moment of the move, in `pendingTransition.origin` for an advance and in the deterministic result for a script exit, and is discarded on placement.
+- The scripted fingerprint hashes canonical `{language, directory, executionDirectory, source, env, params, exits, code}`. Exits carry `{columnId, stageIdentity}`, so retargeting an exit changes the fingerprint without touching source. Review authorization is keyed by Hub, board, project, and stage identity, and the capture store both plans and persists, in one method.
+- A stage entry records only origin stage, destination stage, and moment. The move's own origin exists at the moment of the move, in `pendingTransition.origin` for an advance and in the scripted result for a script exit, and is discarded on placement.
 - Connection geometry — routing, anchors, fan-out, clearance, automatic placement, scene assembly — lives under `src/client/workflow-view/` and imports nothing from React. A stage's rendered height is measured in the browser with `ResizeObserver` and is never stored; the authored `size` is a minimum.
 - `get_board_summary` with `include_workflow` returns the authored document together with the parsed workflow, which on a large board exceeds 100 KB and spills to a file.
 - There is no revision storage. The journal module (`src/domain/journal`) already models a board as a snapshot plus ordered events, materializes each event as a text-range edit, and folds a long tail into the snapshot — but only the sharing layer stores it, and only for a published Hub.
@@ -60,7 +60,7 @@ A stage's height is `max(authoredHeight, header + gaps + cards × cardHeight)`, 
 
 Introduce one domain function that takes the authored text, a composition step (literal edits, struct: field writes, insertion, removal, or a whole document), and the facts the report needs, and returns the composed text plus a report. The host commits the text only when composition and validation succeed; the same report is returned when a write is refused.
 
-The report is assembled from what the pipeline already knows: parser diagnostics, the previous and next parsed workflows, the board's graph, the deterministic definitions on both sides, and the board's cards. Script impact is the one part that needs the filesystem, so it is a port that resolves each allowed project's directory and returns, per deterministic stage, whether a review would still hold and why.
+The report is assembled from what the pipeline already knows: parser diagnostics, the previous and next parsed workflows, the board's graph, the scripted definitions on both sides, and the board's cards. Script impact is the one part that needs the filesystem, so it is a port that resolves each allowed project's directory and returns, per scripted stage, whether a review would still hold and why.
 
 *Why one pipeline.* A refusal and a success must agree, and no surface should be able to save a document that was not reported. The alternative — a separate preview path — was rejected because two implementations of "what would change" diverge, and the product decided against a dry-run mode.
 
@@ -68,7 +68,7 @@ The report is assembled from what the pipeline already knows: parser diagnostics
 
 ### D5 — Split planning a capture from persisting it
 
-Extract the pure planning half of the capture store — resolve the execution directory, read a file source when one is declared, sort environment names, collect parameter names, and map exits to stable destinations — so the report can compute each deterministic stage's fingerprint without writing immutable blobs or registering transient references. The store keeps persistence, integrity verification, and collection.
+Extract the pure planning half of the capture store — resolve the execution directory, read a file source when one is declared, sort environment names, collect parameter names, and map exits to stable destinations — so the report can compute each scripted stage's fingerprint without writing immutable blobs or registering transient references. The store keeps persistence, integrity verification, and collection.
 
 *Why.* Without this split, computing "does the authorization still hold" would either write storage as a side effect of a read-only question, or duplicate the fingerprint inputs in a second place that could disagree with the real capture.
 
@@ -90,7 +90,7 @@ Retention is counted in commits, not events: past the bound, the oldest commits 
 
 ### D7 — Record the transition origin on the stage entry
 
-Add an optional origin to the stage entry and to the entry-writing helper, and thread it from the three places a move settles: the pending transition distinguishes a declared transition from an automatic advance and treats an absent origin as an operator move; the deterministic router records the named exit that routed the card; the reserved error route records itself as such. Entries written before this change decode unchanged and present an unrecorded origin.
+Add an optional origin to the stage entry and to the entry-writing helper, and thread it from the three places a move settles: the pending transition distinguishes a declared transition from an automatic advance and treats an absent origin as an operator move; the scripted router records the named exit that routed the card; the reserved error route records itself as such. Entries written before this change decode unchanged and present an unrecorded origin.
 
 *Why optional.* The stored record is validated strictly; an optional field keeps every existing record valid, needs no data migration, and lets the statistics answer "how" from the moment of the upgrade instead of pretending to know the past. An older build reading a record with the field fails closed on load, which the release version bump makes visible.
 

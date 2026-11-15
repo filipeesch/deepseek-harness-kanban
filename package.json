@@ -31,7 +31,7 @@
     "cordis.patch.yml",
     "presets",
     "README.md",
-    "docs/deterministic-steps.md",
+    "docs/scripted-steps.md",
     "THIRD-PARTY-NOTICES.md"
   ],
   "scripts": {

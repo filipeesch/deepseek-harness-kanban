@@ -48,6 +48,6 @@
 
 - [x] 6.1 Run `pnpm check` and `pnpm test:browser`, and record the results under `.verification/`
 - [x] 6.2 Extend the isolated `project` e2e lane with a repository moved on disk, covering acceptance, waiting, migration of a conversation, workspace rebinding, and worktree revalidation, and record screenshots and a report under `.verification/`
-- [x] 6.3 Cover the failed relocation and its retry with the deterministic host test (failed step, forward-only state, unavailable cancel, re-submission retry) and the browser failure/retry presentation; record that real-composition fault injection is not available
+- [x] 6.3 Cover the failed relocation and its retry with the scripted host test (failed step, forward-only state, unavailable cancel, re-submission retry) and the browser failure/retry presentation; record that real-composition fault injection is not available
 - [x] 6.4 Run `openspec validate project-path-relocation` and review the final diff for the design's non-goals and the no-rollback rule
 - [x] 6.5 Bump the `version` in `package.json` for the release that contains this change

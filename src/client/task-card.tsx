@@ -8,9 +8,9 @@ import { CardInstructionAction, useAutoRunEntry } from './auto-run-view.js';
 import { AutoModeControl, type AutoModeView } from './auto-mode.js';
 import { cardStatusEntries, type CardStatusEntry } from './card-status-entries.js';
 import { projectCardDominance } from '../domain/card-presence.js';
-import { CardScriptActions, CardScriptParameters } from './deterministic-actions.js';
-import { useScriptSummary } from './deterministic-context.js';
-import { ownedScript, scriptActive, scriptAwaitingApproval, scriptCardLabel, scriptLabel } from './deterministic-view.js';
+import { CardScriptActions, CardScriptParameters } from './scripted-actions.js';
+import { useScriptSummary } from './scripted-context.js';
+import { ownedScript, scriptActive, scriptAwaitingApproval, scriptCardLabel, scriptLabel } from './scripted-view.js';
 import { advanceStageLabel } from './stage-advance.js';
 import { AdvanceStageIcon, AlertIcon, ClockIcon } from './icons.js';
 
@@ -125,7 +125,7 @@ export function TaskCard({ task, column, projectName, attention, selectionMode, 
     </button>
     <CardContext taskId={task.id} title={task.title} projectName={projectName} attention={presenceAttention} selectionMode={selectionMode} selected={selected} onToggleSelect={onToggleSelect} onActivate={activate} />
     <CardActivity attention={attention} label={task.title} controls={controls} script={script && !awaitingApproval ? scriptCardLabel(script) : undefined} {...(script?.hold === undefined || awaitingApproval ? {} : { scriptTitle: scriptLabel(script) })} scriptHeld={script?.hold !== undefined && !awaitingApproval} />
-    <CardStatus parameters={script !== undefined && (column.deterministic?.params?.length ?? 0) > 0 ? <CardScriptParameters task={task} column={column} selectionMode={selectionMode} /> : undefined} entries={[...cardStatusEntries(task, runFailure, autoMode.status, autoMode.secondaryStatuses), ...(awaitingApproval ? [{ key: 'script-approval', tone: 'pending' as const, label: 'Awaiting approval' }] : []), ...(script?.error ? [{ key: 'script-error', tone: 'danger' as const, label: script.error.message.slice(0, 512), alert: true }] : [])]} />
+    <CardStatus parameters={script !== undefined && (column.scripted?.params?.length ?? 0) > 0 ? <CardScriptParameters task={task} column={column} selectionMode={selectionMode} /> : undefined} entries={[...cardStatusEntries(task, runFailure, autoMode.status, autoMode.secondaryStatuses), ...(awaitingApproval ? [{ key: 'script-approval', tone: 'pending' as const, label: 'Awaiting approval' }] : []), ...(script?.error ? [{ key: 'script-error', tone: 'danger' as const, label: script.error.message.slice(0, 512), alert: true }] : [])]} />
     {arrivalToken !== undefined && <span key={arrivalToken} className="kb-card-arrival" aria-hidden="true" onAnimationEnd={() => onArrivalEnd?.(task.id, arrivalToken)} />}
   </article>;
 }

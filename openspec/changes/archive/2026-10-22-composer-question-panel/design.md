@@ -16,7 +16,7 @@ See `proposal.md` for motivation and the `structured-questions` delta for requir
 **Goals:**
 
 - One fixed, host-themed question strip above the composer for both task and ordinary conversations.
-- A deterministic slide order that always ends in Additional Notes and Submit.
+- A scripted slide order that always ends in Additional Notes and Submit.
 - Durable per-conversation question state independent of task records.
 - Remove the duplicate transcript surface and the client-only dismissal lifecycle without changing how an answer becomes a normal chat message.
 

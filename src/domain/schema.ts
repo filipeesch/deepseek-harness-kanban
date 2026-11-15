@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { localStageIdentitiesSchema } from './deterministic-state.js';
+import { localStageIdentitiesSchema } from './scripted-state.js';
 import { DATA_VERSION, type BoardState } from '../shared/types.js';
 import { absolutePath, baseTask, canonicalWorkflow, createTaskInvariantChecker, nonempty, note, project, revision, workflow } from './schema-parts.js';
 import { DEFAULT_WORKFLOW_YAML, parseWorkflow } from './workflow.js';

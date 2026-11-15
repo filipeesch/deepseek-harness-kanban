@@ -14,7 +14,7 @@ import type { GitProject } from '../shared/types.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 import { createNativeSessionFacts, inspectedOpenTurn, nativePendingKinds } from './native-facts.js';
 import type { ConversationBlocker, ConversationIdleReport } from '../shared/conversation-idle.js';
-import { optionalService } from './deterministic/native-policy.js';
+import { optionalService } from './scripted/native-policy.js';
 import type { ConversationFactsReader } from './conversation-facts.js';
 import { createSessionHistory, type SessionHistory, type SessionHistoryReader } from './session-history.js';
 import { createQueuedPromptReader, PluginPromptLedger } from './queued-prompts.js';
@@ -282,7 +282,7 @@ export function createNativePorts(ctx: Context, options: NativePortsOptions = {}
       const registry = optionalService<JobControlPort>(ctx, 'jobs');
       if (registry === undefined) throw new KanbanError('JOBS_UNAVAILABLE', 'The native background-job registry is unavailable.');
       try {
-        return registry.kill(jobId, id, 'Cancelled from Kanban because a saved deterministic result awaited delivery.');
+        return registry.kill(jobId, id, 'Cancelled from Kanban because a saved scripted result awaited delivery.');
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (message.includes('belongs to another session') || message.includes('unknown job')) {

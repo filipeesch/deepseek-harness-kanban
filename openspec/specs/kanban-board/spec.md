@@ -32,7 +32,7 @@ A stage's stable identity SHALL be a value distinct from the stage identifier, S
 
 This version SHALL NOT implement WIP limits and SHALL NOT introduce reusable workflow templates.
 
-A stage SHALL additionally support the deterministic configuration defined by `deterministic-steps`. A deterministic stage SHALL NOT author a nonempty entry instruction or an allowed transitions list. Its named exit mappings SHALL be its configured destinations for workflow access and graph presentation; several exits MAY resolve to the same destination, which SHALL be presented as one connection to that destination. The exit names SHALL NOT be presented on the diagram's connections; each exit name and the destination it resolves to SHALL remain presented and editable in the stage editor. A deterministic stage SHALL NOT obtain a default route from the first exit or from workflow order. Exit names SHALL NOT be executable interpretations of a legacy transition condition, and legacy conditions SHALL retain their documentary meaning. A script SHALL NOT supply or override a destination stage identifier.
+A stage SHALL additionally support the scripted configuration defined by `scripted-steps`. A scripted stage SHALL NOT author a nonempty entry instruction or an allowed transitions list. Its named exit mappings SHALL be its configured destinations for workflow access and graph presentation; several exits MAY resolve to the same destination, which SHALL be presented as one connection to that destination. The exit names SHALL NOT be presented on the diagram's connections; each exit name and the destination it resolves to SHALL remain presented and editable in the stage editor. A scripted stage SHALL NOT obtain a default route from the first exit or from workflow order. Exit names SHALL NOT be executable interpretations of a legacy transition condition, and legacy conditions SHALL retain their documentary meaning. A script SHALL NOT supply or override a destination stage identifier.
 
 #### Scenario: Render a configured column group
 
@@ -124,16 +124,16 @@ A stage SHALL additionally support the deterministic configuration defined by `d
 - **THEN** every stage keeps its authored identity
 - **AND** no identity is moved to another stage
 
-#### Scenario: Accept a deterministic stage without changing legacy conditions
+#### Scenario: Accept a scripted stage without changing legacy conditions
 
-- **WHEN** a workflow configures a deterministic stage with named exits and another stage with documentary transition conditions
-- **THEN** the deterministic configuration is validated by the same workflow semantics as the host
+- **WHEN** a workflow configures a scripted stage with named exits and another stage with documentary transition conditions
+- **THEN** the scripted configuration is validated by the same workflow semantics as the host
 - **AND** its exits determine its configured destinations without selecting a default exit
 - **AND** the other stage retains its conditions and permitted targets unchanged
 
 #### Scenario: Draw one connection for several exits without naming it on the path
 
-- **WHEN** a deterministic stage maps two exit names to the same other stage
+- **WHEN** a scripted stage maps two exit names to the same other stage
 - **THEN** the diagram draws one connection to that destination
 - **AND** that connection presents no exit name
 - **AND** the stage editor presents both exit names and the destination they share
@@ -141,7 +141,7 @@ A stage SHALL additionally support the deterministic configuration defined by `d
 ### Requirement: Top-level task creation
 The active board SHALL provide the New task action in each of its presentations: at the top of its workflow's configured initial column in the column board, and in the header of that stage in the workflow diagram as defined by `workflow-view` Task creation in the initial stage. The two presentations SHALL open one shared creation experience, and neither SHALL build creation inputs, enablement, or receipt handling of its own. It SHALL collect a title, description, and project, an Auto mode option that is off by default, and, only when the initial stage has an entry instruction, a Start execution now option that is on by default. The project input SHALL offer only the projects of the active Hub that the active board allows, as defined by Board project scope configuration; a project that the board does not allow SHALL NOT be offered and SHALL NOT be accepted. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. A board that allows no project SHALL present no selectable project and SHALL explain that the board accepts no new task, and saving SHALL be unavailable. Saving a new task SHALL place it in the active board's configured initial stage whichever presentation opened it, and SHALL record the selected auto-mode value. The board SHALL NOT offer any other stage as a creation target. When the initial stage has an entry instruction and the Start execution now option remains enabled, saving SHALL start the automatic first execution defined by Automatic first execution on task creation. Otherwise, saving SHALL NOT create a native DSH conversation, a workspace, or an agent execution. The board header SHALL NOT provide a separate New task action.
 
-Creating a task directly in a deterministic initial stage SHALL create a new entry governed by `deterministic-steps`, even when Auto mode is disabled. The request to activate that entry SHALL be durably recorded in the same operation that creates the task and entry, before reading the program file, capturing code, resolving credentials, or asking for trust; a crash between creation and those later activities SHALL not lose the activation intent. The Start execution now option and agent first-execution preparation SHALL NOT apply to that entry. The host SHALL admit the deterministic entry without creating a conversation, model selection, or worktree solely to execute its script; execution SHALL wait for the required local trust and variables rather than implying authorization from creation.
+Creating a task directly in a scripted initial stage SHALL create a new entry governed by `scripted-steps`, even when Auto mode is disabled. The request to activate that entry SHALL be durably recorded in the same operation that creates the task and entry, before reading the program file, capturing code, resolving credentials, or asking for trust; a crash between creation and those later activities SHALL not lose the activation intent. The Start execution now option and agent first-execution preparation SHALL NOT apply to that entry. The host SHALL admit the scripted entry without creating a conversation, model selection, or worktree solely to execute its script; execution SHALL wait for the required local trust and variables rather than implying authorization from creation.
 
 #### Scenario: Open task creation from the board
 - **WHEN** the user selects the New task action at the top of the active board's configured initial column
@@ -220,16 +220,16 @@ Creating a task directly in a deterministic initial stage SHALL create a new ent
 - **THEN** the task has no native conversation
 - **AND** the section presents the explicit start state defined by `task-conversations`
 
-#### Scenario: Create directly in a deterministic initial stage
+#### Scenario: Create directly in a scripted initial stage
 
-- **WHEN** a task is created in a deterministic initial stage with Auto mode disabled
-- **THEN** its deterministic entry is admitted subject to local authorization
+- **WHEN** a task is created in a scripted initial stage with Auto mode disabled
+- **THEN** its scripted entry is admitted subject to local authorization
 - **AND** no agent preparation, countdown, conversation, or model selection is created for the script
 - **AND** the task keeps the selected Auto mode setting
 
 #### Scenario: Recover creation admitted before script capture
 
-- **WHEN** the host crashes after creating a task in a deterministic initial stage but before capturing or reviewing its program
+- **WHEN** the host crashes after creating a task in a scripted initial stage but before capturing or reviewing its program
 - **THEN** startup recovers the activation intent associated with that persisted entry
 - **AND** no manual stage change is required to discover the entry
 - **AND** the script still requires valid capture and local authorization before launch
@@ -237,7 +237,7 @@ Creating a task directly in a deterministic initial stage SHALL create a new ent
 ### Requirement: Automatic first execution on task creation
 The system SHALL prepare a task's first execution immediately after its creation when the active board's initial stage has an entry instruction and the creation kept the Start execution now option enabled. The preparation SHALL be a host admission that does not depend on the creating board remaining mounted, SHALL present no dialog, SHALL NOT ask the worktree choice, and SHALL NOT present the native model selector. For a Git-backed project, the preparation SHALL create the task's default worktree using its title-derived defaults and SHALL wait until that worktree is ready. For a folder project, the task SHALL use its project directory. The preparation SHALL then create the task's first conversation and SHALL arm the five-second countdown defined by Timed stage instruction after a move for the created entry; expiry SHALL send the stage instruction through the same admission as a user run action. While the preparation runs, the card and the drawer SHALL present a preparing state, and the card's run action SHALL NOT be available. Canceling the countdown SHALL keep the created worktree and conversation, SHALL leave the unresolved entry, and SHALL expose the card's run action. A failed preparation or send SHALL keep the card and the unresolved entry, SHALL report the failure on the card and in the drawer, SHALL expose the run action, and SHALL NOT retry automatically. The preparation and the countdown SHALL NOT be persisted: a reload or plugin restart before the send SHALL send nothing and SHALL leave the entry unresolved. The agent tool surface SHALL prepare and dispatch the first execution in the same call as defined by the product-tools specification.
 
-This preparation SHALL apply only to an agent entry instruction. A deterministic initial entry SHALL follow `deterministic-steps` instead and SHALL NOT acquire the default worktree, conversation, model selection, or five-second countdown described here merely because it executes code.
+This preparation SHALL apply only to an agent entry instruction. A scripted initial entry SHALL follow `scripted-steps` instead and SHALL NOT acquire the default worktree, conversation, model selection, or five-second countdown described here merely because it executes code.
 
 #### Scenario: Prepare and arm after creation
 - **WHEN** a task is created in an instructed initial stage with Start execution now enabled and the task has no conversation
@@ -288,11 +288,11 @@ This preparation SHALL apply only to an agent entry instruction. A deterministic
 - **THEN** no worktree, first conversation, preparation, or countdown is created
 - **AND** the card exposes the run action for the unresolved entry
 
-#### Scenario: Do not apply agent creation preparation to a deterministic entry
+#### Scenario: Do not apply agent creation preparation to a scripted entry
 
-- **WHEN** a task is created directly in a deterministic initial stage
+- **WHEN** a task is created directly in a scripted initial stage
 - **THEN** this agent first-execution preparation is not performed
-- **AND** deterministic execution is governed by its own authorization and execution contract
+- **AND** scripted execution is governed by its own authorization and execution contract
 
 ### Requirement: Edit task text at any stage
 The user SHALL be able to edit a task's title and description in any workflow stage, including after a worktree has been created. Saving those edits SHALL NOT automatically send a message to any task conversation or initiate an agent execution.
@@ -338,7 +338,7 @@ requirement. Canceling the preparation after it created a worktree or the first 
 keep those resources and SHALL leave the task's stage and position unchanged. The preparation SHALL
 NOT be presented for a same-stage reorder or by an automatic advance.
 
-The first execution described here SHALL mean execution of an agent stage instruction, not a deterministic script. A deterministic stage's Play action and a move into a deterministic stage SHALL NOT create a native conversation or present a model selector through this preparation. Its working directory SHALL follow the task-or-project selection defined by `deterministic-steps`.
+The first execution described here SHALL mean execution of an agent stage instruction, not a scripted script. A scripted stage's Play action and a move into a scripted stage SHALL NOT create a native conversation or present a model selector through this preparation. Its working directory SHALL follow the task-or-project selection defined by `scripted-steps`.
 
 #### Scenario: Prepare the first instructed drop
 - **WHEN** the user drops a task that has no conversation on a permitted stage with an entry instruction
@@ -385,14 +385,14 @@ The first execution described here SHALL mean execution of an agent stage instru
 
 #### Scenario: Do not prepare a conversation for script execution
 
-- **WHEN** a task with no conversation enters a deterministic stage or uses its Play action
+- **WHEN** a task with no conversation enters a scripted stage or uses its Play action
 - **THEN** this agent execution preparation is not presented
-- **AND** the absence of a conversation does not by itself prevent authorized deterministic execution
+- **AND** the absence of a conversation does not by itself prevent authorized scripted execution
 
 ### Requirement: Direct stage manipulation on the board
 The task card SHALL NOT provide an independent stage selector. A user SHALL change a task's stage through board drag and drop or through the stage control in the open task drawer. A stage change that requests no position, including a drawer stage change and a confirmed restricted drawer change, SHALL place the task at the top of the destination stage. A drag SHALL present a distinct dragged representation and a drop indicator, and a drop SHALL place the task at the dropped position, including before a chosen card and after the last card of the destination stage. Dropping on a permitted stage SHALL move the task immediately, whether or not that stage has an entry instruction, except when the drop would start the task's first execution: that drop SHALL present the execution preparation defined by Execution preparation before a task's first execution, and the move SHALL follow the preparation. Hovering a restricted stage during a drag SHALL present a distinct warning affordance. Dropping on a restricted stage SHALL require explicit confirmation before moving the task; canceling SHALL leave the task's stage and position unchanged. An instructed destination SHALL arm the timed stage instruction defined by the Timed stage instruction after a move requirement; neither the drop, the drawer stage change, nor a restricted-move confirmation SHALL initiate an agent execution at the time of the move. Dropping within the current stage SHALL reorder the task relative to its neighbors without arming a new timed instruction. A prohibited or canceled change SHALL leave the task unchanged. The board SHALL offer worktree creation during a drop only through that execution preparation. The host's automatic advance, defined by Automatic advance after a completed turn, SHALL NOT be presented as board stage manipulation, SHALL NOT add a card stage selector, and SHALL NOT require a confirmation.
 
-An accepted stage change SHALL durably revoke the deterministic execution that owns the previous entry and record any new deterministic activation intent in the same operation that places the task into its new entry, before requesting cancellation or reading files, capturing code, resolving credentials, or asking for trust. The previous run SHALL be canceled and its late results invalidated before that execution can move the task again. A refused or canceled move SHALL NOT stop it. Entering a deterministic destination SHALL admit its new deterministic entry, subject to local trust, regardless of Auto mode and without the agent countdown or conversation preparation. A same-stage reorder SHALL preserve the current deterministic entry and SHALL NOT restart its program. The configured destination rules and explicit confirmation for a restricted user move SHALL remain in force.
+An accepted stage change SHALL durably revoke the scripted execution that owns the previous entry and record any new scripted activation intent in the same operation that places the task into its new entry, before requesting cancellation or reading files, capturing code, resolving credentials, or asking for trust. The previous run SHALL be canceled and its late results invalidated before that execution can move the task again. A refused or canceled move SHALL NOT stop it. Entering a scripted destination SHALL admit its new scripted entry, subject to local trust, regardless of Auto mode and without the agent countdown or conversation preparation. A same-stage reorder SHALL preserve the current scripted entry and SHALL NOT restart its program. The configured destination rules and explicit confirmation for a restricted user move SHALL remain in force.
 
 #### Scenario: Move to an uninstructed stage by drag and drop
 - **WHEN** the user drops a task on a permitted stage that has no entry instruction
@@ -469,16 +469,16 @@ An accepted stage change SHALL durably revoke the deterministic execution that o
 - **THEN** the card does not present a stage selector
 - **AND** no confirmation or drop indicator is shown
 
-#### Scenario: Move away from an active deterministic entry
+#### Scenario: Move away from an active scripted entry
 
-- **WHEN** a permitted or explicitly confirmed user move changes the stage of a task whose deterministic script is running
+- **WHEN** a permitted or explicitly confirmed user move changes the stage of a task whose scripted script is running
 - **THEN** the task moves through the normal placement pipeline
 - **AND** the previous program and its linked Bash work are canceled
 - **AND** a late result from that execution cannot move the task or deliver a handoff
 
 #### Scenario: Recover a placed entry before script capture
 
-- **WHEN** the host crashes after accepting a move into a deterministic stage but before reading its external script
+- **WHEN** the host crashes after accepting a move into a scripted stage but before reading its external script
 - **THEN** the stored placement and the activation intent describe the same destination entry
 - **AND** startup continues capture and authorization for that entry without fabricating a second move
 - **AND** the revoked source run cannot act on the new entry
@@ -513,9 +513,9 @@ The active board SHALL support text search over its task titles and descriptions
 - **THEN** both inputs are available in the same filter popover without leaving it
 
 ### Requirement: Execution activity is independent of workflow and attention
-The board SHALL represent task execution state independently of the task's workflow stage and of its unread, awaiting-reply, and failure attention indicators. Execution state SHALL consist of two distinct facts. Agent execution SHALL mean that at least one agent owned by the task's conversations is running: a conversation's own assistant turn or an owned native subagent descendant. Background activity SHALL mean that the task owns unsettled work other than agent execution, such as jobs or schedules. Agent execution SHALL aggregate across all of the task's conversations rather than only the currently selected conversation. Background activity SHALL aggregate the task's conversation-owned background work and its directly owned deterministic script execution, including when the task has no conversation. Completing or failing an execution SHALL NOT, by itself, redefine the task's workflow stage. A task SHALL be presented as working while at least one owned agent is running, including when the main turn has ended and only an owned subagent descendant is still running. Work that is not agent execution and outlives the turn SHALL be presented as background activity instead.
+The board SHALL represent task execution state independently of the task's workflow stage and of its unread, awaiting-reply, and failure attention indicators. Execution state SHALL consist of two distinct facts. Agent execution SHALL mean that at least one agent owned by the task's conversations is running: a conversation's own assistant turn or an owned native subagent descendant. Background activity SHALL mean that the task owns unsettled work other than agent execution, such as jobs or schedules. Agent execution SHALL aggregate across all of the task's conversations rather than only the currently selected conversation. Background activity SHALL aggregate the task's conversation-owned background work and its directly owned scripted script execution, including when the task has no conversation. Completing or failing an execution SHALL NOT, by itself, redefine the task's workflow stage. A task SHALL be presented as working while at least one owned agent is running, including when the main turn has ended and only an owned subagent descendant is still running. Work that is not agent execution and outlives the turn SHALL be presented as background activity instead.
 
-A deterministic script SHALL NOT count as an agent, assistant turn, or native subagent. Its run, stopped, trust, and failure states SHALL be presented as deterministic execution state rather than fabricated unread-message or failed-turn attention. A named terminal result SHALL request its separately validated transition; mere process exit SHALL NOT redefine the task's workflow stage.
+A scripted script SHALL NOT count as an agent, assistant turn, or native subagent. Its run, stopped, trust, and failure states SHALL be presented as scripted execution state rather than fabricated unread-message or failed-turn attention. A named terminal result SHALL request its separately validated transition; mere process exit SHALL NOT redefine the task's workflow stage.
 
 #### Scenario: Activity in a nonselected task conversation
 - **WHEN** a task conversation is executing while another task tab is selected
@@ -541,7 +541,7 @@ A deterministic script SHALL NOT count as an agent, assistant turn, or native su
 
 #### Scenario: Count a script without inventing an agent conversation
 
-- **WHEN** a task with no native conversation is executing a deterministic script
+- **WHEN** a task with no native conversation is executing a scripted script
 - **THEN** the task has directly owned background activity
 - **AND** it has no agent execution or conversation attention solely because of that script
 - **AND** no conversation is created to represent the activity
@@ -550,7 +550,7 @@ A deterministic script SHALL NOT count as an agent, assistant turn, or native su
 
 The board SHALL derive attention per task conversation and aggregate it across all conversations belonging to a task. It SHALL distinguish blue unread-message indicators, orange awaiting-reply indicators, and red failure indicators. Blue and red SHALL be derived by the conversation's last settled assistant turn and its stored per-conversation read acknowledgment: unread SHALL mean that the conversation has a settled turn newer than its acknowledgment, and failure SHALL mean that the settled turn ended with an error outcome and is still unread. Blue and red SHALL NOT be presented while any agent owned by that conversation is running. The orange indicator SHALL reflect a live awaiting-reply state and SHALL NOT require acknowledgment. Attention SHALL be derived from durable conversation facts and the stored acknowledgment, SHALL survive a reload or plugin restart, and SHALL NOT depend on a per-client native unread transition. A conversation with no stored acknowledgment SHALL present its last settled turn as unread. Simultaneously applicable indicators SHALL coexist rather than collapse to a single highest-priority indicator. Those attention indicators SHALL also coexist with the card's agent execution accent rather than replacing one another.
 
-Background activity SHALL remain derived per task as unsettled work other than agent execution, and SHALL NOT be presented on the task card as a generic activity count or background indicator. Directly owned deterministic execution SHALL instead expose its own controls and runtime status as defined by `deterministic-steps`, without fabricating conversation attention. A pending executable approval SHALL be a task-level attention fact derived from the task's own deterministic control state; it SHALL present the approval attention defined by `Card attention surface`, and it SHALL NOT mark any conversation as unread, awaiting reply, or failed. Directly owned deterministic execution SHALL remain available through the task drawer's section navigation, whose Conversations entry SHALL expose the number of unsettled activities and their labels on hover and to assistive technology.
+Background activity SHALL remain derived per task as unsettled work other than agent execution, and SHALL NOT be presented on the task card as a generic activity count or background indicator. Directly owned scripted execution SHALL instead expose its own controls and runtime status as defined by `scripted-steps`, without fabricating conversation attention. A pending executable approval SHALL be a task-level attention fact derived from the task's own scripted control state; it SHALL present the approval attention defined by `Card attention surface`, and it SHALL NOT mark any conversation as unread, awaiting reply, or failed. Directly owned scripted execution SHALL remain available through the task drawer's section navigation, whose Conversations entry SHALL expose the number of unsettled activities and their labels on hover and to assistive technology.
 
 #### Scenario: Attention from a nonselected conversation
 
@@ -598,8 +598,8 @@ Background activity SHALL remain derived per task as unsettled work other than a
 
 #### Scenario: Keep script state separate from conversation attention
 
-- **WHEN** a task has an active, stopped, or failed deterministic execution but no unread or failed settled conversation turn
-- **THEN** its deterministic status remains available on the card and drawer
+- **WHEN** a task has an active, stopped, or failed scripted execution but no unread or failed settled conversation turn
+- **THEN** its scripted status remains available on the card and drawer
 - **AND** the script alone creates no blue, orange, or red conversation attention mark
 - **AND** the card adds no generic background activity count
 
@@ -634,7 +634,7 @@ The board SHALL render each task as a card composed of distinct regions in a fix
 
 The project name SHALL remain visible on every card, SHALL be visually quieter than the title, and SHALL expose the complete name when the available width truncates it. The title SHALL NOT be clamped to a fixed number of lines. In selection mode the card SHALL present its selection control at the leading edge of the context region. The whole card surface SHALL remain activatable as defined by Open a task drawer, except for nested controls, which SHALL perform their own action without opening the drawer.
 
-For an entry owned by durable deterministic activation or control state, the activity region SHALL additionally present the applicable Stop, Play, or approval action defined by `deterministic-steps`, not an agent instruction countdown. While that entry awaits approval, the approval action SHALL take the place of Stop and Play in the same single control slot. Ownership SHALL follow that persisted entry state rather than the latest saved workflow mode, so changing the saved stage to an agent or manual mode SHALL NOT hide Stop for its owned active run. The status region SHALL include its deterministic execution state. These controls SHALL preserve the single activity row, nested-control activation rules, project visibility, selection behavior, and independent conversation attention of the existing card.
+For an entry owned by durable scripted activation or control state, the activity region SHALL additionally present the applicable Stop, Play, or approval action defined by `scripted-steps`, not an agent instruction countdown. While that entry awaits approval, the approval action SHALL take the place of Stop and Play in the same single control slot. Ownership SHALL follow that persisted entry state rather than the latest saved workflow mode, so changing the saved stage to an agent or manual mode SHALL NOT hide Stop for its owned active run. The status region SHALL include its scripted execution state. These controls SHALL preserve the single activity row, nested-control activation rules, project visibility, selection behavior, and independent conversation attention of the existing card.
 
 #### Scenario: Present the card regions in order
 
@@ -680,30 +680,30 @@ For an entry owned by durable deterministic activation or control state, the act
 - **WHEN** a card has no unresolved context operation, confirmed transition, automatic-advance state, executable approval, or run-action failure
 - **THEN** the card presents no status-region content
 
-#### Scenario: Present deterministic controls without replacing card regions
+#### Scenario: Present scripted controls without replacing card regions
 
-- **WHEN** a task card is in a deterministic stage
+- **WHEN** a task card is in a scripted stage
 - **THEN** its applicable Stop, Play, or approval control is placed in the activity region
-- **AND** its deterministic status is placed in the status region
+- **AND** its scripted status is placed in the status region
 - **AND** no new card region or separate action row is introduced
 
-#### Scenario: Present deterministic parameter data in the status region
+#### Scenario: Present scripted parameter data in the status region
 
-- **WHEN** a deterministic entry declares parameters
+- **WHEN** a scripted entry declares parameters
 - **THEN** the status region presents the entry's parameter values read-only
 - **AND** it offers an inline edit action while the entry exists and its execution is not active or stopping
 - **AND** the data and action stay inside the status region without adding an activity control or a separate card region
 
 #### Scenario: Keep owned Stop after a saved mode change
 
-- **WHEN** a task owns an active deterministic run and the saved stage is changed to agent or manual mode
+- **WHEN** a task owns an active scripted run and the saved stage is changed to agent or manual mode
 - **THEN** the card keeps Stop for that owned execution
 - **AND** no agent countdown or stage-run action replaces it
-- **AND** a later Play is offered only for valid latest deterministic configuration, otherwise the interface explains the required configuration or new entry
+- **AND** a later Play is offered only for valid latest scripted configuration, otherwise the interface explains the required configuration or new entry
 
 #### Scenario: Replace Stop with approval while an entry waits
 
-- **WHEN** a task's current deterministic entry awaits approval
+- **WHEN** a task's current scripted entry awaits approval
 - **THEN** the activity region presents the approval action in the place of Stop and Play
 - **AND** the status region presents the pending approval
 
@@ -711,7 +711,7 @@ For an entry owned by durable deterministic activation or control state, the act
 
 The card's activity region SHALL keep its content on one line. It SHALL present the auto-mode control, the stage run action or its countdown control, and the advance action at the trailing edge, and it SHALL NOT present a background activity indicator. The card SHALL reserve the activity region's height in every task state, so that starting or ending a turn, or showing or hiding the run and advance actions, SHALL NOT change the card's height. The controls SHALL share one row and SHALL NOT add a separate action row.
 
-A deterministic Stop, Play, or approval control SHALL share this same reserved one-line activity region. It SHALL NOT be represented as an agent stage-instruction action or a background-count indicator, and changes between stopped, running, and awaiting approval SHALL NOT introduce another action row or resize the reserved activity region.
+A scripted Stop, Play, or approval control SHALL share this same reserved one-line activity region. It SHALL NOT be represented as an agent stage-instruction action or a background-count indicator, and changes between stopped, running, and awaiting approval SHALL NOT introduce another action row or resize the reserved activity region.
 
 #### Scenario: Label a single background kind
 
@@ -756,9 +756,9 @@ A deterministic Stop, Play, or approval control SHALL share this same reserved o
 - **THEN** it appears at the trailing edge of the activity region, next to the run action
 - **AND** it is presented in the same control style and height as the auto-mode control
 
-#### Scenario: Keep deterministic controls on the reserved row
+#### Scenario: Keep scripted controls on the reserved row
 
-- **WHEN** a deterministic execution starts, stops, or starts waiting for approval and its card changes between Play, Stop, and the approval action
+- **WHEN** a scripted execution starts, stops, or starts waiting for approval and its card changes between Play, Stop, and the approval action
 - **THEN** the control remains on the same single activity row
 - **AND** the reserved activity-region height is unchanged
 
@@ -768,7 +768,7 @@ The board SHALL present a card's unresolved context operation, confirmed transit
 
 A pause requested by the agent SHALL present the reason the agent recorded, and a diagnostic pause recorded for the same task SHALL remain presented beside it, so a turn that failed while the task was paused is not hidden by the pause.
 
-The same status region SHALL present deterministic execution state defined by `deterministic-steps`, including awaiting approval, running, stopped, and a recoverable execution or handoff failure. Awaiting approval SHALL be presented as a pending status whose label states that the executable version needs approval, and SHALL NOT be presented as an executor failure, an agent turn, or an Auto mode pause. Stopped SHALL NOT be reported as an executor error or an Auto mode pause. These states SHALL coexist with applicable operation, transition, and conversation-derived facts without replacing them, and SHALL NOT disappear merely because a conversation was read.
+The same status region SHALL present scripted execution state defined by `scripted-steps`, including awaiting approval, running, stopped, and a recoverable execution or handoff failure. Awaiting approval SHALL be presented as a pending status whose label states that the executable version needs approval, and SHALL NOT be presented as an executor failure, an agent turn, or an Auto mode pause. Stopped SHALL NOT be reported as an executor error or an Auto mode pause. These states SHALL coexist with applicable operation, transition, and conversation-derived facts without replacing them, and SHALL NOT disappear merely because a conversation was read.
 
 #### Scenario: Report a failed operation
 - **WHEN** a card's task has a context operation in a failed phase
@@ -849,14 +849,14 @@ The same status region SHALL present deterministic execution state defined by `d
 
 #### Scenario: Report a stopped or failed script separately from Auto mode
 
-- **WHEN** a deterministic execution is stopped or fails without a configured error route
-- **THEN** the status region identifies the deterministic state and its available recovery
+- **WHEN** a scripted execution is stopped or fails without a configured error route
+- **THEN** the status region identifies the scripted state and its available recovery
 - **AND** it does not fabricate an Auto mode pause or a failed conversation turn
 - **AND** the applicable Play action remains available without requiring a stage change
 
 #### Scenario: Report a pending executable approval
 
-- **WHEN** a task's current deterministic entry awaits approval
+- **WHEN** a task's current scripted entry awaits approval
 - **THEN** the status region presents a pending status stating that the executable version needs approval
 - **AND** it does not present the approval as a failure, an agent turn, or an Auto mode pause
 
@@ -912,7 +912,7 @@ The Kanban configuration experience SHALL include a General section that is pres
 
 When a task's current stage has an entry instruction, its card SHALL expose a run action only while the current entry into that stage is unresolved. The entry SHALL be unresolved when a persisted entry marker exists for the current stage and no successful user prompt has been sent in any open conversation of the task since that entry. The marker SHALL be created on every move into an instructed stage, including a task created directly in an instructed initial stage. A same-stage reorder SHALL NOT reset the marker; leaving and re-entering the stage SHALL create a new marker. A successful user prompt in any open conversation SHALL clear the marker, and a successful stage-instruction delivery for that entry SHALL clear it as well. An admission failure SHALL NOT clear it. A task already in an instructed stage without a marker SHALL NOT show the action until its next entry. While the timed instruction for the entry is counting down or being sent, the card SHALL expose the countdown control defined by the Timed stage instruction after a move requirement instead of the run action; canceling that countdown or a failed timed send SHALL expose the run action for the same unresolved entry. When visible, the action SHALL deliver the stage's entry instruction to the task's first open conversation in conversation order as the stage-instruction context message defined by Stage instruction delivery as context in `task-conversations`, followed by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies. When the task has no conversation, activating the action SHALL first present the execution preparation defined by Execution preparation before a task's first execution; when no conversation is open after the preparation, the action SHALL create a new conversation and use that conversation as the target. The action SHALL carry the entry identity it was displayed for — the entry's stage and entry timestamp — and the host SHALL reject a request for an entry that has been resolved or replaced. The action SHALL NOT move the task or change its position, SHALL NOT offer a conversation picker, and SHALL NOT be available in selection mode. It SHALL be unavailable while the task has an unresolved context operation or confirmed transition. The delivered context message SHALL contain the stage instruction and, when it applies, the transition briefing; the conversation's first-turn task context supplies the task context. Admission failures SHALL be reported without changing the stage or position and without creating another conversation beyond the resolved target.
 
-This action and its unresolved-instruction marker SHALL remain specific to agent entry instructions. An entry owned by durable deterministic activation or control state SHALL instead expose its own applicable Stop and Play controls, whose availability SHALL NOT be cleared by an ordinary conversation prompt or by a later saved change to the stage mode. While that deterministic ownership remains, a newly saved agent instruction SHALL NOT expose an agent stage-run action or countdown for that entry. Play SHALL be available only when the latest saved configuration is valid deterministic configuration; otherwise the interface SHALL explain that deterministic configuration or a new stage entry is required and SHALL NOT silently start an agent or manual-mode execution. A pending deterministic handoff SHALL be included as its own identified block in an agent instruction delivery as defined by `task-conversations`; it SHALL NOT replace the instruction or be recast as an agent-declared transition reason.
+This action and its unresolved-instruction marker SHALL remain specific to agent entry instructions. An entry owned by durable scripted activation or control state SHALL instead expose its own applicable Stop and Play controls, whose availability SHALL NOT be cleared by an ordinary conversation prompt or by a later saved change to the stage mode. While that scripted ownership remains, a newly saved agent instruction SHALL NOT expose an agent stage-run action or countdown for that entry. Play SHALL be available only when the latest saved configuration is valid scripted configuration; otherwise the interface SHALL explain that scripted configuration or a new stage entry is required and SHALL NOT silently start an agent or manual-mode execution. A pending scripted handoff SHALL be included as its own identified block in an agent instruction delivery as defined by `task-conversations`; it SHALL NOT replace the instruction or be recast as an agent-declared transition reason.
 
 #### Scenario: Show the action after a transition
 
@@ -1031,16 +1031,16 @@ This action and its unresolved-instruction marker SHALL remain specific to agent
 - **WHEN** a card's current stage has no entry instruction
 - **THEN** the card does not expose the run action
 
-#### Scenario: Do not consume deterministic Play with a conversation prompt
+#### Scenario: Do not consume scripted Play with a conversation prompt
 
-- **WHEN** an ordinary conversation prompt is sent while the task remains in a deterministic stage
-- **THEN** it does not resolve, stop, restart, or hide that stage's deterministic controls
-- **AND** the agent instruction marker does not govern the deterministic execution
+- **WHEN** an ordinary conversation prompt is sent while the task remains in a scripted stage
+- **THEN** it does not resolve, stop, restart, or hide that stage's scripted controls
+- **AND** the agent instruction marker does not govern the scripted execution
 
 ### Requirement: Movement never runs an agent
-A user movement of a task, including into a stage with an entry instruction, SHALL update its workflow stage and position without initiating an agent execution at the time of the move. An instructed user move SHALL arm the timed stage instruction defined by the Timed stage instruction after a move requirement; that scheduled execution is separate from the move. Agent execution SHALL otherwise require a separate explicit card run action or a user-sent message from the conversation composer. A host transition admitted after a completed turn or after a deterministic result SHALL dispatch the destination instruction itself when that destination is an agent stage, and SHALL NOT arm the timed stage instruction. A reason-carrying agent-declared transition SHALL remain able to advance after its completed turn without Auto mode, and a deterministic result SHALL remain able to route without Auto mode. A default turn-driven advance without such a declaration SHALL require Auto mode. Optional worktree creation and directory switching SHALL follow the separate worktree-management requirements.
+A user movement of a task, including into a stage with an entry instruction, SHALL update its workflow stage and position without initiating an agent execution at the time of the move. An instructed user move SHALL arm the timed stage instruction defined by the Timed stage instruction after a move requirement; that scheduled execution is separate from the move. Agent execution SHALL otherwise require a separate explicit card run action or a user-sent message from the conversation composer. A host transition admitted after a completed turn or after a scripted result SHALL dispatch the destination instruction itself when that destination is an agent stage, and SHALL NOT arm the timed stage instruction. A reason-carrying agent-declared transition SHALL remain able to advance after its completed turn without Auto mode, and a scripted result SHALL remain able to route without Auto mode. A default turn-driven advance without such a declaration SHALL require Auto mode. Optional worktree creation and directory switching SHALL follow the separate worktree-management requirements.
 
-A user move into a deterministic stage SHALL start only its authorized non-model program. A deterministic output transition into an agent stage SHALL deliver that stage's own prompt with the result handoff, even while Auto mode is disabled. It SHALL NOT cause a script-only or manual destination to create an agent turn.
+A user move into a scripted stage SHALL start only its authorized non-model program. A scripted output transition into an agent stage SHALL deliver that stage's own prompt with the result handoff, even while Auto mode is disabled. It SHALL NOT cause a script-only or manual destination to create an agent turn.
 
 #### Scenario: Move to a stage without an entry instruction
 - **WHEN** the user completes an allowed move to a stage without an entry instruction
@@ -1059,9 +1059,9 @@ A user move into a deterministic stage SHALL start only its authorized non-model
 - **AND** no five-second countdown is armed
 - **AND** no worktree choice is requested by the advance
 
-#### Scenario: Dispatch an agent destination after a deterministic result without Auto mode
+#### Scenario: Dispatch an agent destination after a scripted result without Auto mode
 
-- **WHEN** an authorized deterministic execution returns a configured exit for an agent stage while Auto mode is disabled
+- **WHEN** an authorized scripted execution returns a configured exit for an agent stage while Auto mode is disabled
 - **THEN** the result transition moves exactly to that destination and dispatches its own entry instruction with the handoff
 - **AND** Auto mode remains disabled
 - **AND** no five-second countdown is armed
@@ -1320,7 +1320,7 @@ The Kanban page SHALL present the boards of the active Hub as tabs below the Hub
 ### Requirement: Board attention aggregation
 The board tab SHALL present aggregated attention for all tasks on that board. Attention SHALL consist of the unread indicator, the awaiting-reply indicator, the failure indicator, and a running-task indicator. The unread, awaiting-reply, and failure indicators SHALL be presented first, in that order, and the running-task indicator SHALL follow them. The running-task indicator SHALL be presented as a pulsing ring in the host accent with an adjacent numeral, and SHALL be present whenever at least one task on the board is running, including when exactly one task is running. The numeral SHALL be the number of running tasks, counting each task once regardless of how many agents, subagents, jobs, or schedules it owns. A task SHALL count as running while it has a running agent turn, an owned subagent still running after the turn ends, or unsettled background work such as jobs or schedules. The numeral SHALL be legible in the host's light and dark appearances, SHALL use tabular figures so the board label does not shift as the count changes, and SHALL remain visible without animation when the host prefers reduced motion. Hovering the indicator SHALL expose the titles of the running tasks. The board tab's accessible name SHALL include the running-task count. The unread, awaiting-reply, and failure indicators SHALL coexist with the running-task indicator. The running-task indicator SHALL communicate both the presence and the number of running tasks rather than a static status color alone. The running count SHALL clear when no task on the board is running. Attention on a board that is not active SHALL remain visible on its tab.
 
-A task's running deterministic execution SHALL contribute one to this running-task count, even when the task has no native conversation. Its script SHALL NOT add an agent-turn unread, awaiting-reply, or failure indicator. A stopped execution, trust request, or settled script failure SHALL NOT count as running merely because it needs recovery; their deterministic status SHALL remain available on the task.
+A task's running scripted execution SHALL contribute one to this running-task count, even when the task has no native conversation. Its script SHALL NOT add an agent-turn unread, awaiting-reply, or failure indicator. A stopped execution, trust request, or settled script failure SHALL NOT count as running merely because it needs recovery; their scripted status SHALL remain available on the task.
 
 #### Scenario: Aggregate unread activity on the board tab
 - **WHEN** a task on a board has unread activity
@@ -1376,9 +1376,9 @@ A task's running deterministic execution SHALL contribute one to this running-ta
 - **WHEN** a task on a board in the active Hub gains unread activity, awaits a reply, or starts running while another board is active
 - **THEN** the inactive board's tab presents the corresponding indicator
 
-#### Scenario: Count directly owned deterministic work once
+#### Scenario: Count directly owned scripted work once
 
-- **WHEN** a task with no native conversation runs a deterministic script
+- **WHEN** a task with no native conversation runs a scripted script
 - **THEN** its board's running-task count includes that task once
 - **AND** stopping or settling that script removes its running contribution when no other owned activity remains
 
@@ -1427,7 +1427,7 @@ When a user requests a transition that the active board's workflow does not perm
 ### Requirement: Timed stage instruction after a move
 When a permitted move changes a task's stage to a stage with an entry instruction, or a task created directly in an instructed initial stage completes the automatic first-execution preparation defined by Automatic first execution on task creation, the system SHALL arm one five-second countdown for that entry. The countdown SHALL be armed for board drops, drawer stage changes, and the automatic creation preparation. It SHALL NOT be armed for a same-stage reorder, for a creation whose Start execution now option is disabled, or for a move into a stage without an entry instruction. When the task has no conversation, the countdown SHALL be armed only after the first-execution preparation (the interactive preparation defined by Execution preparation before a task's first execution or the automatic creation preparation) completes, and the conversation that preparation created SHALL be the target. The target SHALL be the task's first open conversation in conversation order; when no conversation is open, the system SHALL create a new conversation and use it. When the five seconds elapse without cancellation, the system SHALL deliver that stage's entry instruction to the target as the stage-instruction context message defined by Stage instruction delivery as context in `task-conversations`, followed by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies. Cancel SHALL stop only the automatic send: the task's stage, position, and unresolved entry SHALL remain, and the card's run action SHALL be available. A new instructed entry for the task SHALL replace the pending countdown for the previous entry. The countdown SHALL be canceled without sending when a successful user prompt resolves the entry, when the task is deleted, or when the entry marker is removed for any other reason. The card SHALL present the countdown as a control that cancels when activated. The drawer for the task SHALL present a matching countdown notice above its section panel with the same cancel action. Both notices SHALL identify the stage whose instruction will run. A countdown SHALL continue when its card is not rendered, when the Kanban panel is not visible, or when the user switches to another board or Hub. The automatic send SHALL NOT depend on the board that armed it being mounted or visible. Unsent composer text or attachments in the target conversation SHALL NOT prevent the send and SHALL remain unchanged. The countdown SHALL NOT be persisted: a reload or plugin restart SHALL send nothing and SHALL leave the entry unresolved with its run action available. A failed timed delivery SHALL stop the countdown, report the failure on the card and in the drawer notice, restore the run action for the unresolved entry, and SHALL NOT retry automatically. When admission reports that the entry was already resolved, the countdown SHALL end without reporting a failure. The delay SHALL be fixed at five seconds and SHALL NOT be configurable.
 
-This countdown SHALL remain specific to agent entry instructions and SHALL NOT schedule deterministic polling or delay a deterministic entry. When an agent entry has a pending deterministic handoff, its message SHALL include that identified handoff block in the order defined by `task-conversations`, in addition to the instruction and applicable briefing. The countdown's non-durable reload behavior SHALL NOT stop or redefine the separate durable recovery of deterministic programs.
+This countdown SHALL remain specific to agent entry instructions and SHALL NOT schedule scripted polling or delay a scripted entry. When an agent entry has a pending scripted handoff, its message SHALL include that identified handoff block in the order defined by `task-conversations`, in addition to the instruction and applicable briefing. The countdown's non-durable reload behavior SHALL NOT stop or redefine the separate durable recovery of scripted programs.
 
 #### Scenario: Arm on a board drop
 - **WHEN** the user drops a card on a permitted stage with an entry instruction
@@ -1457,7 +1457,7 @@ This countdown SHALL remain specific to agent entry instructions and SHALL NOT s
 
 #### Scenario: Send only the instruction on expiry
 - **WHEN** the five-second countdown ends without cancellation
-- **THEN** the stage's entry instruction and any pending deterministic handoff are delivered to the task's first open conversation as a stage-instruction context message, followed by the transition briefing when the stage configures two or more targets
+- **THEN** the stage's entry instruction and any pending scripted handoff are delivered to the task's first open conversation as a stage-instruction context message, followed by the transition briefing when the stage configures two or more targets
 - **AND** the unresolved entry is resolved
 - **AND** no conversation picker or confirmation is presented
 
@@ -1469,7 +1469,7 @@ This countdown SHALL remain specific to agent entry instructions and SHALL NOT s
 #### Scenario: Create a conversation when none is open
 - **WHEN** the countdown ends and every task conversation is closed
 - **THEN** a new conversation is created and becomes the target
-- **AND** the stage's entry instruction and any pending deterministic handoff are delivered to that new conversation
+- **AND** the stage's entry instruction and any pending scripted handoff are delivered to that new conversation
 - **AND** the task's stage and position are unchanged
 
 #### Scenario: Cancel from the card
@@ -1512,7 +1512,7 @@ This countdown SHALL remain specific to agent entry instructions and SHALL NOT s
 
 #### Scenario: Send while the Kanban panel is hidden
 - **WHEN** the countdown ends while the Kanban panel is not visible and its board is not mounted
-- **THEN** the stage's entry instruction and any pending deterministic handoff are delivered to the resolved target
+- **THEN** the stage's entry instruction and any pending scripted handoff are delivered to the resolved target
 - **AND** the unresolved entry is resolved without requiring the board to be reopened
 
 #### Scenario: Unsent draft does not block the send
@@ -1547,8 +1547,8 @@ This countdown SHALL remain specific to agent entry instructions and SHALL NOT s
 
 #### Scenario: Keep script recovery separate from the agent countdown
 
-- **WHEN** the host restarts while a deterministic script was active and another task had an agent countdown
-- **THEN** the script follows deterministic recovery from the beginning of its captured program
+- **WHEN** the host restarts while a scripted script was active and another task had an agent countdown
+- **THEN** the script follows scripted recovery from the beginning of its captured program
 - **AND** the agent countdown still sends nothing after restart and leaves its instruction entry unresolved
 
 ### Requirement: Stable board frame during commands
@@ -1734,7 +1734,7 @@ Enabling auto mode SHALL arm the task and SHALL NOT move it, change its position
 
 The paused state SHALL also present a pause requested by the agent as defined by Agent-requested task pause, and a task carrying that pause SHALL keep auto mode enabled. Activating the control while the task carries a recorded pause — the agent pause or a diagnostic pause — SHALL resume the task and SHALL NOT disable auto mode, whatever the recorded reason; activating it in every other state SHALL toggle the setting as before. A pause derived from a recorded transition that no longer resolves is not a recorded pause, so that presentation SHALL keep the setting toggle. Because a recorded pause resumes when the control is activated, the control SHALL present a task carrying a recorded pause as not pressed even while auto mode is enabled, so the pressed state continues to describe the action the control performs. Resuming SHALL NOT move the task, change its position, send an instruction, or start an execution, and the next completed turn SHALL remain the only trigger.
 
-The completed-turn trigger, future-advance control, and resume behavior described here SHALL apply to turn-driven agent advancement, not to deterministic stage supervision. A deterministic stage SHALL start on entry and route its named result even when Auto mode is disabled. Toggling or resuming Auto mode SHALL NOT stop, start, resume, or restart a deterministic program; its Stop and Play actions SHALL remain independent. While durable activation or control state owns the current entry as deterministic, the control SHALL NOT imply that an incidental completed conversation turn selects an exit or bypasses the script. A later saved mode change SHALL NOT relinquish that ownership or let Auto mode substitute the new instruction or default route for the owned run.
+The completed-turn trigger, future-advance control, and resume behavior described here SHALL apply to turn-driven agent advancement, not to scripted stage supervision. A scripted stage SHALL start on entry and route its named result even when Auto mode is disabled. Toggling or resuming Auto mode SHALL NOT stop, start, resume, or restart a scripted program; its Stop and Play actions SHALL remain independent. While durable activation or control state owns the current entry as scripted, the control SHALL NOT imply that an incidental completed conversation turn selects an exit or bypasses the script. A later saved mode change SHALL NOT relinquish that ownership or let Auto mode substitute the new instruction or default route for the owned run.
 
 #### Scenario: Auto mode is disabled by default
 
@@ -1829,10 +1829,10 @@ The completed-turn trigger, future-advance control, and resume behavior describe
 - **THEN** the control presents itself as pressed
 - **AND** activating it disables auto mode instead of resuming
 
-#### Scenario: Keep deterministic execution independent of the Auto mode toggle
+#### Scenario: Keep scripted execution independent of the Auto mode toggle
 
-- **WHEN** the user disables or resumes Auto mode while a deterministic entry is active or stopped
-- **THEN** the deterministic run or stopped state is unchanged
+- **WHEN** the user disables or resumes Auto mode while a scripted entry is active or stopped
+- **THEN** the scripted run or stopped state is unchanged
 - **AND** only its own entry, Stop, Play, recovery, and result rules control that execution
 
 ### Requirement: Automatic advance after a completed turn
@@ -1844,7 +1844,7 @@ A turn ending for any other reason SHALL NOT advance the task. The host SHALL NO
 
 The host SHALL NOT replay a turn that ended while it was not observing the task's conversations. Only a turn end observed while the host is running SHALL trigger an advance.
 
-This trigger SHALL NOT advance a task out of an entry owned by durable deterministic activation or control state, including an entry waiting for trust, running, stopped, failed, or awaiting result delivery. That ownership SHALL NOT be recomputed from a later saved YAML mode: switching the saved stage to agent or manual mode SHALL NOT enable a conversation turn to bypass the captured run or its stopped state. A completed turn from one of its conversations SHALL NOT replace the named result of that entry or restart its program. The no-catch-up rule above SHALL remain a rule about unobserved conversation turns; automatic recovery of a previously active deterministic run SHALL follow `deterministic-steps` without replaying a conversation turn.
+This trigger SHALL NOT advance a task out of an entry owned by durable scripted activation or control state, including an entry waiting for trust, running, stopped, failed, or awaiting result delivery. That ownership SHALL NOT be recomputed from a later saved YAML mode: switching the saved stage to agent or manual mode SHALL NOT enable a conversation turn to bypass the captured run or its stopped state. A completed turn from one of its conversations SHALL NOT replace the named result of that entry or restart its program. The no-catch-up rule above SHALL remain a rule about unobserved conversation turns; automatic recovery of a previously active scripted run SHALL follow `scripted-steps` without replaying a conversation turn.
 
 #### Scenario: Advance after a completed turn
 - **WHEN** the only open conversation of an armed task ends a completed turn and the task has no pending user work
@@ -1928,10 +1928,10 @@ This trigger SHALL NOT advance a task out of an entry owned by durable determini
 - **THEN** no advance is admitted for that turn
 - **AND** the task remains in its stage until its next completed turn
 
-#### Scenario: Ignore incidental turns in a deterministic entry
+#### Scenario: Ignore incidental turns in a scripted entry
 
-- **WHEN** a task occupies a deterministic entry and one of its conversations completes a turn with Auto mode enabled
-- **THEN** that turn admits no advance out of the deterministic entry
+- **WHEN** a task occupies a scripted entry and one of its conversations completes a turn with Auto mode enabled
+- **THEN** that turn admits no advance out of the scripted entry
 - **AND** its run, stopped state, captured configuration, and pending handoff are not changed
 
 ### Requirement: Automatic advance destination and dispatch
@@ -1940,13 +1940,13 @@ A completed turn SHALL advance the task when its auto mode is enabled or when a 
 
 The destination SHALL be the stage of the task's recorded transition for its current stage while that transition resolves. Otherwise, and only for a task whose auto mode is enabled, it SHALL be the first entry of the current stage's configured transitions, or the stage that follows the current stage in workflow order when the stage does not configure transitions. There SHALL be no default destination when the configured list is empty or the resolved stage is the current stage.
 
-When the destination is the recorded transition, the advance SHALL move the task exactly to that stage and SHALL NOT continue resolution beyond it. While the default destination has neither an entry instruction nor deterministic configuration, resolution SHALL continue from that destination. Resolution SHALL stop at the first stage that has an entry instruction or deterministic configuration, or at the last reachable stage when no reachable stage has either. A stage already visited during the same resolution SHALL NOT be revisited. The resolved destination and its entry instruction SHALL be captured when the advance is admitted, so a workflow edit after admission SHALL NOT change that advance.
+When the destination is the recorded transition, the advance SHALL move the task exactly to that stage and SHALL NOT continue resolution beyond it. While the default destination has neither an entry instruction nor scripted configuration, resolution SHALL continue from that destination. Resolution SHALL stop at the first stage that has an entry instruction or scripted configuration, or at the last reachable stage when no reachable stage has either. A stage already visited during the same resolution SHALL NOT be revisited. The resolved destination and its entry instruction SHALL be captured when the advance is admitted, so a workflow edit after admission SHALL NOT change that advance.
 
 A recorded transition that no longer resolves SHALL NOT be replaced by the default destination. The host SHALL NOT advance the task. When the task's auto mode is enabled, the host SHALL pause auto mode with the `transition-stale` reason defined by Auto mode on a task card; a task whose auto mode is disabled SHALL stay in its stage without recording a pause.
 
 The task SHALL be placed at the top of the destination stage, before every card that stage already contains. When the destination has an entry instruction, that instruction SHALL be delivered to the task's first open conversation as the stage-instruction context message defined by Stage instruction delivery as context in `task-conversations`, followed by the reason the recorded transition carried and then by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies; when no conversation is open, a new conversation SHALL be created and used as the target. The delivered context message SHALL contain the stage instruction, the declared reason when one applies, and, when it applies, the briefing. An advance that consumed no recorded reason SHALL deliver no reason block. The advance SHALL NOT create more than one conversation beyond that target. The destination entry SHALL remain unresolved until a prompt or a stage instruction is delivered.
 
-A deterministic destination SHALL admit its own authorized execution rather than create a conversation or consume an agent instruction marker. A named deterministic result SHALL resolve exactly through the captured exit mapping of its execution, SHALL NOT select the first exit as a default, and SHALL NOT cross an intermediate manual or deterministic destination to reach a later instructed stage. Protected destinations SHALL remain protected: the script SHALL NOT supply a destination or use a human-only override, and a missing or invalid authorized destination SHALL produce a visible failure instead of a fallback. A valid destination agent instruction SHALL additionally carry the deterministic handoff defined by `task-conversations`, without mislabeling it as a recorded agent reason. For a deterministic result, route authority SHALL come from the approved mapping captured by that execution, not a later authored allowed-target set. Editing an active exit from one destination to another SHALL not change or invalidate the approved captured destination merely because the latest configuration differs. Routing SHALL resolve the captured destination to the same stable stage after an identifier rename and SHALL reject identifier reuse by a different stage. It SHALL still validate the current entry and run, destination existence and stable identity, task context, and pending user work; it SHALL not use a generic human transition override to bypass those checks.
+A scripted destination SHALL admit its own authorized execution rather than create a conversation or consume an agent instruction marker. A named scripted result SHALL resolve exactly through the captured exit mapping of its execution, SHALL NOT select the first exit as a default, and SHALL NOT cross an intermediate manual or scripted destination to reach a later instructed stage. Protected destinations SHALL remain protected: the script SHALL NOT supply a destination or use a human-only override, and a missing or invalid authorized destination SHALL produce a visible failure instead of a fallback. A valid destination agent instruction SHALL additionally carry the scripted handoff defined by `task-conversations`, without mislabeling it as a recorded agent reason. For a scripted result, route authority SHALL come from the approved mapping captured by that execution, not a later authored allowed-target set. Editing an active exit from one destination to another SHALL not change or invalidate the approved captured destination merely because the latest configuration differs. Routing SHALL resolve the captured destination to the same stable stage after an identifier rename and SHALL reject identifier reuse by a different stage. It SHALL still validate the current entry and run, destination existence and stable identity, task context, and pending user work; it SHALL not use a generic human transition override to bypass those checks.
 
 #### Scenario: Use the recorded transition
 
@@ -2008,13 +2008,13 @@ A deterministic destination SHALL admit its own authorized execution rather than
 
 #### Scenario: Cross a stage without an instruction
 
-- **WHEN** the next stage has neither an entry instruction nor deterministic configuration and a later reachable stage has an entry instruction
+- **WHEN** the next stage has neither an entry instruction nor scripted configuration and a later reachable stage has an entry instruction
 - **THEN** the task moves to that later stage in one advance
 - **AND** that stage's instruction is delivered
 
 #### Scenario: Stop at the last reachable stage
 
-- **WHEN** no reachable stage ahead has an entry instruction or deterministic configuration
+- **WHEN** no reachable stage ahead has an entry instruction or scripted configuration
 - **THEN** the task moves to the last reachable stage
 - **AND** no instruction is sent
 
@@ -2055,15 +2055,15 @@ A deterministic destination SHALL admit its own authorized execution rather than
 - **AND** the destination entry remains unresolved
 - **AND** the card exposes the stage run action for that entry
 
-#### Scenario: Stop default resolution at a deterministic stage
+#### Scenario: Stop default resolution at a scripted stage
 
-- **WHEN** a default turn-driven advance reaches a deterministic stage before a later instructed stage
-- **THEN** the task stops in the deterministic stage and admits that entry subject to local authorization
+- **WHEN** a default turn-driven advance reaches a scripted stage before a later instructed stage
+- **THEN** the task stops in the scripted stage and admits that entry subject to local authorization
 - **AND** no later stage is crossed or agent conversation created for the script
 
 #### Scenario: Stop a named output at its exact destination
 
-- **WHEN** a deterministic result maps to a manual stage with a later instructed stage reachable beyond it
+- **WHEN** a scripted result maps to a manual stage with a later instructed stage reachable beyond it
 - **THEN** the task moves only to the mapped manual stage
 - **AND** its output message is preserved as handoff without starting a later agent stage
 
@@ -2591,7 +2591,7 @@ The reason SHALL travel with the recording until the advance is dispatched and S
 
 When a stage configures two or more transition targets and the host delivers that stage's entry instruction, the delivery SHALL include a host-generated briefing after the instruction and, when the delivery carries a declared transition's reason, after that reason. The briefing SHALL list every configured target with its stage name and its authored condition when the stage authored one, SHALL name the recorded transition when the task already recorded one for that stage, SHALL name the target that applies when nothing is recorded, and SHALL name the tool that records the choice together with its required reason. The briefing SHALL state that the declared transition is followed at the end of the turn. The briefing SHALL be derived from the active workflow at the moment of delivery and SHALL appear on every delivery path: the card run action, the timed stage instruction after a move, a confirmed transition, the automatic advance, and the first execution of a task created by an agent. A stage that configures fewer than two targets SHALL produce no briefing, and its context message SHALL contain the entry instruction and, when one applies, the declared transition's reason.
 
-When instruction delivery carries a deterministic handoff, the handoff SHALL be a separate identified block after any declared agent reason and before this briefing. It SHALL NOT change the briefing's documentary conditions, configured destinations, or end-of-turn declaration guidance. A stage with fewer than two targets SHALL still receive its pending handoff even though it produces no briefing. The handoff SHALL NOT be presented as a reason the agent declared.
+When instruction delivery carries a scripted handoff, the handoff SHALL be a separate identified block after any declared agent reason and before this briefing. It SHALL NOT change the briefing's documentary conditions, configured destinations, or end-of-turn declaration guidance. A stage with fewer than two targets SHALL still receive its pending handoff even though it produces no briefing. The handoff SHALL NOT be presented as a reason the agent declared.
 
 #### Scenario: Include the briefing with two or more targets
 
@@ -2647,10 +2647,10 @@ When instruction delivery carries a deterministic handoff, the handoff SHALL be 
 - **WHEN** a stage instruction is delivered by the card run action, the timed stage instruction after a move, a confirmed transition, the automatic advance, or the first execution of a task created by an agent
 - **THEN** the delivered context message includes the briefing whenever the stage configures two or more targets
 
-#### Scenario: Keep deterministic handoff when no briefing applies
+#### Scenario: Keep scripted handoff when no briefing applies
 
-- **WHEN** an instructed destination receives a deterministic handoff and configures fewer than two transition targets
-- **THEN** its context message includes the instruction and the separate deterministic handoff block
+- **WHEN** an instructed destination receives a scripted handoff and configures fewer than two transition targets
+- **THEN** its context message includes the instruction and the separate scripted handoff block
 - **AND** no transition briefing is generated
 - **AND** no agent-declared reason is fabricated
 
@@ -3258,7 +3258,7 @@ A board's workflow MAY author an empty allowed transitions list for a stage, and
 
 ### Requirement: Board approval queue
 
-The active board SHALL present an approval queue while at least one card of that board waits for executable approval. The queue SHALL present one item per unapproved executable version of a board stage, together with the number of cards waiting for that version and the project identities only when more than one project waits. The queue SHALL NOT present one item per card. Activating an item SHALL open the executable-version review defined by `deterministic-steps` for that version. Approving from the queue SHALL resume the waiting entries as defined by `deterministic-steps`, and the item SHALL disappear once no card remains waiting for that version. The queue SHALL NOT be dismissible while it holds an item, SHALL NOT claim an agent turn or a failed conversation turn, and SHALL coexist with the board's other notices without replacing them. The queue SHALL NOT include an approved version or a version with no waiting card.
+The active board SHALL present an approval queue while at least one card of that board waits for executable approval. The queue SHALL present one item per unapproved executable version of a board stage, together with the number of cards waiting for that version and the project identities only when more than one project waits. The queue SHALL NOT present one item per card. Activating an item SHALL open the executable-version review defined by `scripted-steps` for that version. Approving from the queue SHALL resume the waiting entries as defined by `scripted-steps`, and the item SHALL disappear once no card remains waiting for that version. The queue SHALL NOT be dismissible while it holds an item, SHALL NOT claim an agent turn or a failed conversation turn, and SHALL coexist with the board's other notices without replacing them. The queue SHALL NOT include an approved version or a version with no waiting card.
 
 #### Scenario: List one item per waiting version
 

@@ -43,9 +43,9 @@ The board keeps only keys, and local enforcement resolves a key to the Hub's pro
 
 Alternative considered: storing local ids and publishing keys (would require translating in both directions on every publication and reception, creating a second invariant that can drift).
 
-### 3. `projectKey` is a deterministic slug, editable, unique per Hub
+### 3. `projectKey` is a scripted slug, editable, unique per Hub
 
-Generated at registration from the project name with a deterministic collision suffix, so two installations registering the same repository name derive the same key without configuration. Renaming or relocating never regenerates it. The key is editable; saving a new key rewrites the key in every board scope of the same Hub inside the same transaction, so no board is left pointing at a key that no project owns.
+Generated at registration from the project name with a scripted collision suffix, so two installations registering the same repository name derive the same key without configuration. Renaming or relocating never regenerates it. The key is editable; saving a new key rewrites the key in every board scope of the same Hub inside the same transaction, so no board is left pointing at a key that no project owns.
 
 Alternatives considered: an opaque per-installation identifier (two installations would never converge without an explicit mapping step); an immutable key (makes a typo permanent and blocks convergence when names differ).
 
@@ -63,7 +63,7 @@ Alternatives considered: a separate key-to-project registry (does not pollute th
 
 ### 6. Backfill runs over raw data before the aggregate is parsed
 
-`HubRepository.open` currently parses each loaded Hub immediately. The deterministic key assignment runs on the raw loaded records, is persisted once, and only then is the aggregate parsed. Existing boards need no backfill because an absent scope is already the unrestricted state.
+`HubRepository.open` currently parses each loaded Hub immediately. The scripted key assignment runs on the raw loaded records, is persisted once, and only then is the aggregate parsed. Existing boards need no backfill because an absent scope is already the unrestricted state.
 
 Alternative considered: deriving the key lazily on read (a project renamed before its first write would change key, breaking any published reference).
 
@@ -95,7 +95,7 @@ Alternatives considered: a board field persisted by the host (would make a perso
 
 - **A version 1 publishing record is dropped on open** → normalize stored documents to version 2 before the existing round-trip validation, and cover it with a test that opens state written against version 1 and asserts bindings, orphans, and removals survive.
 - **A scope-only change is never recognized as a change** → include the scope in `SharingContent`, in the content key, and in the document token, and test a publish that changes only the scope.
-- **A backfilled key collides or changes later** → make allocation deterministic from the name and the existing key set, persist it once, and test two projects whose names slug to the same value.
+- **A backfilled key collides or changes later** → make allocation scripted from the name and the existing key set, persist it once, and test two projects whose names slug to the same value.
 - **A placeholder reaches a path-dependent code path** → make `projectPath` present only for real projects in the schema, and give every consumer a typed rejection that names adoption.
 - **Restoring the viewport fights the automatic fit** → restore only when a board is opened or switched to, and let the workflow-change and fit paths overwrite the stored value deliberately.
 - **A closed board looks like a broken board** → present the reason in the creation experience and report the same state through `get_board_summary` and `list_projects`.

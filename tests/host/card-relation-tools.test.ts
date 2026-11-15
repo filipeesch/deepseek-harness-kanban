@@ -147,7 +147,7 @@ describe('card reads through tools', () => {
     expect(value.truncated).toBe(false);
     expect(value.cards[0]!.description).toBeUndefined();
     expect(value.cards[0]!.history).toBeUndefined();
-    expect(value.cards[0]!.deterministic).toBeUndefined();
+    expect(value.cards[0]!.scripted).toBeUndefined();
     await expect(f.run('get_cards', { task_ids: [] })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
     const dropped = await f.run('get_cards', { task_ids: [epic.id, ...Array.from({ length: 101 }, (_value, index) => 'ghost-' + index)] }) as { cards: Array<{ id: string }>; truncated: boolean; dropped: string[] };
     expect(dropped.truncated).toBe(true);

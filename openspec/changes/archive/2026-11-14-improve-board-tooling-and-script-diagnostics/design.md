@@ -8,7 +8,7 @@ See `proposal.md` — Why. The current state that shapes the approach:
 - The literal edit engine matches `old` against the raw text, applies edits in order, and knows the first offset and the occurrence count at failure, but records neither the edit index nor any line number. The refusal projection returns only `code`, `message`, and the report, so the detail the engine does compute never reaches a caller.
 - The Hub revision is a single counter on the Hub record, advanced by every Hub mutation, including a task move on another board. Each board keeps its own revision log whose revision numbers are journal event sequences; folding the oldest revisions renumbers the retained ones.
 - The board's publishing outcome is decided by `BoardAdministration.publishOutcome`, and the tool path passes the "publish when bound" policy while the interface command path never publishes.
-- A scripted stage's durable state already carries the phase, the captured executable version, the entry parameters, the saved result with its delivery status, and — since the last change in this area — the hold record with its code and bounded facts. A pure hold evaluator exists. Nothing projects any of it to an agent, and the card projections deliberately drop the whole deterministic ledger.
+- A scripted stage's durable state already carries the phase, the captured executable version, the entry parameters, the saved result with its delivery status, and — since the last change in this area — the hold record with its code and bounded facts. A pure hold evaluator exists. Nothing projects any of it to an agent, and the card projections deliberately drop the whole scripted ledger.
 - Script execution runs a TypeScript function body or a Bash program through an isolated runtime with a single `tools.bash` binding, and admits an execution only after native capability verification, an immutable capture, and an executable-version approval.
 - The workflow-architect preset owns its tool set through a step-time gate, and its skill references sit at the 7,000-character ceiling the project enforces.
 
@@ -30,7 +30,7 @@ See `proposal.md` — Why. The current state that shapes the approach:
 - No reusable instruction fragments. The workflow format is unchanged; only size is reported.
 - No per-board revision counter. The Hub revision keeps its current meaning and is not re-scoped.
 - No change to how the product publishes from the interface, and no change to how team updates are applied.
-- No real-model verification. Every acceptance check runs in the isolated lanes with deterministic traffic.
+- No real-model verification. Every acceptance check runs in the isolated lanes with scripted traffic.
 
 ## Decisions
 
@@ -60,7 +60,7 @@ Alternatives considered: a dedicated stage-scoped edit tool. Rejected as a secon
 
 ### Write one stage's script as a partial write
 
-`set_stage_script` is a stage patch over the deterministic configuration, following `set_stage_routes`: each named part is written, each unnamed part keeps its authored value, and the write goes through the same funnel. A part-level patch avoids sending a 128 KiB source to change one line and avoids literal anchors inside code.
+`set_stage_script` is a stage patch over the scripted configuration, following `set_stage_routes`: each named part is written, each unnamed part keeps its authored value, and the write goes through the same funnel. A part-level patch avoids sending a 128 KiB source to change one line and avoids literal anchors inside code.
 
 Alternatives considered: one tool per part. Rejected as a larger tool surface for the same behavior.
 
@@ -96,7 +96,7 @@ Alternatives considered: a real sandboxed shell. Rejected because a debug run mu
 
 Two new observation kinds are computed from the parsed workflow and the card references the report already receives. The reference carries the parameter names a card holds, never a value. Grouping and de-duplication key on the warning kind, the stage, and the reference.
 
-### Extract the deterministic surface from the application root
+### Extract the scripted surface from the application root
 
 `app.ts` holds the summary projection, the handoff reservation and acceptance, and the handoff dispatch. These move into a host module with the ports the root already supplies. The extraction is mechanical and precedes the new projection so the new tool has one place to live.
 
@@ -109,7 +109,7 @@ Two new observation kinds are computed from the parsed workflow and the card ref
 - **Test execution could be mistaken for a real run** → The result names the simulated responses, every shell call, and the fact that nothing was captured or approved; the tool is declared only for the architect preset.
 - **The preset references are at their size ceiling** → Guidance is rewritten by replacing text, and the change must verify the persona and each reference stay under their bounds.
 - **The report summary removes text a caller used to compare** → The digest, the partial document reads, and `get_stage` cover the same need; the complete report stays available on request.
-- **A Bash program cannot be tested in isolation** → Stated in the tool description, the spec, and the deterministic-steps document: a Bash program is the shell script itself, so the tool refuses it with an actionable problem instead of pretending a simulated shell ran it.
+- **A Bash program cannot be tested in isolation** → Stated in the tool description, the spec, and the scripted-steps document: a Bash program is the shell script itself, so the tool refuses it with an actionable problem instead of pretending a simulated shell ran it.
 
 ## Migration Plan
 

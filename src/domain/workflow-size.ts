@@ -19,9 +19,9 @@ export interface StageSizeFact {
 export const BYTES_PER_TOKEN_ESTIMATE = 4;
 
 /** One stage's authored size, or undefined when the stage authors no text. */
-export function stageSize(stage: { readonly id: string; readonly onEnterPrompt?: string; readonly deterministic?: { readonly code?: string } }): StageSizeFact | undefined {
+export function stageSize(stage: { readonly id: string; readonly onEnterPrompt?: string; readonly scripted?: { readonly code?: string } }): StageSizeFact | undefined {
   const instruction = stage.onEnterPrompt;
-  const code = stage.deterministic?.code;
+  const code = stage.scripted?.code;
   if (instruction === undefined && code === undefined) return undefined;
   const instructionBytes = instruction === undefined ? undefined : utf8Length(instruction);
   return {

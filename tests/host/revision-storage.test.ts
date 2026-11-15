@@ -16,7 +16,7 @@ class MemoryTable implements RevisionTablePort {
 }
 
 const FLOW = 'name: Flow\ninitial_column: todo\ncolumns:\n  - id: todo\n    label: Todo\n';
-const DETERMINISTIC = 'name: Flow\ninitial_column: wait\ncolumns:\n  - id: wait\n    label: Wait\n    deterministic:\n      language: bash\n      code: exit 0\n      directory: project\n      exits: {passed: done}\n  - id: done\n    label: Done\n';
+const SCRIPTED = 'name: Flow\ninitial_column: wait\ncolumns:\n  - id: wait\n    label: Wait\n    scripted:\n      language: bash\n      code: exit 0\n      directory: project\n      exits: {passed: done}\n  - id: done\n    label: Done\n';
 const NOW = '2026-11-11T09:00:00.000Z';
 
 function revisions(table: MemoryTable) {
@@ -37,7 +37,7 @@ describe('revision storage', () => {
 
   it('stores an executable board with the board log version its grammar needs', async () => {
     const table = new MemoryTable();
-    await revisions(table).record({ hubId: 'hub', boardId: 'board', previous: null, next: DETERMINISTIC, actor: { kind: 'agent', sessionId: 'session' }, origin: 'tool' });
+    await revisions(table).record({ hubId: 'hub', boardId: 'board', previous: null, next: SCRIPTED, actor: { kind: 'agent', sessionId: 'session' }, origin: 'tool' });
     const stored = table.records.get('board');
     // The board log is the journal's own append-only envelope, one event per line.
     expect(typeof stored?.board).toBe('string');

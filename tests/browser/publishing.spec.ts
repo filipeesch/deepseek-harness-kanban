@@ -38,7 +38,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await expect(row.getByRole('button', { name: /Publish|Use the team version|Keep the local version/ })).toHaveCount(0);
     await expect(page.getByText('Update the plugin', { exact: true })).toBeVisible();
     await expectLegible(page, '.kb-share-board-state');
-    await shot(page, 'deterministic-team-update-required-' + colorScheme + '.png');
+    await shot(page, 'scripted-team-update-required-' + colorScheme + '.png');
   });
 }
 

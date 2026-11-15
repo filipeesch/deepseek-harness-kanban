@@ -115,7 +115,7 @@ export function planProjectRelocation(from: ProjectLocationPaths, to: ProjectLoc
 
 /**
  * Build the stored project, discarding a default branch that has no Git root to belong
- * to. The key is kept when the project already has one, generated deterministically
+ * to. The key is kept when the project already has one, generated scriptedally
  * when it does not, and validated for uniqueness against the Hub's other projects.
  */
 export function buildProject(projectId: string, input: ProjectInput, current?: Project, takenKeys: Iterable<string> = []): RegisteredProject {

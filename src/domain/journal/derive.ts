@@ -2,7 +2,7 @@ import { authoredScalar, writeSequenceItemField } from '../yaml-map-fields.js';
 import { invalidWorkflow } from '../yaml-fields.js';
 import { applyEvents } from './conflict.js';
 import { canonicalWorkflow } from '../schema-parts.js';
-import { canonicalDeterministic } from '../deterministic-definition.js';
+import { canonicalScripted } from '../scripted-definition.js';
 import type { ConnectionLayout, TransitionRule, Workflow } from '../../shared/types.js';
 import { connectionKey } from '../connection-anchor.js';
 import { transitionRule } from '../transition-rule.js';
@@ -40,7 +40,7 @@ export interface DeriveOptions {
 
 function definition(stage: Workflow['columns'][number]): StageDefinition {
   const result: StageDefinition = { id: stage.id, key: stage.key!, name: stage.name };
-  if (stage.deterministic !== undefined) result.deterministic = structuredClone(stage.deterministic);
+  if (stage.scripted !== undefined) result.scripted = structuredClone(stage.scripted);
   if (stage.onEnterPrompt !== undefined) result.onEnterPrompt = stage.onEnterPrompt;
   if (stage.allowedTransitions !== undefined) result.allowedTransitions = stage.allowedTransitions.map(rule => cloneRule(rule));
   if (stage.position !== undefined) result.position = { ...stage.position };
@@ -132,8 +132,8 @@ export function deriveChanges(previous: BoardVersion | null, local: BoardVersion
         value: column.allowedTransitions === undefined ? null : column.allowedTransitions.map(rule => cloneRule(rule)),
       });
     }
-    const signature = (definition: typeof column.deterministic, map: ReadonlyMap<string, string>): string => JSON.stringify(canonicalDeterministic(definition === undefined ? undefined : { ...definition, exits: Object.fromEntries(Object.entries(definition.exits).map(([name, target]) => [name, identity(map, target)])) }));
-    if (signature(previousColumn.deterministic, beforeIdentity) !== signature(column.deterministic, afterIdentity)) changes.push({ kind: 'stage.field-changed', key: column.key!, field: 'deterministic', value: column.deterministic === undefined ? null : structuredClone(column.deterministic) });
+    const signature = (definition: typeof column.scripted, map: ReadonlyMap<string, string>): string => JSON.stringify(canonicalScripted(definition === undefined ? undefined : { ...definition, exits: Object.fromEntries(Object.entries(definition.exits).map(([name, target]) => [name, identity(map, target)])) }));
+    if (signature(previousColumn.scripted, beforeIdentity) !== signature(column.scripted, afterIdentity)) changes.push({ kind: 'stage.field-changed', key: column.key!, field: 'scripted', value: column.scripted === undefined ? null : structuredClone(column.scripted) });
     if (layoutSignature(previousColumn) !== layoutSignature(column)) {
       changes.push({
         kind: 'stage.layout-set', key: column.key!,
@@ -193,7 +193,7 @@ export function deriveChanges(previous: BoardVersion | null, local: BoardVersion
   return changes;
 }
 
-/** A deterministic identity sequence, so derivation never depends on a host service. */
+/** A scripted identity sequence, so derivation never depends on a host service. */
 function localAllocator(): () => string {
   let next = 0;
   return () => 'stage-' + (++next);

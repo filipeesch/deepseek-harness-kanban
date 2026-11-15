@@ -39,7 +39,7 @@ Implementation tasks come first, followed by the verification plan. Each task st
 - [x] 5.2 Add the reported failed `SHARED_WORKTREE` operation fixture in `tests/host/app.test.ts` and the client task fixtures in `tests/client/delete-dialog.test.tsx` and `tests/client/board.test.tsx` (failed operation, worktree, attached, no-worktree, unclaimed, running, and waiting tasks); verify both suites compile and the existing tests pass.
 - [x] 5.3 Add deferred-command and rejection helpers to `tests/client/helpers.ts` for busy, inline failure, and bulk-progress tests; verify the client suite compiles.
 - [x] 5.4 Extend `tests/browser/fake-api.ts` and `tests/browser/harness.tsx` with a delete-target task and a failed-deletion task; verify the existing browser specs pass.
-- [x] 5.5 Add a two-turn deterministic child fixture under `tests/e2e-dsh/` and thread its path through `scripts/e2e-dsh.mjs`; verify `node scripts/e2e-dsh.mjs --check` still passes and the fixture is consumed by the deletion scenario in section 9.
+- [x] 5.5 Add a two-turn scripted child fixture under `tests/e2e-dsh/` and thread its path through `scripts/e2e-dsh.mjs`; verify `node scripts/e2e-dsh.mjs --check` still passes and the fixture is consumed by the deletion scenario in section 9.
 
 ## 6. Fast module tests
 

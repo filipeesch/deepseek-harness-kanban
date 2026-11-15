@@ -1,5 +1,5 @@
-import type { DeterministicSummary } from '../shared/deterministic.js';
-import { ownedScript, scriptActive } from './deterministic-view.js';
+import type { ScriptedSummary } from '../shared/scripted.js';
+import { ownedScript, scriptActive } from './scripted-view.js';
 import type { KanbanSnapshot, Task } from '../shared/types.js';
 
 /**
@@ -21,7 +21,7 @@ export const EMPTY_SCOPE_ACTIVITY: ScopeActivity = { runningTasks: 0, runningTas
  * A task runs while it has a running turn, an owned subagent still running, or
  * unsettled background work. Unread, awaiting-reply, and failure attention fold across the scope.
  */
-export function projectScopeActivity(tasks: readonly Task[], attention: KanbanSnapshot['attention'], scripts: Readonly<Record<string, DeterministicSummary>> = {}): ScopeActivity {
+export function projectScopeActivity(tasks: readonly Task[], attention: KanbanSnapshot['attention'], scripts: Readonly<Record<string, ScriptedSummary>> = {}): ScopeActivity {
   let runningTasks = 0;
   let unread = false;
   let awaitingReply = false;

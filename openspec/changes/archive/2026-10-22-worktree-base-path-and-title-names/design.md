@@ -16,7 +16,7 @@ See `proposal.md` for motivation and the delta specs for required behavior. The 
 
 - One board-level base path for future task worktree destinations.
 - Readable, title-derived branch and destination defaults without the task UUID or a `task/` prefix.
-- Deterministic collision avoidance that keeps `destination = base path + branch`.
+- Scripted collision avoidance that keeps `destination = base path + branch`.
 - A Git form that is useful before any configuration and remains fully overridable.
 
 **Non-Goals:**

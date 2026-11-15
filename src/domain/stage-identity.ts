@@ -67,7 +67,7 @@ export function assignStageIdentities(input: {
 
 /**
  * Give every stage the identity its authored identifier names, which is the
- * deterministic genesis used when a workflow arrives without identities. Two
+ * scripted genesis used when a workflow arrives without identities. Two
  * installations reading the same document derive the same identities.
  */
 export function seedStageIdentities(workflow: Workflow): Workflow {

@@ -32,9 +32,9 @@ export function readStage(input: { readonly text: string; readonly stageId: stri
   // the mapping itself, and either shape must be read before the source is withheld.
   const contents = document.contents as unknown;
   const item = isSeq(contents) ? contents.items[0] : contents;
-  const deterministic = isMap(item) ? item.get('deterministic', true) : undefined;
-  const codeNode = isMap(deterministic) ? deterministic.get('code', true) : undefined;
-  const fileNode = isMap(deterministic) ? deterministic.get('file', true) : undefined;
+  const scripted = isMap(item) ? item.get('scripted', true) : undefined;
+  const codeNode = isMap(scripted) ? scripted.get('code', true) : undefined;
+  const fileNode = isMap(scripted) ? scripted.get('file', true) : undefined;
   if (!isScalar(codeNode) && !isScalar(fileNode)) return { stageId: input.stageId, text: block };
   if (isScalar(fileNode) && typeof fileNode.value === 'string') {
     // The external path is the authored declaration, not the source bytes.

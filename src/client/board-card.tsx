@@ -3,8 +3,8 @@ import type { Attention, Column, Task, Workflow } from '../shared/types.js';
 import { TaskCard } from './task-card.js';
 import { autoModeView } from './auto-mode.js';
 import { advanceDestination } from '../domain/transitions.js';
-import { useScriptSummary } from './deterministic-context.js';
-import { ownedScript } from './deterministic-view.js';
+import { useScriptSummary } from './scripted-context.js';
+import { ownedScript } from './scripted-view.js';
 import type { AutoRunController, AutoRunInput } from './auto-run.js';
 
 export interface BoardCardProps {

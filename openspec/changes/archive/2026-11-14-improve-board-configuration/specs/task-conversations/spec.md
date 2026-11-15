@@ -147,11 +147,11 @@ instruction, or by a cross-card message delivery use the board's default model w
 one and the deployment default otherwise, and SHALL use the board's default agent preset when the
 board names one and the host default preset otherwise.
 
-A deterministic entry SHALL NOT create a conversation, select a preset or model, or start a model
-turn solely to execute code. A task whose first execution is deterministic SHALL remain able to have
+A scripted entry SHALL NOT create a conversation, select a preset or model, or start a model
+turn solely to execute code. A task whose first execution is scripted SHALL remain able to have
 zero native conversations. When that execution later selects an agent destination whose instruction
 needs a conversation, the host SHALL create or resolve only the conversation required by that
-instruction using the normal directory and board-model and board-preset rules; the deterministic
+instruction using the normal directory and board-model and board-preset rules; the scripted
 handoff SHALL accompany the instruction. A script or manual destination SHALL receive or retain its
 handoff without creating a conversation.
 
@@ -226,17 +226,17 @@ handoff without creating a conversation.
 - **WHEN** the task has a ready worktree, an attached worktree, or a recorded base-project choice
 - **THEN** the card start creates the first conversation at the task's current effective directory
 
-#### Scenario: Run a deterministic first stage without creating a chat
+#### Scenario: Run a scripted first stage without creating a chat
 
-- **WHEN** a newly created task enters a deterministic initial stage
+- **WHEN** a newly created task enters a scripted initial stage
 - **THEN** its script-only execution has no native conversation tab
 - **AND** the normal explicit native conversation actions remain available under their existing preconditions
 
 #### Scenario: Create a conversation only for a downstream agent instruction
 
-- **WHEN** a deterministic output enters an agent stage and the task has no open conversation
+- **WHEN** a scripted output enters an agent stage and the task has no open conversation
 - **THEN** one conversation is created in the task's effective directory for that agent instruction
-- **AND** the instruction includes the identified deterministic handoff
+- **AND** the instruction includes the identified scripted handoff
 - **AND** no conversation was required for the source script
 
 ### Requirement: Agent-preset cards start task conversations

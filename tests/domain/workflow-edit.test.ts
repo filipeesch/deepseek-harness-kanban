@@ -223,3 +223,15 @@ describe('edit failures and scoped edits', () => {
     expect(unknown.details).toMatchObject({ index: 0, scope: { stage: 'b', field: 'description' } });
   });
 });
+
+describe('field scope across the authored key spelling', () => {
+  const LEGACY = 'name: Flow\ncolumns:\n  - id: wait\n    label: Wait\n    deterministic:\n      language: bash\n      code: echo ok\n      exits: {ok: done}\n  - id: done\n    label: Done\n';
+  it('resolves the current spelling to the legacy authored key', () => {
+    const result = applyWorkflowEdits(LEGACY, [{ old: 'echo ok', new: 'echo changed', stage: 'wait', field: 'scripted' }]);
+    expect(result).toContain('echo changed');
+  });
+  it('accepts the legacy spelling as a scope', () => {
+    const result = applyWorkflowEdits(LEGACY, [{ old: 'echo ok', new: 'echo changed', stage: 'wait', field: 'deterministic' }]);
+    expect(result).toContain('echo changed');
+  });
+});

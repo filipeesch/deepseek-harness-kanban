@@ -57,16 +57,24 @@ The action SHALL be focusable and SHALL activate from the keyboard as readily as
 
 ### Requirement: Stage editor form
 
-The stage edit action SHALL open one modal editor for a single stage. The editor SHALL present the stage's display name, execution mode, identifier, and whether it is the board's initial stage, and SHALL present a save action and a cancel action. For a legacy instruction or manual stage it SHALL present the entry instruction and allowed transitions. For a deterministic stage it SHALL present the deterministic configuration instead of a second instruction or allowed-transition definition. The editor SHALL edit a draft: changing a field SHALL NOT store anything until the save action is activated, and the cancel action, the Escape key, and the close action SHALL dismiss the editor without storing anything and without changing the stage.
+The stage edit action SHALL open one modal editor for a single stage. The editor SHALL present its content as five tabs — Stage, Execution, Routing, Inputs, and Approval — and SHALL present its save action and its cancel action in a footer that remains visible while the active tab's content scrolls. A stage that authors no program SHALL present the Stage, Execution, and Routing tabs only, and a stage that authors a program SHALL present all five. The editor SHALL hold one width and one height across every tab, so selecting another tab never resizes the overlay, and only the active tab's panel SHALL scroll.
 
-The save action SHALL be unavailable while the draft holds no change and while a save is in flight. The editor SHALL validate its draft before sending it and SHALL present every validation problem inside the editor next to the field it concerns. When a save is rejected, the editor SHALL remain open with the draft intact and SHALL present the problem inline rather than as a board-level notice. After a successful save the editor SHALL close and the board SHALL present the stored stage, except when the saved deterministic stage's executable version is not approved: the editor SHALL remain open, keep the stored stage, and present the approval action for that stored version. Saving SHALL NOT approve an executable version. The editor SHALL present the stored executable version's approval state for the board and stage, and SHALL distinguish that state from the draft: a draft that differs from the stored stage SHALL NOT be presented as approved.
+The Stage tab SHALL present the stage's display name, identifier, execution mode, and whether it is the board's initial stage, together with the action that makes it initial. The Execution tab SHALL present the entry instruction of a stage that authors no program, and the program of a stage that authors one. The Routing tab SHALL present the allowed transitions of a stage that authors no program, and the named exits of a stage that authors one. The Inputs tab SHALL present the declared parameters and the authorized local variable names. The Approval tab SHALL present the stored executable version and its approval state.
 
-The deterministic form SHALL edit Bash or TypeScript, exactly one inline code or external file source, the task-or-base-project directory choice, named output routes, authorized local variable names as defined by `deterministic-steps`, and the declared parameters, each with a required name and an optional description. The parameter declaration SHALL be edited independently of any entry's values: the form SHALL NOT present, accept, or store an entry's parameter values. The inline program SHALL be editable as multiline code. The form SHALL make instruction and deterministic execution mutually exclusive and SHALL reject a conflicting configuration rather than silently running both. It SHALL distinguish the saved authored configuration from the captured version of any existing execution: saving SHALL NOT grant approval, start code, replace an active snapshot, or restart a task. Local variable values SHALL be managed for the selected project and stable stage through the native credential mechanism, not serialized into shared workflow text; their dedicated surface SHALL report configured or missing state without returning stored values to the browser, and the editor SHALL NOT present stored values.
+The editor SHALL edit a draft: changing a field SHALL NOT store anything until the save action is activated, and the cancel action, the Escape key, and the close action SHALL dismiss the editor without storing anything and without changing the stage. Selecting another tab SHALL NOT store, discard, or validate anything, and SHALL keep the draft and its caret and undo history for every field it holds.
+
+The save action SHALL be unavailable while the draft holds no change and while a save is in flight. The editor SHALL validate its draft before sending it and SHALL present every validation problem inside the editor next to the field it concerns, on the tab that holds that field. When a save is rejected, the editor SHALL remain open with the draft intact and SHALL present the problem inline rather than as a board-level notice.
+
+After a successful save the editor SHALL close and the board SHALL present the stored stage, except when the saved stage's executable version still requires approval as `scripted-steps` defines it: the editor SHALL then present the stored version's approval state and the approval action for that stored version instead of the draft form, and SHALL offer no further edit of the closed draft.
+
+The program form SHALL edit Bash or TypeScript, exactly one inline code or external file source, the task-or-base-project directory choice, named output routes, authorized local variable names as defined by `scripted-steps`, and the declared parameters, each with a required name and an optional description. The parameter declaration SHALL be edited independently of any entry's values: the form SHALL NOT present, accept, or store an entry's parameter values. The inline program SHALL be editable as multiline code that the user can enlarge. The form SHALL make an agent instruction and a program mutually exclusive and SHALL reject a conflicting configuration rather than silently running both. It SHALL distinguish the saved authored configuration from the captured version of any existing execution: saving SHALL NOT start code, replace an active snapshot, or restart a task. Local variable values SHALL be managed for the selected project and stable stage through the native credential mechanism, not serialized into shared workflow text; their dedicated surface SHALL report configured or missing state without returning stored values to the browser, and the editor SHALL NOT present stored values.
 
 #### Scenario: Open the editor with the stored stage
 
 - **WHEN** the user activates the stage edit action for a stage that has a name, an entry instruction, and two allowed targets
-- **THEN** the editor presents that name, that instruction, and those two targets
+- **THEN** the editor presents the Stage tab with that name
+- **AND** its Execution tab presents that instruction
+- **AND** its Routing tab presents those two targets
 - **AND** no change is stored
 
 #### Scenario: Discard a draft
@@ -92,41 +100,47 @@ The deterministic form SHALL edit Bash or TypeScript, exactly one inline code or
 
 #### Scenario: Edit a deterministic stage without activating it
 
-- **WHEN** the user opens a deterministic stage, edits its inline script or routes, and saves
-- **THEN** the editor validates and stores that stage's deterministic fields using the same semantics as YAML editing
-- **AND** it does not execute the script or approve its version
+- **WHEN** the user opens a stage that authors a program, edits its inline code or routes, and saves
+- **THEN** the editor validates and stores that stage's program fields using the same semantics as YAML editing
+- **AND** it does not execute the script
 - **AND** an existing run keeps its captured version until explicit Play
+
+#### Scenario: Close after an author save of an inline program
+
+- **WHEN** the user saves an inline program from the editor
+- **THEN** the save authorizes the stored executable version as `scripted-steps` defines it
+- **AND** the editor closes and the board presents the stored stage
+
+#### Scenario: Keep the editor open after saving an unapproved version
+
+- **WHEN** the user saves a program whose stored version still requires approval, which an external file source always does
+- **THEN** the editor stays open with the stored version
+- **AND** it presents the approval action for that stored version
+- **AND** no code runs and no card starts
 
 #### Scenario: Reject mixed prompt and script execution
 
-- **WHEN** a draft supplies deterministic execution together with a nonempty agent instruction or a separate allowed-transition list
+- **WHEN** a draft supplies a program together with a nonempty agent instruction or a separate allowed-transition list
 - **THEN** save is rejected with an inline field diagnostic
 - **AND** no conflicting execution definition is stored
 
 #### Scenario: Declare a parameter in the deterministic form
 
-- **WHEN** the user adds a parameter name with a description to a deterministic draft and saves
-- **THEN** that name and description are stored in the stage's deterministic configuration
+- **WHEN** the user adds a parameter name with a description to a scripted draft and saves
+- **THEN** that name and description are stored in the stage's program definition
 - **AND** no parameter value is stored by the editor
 - **AND** an existing run keeps its captured declaration until explicit Play
 
 #### Scenario: Reject an invalid parameter declaration
 
-- **WHEN** a draft repeats a parameter name, uses an unsafe name, or supplies an empty description
-- **THEN** the editor presents the problem inline next to the parameter field
+- **WHEN** a draft repeats a parameter name, uses an unsafe name, or exceeds the accepted bounds
+- **THEN** the editor presents the problem inline next to the parameter field on the tab that holds it
 - **AND** save does not store a partial or conflicting declaration
-
-#### Scenario: Keep the editor open after saving an unapproved version
-
-- **WHEN** the user saves a deterministic stage whose stored executable version is not approved
-- **THEN** the editor stays open with the stored stage
-- **AND** it presents the approval action for that stored version
-- **AND** no code runs and no card starts
 
 #### Scenario: Distinguish the stored version from the draft
 
-- **WHEN** the editor holds an unsaved deterministic draft while the stored version is approved
-- **THEN** the editor presents the stored version as approved
+- **WHEN** the editor holds an unsaved program draft while the stored version is approved
+- **THEN** the Approval tab presents the stored version as approved
 - **AND** it does not claim that the draft is approved
 
 ### Requirement: Stage display name editing
@@ -154,7 +168,7 @@ The editor SHALL edit the stage's display name. The name SHALL be required, SHAL
 
 The editor SHALL edit the stage's entry instruction as multiline text. An instruction with content SHALL be stored for that stage; an instruction the user clears or reduces to whitespace SHALL remove the stage's entry instruction, so no instruction is delivered when a task enters that stage. Changing the instruction SHALL NOT change the instruction already delivered to a task that entered the stage earlier.
 
-This instruction field SHALL apply to the non-deterministic execution mode. Editing or clearing an agent instruction SHALL NOT implicitly create or run deterministic configuration. Switching to deterministic execution SHALL require a valid mutually exclusive deterministic draft; saving either mode SHALL NOT alter a script version already captured by another task execution.
+This instruction field SHALL apply to the non-scripted execution mode. Editing or clearing an agent instruction SHALL NOT implicitly create or run scripted configuration. Switching to scripted execution SHALL require a valid mutually exclusive scripted draft; saving either mode SHALL NOT alter a script version already captured by another task execution.
 
 #### Scenario: Store an entry instruction
 
@@ -175,19 +189,19 @@ This instruction field SHALL apply to the non-deterministic execution mode. Edit
 
 #### Scenario: Keep instruction editing separate from a captured script
 
-- **WHEN** the user changes the saved stage execution mode while a task still owns a captured deterministic run
+- **WHEN** the user changes the saved stage execution mode while a task still owns a captured scripted run
 - **THEN** the saved draft follows mutual-exclusion validation
 - **AND** the existing execution is not replaced or activated by that save
 
 ### Requirement: Allowed transitions editing
 
-For a stage without deterministic configuration, the editor SHALL edit the stage's allowed transition targets in one of three modes: unrestricted, meaning any other stage may be a destination; restricted to a chosen set of the board's other stages; or no destinations, meaning the stage is terminal and permits no other stage. Unrestricted SHALL be the mode of a stage that authors no allowed transitions, and choosing it SHALL remove the stage's allowed transitions. The no-destinations mode SHALL be the mode of a stage that authors an empty allowed transitions list, and choosing it SHALL store an empty list. A stage that authors an empty list SHALL be presented in the no-destinations mode. In restricted mode the editor SHALL present the board's other stages as a checklist, so a destination can only be chosen from the stages that exist, and SHALL keep the stage itself out of the list.
+For a stage without scripted configuration, the editor SHALL edit the stage's allowed transition targets in one of three modes: unrestricted, meaning any other stage may be a destination; restricted to a chosen set of the board's other stages; or no destinations, meaning the stage is terminal and permits no other stage. Unrestricted SHALL be the mode of a stage that authors no allowed transitions, and choosing it SHALL remove the stage's allowed transitions. The no-destinations mode SHALL be the mode of a stage that authors an empty allowed transitions list, and choosing it SHALL store an empty list. A stage that authors an empty list SHALL be presented in the no-destinations mode. In restricted mode the editor SHALL present the board's other stages as a checklist, so a destination can only be chosen from the stages that exist, and SHALL keep the stage itself out of the list.
 
 Each chosen target SHALL carry an optional free-text condition describing when that transition applies. A condition field SHALL present that condition as editable multiline text whose field the user can enlarge, and SHALL NOT open a second editor for it; the text SHALL be stored with the transition it belongs to when the stage is saved. An empty or whitespace-only condition SHALL be stored as no condition.
 
 The editor SHALL reject a restricted draft that chooses no destination, and SHALL present that problem as a direction to the no-destinations mode, so a stage that permits no destination is reached only through that mode. The editor SHALL reject a target that names the edited stage, a stage that no longer exists, and the same destination chosen twice.
 
-A deterministic stage SHALL use its named exit mapping instead of authoring this allowed-transition list. Its editor SHALL choose each exit's destination from other existing stages, SHALL reject a self-target or an unknown target, and SHALL allow distinct exit names to select the same stage. The configured destination set SHALL be derived from those mappings without choosing a first-exit default. Legacy free-text conditions SHALL NOT become output selectors or executable predicates, and editing one execution mode SHALL NOT create a second routing source.
+A scripted stage SHALL use its named exit mapping instead of authoring this allowed-transition list. Its editor SHALL choose each exit's destination from other existing stages, SHALL reject a self-target or an unknown target, and SHALL allow distinct exit names to select the same stage. The configured destination set SHALL be derived from those mappings without choosing a first-exit default. Legacy free-text conditions SHALL NOT become output selectors or executable predicates, and editing one execution mode SHALL NOT create a second routing source.
 
 #### Scenario: Present the other stages as choices
 
@@ -256,7 +270,7 @@ A deterministic stage SHALL use its named exit mapping instead of authoring this
 
 #### Scenario: Choose several named exits for the same destination
 
-- **WHEN** the deterministic editor maps two different exit names to the same other stage
+- **WHEN** the scripted editor maps two different exit names to the same other stage
 - **THEN** both exit names and mappings are retained
 - **AND** the destination is not rejected as a duplicate legacy checklist entry
 - **AND** no separate allowed-transition list or default first exit is authored
@@ -284,9 +298,9 @@ The editor SHALL present an action that makes the edited stage the workflow's in
 
 ### Requirement: Stage identifier editing
 
-The editor SHALL present the stage identifier as read-only until the board reports no in-flight work, and SHALL present, when it is unavailable, why the identifier cannot be edited. The board SHALL count as having in-flight work when any task of the board has a running conversation, a pending transition, an armed automatic advance, an unresolved stage instruction, an operation in progress, or a worktree that is being prepared or is in error, or an active, stopping, recovering, or result-awaiting-delivery deterministic execution. The identifier field SHALL otherwise be editable, SHALL be validated as a safe identifier, and SHALL be rejected with an inline problem when it is empty or when another stage of the board already uses it.
+The editor SHALL present the stage identifier as read-only until the board reports no in-flight work, and SHALL present, when it is unavailable, why the identifier cannot be edited. The board SHALL count as having in-flight work when any task of the board has a running conversation, a pending transition, an armed automatic advance, an unresolved stage instruction, an operation in progress, or a worktree that is being prepared or is in error, or an active, stopping, recovering, or result-awaiting-delivery scripted execution. The identifier field SHALL otherwise be editable, SHALL be validated as a safe identifier, and SHALL be rejected with an inline problem when it is empty or when another stage of the board already uses it.
 
-Changing the identifier SHALL keep the board valid and SHALL keep every stage reference pointing at the same stage: the initial stage, group membership, other stages' allowed transition targets, deterministic exit destinations, and connection layouts SHALL be rewritten to the new identifier. Tasks that are idle in the edited stage SHALL be migrated to the new identifier by the same save, so no task is left in a stage the workflow does not define. The save SHALL be all-or-nothing: when any reference or task cannot be migrated, nothing SHALL be stored. Changing the identifier SHALL NOT change the stage's stable identity: the stage SHALL remain the same stage to everything that addresses it by identity, and the authored identity SHALL be preserved exactly as it was.
+Changing the identifier SHALL keep the board valid and SHALL keep every stage reference pointing at the same stage: the initial stage, group membership, other stages' allowed transition targets, scripted exit destinations, and connection layouts SHALL be rewritten to the new identifier. Tasks that are idle in the edited stage SHALL be migrated to the new identifier by the same save, so no task is left in a stage the workflow does not define. The save SHALL be all-or-nothing: when any reference or task cannot be migrated, nothing SHALL be stored. Changing the identifier SHALL NOT change the stage's stable identity: the stage SHALL remain the same stage to everything that addresses it by identity, and the authored identity SHALL be preserved exactly as it was.
 
 The identifier edit SHALL NOT require a confirmation step. On a board that is published to a team, the identifier SHALL remain editable, and the rename SHALL reach other members as a change to that stage's identifier rather than as a removal and a creation, so that each member migrates its own tasks in the same save that stores the resulting workflow. The rename SHALL NOT require a team review and SHALL NOT be blocked by another member's tasks.
 
@@ -332,15 +346,15 @@ The rename SHALL preserve the stable local stage association used by executable 
 - **AND** other members apply it as a change to that stage's identifier, so their own tasks in that stage move with it
 - **AND** no team review is required for the rename
 
-#### Scenario: Withhold identifier edits during deterministic work
+#### Scenario: Withhold identifier edits during scripted work
 
-- **WHEN** a board has an active or result-awaiting-delivery deterministic execution
+- **WHEN** a board has an active or result-awaiting-delivery scripted execution
 - **THEN** the identifier field is read-only with an explanation
 - **AND** the ordinary script and route fields remain editable under their own validation and capture rules
 
 #### Scenario: Rename a stage without crossing local variable scopes
 
-- **WHEN** an idle deterministic stage identifier is renamed and other stages map exits to it
+- **WHEN** an idle scripted stage identifier is renamed and other stages map exits to it
 - **THEN** those authored exit destinations follow the same stage in the same save
 - **AND** its local project-and-stage variable associations remain distinct for every project
 - **AND** no secret value or trust grant is published by the rename
@@ -349,7 +363,7 @@ The rename SHALL preserve the stable local stage association used by executable 
 
 A stage edit SHALL change only the fields the editor edits. Every other character of the authored workflow SHALL stay as its author wrote it: comments, key order, quoting style, blank lines, connection layouts, stage position and size, and any authored key the editor does not present. Other stages SHALL NOT change, and the workflow document the edit produces SHALL be validated before it is stored.
 
-Deterministic configuration SHALL obey the same preservation rule. Editing one script, source path, directory choice, exit route, or authorized variable-name list SHALL NOT rewrite unrelated stages or discard comments, scalar text, or layout. An edit that does not present deterministic fields SHALL preserve them. Local credentials, trust grants, captured execution state, and secret values SHALL NOT be inserted into the workflow document.
+Scripted configuration SHALL obey the same preservation rule. Editing one script, source path, directory choice, exit route, or authorized variable-name list SHALL NOT rewrite unrelated stages or discard comments, scalar text, or layout. An edit that does not present scripted fields SHALL preserve them. Local credentials, trust grants, captured execution state, and secret values SHALL NOT be inserted into the workflow document.
 
 #### Scenario: Preserve authored comments and order
 
@@ -370,18 +384,29 @@ Deterministic configuration SHALL obey the same preservation rule. Editing one s
 
 #### Scenario: Preserve a script while editing unrelated stage fields
 
-- **WHEN** the user changes only a deterministic stage's display name in a workflow with authored code and comments
+- **WHEN** the user changes only a scripted stage's display name in a workflow with authored code and comments
 - **THEN** its script bytes and untouched configuration remain as authored
 - **AND** no other stage or layout is rewritten
 - **AND** no local variable value, trust, or execution snapshot is serialized into YAML
 
 ### Requirement: Stage script approval
 
-The stage editor SHALL present an approval action for the stored executable version of the edited deterministic stage when that version is not approved, and SHALL present the approved state when it is. The approval action SHALL open the executable-version review defined by `deterministic-steps` for the stored version. Activating it SHALL NOT save the draft, replace the stored workflow, execute code, start a card, create a conversation or worktree, or move a task. Approving SHALL resume every waiting entry of that board, stage, and executable version whose captured execution context remains valid. The editor SHALL reject an approval whose version changed after the review and SHALL ask for a new review. When the primary source is an external file resolved relative to a task or project directory and different directories produce different primary bytes, the editor SHALL NOT present the stage as approved by a single action: it SHALL state that each resolved version needs its own approval and SHALL approve only the version it can resolve from the authored configuration.
+The editor's Approval tab SHALL present the approval state of the stored executable version of the stage it edits, and SHALL present the approval action when that version is not approved. The approval action SHALL open the executable-version review defined by `scripted-steps` for the stored version. Activating it SHALL NOT save the draft, replace the stored workflow, execute code, start a card, create a conversation or worktree, or move a task. Approving SHALL resume every waiting entry of that board, stage, and executable version whose captured execution context remains valid. The editor SHALL reject an approval whose version changed after the review and SHALL ask for a new review.
+
+The Approval tab SHALL present where the stored version's approval came from, as recorded by `scripted-steps`: the author's own save in this editor, or an explicit review. A version the author saved as an inline program SHALL be presented as approved without offering a second approval action for the same bytes.
+
+When the primary source is an external file resolved relative to a task or project directory and different directories produce different primary bytes, the editor SHALL NOT present the stage as approved by a single action: it SHALL state that each resolved version needs its own approval and SHALL approve only the version it can resolve from the authored configuration.
+
+#### Scenario: Present an approval recorded by the author's save
+
+- **WHEN** the user saves an inline program and reopens the stage editor
+- **THEN** the Approval tab presents the stored version as approved
+- **AND** it presents the approval as recorded by the author's save
+- **AND** it offers no second approval action for that version
 
 #### Scenario: Approve the stored version from the editor
 
-- **WHEN** the user opens a deterministic stage whose stored version is not approved and approves it from the editor
+- **WHEN** the user opens a stage whose stored version requires approval, such as one authored with an external file source, and approves it from the Approval tab
 - **THEN** the stored version becomes approved for the board and stage
 - **AND** the stored workflow is unchanged
 - **AND** no card, conversation, worktree, or execution is created by the approval
@@ -403,3 +428,74 @@ The stage editor SHALL present an approval action for the stored executable vers
 - **WHEN** the stage's primary source is an external file whose bytes depend on the execution directory
 - **THEN** the editor does not present one action as approving every resolved version
 - **AND** it explains that each resolved version needs its own approval
+
+### Requirement: Stage editor tab navigation
+
+The stage editor SHALL present a tab row whose labels are Stage, Execution, Routing, Inputs, and Approval, in that order. The tab row SHALL present only the tabs the edited stage has content for: a stage that authors no program SHALL present Stage, Execution, and Routing, and a stage that authors a program SHALL present all five. A tab label SHALL name the concern it holds and SHALL be reachable and activatable from the keyboard. The tab row SHALL expose one tab stop, with arrow keys and the Home and End keys moving between tabs, and it SHALL report the selected tab and the panel it controls to assistive technology.
+
+Opening the editor SHALL select the Stage tab, except when the surface that opened it names another tab: a scripted stage's connection in the workflow diagram opens the Routing tab, and a card's script panel opens the Execution tab. A stage that authors no program keeps its condition editing in the diagram, so a connection there opens no stage editor. Selecting a tab SHALL NOT store, discard, or validate the draft, and SHALL NOT change the overlay's size.
+
+#### Scenario: Present the tabs a stage has content for
+
+- **WHEN** the user opens the editor for a stage that authors no program
+- **THEN** the tab row presents Stage, Execution, and Routing
+- **AND** it presents no Inputs or Approval tab
+
+#### Scenario: Present every tab for a scripted stage
+
+- **WHEN** the user opens the editor for a stage that authors a program
+- **THEN** the tab row presents Stage, Execution, Routing, Inputs, and Approval in that order
+
+#### Scenario: Open on the Stage tab
+
+- **WHEN** the user activates the stage edit action in a stage header
+- **THEN** the editor opens with the Stage tab selected
+
+#### Scenario: Open on the tab a surface names
+
+- **WHEN** the user opens the editor from a card's script panel
+- **THEN** the Execution tab is selected
+- **AND** when the user opens it from a connection of the workflow diagram whose source stage authors a program, the Routing tab is selected
+
+#### Scenario: Keep the draft across tabs
+
+- **WHEN** the user edits a name on the Stage tab, selects the Execution tab, and returns to the Stage tab
+- **THEN** the edit is still present
+- **AND** nothing was stored
+- **AND** no validation problem was raised by the tab change
+
+#### Scenario: Keep the overlay size across tabs
+
+- **WHEN** the user switches between the tab with the least content and the tab with the most content
+- **THEN** the overlay keeps the same width and height
+- **AND** only the active panel scrolls
+
+#### Scenario: Navigate between tabs from the keyboard
+
+- **WHEN** the tab row holds focus and the user presses an arrow key, Home, or End
+- **THEN** the next, first, or last tab is selected
+- **AND** focus stays on the tab row
+- **AND** the content panel for the selected tab is presented
+
+### Requirement: Stage editor problem navigation
+
+The editor SHALL mark every tab that holds a validation problem and SHALL announce that state in the tab's accessible name. When a save is refused for a problem outside the selected tab, the editor SHALL select the first tab, in tab order, that holds a problem, so a refusal never leaves the author on a tab that presents no problem. The problem SHALL remain presented inline next to the field it concerns, and the mark SHALL clear once no field on that tab holds a problem.
+
+#### Scenario: Mark a tab that holds a problem
+
+- **WHEN** the user clears the stage name and activates save
+- **THEN** the editor presents the inline problem beside the name field
+- **AND** the Stage tab announces that it holds a problem
+
+#### Scenario: Reach a problem that is not on the selected tab
+
+- **WHEN** the user is on the Routing tab and activates save while a field on the Inputs tab holds a problem
+- **THEN** the editor selects the Inputs tab
+- **AND** it presents the problem beside the field that caused it
+- **AND** no command is sent
+
+#### Scenario: Clear the mark after a fix
+
+- **WHEN** the user corrects the only problem on a marked tab
+- **THEN** that tab no longer announces a problem
+- **AND** the stored stage is unchanged until the user saves

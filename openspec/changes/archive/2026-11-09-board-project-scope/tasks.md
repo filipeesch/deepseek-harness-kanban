@@ -9,8 +9,8 @@
 
 ## 2. Project key and placeholder lifecycle
 
-- [x] 2.1 Implement deterministic key generation from a project name with a collision suffix over the existing key set; verify with a unit test that the same name and key set produce the same key, that a collision produces a suffix, and that the suffix is stable
-- [x] 2.2 Backfill keys when the Hub opens, over the raw loaded records and before the aggregate is parsed, persisting once; verify with a host test that a Hub stored without keys opens with deterministic keys, that the second open writes nothing, and that two names that slug to the same value receive different keys
+- [x] 2.1 Implement scripted key generation from a project name with a collision suffix over the existing key set; verify with a unit test that the same name and key set produce the same key, that a collision produces a suffix, and that the suffix is stable
+- [x] 2.2 Backfill keys when the Hub opens, over the raw loaded records and before the aggregate is parsed, persisting once; verify with a host test that a Hub stored without keys opens with scripted keys, that the second open writes nothing, and that two names that slug to the same value receive different keys
 - [x] 2.3 Assign the key on a new project save and validate uniqueness within the Hub; verify with a host test that a duplicate key is rejected and that the stored project is unchanged
 - [x] 2.4 Rewrite the key in every board scope of the Hub in the same transaction that changes a project key; verify with a host test that the board refers to the new key and no board refers to the old one
 - [x] 2.5 Remove a project's key from every board scope of the Hub when the project is deleted, and allow deleting a placeholder without the project-in-use precondition; verify with a host test for both a project with cards on another board and a placeholder

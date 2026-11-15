@@ -115,6 +115,7 @@ test('edits a transition list and its conditions in one resizable field', async 
   await openBoard(page);
   await page.getByRole('button', { name: 'Edit stage Explore' }).click();
   const dialog = page.getByRole('dialog', { name: 'Edit stage' });
+  await dialog.getByRole('tab', { name: /^Routing/ }).click();
   await dialog.getByLabel('Choose destinations').check();
   await dialog.getByLabel('Allow transition to Propose').check();
   const condition = dialog.getByRole('textbox', { name: 'Condition for Propose', exact: true });
@@ -134,6 +135,7 @@ test('chooses no destinations for a terminal stage', async ({ page }) => {
   await openBoard(page);
   await page.getByRole('button', { name: 'Edit stage Explore' }).click();
   const dialog = page.getByRole('dialog', { name: 'Edit stage' });
+  await dialog.getByRole('tab', { name: /^Routing/ }).click();
   await dialog.getByLabel('No destinations').check();
   await dialog.getByRole('button', { name: 'Save stage' }).click();
   await expect(dialog).toBeHidden();
@@ -145,11 +147,13 @@ test('opens a terminal stage in the no-destinations mode', async ({ page }) => {
   await openBoard(page);
   await page.getByRole('button', { name: 'Edit stage Explore' }).click();
   const dialog = page.getByRole('dialog', { name: 'Edit stage' });
+  await dialog.getByRole('tab', { name: /^Routing/ }).click();
   await dialog.getByLabel('No destinations').check();
   await dialog.getByRole('button', { name: 'Save stage' }).click();
   await expect(dialog).toBeHidden();
   await page.getByRole('button', { name: 'Edit stage Explore' }).click();
   const reopened = page.getByRole('dialog', { name: 'Edit stage' });
+  await reopened.getByRole('tab', { name: /^Routing/ }).click();
   await expect(reopened.getByLabel('No destinations')).toBeChecked();
   // Choosing the mode again is not a change, so the save action stays unavailable.
   await expect(reopened.getByRole('button', { name: 'Save stage' })).toBeDisabled();

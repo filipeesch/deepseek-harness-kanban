@@ -10,6 +10,7 @@ import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/sea
 import { setDiagnostics, type Diagnostic } from '@codemirror/lint';
 import { yaml } from '@codemirror/lang-yaml';
 import { tags } from '@lezer/highlight';
+import { codeLanguage, type CodeLanguage } from './code-language.js';
 
 export const editorTheme = EditorView.theme({
   '&': { height: '100%', color: 'inherit', backgroundColor: 'transparent', fontSize: '13px' },
@@ -38,25 +39,36 @@ export const highlightStyle = HighlightStyle.define([
   { tag: tags.invalid, color: '#c53030' },
 ]);
 
+export type EditorLanguage = 'yaml' | CodeLanguage;
+
 export interface CodeEditorProps {
   value: string;
   onChange: (value: string) => void;
   label: string;
+  /** The syntax the surface edits; YAML is the workflow document. */
+  language?: EditorLanguage;
   readOnly?: boolean;
   diagnostics?: readonly Diagnostic[];
   onSaveShortcut?: () => void;
   describedBy?: string;
   className?: string;
+  /**
+   * False while the surface is on a hidden tab. A hidden container measures to
+   * nothing, so the view is re-measured when it becomes visible again instead of
+   * being destroyed and rebuilt, which would discard its undo history.
+   */
+  active?: boolean;
 }
 
-/** Controlled CodeMirror host for workflow YAML; the view is created once per mount. */
-export function CodeEditor({ value, onChange, label, readOnly = false, diagnostics = [], onSaveShortcut, describedBy, className }: CodeEditorProps) {
+/** Controlled CodeMirror host; the view is created once per mount. */
+export function CodeEditor({ value, onChange, label, language = 'yaml', readOnly = false, diagnostics = [], onSaveShortcut, describedBy, className, active = true }: CodeEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
   const onSaveRef = useRef(onSaveShortcut); onSaveRef.current = onSaveShortcut;
   const readOnlyCompartment = useRef(new Compartment());
   const contentCompartment = useRef(new Compartment());
+  const languageCompartment = useRef(new Compartment());
   const syncing = useRef(false);
 
   useEffect(() => {
@@ -87,7 +99,7 @@ export function CodeEditor({ value, onChange, label, readOnly = false, diagnosti
           ...foldKeymap,
           indentWithTab,
         ]),
-        yaml(),
+        languageCompartment.current.of(language === 'yaml' ? yaml() : codeLanguage(language)),
         syntaxHighlighting(highlightStyle),
         EditorView.lineWrapping,
         editorTheme,
@@ -100,7 +112,6 @@ export function CodeEditor({ value, onChange, label, readOnly = false, diagnosti
     });
     const instance = new EditorView({ state, parent });
     view.current = instance;
-    instance.dispatch(setDiagnostics(instance.state, [...diagnostics]));
     return () => { view.current = null; instance.destroy(); };
   }, []);
 
@@ -120,6 +131,18 @@ export function CodeEditor({ value, onChange, label, readOnly = false, diagnosti
     if (!instance) return;
     instance.dispatch({ effects: readOnlyCompartment.current.reconfigure([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]) });
   }, [readOnly]);
+
+  useEffect(() => {
+    const instance = view.current;
+    if (!instance) return;
+    instance.dispatch({ effects: languageCompartment.current.reconfigure(language === 'yaml' ? yaml() : codeLanguage(language)) });
+  }, [language]);
+
+  useEffect(() => {
+    if (!active) return;
+    // A tab that becomes visible again has to re-measure its previously hidden view.
+    view.current?.requestMeasure();
+  }, [active]);
 
   useEffect(() => {
     const instance = view.current;

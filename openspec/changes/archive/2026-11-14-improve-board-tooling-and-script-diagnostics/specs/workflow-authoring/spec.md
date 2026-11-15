@@ -4,9 +4,9 @@
 
 ### Requirement: Structured stage writes
 
-The plugin SHALL expose `set_stage_prompt`, `set_stage_routes`, `set_stage_script`, and `set_layout`. Each SHALL accept an optional expected Hub revision. A write that composes its document SHALL be reapplied to the current document when its anchors still match, and SHALL otherwise reject a stale revision without changing the board. Each SHALL rewrite only the fields it names and SHALL preserve every other authored character of the document, including comments, key order, quoting, blank lines, and the text of stages it does not name. `set_stage_prompt` SHALL set or clear one stage's entry instruction. `set_stage_routes` SHALL replace one stage's transition list, SHALL distinguish an empty list, which permits no destination, from an omitted list, which permits any other stage, and SHALL replace a deterministic stage's named exits with their destinations without changing its source, environment names, parameter declarations, or directory choice. `set_layout` SHALL set stage placements, stage sizes, and connection layouts, including their anchors and segment displacements, and SHALL remove a placement, size, or connection entry that the call clears.
+The plugin SHALL expose `set_stage_prompt`, `set_stage_routes`, `set_stage_script`, and `set_layout`. Each SHALL accept an optional expected Hub revision. A write that composes its document SHALL be reapplied to the current document when its anchors still match, and SHALL otherwise reject a stale revision without changing the board. Each SHALL rewrite only the fields it names and SHALL preserve every other authored character of the document, including comments, key order, quoting, blank lines, and the text of stages it does not name. `set_stage_prompt` SHALL set or clear one stage's entry instruction. `set_stage_routes` SHALL replace one stage's transition list, SHALL distinguish an empty list, which permits no destination, from an omitted list, which permits any other stage, and SHALL replace a scripted stage's named exits with their destinations without changing its source, environment names, parameter declarations, or directory choice. `set_layout` SHALL set stage placements, stage sizes, and connection layouts, including their anchors and segment displacements, and SHALL remove a placement, size, or connection entry that the call clears.
 
-`set_stage_script` SHALL write one stage's deterministic configuration in parts. It SHALL accept any of: the program language, the program source as inline code or as an external file reference, the directory choice, the authorized environment names, the declared parameter list, and the named exits. A part the call does not name SHALL keep its authored value, and the parts it names SHALL be written together in one write. It SHALL reject a configuration that authors both inline code and a file reference, a configuration that removes the only source, a program source that is not text, a directory choice outside the accepted set, a parameter declaration that repeats a name or exceeds the accepted bounds, and an exit whose destination the workflow does not define. It SHALL reject a stage that does not exist, and it SHALL reject a stage that is not a deterministic stage only when the call would create a partial configuration; a call that supplies every required part MAY create the stage's deterministic configuration.
+`set_stage_script` SHALL write one stage's scripted configuration in parts. It SHALL accept any of: the program language, the program source as inline code or as an external file reference, the directory choice, the authorized environment names, the declared parameter list, and the named exits. A part the call does not name SHALL keep its authored value, and the parts it names SHALL be written together in one write. It SHALL reject a configuration that authors both inline code and a file reference, a configuration that removes the only source, a program source that is not text, a directory choice outside the accepted set, a parameter declaration that repeats a name or exceeds the accepted bounds, and an exit whose destination the workflow does not define. It SHALL reject a stage that does not exist, and it SHALL reject a stage that is not a scripted stage only when the call would create a partial configuration; a call that supplies every required part MAY create the stage's scripted configuration.
 
 #### Scenario: Set a stage instruction
 
@@ -30,19 +30,19 @@ The plugin SHALL expose `set_stage_prompt`, `set_stage_routes`, `set_stage_scrip
 
 #### Scenario: Retarget a named exit
 
-- **WHEN** an agent replaces a deterministic stage's named exits
+- **WHEN** an agent replaces a scripted stage's named exits
 - **THEN** each exit names its new destination
 - **AND** the stage's source, environment names, parameter declarations, and directory choice are unchanged
 
 #### Scenario: Replace only one stage's program source
 
-- **WHEN** an agent sets a deterministic stage's inline code and names no other part
+- **WHEN** an agent sets a scripted stage's inline code and names no other part
 - **THEN** the stage authors the new source
 - **AND** its language, directory choice, environment names, declared parameters, named exits, and every comment beside them are unchanged
 
 #### Scenario: Add a declared parameter without touching the source
 
-- **WHEN** an agent sets a deterministic stage's parameter declaration
+- **WHEN** an agent sets a scripted stage's parameter declaration
 - **THEN** the declaration is stored in authored order
 - **AND** the program source, language, directory choice, environment names, and exits are unchanged
 
@@ -79,7 +79,7 @@ The plugin SHALL expose `set_stage_prompt`, `set_stage_routes`, `set_stage_scrip
 
 ### Requirement: Write validation report
 
-Every tool that writes a board's workflow document SHALL compose the result, validate it with the same workflow semantics the board editor enforces, and persist only when validation succeeds. On refusal the tool SHALL persist nothing and return the complete report; on success it SHALL return the same report. The report SHALL carry: validation problems with the line and column of each when the composed document does not parse; a semantic per-stage difference naming changed transitions, named exits, entry instruction, placement, size, group membership, board name, initial stage, and connection layout; graph warnings; for every deterministic stage the state of its stage-scoped reviewed authorization for the board, naming the executable version and the reason when it does not hold; the affected cards by identifier and count; and the instruction size of every stage whose instruction changed.
+Every tool that writes a board's workflow document SHALL compose the result, validate it with the same workflow semantics the board editor enforces, and persist only when validation succeeds. On refusal the tool SHALL persist nothing and return the complete report; on success it SHALL return the same report. The report SHALL carry: validation problems with the line and column of each when the composed document does not parse; a semantic per-stage difference naming changed transitions, named exits, entry instruction, placement, size, group membership, board name, initial stage, and connection layout; graph warnings; for every scripted stage the state of its stage-scoped reviewed authorization for the board, naming the executable version and the reason when it does not hold; the affected cards by identifier and count; and the instruction size of every stage whose instruction changed.
 
 The graph warnings SHALL cover an unreachable stage, a stage that is not a terminal one and authors no outgoing route, a connection layout entry naming a pair the workflow does not draw, a stage outside every group, an instruction that cites a stage the workflow does not define, an instruction that cites a stage the stage does not permit, and an instruction that mentions a stage identifier only in prose. A citation SHALL be an identifier written between backticks, or an identifier the workflow defines that follows one of the authored citation phrases. A bare word after a citing phrase that the workflow does not define, and any plain prose token that happens to equal a stage identifier, SHALL be reported as an informational observation, distinguishable from a citation problem, and SHALL NOT be counted as a routing defect.
 
@@ -87,7 +87,7 @@ The report SHALL also carry cross-stage observations: a destination stage that d
 
 A composition that refuses its own edit SHALL contribute the failing edit index, the occurrence lines and stages, and the closest authored line to the report's problems, so a caller that reads only the report still sees where it failed. The report SHALL group and de-duplicate its warnings so a repeated fact about the same stage and the same reference appears once, and SHALL bound every listed group and count what it left out.
 
-The authorization state SHALL be reported once per deterministic stage for the board instead of once per project the board allows. It SHALL distinguish changed source, changed named exits or their destinations, changed environment names, a changed working-directory choice, changed declared parameter names, a version that was never approved, and a source whose primary bytes depend on the execution directory. When the primary source depends on the execution directory the report SHALL state that each resolved version needs its own approval instead of claiming a board-wide result, and it SHALL NOT report a per-card execution-directory verdict. The report SHALL NOT carry a card title, description, note, task message, or conversation content.
+The authorization state SHALL be reported once per scripted stage for the board instead of once per project the board allows. It SHALL distinguish changed source, changed named exits or their destinations, changed environment names, a changed working-directory choice, changed declared parameter names, a version that was never approved, and a source whose primary bytes depend on the execution directory. When the primary source depends on the execution directory the report SHALL state that each resolved version needs its own approval instead of claiming a board-wide result, and it SHALL NOT report a per-card execution-directory verdict. The report SHALL NOT carry a card title, description, note, task message, or conversation content.
 
 #### Scenario: Refuse an unparsable document and report where
 
@@ -103,25 +103,25 @@ The authorization state SHALL be reported once per deterministic stage for the b
 
 #### Scenario: Report an authorization that no longer holds
 
-- **WHEN** a write retargets a named exit of a deterministic stage the board had already authorized
+- **WHEN** a write retargets a named exit of a scripted stage the board had already authorized
 - **THEN** the report states, once for the board, that the authorization no longer holds for that stage
 - **AND** it names the changed exits and destinations as the reason
 - **AND** it does not repeat that statement for each project the board allows
 
 #### Scenario: Report a change of source
 
-- **WHEN** a write changes a deterministic stage's source bytes
+- **WHEN** a write changes a scripted stage's source bytes
 - **THEN** the report names the changed source as the reason its authorization no longer holds
 
 #### Scenario: Report a version that was never approved
 
-- **WHEN** a write adds or changes a deterministic stage whose executable version the board never approved
+- **WHEN** a write adds or changes a scripted stage whose executable version the board never approved
 - **THEN** the report states, once for the board and stage, that the version was never approved
 - **AND** the write still succeeds when nothing else is wrong
 
 #### Scenario: Report an execution directory that depends on the card
 
-- **WHEN** a write changes a deterministic stage scoped to the task directory
+- **WHEN** a write changes a scripted stage scoped to the task directory
 - **THEN** the report states that the execution directory depends on the card's worktree
 - **AND** it does not claim a project-wide result
 

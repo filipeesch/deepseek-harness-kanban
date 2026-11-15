@@ -5,7 +5,7 @@
 See `proposal.md` for the motivation. This section records only the current state that
 shapes the approach.
 
-The deterministic runtime starts a program-lifetime guard for every execution. The host
+The scripted runtime starts a program-lifetime guard for every execution. The host
 passes the guard to the mounted shell provider, which confines it under the session file
 policy. Today the guard is a single inline `node -e` source, and it has two jobs that pull
 in opposite directions: run the captured program and capture its bounded output, and prove
@@ -29,7 +29,7 @@ Four facts constrain the solution:
 The host also duplicates the guard's stop/kill/re-check loop in `owned-processes.ts`, used
 when a guard was force-killed before it could answer.
 
-Every existing native deterministic test installs a `danger-full-access` policy, so no test
+Every existing native scripted test installs a `danger-full-access` policy, so no test
 ever exercises a confined guard.
 
 ## Goals / Non-Goals
@@ -46,7 +46,7 @@ ever exercises a confined guard.
 
 **Non-Goals:**
 
-- Enabling deterministic execution on Windows. The seam ships; the semantics do not.
+- Enabling scripted execution on Windows. The seam ships; the semantics do not.
 - Changing how DSH decides file-policy enforcement, or accepting partial enforcement.
 - Giving a Bash stage a different meaning on a platform without Bash.
 - Automated evidence for Linux and Windows in this change.
@@ -56,9 +56,9 @@ ever exercises a confined guard.
 
 ### D1. The guard ships as a built module, not as inline source
 
-`scripts/build.mjs` builds `src/host/deterministic/guard/main.ts` with esbuild into
+`scripts/build.mjs` builds `src/host/scripted/guard/main.ts` with esbuild into
 `lib/guard.mjs`, before the host bundle. The host resolves the artifact next to its own
-entry (`new URL('./guard.mjs', import.meta.url)`), and `createDeterministicRuntime` accepts
+entry (`new URL('./guard.mjs', import.meta.url)`), and `createScriptedRuntime` accepts
 an explicit path so a test can point at a build of its own.
 
 *Why:* the current source string cannot be imported, typed, or unit-tested, and it forces

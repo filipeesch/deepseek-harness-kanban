@@ -4,7 +4,7 @@ import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { clearGuardConfigurations, createNativeLifetime, type LifetimeWitness } from '../../src/host/deterministic/lifetime.js';
+import { clearGuardConfigurations, createNativeLifetime, type LifetimeWitness } from '../../src/host/scripted/lifetime.js';
 import { guardArtifact } from '../support/guard-artifact.js';
 
 const roots: string[] = [];

@@ -3,14 +3,14 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { NativeExecutionOwnership } from '../../src/host/deterministic/ownership.js';
-import { createDarwinTable, type ProcessPrograms } from '../../src/host/deterministic/process/darwin.js';
-import { createDelegatedOwnership } from '../../src/host/deterministic/process/delegated.js';
-import { createProcessOwnership, hostTable, ownedProcesses, terminateOwned } from '../../src/host/deterministic/process/index.js';
-import { createLinuxTable, type ProcessFiles } from '../../src/host/deterministic/process/linux.js';
-import { markerNeedle, sweepOwned } from '../../src/host/deterministic/process/sweep.js';
-import type { Membership, ProcessTable } from '../../src/host/deterministic/process/types.js';
-import { createWindowsOwnership, WINDOWS_UNSUPPORTED } from '../../src/host/deterministic/process/windows.js';
+import { NativeExecutionOwnership } from '../../src/host/scripted/ownership.js';
+import { createDarwinTable, type ProcessPrograms } from '../../src/host/scripted/process/darwin.js';
+import { createDelegatedOwnership } from '../../src/host/scripted/process/delegated.js';
+import { createProcessOwnership, hostTable, ownedProcesses, terminateOwned } from '../../src/host/scripted/process/index.js';
+import { createLinuxTable, type ProcessFiles } from '../../src/host/scripted/process/linux.js';
+import { markerNeedle, markerNeedles, sweepOwned } from '../../src/host/scripted/process/sweep.js';
+import type { Membership, ProcessTable } from '../../src/host/scripted/process/types.js';
+import { createWindowsOwnership, WINDOWS_UNSUPPORTED } from '../../src/host/scripted/process/windows.js';
 
 const marker = 'a'.repeat(32);
 
@@ -95,13 +95,32 @@ describe('token sweep', () => {
   });
 
   it('matches only the environment entry, never a bare marker string', () => {
-    expect(markerNeedle(marker)).toBe('DSH_DETERMINISTIC_RUN=' + marker);
+    expect(markerNeedle(marker)).toBe('DSH_SCRIPTED_RUN=' + marker);
+  });
+
+  it('sweeps a process that still carries the token of the previous release', async () => {
+    const environments = new Map<number, string>([[11, 'DSH_DETERMINISTIC_RUN=' + marker + '\0']]);
+    const signals: Array<{ pid: number; signal: string }> = [];
+    const control: ProcessTable = {
+      candidates: needle => [...environments].filter(([, environment]) => environment.includes(needle)).map(([pid]) => pid),
+      membership: (pid, needle) => environments.get(pid)?.includes(needle) === true ? 'owned' : 'not-owned',
+      stopped: () => false,
+    };
+    await sweepOwned(control, marker, {
+      kill: (pid, signal) => { signals.push({ pid, signal }); if (signal === 'SIGKILL') environments.delete(pid); },
+      sleep: async () => {},
+    });
+    expect(signals).toEqual([{ pid: 11, signal: 'SIGSTOP' }, { pid: 11, signal: 'SIGKILL' }]);
+  });
+
+  it('names the current token first and still confirms the previous one', () => {
+    expect(markerNeedles(marker)).toEqual(['DSH_SCRIPTED_RUN=' + marker, 'DSH_DETERMINISTIC_RUN=' + marker]);
   });
 });
 
 describe('linux process table', () => {
   const files = procFiles({
-    '/proc/31/environ': 'A=1\0DSH_DETERMINISTIC_RUN=' + marker + '\0',
+    '/proc/31/environ': 'A=1\0DSH_SCRIPTED_RUN=' + marker + '\0',
     '/proc/32/environ': 'A=1\0',
     '/proc/33/environ': unreadable('EACCES'),
     '/proc/31/stat': '31 (bash) S 1 31 31 0 -1',
@@ -132,8 +151,8 @@ describe('linux process table', () => {
 describe('macOS process table', () => {
   it('reads the environment-bearing command column only', () => {
     const programs = psPrograms({
-      'ps -E -axo pid=,command=': '  41 node DSH_DETERMINISTIC_RUN=' + marker + '\n  42 node unrelated\n',
-      'ps -p 41 -E -o command=': 'node DSH_DETERMINISTIC_RUN=' + marker,
+      'ps -E -axo pid=,command=': '  41 node DSH_SCRIPTED_RUN=' + marker + '\n  42 node unrelated\n',
+      'ps -p 41 -E -o command=': 'node DSH_SCRIPTED_RUN=' + marker,
       'ps -p 42 -E -o command=': 'node unrelated',
       'ps -p 41 -o stat=': 'S',
       'ps -p 42 -o stat=': 'T',

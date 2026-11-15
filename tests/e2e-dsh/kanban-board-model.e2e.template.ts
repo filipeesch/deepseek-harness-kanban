@@ -199,7 +199,7 @@ it('starts a board conversation on the model the board names', { timeout: 300_00
   await hidden(page.locator('.kb-drawer'));
   await openTask('Preset task');
   // The explicit card start waits for the worktree choice; the base project is
-  // enough for this conversation and keeps the flow deterministic.
+  // enough for this conversation and keeps the flow scripted.
   const continueInBase = page.getByRole('button', { name: 'Continue in base project' });
   if (await continueInBase.isVisible()) {
     await continueInBase.click();

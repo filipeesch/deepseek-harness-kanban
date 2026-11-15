@@ -38,8 +38,8 @@ async function seedExecution(f: F, taskId: string, overrides: { hold?: boolean; 
     const task = draft.tasks.find(value => value.id === taskId)!;
     task.columnId = 'in_progress';
     task.stageEntry = { id: 'entry-1', columnId: 'in_progress', stageIdentity: 'stage-run', enteredAt: AT };
-    task.history = [{ kind: 'deterministic-execution', at: AT, executionId: 'exec-0', columnId: 'in_progress', outcome: 'stopped' }];
-    task.deterministic = {
+    task.history = [{ kind: 'scripted-execution', at: AT, executionId: 'exec-0', columnId: 'in_progress', outcome: 'stopped' }];
+    task.scripted = {
       entryId: 'entry-1', executionId: 'exec-1', stageIdentity: 'stage-run',
       definition: { language: 'bash', code: 'echo hi', directory: 'task', params: [{ name: 'pipeline' }], exits: { passed: 'in_review' } },
       parameters: { pipeline: 'ci-main' },

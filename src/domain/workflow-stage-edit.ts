@@ -93,13 +93,13 @@ export function removeStage(input: { readonly text: string; readonly stageId: st
   }
   const clearedExits: string[] = [];
   for (const column of workflow.columns) {
-    const definition = column.deterministic;
+    const definition = column.scripted;
     if (column.id === input.stageId || definition === undefined) continue;
     const dropped = Object.entries(definition.exits).filter(([, destination]) => destination === input.stageId).map(([exit]) => exit);
     if (dropped.length === 0) continue;
     invariant(dropped.length < Object.keys(definition.exits).length, 'STAGE_ROUTED_FROM_SCRIPT', 'Stage ' + column.id + ' routes to ' + input.stageId + ' with its only named exit; give it another destination first.');
     for (const exit of dropped) {
-      text = writeNestedSequenceItemField({ text, sequenceKey: 'columns', idKey: 'id', id: column.id, path: ['deterministic', 'exits'], fieldKeys: [exit], invalid: invalidWorkflow, render: () => null });
+      text = writeNestedSequenceItemField({ text, sequenceKey: 'columns', idKey: 'id', id: column.id, path: ['scripted', 'exits'], fieldKeys: [exit], invalid: invalidWorkflow, render: () => null });
       clearedExits.push(column.id + ':' + exit);
     }
   }

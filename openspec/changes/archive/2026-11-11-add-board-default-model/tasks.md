@@ -161,7 +161,7 @@
 - [x] 11.3 Run `node scripts/e2e-dsh.mjs --checkout <dsh-checkout> --only prepare` with
   `DSH_SNAPSHOT=replay` and a replay override whose board names a model, asserting that the model
   step is skipped when the model is available and presented when it is not, and keep the model
-  traffic deterministic with no real model call.
+  traffic scripted with no real model call.
 - [x] 11.4 Run the fresh isolated web instance from AGENTS.md with a throwaway `DSH_HOME` and the
   `kanban-smoke` profile, exercise the preparation, the notice, and the board configuration control
   against the smoke checklist, and store the report and screenshots under `.verification/` without

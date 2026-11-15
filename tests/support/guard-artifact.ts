@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const entry = fileURLToPath(new URL('../../src/host/deterministic/guard/cli.ts', import.meta.url));
+const entry = fileURLToPath(new URL('../../src/host/scripted/guard/cli.ts', import.meta.url));
 
 /** Build the real guard bundle at one exact path. */
 export async function buildGuard(outfile: string): Promise<string> {

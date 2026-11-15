@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { localStageIdentitiesSchema } from './deterministic-state.js';
+import { localStageIdentitiesSchema } from './scripted-state.js';
 import type { Board, HubSchedule, HubState, HubTask, KanbanMeta, KanbanSettings } from '../shared/types.js';
 import { DEFAULT_WORKFLOW_YAML, parseWorkflow } from './workflow.js';
 import { absolutePath, baseTask, canonicalWorkflow, createTaskInvariantChecker, hubRelation, id, modelSelection, nonempty, note, project, projectKey, revision, storedProject, timestamp, workflow } from './schema-parts.js';

@@ -33,7 +33,7 @@ See `proposal.md` for motivation. The constraints that shape this design:
 
 - Store a Hub-scoped schedule collection inside the Hub aggregate, validated by the same writer
   and optimistic revision every other Hub edit uses.
-- Execute occurrences from the plugin host with deterministic admission: one run per schedule,
+- Execute occurrences from the plugin host with scripted admission: one run per schedule,
   skipped missed occurrences, and no queue.
 - Apply the stored model to the session created for an occurrence while preserving the
   installation default for new conversations.

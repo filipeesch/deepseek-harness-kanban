@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ShellRunResult } from '@deepseek-ai/dsh-shell';
-import { readGuardOutcome } from '../../src/host/deterministic/guard-outcome.js';
+import { readGuardOutcome } from '../../src/host/scripted/guard-outcome.js';
 
 const text = { head: (value: string) => value, tail: (value: string) => value };
 

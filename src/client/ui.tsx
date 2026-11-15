@@ -84,9 +84,9 @@ function modalHost(): HTMLElement | null {
   return roots.at(-1) ?? document.body ?? null;
 }
 
-export type ModalSize = 'default' | 'wide' | 'parameters' | 'settings' | 'settings-wide';
+export type ModalSize = 'default' | 'wide' | 'parameters' | 'settings' | 'settings-wide' | 'stage';
 const MODAL_SIZE_CLASS: Record<ModalSize, string> = {
-  default: '', wide: ' kb-dialog-wide', parameters: ' kb-dialog-parameters', settings: ' kb-dialog-settings', 'settings-wide': ' kb-dialog-settings-wide',
+  default: '', wide: ' kb-dialog-wide', parameters: ' kb-dialog-parameters', settings: ' kb-dialog-settings', 'settings-wide': ' kb-dialog-settings-wide', stage: ' kb-dialog-stage',
 };
 
 /**
@@ -141,7 +141,10 @@ export function Modal({ title, children, onClose, busy = false, size = 'default'
     if (host === null) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = ref.current;
-    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), summary, input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"], [contenteditable="true"]:not([aria-disabled="true"])') ?? []).filter(el => !el.hidden && el.getAttribute('aria-hidden') !== 'true');
+    // A hidden tab panel keeps its controls in the tree, so a control is skipped when
+    // it or an ancestor carries `hidden`; reading the attribute keeps this independent
+    // of layout, which a test renderer does not provide.
+    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), summary, input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"], [contenteditable="true"]:not([aria-disabled="true"])') ?? []).filter(el => el.closest('[hidden]') === null && el.getAttribute('aria-hidden') !== 'true');
     const preferred = initialFocus === 'first' ? undefined : dialog?.querySelector<HTMLElement>('[data-kb-initial-focus]');
     const target = busy ? dialog : preferred ?? focusable()[0] ?? dialog;
     target?.focus();
@@ -178,16 +181,22 @@ export function Modal({ title, children, onClose, busy = false, size = 'default'
   return createPortal(host === document.body ? <div className="dsh-kanban kb-modal-scope">{layered}</div> : layered, host);
 }
 
-export function Tabs({ label, values, selected, onSelect, id }: { label: string; values: readonly string[]; selected: string; onSelect: (value: string) => void; id: string }) {
-  return <div role="tablist" aria-label={label} className="kb-tabs">{values.map((value, index) => <button type="button" className="kb-tab" key={value} id={id + '-tab-' + value} role="tab" aria-selected={selected === value} aria-controls={id + '-panel-' + value} tabIndex={selected === value ? 0 : -1} onClick={() => onSelect(value)} onKeyDown={event => {
+/**
+ * One row of tabs. A tab may report that it holds a validation problem: the state is
+ * announced in its accessible name and marked beside its label, so a problem on a
+ * tab that is not on screen is still discoverable.
+ */
+export function Tabs({ label, values, selected, onSelect, id, problems }: { label: string; values: readonly string[]; selected: string; onSelect: (value: string) => void; id: string; problems?: ReadonlySet<string> }) {
+  const marked = (value: string) => problems?.has(value) === true;
+  return <div role="tablist" aria-label={label} className="kb-tabs">{values.map((value, index) => <button type="button" className="kb-tab" key={value} id={id + '-tab-' + value} role="tab" aria-selected={selected === value} aria-controls={id + '-panel-' + value} aria-label={marked(value) ? value + ' (has a problem)' : undefined} tabIndex={selected === value ? 0 : -1} onClick={() => onSelect(value)} onKeyDown={event => {
     let next = index;
     if (event.key === 'ArrowRight') next = (index + 1) % values.length;
     else if (event.key === 'ArrowLeft') next = (index + values.length - 1) % values.length;
     else if (event.key === 'Home') next = 0;
     else if (event.key === 'End') next = values.length - 1;
     else return;
-    event.preventDefault(); const target = values[next]; if (target) { onSelect(target); document.getElementById(id + '-tab-' + target)?.focus(); }
-  }}>{value}</button>)}</div>;
+    event.preventDefault(); const target = values[next]; if (target) { onSelect(target); const row = event.currentTarget.parentElement; const button = row?.children.item(next); if (button instanceof HTMLElement) button.focus(); }
+  }}>{value}{marked(value) && <span className="kb-tab-problem" aria-hidden="true">•</span>}</button>)}</div>;
 }
 
 export interface IconTabItem {

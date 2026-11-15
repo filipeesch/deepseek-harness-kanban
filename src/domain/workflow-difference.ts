@@ -1,5 +1,5 @@
 import type { ConnectionLayout, Column, ColumnGroup, TransitionRule, Workflow } from '../shared/types.js';
-import { canonicalDeterministic } from './deterministic-definition.js';
+import { canonicalScripted } from './scripted-definition.js';
 import { connectionKey } from './connection-anchor.js';
 
 /** One field whose value differs between two workflows. */
@@ -55,7 +55,7 @@ function stageFields(before: Column, after: Column): FieldChange[] {
   add('name', before.name, after.name);
   add('onEnterPrompt', before.onEnterPrompt, after.onEnterPrompt);
   add('allowedTransitions', rulesOf(before), rulesOf(after));
-  add('deterministic', canonicalDeterministic(before.deterministic), canonicalDeterministic(after.deterministic));
+  add('scripted', canonicalScripted(before.scripted), canonicalScripted(after.scripted));
   add('position', before.position, after.position);
   add('size', before.size, after.size);
   return fields;

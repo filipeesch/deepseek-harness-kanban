@@ -22,7 +22,7 @@ This is a helper validation defect, not a public SDK defect. This is not merely 
 
 ### Independent local reproduction
 
-The actual exported installCoordinationController was executed with the frozen new [kernel model](<../tests/schedule-uat-helper/kernel.ts>), compiled in memory without writing or altering it. A small recording/assertion shim supplied only the model's vi.fn/expect surface. A deterministic in-process clock controlled both Date construction and timers. No real SDK service, native actor, filesystem fixture, process executor, provider or model was used.
+The actual exported installCoordinationController was executed with the frozen new [kernel model](<../tests/schedule-uat-helper/kernel.ts>), compiled in memory without writing or altering it. A small recording/assertion shim supplied only the model's vi.fn/expect surface. A scripted in-process clock controlled both Date construction and timers. No real SDK service, native actor, filesystem fixture, process executor, provider or model was used.
 
 1. Create and naturally settle the modeled one-shot; establish the ordinary safe baseline with the actual controller.
 2. Call the model's SDK-faithful workingDirectory.set(A, target): one canonical change and one native-shaped non-waking notice are produced.
@@ -112,7 +112,7 @@ The new [six pairing regression cases](<../tests/schedule-uat-helper/schedule.te
 
 ### Fresh original-probe replay, including disposal at base
 
-The previous in-memory probe was rerun against the actual corrected exported controller and **unchanged** kernel, using the same complete deterministic wall clock and recording/assertion shim. No source or test was patched or written. It separately injected the exact native-shaped fresh-UUID clone after target and after return. Both variants were then checked **at the exact base cwd**, eliminating a false refusal caused merely by still being at target.
+The previous in-memory probe was rerun against the actual corrected exported controller and **unchanged** kernel, using the same complete scripted wall clock and recording/assertion shim. No source or test was patched or written. It separately injected the exact native-shaped fresh-UUID clone after target and after return. Both variants were then checked **at the exact base cwd**, eliminating a false refusal caused merely by still being at target.
 
 Observed exit **0**, with assertions on all outcomes:
 
