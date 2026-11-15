@@ -20,11 +20,13 @@ body{
   --dsw-static-neutral-bluish-50:rgb(249,250,251);
   --dsw-static-neutral-bluish-400:rgb(173,178,184);
   --dsw-static-neutral-bluish-950:rgb(21,21,23);
+  --dsw-static-red-600:rgb(236,19,19);
   --dsw-alias-bg-base:var(--dsw-static-neutral-bluish-00);
   --dsw-alias-bg-l2:rgb(247,247,247);
   --dsw-alias-border-l2:rgb(208,208,208);
   --dsw-alias-label-deep-diving:color-mix(in srgb,var(--dsw-static-deepseek-500) 70%,var(--dsw-static-blue-950));
   --dsw-alias-state-business-primary:var(--dsw-static-deepseek-500);
+  --dsw-alias-state-error-primary:var(--dsw-static-red-600);
   --dsw-alias-label-primary:rgb(15,17,21);
   --dsw-alias-label-secondary:rgb(97,102,107);
   --dsw-alias-button-primary-fill:var(--dsw-static-neutral-bluish-950);
@@ -35,11 +37,13 @@ body{
   color-scheme:dark;
   --color-background:rgb(21,21,23);
   --background-color:rgb(21,21,23);
+  --dsw-static-red-400:rgb(242,90,90);
   --dsw-alias-bg-base:var(--dsw-static-neutral-bluish-950);
   --dsw-alias-bg-l2:rgb(31,31,35);
   --dsw-alias-border-l2:rgb(63,63,70);
   --dsw-alias-label-deep-diving:color-mix(in srgb,var(--dsw-static-deepseek-450) 55%,var(--dsw-static-neutral-bluish-400));
   --dsw-alias-state-business-primary:var(--dsw-static-deepseek-400);
+  --dsw-alias-state-error-primary:var(--dsw-static-red-400);
   --dsw-alias-label-primary:rgb(250,250,250);
   --dsw-alias-label-secondary:rgb(207,211,214);
   --dsw-alias-button-primary-fill:var(--dsw-static-neutral-bluish-50);

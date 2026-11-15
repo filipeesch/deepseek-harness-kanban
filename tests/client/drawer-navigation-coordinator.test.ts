@@ -174,6 +174,27 @@ describe('drawer navigation coordinator', () => {
     await new Promise(resolve => setTimeout(resolve, 10));
     expect(f.panelSelections).toEqual([]);
     expect(f.page().view).toEqual({ kind: 'conversation', sessionId: 's1', selectionRequired: false });
+    // The refusal is a normal outcome, not a failure to report: no pending claim, no report.
+    expect(f.page().claim).toBeNull();
+    expect(f.report).not.toHaveBeenCalled();
+  });
+
+  it('leaves an ordinary chat native after the host refuses to prove it as a branch', async () => {
+    // An ordinary chat is listed without a parent, so the drawer asks the host once and the
+    // host's refusal ends the claim without presenting a failure or re-selecting the panel.
+    const f = harness({
+      rows: { s1: {}, chat: main },
+      refresh: async () => {},
+      attach: async () => { throw { code: 'FORK_LINEAGE_MISMATCH', message: 'Only a branch of a conversation of this task can be attached.' }; },
+    });
+    f.page().view = { kind: 'conversation', sessionId: 's1', selectionRequired: false };
+    f.navigate(null);
+    await vi.waitFor(() => expect(f.attachFork).toHaveBeenCalledWith('t1', 's1', 'chat'));
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(f.panelSelections).toEqual([]);
+    expect(f.page().view).toEqual({ kind: 'conversation', sessionId: 's1', selectionRequired: false });
+    expect(f.page().claim).toBeNull();
+    expect(f.report).not.toHaveBeenCalled();
   });
 
   it('drops a classification that the timeout expired', async () => {

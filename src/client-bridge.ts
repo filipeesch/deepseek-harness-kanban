@@ -11,17 +11,13 @@ import type { KanbanRemote } from './remote.js';
 import type { ClientApi, Command, HostSnapshot, KanbanSnapshot, Outcome, Problem, QuestionFeedFrame, QuestionRound, SharingCommand, SnapshotRequest } from './shared/types.js';
 import { QuestionRoundCache, type QuestionRoundView } from './client/question-round-cache.js';
 import { QuestionDraftState, type QuestionDraftPort } from './client/question-draft-state.js';
+import { asProblem } from './client/problem.js';
 
-export interface BridgeStatus { error: Problem | null; connected: boolean }
+/** The live board feed's availability; the only fact the board-update status presents. */
+export interface BridgeStatus { error: Problem | null }
 export type BridgeRemote = Pick<ClientRemote, '$stream'> & { kanban: KanbanRemote };
 type Baseline = { kind: 'baseline'; snapshot: HostSnapshot };
 type Update = { kind: 'update'; snapshot: HostSnapshot };
-function problem(error: unknown): Problem {
-  if (typeof error === 'object' && error !== null && 'message' in error) {
-    return { code: 'code' in error && typeof error.code === 'string' ? error.code : 'CLIENT_ERROR', message: String(error.message) };
-  }
-  return { code: 'CLIENT_ERROR', message: String(error) };
-}
 function closedSessions(snapshot: Pick<MergedHostSnapshot, 'state'>): Set<string> {
   return new Set(allTasks(snapshot).flatMap(task => task.closedSessionIds));
 }
@@ -39,7 +35,7 @@ function observable<T>(initial: T) {
 }
 /** One plugin-owned native feed; ordinary chats and Kanban share the same prepared question cache. */
 export class ClientBridge {
-  private readonly health = observable<BridgeStatus>({ error: null, connected: false });
+  private readonly health = observable<BridgeStatus>({ error: null });
   readonly status = this.health.source;
   readonly questions: QuestionRoundCache;
   readonly questionsView: HostObservable<QuestionRoundView>;
@@ -104,20 +100,20 @@ export class ClientBridge {
       },
     };
   }
+  /**
+   * Apply one requested response. A rejection stays a fact for the caller that asked for
+   * it: every surface reports its own failure, so it never replaces the board feed's
+   * availability, and an expected refusal on behalf of a caller cannot surface as one.
+   */
   private async unarySnapshot(request: () => Promise<RemoteResult<Outcome<HostSnapshot>>>): Promise<KanbanSnapshot> {
     const epoch = this.clientEpoch;
-    try {
-      const response = unwrap(await request());
-      const { commandReceipt, ...snapshot } = response;
-      if (epoch === this.clientEpoch) this.accept(snapshot);
-      // An old in-flight response cannot relabel its former host state as a new baseline.
-      if (!this.merged) throw new Error('The Kanban stream generation changed before a current snapshot was available. Retry the request.');
-      // Identity belongs to the admitted command even when a newer feed model has won.
-      return commandReceipt ? { ...this.merged, commandReceipt } : this.merged;
-    } catch (error) {
-      if (epoch === this.clientEpoch) this.fail(error);
-      throw error;
-    }
+    const response = unwrap(await request());
+    const { commandReceipt, ...snapshot } = response;
+    if (epoch === this.clientEpoch) this.accept(snapshot);
+    // An old in-flight response cannot relabel its former host state as a new baseline.
+    if (!this.merged) throw new Error('The Kanban stream generation changed before a current snapshot was available. Retry the request.');
+    // Identity belongs to the admitted command even when a newer feed model has won.
+    return commandReceipt ? { ...this.merged, commandReceipt } : this.merged;
   }
   private makeControl(): RemoteSnapshotStream<Baseline, Update> {
     const remote = this.remote;
@@ -135,8 +131,8 @@ export class ClientBridge {
     });
     return new RemoteSnapshotStream(feed, {
       name: 'Kanban board', isSnapshot: (frame): frame is Baseline => frame.kind === 'baseline',
-      replace: (frame) => this.accept(frame.snapshot, true),
-      update: (frame) => this.accept(frame.snapshot), failed: (error) => this.fail(error),
+      replace: (frame) => this.accept(frame.snapshot, true, true),
+      update: (frame) => this.accept(frame.snapshot, false, true), failed: (error) => this.fail(error),
     });
   }
   start(): void { if (!this.disposed && !this.restarting) this.control.start(); }
@@ -149,8 +145,13 @@ export class ClientBridge {
       if (!this.disposed) { this.control = this.makeControl(); this.control.start(); }
     })().catch(error => this.fail(error)).finally(() => { this.restarting = undefined; });
   }
-  private fail(error: unknown): void { if (!this.disposed) this.health.set({ error: problem(error), connected: false }); }
-  private accept(snapshot: HostSnapshot, baseline = false): void {
+  private fail(error: unknown): void { if (!this.disposed) this.health.set({ error: asProblem(error) }); }
+  /**
+   * Apply one frame or requested response. Only a frame that arrived on the live feed can
+   * report the feed as available: a response a surface requested applies its state, but its
+   * success must never hide a dead feed.
+   */
+  private accept(snapshot: HostSnapshot, baseline = false, fromFeed = false): void {
     if (this.disposed || (!baseline && this.host && snapshot.sequence < this.host.sequence)) return;
     const previous = this.host;
     let merged: MergedHostSnapshot;
@@ -171,7 +172,7 @@ export class ClientBridge {
     this.host = merged;
     if (baseline) this.readState.prune(new Set(allTasks(merged).flatMap(task => task.sessionIds)));
     this.readState.flush();
-    this.health.set({ error: null, connected: true });
+    if (fromFeed) this.health.set({ error: null });
     this.publish();
   }
   /** A conversation whose tab just closed acknowledges the turn that had already settled. */
@@ -269,17 +270,17 @@ export class ClientBridge {
         for await (const frame of remote.kanban.questionsFollow({ sessionId }, signal)) yield frame;
       },
       ended: (accepted) => accepted ? new RemoteStreamCarrierError('Question rounds stream ended; reconnecting.') : new Error('Question rounds stream ended before its opening frame.'),
-      carrierFailed: (error) => onError(problem(error)),
+      carrierFailed: (error) => onError(asProblem(error)),
     });
     const control = new RemoteSnapshotStream<QuestionFeedFrame, QuestionFeedFrame>(feed, {
       name: 'Question rounds',
       isSnapshot: (frame): frame is QuestionFeedFrame => frame.kind === 'baseline',
       replace: deliver,
       update: deliver,
-      failed: error => onError(problem(error)),
+      failed: error => onError(asProblem(error)),
     });
     control.start();
-    return () => { control.dispose().catch(error => onError(problem(error))); };
+    return () => { control.dispose().catch(error => onError(asProblem(error))); };
   }
 
   async dispose(): Promise<void> {

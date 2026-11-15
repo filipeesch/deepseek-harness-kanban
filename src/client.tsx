@@ -20,6 +20,7 @@ import { allTasks } from './client/snapshot-normalize.js';
 import { AutoRunController } from './client/auto-run.js';
 import { QuestionDock, createQuestionDockServices, type QuestionDockSessions } from './client/question-dock.js';
 import { createSessionStatusPort, type SessionStatusHost } from './client/session-status.js';
+import { FeedStatus } from './client/feed-status.js';
 import { RetainedConversation, TaskConversationWindow, type ConversationSurfaceMode, type ConversationSurfaceOwner, type ConversationSurfaceServices } from './client/conversation-surface.js';
 import { AgentPresetProvider } from './client/agent-preset-context.js';
 import { createAgentPresetPortSource } from './client/agent-preset-port.js';
@@ -60,7 +61,7 @@ type EmbeddedPanelFactoryRenderer = (
 export const name = 'kanban-client';
 // Service keys, not package names. Mount our own namespace before any access to remote.kanban.
 export const inject = ['remote', 'slots', 'sessions', 'uiSession', 'locale', 'uiConversation', 'layout'];
-const clientCss = '.kanban-native-state{padding:16px;color:inherit}.kanban-feed-error{padding:8px 16px;color:var(--dsw-alias-state-error-primary,crimson);border-bottom:1px solid var(--dsw-alias-border-l2)}';
+const clientCss = '.kanban-native-state{padding:16px;color:inherit}';
 
 
 /** Sources are optional: a test context may expose no workspace service at all. */
@@ -162,17 +163,11 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   const emptySessionState = { ids: [], byId: {}, phase: 'ready' as const, projectionsBySession: {} };
   const emptySessionList = { subscribe: () => () => {}, getSnapshot: () => emptySessionState };
 
-  function FeedStatus() {
-    const status = useSyncExternalStore(bridge.status.subscribe, bridge.status.getSnapshot, bridge.status.getSnapshot);
-    if (!status.error) return null;
-    return <div className="kanban-feed-error" role="alert">Kanban updates are unavailable: {status.error.message} <button type="button" onClick={() => bridge.retry()}>Retry updates</button></div>;
-  }
-  // The extracted dock receives a narrow contract; the composition root keeps
-  // owning native scope lookup and the board feed status strip.
+  // The dock receives a question-only contract: native scope lookup stays here, and the
+  // board feed's status belongs to the Kanban page, never to a native conversation.
   const questionDockServices = createQuestionDockServices({
     bridge,
     sessions: ctx.sessions as unknown as QuestionDockSessions,
-    status: <FeedStatus />,
   });
   const viewSession = (sessionId: string) => bridge.viewSession(sessionId);
   function ConversationWindowSeat(props: ConversationSeatProps) {
@@ -282,7 +277,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   function Main(props: MainProps) {
     const active = props.usePanelInfo(value => value.activePanelId === 'kanban');
     if (!active) return null; // A hidden cached page must not leave another copy of a composer mounted.
-    return <AgentPresetProvider source={presetSource} translate={ctx.locale.bind('settings.agentPreset')}><style>{clientCss}</style><FeedStatus /><BoardPage {...props} api={bridge.api} autoRun={autoRun} /></AgentPresetProvider>;
+    return <AgentPresetProvider source={presetSource} translate={ctx.locale.bind('settings.agentPreset')}><style>{clientCss}</style><FeedStatus status={bridge.status} retry={() => bridge.retry()} /><BoardPage {...props} api={bridge.api} autoRun={autoRun} /></AgentPresetProvider>;
   }
   /** The strip is the only question surface: the transcript row renders nothing (no generic JSON card). */
   function HiddenDecisionRow() { return null; }

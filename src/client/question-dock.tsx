@@ -1,18 +1,16 @@
-import React, { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
+import React, { useEffect, useState, useSyncExternalStore } from 'react';
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots';
-import type { Problem, QuestionRound } from '../shared/types.js';
+import type { QuestionRound } from '../shared/types.js';
 import type { QuestionDraftPort } from './question-draft-state.js';
 import type { QuestionRoundView } from './question-round-cache.js';
 import { selectActiveRound } from '../questions/submission.js';
 import { QuestionForm } from '../questions/QuestionForm.js';
 
-/** The status strip the dock shows above its question panel. */
-export interface QuestionDockStatus {
-  error: Problem | null;
-  connected: boolean;
-}
+/**
+ * The question-only facts the dock reads. A board-update status never belongs here: the
+ * dock is a question surface in every native conversation, including ordinary chats.
+ */
 export interface QuestionDockBridge {
-  readonly status: HostObservable<QuestionDockStatus>;
   readonly questionsView: HostObservable<QuestionRoundView>;
   readonly questionDrafts: QuestionDraftPort;
   readonly questions: {
@@ -42,7 +40,6 @@ export interface QuestionDockSessions {
 /** Everything the extracted dock needs; no module-level plugin singleton leaks in. */
 export interface QuestionDockServices {
   view: HostObservable<QuestionRoundView>;
-  status?: ReactNode;
   track(sessionId: string): () => void;
   retry(sessionId: string): void;
   isSubmitted(roundId: string): boolean;
@@ -66,13 +63,11 @@ export interface QuestionDockProps { sessionId: string; services: QuestionDockSe
 export function createQuestionDockServices(input: {
   bridge: QuestionDockBridge;
   sessions: QuestionDockSessions;
-  status?: ReactNode;
 }): QuestionDockServices {
   const { bridge, sessions } = input;
   const conversationFor = (sessionId: string): QuestionDockConversation | undefined => sessions.scope(sessionId)?.get('conversation');
   return {
     view: bridge.questionsView,
-    ...(input.status === undefined ? {} : { status: input.status }),
     track: sessionId => bridge.trackQuestions(sessionId),
     retry: sessionId => bridge.retryQuestions(sessionId),
     isSubmitted: roundId => bridge.questions.isSubmitted(roundId),
@@ -108,7 +103,7 @@ export function QuestionDock({ sessionId, services }: QuestionDockProps) {
   const historyError = view.errors.get(sessionId)?.message;
   const round = selectActiveRound(view.rounds, sessionId, id => services.isSubmitted(id), services.focusedRoundId());
   const storedDraft = round === undefined ? undefined : services.drafts.read(round.id);
-  return <>{services.status}{historyError && <div role="alert">Question rounds are unavailable: {historyError} <button type="button" onClick={() => setAttempt(value => value + 1)}>Retry questions</button></div>}{round && <QuestionForm key={round.id} round={round} {...(storedDraft === undefined ? {} : { storedDraft })} hidden={services.isSubmitted(round.id)} onHide={() => services.focusComposer(sessionId)} onDraftChange={draft => services.drafts.update(sessionId, round.id, draft)} onSubmit={async text => {
+  return <>{historyError && <div role="alert">Question rounds are unavailable: {historyError} <button type="button" onClick={() => setAttempt(value => value + 1)}>Retry questions</button></div>}{round && <QuestionForm key={round.id} round={round} {...(storedDraft === undefined ? {} : { storedDraft })} hidden={services.isSubmitted(round.id)} onHide={() => services.focusComposer(sessionId)} onDraftChange={draft => services.drafts.update(sessionId, round.id, draft)} onSubmit={async text => {
     // This is ordinary native human text. It does not settle native approvals or userQuestions.
     services.assertSubmissionAllowed(sessionId);
     // The dock hides the round before admission settles; a failure restores it with the draft.

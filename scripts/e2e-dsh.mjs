@@ -43,6 +43,7 @@ function verify() {
   for (const path of ['apps/web/dist/index.html', 'packages/bundle/web-app/lib']) if (!existsSync(join(checkout, path))) fail('missing built DSH artifact ' + path + '; install and run `pnpm run build` in the DSH checkout');
   if (!existsSync(join(root, 'tests/e2e-dsh/question-round.jsonl'))) fail('missing question fixture');
   if (!existsSync(join(root, 'tests/e2e-dsh/task-context.jsonl'))) fail('missing task-context fixture');
+  if (!existsSync(join(root, 'tests/e2e-dsh/ordinary-chat.jsonl'))) fail('missing ordinary-chat fixture');
   if (!existsSync(join(root, 'tests/e2e-dsh/auto-run.replay.override.json'))) fail('missing auto-run replay override');
   if (!existsSync(join(root, 'tests/e2e-dsh/auto-mode.replay.override.json'))) fail('missing auto-mode replay override');
   if (!existsSync(join(root, 'tests/e2e-dsh/declared-transition.replay.override.json'))) fail('missing declared-transition replay override');
@@ -171,6 +172,7 @@ try {
     cwd: stage, stdio: 'inherit',
     env: { ...environment, HOME: home, USERPROFILE: home, DSH_HOME: join(home, '.dsh'), PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH ?? join(root, '.verification/playwright-browsers'), DSH_SNAPSHOT: 'replay', KANBAN_ROOT: root,
       KANBAN_QUESTION_FIXTURE: join(root, 'tests/e2e-dsh/question-round.jsonl'), KANBAN_TASK_CONTEXT_FIXTURE: join(root, 'tests/e2e-dsh/task-context.jsonl'),
+      KANBAN_ORDINARY_CHAT_FIXTURE: join(root, 'tests/e2e-dsh/ordinary-chat.jsonl'),
       KANBAN_AUTORUN_OVERRIDE: join(root, 'tests/e2e-dsh/auto-run.replay.override.json'), KANBAN_AUTOMODE_OVERRIDE: join(root, 'tests/e2e-dsh/auto-mode.replay.override.json'),
       KANBAN_DECLARED_OVERRIDE: join(root, 'tests/e2e-dsh/declared-transition.replay.override.json'), KANBAN_CREATESTART_OVERRIDE: join(root, 'tests/e2e-dsh/create-start.replay.override.json'),
       KANBAN_NATIVE_OVERRIDE: join(root, 'tests/e2e-dsh/native-drawer.replay.override.json') },

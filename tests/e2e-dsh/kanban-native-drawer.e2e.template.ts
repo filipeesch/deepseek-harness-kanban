@@ -3,7 +3,7 @@
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Browser, Locator } from 'playwright';
+import type { Browser, Locator, WebSocketRoute } from 'playwright';
 import { chromium } from 'playwright';
 import { expect, it, onTestFinished } from 'vitest';
 import { SessionId } from '@deepseek-ai/dsh-session';
@@ -13,6 +13,8 @@ import { newEnglishPage, writeComposerDraft } from './support.ts';
 const KANBAN_ROOT = process.env.KANBAN_ROOT!;
 const TASK_CONTEXT_FIXTURE = process.env.KANBAN_TASK_CONTEXT_FIXTURE
   ?? join(KANBAN_ROOT, 'tests/e2e-dsh/task-context.jsonl');
+const ORDINARY_CHAT_FIXTURE = process.env.KANBAN_ORDINARY_CHAT_FIXTURE
+  ?? join(KANBAN_ROOT, 'tests/e2e-dsh/ordinary-chat.jsonl');
 
 /** The checkout's Vitest 4 runner registers no Playwright matchers; wait and poll instead. */
 async function visible(locator: Locator): Promise<void> {
@@ -182,6 +184,84 @@ it('keeps a branch of the open conversation inside the drawer and selects it', a
   await expectCount(drawer.getByRole('alert').filter({ hasText: 'The branch could not be added to this task' }), 0);
   await mkdir(join(KANBAN_ROOT, '.verification'), { recursive: true });
   await page.screenshot({ path: join(KANBAN_ROOT, '.verification/native-drawer-branch-claimed.png') });
+}, 120_000);
+
+it('leaves an ordinary chat without a board status and keeps the status on the Kanban page', async () => {
+  const scaffold = await launchWebScaffold({ profile: { packages: [{ dir: KANBAN_ROOT, enabled: true }] }, developerTools: true });
+  let browser: Browser | undefined;
+  onTestFinished(async () => { try { await browser?.close(); } finally { await scaffold.close(); } });
+  browser = await chromium.launch();
+  const page = await newEnglishPage(browser);
+  // The lane owns the remote transport so it can end the live board feed once and keep it
+  // from reconnecting while the page status is observed. Unary commands travel over HTTP,
+  // so their requests are observed separately to prove the claim was attempted.
+  const sockets: WebSocketRoute[] = [];
+  const posts: string[] = [];
+  const attachResults: string[] = [];
+  page.on('request', request => { if (request.method() === 'POST') posts.push(request.url() + String.fromCharCode(10) + (request.postData() ?? '').slice(0, 400)); });
+  // The refusal is the host's answer to the claim; capture it so the test cannot pass on a
+  // successful attach or on no claim at all.
+  page.on('response', response => {
+    if (response.request().postData()?.includes('conversation.attach') !== true) return;
+    void response.text().then(body => attachResults.push(body)).catch(() => undefined);
+  });
+  let refuseReconnect = false;
+  await page.routeWebSocket('**/api/remote.mux', route => {
+    sockets.push(route);
+    if (refuseReconnect) return;
+    route.connectToServer();
+  });
+  await page.addInitScript(() => { try { localStorage.setItem('dsh-kanban.drawer.width', '620'); } catch { /* storage is optional */ } });
+
+  // One ordinary chat outside every Workspace, so the host lists it as a normal Session.
+  const ordinaryId = await seedSession(scaffold, await readFile(ORDINARY_CHAT_FIXTURE, 'utf8'), 'kanban-ordinary-chat-e2e');
+  await scaffold.ctx.sessionController.rename({ sessionId: ordinaryId, title: 'Ordinary chat' });
+
+  await createProjectAndTask(page, scaffold, 'Ordinary navigation task');
+  const drawer = page.locator('.kb-drawer');
+  await visible(drawer.locator('.kb-preset-cards'));
+  await drawer.getByRole('button', { name: /^Standard mode/ }).first().click();
+  await visible(drawer.locator('[data-kanban-conversation-window]'));
+
+  // Expand the host's Ungrouped bucket so the seeded ordinary chat is reachable.
+  const ungrouped = page.locator('[data-row-key="workspace:"]');
+  if (await ungrouped.count() > 0 && await ungrouped.first().getAttribute('aria-expanded') !== 'true') await ungrouped.first().click();
+
+  // Selecting that ordinary chat is the navigation that used to leave "Kanban updates are
+  // unavailable: Only a branch ..." above its composer. The host refuses the claim and the
+  // native navigation stands.
+  await page.getByLabel('Sessions', { exact: true }).getByText('Ordinary chat', { exact: true }).click();
+  // The drawer asked the host to prove and attach the Session, the host refused, and the
+  // native navigation stood. Both halves are asserted so a successful attach cannot pass.
+  try {
+    await expect.poll(() => posts.some(post => post.includes('conversation.attach')), { timeout: 20_000 }).toBe(true);
+    await expect.poll(() => attachResults.some(body => body.includes('FORK_LINEAGE_MISMATCH')), { timeout: 20_000 }).toBe(true);
+  } catch (error) {
+    console.log('--- posts ' + posts.length + ' / attach results ' + attachResults.length + ' ---');
+    for (const post of posts.slice(-10)) console.log(post);
+    for (const body of attachResults.slice(-5)) console.log(body.slice(0, 600));
+    throw error;
+  }
+  await expectCount(page.locator('.kb-drawer'), 0);
+  await expectCount(page.locator('.kanban-feed-error'), 0);
+  await expectCount(page.getByText('Kanban updates are unavailable', { exact: false }), 0);
+  await mkdir(join(KANBAN_ROOT, '.verification'), { recursive: true });
+  await page.screenshot({ path: join(KANBAN_ROOT, '.verification/native-drawer-ordinary-chat.png') });
+
+  // Back on the Kanban page, an available board feed presents no status.
+  await page.getByRole('button', { name: 'Kanban', exact: true }).click();
+  await expectCount(page.locator('.kanban-feed-error'), 0);
+
+  // A real stream failure is presented by the page status with its retry. The transport does
+  // not reconnect here, so the presented state stays observable; the recovery is covered by
+  // the bridge unit test.
+  refuseReconnect = true;
+  for (const socket of sockets) await socket.close({ code: 1011, reason: 'lane' }).catch(() => undefined);
+  const strip = page.locator('.kanban-feed-error');
+  await visible(strip);
+  await expectText(strip, 'Kanban updates are unavailable:');
+  await visible(page.getByRole('button', { name: 'Retry updates' }));
+  await page.screenshot({ path: join(KANBAN_ROOT, '.verification/native-drawer-board-status.png') });
 }, 120_000);
 
 it('renders the seeded task-context message as an inline native Chat row', async () => {

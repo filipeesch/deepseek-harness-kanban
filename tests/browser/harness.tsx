@@ -10,6 +10,8 @@ import { DirectoryPickerProvider } from '../../src/client/services.js';
 import { AgentPresetProvider } from '../../src/client/agent-preset-context.js';
 import type { AgentPresetPortSource } from '../../src/client/agent-preset-port.js';
 import { QuestionForm } from '../../src/questions/QuestionForm.js';
+import { FeedStatus } from '../../src/client/feed-status.js';
+import { QuestionDock, type QuestionDockServices } from '../../src/client/question-dock.js';
 import type { BoardState, ClientApi, Command, HubSharingView, QuestionRound, RoundPage, StoredQuestionDraft } from '../../src/shared/types.js';
 import { createHarnessApi, workflowYaml, type TestSnapshot } from './fake-api.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
@@ -437,6 +439,51 @@ function ThemeSync() {
   return null;
 }
 
+/**
+ * The board-update status on the Kanban page, above an ordinary chat's composer dock.
+ * The dock keeps its own question-round failure and never presents the board's.
+ */
+function FeedStatusScenario() {
+  const state = query.get('state') ?? 'failed';
+  const healthy = state === 'healthy';
+  // The round state keeps the question surface usable while the board feed is down.
+  const withRound = healthy || state === 'round';
+  // A host store returns the same snapshot until it changes; the harness mirrors that.
+  const status = useMemo(() => {
+    const value = { error: healthy ? null : { code: 'STREAM_FAILED', message: 'Kanban state stream ended; reconnecting.' } };
+    return { getSnapshot: () => value, subscribe: () => () => {} };
+  }, [healthy]);
+  const view = useMemo(() => withRound
+    ? { rounds: [round], errors: new Map() }
+    : { rounds: [], errors: new Map([['session-1', { code: 'STREAM_FAILED', message: 'Question rounds stream ended; reconnecting.' }]]) }, [withRound]);
+  const services = useMemo<QuestionDockServices>(() => ({
+    view: { getSnapshot: () => view, subscribe: () => () => {} },
+    track: () => () => {},
+    retry: () => {},
+    isSubmitted: () => false,
+    focusedRoundId: () => undefined,
+    submit: () => {},
+    settle: () => {},
+    rollback: () => {},
+    assertSubmissionAllowed: () => {},
+    dismiss: async () => [],
+    drafts: { read: () => undefined, update: () => {}, clear: () => {}, flush: () => {} },
+    send: async () => {},
+    focusComposer: () => {},
+  }), [view]);
+  // Production renders the strip as a sibling above the board root, never inside it.
+  return <>
+    <FeedStatus status={status} retry={() => {}} />
+    <div className="dsh-kanban" style={{ height: '100%' }}>
+      <div data-conversation="ordinary" style={{ display: 'grid', alignContent: 'start', gap: 12, padding: 20, width: 720, maxWidth: '100%' }}>
+        <p style={{ margin: 0, opacity: 0.72 }}>Ordinary DSH chat (harness stand-in)</p>
+        <QuestionDock sessionId="session-1" services={services} />
+        <div data-composer-stand-in="" style={{ border: '1px solid var(--kb-line)', borderRadius: 10, padding: '12px 14px', opacity: 0.75 }}>Message or run a task, / commands, @ files or sessions</div>
+      </div>
+    </div>
+  </>;
+}
+
 function App() {
   if (scenario === 'scripted') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></>;
   if (scenario === 'handoff') return <><style>{themeFixture}</style><ThemeSync /><div className="dsh-kanban" style={{ padding: 24 }}><ScriptedHandoffNodeView node={{ data: { seq: 1, time: 1, content: [{ type: 'text', text: 'Scripted result from CI · Execution synthetic-run · Exit passed\nCI passed. [REDACTED]' }], source: { kind: 'scripted-handoff', form: 'notice', summary: 'CI → Manual review' }, producer: { role: 'inject', label: 'scripted-handoff' }, form: 'notice' } } as never} slots={{ entriesOfSlot: () => [], subscribe: () => () => {} }} t={((key: string) => key) as never} /></div></>;
@@ -469,6 +516,7 @@ function App() {
   if (scenario === 'drawer-peek') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><DrawerPeekScenario /></div></>;
   if (scenario === 'drawer-sidebar') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><DrawerSidebarScenario /></div></>;
   if (scenario === 'question') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban"><QuestionScenario /></div></>;
+  if (scenario === 'feed-status') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><FeedStatusScenario /></>;
   if (scenario === 'task-message') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><TaskMessageScenario /></div></>;
   return <BoardView api={harness.api} renderConversation={id => <div data-native={id} />} />;
 }
