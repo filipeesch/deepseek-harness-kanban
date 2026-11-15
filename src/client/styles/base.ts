@@ -2,6 +2,14 @@
 export const baseStyles = String.raw`
 .dsh-kanban{position:relative;display:flex;flex-direction:column;min-height:420px;height:100%;max-width:100%;overflow:hidden;font:inherit;color:inherit;color-scheme:inherit;--kb-surface:var(--color-background,var(--background-color,Canvas));--kb-line:color-mix(in srgb,currentColor 20%,transparent);--kb-soft:color-mix(in srgb,currentColor 5%,var(--kb-surface))}
 .dsh-kanban .kb-hint{font-size:12px;opacity:.76;margin:4px 0;overflow-wrap:anywhere}
+.dsh-kanban .kb-visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.dsh-kanban .kb-claim-pending{display:flex;align-items:center;gap:7px;min-height:22px;margin:6px 0;font-size:12px;opacity:.86}
+.dsh-kanban .kb-claim-spinner{width:11px;height:11px;flex:none;border:2px solid color-mix(in srgb,currentColor 30%,transparent);border-top-color:currentColor;border-radius:50%;animation:kb-claim-spin 900ms linear infinite}
+@keyframes kb-claim-spin{to{transform:rotate(360deg)}}
+.dsh-kanban .kb-claim-notice{display:flex;flex-direction:column;gap:6px;margin:7px 0}
+.dsh-kanban .kb-claim-notice .kb-actions{align-items:center;margin:0}
+.dsh-kanban .kb-claim-notice .kb-error{margin:0}
+.dsh-kanban .kb-claim-title{font-size:13px;font-weight:650}
 .dsh-kanban .kb-toolbar,.dsh-kanban .kb-actions,.dsh-kanban .kb-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.dsh-kanban .kb-row{justify-content:space-between}
 .dsh-kanban .kb-button{font:inherit;font-size:13px;color:inherit;background:var(--kb-soft);border:1px solid var(--kb-line);border-radius:7px;padding:7px 11px;cursor:pointer;line-height:1.3}.dsh-kanban .kb-button:disabled{cursor:not-allowed;opacity:.5}.dsh-kanban .kb-button:hover:not(:disabled){background:color-mix(in srgb,currentColor 10%,var(--kb-surface))}.dsh-kanban .kb-primary{background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);border-color:var(--dsw-alias-button-primary-fill)}.dsh-kanban .kb-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover);border-color:var(--dsw-alias-button-primary-hover)}.dsh-kanban .kb-danger{color:var(--color-destructive,#c53030);border-color:currentColor}.dsh-kanban .kb-icon-button{font-size:20px;line-height:1;padding:5px 10px}
 .dsh-kanban .kb-button:focus-visible,.dsh-kanban .kb-input:focus-visible,.dsh-kanban .kb-tab:focus-visible,.dsh-kanban .kb-hub-tab:focus-visible,.dsh-kanban .kb-board-tab:focus-visible,.dsh-kanban .kb-tab-add:focus-visible,.dsh-kanban .kb-choice input:focus-visible,.dsh-kanban .kb-closed-chip:focus-visible,.dsh-kanban .kb-closed-item:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:3px}

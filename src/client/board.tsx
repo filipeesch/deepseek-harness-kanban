@@ -53,12 +53,15 @@ import { ModelFallbacksProvider, useModelFallbackRegistry } from './model-fallba
 import { PresetFallbacksProvider, usePresetFallbackRegistry } from './preset-fallbacks.js';
 import type { PreparationSeat } from './execution-preparation/model-seat.js';
 import { createBoardPageState, taskPageState, usePageField, type BoardPageState } from './page-state.js';
+import type { ConversationSurfaceMode } from './conversation-surface.js';
+import type { DrawerNavigationSource } from './drawer-navigation-coordinator.js';
+import { endPeek } from './drawer-view.js';
 export { createBoardPageState } from './page-state.js';
 export type { BoardPageState } from './page-state.js';
 
 export interface BoardViewProps {
   api: ClientApi;
-  renderConversation: (id: string) => ReactNode;
+  renderConversation: (id: string, mode?: ConversationSurfaceMode) => ReactNode;
   pageState?: BoardPageState;
   sessionTitles?: SessionTitles;
   /** Lease scope owned by each mounted task drawer; absent only in isolated render harnesses. */
@@ -72,13 +75,20 @@ export interface BoardViewProps {
   onOpenSession?: (sessionId: string) => void;
   /** Acknowledges the settled turns of the given conversations; absent in isolated harnesses. */
   onMarkAllRead?: (sessionIds: readonly string[]) => void;
+  /** Client navigation outcomes that keep an owned native navigation inside the drawer. */
+  navigation?: DrawerNavigationSource;
 }
 
 const EMPTY_TASKS: readonly Task[] = [];
 const EMPTY_PROJECTS: readonly Project[] = [];
 
-export function BoardView({ api, renderConversation, pageState, sessionTitles, conversationLeases, picker = null, autoRun: providedAutoRun, nativeSeat, onOpenSession, onMarkAllRead }: BoardViewProps) {
+export function BoardView({ api, renderConversation, pageState, sessionTitles, conversationLeases, picker = null, autoRun: providedAutoRun, nativeSeat, onOpenSession, onMarkAllRead, navigation }: BoardViewProps) {
   const [localPageState] = useState(createBoardPageState); const preferences = pageState ?? localPageState;
+  // A peek belongs to the mounted board. Leaving the panel unmounts it, so returning
+  // to Kanban starts the drawer on a conversation instead of a stale peek.
+  useEffect(() => () => {
+    for (const page of Object.values(preferences.drawers)) page.view = endPeek(page.view);
+  }, [preferences]);
   const [snapshot, setSnapshot] = useState<KanbanSnapshot | null>(null); const latest = useRef<KanbanSnapshot | null>(null); const live = useRef(false); const currentApi = useRef(api); currentApi.current = api;
   const [loadError, setLoadError] = useState<Problem | null>(null); const [loadAttempt, setLoadAttempt] = useState(0);
   const [search, setSearch] = usePageField(preferences, 'search'); const [projectFilter, setProjectFilter] = usePageField(preferences, 'projectFilter'); const [selectedId, setSelectedId] = usePageField(preferences, 'selectedTaskId');
@@ -162,8 +172,8 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     if (state === undefined || onMarkAllRead === undefined) return;
     onMarkAllRead(state.tasks.flatMap(task => task.sessionIds));
   }, [state, onMarkAllRead]);
-  function selectHub(hubId: string) { if (hubId === activeHub?.id) return; setActiveHubIdState(hubId); writeStorage(ACTIVE_HUB_KEY, hubId); setSearch(''); setProjectFilter(''); setSelectedId(null); setSelectionMode(false); setSelectedIds(new Set()); }
-  function selectBoard(hubId: string, boardId: string) { setActiveBoardByHub(previous => writeBoardPreference(hubId, boardId, previous)); setSearch(''); setProjectFilter(''); setSelectedId(null); setSelectionMode(false); setSelectedIds(new Set()); }
+  function selectHub(hubId: string) { if (hubId === activeHub?.id) return; setActiveHubIdState(hubId); writeStorage(ACTIVE_HUB_KEY, hubId); setSearch(''); setProjectFilter(''); closeDrawer(); setSelectionMode(false); setSelectedIds(new Set()); }
+  function selectBoard(hubId: string, boardId: string) { setActiveBoardByHub(previous => writeBoardPreference(hubId, boardId, previous)); setSearch(''); setProjectFilter(''); closeDrawer(); setSelectionMode(false); setSelectedIds(new Set()); }
   useEffect(() => { if (snapshot && activeHub && activeHub.id !== activeHubId) { setActiveHubIdState(activeHub.id); writeStorage(ACTIVE_HUB_KEY, activeHub.id); } }, [snapshot, activeHub, activeHubId]);
   useEffect(() => { setSelectionMode(false); setSelectedIds(new Set()); }, [search, projectFilter]);
   const run = useCallback(async (command: Command, allowDiscard = true): Promise<KanbanSnapshot> => {
@@ -210,7 +220,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   const destructive = useDestructiveOperations({
     run: (command, allowDiscard) => run(command, allowDiscard),
     tasks: () => latest.current ? allTasks(latest.current) : [],
-    closed: taskId => { if (selectedId === taskId) setSelectedId(null); },
+    closed: taskId => { if (selectedId === taskId) closeDrawer(); },
   });
   discardRequest.current = destructive.openDiscard;
   const batch = useBatchDeletion({ run: (command, allowDiscard) => run(command, allowDiscard), onRejected: rejections => setActionError(batchRejectionProblem(rejections)) });
@@ -221,9 +231,21 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     if (!task) destructive.close();
   }, [state, destructive.state.view, destructive.state.pending, destructive.close]);
   function clearCloseTimer() { if (closeTimer.current !== undefined) { clearTimeout(closeTimer.current); closeTimer.current = undefined; } }
+  /** A transient peek belongs to the open drawer; closing it or switching tasks forgets it. */
+  function forgetPeek(taskId: string | null) {
+    if (taskId === null) return;
+    const page = preferences.drawers[taskId];
+    if (page !== undefined) page.view = endPeek(page.view);
+  }
+  /** Every close path forgets the peek, so a reopened drawer starts on a conversation. */
+  function closeDrawer() {
+    forgetPeek(selectedIdRef.current);
+    setSelectedId(null);
+  }
   function finishClose() {
     restoreFocus.current = selectedId;
-    clearCloseTimer(); setDrawerClosing(false); setDrawerEntering(false); setSelectedId(null);
+    closeDrawer();
+    clearCloseTimer(); setDrawerClosing(false); setDrawerEntering(false);
   }
   function requestCloseDrawer() {
     if (!selectedId || drawerClosing) return;
@@ -234,9 +256,11 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   }
   const openTask = useCallback((taskId: string) => {
     clearCloseTimer();
+    forgetPeek(selectedIdRef.current);
+    forgetPeek(taskId);
     const entering = selectedIdRef.current === null && !prefersReducedMotion();
     setDrawerClosing(false); setDrawerEntering(entering); setSelectedId(taskId);
-  }, [setDrawerClosing, setDrawerEntering, setSelectedId]);
+  }, [preferences, setDrawerClosing, setDrawerEntering, setSelectedId]);
   // The notice port is the only place that knows the transport; the model stays data.
   const noticeHandlers = useMemo<NoticeHandlers>(() => ({
     openTask,
@@ -296,7 +320,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     restoreFocus.current = null;
     if (closedTaskId) cardFocusTarget(closedTaskId)?.focus();
   }, [selectedId]);
-  useEffect(() => { if (state && selectedId && !state.tasks.some(task => task.id === selectedId)) { clearCloseTimer(); setDrawerClosing(false); setDrawerEntering(false); setSelectedId(null); } }, [state, selectedId]);
+  useEffect(() => { if (state && selectedId && !state.tasks.some(task => task.id === selectedId)) { clearCloseTimer(); setDrawerClosing(false); setDrawerEntering(false); closeDrawer(); } }, [state, selectedId]);
   useEffect(() => {
     if (!selectedId) return;
     const key = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) requestCloseDrawer(); };
@@ -483,7 +507,17 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
             />
           : <BoardColumnsView plan={columnPlan} layoutKeys={layoutKeys} resetKey={motionResetKey} workflow={state.workflow} drag={drag} renderCard={renderCard} renderNewTaskButton={creation.renderButton} onEditStage={openStageEditor} />}
       </BoardBody>
-      {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} conversationAttention={snapshot?.conversationAttention} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} onForce={destructive.openForce} onEditStage={openStageEditor} onToggleAutoMode={toggleAutoMode} autoModePending={autoModePending.has(selected.id)} sessionTitles={sessionTitles} {...(conversationLeases === undefined ? {} : { conversationLeases })} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} />}
+      {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} conversationAttention={snapshot?.conversationAttention} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onEditStage={openStageEditor} {...(navigation === undefined ? {} : { navigation })} {...(onOpenSession === undefined ? {} : {
+        // Revealing the foreign branch in the main chat is the drawer's own navigation,
+        // so the coordinator must not claim it again.
+        onOpenInMain: (sessionId: string) => {
+          // The escape consumes the failure notice it came from.
+          const page = taskPageState(preferences, selected.id);
+          page.claim = null;
+          navigation?.suppressNextNavigation?.(sessionId);
+          onOpenSession(sessionId);
+        },
+      })} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} onForce={destructive.openForce} onToggleAutoMode={toggleAutoMode} autoModePending={autoModePending.has(selected.id)} sessionTitles={sessionTitles} {...(conversationLeases === undefined ? {} : { conversationLeases })} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} />}
       {destructive.state.view && (() => {
         const view = destructive.state.view;
         const task = state.tasks.find(value => value.id === view.request.taskId);
@@ -493,7 +527,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
           const current = latest.current ? allTasks(latest.current).find(value => value.id === view.request.taskId) : undefined;
           if (!current || (current.worktree?.path ?? null) !== view.request.expectedWorktreePath) return Promise.reject({ code: 'CONTEXT_CHANGED', message: 'The task worktree changed while confirmation was open. Cancel and review the current target before trying again.' });
           return run(command, false);
-        }} onClose={destructive.close} onDeleted={() => setSelectedId(null)} />;
+        }} onClose={destructive.close} onDeleted={closeDrawer} />;
         const Dialog = view.request.command.type === 'task.delete' ? DeleteTaskDialog : RemoveWorktreeDialog;
         return <Dialog request={view.request} task={task} project={state.projects.find(value => value.id === task.projectId)} attention={snapshot?.attention[task.id] ?? EMPTY_ATTENTION} sessionTitles={sessionTitles} pending={destructive.state.pending} problem={destructive.state.error} onCancel={destructive.close} onConfirm={destructive.confirm} onRetry={destructive.retry} onReturn={destructive.returnToBase} onForce={() => destructive.openForce(task.id)} />;
       })()}

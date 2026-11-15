@@ -1,10 +1,19 @@
 import { useCallback, useState, type Dispatch, type SetStateAction } from 'react';
 import type { WorkflowView } from '../shared/types.js';
-import { openSessionIds } from '../shared/conversations.js';
+import { EMPTY_DRAWER_VIEW, type DrawerView, type ForkClaim } from './drawer-view.js';
 
 export type DrawerSection = 'Conversations' | 'Info' | 'Git' | 'Notes' | 'Relations' | 'History';
 export interface InfoDraft { title: string; description: string }
-export interface TaskPageState { section: DrawerSection; conversationId: string | null; conversationSelectionRequired?: boolean; infoDraft?: InfoDraft; noteTagFilter?: string }
+/** The view state of one open task drawer; plugin-lifetime bookmarks, never task facts. */
+export interface TaskPageState {
+  section: DrawerSection;
+  /** The conversation surface the Conversations section presents. */
+  view: DrawerView;
+  /** The fork this drawer claimed and is waiting for the host to attach. */
+  claim: ForkClaim | null;
+  infoDraft?: InfoDraft;
+  noteTagFilter?: string;
+}
 /** Plugin-lifetime UI bookmarks only: never store native views, transports, or session references here. */
 export interface BoardPageState {
   search: string;
@@ -21,14 +30,7 @@ export function createBoardPageState(): BoardPageState {
   return { search: '', projectFilter: '', selectedTaskId: null, drawers: Object.create(null) as Record<string, TaskPageState>, view: 'board', dismissedTeamBanner: Object.create(null) as Record<string, string> };
 }
 
-export function createTaskPageState(): TaskPageState { return { section: 'Conversations', conversationId: null }; }
-
-/** Pick the visible conversation for the tab strip and the status row. */
-export function resolveActiveConversation(sessionIds: readonly string[], closedSessionIds: readonly string[], selected: string | null, fallbackAllowed: boolean): string | null {
-  const open = openSessionIds({ sessionIds, closedSessionIds });
-  if (selected !== null && open.includes(selected)) return selected;
-  return fallbackAllowed ? open[0] ?? null : null;
-}
+export function createTaskPageState(): TaskPageState { return { section: 'Conversations', view: EMPTY_DRAWER_VIEW, claim: null }; }
 
 export function taskPageState(state: BoardPageState, taskId: string): TaskPageState {
   if (!Object.prototype.hasOwnProperty.call(state.drawers, taskId)) state.drawers[taskId] = createTaskPageState();
