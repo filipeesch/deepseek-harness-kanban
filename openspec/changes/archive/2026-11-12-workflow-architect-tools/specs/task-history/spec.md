@@ -8,7 +8,7 @@ The record SHALL include, as separate entries: the task's creation together with
 
 The origin a stage entry carries SHALL distinguish an operator move, a transition the task declared, an automatic advance, a named script exit, and the reserved error route, and SHALL name the exit when a script or the error route produced the move. An entry recorded before origins were stored SHALL remain present and SHALL read as an unrecorded origin rather than being backfilled, inferred, or rewritten.
 
-The record SHALL additionally include the settled outcome of each deterministic execution, distinguishing a completed named result, an executor failure, and an explicit or superseding cancellation. The outcome SHALL identify its execution and source stage and SHALL carry the named exit and redacted message or diagnostic when one exists. A settled execution SHALL additionally carry, bounded, the parameter names and values that execution used, so two executions of the same entry can be compared; it SHALL NOT carry a value the execution did not receive. A completed script outcome SHALL NOT claim that its destination was entered before that transition settles. A logical deterministic handoff acceptance or failure SHALL be recorded when that fact settles, with its delivery identity and destination reference, rather than by copying raw transcript events. Replaying the same execution outcome or handoff receipt after restart SHALL NOT create another occurrence; a later explicit Play creates a different execution whose settled outcome SHALL be recorded even when its text repeats a previous outcome. These entries SHALL contain no resolved variable values, trust grants, captured code, or polling log stream and SHALL remain installation-local. Parameter values are task data, not credentials, and SHALL be recorded only on the execution that received them.
+The record SHALL additionally include the settled outcome of each scripted execution, distinguishing a completed named result, an executor failure, and an explicit or superseding cancellation. The outcome SHALL identify its execution and source stage and SHALL carry the named exit and redacted message or diagnostic when one exists. A settled execution SHALL additionally carry, bounded, the parameter names and values that execution used, so two executions of the same entry can be compared; it SHALL NOT carry a value the execution did not receive. A completed script outcome SHALL NOT claim that its destination was entered before that transition settles. A logical scripted handoff acceptance or failure SHALL be recorded when that fact settles, with its delivery identity and destination reference, rather than by copying raw transcript events. Replaying the same execution outcome or handoff receipt after restart SHALL NOT create another occurrence; a later explicit Play creates a different execution whose settled outcome SHALL be recorded even when its text repeats a previous outcome. These entries SHALL contain no resolved variable values, trust grants, captured code, or polling log stream and SHALL remain installation-local. Parameter values are task data, not credentials, and SHALL be recorded only on the execution that received them.
 
 #### Scenario: Record the creation of a task
 
@@ -75,15 +75,15 @@ The record SHALL additionally include the settled outcome of each deterministic 
 - **THEN** the record gains no entry
 - **AND** a task deletion records nothing, because the record is removed with the task
 
-#### Scenario: Record a deterministic result before claiming its move
+#### Scenario: Record a scripted result before claiming its move
 
-- **WHEN** a deterministic execution saves a terminal named output while its result delivery is still held
+- **WHEN** a scripted execution saves a terminal named output while its result delivery is still held
 - **THEN** history records the settled execution outcome with its source stage, output, and redacted message
 - **AND** that outcome is not presented as a completed stage change or handoff acceptance
 
-#### Scenario: Record a settled deterministic handoff once
+#### Scenario: Record a settled scripted handoff once
 
-- **WHEN** a deterministic handoff is accepted by its destination entry
+- **WHEN** a scripted handoff is accepted by its destination entry
 - **THEN** history records its logical acceptance and delivery identity
 - **AND** restarting or retrying the same delivery adds no duplicate acceptance fact
 

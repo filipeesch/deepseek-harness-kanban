@@ -319,7 +319,7 @@ A Git-backed operation SHALL require a project with a Git root. Branch listing, 
 - **THEN** the conversation uses the project path as its effective working directory
 
 ### Requirement: Stable project key
-Every project SHALL have a project key that identifies it across a Hub's boards and across installations. The key SHALL be generated from the project name when the project is registered, SHALL be editable, and SHALL be unique within its Hub. Generating a key SHALL be deterministic for a given name and existing key set, so projects registered on two installations from the same names receive the same key. A rename or a relocation of the project SHALL NOT change its key. Editing a key SHALL rewrite the key in every board scope of the same Hub in the same write, so no board is left referring to the previous key. A project that predates the key SHALL receive a deterministic key when its Hub opens, before any board is published.
+Every project SHALL have a project key that identifies it across a Hub's boards and across installations. The key SHALL be generated from the project name when the project is registered, SHALL be editable, and SHALL be unique within its Hub. Generating a key SHALL be scripted for a given name and existing key set, so projects registered on two installations from the same names receive the same key. A rename or a relocation of the project SHALL NOT change its key. Editing a key SHALL rewrite the key in every board scope of the same Hub in the same write, so no board is left referring to the previous key. A project that predates the key SHALL receive a scripted key when its Hub opens, before any board is published.
 
 #### Scenario: Generate a key on registration
 - **WHEN** the user registers a project named "Platform API"
@@ -346,7 +346,7 @@ Every project SHALL have a project key that identifies it across a Hub's boards 
 
 #### Scenario: Key an existing project on open
 - **WHEN** a Hub opens with a project stored before project keys existed
-- **THEN** the project receives a deterministic key that no other project of the Hub uses
+- **THEN** the project receives a scripted key that no other project of the Hub uses
 - **AND** the key is recorded before the Hub is published
 
 ### Requirement: Published project placeholder

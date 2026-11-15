@@ -12,7 +12,7 @@ The current host already owns everything the advance needs, but nothing connects
 - `firstOpenSessionId` plus `createConversationNow({ allowUndecided: true })` is the established target rule, and the five-second countdown is client state in `AutoRunController`.
 - `app.ts` is already the command coordinator and the owner of the pending-transition drain; the persisted task shape is duplicated between `domain/schema.ts` (legacy board) and `domain/hub-schema.ts` (Hub).
 
-Constraints: no data-version bump, existing persisted states must keep parsing, the five-second behavior must not change, host decisions must be deterministic under an injected clock, and the feature must be provable with the existing in-memory, browser, and replay lanes without a real model.
+Constraints: no data-version bump, existing persisted states must keep parsing, the five-second behavior must not change, host decisions must be scripted under an injected clock, and the feature must be provable with the existing in-memory, browser, and replay lanes without a real model.
 
 ## Goals / Non-Goals
 
@@ -20,7 +20,7 @@ Constraints: no data-version bump, existing persisted states must keep parsing, 
 
 - Make the advance a host decision with no dependency on the Kanban UI being mounted, filtered, or reloaded.
 - Represent one advance as one durable record, so a reload cannot duplicate or cancel it and a restart dispatches what was already decided.
-- Keep the trigger and the dispatch deterministic and testable: an explicit reason check, an explicit idle gate, and an injected scheduler.
+- Keep the trigger and the dispatch scripted and testable: an explicit reason check, an explicit idle gate, and an injected scheduler.
 - Isolate the new behavior behind injected ports so `app.ts` only wires it and existing command paths keep their semantics.
 - Record enough state to explain a pause after a reload, without deriving policy from presentation flags.
 - Land the agreed refactors without changing the persisted format in a breaking way.
@@ -47,7 +47,7 @@ Alternative considered: client-side advance in `AutoRunController`. Rejected bec
 
 On `turn/end`, the coordinator inspects `reason.kind`. Only `completed` proceeds. Non-completed endings record a pause reason immediately. For a completed turn, the coordinator schedules a short settle tick (about 250 ms) and then re-reads the facts, so the native activity projection has observed the end of the turn.
 
-Alternative considered: acting inside the event callback. Rejected because the activity waterfall can still report `running` at that instant, which would make the idle gate nondeterministic.
+Alternative considered: acting inside the event callback. Rejected because the activity waterfall can still report `running` at that instant, which would make the idle gate nonscripted.
 
 Alternative considered: subscribing to `agent/status` idle. Rejected because it is per agent, not per turn, and it does not distinguish a completed turn from a failed one.
 
@@ -136,7 +136,7 @@ New `src/domain/schema-parts.ts` holds the shared primitives, `operation`, `pend
 
 ### 13. Test seams
 
-The coordinator takes `schedule` and a clock-like injection so tests drive the settle tick deterministically, mirroring `AutoRunController`'s `AutoRunClock`. Domain resolution, admission, and derivation are pure enough for unit tests; the coordinator is exercised through the existing in-memory Hub fixture and the fake session port; the automatic path in the real composition is covered by a replay lane with a deterministic turn boundary.
+The coordinator takes `schedule` and a clock-like injection so tests drive the settle tick scriptedally, mirroring `AutoRunController`'s `AutoRunClock`. Domain resolution, admission, and derivation are pure enough for unit tests; the coordinator is exercised through the existing in-memory Hub fixture and the fake session port; the automatic path in the real composition is covered by a replay lane with a scripted turn boundary.
 
 ## Risks / Trade-offs
 

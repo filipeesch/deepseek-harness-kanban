@@ -1,7 +1,7 @@
 import { boundContextSummary, createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm';
 import type { StageInstructionDelivery } from '../shared/ports.js';
 import type { Task, Workflow } from '../shared/types.js';
-import type { DeterministicHandoff } from '../shared/deterministic.js';
+import type { ScriptedHandoff } from '../shared/scripted.js';
 import { bounded } from '../shared/bounded.js';
 import { defaultDestination } from '../domain/transitions.js';
 import { recordedTransition } from '../domain/transition-route.js';
@@ -41,7 +41,7 @@ export interface StageInstructionInput {
   /** The reason the declared transition carried, when this delivery follows one. */
   readonly transition?: DeclaredTransitionNote;
   /** A program result is evidence, not a reason declared by the destination agent. */
-  readonly handoff?: DeterministicHandoff;
+  readonly handoff?: ScriptedHandoff;
   /** The host-generated transition briefing, when the stage configures two or more targets. */
   readonly briefing?: string;
   /** The name of the stage being entered. */
@@ -84,11 +84,11 @@ export const HANDOFF_PARAMETER_CONTEXT_MAX_BYTES = 4 * 1024;
 /**
  * Compose the model-facing delivery: the instruction, then the declared reason
  * when this delivery follows one, then the handoff when one applies. A handoff
- * carries the values the source sent as bounded context; a deterministic
+ * carries the values the source sent as bounded context; a scripted
  * destination reads only declared parameters and never this block.
  */
-export function deterministicHandoffBlock(handoff: DeterministicHandoff): string {
-  const base = `Deterministic result (from ${handoff.fromColumnId}; exit: ${handoff.exit}; execution: ${handoff.executionId}):\n${handoff.message}`;
+export function scriptedHandoffBlock(handoff: ScriptedHandoff): string {
+  const base = `Scripted result (from ${handoff.fromColumnId}; exit: ${handoff.exit}; execution: ${handoff.executionId}):\n${handoff.message}`;
   const entries = Object.entries(handoff.params ?? {});
   if (entries.length === 0) return base;
   const section = bounded('Sent parameters:\n' + entries.map(([name, value]) => name + ': ' + value).join('\n'), HANDOFF_PARAMETER_CONTEXT_MAX_BYTES);
@@ -98,7 +98,7 @@ export function deterministicHandoffBlock(handoff: DeterministicHandoff): string
 export function buildStageInstructionDelivery(input: StageInstructionInput): StageInstructionDelivery {
   const blocks = [input.instruction];
   if (input.transition !== undefined) blocks.push(transitionNoteBlock(input.transition));
-  if (input.handoff !== undefined) blocks.push(deterministicHandoffBlock(input.handoff));
+  if (input.handoff !== undefined) blocks.push(scriptedHandoffBlock(input.handoff));
   if (input.briefing !== undefined) blocks.push(input.briefing);
   return {
     requestId: input.requestId,

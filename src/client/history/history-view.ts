@@ -1,7 +1,7 @@
 import type { StageEntryOrigin, TaskHistoryEntry } from '../../shared/task-history.js';
 import type { Column, Problem } from '../../shared/types.js';
-import { FAILURE_ORIGIN_LABELS } from '../../shared/deterministic-failure.js';
-import { failureDetail } from '../../domain/deterministic-failure.js';
+import { FAILURE_ORIGIN_LABELS } from '../../shared/scripted-failure.js';
+import { failureDetail } from '../../domain/scripted-failure.js';
 
 /**
  * How one task's flow record reads as table rows.
@@ -185,14 +185,14 @@ function worktreeRow(entry: Extract<TaskHistoryEntry, { kind: 'worktree' }>): { 
 
 function present(entry: TaskHistoryEntry, columns: readonly Pick<Column, 'id' | 'name'>[]): { event: string; detail: string; tone: HistoryTone; evidence?: string } {
   switch (entry.kind) {
-    case 'deterministic-execution': {
+    case 'scripted-execution': {
       // The synthetic result message and the diagnostic are the same sentence; show
       // it once instead of repeating it inside the same row.
       const repeated = entry.message !== undefined && entry.error !== undefined && entry.message === entry.error.message;
       const evidence = failureEvidence(entry.error);
       return { event: 'Script ' + entry.outcome, detail: stageName(columns, entry.columnId) + ' · Execution ' + entry.executionId + (entry.exit ? ' · Exit ' + entry.exit : '') + parameterText(entry.parameters, 'Parameters') + (entry.message !== undefined && !repeated ? ' — ' + entry.message : '') + failureText(entry.error), tone: entry.outcome === 'failed' ? 'warning' : 'neutral', ...(evidence === undefined ? {} : { evidence }) };
     }
-    case 'deterministic-handoff': return { event: 'Script handoff ' + entry.outcome, detail: transition(entry.fromColumnId, entry.columnId, columns) + ' · Execution ' + entry.executionId + ' · Delivery ' + entry.deliveryId + ' · Exit ' + entry.exit + parameterText(entry.parameters, 'Sent parameters') + ' — ' + entry.message + (entry.error ? ' — ' + entry.error.message : ''), tone: entry.outcome === 'failed' ? 'warning' : 'neutral' };
+    case 'scripted-handoff': return { event: 'Script handoff ' + entry.outcome, detail: transition(entry.fromColumnId, entry.columnId, columns) + ' · Execution ' + entry.executionId + ' · Delivery ' + entry.deliveryId + ' · Exit ' + entry.exit + parameterText(entry.parameters, 'Sent parameters') + ' — ' + entry.message + (entry.error ? ' — ' + entry.error.message : ''), tone: entry.outcome === 'failed' ? 'warning' : 'neutral' };
     case 'created': return { event: 'Created', detail: stageName(columns, entry.columnId), tone: 'accent' };
     case 'stage': return { event: 'Stage changed', detail: transition(entry.fromColumnId, entry.columnId, columns) + ' · ' + stageOrigin(entry.origin), tone: 'accent' };
     case 'intent': return { event: 'Next stage recorded', detail: transition(entry.fromColumnId, entry.columnId, columns), tone: 'neutral' };

@@ -11,7 +11,7 @@ import { composeWorkflowReport, reviewWorkflowText, summarizeWorkflowReport, wit
 import type { WorkflowProblem } from '../domain/workflow-diagnostics.js';
 import { diffWorkflow } from '../domain/workflow-difference.js';
 import { parseWorkflow } from '../domain/workflow.js';
-import type { DeterministicImpactPort } from './deterministic-impact.js';
+import type { ScriptedImpactPort } from './scripted-impact.js';
 import { describeStageActivity, hasInFlightWork } from '../shared/stage-activity.js';
 
 /** The narrow publishing surface a board write needs; no dependency on the Kanban app. */
@@ -89,7 +89,7 @@ export interface BoardAdministrationOptions {
   readonly report?: (error: unknown) => void;
   readonly activity?: BoardActivityPort;
   /** Resolves the reviewed authorization of a composed document's scripts; absent reports none. */
-  readonly impact?: DeterministicImpactPort;
+  readonly impact?: ScriptedImpactPort;
   /** Records each accepted workflow write; absent keeps no local history. */
   readonly revisions?: BoardRevisionPort;
 }
@@ -204,7 +204,7 @@ export class BoardAdministration {
       ...(task.pendingTransition === undefined ? {} : { pendingTransition: { fromColumnId: task.pendingTransition.fromColumnId, columnId: task.pendingTransition.columnId } }),
       // Parameter names only: a report never carries an entry's values.
       parameters: [...new Set([
-        ...Object.keys(task.deterministic?.parameters ?? {}),
+        ...Object.keys(task.scripted?.parameters ?? {}),
         ...Object.keys(task.recordedTransition?.parameters ?? {}),
         ...Object.keys(task.pendingTransition?.parameters ?? {}),
       ])],
@@ -495,7 +495,7 @@ export class BoardAdministration {
       const created = await this.create({ ...input, workflowYaml, revision: { actor: input.actor ?? { kind: 'operator' }, origin: input.origin ?? 'editor' } }, policy);
       if (this.options.impact === undefined) return { ...created, saved: true, sha256, report: this.shaped(report, this.workflowOf(workflowYaml), detail) };
       // A creation has no evaluated approvals yet, which is exactly the answer an
-      // author needs: every deterministic stage of the new board is unreviewed.
+      // author needs: every scripted stage of the new board is unreviewed.
       try {
         const scripts = await this.options.impact.describe({ hub: this.options.hubs.requireHub(hubId), board: created.board, before: null, after: created.board.workflow });
         return { ...created, saved: true, sha256, report: this.shaped(withScripts(report, scripts), this.workflowOf(workflowYaml), detail) };

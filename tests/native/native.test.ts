@@ -312,7 +312,7 @@ describe('native conversations', () => {
     const f = fixture(); const kill = vi.fn(() => 'requested' as const);
     Object.assign(f.ctx as object, { jobs: { kill } });
     expect(await f.sessions.cancelJob!('a', 'bash-1')).toBe('requested');
-    expect(kill).toHaveBeenCalledWith('bash-1', 'a', expect.stringContaining('saved deterministic result'));
+    expect(kill).toHaveBeenCalledWith('bash-1', 'a', expect.stringContaining('saved scripted result'));
   });
   it('reports a settled job without treating it as an error', async () => {
     const f = fixture(); Object.assign(f.ctx as object, { jobs: { kill: () => 'already-finished' } });

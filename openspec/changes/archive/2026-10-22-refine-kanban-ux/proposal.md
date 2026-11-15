@@ -19,7 +19,7 @@ This change captures the decisions aligned on October 22, 2026. It refines the e
 - **Native workspace binding.** Each new task conversation joins a native DSH workspace for its effective project or worktree path instead of being created with cwd only. The base-project workspace is shared by tasks in that project; a worktree workspace is per task. Workspace titles are the project name and `project · branch`. Existing workspaces are reused and never renamed. The worktree workspace registration is deleted when its task is deleted, if Kanban created it and no other session uses it. DSH has no hidden-workspace flag; the sidebar entries remain visible while in use.
 - **Conversation tabs.** Agent tabs use the native session title, with `Agent N` as fallback. Renaming a tab renames the native session; closed tabs use the same title. Reactivating a task restores its existing sessions.
 - **Copy.** The board legend sentence is removed; attention indicators keep their accessible labels and tooltips.
-- **Deterministic verification.** A test-only, scripted LLM adapter is introduced for GUI and native-contract tests. Tests select it per session or preset; no test in the acceptance path makes a real model request. Existing real-model helper scripts are disabled or guarded out of acceptance.
+- **Scripted verification.** A test-only, scripted LLM adapter is introduced for GUI and native-contract tests. Tests select it per session or preset; no test in the acceptance path makes a real model request. Existing real-model helper scripts are disabled or guarded out of acceptance.
 
 ## Capabilities
 
@@ -40,7 +40,7 @@ None. This change modifies existing capabilities only.
 - **Client:** board, card, drawer, Info, Git, tab, icon, and page-state components; drag/drop interaction; bulk-selection state; resizable drawer; draft retention.
 - **Host:** native session creation with `workspaceId`; workspace registry create/resolve/delete; task lifecycle commands; worktree coordination; task ordering; store/schema changes for workspace ownership and archive removal.
 - **Persistence:** `archivedAt` leaves the active model. A load-time compatibility guard rejects unexpected legacy archived tasks instead of silently exposing or deleting them. Workspace identifiers are persisted for cleanup.
-- **Tests:** client board/state/lifecycle tests, host app/product-walkthrough tests, domain schema/store tests, bridge fixtures, and native workspace tests. A test-only LLM adapter and deterministic fixtures replace real-model helper runs in acceptance.
+- **Tests:** client board/state/lifecycle tests, host app/product-walkthrough tests, domain schema/store tests, bridge fixtures, and native workspace tests. A test-only LLM adapter and scripted fixtures replace real-model helper runs in acceptance.
 - **Docs and specs:** README, operations, verification boundaries, and the affected capability specs.
 - **Dependencies:** no new runtime dependency; no DSH core change; Railyin remains an external UX reference.
 

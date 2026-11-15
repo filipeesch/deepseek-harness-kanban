@@ -2,7 +2,9 @@ import { sequenceItemSpan } from './journal/authored-text.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 
 /** The authored fields of a stage an edit may scope its match to. */
-export const WORKFLOW_EDIT_FIELDS = ['on_enter_prompt', 'description', 'allowed_transitions', 'deterministic', 'block'] as const;
+export const WORKFLOW_EDIT_FIELDS = ['on_enter_prompt', 'description', 'allowed_transitions', 'scripted', 'deterministic', 'block'] as const;
+/** The two spellings that address one stage's program. */
+const SCRIPTED_EDIT_KEYS: readonly WorkflowEditField[] = ['scripted', 'deterministic'];
 export type WorkflowEditField = (typeof WORKFLOW_EDIT_FIELDS)[number];
 
 /** One literal replacement inside a board's authored workflow YAML. */
@@ -146,7 +148,12 @@ function scopeOf(text: string, edit: WorkflowTextEdit): Span & { stage?: string 
   invariant(stage !== undefined, 'STAGE_NOT_FOUND', 'The workflow has no stage ' + edit.stage + '.');
   const block = text.slice(stage.start, stage.end);
   if (edit.field === undefined || edit.field === 'block') return { start: stage.start, end: stage.end, stage: edit.stage };
-  const field = fieldSpan(block, edit.field);
+  // A stage may author the program under either spelling, so a program scope resolves
+  // the one it authors. Any other field name keeps its own exact match.
+  const program = edit.field === 'scripted' || edit.field === 'deterministic';
+  const authored = !program || fieldSpan(block, edit.field) !== undefined ? edit.field
+    : SCRIPTED_EDIT_KEYS.find(key => fieldSpan(block, key) !== undefined) ?? edit.field;
+  const field = fieldSpan(block, authored);
   if (field === undefined) {
     throw new KanbanError('WORKFLOW_EDIT_NOT_FOUND', 'Stage ' + edit.stage + ' authors no ' + edit.field + ' field.', {
       index: -1, occurrences: 0, lineNumbers: [], scope: { stage: edit.stage, field: edit.field },

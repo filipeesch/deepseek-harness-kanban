@@ -41,17 +41,17 @@ Lets an agent read one board's exact workflow document and the authored block of
 
 ### Requirement: Single-stage read
 
-`get_stage` SHALL return the authored block of one stage of a board's workflow exactly as written, covering its identifier, label, entry instruction, transition list, deterministic configuration, placement, and size, together with the Hub revision the board reports. Script source SHALL be withheld by default and represented by its byte length and a stable digest of those bytes; an explicit request SHALL return the authored source instead. Everything outside the source SHALL stay character for character as authored. The tool SHALL reject a stage the workflow does not define, without changing the board.
+`get_stage` SHALL return the authored block of one stage of a board's workflow exactly as written, covering its identifier, label, entry instruction, transition list, scripted configuration, placement, and size, together with the Hub revision the board reports. Script source SHALL be withheld by default and represented by its byte length and a stable digest of those bytes; an explicit request SHALL return the authored source instead. Everything outside the source SHALL stay character for character as authored. The tool SHALL reject a stage the workflow does not define, without changing the board.
 
 #### Scenario: Withhold script source by default
 
-- **WHEN** an agent reads a deterministic stage without asking for its source
+- **WHEN** an agent reads a scripted stage without asking for its source
 - **THEN** the returned block carries a byte length and a digest in place of the source
 - **AND** it carries the authored exits, environment names, parameter declarations, and directory choice
 
 #### Scenario: Return the authored source on request
 
-- **WHEN** an agent reads a deterministic stage and asks for its source
+- **WHEN** an agent reads a scripted stage and asks for its source
 - **THEN** the returned block carries the authored source exactly as stored
 
 #### Scenario: Preserve the authored block
@@ -67,7 +67,7 @@ Lets an agent read one board's exact workflow document and the authored block of
 
 ### Requirement: Structured stage writes
 
-The plugin SHALL expose `set_stage_prompt`, `set_stage_routes`, and `set_layout`. Each SHALL accept an optional expected Hub revision and SHALL reject a stale revision without changing the board. Each SHALL rewrite only the fields it names and SHALL preserve every other authored character of the document, including comments, key order, quoting, blank lines, and the text of stages it does not name. `set_stage_prompt` SHALL set or clear one stage's entry instruction. `set_stage_routes` SHALL replace one stage's transition list, SHALL distinguish an empty list, which permits no destination, from an omitted list, which permits any other stage, and SHALL replace a deterministic stage's named exits with their destinations without changing its source, environment names, parameter declarations, or directory choice. `set_layout` SHALL set stage placements, stage sizes, and connection layouts, including their anchors and segment displacements, and SHALL remove a placement, size, or connection entry that the call clears.
+The plugin SHALL expose `set_stage_prompt`, `set_stage_routes`, and `set_layout`. Each SHALL accept an optional expected Hub revision and SHALL reject a stale revision without changing the board. Each SHALL rewrite only the fields it names and SHALL preserve every other authored character of the document, including comments, key order, quoting, blank lines, and the text of stages it does not name. `set_stage_prompt` SHALL set or clear one stage's entry instruction. `set_stage_routes` SHALL replace one stage's transition list, SHALL distinguish an empty list, which permits no destination, from an omitted list, which permits any other stage, and SHALL replace a scripted stage's named exits with their destinations without changing its source, environment names, parameter declarations, or directory choice. `set_layout` SHALL set stage placements, stage sizes, and connection layouts, including their anchors and segment displacements, and SHALL remove a placement, size, or connection entry that the call clears.
 
 #### Scenario: Set a stage instruction
 
@@ -91,7 +91,7 @@ The plugin SHALL expose `set_stage_prompt`, `set_stage_routes`, and `set_layout`
 
 #### Scenario: Retarget a named exit
 
-- **WHEN** an agent replaces a deterministic stage's named exits
+- **WHEN** an agent replaces a scripted stage's named exits
 - **THEN** each exit names its new destination
 - **AND** the stage's source, environment names, parameter declarations, and directory choice are unchanged
 
@@ -166,7 +166,7 @@ The plugin SHALL expose `set_stage_prompt`, `set_stage_routes`, and `set_layout`
 
 ### Requirement: Write validation report
 
-Every tool that writes a board's workflow document SHALL compose the result, validate it with the same workflow semantics the board editor enforces, and persist only when validation succeeds. On refusal the tool SHALL persist nothing and return the complete report; on success it SHALL return the same report. The report SHALL carry: validation problems with the line and column of each when the composed document does not parse; a semantic per-stage difference naming changed transitions, named exits, entry instruction, placement, size, group membership, board name, initial stage, and connection layout; graph warnings covering an unreachable stage, a stage that is not a terminal one and authors no outgoing route, a connection layout entry naming a pair the workflow does not draw, a stage outside every group, and an instruction that names a stage the workflow does not define or that is not a permitted destination of that stage; for every deterministic stage the state of its reviewed authorization in each project the board allows, naming the reason when it no longer holds; and the affected cards by identifier and count.
+Every tool that writes a board's workflow document SHALL compose the result, validate it with the same workflow semantics the board editor enforces, and persist only when validation succeeds. On refusal the tool SHALL persist nothing and return the complete report; on success it SHALL return the same report. The report SHALL carry: validation problems with the line and column of each when the composed document does not parse; a semantic per-stage difference naming changed transitions, named exits, entry instruction, placement, size, group membership, board name, initial stage, and connection layout; graph warnings covering an unreachable stage, a stage that is not a terminal one and authors no outgoing route, a connection layout entry naming a pair the workflow does not draw, a stage outside every group, and an instruction that names a stage the workflow does not define or that is not a permitted destination of that stage; for every scripted stage the state of its reviewed authorization in each project the board allows, naming the reason when it no longer holds; and the affected cards by identifier and count.
 
 The authorization state SHALL distinguish changed source, changed named exits or their destinations, changed environment names, a changed working-directory choice, and a changed execution directory. For a stage scoped to the task directory it SHALL report that the execution directory depends on the card's worktree instead of claiming a project-wide result. The report SHALL NOT carry a card title, description, note, task message, or conversation content.
 
@@ -184,18 +184,18 @@ The authorization state SHALL distinguish changed source, changed named exits or
 
 #### Scenario: Report an authorization that no longer holds
 
-- **WHEN** a write retargets a named exit of a deterministic stage the board had already authorized
+- **WHEN** a write retargets a named exit of a scripted stage the board had already authorized
 - **THEN** the report states, for each project the board allows, that the authorization no longer holds for that stage
 - **AND** it names the changed exits and destinations as the reason
 
 #### Scenario: Report a change of source
 
-- **WHEN** a write changes a deterministic stage's source bytes
+- **WHEN** a write changes a scripted stage's source bytes
 - **THEN** the report names the changed source as the reason its authorization no longer holds
 
 #### Scenario: Report an execution directory that depends on the card
 
-- **WHEN** a write changes a deterministic stage scoped to the task directory
+- **WHEN** a write changes a scripted stage scoped to the task directory
 - **THEN** the report states that the execution directory depends on the card's worktree
 - **AND** it does not claim a project-wide result
 

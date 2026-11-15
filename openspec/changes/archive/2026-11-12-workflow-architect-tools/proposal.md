@@ -9,7 +9,7 @@ The plugin already knows all of this internally: stage entries record every move
 ## What Changes
 
 - Add read-only route usage statistics (`get_route_stats`) covering per-transition usage by origin, per-script-exit usage including unused exits, per-stage entries and dwell time, current card dwell, per-card loop counts, and configured routes or exits never used in a period.
-- Make **every** board workflow write validate atomically and return a full report — parse errors with line and column, semantic per-stage diff, graph warnings, deterministic-script fingerprint impact per allowed project, and affected cards — on both refusal and success. There is no separate dry-run mode.
+- Make **every** board workflow write validate atomically and return a full report — parse errors with line and column, semantic per-stage diff, graph warnings, scripted-script fingerprint impact per allowed project, and affected cards — on both refusal and success. There is no separate dry-run mode.
 - Add diagram rendering (`render_workflow_diagram`, SVG always and PNG when a rasterizer is available) and layout diagnostics (`layout_metrics`) that reuse the same routing geometry as the GUI.
 - Add exact document reads (`get_board_yaml`) and per-stage reads (`get_stage`), both paginated, plus structured writes (`set_stage_prompt`, `set_stage_routes`, `set_layout`, `add_stage`, `remove_stage`) that preserve authored text outside the edited field.
 - Add per-board revision history backed by a local board change log (`list_board_revisions`, `diff_board_revisions`, `revert_board`).

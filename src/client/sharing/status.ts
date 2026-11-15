@@ -64,7 +64,7 @@ function fieldLabel(field: string): string {
   switch (field) {
     case 'onEnterPrompt': return 'entry instruction';
     case 'allowedTransitions': return 'allowed transitions';
-    case 'deterministic': return 'script';
+    case 'scripted': return 'script';
     default: return field;
   }
 }

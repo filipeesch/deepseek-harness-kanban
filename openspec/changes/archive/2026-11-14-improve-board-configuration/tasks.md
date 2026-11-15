@@ -61,5 +61,5 @@
 
 - [x] 9.1 Update `tests/e2e-dsh/kanban-board-ux.e2e.template.ts` for the Board sub-tab navigation (Projects and Workflow) and keep the project-scope and workflow assertions. Verify with the real-composition lane.
 - [x] 9.2 Update `tests/e2e-dsh/kanban-board-model.e2e.template.ts` for the Workflow sub-tab and add an assertion that the Defaults native model selector opens and selects a route through the host component. Verify with the lane and a screenshot without credentials.
-- [x] 9.3 Add a deterministic real-composition case for a board default preset: the Defaults list stores it, the card is marked, and a new conversation receives it, using a replay fixture and no real model turn. Verify with the lane and the committed replay override.
+- [x] 9.3 Add a scripted real-composition case for a board default preset: the Defaults list stores it, the card is marked, and a new conversation receives it, using a replay fixture and no real model turn. Verify with the lane and the committed replay override.
 - [x] 9.4 Run the full gates: `pnpm check`, `pnpm test:browser`, the real-composition lane against an installed and built DSH checkout, and `openspec validate improve-board-configuration --strict`. Record the evidence under `.verification/` and confirm no developer profile, personal data, or credentials were touched.

@@ -1,11 +1,11 @@
-import { captureDeterministicTargets, establishStageEntry, ensureLocalStageIdentity } from './deterministic-state.js';
-import { declaredParameterValues } from './deterministic-parameters.js';
+import { captureScriptedTargets, establishStageEntry, ensureLocalStageIdentity } from './scripted-state.js';
+import { declaredParameterValues } from './scripted-parameters.js';
 import type { HubTask, Task, Workflow } from '../shared/types.js';
 import type { StageEntryOrigin } from '../shared/task-history.js';
 import { compareTaskOrder } from './task-order.js';
 import { entryInstruction } from './stage-entry.js';
 import { placementIndex, type Placement } from './placement.js';
-import { recordAutoModeChange, recordStageEntry, recordDeterministicExecution } from './task-history/record.js';
+import { recordAutoModeChange, recordStageEntry, recordScriptedExecution } from './task-history/record.js';
 
 /**
  * The one stage placement, expressed over a board's own workflow and tasks.
@@ -54,10 +54,10 @@ export function placeTaskIn(board: TaskPlacementBoard, task: HubTask, columnId: 
   // moment the task leaves that stage. A same-stage reorder keeps it.
   if (sourceColumnId !== columnId && task.recordedTransition !== undefined) delete task.recordedTransition;
   if (sourceColumnId !== columnId) {
-    const superseded = task.deterministic;
+    const superseded = task.scripted;
     if (superseded && !superseded.result && !['stopped', 'failed'].includes(superseded.phase)) {
       const used = superseded.parameters === undefined || superseded.attempt === 0 ? {} : declaredParameterValues(superseded.capture?.params ?? Object.keys(superseded.parameters), superseded.parameters);
-      recordDeterministicExecution(task, { at: options.at, executionId: superseded.executionId, columnId: sourceColumnId, outcome: 'stopped', ...(Object.keys(used).length === 0 ? {} : { parameters: used }) });
+      recordScriptedExecution(task, { at: options.at, executionId: superseded.executionId, columnId: sourceColumnId, outcome: 'stopped', ...(Object.keys(used).length === 0 ? {} : { parameters: used }) });
     }
     recordStageEntry(task as Task, sourceColumnId, columnId, options.at, options.origin);
     const destinationColumn = board.workflow.columns.find(value => value.id === columnId);
@@ -65,7 +65,7 @@ export function placeTaskIn(board: TaskPlacementBoard, task: HubTask, columnId: 
     else delete task.instructionPending;
     if (destinationColumn !== undefined) {
       const allocate = options.allocateId ?? (() => globalThis.crypto.randomUUID());
-      establishStageEntry(task, destinationColumn, ensureLocalStageIdentity(board, columnId, allocate), options.at, allocate, captureDeterministicTargets(board, destinationColumn, allocate), options.parameters);
+      establishStageEntry(task, destinationColumn, ensureLocalStageIdentity(board, columnId, allocate), options.at, allocate, captureScriptedTargets(board, destinationColumn, allocate), options.parameters);
     }
   }
   // A cleared pause is an auto mode change wherever it happens, so a placement

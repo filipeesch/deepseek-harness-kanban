@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import os from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { createDeterministicRuntime } from './host/deterministic/index.js';
+import { createScriptedRuntime } from './host/scripted/index.js';
 import type {} from '@deepseek-ai/dsh-typert-registry';
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-subagent';
@@ -40,7 +40,7 @@ import { KanbanController } from './host/controller.js';
 import { registerProductTools } from './host/tools.js';
 import { KanbanError } from './shared/errors.js';
 import { registerTaskContextInjection } from './host/task-context.js';
-import { registerDeterministicHandoffInjection } from './host/deterministic-handoff.js';
+import { registerScriptedHandoffInjection } from './host/scripted-handoff.js';
 import { createSessionHistory } from './host/session-history.js';
 import { openScheduleRunStorage } from './host/schedule-run-storage.js';
 import { ScheduleRunRegistry } from './host/schedule-runs.js';
@@ -214,10 +214,10 @@ export async function apply(ctx:Context):Promise<void>{
   // Optional child injection grants access without making conventional boards
   // depend on providers that might not be installed in this profile.
   const runtimeFiber=ctx.inject(['fs','shell','ptcRuntime','sandbox'],child=>{
-   const detach=app.attachDeterministicRuntime(createDeterministicRuntime({context:child,privateDirectory:join(profile.dir,'kanban-private','deterministic')}));
-   child.effect(()=>detach,'kanban.deterministicRuntime');
+   const detach=app.attachScriptedRuntime(createScriptedRuntime({context:child,privateDirectory:join(profile.dir,'kanban-private','scripted')}));
+   child.effect(()=>detach,'kanban.scriptedRuntime');
   });
-  ctx.effect(()=>()=>runtimeFiber.dispose(),'kanban.optionalDeterministicRuntime');
+  ctx.effect(()=>()=>runtimeFiber.dispose(),'kanban.optionalScriptedRuntime');
  }
  const taskMessages=new InterCardMessaging({locateBySession:id=>app.locator.bySession(id),locate:id=>app.locator.byTask(id),prepare:id=>app.prepareMessageConversation(id),delivery:createNativeTaskMessageDelivery(ctx,history),activity:task=>app.taskActivity(task)});
  sharing.setNotify(()=>app.sharingChanged());
@@ -288,7 +288,7 @@ export async function apply(ctx:Context):Promise<void>{
  offSignals=registerAttentionSignals(ctx,app);
  offGuards=registerTaskExecutionGuards(ctx,app.locator,app);
  offContext=registerTaskContextInjection(ctx,app.locator,{history,report});
- offHandoff=registerDeterministicHandoffInjection(ctx,{locateBySession:id=>app.locator.bySession(id),events:async id=>(await history.read(id)).events,reserve:(taskId,entryId,id)=>app.reserveDeterministicHandoff(taskId,entryId,id),accept:(taskId,entryId,id)=>app.acceptDeterministicHandoff(taskId,entryId,id),report});
+ offHandoff=registerScriptedHandoffInjection(ctx,{locateBySession:id=>app.locator.bySession(id),events:async id=>(await history.read(id)).events,reserve:(taskId,entryId,id)=>app.reserveScriptedHandoff(taskId,entryId,id),accept:(taskId,entryId,id)=>app.acceptScriptedHandoff(taskId,entryId,id),report});
  const adopter=new ForkAdopter({
   locate:sessionId=>{const located=app.locator.bySession(sessionId);return located===undefined?undefined:{hubId:located.hubId,taskId:located.task.id,effectiveCwd:located.task.effectiveCwd};},
   directory:sessionId=>native.sessions.directory(sessionId),

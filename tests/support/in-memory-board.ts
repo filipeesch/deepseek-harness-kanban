@@ -5,7 +5,7 @@ import { placementFromAnchor } from '../../src/domain/placement.js';
 
 export type EnteredAtSource = () => number;
 
-/** Monotonic entry identity for deterministic fake boards; never wall-clock dependent. */
+/** Monotonic entry identity for scripted fake boards; never wall-clock dependent. */
 export function createEnteredAtSource(start = 1_000): EnteredAtSource {
   let next = start;
   return () => next++;

@@ -23,11 +23,11 @@
 - [x] 3.2 Style the pulse as a ring over the card that changes no layout, adds no scrollable area, and is absent under reduced motion. Verify `tests/client/styles.test.ts` and a browser assertion that the destination card's box does not change size while the pulse runs.
 - [x] 3.3 Verify the arrival pulse also happens for a move with no drawn connection, which presents no transit. Verify in `tests/browser/workflow-view.spec.ts` for the restricted-move case.
 
-## 4. Deterministic exit labels leave the diagram
+## 4. Scripted exit labels leave the diagram
 
-- [x] 4.1 Remove `exitLabels` from `CanvasConnection`, the edge data, `LiveEdge`, `edge-model.ts`, and the `hasCondition` fold in `canvas.tsx`, publishing a plain deterministic flag instead; exclude that flag from the "no condition" mark. Verify a unit test asserts the mark is absent on a deterministic connection, absent on the dashed default path, and present on a plain explicit connection with no condition.
-- [x] 4.2 Remove the label button from `connection-edge.tsx` and the `.kb-flow-exit-label` rule from `src/client/styles/deterministic.ts`. Verify `grep -rn "exit-label\|exitLabels" src` returns nothing and the styles test passes.
-- [x] 4.3 Confirm the double-press path: a deterministic connection opens the stage editor while the layout lock is off and opens nothing while it is on, and it never opens the condition editor. Verify in `tests/browser/deterministic.spec.ts`, replacing the label click that test uses today with a double-click while unlocked plus a locked assertion.
+- [x] 4.1 Remove `exitLabels` from `CanvasConnection`, the edge data, `LiveEdge`, `edge-model.ts`, and the `hasCondition` fold in `canvas.tsx`, publishing a plain scripted flag instead; exclude that flag from the "no condition" mark. Verify a unit test asserts the mark is absent on a scripted connection, absent on the dashed default path, and present on a plain explicit connection with no condition.
+- [x] 4.2 Remove the label button from `connection-edge.tsx` and the `.kb-flow-exit-label` rule from `src/client/styles/scripted.ts`. Verify `grep -rn "exit-label\|exitLabels" src` returns nothing and the styles test passes.
+- [x] 4.3 Confirm the double-press path: a scripted connection opens the stage editor while the layout lock is off and opens nothing while it is on, and it never opens the condition editor. Verify in `tests/browser/scripted.spec.ts`, replacing the label click that test uses today with a double-click while unlocked plus a locked assertion.
 - [x] 4.4 Review the accessible names the diagram publishes for connections so none still announces exit names. Verify by asserting the rendered accessible names in the browser lane.
 
 ## 5. Cleanup, docs, and release metadata
@@ -41,5 +41,5 @@
 
 - [x] 6.1 Run `pnpm check` (host and client typechecks, vitest, build) and confirm it passes with no new failures.
 - [x] 6.2 Run `pnpm test:browser` and confirm the light and dark runs pass, with screenshots written under `.verification/`.
-- [x] 6.3 Run the isolated real-composition lane from `AGENTS.md` with a throwaway `DSH_HOME` and a profile cloned from the shipped web template, never the owner profile; exercise a card moved between connected stages and a restricted move between unconnected stages. Verify the transit, the pulse, the absence of a duplicated card, and the label-free deterministic arrow, and keep the token URL out of every screenshot and log.
+- [x] 6.3 Run the isolated real-composition lane from `AGENTS.md` with a throwaway `DSH_HOME` and a profile cloned from the shipped web template, never the owner profile; exercise a card moved between connected stages and a restricted move between unconnected stages. Verify the transit, the pulse, the absence of a duplicated card, and the label-free scripted arrow, and keep the token URL out of every screenshot and log.
 - [x] 6.4 `openspec validate workflow-electron-transit --strict` passes and the change reports every artifact done.

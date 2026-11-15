@@ -138,7 +138,7 @@ describe('Hub operations', () => {
 
   it('records declared parameter values and rejects a set that does not match the destination', () => {
     const hub = sampleHub(); const deps = operationDeps();
-    hub.boards[0]!.workflow.columns.push({ id: 'wait', name: 'Wait', deterministic: { language: 'bash', code: 'echo ok', directory: 'task', params: [{ name: 'pipeline', description: 'CI workflow' }], exits: { ok: 'done' } } }, { id: 'done', name: 'Done' });
+    hub.boards[0]!.workflow.columns.push({ id: 'wait', name: 'Wait', scripted: { language: 'bash', code: 'echo ok', directory: 'task', params: [{ name: 'pipeline', description: 'CI workflow' }], exits: { ok: 'done' } } }, { id: 'done', name: 'Done' });
     hub.boards[0]!.workflow.columns[0]!.allowedTransitions = transitions('wait', 'done');
     const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Monitor', description: '' }, deps);
     operations.recordTransition(hub, task.id, 'wait', 'Monitor the CI workflow.', { pipeline: 'ci-main' }, deps);

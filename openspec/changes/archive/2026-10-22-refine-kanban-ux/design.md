@@ -10,7 +10,7 @@ See `proposal.md` for motivation and the capability deltas for required behavior
 - Task conversations are created with `cwd` only. The native workspace registry is used only to archive sessions. DSH accepts `workspaceId` or `cwd` when creating a session, and its sidebar has no hidden-workspace state.
 - Native workspace membership is established at session creation and is not migrated when the effective directory changes (the A7 assumption). New conversations can join the workspace for the current path.
 - The plugin registers its product tools globally; ordinary-chat availability was confirmed in the running GUI.
-- DSH exposes `ctx.llm.registerAdapter` and `LlmAdapter` but ships no deterministic test adapter.
+- DSH exposes `ctx.llm.registerAdapter` and `LlmAdapter` but ships no scripted test adapter.
 
 The Railyin checkout at `~/projects/pessoal/railyin` provides observed UX evidence: pointer-based drag with a cloned ghost and drop indicator, explicit card selection mode, a compact toolbar stage select, a resizable drawer with an outside-click guard, read-only Info with an edit action, and a three-state Git tab with searchable branch selection.
 
@@ -22,7 +22,7 @@ The Railyin checkout at `~/projects/pessoal/railyin` provides observed UX eviden
 - Reduce drawer, Info, and Git surface density while retaining operation recovery and safety warnings.
 - Make Delete the only task lifecycle action and remove archive code paths and metadata.
 - Bind task conversations to native workspaces so the chat does not ask for a workspace, including existing tasks.
-- Replace real-model verification with a deterministic, scriptable provider.
+- Replace real-model verification with a scripted, scriptable provider.
 - Preserve native conversation identity, histories, tools, permissions, and DSH navigation.
 
 **Non-Goals:**
@@ -46,7 +46,7 @@ The board removes the card stage select. The drawer keeps a compact select in it
 
 `task.move` gains an optional `beforeTaskId` (or append when null) and accepts a same-column destination. The host validates allowed transitions, operation/pending state, and that the anchor belongs to the destination stage. It then renumbers the destination column (and the source column for a cross-column move) in one transaction, preserving a stable integer order.
 
-**Why renumber:** fractional positions eventually collide and complicate recovery. Single-user command serialization makes a full-column renumber cheap and deterministic. The client applies an optimistic local order and rolls back if the command rejects.
+**Why renumber:** fractional positions eventually collide and complicate recovery. Single-user command serialization makes a full-column renumber cheap and scripted. The client applies an optimistic local order and rolls back if the command rejects.
 
 Instructed destinations keep the existing Move and run / Move only / Cancel flow; same-column reorder is a move-only operation. Worktree creation is not part of the drop or the move command.
 
@@ -93,9 +93,9 @@ Remove the archive/restore UI, archived view, commands, and `archivedAt` from th
 
 Deletion keeps its existing semantics: return retained chats to the base project, archive native chats without erasing histories, remove task/notes/eligible worktree, keep the branch, and leave unclaimed checkouts. The worktree workspace cleanup runs after the task's chats are archived and before/after the task record is removed, using the ownership ledger; a cleanup failure is reported but does not turn a completed task deletion into a claimed success.
 
-### 10. Verify with a deterministic LLM adapter
+### 10. Verify with a scripted LLM adapter
 
-Add a test-only plugin that registers a `kanban-fixture` provider through `ctx.llm.registerAdapter`. The adapter implements `providerInfo`, `listModels`, `prepareCall`, and the streaming protocol; it returns scripted text, tool calls, errors, or delayed chunks from deterministic fixtures. Tests select it per session or preset and never change the global default. The existing `verify-native-*` scripts stop accepting real-model runs; any request for a non-fixture provider fails the test. Existing unit/integration fakes remain.
+Add a test-only plugin that registers a `kanban-fixture` provider through `ctx.llm.registerAdapter`. The adapter implements `providerInfo`, `listModels`, `prepareCall`, and the streaming protocol; it returns scripted text, tool calls, errors, or delayed chunks from scripted fixtures. Tests select it per session or preset and never change the global default. The existing `verify-native-*` scripts stop accepting real-model runs; any request for a non-fixture provider fails the test. Existing unit/integration fakes remain.
 
 The adapter is verification infrastructure, not a product capability, so it has no capability spec delta. Its first task is a protocol gate proving that one ordinary GUI turn, one tool call, and one error can run without network access.
 
@@ -114,7 +114,7 @@ Add a small icon module with 16–20px inline SVGs rendered with `currentColor`.
 - [Native title changes asynchronously] → Read the catalog title reactively and keep the `Agent N` fallback; do not cache a second label.
 - [Outside-click handling can close during native overlays] → Scope the listener to the board background, ignore portals/overlays and the resize handle, and test with a native menu open.
 - [Simplified Git can hide recovery state] → Keep operation status, retry/return actions, discard consent, and unclaimed warnings visible; only technical paths move behind disclosure.
-- [Deterministic adapter drifts from the real protocol] → Add contract tests for chunk/finish semantics, tool calls, cancellation, and errors; keep real-model runs out of acceptance.
+- [Scripted adapter drifts from the real protocol] → Add contract tests for chunk/finish semantics, tool calls, cancellation, and errors; keep real-model runs out of acceptance.
 - [Info drafts are memory-only] → Document that reload discards uncommitted UI drafts; domain writes still use explicit Save.
 
 ## Migration Plan

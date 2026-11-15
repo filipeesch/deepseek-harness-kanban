@@ -1,10 +1,10 @@
 import type { Board, HubState, Project } from '../shared/types.js';
-import type { DeterministicDefinition } from '../shared/deterministic.js';
-import type { DeterministicRuntime, SimulatedShellResponse, TestProgramOutcome } from './deterministic/ports.js';
+import type { ScriptedDefinition } from '../shared/scripted.js';
+import type { ScriptedRuntime, SimulatedShellResponse, TestProgramOutcome } from './scripted/ports.js';
 import { invariant } from '../shared/errors.js';
-import { declaredParameterNames, validateParameterValues } from '../domain/deterministic-parameters.js';
+import { declaredParameterNames, validateParameterValues } from '../domain/scripted-parameters.js';
 import { requireProjectPath } from '../shared/project.js';
-import { bounded } from './deterministic/safety.js';
+import { bounded } from './scripted/safety.js';
 import type { HubRepository } from './hub-repository.js';
 
 /** One stage program run against a simulated shell; nothing here is durable. */
@@ -13,7 +13,7 @@ export interface ScriptTestResult {
   readonly stageId: string;
   readonly projectId: string;
   readonly directory: string;
-  readonly language: DeterministicDefinition['language'];
+  readonly language: ScriptedDefinition['language'];
   readonly parameters: Readonly<Record<string, string>>;
   readonly outcome: TestProgramOutcome;
   /** The stage the chosen exit names, when the program completed. */
@@ -32,7 +32,7 @@ export interface ScriptTestInput {
 export interface ScriptTestDeps {
   readonly hubs: HubRepository;
   /** The native runtime, absent when the host cannot run scripted steps. */
-  runtime(): DeterministicRuntime | undefined;
+  runtime(): ScriptedRuntime | undefined;
   readonly now?: () => string;
 }
 
@@ -78,14 +78,14 @@ export async function testStageScript(deps: ScriptTestDeps, input: ScriptTestInp
   const { hub, board } = located;
   const column = board.workflow.columns.find(value => value.id === input.stageId);
   invariant(column !== undefined, 'STAGE_NOT_FOUND', 'The workflow has no stage ' + input.stageId + '.');
-  const definition = column.deterministic;
-  invariant(definition !== undefined, 'DETERMINISTIC_CONFIGURATION_REQUIRED', 'Stage ' + column.id + ' authors no script.');
+  const definition = column.scripted;
+  invariant(definition !== undefined, 'SCRIPTED_CONFIGURATION_REQUIRED', 'Stage ' + column.id + ' authors no script.');
   const declared = declaredParameterNames(definition.params);
   // A stage that declares nothing needs no values; an omitted argument is the same as an empty set.
   const checked = validateParameterValues(declared, input.parameters === undefined && declared.length === 0 ? {} : input.parameters);
   invariant(checked.ok, 'INVALID_PARAMETERS', checked.ok ? '' : checked.message);
   const runtime = deps.runtime();
-  invariant(runtime?.test !== undefined, 'DETERMINISTIC_UNAVAILABLE', 'This host cannot run an isolated test execution.');
+  invariant(runtime?.test !== undefined, 'SCRIPTED_UNAVAILABLE', 'This host cannot run an isolated test execution.');
   invariant(input.responses.length <= MAX_SIMULATED_RESPONSES, 'INVALID_INPUT', 'At most ' + MAX_SIMULATED_RESPONSES + ' simulated responses are accepted.');
   const project = testProject(hub, board, input.projectId);
   const directory = requireProjectPath(project);

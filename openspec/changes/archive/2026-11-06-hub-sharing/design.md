@@ -101,7 +101,7 @@ per board: in-sync | draft | updates-available | needs-review | orphan | removed
 
 `SharingPollScheduler` schedules one timer per published Hub, checks immediately after startup and after a connection, then waits `intervalMinutes`. Default 5, minimum 1, `0` disables automatic checks. A due check waits five seconds and retries while a publish or update application for that Hub is in flight, then runs once that operation finishes. A failed check records the failure and keeps the last success; the next check simply retries at the interval.
 
-**Why:** status must exist even when the page has been closed, and the decision was host-side. Injected timers keep tests deterministic and let disposal clear every handle.
+**Why:** status must exist even when the page has been closed, and the decision was host-side. Injected timers keep tests scripted and let disposal clear every handle.
 
 ### D9. One serialized lane per Hub for every sharing operation
 
@@ -142,7 +142,7 @@ Two refactors ship with this change because sharing touches them directly:
 
 Deferred on purpose: unifying `BoardSettings` / `KanbanSettings` / `KanbanMeta`, migrating the older settings panels to `useAction`, and reducing the four-place command definition pattern.
 
-### D15. Deterministic tests
+### D15. Scripted tests
 
 Domain tests cover the plan matrix and identity rules without I/O. The Git adapter runs against real temporary repositories with a local bare repository as the team remote, so no network is involved. The scheduler uses fake timers. The service runs with an in-memory `SharedConfigStore`. The browser harness covers the Publishing section, banner, indicators, and the two save actions.
 

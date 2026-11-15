@@ -8,7 +8,7 @@ export interface FixtureTurn {
 }
 
 /**
- * Deterministic test-only provider. It never performs network I/O and returns
+ * Scripted test-only provider. It never performs network I/O and returns
  * one scripted turn per stream call, falling back to a fixed text response.
  */
 export class ScriptedAdapter extends LlmAdapter {
@@ -19,7 +19,7 @@ export class ScriptedAdapter extends LlmAdapter {
   }
 
   override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
-    return [{ provider, id: 'deterministic-1', name: 'Deterministic fixture', inputModalities: ['text'] }];
+    return [{ provider, id: 'scripted-1', name: 'Scripted fixture', inputModalities: ['text'] }];
   }
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {

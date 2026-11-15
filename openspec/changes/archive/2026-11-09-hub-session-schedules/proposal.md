@@ -20,7 +20,7 @@ sweep) have to remember to start it themselves.
 - Add a host-owned coordinator that fires enabled schedules while the host runs. Each occurrence
   resolves the project workspace, creates the session (or reuses the continuous one), applies the
   model, sends the prompt, and archives the session once it is genuinely idle.
-- Add deterministic run admission: an occurrence missed while the host was closed is skipped, and
+- Add scripted run admission: an occurrence missed while the host was closed is skipped, and
   an occurrence due while the previous run of the same schedule is still active is skipped. The
   next occurrence is always a future one.
 - Show, per schedule, the last run (time, status, error, and session) plus a live running

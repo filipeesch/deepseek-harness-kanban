@@ -26,7 +26,7 @@
 
 ## 4. Test support and harness
 
-- [x] 4.1 Create `tests/support/in-memory-board.ts` with one command contract for move, marker creation with a deterministic `enteredAt`, run identity enforcement, host busy/context-operation parity, exact instruction text, and marker clearing; verify both fakes wrap it and no marker/identity logic is duplicated.
+- [x] 4.1 Create `tests/support/in-memory-board.ts` with one command contract for move, marker creation with a scripted `enteredAt`, run identity enforcement, host busy/context-operation parity, exact instruction text, and marker clearing; verify both fakes wrap it and no marker/identity logic is duplicated.
 - [x] 4.2 Refactor `tests/client/helpers.ts` to wrap the shared contract, add the second instructed column, and derive fixture markers through it; verify the client suite passes after the payload migration in 5.12.
 - [x] 4.3 Extend `tests/browser/fake-api.ts` with the shared contract, an instructed column, move/run recording, and failure mode; verify the harness builds and the existing browser specs still pass under `pnpm test:browser`.
 - [x] 4.4 Add `tests/e2e-dsh/auto-run.replay.override.json` with exactly the two scripted assistant turns and pass it through the template environment as an override-only replay script with an absent base fixture; the scaffold consumption check remains in 6.4.

@@ -40,7 +40,7 @@ const PARAMETERIZED_WORKFLOW = [
   '      - to: wait',
   '  - id: wait',
   '    label: Wait',
-  '    deterministic:',
+  '    scripted:',
   '      language: bash',
   '      code: echo ok',
   '      params:',
@@ -84,7 +84,7 @@ describe('transition tools', () => {
     const description = f.named('set_next_transition').description;
     expect(description).toContain('message from another task');
     expect(description).toContain('current stage configures');
-    expect(description).toContain('deterministic entry');
+    expect(description).toContain('scripted entry');
     expect(description).toContain('never moves the task');
   });
 

@@ -1,5 +1,5 @@
-import { captureDeterministicTargets, establishStageEntry, ensureLocalStageIdentity, reconcileLocalStageIdentities } from './deterministic-state.js';
-import { declaredParameterNames, validateParameterValues } from './deterministic-parameters.js';
+import { captureScriptedTargets, establishStageEntry, ensureLocalStageIdentity, reconcileLocalStageIdentities } from './scripted-state.js';
+import { declaredParameterNames, validateParameterValues } from './scripted-parameters.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 import type { AutoModePause, AutoModeState, Board, BoardSettings, HubRelation, HubRelationType, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ModelSelection, StagePatch, Workflow } from '../shared/types.js';
 import { assertId, isAbsolutePath } from './validation.js';
@@ -216,12 +216,12 @@ export function saveBoardWorkflow(hub: HubState, boardId: string, yaml: string, 
   reconcileLocalStageIdentities(board, workflow);
   board.workflowYaml = yaml;
   board.workflow = workflow;
-  // A saved deterministic stage can be reviewed before any card enters, so the
+  // A saved scripted stage can be reviewed before any card enters, so the
   // write freezes its stable identity and its destinations' identities.
   for (const column of workflow.columns) {
-    if (column.deterministic === undefined) continue;
+    if (column.scripted === undefined) continue;
     ensureLocalStageIdentity(board, column.id, deps.id);
-    for (const destination of Object.values(column.deterministic.exits)) ensureLocalStageIdentity(board, destination, deps.id);
+    for (const destination of Object.values(column.scripted.exits)) ensureLocalStageIdentity(board, destination, deps.id);
   }
   board.updatedAt = timestamp(deps);
   hub.updatedAt = timestamp(deps);
@@ -373,7 +373,7 @@ export function createTask(hub: HubState, input: { boardId: string; projectId: s
     ...(entryInstruction(initialColumn) !== undefined ? { instructionPending: { columnId: initialColumn!.id, enteredAt: nextEnteredAt(Date.parse(at)) } } : {}),
     createdAt: at, updatedAt: at,
   };
-  if (initialColumn !== undefined) establishStageEntry(task, initialColumn, ensureLocalStageIdentity(board, initialColumn.id, deps.id), at, deps.id, captureDeterministicTargets(board, initialColumn, deps.id));
+  if (initialColumn !== undefined) establishStageEntry(task, initialColumn, ensureLocalStageIdentity(board, initialColumn.id, deps.id), at, deps.id, captureScriptedTargets(board, initialColumn, deps.id));
   recordCreation(task, board.workflow.initialColumnId, at);
   hub.tasks.push(task);
   hub.updatedAt = at;
@@ -490,7 +490,7 @@ export function recordTransition(hub: HubState, taskId: string, columnId: string
     invariant(transitionTargets(board.workflow, task.columnId).some(target => target.column.id === columnId),
       'TRANSITION_NOT_ALLOWED', 'The destination stage is not a configured transition of the current stage.');
     const destination = board.workflow.columns.find(column => column.id === columnId);
-    const declared = declaredParameterNames(destination?.deterministic?.params);
+    const declared = declaredParameterNames(destination?.scripted?.params);
     let values: Record<string, string> | undefined;
     // A destination that declares none takes no set at all; a destination that
     // declares parameters requires exactly that set.

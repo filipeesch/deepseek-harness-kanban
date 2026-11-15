@@ -3,7 +3,7 @@ import { routeStats, type RouteStatsCard, type RouteStatsOptions } from '../../s
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import type { TaskHistoryEntry } from '../../src/shared/task-history.js';
 
-const FLOW = 'initial_column: todo\ncolumns:\n  - id: todo\n    label: Todo\n    allowed_transitions: [review, done]\n  - id: review\n    label: Review\n    allowed_transitions: [done]\n  - id: wait\n    label: Wait\n    deterministic:\n      language: bash\n      code: exit 0\n      directory: project\n      exits: {passed: done, failed: todo}\n  - id: done\n    label: Done\n';
+const FLOW = 'initial_column: todo\ncolumns:\n  - id: todo\n    label: Todo\n    allowed_transitions: [review, done]\n  - id: review\n    label: Review\n    allowed_transitions: [done]\n  - id: wait\n    label: Wait\n    scripted:\n      language: bash\n      code: exit 0\n      directory: project\n      exits: {passed: done, failed: todo}\n  - id: done\n    label: Done\n';
 
 const WINDOW = { since: '2026-01-01T00:00:00.000Z', until: '2026-02-01T00:00:00.000Z' };
 
@@ -31,7 +31,7 @@ describe('route statistics', () => {
   it('counts a named script exit and lists one that was never used', () => {
     const value = stats([card('t1', [
       { kind: 'created', at: '2026-01-01T00:00:00.000Z', columnId: 'wait' },
-      { kind: 'deterministic-execution', at: '2026-01-02T00:00:00.000Z', executionId: 'e1', columnId: 'wait', outcome: 'completed', exit: 'passed' },
+      { kind: 'scripted-execution', at: '2026-01-02T00:00:00.000Z', executionId: 'e1', columnId: 'wait', outcome: 'completed', exit: 'passed' },
       { kind: 'stage', at: '2026-01-02T00:00:01.000Z', fromColumnId: 'wait', columnId: 'done', origin: 'script:passed' },
     ])]);
     expect(value.exits).toEqual([{ stage: 'wait', exit: 'passed', count: 1 }]);

@@ -13,7 +13,7 @@ describe('project key', () => {
     expect(projectKeyFromName('   ')).toBe('project');
   });
 
-  it('allocates deterministically and suffixes a collision', () => {
+  it('allocates scriptedally and suffixes a collision', () => {
     expect(allocateProjectKey('Web', [])).toBe('web');
     expect(allocateProjectKey('Web', [])).toBe(allocateProjectKey('Web', []));
     expect(allocateProjectKey('Web', ['web'])).toBe('web-2');
@@ -32,7 +32,7 @@ describe('project key', () => {
     expect(keyed.map(project => project.projectKey)).toEqual(['web-2', 'web-3', 'web']);
   });
 
-  it('is deterministic for the same records', () => {
+  it('is scripted for the same records', () => {
     const records = [{ name: 'A' }, { name: 'B' }];
     expect(withProjectKeys(records)).toEqual(withProjectKeys(records));
   });

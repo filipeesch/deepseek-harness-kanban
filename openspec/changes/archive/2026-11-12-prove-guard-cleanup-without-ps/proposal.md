@@ -2,12 +2,12 @@
 
 ## Why
 
-A deterministic stage cannot run on macOS whenever the session file policy is confined.
+A scripted stage cannot run on macOS whenever the session file policy is confined.
 The isolated Bash guard proves that no owned process survived by sweeping the process
 table with `ps -E`, but `/bin/ps` is setuid and `sandbox-exec` refuses to execute it
 (`EPERM`). The guard therefore exits with status 125 before it prints its result
 envelope, and the host can only report that the guard "did not return a valid result".
-Every `tools.bash` call of a deterministic step fails this way, including the TypeScript
+Every `tools.bash` call of a scripted step fails this way, including the TypeScript
 path, whose guard performs the same group inspection with `ps`. The only workaround is to
 start the server with a broader file policy, which removes confinement from the very
 scripts that are supposed to run under it.
@@ -51,7 +51,7 @@ started survives, on every supported system, without requiring broader permissio
 - The duplicated stop/kill/re-check loop that exists in both the guard and the host is
   absorbed into the port, so one implementation serves both sides.
 - **BREAKING** for local development only: the built artifact gains `lib/guard.mjs`, so a
-  profile that loads a stale `lib` must rebuild before deterministic stages work.
+  profile that loads a stale `lib` must rebuild before scripted stages work.
 
 ## Capabilities
 
@@ -61,23 +61,23 @@ None.
 
 ### Modified Capabilities
 
-- `deterministic-steps`: process cleanup is proven by the readable process table that each
+- `scripted-steps`: process cleanup is proven by the readable process table that each
   platform actually offers, the guard reports its own reason when cleanup cannot be
   proven, and a platform without a supported ownership primitive fails closed in every
   execution mode rather than reporting a clean tree it never verified.
 
 ## Impact
 
-- Host execution: `src/host/deterministic/` — the inline guard source is replaced by
+- Host execution: `src/host/scripted/` — the inline guard source is replaced by
   `guard/` modules and `process/` adapters; `lifetime.ts` gains a sweep action and a
   configuration file; `owned-processes.ts` is absorbed into the port; `guard-outcome.ts`
   gains the guard's own reason; `native-policy.ts` gains an actionable Windows refusal.
 - Build: `scripts/build.mjs` emits `lib/guard.mjs`; `package.json` version is bumped in the
   same pull request, as required for an installed artifact.
-- Documentation: `docs/deterministic-steps.md` describes the per-platform cleanup proof and
+- Documentation: `docs/scripted-steps.md` describes the per-platform cleanup proof and
   stops claiming that the Windows guard is the only Windows limitation.
 - Tests: a new native suite runs the real guard under the real confinement profile of the
-  current system, which no existing test does today because every native deterministic test
+  current system, which no existing test does today because every native scripted test
   installs a `danger-full-access` policy. Linux bwrap/Landlock and Windows are not covered
   by automated evidence in this change and are recorded as accepted risk.
 - No client, workflow YAML, board, or public API change. No change to the board that

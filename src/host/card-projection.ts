@@ -5,12 +5,12 @@ import { EPIC_ROLLUP_LIMIT, epicChildren, otherEndpoint, relationReference, type
 /**
  * The one place a card payload is shaped. Two shapes exist so a listing stays
  * cheap and a detail read stays complete; both exclude the flow record and the
- * deterministic ledger, which the drawer owns.
+ * scripted ledger, which the drawer owns.
  */
 
 /** The stored task without the fields a tool payload never carries. */
-export function plainCard(task: HubTask): Omit<HubTask, 'history' | 'deterministic'> {
-  const { history: _history, deterministic: _ledger, ...rest } = task;
+export function plainCard(task: HubTask): Omit<HubTask, 'history' | 'scripted'> {
+  const { history: _history, scripted: _ledger, ...rest } = task;
   return rest;
 }
 

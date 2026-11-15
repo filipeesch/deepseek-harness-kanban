@@ -15,7 +15,7 @@ The pieces the change builds on:
 - `ctx.agents.get(sessionId)?.inbox` reads the live queue synchronously; `ctx.sessionController.projections()` exposes the durable `inbox` projection for a conversation that is not live.
 - `SessionPort.facts` is the only host-facing fact read; `AttentionCoordinator` caches it with a debounce, so it cannot be the gate's source of truth.
 
-Constraints: no persisted task field changes and no data-version bump; the host and client ship together, so an internal snapshot contract change is acceptable; the advance trigger stays an observed completed turn; the existing five-second countdown, attention dots, and hub aggregation keep their meaning; host decisions must be deterministic and provable without a real model.
+Constraints: no persisted task field changes and no data-version bump; the host and client ship together, so an internal snapshot contract change is acceptable; the advance trigger stays an observed completed turn; the existing five-second countdown, attention dots, and hub aggregation keep their meaning; host decisions must be scripted and provable without a real model.
 
 ## Goals / Non-Goals
 

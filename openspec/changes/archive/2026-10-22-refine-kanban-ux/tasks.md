@@ -4,7 +4,7 @@
 
 - [x] 1.1 Run `pnpm run check` on the current checkout and record the baseline result so later failures are attributable to this change.
 - [x] 1.2 Prove the workspace-membership gate: create a workspace for an existing cwd-only session's recorded header cwd in a disposable host, then verify the session becomes a member and the embedded chat no longer asks for a workspace; record the exact observation and stop for design revision if it fails.
-- [x] 1.3 Prove the deterministic-adapter protocol gate: register a minimal test adapter through `ctx.llm.registerAdapter`, list one model, and complete one scripted stream through `finish`; stop for design revision if the public protocol cannot support it.
+- [x] 1.3 Prove the scripted-adapter protocol gate: register a minimal test adapter through `ctx.llm.registerAdapter`, list one model, and complete one scripted stream through `finish`; stop for design revision if the public protocol cannot support it.
 
 ## 2. Lifecycle and Persistence
 
@@ -62,18 +62,18 @@
 - [x] 6.6 Move base project, Git root, effective directory, and ownership into a secondary detail surface; verify they are absent from the primary ready state and reachable from the detail control.
 - [x] 6.7 Remove the transition-time worktree prompt and verify a board drop or drawer stage change makes no branch/worktree request when the task has no worktree.
 
-## 7. Deterministic LLM Verification
+## 7. Scripted LLM Verification
 
 - [x] 7.1 Implement the test-only `kanban-fixture` adapter with `providerInfo`, `listModels`, `prepareCall`, and the streaming protocol; verify the protocol gate from task 1.3 and a provider list in the GUI.
 - [x] 7.2 Add scripted fixtures for text, tool calls, errors, cancellation, and delayed chunks; verify each fixture produces the expected terminal outcome without network access.
 - [x] 7.3 Select the fixture model per session or preset without changing the global default; verify a normal session still uses its configured model and a fixture session uses the scripted route.
 - [x] 7.4 Disable the real-model branches and consent flags in `scripts/verify-native-*`; verify a provider request outside the fixture route fails the test and no helper can opt into a real model.
-- [x] 7.5 Add GUI-level deterministic tests for one ordinary chat turn, one board-tool call, one error turn, and one reload; verify they run against the existing DSH GUI with zero provider network calls.
+- [x] 7.5 Add GUI-level scripted tests for one ordinary chat turn, one board-tool call, one error turn, and one reload; verify they run against the existing DSH GUI with zero provider network calls.
 - [x] 7.6 Keep the existing unit/integration fakes and verify they remain independent of the fixture adapter.
 
 ## 8. Documentation and Acceptance
 
-- [x] 8.1 Update the README and operations guide for the initial-column New task action, delete-only lifecycle, workspace binding, compact drawer/Git surfaces, native tab titles, and deterministic tests.
+- [x] 8.1 Update the README and operations guide for the initial-column New task action, delete-only lifecycle, workspace binding, compact drawer/Git surfaces, native tab titles, and scripted tests.
 - [x] 8.2 Update the verification boundary and scenario evidence to state that real-model calls are not part of acceptance and to reference the fixture adapter.
 - [x] 8.3 Run `pnpm run check` and verify typechecks, unit/integration tests, and the build pass with the new schema and client behavior.
 - [x] 8.4 Rebuild and reconcile the plugin in the existing DSH GUI at `http://127.0.0.1:51781`; verify drag/reorder, whole-card open, initial-column creation, bulk best-effort deletion, drawer resize/close, Info edit, Git states/search, tab rename, and no workspace picker; capture evidence without starting a replacement server.

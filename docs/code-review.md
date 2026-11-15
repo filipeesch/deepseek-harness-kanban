@@ -168,7 +168,7 @@ This is a separate parent-authorized source investigation and minimal correction
 
 The investigation ran only local synthetic tests and TypeScript checks. It did not call a Host, Native API, schedule/reminder API, profile, GUI, authentication, provider, or real Native executor; did not append canonical Native history; and did not build, install, reload, restart, reconcile, or modify live fixture/user data. Local unit fixtures use a temporary filesystem root with guarded cleanup, in-memory public-service fakes, a real Cordis bus, and the existing TestGit boundary. The real product registration, native activity adapter, BoardStore, KanbanApp, and WorktreeCoordinator execute, with only the approved public-event listener added to production.
 
-### Source condition and deterministic RED
+### Source condition and scripted RED
 
 The pinned public [schedule delivery path](</Applications/DeepSeek Harness.app/Contents/Resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-schedule/lib/index.js#L1586-L1609>) follows up the Agent and awaits Session persistence before committing one-shot inactivity. Its [public activity contribution](</Applications/DeepSeek Harness.app/Contents/Resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-schedule/lib/index.js#L2043-L2055>) treats active owner schedules as busy, including future one-shots. The generated [schedule/changed contract](</Applications/DeepSeek Harness.app/Contents/Resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-schedule/lib/typert.host.js#L845-L857>) is an emit notification with no payload.
 
@@ -183,7 +183,7 @@ The new [real-registration regression](<../tests/host/schedule-wake-race.test.ts
 
 **Before patch:** one RED race test and one GREEN positive control, reproduced twice. Strict scoped TypeScript passed after the new test documented the optional schedule activity-type extension with a bounded test-only adapter matching the pinned public shape.
 
-This is deterministic source-ordering evidence for the stated late-commit interleaving. It does not prove that a live Native schedule exhibited that interleaving in the installed runtime, and it is not a separate claim that ordinary turn-end/idle microtask ordering needs a new status hook.
+This is scripted source-ordering evidence for the stated late-commit interleaving. It does not prove that a live Native schedule exhibited that interleaving in the installed runtime, and it is not a separate claim that ordinary turn-end/idle microtask ordering needs a new status hook.
 
 ### Minimal approved correction
 

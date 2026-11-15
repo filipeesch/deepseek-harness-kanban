@@ -168,7 +168,7 @@ export const baseStyles = String.raw`
 .dsh-kanban .kb-git-card>.kb-error{margin:0 14px 14px;max-height:190px;overflow:auto}
 .dsh-kanban .kb-git .kb-error{max-height:190px;overflow:auto}
 .dsh-kanban .kb-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-@media(max-width:760px){.dsh-kanban .kb-page-body.kb-page-body-flow{padding:0}.dsh-kanban .kb-dialog-wide,.dsh-kanban .kb-dialog-parameters,.dsh-kanban .kb-dialog-settings,.dsh-kanban .kb-dialog-settings-wide{width:100%}.dsh-kanban .kb-workflow-surface{height:50vh;min-height:260px}.dsh-kanban .kb-page-body{padding:12px}.dsh-kanban .kb-drawer{width:100%;min-width:0}.dsh-kanban .kb-backdrop{padding:8px}.dsh-kanban .kb-dialog{max-height:96vh;padding:0 12px 12px}}
+@media(max-width:760px){.dsh-kanban .kb-page-body.kb-page-body-flow{padding:0}.dsh-kanban .kb-dialog-wide,.dsh-kanban .kb-dialog-parameters,.dsh-kanban .kb-dialog-settings,.dsh-kanban .kb-dialog-settings-wide,.dsh-kanban .kb-dialog-stage{width:100%}.dsh-kanban .kb-workflow-surface{height:50vh;min-height:260px}.dsh-kanban .kb-page-body{padding:12px}.dsh-kanban .kb-drawer{width:100%;min-width:0}.dsh-kanban .kb-backdrop{padding:8px}.dsh-kanban .kb-dialog{max-height:96vh;padding:0 12px 12px}}
 
 @keyframes kb-drawer-enter{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:none}}
 @keyframes kb-drawer-exit{from{opacity:1;transform:none}to{opacity:0;transform:translateX(24px)}}

@@ -90,7 +90,7 @@ The native consequences are accepted explicitly:
 
 - Archiving a parent conversation gates its descendant sessions through native archived-session behavior.
 - A subagent child is created with the parent's header cwd (the base project); its working-directory projection may still point at the worktree. If it is resumed after the worktree is removed, native `working-directory.ensure` recovers a missing directory to the header cwd.
-- The plugin does not claim to move or archive child sessions. The verification strategy covers the stale projection and native recovery behavior through the manual real-DSH deterministic-subagent e2e.
+- The plugin does not claim to move or archive child sessions. The verification strategy covers the stale projection and native recovery behavior through the manual real-DSH scripted-subagent e2e.
 
 **Why:** this respects the native subagent ownership boundary and avoids unsupported generic operations. Archiving children directly was rejected because there is no plugin surface to unarchive a child independently; moving them was rejected because native routing does not allow it; refusing deletion was the original bug.
 
@@ -163,7 +163,7 @@ Destructive dialog errors and operation-status errors stay in those surfaces. Th
 
 ## Verification Strategy
 
-The change uses five lanes so cheap checks stay fast and the native assumptions are proved where they can be deterministic.
+The change uses five lanes so cheap checks stay fast and the native assumptions are proved where they can be scripted.
 
 ### 1. Fast module lane
 
@@ -217,7 +217,7 @@ This lane is manual, requires the pinned `dsh-v0.2.1-rc.2` checkout and built DS
 
 ## Risks / Trade-offs
 
-- **Child session working directory becomes stale after worktree removal** → Native `working-directory.ensure` restores the header cwd (the base project) when the child is resumed; the parent archive gates execution first. Document this and verify it in the manual real-DSH deterministic-subagent e2e; do not claim the plugin moves children.
+- **Child session working directory becomes stale after worktree removal** → Native `working-directory.ensure` restores the header cwd (the base project) when the child is resumed; the parent archive gates execution first. Document this and verify it in the manual real-DSH scripted-subagent e2e; do not claim the plugin moves children.
 - **Lineage metadata can be missing or corrupt** → The closure treats an unknown parent as not owned, so the operation remains blocked rather than deleting a possibly shared checkout. This is intentionally fail-closed.
 - **The sharing check remains point-in-time** → The coordinator keeps its second check before Git removal; this is not an atomic lease. Do not claim a guarantee the host cannot provide.
 - **Client-only confirmation can discover dirty or shared blockers only after confirm** → The dialog stays open with inline recovery; the host command remains authoritative.
@@ -238,4 +238,4 @@ This lane is manual, requires the pinned `dsh-v0.2.1-rc.2` checkout and built DS
 
 ## Open Questions
 
-None that change the approach. The native parent-archive gate and child working-directory recovery are covered by the manual real-DSH deterministic-subagent e2e in the verification strategy; they are not open design decisions.
+None that change the approach. The native parent-archive gate and child working-directory recovery are covered by the manual real-DSH scripted-subagent e2e in the verification strategy; they are not open design decisions.

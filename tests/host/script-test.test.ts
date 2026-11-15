@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools';
 import { productToolDefinitions } from '../../src/host/tools.js';
 import { fixture } from './helpers.js';
-import type { DeterministicRuntime, TestProgramRequest } from '../../src/host/deterministic/ports.js';
+import type { ScriptedRuntime, TestProgramRequest } from '../../src/host/scripted/ports.js';
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 type F = Fixture & { tools: ToolDefinition[] };
@@ -38,7 +38,7 @@ const SCRIPTED = [
   '    label: Todo',
   '  - id: check',
   '    label: Check',
-  '    deterministic:',
+  '    scripted:',
   '      language: typescript',
   '      code: |',
   '        return { exit: input.params.pipeline ? "passed" : "error", message: "checked" }',
@@ -50,8 +50,8 @@ const SCRIPTED = [
   '',
 ].join('\n');
 
-/** A deterministic runtime that answers the plan and the test without running code. */
-function fakeRuntime(seen: TestProgramRequest[]): DeterministicRuntime {
+/** A scripted runtime that answers the plan and the test without running code. */
+function fakeRuntime(seen: TestProgramRequest[]): ScriptedRuntime {
   return {
     capture: vi.fn(async () => { throw new Error('capture must not run'); }),
     plan: vi.fn(async () => ({ content: { language: 'typescript', directory: 'task', executionDirectory: '/repos/project', source: { kind: 'inline' }, env: [], params: ['pipeline'], exits: {} } as any, code: 'return { exit: "passed", message: "checked" }', fingerprint: 'fp' })),
@@ -66,7 +66,7 @@ function fakeRuntime(seen: TestProgramRequest[]): DeterministicRuntime {
       seen.push(request);
       return { kind: 'completed' as const, completion: { exit: 'passed', message: 'checked' }, calls: [{ command: 'ci status', matched: 'ci', exitCode: 0 }], diagnostics: [] };
     }),
-    trust: { isApproved: async () => false, approve: vi.fn(async () => {}) },
+    trust: { isApproved: async () => false, approval: async () => undefined, approve: vi.fn(async () => {}) },
     variables: { status: async () => [], set: async () => {}, remove: async () => {}, resolve: async () => ({}) },
   };
 }
@@ -103,7 +103,7 @@ describe('test_script', () => {
     const boardId = (await run(f, 'create_board', { hub_id: f.hub.id, name: 'Scripted', workflow_yaml: SCRIPTED })).id;
     const seen: TestProgramRequest[] = [];
     const runtime = fakeRuntime(seen);
-    f.app.attachDeterministicRuntime(runtime);
+    f.app.attachScriptedRuntime(runtime);
     const value = await run(f, 'test_script', {
       board_id: boardId, stage_id: 'check', params: { pipeline: 'ci-main' },
       responses: [{ match: 'ci', exit_code: 0, stdout: 'green' }],
@@ -125,7 +125,7 @@ describe('test_script', () => {
     const f = await setup();
     const noParams = SCRIPTED.replace('      params:\n        - name: pipeline\n', '');
     const boardId = (await run(f, 'create_board', { hub_id: f.hub.id, name: 'No params', workflow_yaml: noParams })).id;
-    f.app.attachDeterministicRuntime(fakeRuntime([]));
+    f.app.attachScriptedRuntime(fakeRuntime([]));
     const value = await run(f, 'test_script', { board_id: boardId, stage_id: 'check' });
     expect(value.parameters).toEqual({});
     expect(value.outcome.kind).toBe('completed');
@@ -140,12 +140,12 @@ describe('test_script', () => {
   it('rejects a stage that authors no program', async () => {
     const f = await setup();
     const boardId = (await run(f, 'create_board', { hub_id: f.hub.id, name: 'Scripted', workflow_yaml: SCRIPTED })).id;
-    await expect(run(f, 'test_script', { board_id: boardId, stage_id: 'todo', params: {} })).rejects.toMatchObject({ code: 'DETERMINISTIC_CONFIGURATION_REQUIRED' });
+    await expect(run(f, 'test_script', { board_id: boardId, stage_id: 'todo', params: {} })).rejects.toMatchObject({ code: 'SCRIPTED_CONFIGURATION_REQUIRED' });
   });
 
   it('reports a host that cannot test a program', async () => {
     const f = await setup();
     const boardId = (await run(f, 'create_board', { hub_id: f.hub.id, name: 'Scripted', workflow_yaml: SCRIPTED })).id;
-    await expect(run(f, 'test_script', { board_id: boardId, stage_id: 'check', params: { pipeline: 'x' } })).rejects.toMatchObject({ code: 'DETERMINISTIC_UNAVAILABLE' });
+    await expect(run(f, 'test_script', { board_id: boardId, stage_id: 'check', params: { pipeline: 'x' } })).rejects.toMatchObject({ code: 'SCRIPTED_UNAVAILABLE' });
   });
 });

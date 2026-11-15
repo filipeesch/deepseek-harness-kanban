@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Column } from '../../shared/types.js';
 import { ConditionField } from './condition-field.js';
+import { ProblemNotice } from './problem-notice.js';
 import type { StageTransitionDraft, StageTransitionMode } from './stage-editor-draft.js';
 
 /** The three states a stage can be in, in the order the editor presents them. */
@@ -53,6 +54,6 @@ export function TransitionsSection({ choices, mode, transitions, disabled, probl
         </div>;
       })}
     </div>}
-    {problem !== undefined && <p className="kb-hint kb-problem" role="alert">{problem}</p>}
+    <ProblemNotice message={problem} />
   </fieldset>;
 }

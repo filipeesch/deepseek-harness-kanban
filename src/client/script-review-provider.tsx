@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
 import type { ClientApi } from '../shared/types.js';
 import type { RunCommand } from './ui.js';
-import { ScriptReviewDialog, type ScriptReviewRequest } from './deterministic-review.js';
+import { ScriptReviewDialog, type ScriptReviewRequest } from './scripted-review.js';
 
 type OpenReview = (request: ScriptReviewRequest) => Promise<void>;
 const ReviewContext = createContext<OpenReview | null>(null);

@@ -8,7 +8,7 @@ import { KanbanError, invariant } from '../../shared/errors.js';
 import { actorOf, digestRefusal, flag, normal, refusal, text, written } from './support.js';
 import { assertBoardWriteAllowed, resolveBoard, type ToolArgs } from './scope.js';
 
-const reportNote = ' The result carries the digest of the exact document stored and a write report: the changed stages and their changed field names, the graph warnings, the board-level reviewed authorization of every deterministic stage, and the affected cards. The report is a summary by default and the per-field values only when detail is full. A refused write saves nothing.';
+const reportNote = ' The result carries the digest of the exact document stored and a write report: the changed stages and their changed field names, the graph warnings, the board-level reviewed authorization of every scripted stage, and the affected cards. The report is a summary by default and the per-field values only when detail is full. A refused write saves nothing.';
 
 function requireRevisions(revisions: BoardRevisions | undefined): BoardRevisions {
   invariant(revisions !== undefined, 'REVISIONS_UNAVAILABLE', 'This host does not keep a local board revision log.');

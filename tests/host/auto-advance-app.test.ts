@@ -79,7 +79,7 @@ const PARAMETERIZED_ADVANCE_FLOW = [
   '      - to: wait',
   '  - id: wait',
   '    label: Wait',
-  '    deterministic:',
+  '    scripted:',
   '      language: bash',
   '      code: echo ok',
   '      params:',
@@ -262,7 +262,7 @@ describe('automatic advance', () => {
     await expect.poll(() => f.store.requireTask(task.id).pendingTransition?.status).toBe('failed');
     expect(f.store.requireTask(task.id).pendingTransition?.error?.code).toBe('INVALID_PARAMETERS');
     expect(f.store.requireTask(task.id).columnId).toBe('backlog');
-    expect(f.store.requireTask(task.id).deterministic).toBeUndefined();
+    expect(f.store.requireTask(task.id).scripted).toBeUndefined();
   });
 
   it('advances to the recorded destination instead of the first configured target', async () => {
