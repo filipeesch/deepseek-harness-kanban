@@ -24,6 +24,7 @@ import { useScriptSummary } from './scripted-context.js';
 import { ownedScript, scriptActive } from './scripted-view.js';
 import { DrawerHeader } from './drawer-header.js';
 import { DrawerConversations } from './drawer-conversations.js';
+import { DrawerWidthProvider, useDrawerWidth } from './drawer-width.js';
 import type { SessionTitles } from './conversation-label.js';
 import { ConversationLeaseRegistry, type ConversationLeaseEnvironment } from './conversation-leases.js';
 import { ConversationLeasesProvider } from './conversation-lease-context.js';
@@ -56,10 +57,6 @@ interface DrawerProps {
 /** A drawer rendered without the client navigation coordinator still subscribes to a stable source. */
 const NO_NAVIGATION: DrawerNavigationSource = { subscribe: () => () => {}, getSnapshot: () => 0 };
 
-const DRAWER_WIDTH_KEY = 'dsh-kanban.drawer.width';
-const DRAWER_DEFAULT_WIDTH = 620;
-function clampWidth(value: number): number { const max = Math.max(360, (typeof window === 'undefined' ? 1200 : window.innerWidth) * 0.9); return Math.min(Math.max(value, 360), max); }
-function storedWidth(): number { try { const value = Number(window.localStorage.getItem(DRAWER_WIDTH_KEY)); if (Number.isFinite(value) && value > 0) return clampWidth(value === 560 ? DRAWER_DEFAULT_WIDTH : value); } catch { /* storage is optional */ } return clampWidth(DRAWER_DEFAULT_WIDTH); }
 
 export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAttention, state, api, run, autoRun, renderConversation, onOpenInMain, navigation, onClose, onMove, onDanger, onForce, onToggleAutoMode, autoModePending = false, viewState, sessionTitles, conversationLeases, entering = false, closing = false, onEditStage }: DrawerProps) {
   // A client navigation outcome is written to the drawer's page state outside React;
@@ -75,7 +72,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
     if (section === 'Conversations') return;
     setPageView(current => endPeek(current));
   }, [section, setPageView]);
-  const [width, setWidth] = useState(storedWidth); const widthRef = useRef(width); widthRef.current = width;
+  const width = useDrawerWidth();
   const aside = useRef<HTMLElement>(null);
   const [leases] = useState<ConversationLeaseRegistry | null>(() => conversationLeases === undefined ? null : new ConversationLeaseRegistry(conversationLeases));
   const openKey = JSON.stringify(openSessionIds(task));
@@ -137,22 +134,8 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
     finally { if (alive.current) setMovingTo(null); }
   }
 
-  function persistWidth(next: number) { setWidth(next); try { window.localStorage.setItem(DRAWER_WIDTH_KEY, String(next)); } catch { /* storage is optional */ } }
-  function startResize(event: React.PointerEvent<HTMLDivElement>) {
-    event.preventDefault(); event.stopPropagation();
-    const startX = event.clientX; const startWidth = widthRef.current;
-    const move = (moveEvent: PointerEvent) => setWidth(clampWidth(startWidth + (startX - moveEvent.clientX)));
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); persistWidth(widthRef.current); };
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
-  }
-  function resizeKey(event: React.KeyboardEvent<HTMLDivElement>) {
-    if (event.key === 'ArrowLeft') { event.preventDefault(); persistWidth(clampWidth(width + 16)); }
-    if (event.key === 'ArrowRight') { event.preventDefault(); persistWidth(clampWidth(width - 16)); }
-    if (event.key === 'Home') { event.preventDefault(); persistWidth(clampWidth(DRAWER_DEFAULT_WIDTH)); }
-  }
-
-  const body = <aside ref={aside} className="kb-drawer" aria-label="Task details" aria-labelledby={id + '-title'} style={{ width }} data-entering={entering ? 'true' : undefined} data-closing={closing ? 'true' : undefined}>
-    <div className="kb-drawer-resize" role="separator" aria-orientation="vertical" aria-label="Resize task drawer" aria-valuenow={Math.round(width)} aria-valuemin={360} aria-valuemax={Math.round(Math.max(360, (typeof window === 'undefined' ? 1200 : window.innerWidth) * 0.9))} tabIndex={0} onPointerDown={startResize} onDoubleClick={() => persistWidth(clampWidth(DRAWER_DEFAULT_WIDTH))} onKeyDown={resizeKey} />
+  const body = <aside ref={aside} className="kb-drawer" aria-label="Task details" aria-labelledby={id + '-title'} style={{ width: width.width }} data-entering={entering ? 'true' : undefined} data-closing={closing ? 'true' : undefined}>
+    <div className="kb-drawer-resize" role="separator" aria-orientation="vertical" aria-label="Resize task drawer" aria-valuenow={Math.round(width.width)} aria-valuemin={width.minWidth} aria-valuemax={width.maxWidth} tabIndex={0} onPointerDown={event => { event.stopPropagation(); width.beginResize(event); }} onDoubleClick={width.resetWidth} onKeyDown={width.resizeKey} />
     <DrawerHeader
       title={{ id: id + '-title', title: task.title, projectName }}
       sectionNav={{ id, sections, selected: section, onSelect: value => setSection(value), activity: { ...attention, script: scriptActive(script) } }}
@@ -176,5 +159,6 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
       {section === 'History' && <HistoryPanel history={task.history} columns={state.workflow.columns} />}
     </section>
   </aside>;
-  return leases === null ? body : <ConversationLeasesProvider registry={leases}>{body}</ConversationLeasesProvider>;
+  const framed = <DrawerWidthProvider value={width}>{body}</DrawerWidthProvider>;
+  return leases === null ? framed : <ConversationLeasesProvider registry={leases}>{framed}</ConversationLeasesProvider>;
 }

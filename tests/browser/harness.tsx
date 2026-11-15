@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BoardView } from '../../src/client/board.js';
 import { createBoardPageState, taskPageState } from '../../src/client/page-state.js';
@@ -19,6 +19,8 @@ import { TaskMessageNodeView, TASK_MESSAGE_NODE_KIND } from '../../src/client/ta
 import type { NativeLocaleSource, NativeSeat, NativeSlotSource } from '../../src/client/native-slot-host.js';
 import { MODEL_SELECTION_SLOT } from '../../src/client/native-slot-host.js';
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots';
+import { ConversationWorkspace } from '../../src/client/conversations/workspace.js';
+import type { SidebarPanelPort, SidebarSessionFace } from '../../src/client/sidebar-panel-port.js';
 
 const scenario = new URLSearchParams(window.location.search).get('scenario') ?? 'board';
 const sharingCase = new URLSearchParams(window.location.search).get('sharing');
@@ -356,6 +358,62 @@ function DrawerPeekScenario() {
   />;
 }
 
+/** One fake Session face the drawer-sidebar spec expands and collapses. */
+function fakeSidebarFace(sessionId: string) {
+  let value = false;
+  const listeners = new Set<() => void>();
+  const expanded = {
+    getSnapshot: () => value,
+    subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+  };
+  const setExpanded = (next: boolean): void => { value = next; for (const listener of [...listeners]) listener(); };
+  const face: SidebarSessionFace = { sessionId, expanded, setExpanded };
+  return { face, setExpanded };
+}
+
+/**
+ * Opens one task's drawer with the real workspace mounted through
+ * `renderConversation`: a fake host port drives the rail, and the drawer's own
+ * width controller decides the growth, the split, and the covered presentation.
+ */
+function DrawerSidebarScenario() {
+  const [pageState] = useState(() => {
+    const state = createBoardPageState();
+    state.selectedTaskId = 'closed';
+    return state;
+  });
+  const [sidebar] = useState(() => {
+    const faces = new Map<string, ReturnType<typeof fakeSidebarFace>>();
+    const ensure = (sessionId: string): ReturnType<typeof fakeSidebarFace> => {
+      let held = faces.get(sessionId);
+      if (held === undefined) { held = fakeSidebarFace(sessionId); faces.set(sessionId, held); }
+      return held;
+    };
+    const port: SidebarPanelPort = { forSession: sessionId => ensure(sessionId).face };
+    return { ensure, port };
+  });
+  useEffect(() => {
+    (window as unknown as { __drawerSidebar?: { setExpanded(id: string, value: boolean): void } }).__drawerSidebar = {
+      setExpanded: (id, value) => { sidebar.ensure(id).setExpanded(value); },
+    };
+  }, [sidebar]);
+  // The same drawer on a host without the capability: the plugin mounts no
+  // workspace at all and keeps its previous conversation markup.
+  if (query.get('port') === 'none') {
+    return <BoardView api={harness.api} pageState={pageState} renderConversation={id => <div data-native={id} style={{ display: 'grid', height: '100%' }} />} />;
+  }
+  return <BoardView
+    api={harness.api}
+    pageState={pageState}
+    renderConversation={id => <ConversationWorkspace sessionId={id} port={sidebar.port} renderPanel={() => <div data-testid="fake-panel" style={{ padding: 16, height: '100%', boxSizing: 'border-box' }}>Files · Preview · Terminal</div>}>
+      <div data-native={id} data-surface-mode="conversation" style={{ display: 'grid', gap: 6, alignContent: 'start', padding: 16, height: '100%', boxSizing: 'border-box' }}>
+        <strong>Task conversation</strong>
+        <span style={{ opacity: 0.7 }}>{id}</span>
+      </div>
+    </ConversationWorkspace>}
+  />;
+}
+
 /**
  * Mounts the board with a control that hides and shows it, so a spec can prove a
  * dismissal survives the panel switch that used to undo it.
@@ -409,6 +467,7 @@ function App() {
   if (scenario === 'retained' || scenario === 'retained-many') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><RetainedScenario /></div></>;
   if (scenario === 'sharing') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;
   if (scenario === 'drawer-peek') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><DrawerPeekScenario /></div></>;
+  if (scenario === 'drawer-sidebar') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><DrawerSidebarScenario /></div></>;
   if (scenario === 'question') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban"><QuestionScenario /></div></>;
   if (scenario === 'task-message') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><TaskMessageScenario /></div></>;
   return <BoardView api={harness.api} renderConversation={id => <div data-native={id} />} />;
