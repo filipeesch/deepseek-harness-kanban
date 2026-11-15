@@ -5,6 +5,7 @@ import { canTransition, transitionAccess } from '../domain/transitions.js';
 import { resolveTaskConversationModel } from '../domain/model-preference.js';
 import type { SessionModelPort } from './session-model.js';
 import type { SessionPresetPort } from './session-preset.js';
+import type { ForkClaimPort } from './fork-claim.js';
 import { conversationStageActivity, persistedStageActivity } from '../shared/stage-activity.js';
 import { openSessionIds } from '../shared/conversations.js';
 import { aggregateTaskActivity, UNAVAILABLE_TASK_ACTIVITY, type TaskActivity, type TaskActivityOptions, type TaskActivityScope } from '../domain/task-activity.js';
@@ -137,6 +138,8 @@ export class KanbanApp {
  private readonly factsSource:ConversationFactsSource;
  private readonly workspaceCoordinator?:WorkspaceCoordinator;
  private scheduleRuntime:ScheduleRuntimePort|undefined;
+ /** Attaches a branch the task drawer claimed; absent means claims are refused. */
+ private forkClaim:ForkClaimPort|undefined;
  private deterministicRuntime:DeterministicSupervisor|undefined;
  private deterministicApproval:DeterministicApprovalService|undefined;
  /** The native runtime a write report asks for the fingerprint of a proposed executable. */
@@ -193,6 +196,8 @@ export class KanbanApp {
  }
  /** Attach the live schedule runtime once the app exists; commands require it. */
  attachScheduleRuntime(port:ScheduleRuntimePort):void{this.scheduleRuntime=port;}
+ /** Attach the fork-claim port once the adoption coordinator exists. */
+ attachForkClaim(port:ForkClaimPort):void{this.forkClaim=port;}
  private requireScheduleRuntime():ScheduleRuntimePort{
   invariant(this.scheduleRuntime,'SCHEDULES_UNAVAILABLE','Session schedules are unavailable in this host.');
   return this.scheduleRuntime;
@@ -1120,6 +1125,18 @@ export class KanbanApp {
    case 'conversation.create':{const created=await this.createConversationNow(command.taskId,{ensureFirst:command.ensureFirst===true});commandReceipt={kind:'conversation',id:created.sessionId,...(created.model===undefined?{}:{model:created.model}),...(created.preset===undefined?{}:{preset:created.preset})};break;}
    case 'conversation.close':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).closeSession(command.taskId,command.sessionId);break;}
    case 'conversation.reopen':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).reopenSession(command.taskId,command.sessionId);break;}
+   case 'conversation.attach':{
+    const located=this.locatedTask(command.taskId);
+    // The branch must come from one of this task's own conversations, so a claim
+    // can never attach an unrelated or foreign Session to the task.
+    invariant(located.task.sessionIds.includes(command.parentSessionId),'SESSION_NOT_FOUND','The branch source is not a conversation of this task.');
+    invariant(command.sessionId!==command.parentSessionId,'INVALID_ATTACH','A conversation cannot be attached to itself.');
+    const claim=this.forkClaim;
+    invariant(claim,'FORK_CLAIM_UNAVAILABLE','Attaching a branch is unavailable in this host.');
+    await claim.claim({taskId:command.taskId,parentSessionId:command.parentSessionId,sessionId:command.sessionId});
+    commandReceipt={kind:'conversation',id:command.sessionId};
+    break;
+   }
    case 'note.save':{const value=await this.saveNoteNow(command);commandReceipt={kind:'note',id:value.id};break;}
    case 'note.delete':{const value=await this.deleteNoteNow(command);commandReceipt={kind:'note',id:value.id};break;}
    case 'task.delete':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm task data/worktree removal and native conversation archiving.');this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'delete');this.assertScriptContextStopped(command.taskId);await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'delete',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true});break;

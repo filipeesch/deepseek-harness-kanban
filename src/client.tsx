@@ -12,13 +12,14 @@ import type { PropsRuntime, PropsRenderSlots, PropsRenderFactories } from '@deep
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import { TYPERT_REMOTE } from './remote.js';
 import { createWorkspaceNavigation } from './client/settings/schedules/workspace-navigation.js';
+import { createDrawerNavigation, NavigationForwarder } from './client/host-navigation.js';
 import { ClientBridge } from './client-bridge.js';
 import { createDirectoryPicker } from './client/directory-picker.js';
 import { BoardView, createBoardPageState, type BoardPageState } from './client/board.js';
 import { allTasks } from './client/snapshot-normalize.js';
 import { AutoRunController } from './client/auto-run.js';
 import { QuestionDock, createQuestionDockServices, type QuestionDockSessions } from './client/question-dock.js';
-import { RetainedConversation, TaskConversationWindow, type ConversationSurfaceOwner, type ConversationSurfaceServices } from './client/conversation-surface.js';
+import { RetainedConversation, TaskConversationWindow, type ConversationSurfaceMode, type ConversationSurfaceOwner, type ConversationSurfaceServices } from './client/conversation-surface.js';
 import { AgentPresetProvider } from './client/agent-preset-context.js';
 import { createAgentPresetPortSource } from './client/agent-preset-port.js';
 import type { ConversationLeaseEnvironment } from './client/conversation-leases.js';
@@ -29,7 +30,7 @@ import { TASK_CONTEXT_NODE_KIND, TaskContextNodeView, taskContextDefinition } fr
 import { STAGE_CONTEXT_NODE_KIND, StageInstructionNodeView, stageInstructionDefinition } from './client/stage-instruction-node.js';
 import { HANDOFF_CONTEXT_NODE_KIND, DeterministicHandoffNodeView, deterministicHandoffDefinition } from './client/deterministic-handoff-node.js';
 import { TASK_MESSAGE_NODE_KIND, TaskMessageNodeView, taskMessageDefinition } from './client/task-message-node.js';
-import type { ClientApi } from './shared/types.js';
+import type { ClientApi, KanbanSnapshot } from './shared/types.js';
 
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
   interface SessionReferenceSourceMap { kanbanTaskDrawer: unknown }
@@ -44,7 +45,7 @@ type MainProps = PropsRuntime<'main'> & PropsRenderSlots<'kanban.conversation'>;
 type ConversationSeatProps = PropsRuntime<'kanban.conversation'> & PropsRenderFactories;
 export const name = 'kanban-client';
 // Service keys, not package names. Mount our own namespace before any access to remote.kanban.
-export const inject = ['remote', 'slots', 'sessions', 'uiSession', 'locale', 'uiConversation'];
+export const inject = ['remote', 'slots', 'sessions', 'uiSession', 'locale', 'uiConversation', 'layout'];
 const clientCss = '.kanban-native-state{padding:16px;color:inherit}.kanban-feed-error{padding:8px 16px;color:var(--dsw-alias-state-error-primary,crimson);border-bottom:1px solid var(--dsw-alias-border-l2)}';
 
 
@@ -117,6 +118,25 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   } catch { presetInjection = undefined; }
   if (presetInjection !== undefined) void Promise.resolve(presetInjection).catch(() => undefined);
   const picker = createDirectoryPicker(directoryPickerSources(ctx));
+  // The latest board snapshot, so a native navigation can be resolved synchronously
+  // without waiting for the board to render.
+  let latestSnapshot: KanbanSnapshot | undefined;
+  const unsubscribeSnapshot = bridge.api.subscribe(snapshot => { latestSnapshot = snapshot; });
+  // Keeping owned navigation inside the drawer needs the host layout service. The
+  // drawer subscribes to a stable source; without the host surface it never changes,
+  // so the native navigation applies unchanged.
+  const navigation = new NavigationForwarder();
+  let stopNavigation: (() => void) | undefined;
+  try {
+    const coordinator = createDrawerNavigation(ctx, pageState, value => bridge.api.command(value), scopedSessions, () => latestSnapshot);
+    if (coordinator !== undefined) {
+      stopNavigation = coordinator.start();
+      navigation.attach(coordinator);
+    }
+  } catch (error) {
+    // A host that composes no layout panel keeps native navigation.
+    console.warn('kanban: drawer navigation unavailable', error);
+  }
   const emptySessionState = { ids: [], byId: {}, phase: 'ready' as const, projectionsBySession: {} };
   const emptySessionList = { subscribe: () => () => {}, getSnapshot: () => emptySessionState };
 
@@ -199,11 +219,12 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
         if (!result.ok) throw new Error(result.error.message);
       },
     }), [sessionList, scopedSessions]);
-    const renderConversation = useCallback((id: string) => <RetainedConversation
+    const renderConversation = useCallback((id: string, mode?: ConversationSurfaceMode) => <RetainedConversation
       key={id}
       id={id}
       owner={surfaceOwner}
       services={surfaceServices}
+      {...(mode === undefined ? {} : { mode })}
     />, [surfaceOwner, surfaceServices]);
     const openSession = useMemo(workspaceNavigation, [ctx]);
     return <BoardView
@@ -214,6 +235,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       autoRun={props.autoRun}
       nativeSeat={nativeSeat}
       {...(openSession === undefined ? {} : { onOpenSession: openSession })}
+      navigation={navigation}
       conversationLeases={leaseEnvironment}
       onMarkAllRead={sessionIds => bridge.markAllRead(sessionIds)}
       renderConversation={renderConversation}
@@ -245,9 +267,10 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   const unsubscribeAutoRun = bridge.api.subscribe(snapshot => autoRun.reconcile(allTasks(snapshot), snapshot.deterministic));
   bridge.start();
   return async () => {
-    lifetime.abort(); autoRun.dispose(); unsubscribeAutoRun();
+    lifetime.abort(); autoRun.dispose(); unsubscribeAutoRun(); unsubscribeSnapshot();
     offTaskContext(); offStageInstruction(); offTaskMessage(); offHandoff();
     try { await presetInjection?.dispose(); } catch { /* the optional namespace fiber is best effort */ }
+    try { stopNavigation?.(); navigation.detach(); } catch { /* the navigation subscription is best effort */ }
     await bridge.dispose();
   };
 }

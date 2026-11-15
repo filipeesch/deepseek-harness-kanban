@@ -51,6 +51,7 @@ import { createSessionModelPort } from './host/session-model.js';
 import { createSessionPresetPort } from './host/session-preset.js';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { abortableSleep, ForkAdopter } from './host/conversation-adoption.js';
+import { createForkClaim, createInheritedPrefixCheck } from './host/fork-claim.js';
 import type { TaskLocator } from './host/task-locator.js';
 
 // The optional public schedule module emits this payloadless event; listening does not require its service.
@@ -297,6 +298,24 @@ export async function apply(ctx:Context):Promise<void>{
   report,
  });
  offAdoption=registerForkAdoption(ctx,adopter,{signal:lifetime.signal,report});
+ // The drawer claims a branch explicitly; the claim reuses the same adoption
+ // coordinator and reads the child's header so a mismatched claim is refused.
+ app.attachForkClaim(createForkClaim({
+  adopter,
+  lineage:async sessionId=>{
+   const snapshot=await history.read(sessionId,{signal:lifetime.signal});
+   const header=snapshot.header;
+   return {
+    ...(header.parentSession===undefined?{}:{parentSessionId:String(header.parentSession)}),
+    ...(header.origin===undefined?{}:{origin:header.origin}),
+   };
+  },
+  // A host that records no fork lineage still copies the source log prefix into
+  // the branch, so the shared prefix proves which conversation it came from.
+  inheritsPrefix:createInheritedPrefixCheck(sessionId=>history.read(sessionId,{signal:lifetime.signal})),
+  taskOfSession:sessionId=>app.locator.bySession(sessionId)?.task.id,
+  signal:lifetime.signal,
+ }));
  await app.initialize();
  await scheduleRuns.pruneSchedules(new Set(scheduleEntries(hubs).map(entry=>entry.schedule.id)));
  await scheduleRuns.finalizeInterrupted();

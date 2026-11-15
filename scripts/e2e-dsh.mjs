@@ -47,6 +47,7 @@ function verify() {
   if (!existsSync(join(root, 'tests/e2e-dsh/auto-mode.replay.override.json'))) fail('missing auto-mode replay override');
   if (!existsSync(join(root, 'tests/e2e-dsh/declared-transition.replay.override.json'))) fail('missing declared-transition replay override');
   if (!existsSync(join(root, 'tests/e2e-dsh/create-start.replay.override.json'))) fail('missing create-start replay override');
+  if (!existsSync(join(root, 'tests/e2e-dsh/native-drawer.replay.override.json'))) fail('missing native-drawer replay override');
   const pinned = pluginDshVersion();
   if (pinned !== undefined && version !== 'unknown' && !semver.satisfies(version, pinned, { includePrerelease: true })) {
     console.warn('e2e-dsh: the plugin expects DSH ' + pinned + ' but the checkout reports ' + version + '; continuing with the checkout as requested.');
@@ -135,7 +136,8 @@ try {
     env: { ...environment, HOME: home, USERPROFILE: home, DSH_HOME: join(home, '.dsh'), PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH ?? join(root, '.verification/playwright-browsers'), DSH_SNAPSHOT: 'replay', KANBAN_ROOT: root,
       KANBAN_QUESTION_FIXTURE: join(root, 'tests/e2e-dsh/question-round.jsonl'), KANBAN_TASK_CONTEXT_FIXTURE: join(root, 'tests/e2e-dsh/task-context.jsonl'),
       KANBAN_AUTORUN_OVERRIDE: join(root, 'tests/e2e-dsh/auto-run.replay.override.json'), KANBAN_AUTOMODE_OVERRIDE: join(root, 'tests/e2e-dsh/auto-mode.replay.override.json'),
-      KANBAN_DECLARED_OVERRIDE: join(root, 'tests/e2e-dsh/declared-transition.replay.override.json'), KANBAN_CREATESTART_OVERRIDE: join(root, 'tests/e2e-dsh/create-start.replay.override.json') },
+      KANBAN_DECLARED_OVERRIDE: join(root, 'tests/e2e-dsh/declared-transition.replay.override.json'), KANBAN_CREATESTART_OVERRIDE: join(root, 'tests/e2e-dsh/create-start.replay.override.json'),
+      KANBAN_NATIVE_OVERRIDE: join(root, 'tests/e2e-dsh/native-drawer.replay.override.json') },
   });
 } finally {
   // stage is the verified, test-owned mkdtemp result, never a computed checkout path.

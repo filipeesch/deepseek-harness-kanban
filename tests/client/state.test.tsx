@@ -65,7 +65,7 @@ describe('plugin-owned page bookmarks', () => {
     await user.click(screen.getByRole('tab', { name: 'Agent 2' })); await screen.findByTestId('retained-s2');
     expect([...mounted]).toEqual(['s2']);
     first.unmount(); expect(mounted.size).toBe(0); expect(released).toContain('s2'); expect(mock.listeners.size).toBe(0);
-    expect(pageState.search).toBe('Alpha'); expect(pageState.projectFilter).toBe('p1'); expect(pageState.selectedTaskId).toBe('t1'); expect(pageState.drawers.t1?.conversationId).toBe('s2');
+    expect(pageState.search).toBe('Alpha'); expect(pageState.projectFilter).toBe('p1'); expect(pageState.selectedTaskId).toBe('t1'); expect(pageState.drawers.t1?.view).toEqual({ kind: 'conversation', sessionId: 's2', selectionRequired: false });
     render(<BoardView api={mock.api} pageState={pageState} renderConversation={native} />);
     await screen.findByTestId('retained-s2');
     await openFilterPopover(user);
