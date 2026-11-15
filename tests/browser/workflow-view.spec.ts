@@ -1080,7 +1080,7 @@ async function edgePoint(page: Page, index: number): Promise<{ x: number; y: num
   // The edge is measured after the first paint, and the hit target may be the
   // visible path under the interaction path. Sample the actual stroke instead of
   // a bounding-box grid, accept any element inside the edge group, and retry
-  // while the canvas settles. This is deterministic across font metrics.
+  // while the canvas settles. This is scripted across font metrics.
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const point = await page.evaluate(index => {
       const paths = [...document.querySelectorAll('.react-flow__edge-interaction')];

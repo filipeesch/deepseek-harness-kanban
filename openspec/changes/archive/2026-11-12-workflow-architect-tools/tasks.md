@@ -18,10 +18,10 @@
 - [x] 2.6 Make the workflow write path compose, validate, report, and commit as one step, persisting nothing on refusal; verify a host test where a refused write leaves the stored text and Hub revision unchanged and returns the report.
 - [x] 2.7 Return the report from `edit_board_yaml`, `update_board`, and `create_board`; verify tool tests assert the report on success and on refusal without changing stored state.
 
-## 3. Deterministic script impact
+## 3. Scripted script impact
 
 - [x] 3.1 Extract capture planning from the capture store so directory resolution, file source reading, environment and parameter collection, and exit mapping are available without writing immutable blobs; verify the existing capture tests pass unchanged.
-- [x] 3.2 Add the script-impact port that resolves each allowed project's directory and returns, per deterministic stage, whether a review still holds; verify unit tests for changed source, changed exits, changed destinations, changed environment names, and a changed working-directory choice.
+- [x] 3.2 Add the script-impact port that resolves each allowed project's directory and returns, per scripted stage, whether a review still holds; verify unit tests for changed source, changed exits, changed destinations, changed environment names, and a changed working-directory choice.
 - [x] 3.3 Report an unresolvable directory as "cannot verify" and a task-scoped stage as depending on the card's worktree; verify unit tests for both.
 - [x] 3.4 Wire the port into the write pipeline; verify a host test where retargeting an exit reports that the authorization no longer holds in every allowed project and names the reason.
 
@@ -29,7 +29,7 @@
 
 - [x] 4.1 Add the optional origin to the stage-entry record and to the entry-writing helper; verify a stored entry without it still decodes and a new one round-trips.
 - [x] 4.2 Thread the origin from the pending transition, distinguishing an operator move, a declared transition, and an automatic advance; verify one host test per origin.
-- [x] 4.3 Thread the origin from the deterministic router including the named exit, and record the reserved error route as such; verify deterministic tests for both paths.
+- [x] 4.3 Thread the origin from the scripted router including the named exit, and record the reserved error route as such; verify scripted tests for both paths.
 - [x] 4.4 Present the origin in the History detail; verify a client test asserting each origin renders distinctly and an unrecorded origin reads as unrecorded.
 
 ## 5. Local board log and revisions
@@ -79,4 +79,4 @@
 - [x] 9.1 Run `pnpm check` and confirm host and client typechecks, the full test suite, and the build pass.
 - [x] 9.2 Run `pnpm test:browser` and confirm the estimator guard, the origin presentation, and the existing appearance checks pass in light and dark.
 - [x] 9.3 Run the isolated real-composition lane with `DSH_SNAPSHOT=replay` for the board scenario and record the evidence under `.verification/`.
-- [x] 9.4 Update the product documentation that describes the tool surface and the deterministic authorization model; verify no document still teaches the removed `get_board_summary` payload or a dry-run mode.
+- [x] 9.4 Update the product documentation that describes the tool surface and the scripted authorization model; verify no document still teaches the removed `get_board_summary` payload or a dry-run mode.

@@ -78,7 +78,7 @@ A running transit SHALL continue without restarting when the presented view re-r
 
 ### Requirement: Condition mark on a connection without a condition
 
-Every connection the workflow authors as a transition and that authors no condition SHALL present a mark on its path distinguishing it from a connection that authors a condition. The mark SHALL be absent from a connection that authors a condition, from the dashed connection a stage that authors no transitions receives, and from a connection whose source stage is deterministic, because that connection's routing is authored by the stage's named exits rather than by a condition; the diagram already distinguishes the latter two as paths it never invites the user to condition. The mark SHALL be presented only while the layout lock is off, because authoring the condition it stands for is a structural edit. The mark SHALL be removed when a condition is stored for that connection. The mark SHALL keep a readable size while the diagram zooms and SHALL follow its connection while a stage is moved or resized. The mark SHALL NOT be a control, SHALL NOT enter the diagram's keyboard order, and SHALL NOT change board data when pressed.
+Every connection the workflow authors as a transition and that authors no condition SHALL present a mark on its path distinguishing it from a connection that authors a condition. The mark SHALL be absent from a connection that authors a condition, from the dashed connection a stage that authors no transitions receives, and from a connection whose source stage is scripted, because that connection's routing is authored by the stage's named exits rather than by a condition; the diagram already distinguishes the latter two as paths it never invites the user to condition. The mark SHALL be presented only while the layout lock is off, because authoring the condition it stands for is a structural edit. The mark SHALL be removed when a condition is stored for that connection. The mark SHALL keep a readable size while the diagram zooms and SHALL follow its connection while a stage is moved or resized. The mark SHALL NOT be a control, SHALL NOT enter the diagram's keyboard order, and SHALL NOT change board data when pressed.
 
 The accessible name of each connection end SHALL say whether that connection authors a condition, so the absence of a condition is available to assistive technology without the mark.
 
@@ -114,26 +114,26 @@ The accessible name of each connection end SHALL say whether that connection aut
 - **THEN** each mark stays on its connection's path
 - **AND** it keeps a readable size
 
-#### Scenario: Do not mark a deterministic connection
+#### Scenario: Do not mark a scripted connection
 
-- **WHEN** a deterministic stage maps an exit to another stage
+- **WHEN** a scripted stage maps an exit to another stage
 - **THEN** the connection drawn to that destination presents no mark
 - **AND** the stage editor presents that exit and the destination it resolves to
 
 ## ADDED Requirements
 
-### Requirement: Editing the routing of a deterministic connection
+### Requirement: Editing the routing of a scripted connection
 
-A connection whose source stage is deterministic SHALL NOT open the condition editor, because the routing that connection stands for is authored by that stage's named exits and no condition applies to it. Double-clicking that connection SHALL open the deterministic stage's editor while the layout lock is off, and SHALL open nothing while the layout lock is on. The stage editor SHALL remain the surface that presents and edits every named exit and the destination it resolves to, including when several exits resolve to one destination.
+A connection whose source stage is scripted SHALL NOT open the condition editor, because the routing that connection stands for is authored by that stage's named exits and no condition applies to it. Double-clicking that connection SHALL open the scripted stage's editor while the layout lock is off, and SHALL open nothing while the layout lock is on. The stage editor SHALL remain the surface that presents and edits every named exit and the destination it resolves to, including when several exits resolve to one destination.
 
-#### Scenario: Open a deterministic stage's editor from its connection
+#### Scenario: Open a scripted stage's editor from its connection
 
-- **WHEN** the layout lock is off and the user double-clicks a connection whose source stage is deterministic
+- **WHEN** the layout lock is off and the user double-clicks a connection whose source stage is scripted
 - **THEN** the stage editor opens for that stage
 - **AND** no condition editor is presented
 
 #### Scenario: Open nothing while the layout is locked
 
-- **WHEN** the layout lock is on and the user double-clicks a connection whose source stage is deterministic
+- **WHEN** the layout lock is on and the user double-clicks a connection whose source stage is scripted
 - **THEN** no editor opens
 - **AND** no change is stored

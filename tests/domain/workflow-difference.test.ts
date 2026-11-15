@@ -65,21 +65,21 @@ describe('workflow difference', () => {
     expect(stage?.fields?.map(field => field.field)).toEqual(['position', 'size']);
   });
 
-  it('reports a retargeted deterministic exit', () => {
-    const deterministic = `columns:
+  it('reports a retargeted scripted exit', () => {
+    const scripted = `columns:
   - id: wait
     label: Wait
-    deterministic:
+    scripted:
       language: bash
       code: exit 0
       exits: {yes: done}
   - id: done
     label: Done
 `;
-    const retargeted = deterministic.replace('exits: {yes: done}', 'exits: {yes: other}') + '  - id: other\n    label: Other\n';
-    const difference = diffWorkflow(parseWorkflow(deterministic), parseWorkflow(deterministic.replace('exits: {yes: done}', 'exits: {yes: done2}') + '  - id: done2\n    label: Done 2\n'));
+    const retargeted = scripted.replace('exits: {yes: done}', 'exits: {yes: other}') + '  - id: other\n    label: Other\n';
+    const difference = diffWorkflow(parseWorkflow(scripted), parseWorkflow(scripted.replace('exits: {yes: done}', 'exits: {yes: done2}') + '  - id: done2\n    label: Done 2\n'));
     expect(difference.stages.some(stage => stage.stage === 'wait' && stage.change === 'changed')).toBe(true);
-    expect(isWorkflowDifferenceEmpty(diffWorkflow(parseWorkflow(deterministic), parseWorkflow(retargeted)))).toBe(false);
+    expect(isWorkflowDifferenceEmpty(diffWorkflow(parseWorkflow(scripted), parseWorkflow(retargeted)))).toBe(false);
   });
 
   it('reports an added and a removed stage', () => {

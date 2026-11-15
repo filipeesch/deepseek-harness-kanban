@@ -1,6 +1,6 @@
 import type { QuestionRound } from '../shared/types.js';
 
-/** One deterministic answer to "may this form submit right now, and why not?". */
+/** One scripted answer to "may this form submit right now, and why not?". */
 export type SubmitState =
   | { kind: 'blocked'; reason: 'invalid' | 'awaiting-turn' }
   | { kind: 'ready' }

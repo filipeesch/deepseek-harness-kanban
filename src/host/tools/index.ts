@@ -15,7 +15,7 @@ import { autoModeTools } from './auto-mode.js';
 import { teamFileTools } from './team-files.js';
 import { messageTools } from './messages.js';
 import { authoringTools } from './authoring.js';
-import { deterministicTools } from './deterministic.js';
+import { scriptedTools } from './scripted.js';
 import { validationTools } from './validation.js';
 import { sharingTools } from './sharing.js';
 import { revisionTools } from './revisions.js';
@@ -41,7 +41,7 @@ export function productToolDefinitions(app:KanbanApp,boards:BoardAdministration=
   ...noteTools(app),
   ...boardTools(app,boards),
   ...authoringTools(app,boards),
-  ...deterministicTools(app),
+  ...scriptedTools(app),
   ...validationTools(),
   ...sharingTools(app),
   ...revisionTools(app,extras.revisions,boards),

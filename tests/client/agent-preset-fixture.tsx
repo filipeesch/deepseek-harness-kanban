@@ -16,7 +16,7 @@ export function presetPort(overrides: Partial<AgentPresetPort> = {}): AgentPrese
   } as AgentPresetPort;
 }
 
-/** Supply a deterministic preset port to a component under test. */
+/** Supply a scripted preset port to a component under test. */
 export function PresetProvider({ port, children }: { port?: AgentPresetPort; children: ReactNode }) {
   const source = useMemo(() => {
     const value = port ?? presetPort();

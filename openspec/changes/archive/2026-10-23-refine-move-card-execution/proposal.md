@@ -23,7 +23,7 @@ None.
 
 ### Modified Capabilities
 
-- `kanban-board`: instructed moves become immediate; the Move-and-run confirmation and explicit agent-choice requirements are replaced by a card run action with a deterministic target; movement never runs an agent; task creation starts with an unselected project.
+- `kanban-board`: instructed moves become immediate; the Move-and-run confirmation and explicit agent-choice requirements are replaced by a card run action with a scripted target; movement never runs an agent; task creation starts with an unselected project.
 - `task-conversations`: the first model step of a task conversation receives a native injected task-context message once; later stage instructions carry only the stage instruction; the drawer stage control moves immediately and pre-fills the active conversation composer instead of opening the confirmation dialog.
 
 ## Impact

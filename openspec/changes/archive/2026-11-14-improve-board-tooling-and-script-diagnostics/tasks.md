@@ -2,7 +2,7 @@
 
 ## 1. Read a scripted step's execution state
 
-- [x] 1.1 Move the deterministic summary projection, the handoff reservation and acceptance, and the handoff dispatch out of `src/host/app.ts` into a host module that takes the ports the composition root already supplies; verify `pnpm test` and the host typecheck pass with no behavior change
+- [x] 1.1 Move the scripted summary projection, the handoff reservation and acceptance, and the handoff dispatch out of `src/host/app.ts` into a host module that takes the ports the composition root already supplies; verify `pnpm test` and the host typecheck pass with no behavior change
 - [x] 1.2 Build a pure execution-state projection over the task's durable scripted state, the stored hold record, and the task history, mapping each hold code to the action that clears it; verify unit tests for a held result, a running execution, a task with no execution, and a task history bound
 - [x] 1.3 Declare `get_script_execution` in the architect-gated tool set and verify the tool-surface test lists it and the gate test withholds it from a non-architect session
 - [x] 1.4 Verify the reported case: a saved result held by a busy conversation returns its hold code, bounded facts, exit, and destination, and the call appends no history row, no diagnostic, and no revision
@@ -21,7 +21,7 @@
 - [x] 3.1 Make the edit engine report structured failure facts instead of throwing on the first miss: edit index, failure kind, every occurrence offset and line, the stage each occurrence falls in, and the closest authored line with its line number; verify unit tests for missing, ambiguous, and last-edit failures
 - [x] 3.2 Surface those facts through the refusal projection and as bounded report problems; verify a tool-level test that reads the failed index and the occurrence lines from the result
 - [x] 3.3 Accept an optional stage and an optional field on each edit and narrow the match to that authored span; verify tests for a scoped match in one of two identical stages, a scoped miss, an unknown stage, and an unknown field
-- [x] 3.4 Add `set_stage_script` as a partial write over one stage's deterministic configuration; verify tests for changing only the source, only the parameter declaration, only the environment names, only the exits, two simultaneous sources, and preserved comments
+- [x] 3.4 Add `set_stage_script` as a partial write over one stage's scripted configuration; verify tests for changing only the source, only the parameter declaration, only the environment names, only the exits, two simultaneous sources, and preserved comments
 - [x] 3.5 Verify the reported cases: `Exit code 4 means the space is not configured` present in two stages with different indentation is scoped to one of them, and a wrong line break is reported with the failing edit index and the closest line
 
 ## 4. Rebase a composed write on a stale revision
@@ -35,7 +35,7 @@
 
 - [x] 5.1 Match a cited stage identifier only between backticks or after an authored citation phrase, and record a plain prose token that equals a stage identifier as a separate informational observation; verify tests for a citation problem, an informational prose mention, and a stage that permits every destination
 - [x] 5.2 Group and de-duplicate observations by kind, stage, and reference, and bound each group with a count of what it left out; verify a test where the same fact appears five times and is reported once with its count
-- [x] 5.3 Report the executable authorization state once per deterministic stage for the board; verify a test where the board allows three projects and the stage is reported once
+- [x] 5.3 Report the executable authorization state once per scripted stage for the board; verify a test where the board allows three projects and the stage is reported once
 - [x] 5.4 Verify the reported case: an instruction containing `the`, `nothing`, and the prose words `explore`, `scope`, and `backlog` produces no routing warning while an explicit citation of an unpermitted stage still warns
 
 ## 6. Review and test without saving
@@ -65,6 +65,6 @@
 
 - [x] 9.1 Report each changed instruction's character count, byte length, and estimated token count, and the script source size, in the write summary; verify a test for a changed instruction and for a stage whose source changed
 - [x] 9.2 Rewrite the preset skill and its references so the new tools, the local-only publishing rule, and the write controls are covered while the persona and every reference stay under their enforced bounds; verify the bundle check that asserts those sizes
-- [x] 9.3 Update `README.md` and `docs/deterministic-steps.md` for the new tools, the summary report, and manual publishing; verify no document still states that a tool write publishes automatically
+- [x] 9.3 Update `README.md` and `docs/scripted-steps.md` for the new tools, the summary report, and manual publishing; verify no document still states that a tool write publishes automatically
 - [x] 9.4 Run `pnpm check` and verify the host and client typechecks, the vitest suite, and the build all pass
 - [x] 9.5 Run the isolated real-composition lane for the affected areas and verify it passes without real-model traffic

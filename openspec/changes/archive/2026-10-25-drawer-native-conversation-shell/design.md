@@ -176,12 +176,12 @@ Use only for plugin-wrapper geometry that jsdom cannot compute: header wrapper a
 
 ### Pinned DSH real-composition e2e
 
-Run against the unchanged `dsh-v0.2.1-rc.2` checkout with deterministic replay/seed data; no real model, no owner profile.
+Run against the unchanged `dsh-v0.2.1-rc.2` checkout with scripted replay/seed data; no real model, no owner profile.
 
 - **A — native header and per-conversation mode:** create a task, open the drawer, assert the native session header and the absence of the compact row/resident header/View tabs/corner; select a mode on a blank conversation, assert the session projection and native label, create a second conversation with a different mode, assert both; verify Info hides the header and the drawer stays open on native portals; check narrow-width overflow.
-- **B — in-drawer subagent peek:** create a task, start a deterministic child through the same replay pattern as `kanban-deletion`, open the native catalog, select the child, assert it renders in the drawer while the board stays visible and the tab count stays 1; navigate back with the parent breadcrumb; assert no child tab/session ID and no mode picker on the child.
+- **B — in-drawer subagent peek:** create a task, start a scripted child through the same replay pattern as `kanban-deletion`, open the native catalog, select the child, assert it renders in the drawer while the board stays visible and the tab count stays 1; navigate back with the parent breadcrumb; assert no child tab/session ID and no mode picker on the child.
 - **C — seeded inline task context:** seed a session with a `kanban-task` message and a normal user message, attach it to a workspace, open ordinary native Chat, and assert the row is inside the chat flow, not an overlay, appears once, expands, and survives reload. This proves the real Chat Definition/visible-node pipeline while the Kanban panel is inactive.
-- **D — optional first-turn acceptance:** with a deterministic first-turn replay fixture, select a mode, send the first message, assert the session log has the context before the user message, the inline row appears in the drawer, the picker becomes the native label, and the next turn does not repeat the context. If the fixture cost is high, the host unit test plus C cover the two halves; D is the strongest acceptance, not the minimum gate.
+- **D — optional first-turn acceptance:** with a scripted first-turn replay fixture, select a mode, send the first message, assert the session log has the context before the user message, the inline row appears in the drawer, the picker becomes the native label, and the next turn does not repeat the context. If the fixture cost is high, the host unit test plus C cover the two halves; D is the strongest acceptance, not the minimum gate.
 
 ### Commands and cadence
 
@@ -192,14 +192,14 @@ node scripts/e2e-dsh.mjs --checkout <pin> --check
 node scripts/e2e-dsh.mjs --checkout <pin> --only native-drawer
 ```
 
-The pinned lane stays opt-in/nightly or pre-release because it needs the built DSH checkout. It is isolated and deterministic, so it can run without the owner's profile. Screenshots and a short report go under `.verification/` without the authenticated URL token.
+The pinned lane stays opt-in/nightly or pre-release because it needs the built DSH checkout. It is isolated and scripted, so it can run without the owner's profile. Screenshots and a short report go under `.verification/` without the authenticated URL token.
 
 ### Coverage boundaries
 
 - Fake native entries test adapter behavior; only A/B/C prove the real private entries and native rendering.
 - The browser harness is not native-DSH evidence.
 - Native utilities vary by profile; tests assert the header/no-row/no-resident/View/corner contract, not arbitrary utility IDs.
-- Profile preset availability varies; use the shipped built-ins or an explicit deterministic preset configuration.
+- Profile preset availability varies; use the shipped built-ins or an explicit scripted preset configuration.
 - Store-backed entries are asserted absent rather than tested with an isolated store.
 
 ## Risks / Trade-offs

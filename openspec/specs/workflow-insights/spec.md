@@ -24,7 +24,7 @@ Lets an agent measure how a board's workflow is actually used and inspect the di
 
 #### Scenario: Count a named exit and list an unused one
 
-- **WHEN** a deterministic stage configures two exits and only one was used in the window
+- **WHEN** a scripted stage configures two exits and only one was used in the window
 - **THEN** the report gives the used exit its count
 - **AND** it lists the unused exit as configured and unused
 

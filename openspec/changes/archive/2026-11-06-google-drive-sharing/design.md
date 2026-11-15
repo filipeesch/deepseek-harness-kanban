@@ -120,11 +120,11 @@ The service maps provider failures to typed codes (`SHARING_AUTH_DENIED`, `SHARI
 
 **Why:** the UI must explain a Drive failure without revision-control vocabulary and without coupling to Google error payloads; the client already renders everything from the snapshot.
 
-### D12. Deterministic tests, one manual authorization check
+### D12. Scripted tests, one manual authorization check
 
 The provider contract runs against Git temporary repositories and a fake Drive HTTP server: ensure, read, missing document, token, write, stale write, destroy. Authorization tests inject `fetch`, the loopback server, the clock, and the credential store: PKCE, state, token exchange, refresh rotation through `modifyRecord`, revoke, switch, policy errors, and the missing-secret path. Synchronization tests cover debounce, automatic publish, automatic apply, conflicts, blockers, offline pending, retry, restart, and serialization. Browser tests cover Team Settings, the storage swap, the Drive connection states, and the conflict review. The real OAuth client, My Drive, Shared Drive, folder creation, and the 60-second change feed are exercised by one documented manual acceptance run, not by CI.
 
-**Why:** no Google credentials or Drive traffic belong in the deterministic lanes; the only behavior that needs the real service is the token exchange without a client secret and the account/folder authorization.
+**Why:** no Google credentials or Drive traffic belong in the scripted lanes; the only behavior that needs the real service is the token exchange without a client secret and the account/folder authorization.
 
 ## Risks / Trade-offs
 

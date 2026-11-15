@@ -8,7 +8,7 @@
 - [x] 1.4 Add the `kanban_hubs` storage domain with `layout: 'per-record'`, a `hubs` table, and a global settings/initialization slot; verify `pnpm typecheck` and confirm the domain opens in the isolated host without touching the legacy `kanban` document.
 - [x] 1.5 Implement `HubRepository` with one write tail, per-Hub revisions, Hub/board name uniqueness, last-Hub protection, Hub/board/project deletion eligibility, cross-Hub task and session ownership checks, and settings revision; verify `pnpm typecheck` and a repository smoke against a temporary storage fake.
 - [x] 1.6 Implement the additive legacy migration: read the frozen v2 `kanban` state, create `My Hub` and the default board, copy projects/tasks/notes and the global worktree base path, write the initialization marker last, and leave the legacy document untouched; verify by opening the isolated host against a copy of a v2 state file and confirming one Hub and one board.
-- [x] 1.7 Expose `HubStorage` and `LegacyStateReader` as ports and inject a clock plus ID factory into `HubRepository` and the operation modules so revisions, timestamps, and generated IDs are deterministic in tests; verify `pnpm typecheck` and that the production adapter is the only DSH-specific implementation.
+- [x] 1.7 Expose `HubStorage` and `LegacyStateReader` as ports and inject a clock plus ID factory into `HubRepository` and the operation modules so revisions, timestamps, and generated IDs are scripted in tests; verify `pnpm typecheck` and that the production adapter is the only DSH-specific implementation.
 
 ## 2. Host commands and coordination
 

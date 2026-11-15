@@ -11,7 +11,7 @@ import { scheduleStyles } from './schedules.js';
 import { stageStyles } from './stage.js';
 import { historyStyles } from './history.js';
 import { relationStyles } from './relations.js';
-import { deterministicStyles } from './deterministic.js';
+import { scriptedStyles } from './scripted.js';
 
 /** Every plugin style module in cascade order; the board mounts this one string. */
-export const styles = [tokenStyles, baseStyles, headerStyles, cardStyles, activityStyles, motionStyles, sharingStyles, drawerHeaderStyles, scheduleStyles, stageStyles, historyStyles, relationStyles, deterministicStyles, workflowViewStyles].join(String.fromCharCode(10));
+export const styles = [tokenStyles, baseStyles, headerStyles, cardStyles, activityStyles, motionStyles, sharingStyles, drawerHeaderStyles, scheduleStyles, stageStyles, historyStyles, relationStyles, scriptedStyles, workflowViewStyles].join(String.fromCharCode(10));

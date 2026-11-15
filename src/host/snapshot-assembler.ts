@@ -7,7 +7,7 @@ const DEFAULT_AUTH_TTL_MS = 5_000;
 /** Execution authority and source references are host-private, never ordinary state. */
 export function publicKanbanState(state: KanbanState): KanbanState {
   for (const hub of state.hubs) {
-    for (const task of hub.tasks) delete task.deterministic;
+    for (const task of hub.tasks) delete task.scripted;
     for (const board of hub.boards) delete board.localStageIdentities;
   }
   return state;

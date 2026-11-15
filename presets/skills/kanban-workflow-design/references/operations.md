@@ -24,7 +24,7 @@ Board administration rejects task-owned chat, including descendants. Task creati
 ## Apply an approved change
 
 1. `create_board` accepts a complete document; omission uses the default uninstructed flow.
-2. Prefer `set_stage_prompt`, `set_stage_routes`, `set_stage_script`, `set_layout`, `add_stage`, and `remove_stage`: each rewrites only what it names and keeps every other authored character, comments included. `set_stage_script` writes one stage's deterministic configuration in parts.
+2. Prefer `set_stage_prompt`, `set_stage_routes`, `set_stage_script`, `set_layout`, `add_stage`, and `remove_stage`: each rewrites only what it names and keeps every other authored character, comments included. `set_stage_script` writes one stage's scripted configuration in parts.
 3. `update_board` renames or replaces the whole document, preserving unrelated model, keys, layout, descriptions, and comments; omission can clear them.
 4. Every write accepts `expect_sha256` (refuse unless the stored bytes match), `dry_run` (same report, nothing saved), and `detail` (`summary` by default). The result names the digest of the stored document; verify with it instead of re-reading.
 5. Read the report: changed stages and field names, graph warnings, each scripted stage's board-level authorization once, affected cards, instruction sizes. `detail: full` adds field values. A refusal saves nothing.
@@ -53,7 +53,7 @@ A tool write never publishes. It saves locally and leaves a bound board a draft;
 Choose **work start**, **destination selector**, and **default advance** separately. There is no per-stage YAML automation switch.
 
 - **Manual:** no entry instruction means no work starts on entry. With auto mode off and no declared route, completed turns do not move the card.
-- **Agent-selected:** the stage reads `list_allowed_transitions`, chooses a configured target from evidence, and calls `set_next_transition` with a reason. Only its own card moves, at its next completed-turn end, even with auto mode off. A deterministic entry routes only through its captured exit. Parameters are entry data, never secrets or YAML.
+- **Agent-selected:** the stage reads `list_allowed_transitions`, chooses a configured target from evidence, and calls `set_next_transition` with a reason. Only its own card moves, at its next completed-turn end, even with auto mode off. A scripted entry routes only through its captured exit. Parameters are entry data, never secrets or YAML.
 - **Task auto mode:** eligible completed turns advance by the first configured target, or workflow order when omitted, unless a route is declared. Default resolution crosses uninstructed stages without revisiting one.
 
 An uninstructed stage or auto mode off alone is not a human gate. Ask for approval instead of predeclaring a gated route; for a durable hold use `pause_task` and ask the human to resume. `[]` prevents default exit. Unanswered questions, pending approvals, and queued messages hold advance; dismissing a question is not approval. `resume_task` neither enables auto mode nor moves a card.

@@ -94,7 +94,7 @@ Normal **Plugins disable/enable** remains a supported native lifecycle action, b
 
 ### Historical exploratory helpers
 
-The scripts under `scripts/verify-native-*` and the lifecycle helpers are optional, guarded historical experiments, not a required part of installation or product acceptance. Do not run them as routine diagnostics, enable consent flags automatically, replay DSH internals, or create native fixtures merely to satisfy a test count. The user-approved boundary is public-adapter/product contracts plus controlled Git and an existing-GUI smoke. Acceptance uses a deterministic, test-only model adapter; real-model requests are not part of it. Native activity and archive/history behavior remain upstream contracts; our coordinator still must respect those contracts and fail safely.
+The scripts under `scripts/verify-native-*` and the lifecycle helpers are optional, guarded historical experiments, not a required part of installation or product acceptance. Do not run them as routine diagnostics, enable consent flags automatically, replay DSH internals, or create native fixtures merely to satisfy a test count. The user-approved boundary is public-adapter/product contracts plus controlled Git and an existing-GUI smoke. Acceptance uses a scripted, test-only model adapter; real-model requests are not part of it. Native activity and archive/history behavior remain upstream contracts; our coordinator still must respect those contracts and fail safely.
 
 Old reports remain time-scoped and honest. The inconclusive schedule attempt was not qualified, its script was stopped with explicit user consent, and its fixture/base/archive/guard cleanup remains unverified. That does not authorize deleting user data or repairing DSH. Optional local artifacts remain ignored and are not published. See the [current evidence](<verification-preliminary.md>).
 
@@ -300,7 +300,7 @@ Acceptance follows the user-approved [public-extension-point boundary](<../opens
 | G4 | Our tool/schema/PTC correlation, dock/form/ordinary-text forwarding and reload behavior; historical native presentation slices supplement the contracts. |
 | G5 | Real temporary Git plus controlled native lifecycle ports for return-before-remove, archive-not-purge, dirty confirmation, branch/base preservation, unknown/shared-target refusal and recovery. |
 
-**Host limitations remain explicit.** Native Files and sandbox origin are not migrated by cwd changes. Actual policy/confinement can deny operations. An unreadable native record prevents safe shared-target exclusion and therefore physical cleanup in that profile; this is a safe refusal, not a reason to weaken checks or repair native data. Acceptance uses the deterministic test adapter; a real-model end-to-end conversation is not claimed.
+**Host limitations remain explicit.** Native Files and sandbox origin are not migrated by cwd changes. Actual policy/confinement can deny operations. An unreadable native record prevents safe shared-target exclusion and therefore physical cleanup in that profile; this is a safe refusal, not a reason to weaken checks or repair native data. Acceptance uses the scripted test adapter; a real-model end-to-end conversation is not claimed.
 
 ### Published records versus local-generated evidence
 

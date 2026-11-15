@@ -10,7 +10,7 @@ A stage's stable identity SHALL be a value distinct from the stage identifier, S
 
 This version SHALL NOT implement WIP limits and SHALL NOT introduce reusable workflow templates.
 
-A stage SHALL additionally support the deterministic configuration defined by `deterministic-steps`. A deterministic stage SHALL NOT author a nonempty entry instruction or an allowed transitions list. Its named exit mappings SHALL be its configured destinations for workflow access and graph presentation; several exits MAY resolve to the same destination, which SHALL be presented as one connection to that destination. The exit names SHALL NOT be presented on the diagram's connections; each exit name and the destination it resolves to SHALL remain presented and editable in the stage editor. A deterministic stage SHALL NOT obtain a default route from the first exit or from workflow order. Exit names SHALL NOT be executable interpretations of a legacy transition condition, and legacy conditions SHALL retain their documentary meaning. A script SHALL NOT supply or override a destination stage identifier.
+A stage SHALL additionally support the scripted configuration defined by `scripted-steps`. A scripted stage SHALL NOT author a nonempty entry instruction or an allowed transitions list. Its named exit mappings SHALL be its configured destinations for workflow access and graph presentation; several exits MAY resolve to the same destination, which SHALL be presented as one connection to that destination. The exit names SHALL NOT be presented on the diagram's connections; each exit name and the destination it resolves to SHALL remain presented and editable in the stage editor. A scripted stage SHALL NOT obtain a default route from the first exit or from workflow order. Exit names SHALL NOT be executable interpretations of a legacy transition condition, and legacy conditions SHALL retain their documentary meaning. A script SHALL NOT supply or override a destination stage identifier.
 
 #### Scenario: Render a configured column group
 
@@ -102,16 +102,16 @@ A stage SHALL additionally support the deterministic configuration defined by `d
 - **THEN** every stage keeps its authored identity
 - **AND** no identity is moved to another stage
 
-#### Scenario: Accept a deterministic stage without changing legacy conditions
+#### Scenario: Accept a scripted stage without changing legacy conditions
 
-- **WHEN** a workflow configures a deterministic stage with named exits and another stage with documentary transition conditions
-- **THEN** the deterministic configuration is validated by the same workflow semantics as the host
+- **WHEN** a workflow configures a scripted stage with named exits and another stage with documentary transition conditions
+- **THEN** the scripted configuration is validated by the same workflow semantics as the host
 - **AND** its exits determine its configured destinations without selecting a default exit
 - **AND** the other stage retains its conditions and permitted targets unchanged
 
 #### Scenario: Draw one connection for several exits without naming it on the path
 
-- **WHEN** a deterministic stage maps two exit names to the same other stage
+- **WHEN** a scripted stage maps two exit names to the same other stage
 - **THEN** the diagram draws one connection to that destination
 - **AND** that connection presents no exit name
 - **AND** the stage editor presents both exit names and the destination they share

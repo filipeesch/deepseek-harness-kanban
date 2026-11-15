@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { BoundedCapture, STDERR_LIMIT, STDOUT_LIMIT } from '../../src/host/deterministic/guard/capture.js';
-import { parseGuardConfig } from '../../src/host/deterministic/guard/config.js';
-import { createGuardOwnership, guardOwnershipSupported } from '../../src/host/deterministic/guard/ownership.js';
-import { matches, proof } from '../../src/host/deterministic/guard/proof.js';
-import { createWindowsOwnership, WINDOWS_UNSUPPORTED } from '../../src/host/deterministic/process/windows.js';
+import { BoundedCapture, STDERR_LIMIT, STDOUT_LIMIT } from '../../src/host/scripted/guard/capture.js';
+import { parseGuardConfig } from '../../src/host/scripted/guard/config.js';
+import { createGuardOwnership, guardOwnershipSupported } from '../../src/host/scripted/guard/ownership.js';
+import { matches, proof } from '../../src/host/scripted/guard/proof.js';
+import { createWindowsOwnership, WINDOWS_UNSUPPORTED } from '../../src/host/scripted/process/windows.js';
 
 const authorization = 'a'.repeat(64);
 const marker = 'b'.repeat(32);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { partialEnforcementAdvice } from '../../src/host/deterministic/native-policy.js';
+import { partialEnforcementAdvice } from '../../src/host/scripted/native-policy.js';
 
 describe('partial enforcement diagnostics', () => {
   it('names the Windows limitation instead of a generic policy failure', () => {

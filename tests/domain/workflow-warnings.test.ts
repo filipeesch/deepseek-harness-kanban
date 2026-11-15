@@ -75,13 +75,13 @@ describe('workflow warnings', () => {
   });
 
   it('reports a destination parameter the origin instruction never names', () => {
-    const value = warnings('initial_column: todo\ncolumns:\n  - id: todo\n    label: Todo\n    allowed_transitions: [check]\n    on_enter_prompt: Send it on with the pipeline name.\n  - id: check\n    label: Check\n    deterministic:\n      language: bash\n      code: echo hi\n      params:\n        - name: pipeline\n        - name: app\n      exits: {passed: done}\n  - id: done\n    label: Done\n');
+    const value = warnings('initial_column: todo\ncolumns:\n  - id: todo\n    label: Todo\n    allowed_transitions: [check]\n    on_enter_prompt: Send it on with the pipeline name.\n  - id: check\n    label: Check\n    scripted:\n      language: bash\n      code: echo hi\n      params:\n        - name: pipeline\n        - name: app\n      exits: {passed: done}\n  - id: done\n    label: Done\n');
     expect(value).toContainEqual({ kind: 'destination-parameter-unmentioned', stage: 'todo', destination: 'check', parameter: 'app' });
     expect(value.some((warning: any) => warning.parameter === 'pipeline')).toBe(false);
   });
 
   it('reports a card without the values its stage declares', () => {
-    const workflow = parseWorkflow('initial_column: check\ncolumns:\n  - id: check\n    label: Check\n    deterministic:\n      language: bash\n      code: echo hi\n      params:\n        - name: pipeline\n      exits: {passed: done}\n  - id: done\n    label: Done\n');
+    const workflow = parseWorkflow('initial_column: check\ncolumns:\n  - id: check\n    label: Check\n    scripted:\n      language: bash\n      code: echo hi\n      params:\n        - name: pipeline\n      exits: {passed: done}\n  - id: done\n    label: Done\n');
     const value = workflowWarnings(workflow, [{ id: 'task-1', columnId: 'check', parameters: [] }, { id: 'task-2', columnId: 'check', parameters: ['pipeline'] }]);
     // The observation carries identifiers and declared names, never an entry's value.
     expect(value).toContainEqual({ kind: 'card-missing-parameters', stage: 'check', taskId: 'task-1', parameters: ['pipeline'] });

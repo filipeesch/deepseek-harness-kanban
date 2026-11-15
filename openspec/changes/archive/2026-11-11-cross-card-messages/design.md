@@ -15,7 +15,7 @@ The plugin already has the surrounding plumbing:
 - `src/host/tools/index.ts` composes product tools from small modules, and `src/client/context-row.tsx` builds a visible context row for any plugin source kind.
 - `src/index.ts` composes the host adapters and the client registers chat definitions beside `kanban-task` and `stage-instruction`.
 
-Constraints that shape the approach: no stored schema change, no Hub-state or sharing write, no deterministic consent detector, auto advance unchanged, no messaging policy in the `KanbanApp` facade, and no growth of the broad `SessionPort`.
+Constraints that shape the approach: no stored schema change, no Hub-state or sharing write, no scripted consent detector, auto advance unchanged, no messaging policy in the `KanbanApp` facade, and no growth of the broad `SessionPort`.
 
 ## Goals / Non-Goals
 
@@ -137,7 +137,7 @@ The tool description requires the user's explicit request. Runtime validation is
 
 Alternatives considered:
 
-- A `confirmed: true` argument: rejected. It adds friction and a false sense of enforcement; the host has no deterministic consent signal.
+- A `confirmed: true` argument: rejected. It adds friction and a false sense of enforcement; the host has no scripted consent signal.
 - A product approval dialog: rejected. It would contradict the existing explicit-intent rule for board writes.
 
 ### 8. The transcript is the record

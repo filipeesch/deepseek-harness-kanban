@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import type { DeterministicDefinition } from '../../shared/deterministic.js';
-import { deterministicDefinitionSchema } from '../deterministic-definition.js';
+import type { ScriptedDefinition } from '../../shared/scripted.js';
+import { scriptedDefinitionSchema } from '../scripted-definition.js';
 import type { ColumnGroup, ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset, StagePosition, StageSize, TransitionRule } from '../../shared/types.js';
 import { isDomainId } from '../validation.js';
 import { PROJECT_KEY_PATTERN } from '../project-key.js';
@@ -15,7 +15,7 @@ export type BoardChange =
   | { kind: 'workflow.initial-changed'; columnId: string }
   | { kind: 'stage.created'; stage: StageDefinition }
   | { kind: 'stage.field-changed'; key: string; field: 'name'; value: string }
-  | { kind: 'stage.field-changed'; key: string; field: 'deterministic'; value: DeterministicDefinition | null }
+  | { kind: 'stage.field-changed'; key: string; field: 'scripted'; value: ScriptedDefinition | null }
   | { kind: 'stage.field-changed'; key: string; field: 'onEnterPrompt'; value: string | null }
   | { kind: 'stage.field-changed'; key: string; field: 'allowedTransitions'; value: TransitionRule[] | null }
   | { kind: 'stage.id-changed'; key: string; from: string; id: string }
@@ -37,7 +37,7 @@ export interface StageDefinition {
   id: string;
   key: string;
   name: string;
-  deterministic?: DeterministicDefinition;
+  scripted?: ScriptedDefinition;
   onEnterPrompt?: string;
   allowedTransitions?: TransitionRule[];
   position?: StagePosition;
@@ -66,7 +66,7 @@ const anchor = z.strictObject({ side: z.enum(['top', 'right', 'bottom', 'left'])
 const segment = z.strictObject({ axis: z.enum(['x', 'y']), offset: z.number().finite() });
 const connection = z.strictObject({ from: identifier, to: identifier, source: anchor.optional(), target: anchor.optional(), segments: z.array(segment).optional() });
 const group = z.strictObject({ id: identifier, name: z.string().min(1), columnIds: z.array(identifier).min(1) });
-const stage = z.strictObject({ id: identifier, key: identifier, name: z.string().min(1), deterministic: deterministicDefinitionSchema.optional(), onEnterPrompt: z.string().optional(), allowedTransitions: transitionList.optional(), position: position.optional(), size: size.optional() });
+const stage = z.strictObject({ id: identifier, key: identifier, name: z.string().min(1), scripted: scriptedDefinitionSchema.optional(), onEnterPrompt: z.string().optional(), allowedTransitions: transitionList.optional(), position: position.optional(), size: size.optional() });
 const projectKey = z.string().refine(value => PROJECT_KEY_PATTERN.test(value), 'Expected a safe project key.');
 const rank = z.string().refine(value => RANK_PATTERN.test(value), 'Expected an orderable board position.');
 
@@ -77,7 +77,7 @@ const shape = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('workflow.field-changed'), field: z.enum(['name', 'defaultView']), value: z.string().nullable(), ...stamped }),
   z.strictObject({ kind: z.literal('workflow.initial-changed'), columnId: identifier, ...stamped }),
   z.strictObject({ kind: z.literal('stage.created'), stage, ...stamped }),
-  z.strictObject({ kind: z.literal('stage.field-changed'), key: identifier, field: z.enum(['name', 'onEnterPrompt', 'allowedTransitions', 'deterministic']), value: z.union([z.string(), transitionList, deterministicDefinitionSchema, z.null()]), ...stamped }),
+  z.strictObject({ kind: z.literal('stage.field-changed'), key: identifier, field: z.enum(['name', 'onEnterPrompt', 'allowedTransitions', 'scripted']), value: z.union([z.string(), transitionList, scriptedDefinitionSchema, z.null()]), ...stamped }),
   z.strictObject({ kind: z.literal('stage.id-changed'), key: identifier, from: identifier, id: identifier, ...stamped }),
   z.strictObject({ kind: z.literal('stage.removed'), key: identifier, ...stamped }),
   z.strictObject({ kind: z.literal('stage.layout-set'), key: identifier, position: position.nullable(), size: size.nullable(), ...stamped }),
@@ -122,7 +122,7 @@ export function decodeEvent(raw: unknown): EventDecode {
   if (typeof version !== 'number' || !Number.isInteger(version)) return { ok: false, reason: 'invalid', message: 'An event must state an integer format version.' };
   if (version > EVENT_FORMAT_VERSION) return { ok: false, reason: 'unsupported-version', version };
   const kind = value.kind;
-  if (version === 1 && (kind === 'stage.field-changed' && value.field === 'deterministic' || kind === 'stage.created' && typeof value.stage === 'object' && value.stage !== null && Object.hasOwn(value.stage, 'deterministic'))) return { ok: false, reason: 'unsupported-version', version: EVENT_FORMAT_VERSION };
+  if (version === 1 && (kind === 'stage.field-changed' && value.field === 'scripted' || kind === 'stage.created' && typeof value.stage === 'object' && value.stage !== null && Object.hasOwn(value.stage, 'scripted'))) return { ok: false, reason: 'unsupported-version', version: EVENT_FORMAT_VERSION };
   if (typeof kind !== 'string' || !EVENT_KINDS.includes(kind)) return { ok: false, reason: 'unknown-kind', kind: typeof kind === 'string' ? kind : String(kind) };
   const parsed = shape.safeParse(value);
   if (!parsed.success) {
@@ -142,7 +142,7 @@ export function decodeEvent(raw: unknown): EventDecode {
  */
 function fieldValueMismatch(event: JournalEvent): string | null {
   if (event.kind === 'stage.field-changed') {
-    if (event.field === 'deterministic' && event.value !== null && !deterministicDefinitionSchema.safeParse(event.value).success) return 'A deterministic change requires a definition or null.';
+    if (event.field === 'scripted' && event.value !== null && !scriptedDefinitionSchema.safeParse(event.value).success) return 'A scripted change requires a definition or null.';
     if (event.field === 'name' && typeof event.value !== 'string') return 'A stage name change requires text.';
     if (event.field === 'onEnterPrompt' && !(typeof event.value === 'string' || event.value === null)) return 'A stage instruction change requires text or null.';
     if (event.field === 'allowedTransitions' && !(event.value === null || Array.isArray(event.value))) return 'A stage transition change requires a list or null.';

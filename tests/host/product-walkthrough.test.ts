@@ -136,15 +136,15 @@ const IDLE_ACTIVITY = { available: true, running: false, pending: [], queuedProm
  * relation references. A listing never waits on a cold native read, so a task whose
  * conversation is not resolved yet reports its activity as unavailable.
  */
-function compactCardOf<T extends { history?: unknown; deterministic?: unknown; description?: string; sessionIds: string[]; closedSessionIds: string[] }>(task: T, hubId: string) {
-  const { history: _history, deterministic: _ledger, description: _description, ...rest } = task;
+function compactCardOf<T extends { history?: unknown; scripted?: unknown; description?: string; sessionIds: string[]; closedSessionIds: string[] }>(task: T, hubId: string) {
+  const { history: _history, scripted: _ledger, description: _description, ...rest } = task;
   const open = task.sessionIds.filter(id => !task.closedSessionIds.includes(id));
   return { ...rest, hubId, activity: open.length === 0 ? IDLE_ACTIVITY : { ...IDLE_ACTIVITY, available: false }, relations: [] };
 }
 
 /** A detail card payload: the compact fields plus the description, context, and relations. */
-function detailCardOf<T extends { history?: unknown; deterministic?: unknown; description: string; boardId: string }>(task: T, hubId: string, project: unknown, hubName: string) {
-  const { history: _history, deterministic: _ledger, ...rest } = task;
+function detailCardOf<T extends { history?: unknown; scripted?: unknown; description: string; boardId: string }>(task: T, hubId: string, project: unknown, hubName: string) {
+  const { history: _history, scripted: _ledger, ...rest } = task;
   return { ...rest, hubId, activity: IDLE_ACTIVITY, relations: [], project, board: { id: task.boardId, name: 'Kanban' }, hub: { id: hubId, name: hubName } };
 }
 

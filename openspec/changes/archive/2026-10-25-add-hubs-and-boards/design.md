@@ -259,7 +259,7 @@ Initialization sequence:
 5. Write the Hub record first, then the initialization marker and settings. The legacy revision heuristic distinguishes a real legacy installation from the untouched initial state; any write increments the legacy revision.
 6. Close the legacy domain. Do not modify or delete its document.
 
-If the legacy data is missing, the legacy domain's initial state produces the fresh-install Hub. If it is present but invalid, open rejects and the plugin startup fails with the validation problem; the new domain is not initialized. Re-running migration uses the deterministic `default` Hub and board IDs, so a crash after the Hub write but before the marker write is idempotent.
+If the legacy data is missing, the legacy domain's initial state produces the fresh-install Hub. If it is present but invalid, open rejects and the plugin startup fails with the validation problem; the new domain is not initialized. Re-running migration uses the scripted `default` Hub and board IDs, so a crash after the Hub write but before the marker write is idempotent.
 
 The previous plugin can still open the untouched legacy document. Changes made after migration live only in the new domain; downgrade semantics are documented as "new data is not visible to the previous version."
 
@@ -397,7 +397,7 @@ Add `tests/e2e-dsh/kanban-hubs.e2e.template.ts` and a `--only hubs` runner mappi
 
 ### Testability seams
 
-- Inject a clock and an ID factory into `HubRepository` and the operation modules so revisions, timestamps, and generated IDs are deterministic.
+- Inject a clock and an ID factory into `HubRepository` and the operation modules so revisions, timestamps, and generated IDs are scripted.
 - Define `HubStorage` and `LegacyStateReader` as ports with in-memory implementations; keep the DSH storage adapter behind `HubStorage`.
 - Define `TaskLocator` and `ToolScope` as interfaces; keep the tool services independent of `KanbanApp`.
 - Add a local-storage port for the client selection functions instead of reading `window.localStorage` directly.

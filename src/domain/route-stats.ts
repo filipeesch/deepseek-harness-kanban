@@ -124,7 +124,7 @@ export function routeStats(input: { readonly workflow: Workflow; readonly cards:
   const configuredExits: Array<{ stage: string; exit: string }> = [];
 
   for (const column of input.workflow.columns) {
-    for (const exit of Object.keys(column.deterministic?.exits ?? {})) configuredExits.push({ stage: column.id, exit });
+    for (const exit of Object.keys(column.scripted?.exits ?? {})) configuredExits.push({ stage: column.id, exit });
   }
 
   for (const card of cards) {
@@ -169,7 +169,7 @@ export function routeStats(input: { readonly workflow: Workflow; readonly cards:
         }
         continue;
       }
-      if (entry.kind === 'deterministic-execution' && entry.exit !== undefined && within(window, entry.at)) {
+      if (entry.kind === 'scripted-execution' && entry.exit !== undefined && within(window, entry.at)) {
         const key = entry.columnId + '\u0000' + entry.exit;
         exits.set(key, (exits.get(key) ?? 0) + 1);
       }

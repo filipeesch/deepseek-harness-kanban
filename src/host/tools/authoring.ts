@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { KanbanApp } from '../app.js';
 import type { BoardAdministration, BoardPublishingPolicy, BoardView, BoardWriteResult, ComposeBoardWorkflowInput, WorkflowWriteDetail, WorkflowWriteOutcome } from '../board-administration.js';
 import type { ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset, StagePatch, StagePosition, StageSize, TransitionRule, Workflow } from '../../shared/types.js';
-import type { DeterministicDefinition } from '../../shared/deterministic.js';
+import type { ScriptedDefinition } from '../../shared/scripted.js';
 import type { WorkflowCardReference, WorkflowWriteReport } from '../../domain/workflow-report.js';
 import { composeWorkflowReport, summarizeWorkflowReport } from '../../domain/workflow-report.js';
 import { invariant } from '../../shared/errors.js';
@@ -31,7 +31,7 @@ const preserveNote = ' Only the named fields are rewritten; comments, key order,
 /** The one revision parameter every board write names, with the rebase rule it obeys. */
 export const revisionParameter = { type: 'integer', description: 'Hub revision from a prior read. A composed write is reapplied to the current document when every anchor still matches; a whole-document replacement refuses a stale revision.' } as const;
 
-const reportNote = ' The change is local; publishing it to a team stays a manual action in the interface. The result carries the digest of the exact document stored and a write report: the changed stages and their changed field names, the graph warnings, the reviewed authorization of every deterministic stage for the board, and the affected cards. The report is a summary by default and the per-field values only when detail is full. A refused write saves nothing and returns the same report.';
+const reportNote = ' The change is local; publishing it to a team stays a manual action in the interface. The result carries the digest of the exact document stored and a write report: the changed stages and their changed field names, the graph warnings, the reviewed authorization of every scripted stage for the board, and the affected cards. The report is a summary by default and the per-field values only when detail is full. A refused write saves nothing and returns the same report.';
 
 /** The document, stage, and write surface the authoring tools need. */
 export interface WorkflowAuthoringPort {
@@ -104,7 +104,7 @@ function ruleOf(value: unknown, label: string): TransitionRule {
   return map.when === undefined ? { to } : { to, when: typeof map.when === 'string' ? map.when : String(map.when) };
 }
 
-/** The parts of one stage's deterministic configuration a patch may name. */
+/** The parts of one stage's scripted configuration a patch may name. */
 interface ScriptPatch {
   readonly language?: 'bash' | 'typescript';
   readonly code?: string;
@@ -116,15 +116,15 @@ interface ScriptPatch {
 }
 
 /**
- * One stage's deterministic configuration after a partial write: the named parts
+ * One stage's scripted configuration after a partial write: the named parts
  * replaced, every other part kept as authored, and a source swap never leaving two.
  */
-function mergeScriptPatch(current: DeterministicDefinition | undefined, patch: ScriptPatch): DeterministicDefinition {
+function mergeScriptPatch(current: ScriptedDefinition | undefined, patch: ScriptPatch): ScriptedDefinition {
   invariant(current !== undefined || patch.language !== undefined, 'INVALID_INPUT', 'A stage with no script requires a language.');
   invariant(!(patch.code !== undefined && patch.file !== undefined), 'INVALID_INPUT', 'Name one source: inline code or an external file, not both.');
   invariant(current !== undefined || (patch.code === undefined) !== (patch.file === undefined), 'INVALID_INPUT', 'A stage with no script requires exactly one of code or file.');
   invariant(current !== undefined || patch.exits !== undefined, 'INVALID_INPUT', 'A stage with no script requires its named exits.');
-  const next: DeterministicDefinition = current === undefined
+  const next: ScriptedDefinition = current === undefined
     ? { language: patch.language!, directory: patch.directory ?? 'task', exits: {} }
     : structuredClone(current);
   if (patch.language !== undefined) next.language = patch.language;
@@ -261,12 +261,12 @@ export function authoringTools(app: KanbanApp, port: WorkflowAuthoringPort = app
       return write(port, args as WriteArgs, exec, current => updateStage({ text: current, stageId: args.stage_id, patch: { onEnterPrompt: prompt } }).text);
     }),
 
-    normal('set_stage_routes', intent + 'Replace the routes one stage authors. A stage without a script takes transitions, an authored list of destinations with an optional condition, or permit_any to author no restriction. A deterministic stage takes exits, a mapping from each named exit to its destination. An empty transition list means the stage permits no destination.' + preserveNote + reportNote, {
+    normal('set_stage_routes', intent + 'Replace the routes one stage authors. A stage without a script takes transitions, an authored list of destinations with an optional condition, or permit_any to author no restriction. A scripted stage takes exits, a mapping from each named exit to its destination. An empty transition list means the stage permits no destination.' + preserveNote + reportNote, {
       board_id: text('Board ID.', true),
       stage_id: text('Stage ID.', true),
       transitions: { type: 'array', description: 'Destinations the stage permits, each a stage id or an object with to and an optional when condition. An empty list permits none.', items: { oneOf: [{ type: 'string' }, { type: 'object', additionalProperties: false, properties: { to: { type: 'string', required: true }, when: { type: 'string' } } }] } },
       permit_any: flag('Author no transition list, so the stage permits any other stage.'),
-      exits: { type: 'object', additionalProperties: true, description: 'Named exits mapped to destination stage ids, for a deterministic stage. Every exit must name a destination.' },
+      exits: { type: 'object', additionalProperties: true, description: 'Named exits mapped to destination stage ids, for a scripted stage. Every exit must name a destination.' },
       hub_id: text('Hub ID. Optional when the board identifier is enough.'),
       expected_revision: revisionParameter,
       ...workflowWriteControls,
@@ -278,11 +278,11 @@ export function authoringTools(app: KanbanApp, port: WorkflowAuthoringPort = app
       const provided = [args.transitions !== undefined, args.permit_any === true, args.exits !== undefined].filter(Boolean).length;
       invariant(provided === 1, 'INVALID_INPUT', 'Provide exactly one of transitions, permit_any, or exits.');
       let patch: StagePatch;
-      if (stage.deterministic !== undefined) {
-        invariant(args.exits !== undefined, 'INVALID_ROUTES', 'Stage ' + stage.id + ' runs a deterministic script; set its named exits instead of transitions.');
+      if (stage.scripted !== undefined) {
+        invariant(args.exits !== undefined, 'INVALID_ROUTES', 'Stage ' + stage.id + ' runs a script; set its named exits instead of transitions.');
         const exits = Object.fromEntries(Object.entries(record(args.exits, 'exits')).map(([name, destination]) => [name, stageId(destination, 'Exit ' + name + ' destination')]));
-        invariant(Object.keys(exits).length > 0, 'INVALID_ROUTES', 'A deterministic stage requires at least one named exit.');
-        patch = { deterministic: { ...stage.deterministic, exits } };
+        invariant(Object.keys(exits).length > 0, 'INVALID_ROUTES', 'A scripted stage requires at least one named exit.');
+        patch = { scripted: { ...stage.scripted, exits } };
       } else {
         invariant(args.exits === undefined, 'INVALID_ROUTES', 'Stage ' + stage.id + ' authors no script; set transitions or permit_any instead.');
         if (args.permit_any === true) patch = { allowedTransitions: null };
@@ -294,7 +294,7 @@ export function authoringTools(app: KanbanApp, port: WorkflowAuthoringPort = app
       return write(port, args as WriteArgs, exec, current => updateStage({ text: current, stageId: args.stage_id, patch }).text);
     }),
 
-    normal('set_stage_script', intent + 'Write one stage deterministic configuration in parts. Only the parts the call names are rewritten; every other authored character of the stage, including comments beside the script, stays as written. A stage that authors no script needs the language, one source, and its named exits; a stage that already runs a script accepts any subset.' + preserveNote + reportNote, {
+    normal('set_stage_script', intent + 'Write one stage scripted configuration in parts. Only the parts the call names are rewritten; every other authored character of the stage, including comments beside the script, stays as written. A stage that authors no script needs the language, one source, and its named exits; a stage that already runs a script accepts any subset.' + preserveNote + reportNote, {
       board_id: text('Board ID.', true),
       stage_id: text('Stage ID.', true),
       language: { type: 'string', enum: ['bash', 'typescript'], description: 'Program language.' },
@@ -313,8 +313,8 @@ export function authoringTools(app: KanbanApp, port: WorkflowAuthoringPort = app
         const workflow = parseWorkflow(current);
         const stage = workflow.columns.find(column => column.id === args.stage_id);
         invariant(stage !== undefined, 'STAGE_NOT_FOUND', 'The workflow has no stage ' + args.stage_id + '.');
-        const next = mergeScriptPatch(stage.deterministic, args as unknown as ScriptPatch);
-        return updateStage({ text: current, stageId: args.stage_id, patch: { deterministic: next } }).text;
+        const next = mergeScriptPatch(stage.scripted, args as unknown as ScriptPatch);
+        return updateStage({ text: current, stageId: args.stage_id, patch: { scripted: next } }).text;
       });
     }),
 

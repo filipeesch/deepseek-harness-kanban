@@ -18,8 +18,8 @@ export interface ConnectionEdgeData {
   readonly returning: boolean;
   /** True when this transition authors a condition. */
   readonly hasCondition: boolean;
-  /** True when a deterministic stage's named exits author this connection's routing. */
-  readonly deterministic: boolean;
+  /** True when a scripted stage's named exits author this connection's routing. */
+  readonly scripted: boolean;
 }
 
 /** The middle of a drawn path, where its mark and its editor sit. */
@@ -57,7 +57,7 @@ export function pathMidpoint(points: readonly DiagramPoint[]): DiagramPoint | un
  * below the stage content. Selecting is always available: a locked diagram reads a
  * connection without changing it, so the press selects in both modes while the
  * double press and the condition mark wait for the editable mode. A connection whose
- * routing comes from a deterministic stage's named exits presents no exit name: its
+ * routing comes from a scripted stage's named exits presents no exit name: its
  * double press opens that stage's editor, which the layout lock gates as well.
  */
 export function ConnectionEdgeView({ id, data }: EdgeProps) {
@@ -84,7 +84,7 @@ export function ConnectionEdgeView({ id, data }: EdgeProps) {
     onPointerLeave={edit ? () => handlers.onHoverEnd(id) : undefined}
   >
     <BaseEdge id={id} path={edge.path} interactionWidth={LINE_HIT_WIDTH} className={'kb-flow-edge ' + (edge.kind === 'implicit' ? 'is-implicit' : 'is-explicit') + (edge.returning ? ' is-returning' : '')} />
-    {middle !== undefined && !edge.hasCondition && edge.deterministic !== true && edge.kind === 'explicit' && edit && <circle
+    {middle !== undefined && !edge.hasCondition && edge.scripted !== true && edge.kind === 'explicit' && edit && <circle
       className="kb-flow-condition-mark"
       cx={middle.x}
       cy={middle.y}

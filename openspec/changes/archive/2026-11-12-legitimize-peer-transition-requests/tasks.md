@@ -12,14 +12,14 @@
 
 ## 3. Tests: composition proof
 
-- [x] 3.1 Extend the advance-arming suite in `tests/domain/transition-route.test.ts` with `advanceArmedFor` cases for both origins, a deterministic stage, and a recording made for another stage; verify the new cases pass.
+- [x] 3.1 Extend the advance-arming suite in `tests/domain/transition-route.test.ts` with `advanceArmedFor` cases for both origins, a scripted stage, and a recording made for another stage; verify the new cases pass.
 - [x] 3.2 Add `tests/host/task-message-declared-advance.test.ts`: deliver a message through a composed `InterCardMessaging` with a recording delivery port, record the target's declaration, observe `turn/end` for the target conversation, and assert the card moved with auto mode off; verify the test passes.
 - [x] 3.3 Add the negative case in the same file: observe the message-started turn ending without a declaration and assert the card's stage and position are unchanged; verify the test passes.
 
 ## 4. Documentation and preset guidance
 
 - [x] 4.1 Rewrite the authorization section of `presets/skills/kanban-workflow-design/references/coordination.md` so a stage instruction may authorize a handoff message and a routing request while task, board, note, and team-file writes stay user-only, and so a peer request is not a dependency gate, completion evidence, or authorization for any other write; verify `pnpm vitest run tests/host/workflow-architect-preset.test.ts` passes its size and local-link checks.
-- [x] 4.2 Add the peer-requested variant to the agent-selected route in `presets/skills/kanban-workflow-design/references/operations.md`, including the precedence rule and its preconditions (configured transitions, no deterministic stage, no pending hold); verify the same preset test passes.
+- [x] 4.2 Add the peer-requested variant to the agent-selected route in `presets/skills/kanban-workflow-design/references/operations.md`, including the precedence rule and its preconditions (configured transitions, no scripted stage, no pending hold); verify the same preset test passes.
 - [x] 4.3 Update `presets/skills/kanban-workflow-design/SKILL.md` only where its scope summary repeats the old rule; verify the persona stays within its size ceiling in the preset test.
 - [x] 4.4 Update the README sections for `send_task_message` and `set_next_transition` with the new triggers and the request composition; verify no section contradicts the delta specs.
 

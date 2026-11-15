@@ -26,7 +26,7 @@
 - [x] 4.2 Add relation references to the compact shape: relation identifier, type, direction, and the other task identifier. Verify with a test over a card with one outgoing epic relation and one symmetric relation.
 - [x] 4.3 Add the epic roll-up to the detail shape: direct children with identifier, title, stage, and activity, a limit of 50, the total child count, and a truncation flag. Verify with tests for no children, children within the limit, and children over the limit.
 - [x] 4.4 Add activity to both shapes through the port, with the unavailable value propagated. Verify with a test that reads a card while the source is unavailable and still succeeds.
-- [x] 4.5 Verify the detail shape keeps history and the deterministic ledger out of the payload. Verify with a test that seeds both and asserts neither appears.
+- [x] 4.5 Verify the detail shape keeps history and the scripted ledger out of the payload. Verify with a test that seeds both and asserts neither appears.
 
 ## 5. Tool surface
 

@@ -1,5 +1,5 @@
 import { parseDocument } from 'yaml';
-import { parseDeterministicDefinition } from './deterministic-definition.js';
+import { parseScriptedDefinition } from './scripted-definition.js';
 import type { Column, ColumnGroup, ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset, ModelSelection, StagePosition, StageSize, Workflow, WorkflowView } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
 import { createYamlFields, invalidWorkflow } from './yaml-fields.js';
@@ -149,7 +149,7 @@ export function parseWorkflow(yaml: string): Workflow {
   if (!Array.isArray(input.columns) || input.columns.length === 0) invalidWorkflow('Workflow requires at least one column.');
   const columns: Column[] = input.columns.map((item, index) => {
     const value = record(item, 'Column ' + index);
-    keys(value, ['id', 'key', 'label', 'name', 'description', 'allowed_transitions', 'on_enter_prompt', 'deterministic', 'position', 'size'], 'column', COLUMN_NOTE);
+    keys(value, ['id', 'key', 'label', 'name', 'description', 'allowed_transitions', 'on_enter_prompt', 'scripted', 'deterministic', 'position', 'size'], 'column', COLUMN_NOTE);
     if (value.description !== undefined && typeof value.description !== 'string') invalidWorkflow('Column description must be text.');
     const column: Column = { id: id(value.id, 'Column ID'), name: label(value, 'Column') };
     if (value.key !== undefined) column.key = id(value.key, 'Column ' + column.id + ' key');
@@ -158,9 +158,13 @@ export function parseWorkflow(yaml: string): Workflow {
       if (typeof value.on_enter_prompt !== 'string') invalidWorkflow('on_enter_prompt must be text or null.');
       if (value.on_enter_prompt.trim()) column.onEnterPrompt = value.on_enter_prompt;
     }
-    if (value.deterministic !== undefined) {
-      column.deterministic = parseDeterministicDefinition(value.deterministic);
-      if (column.onEnterPrompt !== undefined || column.allowedTransitions !== undefined) invalidWorkflow('A deterministic stage cannot also configure an entry prompt or allowed_transitions.');
+    if (value.scripted !== undefined && value.deterministic !== undefined) {
+      invalidWorkflow('Column ' + column.id + ' authors both scripted and deterministic configuration. Keep one spelling.');
+    }
+    const authored = value.scripted === undefined ? value.deterministic : value.scripted;
+    if (authored !== undefined) {
+      column.scripted = parseScriptedDefinition(authored);
+      if (column.onEnterPrompt !== undefined || column.allowedTransitions !== undefined) invalidWorkflow('A scripted stage cannot also configure an entry prompt or allowed_transitions.');
     }
     if (value.position !== undefined) column.position = stagePosition(value.position, 'Column ' + column.id + ' position');
     if (value.size !== undefined) column.size = stageSize(value.size, 'Column ' + column.id + ' size');
@@ -171,9 +175,9 @@ export function parseWorkflow(yaml: string): Workflow {
   const columnKeys = columns.flatMap(column => (column.key === undefined ? [] : [column.key]));
   if (new Set(columnKeys).size !== columnKeys.length) invalidWorkflow('Column keys must be unique.');
   for (const column of columns) {
-    for (const target of Object.values(column.deterministic?.exits ?? {})) {
-      if (!columnIds.has(target)) invalidWorkflow('Column ' + column.id + ' references unknown deterministic target ' + target + '.');
-      if (target === column.id) invalidWorkflow('A deterministic exit cannot target its own stage.');
+    for (const target of Object.values(column.scripted?.exits ?? {})) {
+      if (!columnIds.has(target)) invalidWorkflow('Column ' + column.id + ' references unknown scripted target ' + target + '.');
+      if (target === column.id) invalidWorkflow('A scripted exit cannot target its own stage.');
     }
     for (const entry of column.allowedTransitions ?? []) {
       if (!columnIds.has(entry.to)) invalidWorkflow('Column ' + column.id + ' references unknown transition target ' + entry.to + '.');

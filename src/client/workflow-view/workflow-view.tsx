@@ -18,6 +18,7 @@ import { presentWorkflow, presentedRules } from './present-workflow.js';
 import { computeAutoLayout, graphKey } from '../../domain/diagram/auto-layout.js';
 import { useTransitionOverrides } from './use/use-transition-overrides.js';
 import { useTransitionActions } from './use/use-transition-actions.js';
+import type { StageEditorTab } from '../stage/stage-tabs.js';
 import { useWorkflowLayout } from './use/use-workflow-layout.js';
 import { useWorkflowWrites } from '../workflow-write.js';
 import { connectionLayoutOf } from './edge-model.js';
@@ -82,7 +83,7 @@ export interface WorkflowViewProps {
    * Opens the board's stage editor for one stage. The board owns the dialog, so the
    * diagram never holds a stage draft of its own.
    */
-  onEditStage?: (stageId: string) => void;
+  onEditStage?: (stageId: string, initialTab?: StageEditorTab) => void;
   /** Isolated harnesses substitute the canvas; production uses React Flow. */
   canvas?: WorkflowCanvasComponent;
   /** Isolated harnesses may replace the host's path-motion capability probe. */
@@ -391,12 +392,12 @@ export function WorkflowView(props: WorkflowViewProps) {
   const connections: CanvasConnection[] = scene.edges.map(edge => {
     const authored = presentedRules(presented, edge.from);
     const rule = authored?.find(value => value.to === edge.to);
-    const definition = presented.columns.find(column => column.id === edge.from)?.deterministic;
+    const definition = presented.columns.find(column => column.id === edge.from)?.scripted;
     const connection = layout.connectionLayouts[connectionKey(edge.from, edge.to)];
     return {
       id: edge.id, from: edge.from, to: edge.to, kind: edge.kind, returning: edge.returning, fanOut: edge.fanOut, fanOutCount: edge.fanOutCount,
       ...(rule?.when === undefined ? {} : { condition: rule.when }),
-      ...(definition === undefined ? {} : { deterministic: true }),
+      ...(definition === undefined ? {} : { scripted: true }),
       ...(connection?.source === undefined ? {} : { source: connection.source }),
       ...(connection?.target === undefined ? {} : { target: connection.target }),
       ...(connection?.segments === undefined ? {} : { segments: connection.segments }),
@@ -440,7 +441,7 @@ export function WorkflowView(props: WorkflowViewProps) {
   const openCondition = useCallback((connectionId: string, anchor: ConditionAnchor) => {
     if (lock.locked) return;
     const connection = connectionsRef.current.find(value => value.id === connectionId);
-    if (connection && presented.columns.find(column => column.id === connection.from)?.deterministic) { props.onEditStage?.(connection.from); return; }
+    if (connection && presented.columns.find(column => column.id === connection.from)?.scripted) { props.onEditStage?.(connection.from, 'routing' as const); return; }
     setSelectedConnectionId(connectionId);
     setConditionEditor({ connectionId, anchor });
   }, [lock.locked, presented, props.onEditStage]);

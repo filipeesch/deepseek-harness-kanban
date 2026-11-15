@@ -19,8 +19,9 @@ import { useBoardNotices, type NoticeDismissalPort } from './notices/use-board-n
 import type { NoticeHandlers } from './notices/model.js';
 import { BoardColumnsView } from './board/board-columns-view.js';
 import { StageEditorDialog } from './stage/stage-editor-dialog.js';
+import type { StageEditorTab } from './stage/stage-tabs.js';
 import { ScriptReviewProvider } from './script-review-provider.js';
-import { ApprovalQueue } from './deterministic-approval-queue.js';
+import { ApprovalQueue } from './scripted-approval-queue.js';
 import { BoardCreationDialogs } from './board/board-dialogs.js';
 import { useCreationDialogs } from './use-creation-dialogs.js';
 import { useTaskCreation } from './use-task-creation.js';
@@ -40,7 +41,7 @@ import { BoardTabRow, HubTabRow } from './hub-nav.js';
 import { asProblem } from './ui.js';
 import { adviseCommandFailure } from './command-failure.js';
 import { styles } from './styles/index.js';
-import { DeterministicProvider } from './deterministic-context.js';
+import { ScriptedProvider } from './scripted-context.js';
 import { DeleteTaskDialog, DiscardDialog, RemoveWorktreeDialog, type DestructiveRequest } from './destructive-dialogs.js';
 import { BulkDeleteDialog } from './bulk-delete-dialogs.js';
 import { ForceRemovalDialog } from './force-removal-dialog.js';
@@ -87,7 +88,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
    * The stage editor's frozen target: the stage and revision the user opened it on,
    * so a background snapshot update cannot silently rebase the draft onto newer data.
    */
-  const [stageEditor, setStageEditor] = useState<{ column: Column; columns: readonly Column[]; initialStageId: string; revision: number } | null>(null);
+  const [stageEditor, setStageEditor] = useState<{ column: Column; columns: readonly Column[]; initialStageId: string; revision: number; initialTab?: StageEditorTab } | null>(null);
   const [actionError, setActionError] = useState<Problem | null>(null);
   const [selectionMode, setSelectionMode] = useState(false); const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [autoModePending, setAutoModePending] = useState<ReadonlySet<string>>(() => new Set());
@@ -128,22 +129,27 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     if (activeBoard !== undefined) writeBoardView(activeBoard.id, next);
   }, [activeBoard?.id, setView]);
   const state = useMemo(() => snapshot && activeHub && activeBoard ? boardView(activeHub, activeBoard, snapshot.state.settings ?? { revision: 0 }) : undefined, [snapshot, activeHub, activeBoard]);
-  const openStageEditor = useCallback((stageId: string) => {
+  /**
+   * Open the stage editor for one stage. The surface that opens it names the tab it
+   * works in — a diagram connection lands on Routing, a card's script panel on
+   * Execution — and the editor falls back to Stage when that tab does not apply.
+   */
+  const openStageEditor = useCallback((stageId: string, initialTab?: StageEditorTab) => {
     if (state === undefined) return;
     const column = state.workflow.columns.find(candidate => candidate.id === stageId);
     if (column === undefined) return;
-    setStageEditor({ column, columns: state.workflow.columns, initialStageId: state.workflow.initialColumnId, revision: state.revision });
+    setStageEditor({ column, columns: state.workflow.columns, initialStageId: state.workflow.initialColumnId, revision: state.revision, ...(initialTab === undefined ? {} : { initialTab }) });
   }, [state]);
   const hubActivity = useMemo(() => {
     const values = new Map<string, ScopeActivity>();
     if (!snapshot) return values;
-    for (const hub of snapshot.state.hubs) values.set(hub.id, projectScopeActivity(hub.tasks, snapshot.attention, snapshot.deterministic));
+    for (const hub of snapshot.state.hubs) values.set(hub.id, projectScopeActivity(hub.tasks, snapshot.attention, snapshot.scripted));
     return values;
   }, [snapshot]);
   const boardActivity = useMemo(() => {
     const values = new Map<string, ScopeActivity>();
     if (!snapshot || !activeHub) return values;
-    for (const board of activeHub.boards) values.set(board.id, projectScopeActivity(activeHub.tasks.filter(task => task.boardId === board.id), snapshot.attention, snapshot.deterministic));
+    for (const board of activeHub.boards) values.set(board.id, projectScopeActivity(activeHub.tasks.filter(task => task.boardId === board.id), snapshot.attention, snapshot.scripted));
     return values;
   }, [snapshot, activeHub]);
   // The board's own aggregated attention already answers whether anything on it is
@@ -179,7 +185,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   const autoRun = providedAutoRun ?? fallbackAutoRun;
   useEffect(() => { if (providedAutoRun) return; return () => fallbackAutoRun.dispose(); }, [providedAutoRun, fallbackAutoRun]);
   // Owned fallback only: a provided controller is reconciled by the client generation that owns it.
-  useEffect(() => { if (providedAutoRun || !snapshot) return; fallbackAutoRun.reconcile(allTasks(snapshot), snapshot.deterministic); }, [providedAutoRun, snapshot, fallbackAutoRun]);
+  useEffect(() => { if (providedAutoRun || !snapshot) return; fallbackAutoRun.reconcile(allTasks(snapshot), snapshot.scripted); }, [providedAutoRun, snapshot, fallbackAutoRun]);
   // One memory of what became of each conversation's board model, for as long as
   // this board is mounted: it feeds the notice, never the saved document.
   const modelFallbacks = useModelFallbackRegistry();
@@ -382,7 +388,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     requestCloseDrawer();
   }
 
-  return <DirectoryPickerProvider picker={picker}><ModelFallbacksProvider registry={modelFallbacks}><PresetFallbacksProvider registry={presetFallbacks}><DeterministicProvider api={api} run={command => run(command, false)} summaries={snapshot?.deterministic ?? {}} boardId={activeBoard?.id}><section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style><ScriptReviewProvider api={api} run={command => run(command, false)}>
+  return <DirectoryPickerProvider picker={picker}><ModelFallbacksProvider registry={modelFallbacks}><PresetFallbacksProvider registry={presetFallbacks}><ScriptedProvider api={api} run={command => run(command, false)} summaries={snapshot?.scripted ?? {}} boardId={activeBoard?.id}><section className="dsh-kanban" aria-label="Kanban"><style>{styles}</style><ScriptReviewProvider api={api} run={command => run(command, false)}>
     <BoardHeader
       hubTabs={<HubTabRow
         hubs={snapshot?.state.hubs ?? []}
@@ -438,7 +444,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       {...(dismissAllRetained === undefined ? {} : { dismissAllRetained })}
       onFocusBoard={focusBoard}
     />
-    {state && <ApprovalQueue boardId={activeBoard?.id} tasks={state.tasks} scripts={snapshot?.deterministic ?? {}} workflow={state.workflow} projectNames={new Map(state.projects.map(project => [project.id, project.name]))} />}
+    {state && <ApprovalQueue boardId={activeBoard?.id} tasks={state.tasks} scripts={snapshot?.scripted ?? {}} workflow={state.workflow} projectNames={new Map(state.projects.map(project => [project.id, project.name]))} />}
     <BoardEmptyStates snapshot={snapshot} loadError={loadError} hub={activeHub} board={activeBoard} onCreateHub={containers.openHub} onCreateBoard={containers.openBoard} />
     {state && <>
       <BoardBody bodyRef={boardBody} onPointerDown={onBoardPointerDown} flow={view === 'workflow'} empty={state.projects.length === 0 && view !== 'workflow' ? <ProjectsEmptyState onConfigureProjects={() => setConfiguration('Projects')} /> : null}>
@@ -477,7 +483,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
             />
           : <BoardColumnsView plan={columnPlan} layoutKeys={layoutKeys} resetKey={motionResetKey} workflow={state.workflow} drag={drag} renderCard={renderCard} renderNewTaskButton={creation.renderButton} onEditStage={openStageEditor} />}
       </BoardBody>
-      {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} conversationAttention={snapshot?.conversationAttention} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} onForce={destructive.openForce} onToggleAutoMode={toggleAutoMode} autoModePending={autoModePending.has(selected.id)} sessionTitles={sessionTitles} {...(conversationLeases === undefined ? {} : { conversationLeases })} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} />}
+      {selected && <TaskDrawer key={selected.id} task={selected} attention={snapshot?.attention[selected.id] ?? EMPTY_ATTENTION} conversationAttention={snapshot?.conversationAttention} viewState={taskPageState(preferences, selected.id)} state={state} api={api} run={run} renderConversation={renderConversation} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} onForce={destructive.openForce} onEditStage={openStageEditor} onToggleAutoMode={toggleAutoMode} autoModePending={autoModePending.has(selected.id)} sessionTitles={sessionTitles} {...(conversationLeases === undefined ? {} : { conversationLeases })} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} />}
       {destructive.state.view && (() => {
         const view = destructive.state.view;
         const task = state.tasks.find(value => value.id === view.request.taskId);
@@ -497,6 +503,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       hubId={activeHub!.id}
       boardId={activeBoard!.id}
       revision={stageEditor.revision}
+      {...(stageEditor.initialTab === undefined ? {} : { initialTab: stageEditor.initialTab })}
       initialStageId={stageEditor.initialStageId}
       column={stageEditor.column}
       columns={stageEditor.columns}
@@ -510,5 +517,5 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     <BoardCreationDialogs hub={activeHub} run={run} taskDialog={creation.dialog} containers={containers} />
     {preparation.dialog === null && moves.overrideDialog}
     {preparation.dialog}
-  </ScriptReviewProvider></section></DeterministicProvider></PresetFallbacksProvider></ModelFallbacksProvider></DirectoryPickerProvider>;
+  </ScriptReviewProvider></section></ScriptedProvider></PresetFallbacksProvider></ModelFallbacksProvider></DirectoryPickerProvider>;
 }

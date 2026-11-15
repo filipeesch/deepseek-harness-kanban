@@ -129,7 +129,7 @@ The command type and wire schema for `task.move` become `{ taskId, columnId, bef
 - **[Hidden card makes Cancel unreachable]** → Accepted by the selected "keep running" rule. The window is five seconds, the move was just performed, and the card control reappears with the remaining time if the card returns; the drawer notice covers the selected task.
 - **[Throttled timers send late]** → The countdown is a local best-effort timer, not a durable deadline. No spec promise about wall-clock precision beyond the five-second window.
 - **[Removing prefill removes the review/edit step]** → A cancel leaves the entry unresolved and the play action available; the user can also send from the composer. The stage instruction remains editable through the workflow configuration.
-- **[Two clients on the same board]** → Only the tab that performed the move arms a countdown; another tab sees the play action. The guard makes the outcome deterministic if both act.
+- **[Two clients on the same board]** → Only the tab that performed the move arms a countdown; another tab sees the play action. The guard makes the outcome scripted if both act.
 - **[Drawer notice crowds every section]** → It is a single compact line above the panel, replaces the old prefill region, and only exists while an entry is counting, sending, or failed.
 - **[The legacy run/worktree branch remains as dead-looking code]** → It is the compatibility path for persisted records. Mark it as legacy in code, keep its existing retry tests, and stop creating new records; removing it later needs an explicit migration.
 - **[`BoardView` still mixes many concerns]** → This change adds only arming and a subscription effect; the timer, policy, presentation, and execution live in their own modules. A general decomposition remains a separate change.
@@ -162,7 +162,7 @@ Every scenario in the deltas is assigned to the cheapest lane that can observe i
 
 **Shared test contract.**
 
-`tests/support/in-memory-board.ts` owns the move, marker, and run behavior for both `tests/client/helpers.ts` and `tests/browser/fake-api.ts`: it sets `instructionPending` with a deterministic `enteredAt`, enforces the stage and timestamp identity on runs, sends only the current stage instruction, clears the marker, and mirrors the host's busy and context-operation rejections. The browser harness adds a run-failure flag; jsdom tests inject command rejections. The host tests remain the authority for admission, and the shared contract rejects the same codes so a jsdom or browser test cannot pass against a fake the host would refuse. Host tests read the marker identity directly and seed legacy records inline.
+`tests/support/in-memory-board.ts` owns the move, marker, and run behavior for both `tests/client/helpers.ts` and `tests/browser/fake-api.ts`: it sets `instructionPending` with a scripted `enteredAt`, enforces the stage and timestamp identity on runs, sends only the current stage instruction, clears the marker, and mirrors the host's busy and context-operation rejections. The browser harness adds a run-failure flag; jsdom tests inject command rejections. The host tests remain the authority for admission, and the shared contract rejects the same codes so a jsdom or browser test cannot pass against a fake the host would refuse. Host tests read the marker identity directly and seed legacy records inline.
 
 **Real rendering.**
 

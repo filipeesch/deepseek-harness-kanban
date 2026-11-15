@@ -13,7 +13,7 @@ export const REPORT_ITEM_LIMIT = 100;
 export type ScriptImpactReason = 'source' | 'exits' | 'environment' | 'directory' | 'parameters' | 'unapproved' | 'directory-dependent' | 'unresolvable';
 
 /**
- * The state of one deterministic stage's reviewed authorization for the board.
+ * The state of one scripted stage's reviewed authorization for the board.
  * `unverifiable` is a real answer: the stage or the source could not be
  * resolved, so the report never claims the approval still holds.
  */

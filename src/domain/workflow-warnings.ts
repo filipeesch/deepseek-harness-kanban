@@ -29,7 +29,7 @@ const IDENTIFIER_TOKEN = /\b[a-z][a-z0-9_-]{2,63}\b/g;
 function destinations(column: Column): Set<string> | null {
   // A stage that authors no restriction permits any other stage, so nothing it
   // names can be a disallowed destination.
-  if (column.deterministic !== undefined) return new Set(Object.values(column.deterministic.exits));
+  if (column.scripted !== undefined) return new Set(Object.values(column.scripted.exits));
   if (column.allowedTransitions === undefined) return null;
   return new Set(column.allowedTransitions.map(rule => rule.to));
 }
@@ -75,7 +75,7 @@ class ObservationList {
 
 function instructionWarnings(workflow: Workflow, column: Column, known: Set<string>): WorkflowWarning[] {
   const instruction = column.onEnterPrompt;
-  if (instruction === undefined || column.deterministic !== undefined) return [];
+  if (instruction === undefined || column.scripted !== undefined) return [];
   const allowed = destinations(column);
   const observations = new ObservationList();
   const cited = new Set<string>();
@@ -119,7 +119,7 @@ function destinationParameterWarnings(workflow: Workflow): WorkflowWarning[] {
     if (targets === null) continue;
     for (const destinationId of targets) {
       const destination = byId.get(destinationId);
-      for (const parameter of destination?.deterministic?.params ?? []) {
+      for (const parameter of destination?.scripted?.params ?? []) {
         if (new RegExp('\\b' + parameter.name + '\\b', 'i').test(instruction)) continue;
         warnings.push({ kind: 'destination-parameter-unmentioned', stage: column.id, destination: destinationId, parameter: parameter.name });
       }
@@ -133,7 +133,7 @@ function cardParameterWarnings(workflow: Workflow, cards: readonly { readonly id
   const byId = new Map(workflow.columns.map(column => [column.id, column]));
   const warnings: WorkflowWarning[] = [];
   for (const card of cards) {
-    const declared = byId.get(card.columnId)?.deterministic?.params ?? [];
+    const declared = byId.get(card.columnId)?.scripted?.params ?? [];
     if (declared.length === 0) continue;
     const held = new Set(card.parameters ?? []);
     const missing = declared.map(parameter => parameter.name).filter(name => !held.has(name));

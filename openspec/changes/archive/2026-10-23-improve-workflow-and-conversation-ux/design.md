@@ -130,7 +130,7 @@ Use four layers instead of one end-to-end suite:
 3. **A plugin-owned Playwright browser harness** for what jsdom cannot compute: real CSS layout, real CodeMirror, CSS keyframes, and reduced-motion behavior. It renders the actual client components with a fake API, requires no DSH host, and runs as a separate `pnpm test:browser` command. It is intentionally not added to `pnpm check` so the default check stays portable.
 4. **Two plugin-owned real-composition scenarios** driven through DSH's web e2e lane, run manually before release against a pinned `dsh-v0.2.1-rc.2` checkout. They cover the real plugin bundle, profile, native sessions, real Git, persistence, and the actual web shell.
 
-CodeMirror is not supported under jsdom by its maintainers; geometry polyfills are not a stable contract. Mocking the generic `CodeEditor` in component tests keeps form/validation tests fast and deterministic while the browser harness and DSH lane exercise the real editor.
+CodeMirror is not supported under jsdom by its maintainers; geometry polyfills are not a stable contract. Mocking the generic `CodeEditor` in component tests keeps form/validation tests fast and scripted while the browser harness and DSH lane exercise the real editor.
 
 Alternatives considered:
 

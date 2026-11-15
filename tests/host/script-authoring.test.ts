@@ -37,7 +37,7 @@ const SCRIPTED = [
   '    label: Todo',
   '  - id: check',
   '    label: Check',
-  '    deterministic:',
+  '    scripted:',
   '      language: bash',
   '      directory: task',
   '      # keep this comment',
@@ -88,8 +88,8 @@ describe('stage script writes', () => {
     expect(value.saved).toBe(true);
     const workflow = (await run(f, 'get_board_summary', { board_id: boardId, include_workflow: true })).workflow;
     const column = workflow.columns.find((value: { id: string }) => value.id === 'todo');
-    expect(column.deterministic).toMatchObject({ language: 'typescript', directory: 'task', exits: { passed: 'done' } });
-    expect(column.deterministic.code).toContain('return { exit: "passed"');
+    expect(column.scripted).toMatchObject({ language: 'typescript', directory: 'task', exits: { passed: 'done' } });
+    expect(column.scripted.code).toContain('return { exit: "passed"');
   });
 
   it('rewrites only the program source and keeps the comment and every other part', async () => {
@@ -113,9 +113,9 @@ describe('stage script writes', () => {
     await run(f, 'set_stage_script', { board_id: boardId, stage_id: 'check', params: [{ name: 'pipeline' }, { name: 'app' }] });
     const workflow = (await run(f, 'get_board_summary', { board_id: boardId, include_workflow: true })).workflow;
     const column = workflow.columns.find((value: { id: string }) => value.id === 'check');
-    expect(column.deterministic.params.map((parameter: { name: string }) => parameter.name)).toEqual(['pipeline', 'app']);
-    expect(column.deterministic.code).toContain('echo hello');
-    expect(column.deterministic.exits).toEqual({ passed: 'done', error: 'todo' });
+    expect(column.scripted.params.map((parameter: { name: string }) => parameter.name)).toEqual(['pipeline', 'app']);
+    expect(column.scripted.code).toContain('echo hello');
+    expect(column.scripted.exits).toEqual({ passed: 'done', error: 'todo' });
   });
 
   it('clears the environment names with an empty list', async () => {
@@ -138,7 +138,7 @@ describe('stage script writes', () => {
     const boardId = await boardWith(f, 'Bare', ['name: Bare', 'initial_column: todo', 'columns:', '  - id: todo', '    label: Todo', '  - id: done', '    label: Done', ''].join('\n'));
     expect(await run(f, 'set_stage_script', { board_id: boardId, stage_id: 'todo', code: 'echo x', exits: { passed: 'done' } })).toMatchObject({ saved: false, error: { code: 'INVALID_INPUT' } });
     expect(await run(f, 'set_stage_script', { board_id: boardId, stage_id: 'todo', language: 'bash', code: 'echo x' })).toMatchObject({ saved: false, error: { code: 'INVALID_INPUT' } });
-    expect((await stageBlock(f, boardId, 'todo'))).not.toContain('deterministic');
+    expect((await stageBlock(f, boardId, 'todo'))).not.toContain('scripted');
   });
 
   it('reports an unknown exit destination as a refused write', async () => {

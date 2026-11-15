@@ -6,10 +6,10 @@ A task conversation can already message another task, and a task can already mov
 
 ## What Changes
 
-- A cross-card message may explicitly request that the receiving task declare the transition its body names. The receiving task decides under its own rules: the destination must be a target the message names and its current stage configures, the reason is still required, its own stage instruction and conditions still govern whether it may leave, and a stage already executing deterministic steps still routes through its captured exit. The request never moves the card by itself.
+- A cross-card message may explicitly request that the receiving task declare the transition its body names. The receiving task decides under its own rules: the destination must be a target the message names and its current stage configures, the reason is still required, its own stage instruction and conditions still govern whether it may leave, and a stage already executing scripted steps still routes through its captured exit. The request never moves the card by itself.
 - `send_task_message` becomes available when the sending conversation's stage instruction explicitly directs the handoff, in addition to the user's explicit request. Sending a message merely to record the agent's own progress stays unauthorized.
 - The sending agent is guided to read the target's allowed transitions before composing the request and to include the target stage identifier and the reason in the body. No argument, schema, or send-time validation is added: a request the target cannot satisfy fails in the target's turn.
-- What counts as an explicit request is agent judgment over the message text. The plugin adds no marker, envelope, or deterministic check.
+- What counts as an explicit request is agent judgment over the message text. The plugin adds no marker, envelope, or scripted check.
 - The preset documentation separates the two authorization scopes: a stage instruction may authorize a handoff message and a routing request, while task, board, note, and team-file writes still require the user's explicit request.
 - One internal refactor: the per-origin advance-arming condition becomes a single domain function shared by the turn observation and the advance admission, so the two reads cannot drift.
 

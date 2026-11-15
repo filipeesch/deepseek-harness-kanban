@@ -37,13 +37,13 @@ A message may ask the receiving task to declare a transition, but nothing is add
 
 ### 2. Authority stays with the receiving task
 
-The receiver declares only through `set_next_transition` on its own task, and every existing rule still applies: destination configured by its current stage, nonempty reason, stage conditions, deterministic entries, pending user work, and unresolved stage entries. A peer request cannot select an unconfigured destination, cannot bypass a deterministic exit, cannot clear a hold, and cannot authorize task, board, note, or team-file writes.
+The receiver declares only through `set_next_transition` on its own task, and every existing rule still applies: destination configured by its current stage, nonempty reason, stage conditions, scripted entries, pending user work, and unresolved stage entries. A peer request cannot select an unconfigured destination, cannot bypass a scripted exit, cannot clear a hold, and cannot authorize task, board, note, or team-file writes.
 
 *Alternatives considered.* Letting the sender move the receiving card through a new tool or a message-driven host action would remove the receiver's judgment, bypass `requireOwnTask`, and make attribution ambiguous — the card would move without its own conversation deciding. Treating the message body as sufficient authorization for any write would collapse the deliberate separation between protocol data and user intent that the preset documents; the proposal limits the exception to routing for that reason.
 
 ### 3. Sender authorization adds the stage instruction, not a token
 
-`send_task_message` becomes available when the sending conversation's user asks for the message or when its stage instruction explicitly directs it. The tool description states both sources; no deterministic consent check is added, matching the existing model for board writes.
+`send_task_message` becomes available when the sending conversation's user asks for the message or when its stage instruction explicitly directs it. The tool description states both sources; no scripted consent check is added, matching the existing model for board writes.
 
 *Alternatives considered.* Keeping the user's request as the only source would force a human nudge between every handoff and contradicts the stage-authoring model, where the workflow author already decides what the stage does. A structured consent argument would look like enforcement without being one, since the model writes it. Asking the user at send time would make every handoff interactive.
 
@@ -61,22 +61,22 @@ The guidance tells the sending agent to call `list_allowed_transitions` for the 
 
 ### 6. One per-origin arming predicate
 
-`advanceArmedFor(origin, workflow, task)` is added to `src/domain/transition-route.ts`. `advanceArmed` is expressed through it, `advance-admission` uses it in `blocked` and `requireArmed`, and the coordinator keeps using `advanceArmed` for the observation gate. The auto branch and the declared branch then come from one expression, so a future trigger cannot be armed in one read and refused in the other. The admission now also refuses a deterministic entry, which closes the window between the settle read and the durable decision; the new admission and domain tests cover that race.
+`advanceArmedFor(origin, workflow, task)` is added to `src/domain/transition-route.ts`. `advanceArmed` is expressed through it, `advance-admission` uses it in `blocked` and `requireArmed`, and the coordinator keeps using `advanceArmed` for the observation gate. The auto branch and the declared branch then come from one expression, so a future trigger cannot be armed in one read and refused in the other. The admission now also refuses a scripted entry, which closes the window between the settle read and the durable decision; the new admission and domain tests cover that race.
 
 *Alternatives considered.* Leaving the duplication is the status quo, but the composition makes the declared branch more reachable, and a divergence between "queue the turn" and "admit the turn" would produce silent no-ops. Moving the whole decision into the admission is not possible: the observation gate must avoid scheduling work it would always drop.
 
 ### 7. Tests prove the composition at host level
 
-The suite covers the predicate (`advanceArmedFor` for both origins, a deterministic stage, and a recording made for another stage), the admission of an `'agent'` origin with auto mode off and under pending user work, the admission skipping a deterministic entry and refusing one that turned deterministic inside the transaction, and one app-level composition: deliver a message through a composed `InterCardMessaging` with a recording delivery port, record the declaration on the target, observe a `turn/end` for the target conversation, and assert the card moved. A negative case observes the same turn end without a declaration and asserts nothing moved. The existing suite (`turn-advance`, `advance-admission`, `inter-card-messaging`, `transition-tools`) stays green.
+The suite covers the predicate (`advanceArmedFor` for both origins, a scripted stage, and a recording made for another stage), the admission of an `'agent'` origin with auto mode off and under pending user work, the admission skipping a scripted entry and refusing one that turned scripted inside the transaction, and one app-level composition: deliver a message through a composed `InterCardMessaging` with a recording delivery port, record the declaration on the target, observe a `turn/end` for the target conversation, and assert the card moved. A negative case observes the same turn end without a declaration and asserts nothing moved. The existing suite (`turn-advance`, `advance-admission`, `inter-card-messaging`, `transition-tools`) stays green.
 
 *Alternatives considered.* A new real-composition e2e lane would prove the browser path, but the browser adds no behavior here — the message row and the card move are already covered by the `messages` and `declared` lanes, and the new claim is a host sequencing claim. Testing only the domain predicate would miss the wiring between delivery and observation.
 
 ## Risks / Trade-offs
 
 - **Any task in the Hub can ask another to move along its configured edges** → the destination is bounded by the receiver's workflow, the receiver's stage conditions still apply, the request cannot write anything else, and the receiving user sees the context row and the transition. The preset states the trust boundary explicitly.
-- **Recognizing a request is non-deterministic** → the failure is observable (the peer simply does not declare) and the sender can ask for a reply; the contract says recognition is judgment, so no test pretends otherwise.
+- **Recognizing a request is non-scripted** → the failure is observable (the peer simply does not declare) and the sender can ask for a reply; the contract says recognition is judgment, so no test pretends otherwise.
 - **The default workflow configures no transitions** → out of the box a request cannot be satisfied. Documentation states the precondition; no runtime change hides it.
-- **A deterministic stage ignores declarations** → its captured exit keeps routing authority; documentation states it so a coordinator does not wait for a move that cannot happen.
+- **A scripted stage ignores declarations** → its captured exit keeps routing authority; documentation states it so a coordinator does not wait for a move that cannot happen.
 - **Two tasks can wake each other indefinitely** → no rate limit or loop prevention is in scope. The preset guidance bounds handoffs and treats a request as neither a dependency gate nor completion evidence.
 - **Unattended chains lose the per-handoff human checkpoint** → the sender's stage instruction is authored by the user, the receiver's conditions still decide, and no other write is authorized. Teams that want a checkpoint keep it in the stage instruction.
 - **Tool descriptions and preset references grow** → keep the additions to the essential rule, replace obsolete guidance instead of appending, and respect the preset size ceilings from AGENTS.md.

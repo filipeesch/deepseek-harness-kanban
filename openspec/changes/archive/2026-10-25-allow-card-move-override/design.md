@@ -218,7 +218,7 @@ Verification is layered: the cheapest in-memory modules prove the policy and the
 - **The host's workflow can change between admission and drain** -> Normal transitions keep the existing recheck. Override transitions remain bound to the confirmed source and destination; the persisted flag is the user's consent for that specific pending move.
 - **Accepted commands do not guarantee the pending placement completed** -> Existing `PendingTransitionStatus` and retry/return semantics remain the recovery path; this change does not alter them.
 - **The selected native option styling cannot be browser-tested through the OS popup** -> Verification asserts the rendered option's class, computed color, and accessibility, while a one-off manual popup check covers the OS-rendered surface. The limitation is documented rather than hidden.
-- **The focused real-composition lane is release-only and does not assert native composer prefill** -> The fake draft port covers the confirmation-to-prefill trigger, and the native draft path is unchanged from the archived change. The release lane stays deterministic and small.
+- **The focused real-composition lane is release-only and does not assert native composer prefill** -> The fake draft port covers the confirmation-to-prefill trigger, and the native draft path is unchanged from the archived change. The release lane stays scripted and small.
 - **Existing tests assert prohibited transitions/options are rejected/omitted** -> Those expectations are intentionally replaced; the tasks cover the replacements without treating them as regressions.
 
 ## Migration Plan

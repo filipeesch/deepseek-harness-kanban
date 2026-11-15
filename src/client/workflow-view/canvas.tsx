@@ -172,7 +172,7 @@ function CanvasInner(props: WorkflowCanvasProps) {
     source: edge.from,
     target: edge.to,
     type: 'connection',
-    data: { path: edge.path, points: edge.points, tipAngle: edge.tipAngle, kind: edge.kind, returning: edge.returning, hasCondition: edge.condition !== undefined, deterministic: edge.deterministic === true },
+    data: { path: edge.path, points: edge.points, tipAngle: edge.tipAngle, kind: edge.kind, returning: edge.returning, hasCondition: edge.condition !== undefined, scripted: edge.scripted === true },
     selectable: false,
     focusable: false,
   })), [liveEdges]);

@@ -39,5 +39,5 @@
 
 - [x] 6.1 Run `pnpm check` and verify host and client typechecks, the full vitest suite, and the build pass
 - [x] 6.2 Add `tests/browser/schedules.spec.ts` using the existing harness API for the list, editor, validation, and light/dark appearance, capture screenshots under `.verification/`, and verify `pnpm test:browser` passes
-- [x] 6.3 Add a new `--only schedules` real-composition scenario that creates a schedule, runs one occurrence, verifies exactly one session, its directory, the delivered prompt, and the scaffold's deterministic model-call failure; verify `node scripts/e2e-dsh.mjs --checkout <checkout> --only schedules` passes against a temporary profile
+- [x] 6.3 Add a new `--only schedules` real-composition scenario that creates a schedule, runs one occurrence, verifies exactly one session, its directory, the delivered prompt, and the scaffold's scripted model-call failure; verify `node scripts/e2e-dsh.mjs --checkout <checkout> --only schedules` passes against a temporary profile
 - [x] 6.4 Document the Schedules section, unattended execution, dispatch admission, session-only model (0.2.2+), archiving and archive failures, durable run state, shutdown drain, and the downgrade shape in `README.md` and `docs/operations.md`; restore the pre-existing documentation untouched and verify the documented steps match the shipped controls

@@ -1,7 +1,7 @@
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import type { KanbanApp } from '../app.js';
 import type { BoardAdministration } from '../board-administration.js';
-import { applyWorkflowEdits, type WorkflowTextEdit } from '../../domain/workflow-edit.js';
+import { applyWorkflowEdits, WORKFLOW_EDIT_FIELDS, type WorkflowTextEdit } from '../../domain/workflow-edit.js';
 import { KanbanError, invariant } from '../../shared/errors.js';
 import { actorOf, boardResult, digestRefusal, flag, normal, refusal, text, written } from './support.js';
 import { assertBoardWriteAllowed, resolveBoard, type ToolArgs } from './scope.js';
@@ -9,7 +9,7 @@ import { revisionParameter, workflowWriteControls } from './authoring.js';
 
 const intent = 'Use ONLY when the user explicitly requests this board change. ';
 
-const reportNote = ' The result carries the digest of the exact document stored and a write report: the changed stages and their changed field names, the graph warnings, the board-level reviewed authorization of every deterministic stage, and the affected cards. The report is a summary by default and the per-field values only when detail is full. A refused write saves nothing and returns the same report instead of changing the board.';
+const reportNote = ' The result carries the digest of the exact document stored and a write report: the changed stages and their changed field names, the graph warnings, the board-level reviewed authorization of every scripted stage, and the affected cards. The report is a summary by default and the per-field values only when detail is full. A refused write saves nothing and returns the same report instead of changing the board.';
 
 /** One write result, with a digest refusal reported like any other refusal. */
 function outcome(error: unknown): unknown {
@@ -85,7 +85,7 @@ export function boardTools(app: KanbanApp, boards: BoardAdministration): ToolDef
             old: { type: 'string', required: true },
             new: { type: 'string', required: true },
             stage: { type: 'string', description: 'Stage ID the match must fall inside.' },
-            field: { type: 'string', enum: ['on_enter_prompt', 'description', 'allowed_transitions', 'deterministic', 'block'], description: 'Authored field of the named stage the match must fall inside; block means the whole stage block.' },
+            field: { type: 'string', enum: [...WORKFLOW_EDIT_FIELDS], description: 'Authored field of the named stage the match must fall inside; block means the whole stage block.' },
           },
         },
       },

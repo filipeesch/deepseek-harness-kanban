@@ -94,7 +94,7 @@ describe('real Cordis + real gateway namespace injection', () => {
     expect(components.has('conversation.chat.node:kanban-task-context')).toBe(true);
     expect(components.has('conversation.chat.node:kanban-stage-context')).toBe(true);
     expect(components.has('conversation.chat.node:kanban-task-message')).toBe(true);
-    expect(components.has('conversation.chat.node:kanban-deterministic-handoff')).toBe(true);
+    expect(components.has('conversation.chat.node:kanban-scripted-handoff')).toBe(true);
     // Invoke the page's own bridge API, not a separately authorized stand-in consumer.
     const Main = components.get('main:kanban') as (props: { usePanelInfo: (selector: (value: { activePanelId: string }) => boolean) => boolean }) => ReactNode;
     const page = Main({ usePanelInfo: selector => selector({ activePanelId: 'kanban' }) });

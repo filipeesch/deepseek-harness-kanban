@@ -131,7 +131,7 @@ delete confirmed -> dialog closed, card queued
                   -> deleted card is gone
 ```
 
-The gate makes "the board served commands while a deletion was queued" a deterministic assertion rather than a timing race, and no model call is involved.
+The gate makes "the board served commands while a deletion was queued" a scripted assertion rather than a timing race, and no model call is involved.
 
 ## Risks / Trade-offs
 
