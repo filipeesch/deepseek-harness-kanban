@@ -1,10 +1,10 @@
-import React, { Component, useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import type { Attention, Command, Problem, Task } from '../shared/types.js';
 import { EMPTY_ATTENTION } from '../shared/types.js';
 import { closedSessionIds, openSessionIds } from '../shared/conversations.js';
-import { AttentionDots, AttentionStatusText } from './attention-dots.js';
-import { creationModelOutcome, creationPresetOutcome, creationReceiptId, useAction, type RunCommand } from './ui.js';
-import { resolveActiveConversation, usePageField, type TaskPageState } from './page-state.js';
+import { creationModelOutcome, creationPresetOutcome, useAction, type RunCommand } from './ui.js';
+import { usePageField, type TaskPageState } from './page-state.js';
+import { conversationOf, endPeek, peekOf, requireSelection, resolveConversation, selectConversation, selectionRequiredOf } from './drawer-view.js';
 import { conversationLabel, type SessionTitles } from './conversation-label.js';
 import { ClosedConversationsMenu } from './closed-conversations.js';
 import { ConversationActionsProvider, ConversationCloseAction, type ConversationActions } from './conversation-actions.js';
@@ -12,13 +12,16 @@ import { ConversationModelNotice, ConversationNotices, ConversationPresetNotice 
 import { useOptionalModelFallbacks } from './model-fallbacks.js';
 import { useOptionalPresetFallbacks } from './preset-fallbacks.js';
 import { useOptionalConversationLeases } from './conversation-lease-context.js';
-import { AgentPresetCards } from './agent-preset-cards.js';
 import { useAgentPresetPort } from './agent-preset-context.js';
+import { ConversationBody } from './conversations/body.js';
+import type { ConversationSurfaceMode } from './conversation-surface.js';
+import { ConversationTabs } from './conversations/tabs.js';
+import { ConversationCreationPanel, useConversationCreation } from './conversations/creation.js';
 
 export interface DrawerConversationsProps {
   task: Task;
   run: RunCommand;
-  renderConversation: (id: string) => ReactNode;
+  renderConversation: (id: string, mode?: ConversationSurfaceMode) => ReactNode;
   viewState: TaskPageState;
   sessionTitles?: SessionTitles;
   conversationAttention?: Readonly<Record<string, Attention>>;
@@ -40,20 +43,23 @@ export interface DrawerConversationsProps {
   presetNoticeDismissed?: readonly string[];
   /** Record that the person read the preset-fallback notice of one conversation. */
   onDismissPresetNotice?: (sessionId: string) => void;
+  /** Reveal one Session in the host's main chat; used by a branch the task could not adopt. */
+  onOpenInMain?: ((sessionId: string) => void) | undefined;
 }
 
 type CommandScope = 'create' | 'close' | 'reopen';
 
 const NO_DISMISSED_NOTICES: readonly string[] = [];
 
-export function DrawerConversations({ task, run, renderConversation, viewState, sessionTitles, conversationAttention = {}, worktreeDecisionRequired = false, projectUnavailable = false, modelNoticeDismissed = NO_DISMISSED_NOTICES, onDismissModelNotice, boardDefaultPreset, presetNoticeDismissed = NO_DISMISSED_NOTICES, onDismissPresetNotice }: DrawerConversationsProps) {
+/** The Conversations section: task conversation tabs, the native surface, and the transient peek. */
+export function DrawerConversations({ task, run, renderConversation, viewState, sessionTitles, conversationAttention = {}, worktreeDecisionRequired = false, projectUnavailable = false, modelNoticeDismissed = NO_DISMISSED_NOTICES, onDismissModelNotice, boardDefaultPreset, presetNoticeDismissed = NO_DISMISSED_NOTICES, onDismissPresetNotice, onOpenInMain }: DrawerConversationsProps) {
   const open = openSessionIds(task);
   const closed = closedSessionIds(task);
   const noConversations = task.sessionIds.length === 0;
   const noOpenConversations = open.length === 0;
   const openKey = JSON.stringify(open);
-  const [selected, setSelected] = usePageField(viewState, 'conversationId');
-  const [selectionRequired, setSelectionRequired] = usePageField(viewState, 'conversationSelectionRequired');
+  const [view, setView] = usePageField(viewState, 'view');
+  const [claim, setClaim] = usePageField(viewState, 'claim');
   const action = useAction(run);
   const leases = useOptionalConversationLeases();
   const modelFallbacks = useOptionalModelFallbacks();
@@ -61,115 +67,70 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
   const { port: presetPort, translate: presetTranslate } = useAgentPresetPort();
   const id = useId();
   const [commandScope, setCommandScope] = useState<CommandScope | null>(null);
-  const [creationPending, setCreationPending] = useState(false);
-  const [creationError, setCreationError] = useState<Problem | null>(null);
-  const [choosingPreset, setChoosingPreset] = useState(false);
-  const [pendingConversation, setPendingConversation] = useState<string | null>(null);
-  const [presetError, setPresetError] = useState<string | null>(null);
-  const [presetBusy, setPresetBusy] = useState(false);
-  const presetGeneration = useRef(0);
   const [renaming, setRenaming] = useState<{ sessionId: string; value: string } | null>(null);
   const [renameError, setRenameError] = useState<Problem | null>(null);
   const [focusTarget, setFocusTarget] = useState<string | null>(null);
-  const canSelectDefault = !creationPending && !creationError && !selectionRequired;
-  useEffect(() => {
-    if (!canSelectDefault || (selected !== null && open.includes(selected))) return;
-    const next = open[0] ?? null;
-    setSelected(next);
-    if (next !== null) leases?.acquireRoot(next);
-  }, [openKey, selected, setSelected, canSelectDefault, leases]);
-  const active = resolveActiveConversation(task.sessionIds, task.closedSessionIds, selected, canSelectDefault) ?? undefined;
-  const chooseConversation = useCallback((sessionId: string) => {
-    presetGeneration.current += 1;
-    leases?.acquireRoot(sessionId);
-    setSelected(sessionId);
-    setSelectionRequired(false);
-    setCreationError(null);
-    setChoosingPreset(false);
-    setPendingConversation(null);
-    setPresetError(null);
-  }, [leases, setSelected, setSelectionRequired]);
-  const label = (sessionId: string) => conversationLabel(task, sessionId, sessionTitles);
   const busy = Boolean(task.operation || task.pendingTransition);
-  const createBlocked = Boolean(creationError || selectionRequired || worktreeDecisionRequired || projectUnavailable);
-  const startHint = projectUnavailable
-    ? 'Refresh the board: the task project is unavailable.'
-    : worktreeDecisionRequired
-    ? task.worktree === null
-      ? 'Create a worktree or continue in the base project using the notice above before starting.'
-      : 'Resolve the worktree setup in Git before starting.'
-    : creationError || selectionRequired
-      ? 'Resolve the conversation creation error before starting.'
-      : busy ? 'Wait for the current task operation to finish.' : undefined;
+  const surfaceBlocked = Boolean(worktreeDecisionRequired || projectUnavailable);
+
+  /** Present one conversation tab; a peek always ends when a tab is selected. */
+  const chooseView = useCallback((sessionId: string) => {
+    setClaim(null);
+    if (sessionId !== null) leases?.acquireRoot(sessionId);
+    setView(current => selectConversation(current, sessionId));
+  }, [leases, setView, setClaim]);
 
   function execute(command: Command, scope: CommandScope) {
     setCommandScope(scope);
     return action.execute(command);
   }
 
-  /** Create the conversation, validate its receipt, and keep it pending until its preset is chosen. */
-  async function createConversationSession(): Promise<string | null> {
-    if (creationPending || creationError || selectionRequired || worktreeDecisionRequired || projectUnavailable || busy) return null;
-    setCreationPending(true);
-    try {
-      // The first start reuses a conversation created while this request was queued;
-      // the plus action on an existing task intentionally adds another one.
-      const result = await execute({ type: 'conversation.create', taskId: task.id, ...(task.sessionIds.length === 0 ? { ensureFirst: true } : {}) }, 'create');
-      if (!result) return null;
-      const sessionId = creationReceiptId(result, 'conversation');
-      // What the host did with the board's model travels on the same receipt, so the
-      // notice needs no extra read and can be shown when this conversation is opened.
-      if (sessionId !== undefined) {
-        modelFallbacks?.record(sessionId, creationModelOutcome(result));
-        presetFallbacks?.record(sessionId, creationPresetOutcome(result));
-      }
-      const createdTask = result.state.hubs.flatMap(hub => hub.tasks).find(value => value.id === task.id);
-      if (!sessionId || !createdTask?.sessionIds.includes(sessionId) || createdTask.closedSessionIds.includes(sessionId)) {
-        setSelectionRequired(true);
-        setCreationError({ code: !sessionId ? 'CREATION_RECEIPT_REQUIRED' : 'CREATED_CONVERSATION_UNAVAILABLE', message: 'The saved conversation could not be identified safely from its exact creation receipt. Select a tab explicitly or refresh the application before creating another conversation.' });
-        return null;
-      }
-      return sessionId;
-    } finally { setCreationPending(false); }
+  const creation = useConversationCreation({
+    task,
+    blocked: surfaceBlocked || selectionRequiredOf(view),
+    busy,
+    execute: command => execute(command, 'create'),
+    pending: action.pending,
+    leases,
+    models: modelFallbacks,
+    presets: presetFallbacks,
+    presetPort,
+    onSelected: chooseView,
+    onFocus: setFocusTarget,
+    onSelectionRequired: () => { setView(current => requireSelection(current)); },
+    ...(boardDefaultPreset === undefined ? {} : { boardDefaultPreset }),
+  });
+
+  const canSelectDefault = !creation.creating && creation.error === null && !selectionRequiredOf(view);
+  const resolved = resolveConversation(view, open, canSelectDefault);
+  const active = conversationOf(resolved) ?? undefined;
+  const peek = peekOf(resolved);
+  const selectionRequired = selectionRequiredOf(resolved);
+  const createBlocked = Boolean(creation.error || selectionRequired || surfaceBlocked);
+  const startHint = projectUnavailable
+    ? 'Refresh the board: the task project is unavailable.'
+    : worktreeDecisionRequired
+    ? task.worktree === null
+      ? 'Create a worktree or continue in the base project using the notice above before starting.'
+      : 'Resolve the worktree setup in Git before starting.'
+    : creation.error || selectionRequired
+      ? 'Resolve the conversation creation error before starting.'
+      : busy ? 'Wait for the current task operation to finish.' : undefined;
+
+  // Persist the resolved view (a fallback selection, or a peek whose conversation left)
+  // without racing the render that already presents it.
+  useEffect(() => {
+    if (resolved === view) return;
+    const conversation = conversationOf(resolved);
+    if (conversation !== null) leases?.acquireRoot(conversation);
+    setView(resolved);
+  }, [resolved, view, leases, setView]);
+
+  function chooseConversation(sessionId: string) {
+    creation.forget();
+    chooseView(sessionId);
   }
 
-  /** Create (once), select the chosen preset on that conversation, and open its window. */
-  async function pickPreset(presetId: string, isDefault: boolean) {
-    if (presetBusy || createBlocked || busy || action.pending) return;
-    const generation = presetGeneration.current;
-    setPresetError(null);
-    setPresetBusy(true);
-    try {
-      let sessionId = pendingConversation;
-      if (sessionId === null) {
-        sessionId = await createConversationSession();
-        if (sessionId === null) return;
-        if (generation !== presetGeneration.current) return;
-        setPendingConversation(sessionId);
-      }
-      // The created conversation already runs the deployment default; selecting
-      // that same preset again would only ask the host to reapply it.
-      if (!isDefault) {
-        if (presetPort === null) throw new Error('The native agent-preset roster is unavailable.');
-        const result = await presetPort.select(sessionId, presetId);
-        if (generation !== presetGeneration.current) return;
-        if (!result.ok) throw new Error(result.message ?? 'The agent preset could not be selected.');
-      }
-      chooseConversation(sessionId);
-      setFocusTarget(sessionId);
-    } catch (error) {
-      if (generation !== presetGeneration.current) return;
-      setPresetError(error instanceof Error ? error.message : String(error));
-    } finally { setPresetBusy(false); }
-  }
-
-  function cancelPresetChoice() {
-    presetGeneration.current += 1;
-    setChoosingPreset(false);
-    setPendingConversation(null);
-    setPresetError(null);
-    if (active !== undefined) setFocusTarget(active);
-  }
   function beginRename(sessionId: string) {
     if (!sessionTitles) return;
     setRenaming({ sessionId, value: sessionTitles.title(sessionId) ?? '' });
@@ -192,7 +153,8 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
     if (action.pending) return false;
     const result = await execute({ type: 'conversation.reopen', taskId: task.id, sessionId }, 'reopen');
     if (!result) return false;
-    chooseConversation(sessionId);
+    creation.forget();
+    chooseView(sessionId);
     return true;
   }
   function clearReopenProblem() {
@@ -203,7 +165,7 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
     activeSessionId: active ?? null,
     pending: action.pending,
     close: closeConversation,
-    label,
+    label: sessionId => conversationLabel(task, sessionId, sessionTitles),
   };
 
   useEffect(() => {
@@ -222,27 +184,25 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
     return () => window.clearTimeout(timer);
   }, [focusTarget, openKey, id]);
 
-  const viewed = active;
   // Whether a fallback notice was read is the open drawer's view state, never a saved
   // fact, and it is held by the drawer above so that leaving and returning to this
   // section keeps it: closing the conversation forgets the dismissal, so a reopened
   // conversation announces the same fallback again.
-  const fallbackSession = viewed !== undefined && modelFallbacks !== null && !modelNoticeDismissed.includes(viewed) ? viewed : null;
-  const viewedFallback = fallbackSession === null ? null : modelFallbacks?.of(fallbackSession) ?? null;
+  const modelFallbackSession = active !== undefined && modelFallbacks !== null && !modelNoticeDismissed.includes(active) ? active : null;
+  const viewedFallback = modelFallbackSession === null ? null : modelFallbacks?.of(modelFallbackSession) ?? null;
   // The preset fallback is a separate notice with its own dismissal, on the same terms.
-  const presetFallbackSession = viewed !== undefined && presetFallbacks !== null && !presetNoticeDismissed.includes(viewed) ? viewed : null;
+  const presetFallbackSession = active !== undefined && presetFallbacks !== null && !presetNoticeDismissed.includes(active) ? active : null;
   const viewedPresetFallback = presetFallbackSession === null ? null : presetFallbacks?.of(presetFallbackSession) ?? null;
-  const cancelPreset = presetBusy || creationPending || (noOpenConversations && pendingConversation === null)
-    ? undefined
-    : cancelPresetChoice;
+  const canCancelPreset = !(creation.busy || (noOpenConversations && creation.pendingConversation === null));
   const presetHint = startHint ?? (!noConversations && noOpenConversations
     ? 'All conversations are closed. Choose a preset to start a new one, or reopen one from the closed conversations above.'
     : undefined);
   const notices = [
     { key: 'command', problem: commandScope === 'reopen' ? null : action.error },
-    { key: 'create', problem: creationError },
+    { key: 'create', problem: creation.error },
     { key: 'rename', problem: renameError },
   ];
+  const label = (sessionId: string) => conversationLabel(task, sessionId, sessionTitles);
   const closedMenu = <ClosedConversationsMenu
     closed={closed}
     label={label}
@@ -252,73 +212,71 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
     onReopen={reopenConversation}
     onReopened={setFocusTarget}
   />;
+  const showingCreation = creation.choosing || noOpenConversations || creation.pendingConversation !== null;
 
   return <ConversationActionsProvider value={actions}><div className="kb-conversations"><ConversationTabs
     open={open} active={active} id={id} label={label} sessionTitles={sessionTitles}
     renaming={renaming} setRenaming={setRenaming} chooseConversation={chooseConversation}
-    beginRename={beginRename} commitRename={commitRename} onRequestNew={() => { setChoosingPreset(true); setPresetError(null); }}
-    creating={creationPending} createBlocked={createBlocked} blockedReason={startHint} busy={busy}
+    beginRename={beginRename} commitRename={commitRename} onRequestNew={creation.start}
+    creating={creation.creating} createBlocked={createBlocked} blockedReason={startHint} busy={busy}
     actionPending={action.pending} conversationAttention={conversationAttention} closedMenu={closedMenu} />
     <ConversationNotices notices={notices} />
-    {viewedFallback === null || fallbackSession === null ? null : <ConversationModelNotice
+    {claim === null ? null : <ForkClaimNotice
+      claim={claim}
+      onOpenInMain={claim.error === undefined ? undefined : onOpenInMain}
+      onDismiss={() => setClaim(null)} />}
+    {viewedFallback === null || modelFallbackSession === null ? null : <ConversationModelNotice
       outcome={viewedFallback}
-      onDismiss={() => { onDismissModelNotice?.(fallbackSession); }} />}
+      onDismiss={() => { onDismissModelNotice?.(modelFallbackSession); }} />}
     {viewedPresetFallback === null || presetFallbackSession === null ? null : <ConversationPresetNotice
       outcome={viewedPresetFallback}
       onDismiss={() => { onDismissPresetNotice?.(presetFallbackSession); }} />}
-    {selectionRequired && creationError === null && viewed !== undefined && <p className="kb-hint" role="status">Select a conversation tab explicitly before creating another conversation.</p>}
-    {choosingPreset || noOpenConversations || pendingConversation !== null
-      ? <AgentPresetCards
+    {selectionRequired && creation.error === null && active !== undefined && <p className="kb-hint" role="status">Select a conversation tab explicitly before creating another conversation.</p>}
+    {showingCreation
+      ? <ConversationCreationPanel
+        creation={creation}
         port={presetPort}
         translate={presetTranslate}
         disabled={createBlocked || busy || action.pending}
         hint={presetHint}
-        busy={presetBusy || creationPending}
-        error={presetError}
-        onPick={(presetId, isDefault) => void pickPreset(presetId, isDefault)}
-        {...(cancelPreset === undefined ? {} : { onCancel: cancelPreset })}
-        {...(boardDefaultPreset === undefined ? {} : { defaultPresetId: boardDefaultPreset })}
+        {...(canCancelPreset ? { onCancel: () => { creation.cancel(); if (active !== undefined) setFocusTarget(active); } } : {})}
+        {...(boardDefaultPreset === undefined ? {} : { boardDefaultPreset })}
       />
-      : viewed
-        ? <ConversationBody active={viewed} root={active} id={id} renderConversation={renderConversation} />
-        : selectionRequired
-          ? <p className="kb-empty">Select a conversation tab explicitly before continuing.</p>
-          : <p className="kb-empty">All conversations are closed. Use + to start a new one, or reopen one from the closed conversations above.</p>}
+      : peek !== null
+        ? <ConversationBody
+          active={peek.sessionId}
+          root={active}
+          target={peek}
+          id={id}
+          renderConversation={renderConversation}
+          onUnavailable={sessionId => { if (peek.sessionId === sessionId) setView(current => endPeek(current)); }}
+        />
+        : active !== undefined
+          ? <ConversationBody active={active} root={active} id={id} renderConversation={renderConversation} />
+          : selectionRequired
+            ? <p className="kb-empty">Select a conversation tab explicitly before continuing.</p>
+            : <p className="kb-empty">All conversations are closed. Use + to start a new one, or reopen one from the closed conversations above.</p>}
   </div></ConversationActionsProvider>;
 }
 
-interface ConversationTabsProps {
-  open: readonly string[]; active?: string; id: string; label: (sessionId: string) => string; sessionTitles?: SessionTitles;
-  renaming: { sessionId: string; value: string } | null;
-  setRenaming: (value: { sessionId: string; value: string } | null) => void;
-  chooseConversation: (sessionId: string) => void; beginRename: (sessionId: string) => void; commitRename: () => Promise<void>;
-  onRequestNew: () => void;
-  creating: boolean; createBlocked: boolean; blockedReason?: string; busy: boolean; actionPending: boolean;
-  conversationAttention: Readonly<Record<string, Attention>>;
-  closedMenu: ReactNode;
-}
-
-function ConversationTabs({ open, active, id, label, sessionTitles, renaming, setRenaming, chooseConversation, beginRename, commitRename, onRequestNew, creating, createBlocked, blockedReason, busy, actionPending, conversationAttention, closedMenu }: ConversationTabsProps) {
-  return <div className="kb-session-toolbar"><div className="kb-tabs kb-agent-tabs" role="tablist" aria-label="Agent conversations">{open.map((sessionId, index) => {
-    if (renaming?.sessionId === sessionId) return <input key={sessionId} className="kb-input kb-tab-input" autoFocus aria-label={'Rename ' + label(sessionId)} value={renaming.value} onChange={event => setRenaming({ sessionId, value: event.target.value })} onBlur={() => void commitRename()} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void commitRename(); } if (event.key === 'Escape') { event.preventDefault(); setRenaming(null); } }} />;
-    const attention = conversationAttention[sessionId] ?? EMPTY_ATTENTION;
-    return <div key={sessionId} className="kb-tab-item" data-active={active === sessionId ? 'true' : undefined}>
-      <button type="button" className="kb-tab" id={id + '-tab-' + sessionId} role="tab" aria-selected={active === sessionId} aria-controls={id + '-conversation'} tabIndex={active === sessionId ? 0 : -1} title={sessionTitles?.title(sessionId) ?? sessionId} onClick={() => chooseConversation(sessionId)} onDoubleClick={() => beginRename(sessionId)} onContextMenu={event => { if (!sessionTitles) return; event.preventDefault(); beginRename(sessionId); }} onKeyDown={event => { let next = index; if (event.key === 'ArrowRight') next = (index + 1) % open.length; else if (event.key === 'ArrowLeft') next = (index + open.length - 1) % open.length; else if (event.key === 'Home') next = 0; else if (event.key === 'End') next = open.length - 1; else return; event.preventDefault(); const value = open[next]; if (value) { chooseConversation(value); document.getElementById(id + '-tab-' + value)?.focus(); } }}>{label(sessionId)}<AttentionDots value={attention} decorative /><AttentionStatusText value={attention} /></button>
-      {active === sessionId && <ConversationCloseAction />}
-    </div>;
-  })}</div>
-    {closedMenu}
-    <button type="button" className="kb-button kb-icon-button" aria-label="New conversation" title={blockedReason ?? 'New conversation'} disabled={actionPending || creating || createBlocked || busy} onClick={onRequestNew}><span aria-hidden="true">+</span></button>
+/** A fork the drawer claimed: either still attaching, or a failure the person can leave. */
+function ForkClaimNotice({ claim, onOpenInMain, onDismiss }: { claim: { sessionId: string; error?: string }; onOpenInMain?: ((sessionId: string) => void) | undefined; onDismiss: () => void }) {
+  if (claim.error === undefined) {
+    return <p className="kb-claim-pending" role="status">
+      <span className="kb-claim-spinner" aria-hidden="true" />
+      <span>Attaching the branch…</span>
+    </p>;
+  }
+  // The alert carries the message only: the actions stay outside it so assistive
+  // technology announces the reason without swallowing a control.
+  return <div className="kb-claim-notice">
+    <div className="kb-error">
+      <strong className="kb-claim-title">Branch not added</strong>
+      <span role="alert">{claim.error}</span>
+    </div>
+    <div className="kb-actions">
+      {onOpenInMain === undefined ? null : <button type="button" className="kb-button kb-primary" onClick={() => onOpenInMain(claim.sessionId)}>Open in main chat</button>}
+      <button type="button" className="kb-link-button" onClick={onDismiss}>Dismiss</button>
+    </div>
   </div>;
-}
-
-function ConversationBody({ active, root, id, renderConversation }: { active: string; root?: string; id: string; renderConversation: (id: string) => ReactNode }) {
-  const labelledBy = root === undefined ? undefined : id + '-tab-' + root;
-  return <div className="kb-conversation-panel" role="tabpanel" id={id + '-conversation'} aria-labelledby={labelledBy}><NativeBoundary key={active}>{renderConversation(active)}</NativeBoundary></div>;
-}
-
-class NativeBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
-  state: { error: string | null } = { error: null };
-  static getDerivedStateFromError(error: unknown) { return { error: error instanceof Error ? error.message : 'Native conversation rendering failed.' }; }
-  render() { return this.state.error ? <div role="alert" className="kb-error"><strong>Native conversation unavailable</strong><p>{this.state.error}</p><div className="kb-actions"><button type="button" className="kb-button" onClick={() => this.setState({ error: null })}>Retry native view</button></div></div> : this.props.children; }
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import React, { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { EMPTY_ATTENTION, type Attention, type BoardState, type ClientApi, type Column, type Task } from '../shared/types.js';
 import { isGitProject } from '../shared/project.js';
 import { requiresWorktreeDecision } from '../shared/worktree-decision.js';
@@ -27,11 +27,18 @@ import { DrawerConversations } from './drawer-conversations.js';
 import type { SessionTitles } from './conversation-label.js';
 import { ConversationLeaseRegistry, type ConversationLeaseEnvironment } from './conversation-leases.js';
 import { ConversationLeasesProvider } from './conversation-lease-context.js';
+import type { ConversationSurfaceMode } from './conversation-surface.js';
+import { endPeek } from './drawer-view.js';
+import type { DrawerNavigationSource } from './drawer-navigation-coordinator.js';
 import { openSessionIds } from '../shared/conversations.js';
 
 interface DrawerProps {
   task: Task; attention?: Attention; conversationAttention?: Readonly<Record<string, Attention>>; state: BoardState; api: ClientApi; run: RunCommand; autoRun?: AutoRunController;
-  renderConversation: (id: string) => ReactNode;
+  renderConversation: (id: string, mode?: ConversationSurfaceMode) => ReactNode;
+  /** Reveals one Session in the host's main chat; used by a branch this task could not adopt. */
+  onOpenInMain?: ((sessionId: string) => void) | undefined;
+  /** Client navigation outcomes that change this drawer's presented view. */
+  navigation?: DrawerNavigationSource | undefined;
   onClose: () => void;
   onMove: (task: Task, column: Column, beforeTaskId?: string | null) => Promise<boolean>;
   onDanger: (task: Task, type: 'task.delete' | 'worktree.remove') => void;
@@ -46,15 +53,28 @@ interface DrawerProps {
   entering?: boolean; closing?: boolean;
 }
 
+/** A drawer rendered without the client navigation coordinator still subscribes to a stable source. */
+const NO_NAVIGATION: DrawerNavigationSource = { subscribe: () => () => {}, getSnapshot: () => 0 };
+
 const DRAWER_WIDTH_KEY = 'dsh-kanban.drawer.width';
 const DRAWER_DEFAULT_WIDTH = 620;
 function clampWidth(value: number): number { const max = Math.max(360, (typeof window === 'undefined' ? 1200 : window.innerWidth) * 0.9); return Math.min(Math.max(value, 360), max); }
 function storedWidth(): number { try { const value = Number(window.localStorage.getItem(DRAWER_WIDTH_KEY)); if (Number.isFinite(value) && value > 0) return clampWidth(value === 560 ? DRAWER_DEFAULT_WIDTH : value); } catch { /* storage is optional */ } return clampWidth(DRAWER_DEFAULT_WIDTH); }
 
-export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAttention, state, api, run, autoRun, renderConversation, onClose, onMove, onDanger, onForce, onToggleAutoMode, autoModePending = false, viewState, sessionTitles, conversationLeases, entering = false, closing = false, onEditStage }: DrawerProps) {
+export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAttention, state, api, run, autoRun, renderConversation, onOpenInMain, navigation, onClose, onMove, onDanger, onForce, onToggleAutoMode, autoModePending = false, viewState, sessionTitles, conversationLeases, entering = false, closing = false, onEditStage }: DrawerProps) {
+  // A client navigation outcome is written to the drawer's page state outside React;
+  // this subscription is what re-renders the drawer with the new view.
+  const navigationSource = navigation ?? NO_NAVIGATION;
+  void useSyncExternalStore(navigationSource.subscribe, navigationSource.getSnapshot, navigationSource.getSnapshot);
   const script = ownedScript(task, useScriptSummary(task.id));
   const [localViewState] = useState(createTaskPageState); const preferences = viewState ?? localViewState;
   const [section, setSection] = usePageField(preferences, 'section'); const id = useId(); const close = useRef<HTMLButtonElement>(null);
+  const [, setPageView] = usePageField(preferences, 'view');
+  // A peek is a view of the Conversations section; leaving it forgets the peek.
+  useEffect(() => {
+    if (section === 'Conversations') return;
+    setPageView(current => endPeek(current));
+  }, [section, setPageView]);
   const [width, setWidth] = useState(storedWidth); const widthRef = useRef(width); widthRef.current = width;
   const aside = useRef<HTMLElement>(null);
   const [leases] = useState<ConversationLeaseRegistry | null>(() => conversationLeases === undefined ? null : new ConversationLeaseRegistry(conversationLeases));
@@ -148,7 +168,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
     <ScriptPanel task={task} column={state.workflow.columns.find(column => column.id === task.columnId)} projectName={projectName} api={api} run={run} {...(onEditStage === undefined ? {} : { onEditStage: () => onEditStage(task.columnId, 'execution') })} />
     {autoRun && !script && <DrawerAutoRunNotice task={task} controller={autoRun} columns={state.workflow.columns} sessionTitles={sessionTitles} />}
     <section className={'kb-drawer-panel ' + (section === 'Conversations' ? 'kb-chat-panel' : '')} role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>
-      {section === 'Conversations' && <>{!gitBacked && task.worktree && <p className="kb-hint" role="note" aria-label="Plain checkout">This checkout is no longer Git-managed. Git actions are unavailable and the directory is kept when the task is deleted.</p>}{showsWorktreeNotice(task, project) && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} />}<DrawerConversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} worktreeDecisionRequired={worktreeDecisionRequired} projectUnavailable={project === undefined} conversationAttention={conversationAttention} modelNoticeDismissed={modelNoticeDismissed} onDismissModelNotice={sessionId => setModelNoticeDismissed(current => current.includes(sessionId) ? current : [...current, sessionId])} boardDefaultPreset={state.workflow.agentPreset} presetNoticeDismissed={presetNoticeDismissed} onDismissPresetNotice={sessionId => setPresetNoticeDismissed(current => current.includes(sessionId) ? current : [...current, sessionId])} /></>}
+{section === 'Conversations' && <>{!gitBacked && task.worktree && <p className="kb-hint" role="note" aria-label="Plain checkout">This checkout is no longer Git-managed. Git actions are unavailable and the directory is kept when the task is deleted.</p>}{showsWorktreeNotice(task, project) && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} />}<DrawerConversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} worktreeDecisionRequired={worktreeDecisionRequired} projectUnavailable={project === undefined} conversationAttention={conversationAttention} modelNoticeDismissed={modelNoticeDismissed} onDismissModelNotice={sessionId => setModelNoticeDismissed(current => current.includes(sessionId) ? current : [...current, sessionId])} boardDefaultPreset={state.workflow.agentPreset} presetNoticeDismissed={presetNoticeDismissed} onDismissPresetNotice={sessionId => setPresetNoticeDismissed(current => current.includes(sessionId) ? current : [...current, sessionId])} onOpenInMain={onOpenInMain} /></>}
       {section === 'Info' && <InfoPanel task={task} state={state} run={run} viewState={preferences} />}
       {section === 'Git' && gitBacked && <GitPanel task={task} project={project} api={api} run={run} worktreeBasePath={state.settings?.worktreeBasePath} draft={worktreeDraft} />}
       {section === 'Notes' && <NotesPanel task={task} state={state} run={run} viewState={preferences} />}

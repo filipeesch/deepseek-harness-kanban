@@ -577,6 +577,8 @@ export type Command =
   | { type: 'task.prepareFirstExecution'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction?: string }
   | { type: 'conversation.create'; hubId?: string; taskId: string; /** A first-start request reuses a conversation created while it was queued. */ ensureFirst?: boolean }
   | { type: 'conversation.close' | 'conversation.reopen'; hubId?: string; taskId: string; sessionId: string }
+  /** Attach a branch the task drawer claimed; the source must be a conversation of the task. */
+  | { type: 'conversation.attach'; hubId?: string; taskId: string; parentSessionId: string; sessionId: string }
   | { type: 'task.delete'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; force?: boolean }
   | ({ type: 'worktree.create'; hubId?: string; taskId: string } & CreateWorktreeInput)
   | { type: 'worktree.attach'; hubId?: string; taskId: string; path: string }

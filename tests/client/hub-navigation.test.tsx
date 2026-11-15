@@ -5,6 +5,7 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import { userEvent } from '@testing-library/user-event';
 import { BoardView } from '../../src/client/board.js';
 import { fixture, fakeApi, task } from './helpers.js';
+import { createBoardPageState, taskPageState } from '../../src/client/page-state.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 
 beforeEach(() => { try { globalThis.localStorage?.clear(); } catch { /* jsdom storage optional */ } });
@@ -35,6 +36,19 @@ describe('Hub and board navigation', () => {
     await user.click(within(boardDialog).getByRole('button', { name: 'Create board' }));
     await waitFor(() => expect(screen.getByRole('tab', { name: /Delivery board/ }).getAttribute('aria-selected')).toBe('true'));
     expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'board.create', name: 'Delivery board' }));
+  });
+
+  it('forgets a transient peek when a Hub switch closes the drawer', async () => {
+    const value = fixture();
+    value.state.hubs.push({ ...value.state.hubs[0]!, id: 'hub-2', name: 'Second Hub', boards: [], tasks: [] });
+    const mock = fakeApi(value); const user = userEvent.setup();
+    const pageState = createBoardPageState();
+    pageState.selectedTaskId = 't1';
+    taskPageState(pageState, 't1').view = { kind: 'peek', conversationId: 's1', selectionRequired: false, target: { parentSessionId: 's1', sessionId: 'child', mode: 'continuable' } };
+    render(<BoardView api={mock.api} pageState={pageState} renderConversation={() => null} />);
+    await screen.findByRole('tab', { name: /Second Hub/ });
+    await user.click(screen.getByRole('tab', { name: /Second Hub/ }));
+    expect(taskPageState(pageState, 't1').view).toEqual({ kind: 'conversation', sessionId: 's1', selectionRequired: false });
   });
 
   it('remembers the active Hub across a remount', async () => {

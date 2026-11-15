@@ -42,7 +42,8 @@ export type ForkAdoptionOutcome = 'adopted' | 'ignored' | 'failed' | 'cancelled'
 const DEFAULT_ATTEMPTS = 6;
 const DEFAULT_RETRY_DELAY_MS = 500;
 
-function isTaskBusy(error: unknown): boolean {
+/** Whether a failure is the host refusing work while a context operation is pending. */
+export function isTaskBusy(error: unknown): boolean {
   return Boolean(error && typeof error === 'object' && 'code' in error && (error as { code?: unknown }).code === 'TASK_BUSY');
 }
 
@@ -88,7 +89,17 @@ export class ForkAdopter {
     }
   }
 
-  private async run(facts: ForkSessionFacts, signal?: AbortSignal): Promise<ForkAdoptionOutcome> {
+  /**
+   * Adopt like {@link adopt}, but let a failure reason propagate to the caller.
+   *
+   * Adoption is announced and therefore only reportable; a claim is an explicit
+   * request, so its caller must be able to say why it failed.
+   */
+  claim(facts: ForkSessionFacts, signal?: AbortSignal): Promise<ForkAdoptionOutcome> {
+    return this.run(facts, signal, { rethrow: true });
+  }
+
+  private async run(facts: ForkSessionFacts, signal?: AbortSignal, options: { rethrow?: boolean } = {}): Promise<ForkAdoptionOutcome> {
     if (signal?.aborted) return 'cancelled';
     if (!isForkLineage(facts)) return 'ignored';
     // A session already retained by a task is never attached a second time.
@@ -110,6 +121,9 @@ export class ForkAdopter {
         return 'adopted';
       } catch (error) {
         if (!isTaskBusy(error) || attempt >= this.attempts) {
+          // A claim is explicit, so its caller surfaces the real reason instead of a
+          // generic busy failure; an announced adoption only reports it.
+          if (options.rethrow === true) throw error;
           this.report(error);
           return 'failed';
         }

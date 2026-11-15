@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BoardView } from '../../src/client/board.js';
+import { createBoardPageState, taskPageState } from '../../src/client/page-state.js';
+import { openPeek } from '../../src/client/drawer-view.js';
 import { styles } from '../../src/client/styles/index.js';
 import { Configuration } from '../../src/client/settings/configuration.js';
 import { ProjectEditorDialog } from '../../src/client/projects/project-editor-dialog.js';
@@ -323,6 +325,38 @@ function QuestionScenario() {
 }
 
 /**
+ * Mounts the task drawer on a pre-set view state: the transient subagent peek, and
+ * a claimed branch whose attach is still pending or already failed.
+ */
+function DrawerPeekScenario() {
+  const [pageState] = useState(() => {
+    const state = createBoardPageState();
+    state.selectedTaskId = 'closed';
+    const page = taskPageState(state, 'closed');
+    // A claim is pending work over a task conversation, never over a subagent peek.
+    const claim = query.get('claim');
+    page.view = claim === null
+      ? openPeek(
+        { kind: 'conversation', sessionId: 's-closed', selectionRequired: false },
+        { parentSessionId: 's-closed', sessionId: 'child-subagent', mode: 'continuable' },
+      )
+      : { kind: 'conversation', sessionId: 's-closed', selectionRequired: false };
+    if (claim === 'pending') page.claim = { sessionId: 'fork-session' };
+    if (claim === 'failed') page.claim = { sessionId: 'fork-session', error: 'The task stayed busy while the branch was attached. Try again.' };
+    return state;
+  });
+  return <BoardView
+    api={harness.api}
+    pageState={pageState}
+    onOpenSession={() => {}}
+    renderConversation={(id, mode) => <div data-native={id} data-surface-mode={mode ?? 'conversation'} style={{ display: 'grid', gap: 6, alignContent: 'start', padding: 16, height: '100%', boxSizing: 'border-box' }}>
+      <strong>{mode === 'peek' ? 'Subagent conversation' : 'Task conversation'}</strong>
+      <span style={{ opacity: 0.7 }}>{id}</span>
+    </div>}
+  />;
+}
+
+/**
  * Mounts the board with a control that hides and shows it, so a spec can prove a
  * dismissal survives the panel switch that used to undo it.
  */
@@ -374,6 +408,7 @@ function App() {
   if (scenario === 'relocation-board') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;
   if (scenario === 'retained' || scenario === 'retained-many') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><RetainedScenario /></div></>;
   if (scenario === 'sharing') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;
+  if (scenario === 'drawer-peek') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><DrawerPeekScenario /></div></>;
   if (scenario === 'question') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban"><QuestionScenario /></div></>;
   if (scenario === 'task-message') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><TaskMessageScenario /></div></>;
   return <BoardView api={harness.api} renderConversation={id => <div data-native={id} />} />;
