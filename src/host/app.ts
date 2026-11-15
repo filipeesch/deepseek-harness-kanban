@@ -42,7 +42,8 @@ import { prepareFirstExecution } from './first-execution.js';
 import { worktreeDecision } from '../domain/first-execution.js';
 import { firstOpenSessionId } from '../shared/conversations.js';
 import { admitStageInstruction, type StageInstructionDeps } from './stage-instruction.js';
-import { requiresWorktreeDecision, unresolvedWorktreeBinding } from '../shared/worktree-decision.js';
+import { createsDefaultWorktree, requiresWorktreeDecision, unresolvedWorktreeBinding } from '../shared/worktree-decision.js';
+import { worktreePolicy } from '../shared/worktree-policy.js';
 import { HubRepository, HubStore } from './hub-repository.js';
 import { BoardAdministration, type BoardRevisionPort, type BoardSharingPort } from './board-administration.js';
 import type { LocatedTask, TaskSummary } from './hub-repository.js';
@@ -914,13 +915,22 @@ export class KanbanApp {
   }
  }
  private async createConversationNow(taskId:string,options:{allowUndecided?:boolean;ensureFirst?:boolean}={}):Promise<CreatedConversation>{
-  this.assertContext(taskId);const located=this.locatedTask(taskId);const store=this.hubs.hub(located.hubId);const before=located.task;const project=located.project;
+  this.assertContext(taskId);let located=this.locatedTask(taskId);const store=this.hubs.hub(located.hubId);let before=located.task;const project=located.project;
   this.assertProjectRelocation(project,'creating a conversation');
   // A first-start request queued behind a message preparation must reuse the
   // conversation that preparation created; an explicit plus action never sets this.
   if(options.ensureFirst===true){const existing=firstOpenSessionId(before);if(existing!==undefined)return {sessionId:existing};}
   invariant(!(options.allowUndecided===true&&before.sessionIds.length===0&&unresolvedWorktreeBinding(before,project)),'WORKTREE_BINDING_UNRESOLVED','Resolve the worktree binding in the Git section before starting the first conversation.');
   invariant(options.allowUndecided===true||!requiresWorktreeDecision(before,project),'WORKTREE_DECISION_REQUIRED','Choose whether to create a worktree or continue in the base project before starting the first conversation.');
+  // A project whose policy always creates a worktree resolves that choice itself, so an
+  // explicit first conversation cannot silently run in the base project and strand the
+  // task without the worktree its policy promises.
+  if(worktreePolicy(project)==='always'&&before.sessionIds.length===0&&createsDefaultWorktree(before,project)){
+   const defaults=await this.worktreeDefaultsFor(before);
+   if(defaults.kind==='unavailable')throw new KanbanError(defaults.reason.code,defaults.reason.message,defaults.reason.details);
+   await this.worktrees.request(taskId,{kind:'create',mode:'new',path:defaults.path,branchName:defaults.branchName,...(defaults.sourceBranch===undefined?{}:{sourceBranch:defaults.sourceBranch})});
+   located=this.locatedTask(taskId);before=located.task;
+  }
   const projectDirectory=requireProjectPath(project);const workspaceId=await this.workspaceCoordinator?.ensureTaskWorkspace(located.hubId,before,project);const id=await this.sessions.create(projectDirectory,workspaceId);
   try{
    if(before.effectiveCwd!==projectDirectory)await this.sessions.setDirectory(id,before.effectiveCwd);

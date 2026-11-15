@@ -26,7 +26,7 @@ export const drawerHeaderStyles = String.raw`
 .dsh-kanban .kb-worktree-line-facts{display:flex;align-items:center;gap:2px;min-width:0;opacity:.78;overflow:hidden}
 .dsh-kanban .kb-worktree-line-facts code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:180px}
 .dsh-kanban .kb-worktree-line-actions{flex:1 1 auto;min-width:0;flex-wrap:wrap;gap:4px}
-.dsh-kanban .kb-worktree-line .kb-error{flex-basis:100%}
+.dsh-kanban .kb-worktree-line .kb-error{flex-basis:100%}.dsh-kanban .kb-worktree-line .kb-hint{flex-basis:100%;margin:0}
 @container (max-width:560px){.dsh-kanban .kb-drawer-header{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"title actions" "nav stage";gap:6px 8px;padding:8px 10px}.dsh-kanban .kb-drawer-title{justify-content:flex-start}.dsh-kanban .kb-drawer-project{max-width:50%}.dsh-kanban .kb-stage-select{max-width:132px}}
 @media(prefers-reduced-motion:reduce){.dsh-kanban .kb-activity-dot{animation:none;opacity:1}}
 `;

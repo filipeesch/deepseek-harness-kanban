@@ -20,7 +20,7 @@ const hub: HubState = {
 
 function mount(hubValue: HubState | null) {
   const run = vi.fn(async (_command: Command) => ({}) as KanbanSnapshot);
-  return { run, ...render(<Configuration state={null} hub={hubValue} board={null} hubCount={1} settingsRevision={0} run={run} onClose={vi.fn()} />) };
+  return { run, ...render(<Configuration hub={hubValue} hubCount={1} settingsRevision={0} run={run} onClose={vi.fn()} />) };
 }
 
 describe('Configuration Schedules section', () => {
@@ -44,7 +44,7 @@ describe('Configuration Schedules section', () => {
     const onOpenSession = vi.fn();
     const run = vi.fn(async (_command: Command) => ({}) as KanbanSnapshot);
     const runtime = { schedule: { running: false, lastRun: { status: 'sent' as const, at: now, manual: false, sessionId: 'session-1' } } };
-    render(<Configuration state={null} hub={hub} board={null} hubCount={1} settingsRevision={0} run={run} onClose={vi.fn()} scheduleRuntime={runtime} onOpenSession={onOpenSession} />);
+    render(<Configuration hub={hub} hubCount={1} settingsRevision={0} run={run} onClose={vi.fn()} scheduleRuntime={runtime} onOpenSession={onOpenSession} />);
     await user.click(screen.getByRole('tab', { name: 'Schedules' }));
     await user.click(screen.getByRole('button', { name: 'Open conversation' }));
     expect(onOpenSession).toHaveBeenCalledWith('session-1');

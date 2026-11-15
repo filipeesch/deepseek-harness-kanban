@@ -84,3 +84,23 @@ describe('executionPreparationPlan', () => {
     });
   });
 });
+
+describe('executionPreparationPlan under a project worktree policy', () => {
+  const always: Project = { ...gitProject, worktreePolicy: 'always' };
+  const never: Project = { ...gitProject, worktreePolicy: 'never' };
+
+  it('creates the derived default without asking under Always create', () => {
+    expect(plan({}, always, true)).toEqual({ worktree: 'create-default', model: true });
+    expect(plan({}, always, false)).toEqual({ worktree: 'create-default', model: false });
+  });
+
+  it('asks nothing under Never, keeping only whatever remains', () => {
+    expect(plan({}, never, true)).toEqual({ worktree: 'none', model: true });
+    expect(plan({}, never, false)).toBeNull();
+  });
+
+  it('still blocks on a binding that is not ready under either policy', () => {
+    expect(plan({ worktree: preparing }, always, true)).toEqual({ worktree: 'blocked', model: false });
+    expect(plan({ worktree: failed }, never, true)).toEqual({ worktree: 'blocked', model: false });
+  });
+});

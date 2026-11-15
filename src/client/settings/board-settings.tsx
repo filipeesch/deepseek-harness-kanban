@@ -33,7 +33,9 @@ export interface BoardSettingsProps {
 }
 
 /**
- * The Board section of Configuration: five focused panels behind one sub-tab row.
+ * One board's configuration: five focused panels behind one sub-tab row, presented by the
+ * overlay that the Boards section opens. The board is the one the overlay targets, which
+ * is not necessarily the page's active board.
  *
  * Each panel owns its own form and reports only its own draft. The container owns
  * the navigation, so leaving a panel that would lose its draft asks first; the

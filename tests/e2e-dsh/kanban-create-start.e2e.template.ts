@@ -67,7 +67,9 @@ it('starts the first execution on creation, cancels a Git start, and preserves t
   await gitDialog.getByRole('button', { name: 'Save project' }).click();
   await expect(page.getByText('Project saved.')).toBeVisible();
 
-  await page.getByRole('tab', { name: 'Board' }).click();
+  await page.getByRole('tab', { name: 'Boards' }).click();
+  await page.getByRole('button', { name: /^Edit board / }).click();
+  await page.getByRole('tab', { name: 'Workflow' }).click();
   const editor = page.locator('.cm-content');
   await editor.click();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
@@ -75,6 +77,7 @@ it('starts the first execution on creation, cancels a Git start, and preserves t
   await expect(page.getByRole('button', { name: 'Save workflow' })).toBeEnabled();
   await page.getByRole('button', { name: 'Save workflow' }).click();
   await expect(page.getByText('Workflow saved.')).toBeVisible();
+  await page.getByRole('button', { name: /^Close Board configuration · / }).click();
   await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
 
   await page.clock.install({ time: new Date() });

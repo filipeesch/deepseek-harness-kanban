@@ -329,3 +329,42 @@ describe('ExecutionPreparationController', () => {
     expect(fake.createConversation).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('ExecutionPreparationController under an Always create project', () => {
+  const alwaysProject: Project = { ...gitProject, worktreePolicy: 'always' };
+
+  it('creates the derived default and provisions the conversation without asking', async () => {
+    const fake = ports();
+    const controller = controllerWith(fake);
+    await expect(controller.open(request({ project: alwaysProject }))).resolves.toBe(true);
+    expect(fake.createWorktree).toHaveBeenCalledWith('t1', { mode: 'new', branchName: 'alpha-task', path: '/trees/alpha-task', sourceBranch: 'main' });
+    expect(fake.dismissWorktree).not.toHaveBeenCalled();
+    expect(fake.createConversation).toHaveBeenCalledWith('t1');
+    expect(controller.getSnapshot().phase).toBe('closed');
+  });
+
+  it('asks instead when the defaults cannot be derived, keeping the failure visible', async () => {
+    const fake = ports({ defaults: vi.fn(async () => ({ kind: 'unavailable' as const, reason: { code: 'WORKTREE_NAME_UNAVAILABLE', message: 'No name.' } })) });
+    const controller = controllerWith(fake);
+    const pending = controller.open(request({ project: alwaysProject }));
+    await atPhase(controller, 'worktree');
+    expect(controller.getSnapshot().error).toMatchObject({ code: 'WORKTREE_NAME_UNAVAILABLE' });
+    expect(controller.getSnapshot().destinationMissing).toBe(true);
+    expect(fake.createWorktree).not.toHaveBeenCalled();
+    controller.answerWorktree(false);
+    await expect(pending).resolves.toBe(true);
+    expect(fake.dismissWorktree).toHaveBeenCalledWith('t1');
+    expect(fake.createConversation).toHaveBeenCalledWith('t1');
+  });
+
+  it('asks instead when the derived destination is invalid', async () => {
+    const fake = ports({ defaults: vi.fn(async () => ({ kind: 'derived' as const, branchName: 'alpha-task', path: '' })) });
+    const controller = controllerWith(fake);
+    const pending = controller.open(request({ project: alwaysProject }));
+    await atPhase(controller, 'worktree');
+    expect(controller.getSnapshot().destinationMissing).toBe(true);
+    expect(fake.createWorktree).not.toHaveBeenCalled();
+    controller.cancel();
+    await expect(pending).resolves.toBe(false);
+  });
+});

@@ -3,6 +3,7 @@ import type { Board, ClientApi, HubState } from '../../../shared/types.js';
 import { displayPreset } from '../../agent-preset-roster.js';
 import { useAgentPresetPort } from '../../agent-preset-context.js';
 import { NativeModelField } from '../../model/native-model-field.js';
+import { SegmentedControl } from '../../segmented.js';
 import { ErrorNotice, type RunCommand } from '../../ui.js';
 import type { NativeSeat } from '../../native-slot-host.js';
 import { useBoardDefaults } from './use-board-defaults.js';
@@ -49,20 +50,27 @@ export function BoardDefaultsPanel({ hub, board, run, api, yaml, baseRevision, w
 
     <fieldset className="kb-fieldset" aria-label="Board default model">
       <legend>Default model</legend>
-      <label className="kb-choice"><input type="radio" name={id + '-model'} checked={controller.mode === 'host'} disabled={controller.pending} onChange={controller.chooseHostModel} /> Host default model</label>
-      <label className="kb-choice"><input type="radio" name={id + '-model'} checked={controller.mode === 'specific'} disabled={controller.pending} onChange={controller.chooseSpecificModel} /> Specific model</label>
+      <SegmentedControl
+        label="Default model mode"
+        value={controller.mode}
+        options={[{ value: 'host', label: 'Host default' }, { value: 'specific', label: 'Specific model' }]}
+        disabled={controller.pending}
+        onChange={mode => mode === 'host' ? controller.chooseHostModel() : controller.chooseSpecificModel()}
+      />
+      {/* The selector stays in place in both modes and is disabled under the host default,
+          so switching the mode never moves or resizes this panel. */}
+      <NativeModelField
+        seat={seat}
+        value={controller.selection}
+        catalog={controller.catalog.catalog}
+        catalogError={controller.catalog.error}
+        catalogLoading={controller.catalog.loading}
+        onChange={controller.chooseModel}
+        onRetry={controller.catalog.reload}
+        disabled={controller.pending || controller.mode === 'host'}
+        subject="board"
+      />
       {controller.mode === 'specific' && <>
-        <NativeModelField
-          seat={seat}
-          value={controller.selection}
-          catalog={controller.catalog.catalog}
-          catalogError={controller.catalog.error}
-          catalogLoading={controller.catalog.loading}
-          onChange={controller.chooseModel}
-          onRetry={controller.catalog.reload}
-          disabled={controller.pending}
-          subject="board"
-        />
         {controller.selection === undefined && <p className="kb-hint" role="status">Choose a model or switch to the host default before saving.</p>}
         {controller.storedModelMissing && controller.storedModel !== undefined && <p className="kb-hint" role="status">The board's stored model, {controller.storedModel.provider} · {controller.storedModel.model}, is not offered by this host. It is kept until another route is chosen.</p>}
         {controller.catalog.error !== null && <p className="kb-hint" role="status">The model catalog is unavailable: {controller.catalog.error.message} <button type="button" className="kb-button" disabled={controller.pending} onClick={controller.catalog.reload}>Retry models</button></p>}

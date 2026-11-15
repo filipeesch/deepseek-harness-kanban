@@ -6,7 +6,7 @@ import { STAGE_MIN_SIZE, STAGE_SIZE_LIMIT } from './stage-size.js';
 import { PROJECT_KEY_PATTERN } from './project-key.js';
 import { transitionRule as normalizeTransitionRule } from './transition-rule.js';
 import { isAbsolutePath, isDomainId } from './validation.js';
-import { AUTO_MODE_PAUSE_REASONS, HUB_RELATION_TYPES } from '../shared/types.js';
+import { AUTO_MODE_PAUSE_REASONS, HUB_RELATION_TYPES, WORKTREE_POLICIES } from '../shared/types.js';
 import { ANCHOR_POINTS_PER_SIDE, CONNECTION_OFFSET_LIMIT } from './connection-anchor.js';
 import { taskHistorySchema } from './task-history/entry.js';
 
@@ -155,7 +155,7 @@ export const projectKey = z.string().refine(value => PROJECT_KEY_PATTERN.test(va
 const projectFields = {
   id, name: nonempty,
   projectPath: absolutePath.optional(),
-  gitRootPath: absolutePath.optional(), defaultBranch: nonempty.optional(), workspaceId: id.optional(), workspaceOwned: z.boolean().optional(), operation: projectRelocation.optional(),
+  gitRootPath: absolutePath.optional(), defaultBranch: nonempty.optional(), workspaceId: id.optional(), workspaceOwned: z.boolean().optional(), worktreePolicy: z.enum(WORKTREE_POLICIES).optional(), operation: projectRelocation.optional(),
   /** Present only on a placeholder created from a received document. */
   origin: z.literal('published').optional(),
 };

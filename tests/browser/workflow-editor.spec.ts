@@ -1,9 +1,16 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+
+/** Board configuration is reached from the Boards section: Edit opens it over the list. */
+async function openBoard(page: Page): Promise<void> {
+  await page.getByRole('button', { name: /^Edit board / }).click();
+  await page.getByRole('tablist', { name: 'Board configuration sections' }).waitFor();
+}
 
 const HARNESS = new URL('./.tmp/index.html', import.meta.url).href;
 
 test('real CodeMirror validates YAML, saves, and expands', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=workflow');
+  await openBoard(page);
   await page.getByRole('tablist', { name: 'Board configuration sections' }).getByRole('tab', { name: 'Workflow' }).click();
   const editor = page.locator('.cm-content');
   await expect(editor).toHaveAttribute('contenteditable', 'true');

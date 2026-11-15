@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { Project, ProjectInput, ProjectLocationPaths, RegisteredProject } from '../shared/types.js';
+import { WORKTREE_POLICIES } from '../shared/types.js';
+import type { Project, ProjectInput, ProjectLocationPaths, RegisteredProject, WorktreePolicy } from '../shared/types.js';
 import { allocateProjectKey, requireProjectKey } from './project-key.js';
 
 /** The task facts that make a Git-association change unsafe while work is in flight. */
@@ -35,6 +36,17 @@ export function projectGitRoot(input: ProjectInput): string | undefined {
   invariant(typeof input.gitRootPath === 'string', 'INVALID_INPUT', 'Git root must be text.');
   const value = input.gitRootPath.trim();
   return value.length > 0 ? value : undefined;
+}
+
+/**
+ * The project's worktree policy: an omitted value keeps the stored one, and a new
+ * project without one defaults to Ask. Only the three defined states are accepted.
+ */
+function projectWorktreePolicy(input: ProjectInput, current?: Project): WorktreePolicy | undefined {
+  if (input.worktreePolicy === undefined) return current?.worktreePolicy;
+  invariant(typeof input.worktreePolicy === 'string' && (WORKTREE_POLICIES as readonly string[]).includes(input.worktreePolicy),
+    'INVALID_INPUT', 'Worktree policy must be ask, always, or never.');
+  return input.worktreePolicy;
 }
 
 function busyTasks(state: ProjectRegistrationState, projectId: string): ProjectRegistrationTask[] {
@@ -114,9 +126,11 @@ export function buildProject(projectId: string, input: ProjectInput, current?: P
     throw new KanbanError('PROJECT_KEY_CONFLICT', 'Another project of this Hub already uses this key.', { projectKey: requested });
   }
   const projectKey = requested ?? current?.projectKey ?? allocateProjectKey(input.name, taken);
+  const worktreePolicy = projectWorktreePolicy(input, current);
   const project: RegisteredProject = {
     id: projectId, name: input.name.trim(), projectPath: input.projectPath, projectKey,
     ...(gitRootPath === undefined ? {} : { gitRootPath }),
+    ...(worktreePolicy === undefined ? {} : { worktreePolicy }),
     ...(current?.workspaceId ? { workspaceId: current.workspaceId } : {}),
     ...(current?.workspaceOwned !== undefined ? { workspaceOwned: current.workspaceOwned } : {}),
     ...(current?.operation ? { operation: current.operation } : {}),

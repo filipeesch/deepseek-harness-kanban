@@ -2,8 +2,8 @@ import type { ModelCatalog, ModelSelection, Project, Task } from '../../shared/t
 import { modelIsAvailable } from '../../domain/model-preference.js';
 import { planFirstExecution } from '../../domain/first-execution.js';
 
-/** The worktree part of a preparation: ask, blocked by a binding, or nothing. */
-export type PreparationWorktree = 'ask' | 'blocked' | 'none';
+/** The worktree part of a preparation: ask, create the derived default, blocked by a binding, or nothing. */
+export type PreparationWorktree = 'ask' | 'create-default' | 'blocked' | 'none';
 
 /** What the board has already settled about the model its conversations start on. */
 export interface PreparationModel {
@@ -44,6 +44,6 @@ export function executionPreparationPlan(
   const needsSeat = modelSeatAvailable && !modelIsAvailable(model.catalog ?? undefined, model.boardModel);
   const plan = planFirstExecution({ task, project, modelSeatAvailable: needsSeat, mode: 'interactive' });
   if (plan === null) return null;
-  const worktree: PreparationWorktree = plan.worktree === 'ask' ? 'ask' : plan.worktree === 'blocked' ? 'blocked' : 'none';
+  const worktree: PreparationWorktree = plan.worktree === 'ask' ? 'ask' : plan.worktree === 'blocked' ? 'blocked' : plan.worktree === 'create-default' ? 'create-default' : 'none';
   return { worktree, model: plan.model };
 }

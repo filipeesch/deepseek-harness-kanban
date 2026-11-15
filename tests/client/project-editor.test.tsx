@@ -87,12 +87,38 @@ describe('project editor detection', () => {
     await user.clear(screen.getByRole('textbox', { name: 'Git root' }));
     await user.click(screen.getByRole('button', { name: 'Save project' }));
     await waitFor(() => expect(mock.command).toHaveBeenLastCalledWith(expect.objectContaining({
-      type: 'project.save', project: { id: 'p2', name: 'Web', projectKey: 'p2', projectPath: '/web' }, expectedRevision: 1,
+      type: 'project.save', project: { id: 'p2', name: 'Web', projectKey: 'p2', projectPath: '/web', worktreePolicy: 'ask' }, expectedRevision: 1,
     })));
   });
 
   it('shows the initial detection prompt before anything is chosen', async () => {
     await openEditor();
     expect(screen.getByText('Choose or type a project folder to detect its Git repository.')).toBeTruthy();
+  });
+});
+
+describe('project editor worktree policy', () => {
+  it('explains each state and saves the chosen policy', async () => {
+    const { mock, user } = await openEditor();
+    await user.type(screen.getByRole('textbox', { name: 'Project name' }), 'Worker');
+    await user.type(screen.getByRole('textbox', { name: 'Project path' }), '/repo/apps/worker');
+    expect(screen.getByText('Each task asks once, before its first execution, whether to create a worktree.')).toBeTruthy();
+    await user.click(screen.getByRole('radio', { name: 'Never' }));
+    expect(screen.getByText('Tasks use the project directory. The worktree notice is not shown and no worktree is created.')).toBeTruthy();
+    await user.click(screen.getByRole('radio', { name: 'Always create' }));
+    expect(screen.getByText('New tasks start on a worktree created from the title-derived defaults, without asking.')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Save project' }));
+    await waitFor(() => expect(mock.command).toHaveBeenCalledWith(expect.objectContaining({ type: 'project.save', project: expect.objectContaining({ worktreePolicy: 'always' }) })));
+  });
+
+  it('opens an existing project on its stored policy', async () => {
+    const mock = fakeApi();
+    const user = userEvent.setup();
+    render(<BoardView api={mock.api} renderConversation={() => null} />);
+    await screen.findByRole('button', { name: 'Open task Alpha task' });
+    await user.click(screen.getByRole('button', { name: 'Configuration' }));
+    await user.click(screen.getByRole('tab', { name: 'Projects' }));
+    await user.click(screen.getByRole('button', { name: 'Edit project API' }));
+    expect(screen.getByRole('radio', { name: 'Ask' }).getAttribute('aria-checked')).toBe('true');
   });
 });

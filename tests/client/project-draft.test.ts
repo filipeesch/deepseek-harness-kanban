@@ -41,12 +41,18 @@ describe('project draft detection', () => {
 describe('project draft payload', () => {
   it('omits a blank Git root and a branch without a Git root', () => {
     const draft = { ...createProjectDraft(), name: 'Notes', projectPath: '/plain/notes', defaultBranch: 'main' };
-    expect(toProjectInput(draft)).toEqual({ name: 'Notes', projectPath: '/plain/notes' });
+    expect(toProjectInput(draft)).toEqual({ name: 'Notes', projectPath: '/plain/notes', worktreePolicy: 'ask' });
   });
 
   it('sends the Git root and branch when both are present', () => {
     const draft = { ...createProjectDraft(), name: 'Web', projectPath: '/repo/apps/web', gitRootPath: '/repo', defaultBranch: 'main' };
-    expect(toProjectInput(draft)).toEqual({ name: 'Web', projectPath: '/repo/apps/web', gitRootPath: '/repo', defaultBranch: 'main' });
+    expect(toProjectInput(draft)).toEqual({ name: 'Web', projectPath: '/repo/apps/web', gitRootPath: '/repo', defaultBranch: 'main', worktreePolicy: 'ask' });
+  });
+
+  it('carries the stored worktree policy and defaults a new project to Ask', () => {
+    expect(createProjectDraft().worktreePolicy).toBe('ask');
+    const stored = createProjectDraft({ id: 'p', projectKey: 'p', name: 'Web', projectPath: '/repo', worktreePolicy: 'never' });
+    expect(toProjectInput(stored).worktreePolicy).toBe('never');
   });
 
   it('requires a name and an absolute project path', () => {

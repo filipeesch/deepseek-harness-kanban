@@ -1,5 +1,6 @@
 import type { Project, Task, Workflow } from '../shared/types.js';
-import { requiresWorktreeDecision, unresolvedWorktreeBinding } from '../shared/worktree-decision.js';
+import { createsDefaultWorktree, unresolvedWorktreeBinding } from '../shared/worktree-decision.js';
+import { worktreePolicy } from '../shared/worktree-policy.js';
 import { entryInstruction } from './stage-entry.js';
 
 /** How a first execution is being prepared: an interactive dialog or the automatic creation path. */
@@ -49,22 +50,25 @@ function unresolvedEntry(input: FirstExecutionInput): FirstExecutionEntry | null
  * The worktree decision for a task that is about to receive its first execution
  * context: a blocked binding, a default creation, a recorded base project, or no
  * choice at all. The message preparation and the automatic first execution share
- * this rule instead of duplicating it.
+ * this rule instead of duplicating it. The project's worktree policy decides whether
+ * the task would have been asked: Ask and Always create both start on the default
+ * worktree, and Never starts on the base project.
  */
 export function worktreeDecision(
   task: Pick<Task, 'sessionIds' | 'worktree' | 'worktreeDismissed'>,
   project: Project | undefined,
 ): Exclude<FirstExecutionWorktree, 'ask'> {
   if (unresolvedWorktreeBinding(task, project)) return 'blocked';
-  if (requiresWorktreeDecision(task, project)) return 'create-default';
+  if (createsDefaultWorktree(task, project)) return 'create-default';
   if (task.worktreeDismissed === true) return 'base';
   return 'none';
 }
 
 /**
  * Decide one first execution. Interactive reproduces the execution-preparation
- * gate: ask for the worktree only while the choice is genuinely unresolved, block
- * on a binding that is not ready, and otherwise present whatever remains. Automatic
+ * gate: ask for the worktree while the project's policy leaves the choice to the
+ * task, create the derived default without asking under Always create, block on a
+ * binding that is not ready, and otherwise present whatever remains. Automatic
  * uses the default worktree and never asks; it starts only when the creation
  * requested it, the instructed entry is unresolved, and no conversation exists.
  */
@@ -73,7 +77,9 @@ export function planFirstExecution(input: FirstExecutionInput): FirstExecutionPl
   if (input.mode === 'interactive') {
     if (task.sessionIds.length > 0) return null;
     if (unresolvedWorktreeBinding(task, project)) return { start: false, worktree: 'blocked', model: false, entry: null };
-    const worktree: FirstExecutionWorktree = requiresWorktreeDecision(task, project) ? 'ask' : 'none';
+    const worktree: FirstExecutionWorktree = createsDefaultWorktree(task, project)
+      ? worktreePolicy(project) === 'always' ? 'create-default' : 'ask'
+      : 'none';
     if (worktree === 'none' && !input.modelSeatAvailable) return null;
     return { start: false, worktree, model: input.modelSeatAvailable, entry: null };
   }

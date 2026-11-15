@@ -89,9 +89,22 @@ describe('the board defaults panel', () => {
     expect(await screen.findByText('Defaults saved.')).toBeTruthy();
   });
 
+  it('keeps the native selector in place while the mode changes', async () => {
+    const { user } = harness();
+    // Always create renders the selector; the stored default is the host mode here.
+    expect(screen.getByRole('radio', { name: 'Host default' }).getAttribute('aria-checked')).toBe('true');
+    expect(await screen.findByTestId('native-current')).toBeTruthy();
+    await user.click(screen.getByRole('radio', { name: 'Specific model' }));
+    expect(screen.getByTestId('native-current')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Choose Chat' }));
+    expect(screen.getByTestId('native-current').textContent).toBe('deepseek · chat');
+    await user.click(screen.getByRole('radio', { name: 'Host default' }));
+    expect(screen.getByTestId('native-current').textContent).toBe('deepseek · chat');
+  });
+
   it('keeps the host defaults by removing both root fields', async () => {
     const { user, run } = harness({ stored: { model: { provider: 'deepseek', model: 'reason' }, preset: 'standard' } });
-    await user.click(screen.getByRole('radio', { name: 'Host default model' }));
+    await user.click(screen.getByRole('radio', { name: 'Host default' }));
     await user.click(screen.getByRole('radio', { name: /Host default preset/ }));
     await user.click(saveButton());
     await waitFor(() => expect(run).toHaveBeenCalledTimes(1));

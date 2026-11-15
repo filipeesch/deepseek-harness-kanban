@@ -30,7 +30,8 @@ it('edits a grouped workflow, grows columns, and animates the drawer', async () 
   await expect(projectDialog.getByText('No Git repository found')).toBeVisible();
   await projectDialog.getByRole('button', { name: 'Save project' }).click();
   await expect(page.getByText('Project saved.')).toBeVisible();
-  await page.getByRole('tab', { name: 'Board' }).click();
+  await page.getByRole('tab', { name: 'Boards' }).click();
+  await page.getByRole('button', { name: /^Edit board / }).click();
   await page.getByRole('tablist', { name: 'Board configuration sections' }).getByRole('tab', { name: 'Workflow' }).click();
   const editor = page.locator('.cm-content');
   await editor.click();
@@ -39,6 +40,7 @@ it('edits a grouped workflow, grows columns, and animates the drawer', async () 
   await expect(page.getByRole('button', { name: 'Save workflow' })).toBeEnabled();
   await page.getByRole('button', { name: 'Save workflow' }).click();
   await expect(page.getByText('Workflow saved.')).toBeVisible();
+  await page.getByRole('button', { name: /^Close Board configuration · / }).click();
   await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
 
   for (let index = 0; index < 10; index += 1) {
@@ -153,13 +155,15 @@ it('restricts which projects create tasks on a board and closes it to creation',
 
   // Restrict the board to one project.
   await page.getByRole('button', { name: 'Configuration' }).click();
-  await page.getByRole('tab', { name: 'Board' }).click();
+  await page.getByRole('tab', { name: 'Boards' }).click();
+  await page.getByRole('button', { name: /^Edit board / }).click();
   await page.getByRole('tablist', { name: 'Board configuration sections' }).getByRole('tab', { name: 'Projects' }).click();
   const scope = page.getByRole('group', { name: 'Board project scope' });
   await scope.getByRole('radio', { name: 'Selected projects' }).check();
   await scope.getByRole('checkbox', { name: 'Harness', exact: true }).check();
   await scope.getByRole('button', { name: 'Save project scope' }).click();
   await expect(page.getByText('Project scope saved.')).toBeVisible();
+  await page.getByRole('button', { name: /^Close Board configuration · / }).click();
   await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
 
   const newTask = async (): Promise<void> => { await page.getByRole('button', { name: 'New task' }).first().click(); };
@@ -194,13 +198,15 @@ it('restricts which projects create tasks on a board and closes it to creation',
 
   // Selecting no project closes the board to creation.
   await page.getByRole('button', { name: 'Configuration' }).click();
-  await page.getByRole('tab', { name: 'Board' }).click();
+  await page.getByRole('tab', { name: 'Boards' }).click();
+  await page.getByRole('button', { name: /^Edit board / }).click();
   await page.getByRole('tablist', { name: 'Board configuration sections' }).getByRole('tab', { name: 'Projects' }).click();
   const reopened = page.getByRole('group', { name: 'Board project scope' });
   await reopened.getByRole('checkbox', { name: 'Harness', exact: true }).uncheck();
   await expect(reopened.getByRole('status')).toContainText('accepts no new task');
   await reopened.getByRole('button', { name: 'Save project scope' }).click();
   await expect(page.getByText('Project scope saved.')).toBeVisible();
+  await page.getByRole('button', { name: /^Close Board configuration · / }).click();
   await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
 
   await newTask();
@@ -230,7 +236,9 @@ it('refuses a team configuration written by a newer plugin version', async () =>
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   // A first connection to an empty folder publishes this Hub in the current layout.
   await expect(page.getByRole('button', { name: 'Refresh' })).toBeVisible();
+  await page.getByRole('tablist', { name: 'Team settings areas' }).getByRole('tab', { name: 'Changes' }).click();
   await expect(page.getByRole('region', { name: 'Changes' })).toBeVisible();
+  await page.getByRole('tablist', { name: 'Team settings areas' }).getByRole('tab', { name: 'Connection' }).click();
 
   // A teammate on a newer plugin publishes a layout this version cannot read.
   await writeFile(documentPath, ['version: 5', ''].join('\n'), 'utf8');

@@ -6,6 +6,9 @@ import type { TaskHistoryEntry } from './task-history.js';
 export type { NewTask, TaskHistoryEntry };
 
 export const DATA_VERSION = 2 as const;
+/** How a project answers the worktree decision its tasks face before their first execution. */
+export const WORKTREE_POLICIES = ['ask', 'always', 'never'] as const;
+export type WorktreePolicy = (typeof WORKTREE_POLICIES)[number];
 export interface Problem { code: string; message: string; details?: Record<string, unknown> }
 /** One project location as it is recorded before, and applied as, a relocation target. */
 export interface ProjectLocationPaths { projectPath: string; gitRootPath?: string; defaultBranch?: string }
@@ -29,6 +32,11 @@ export interface ProjectBase {
   /** Stable identity across boards and installations; unique within its Hub. */
   projectKey: string;
   gitRootPath?: string; defaultBranch?: string; workspaceId?: string; workspaceOwned?: boolean;
+  /**
+   * Absent means Ask. Kept on this installation: it is never part of a published board and is
+   * never received from a team layout.
+   */
+  worktreePolicy?: WorktreePolicy;
   /** Absent means no relocation is recorded. */
   operation?: ProjectRelocation;
 }
@@ -525,7 +533,7 @@ export interface SnapshotRequest {
 /** Client snapshot: host facts plus the client-owned attention projection. State is always merged. */
 export interface KanbanSnapshot extends Omit<HostSnapshot, 'conversations' | 'state'> { state: KanbanState; attention: Record<string, Attention>; conversationAttention: Record<string, Attention>; clientEpoch?: number }
 export const EMPTY_ATTENTION: Attention = { running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
-export interface ProjectInput { id?: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string; projectKey?: string }
+export interface ProjectInput { id?: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string; projectKey?: string; /** Absent keeps the stored policy; a new project defaults to Ask. */ worktreePolicy?: WorktreePolicy }
 export type Command =
   | { type: 'task.deterministicPlay'; taskId: string }
   /** Start a new execution of the current entry; the only action that captures and runs again. */

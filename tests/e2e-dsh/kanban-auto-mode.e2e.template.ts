@@ -68,7 +68,9 @@ it('advances the card and dispatches the next instruction after a completed turn
   await projectDialog.getByRole('button', { name: 'Save project' }).click();
   await visible(page.getByText('Project saved.'));
 
-  await page.getByRole('tab', { name: 'Board' }).click();
+  await page.getByRole('tab', { name: 'Boards' }).click();
+  await page.getByRole('button', { name: /^Edit board / }).click();
+  await page.getByRole('tab', { name: 'Workflow' }).click();
   const editor = page.locator('.cm-content');
   await editor.click();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
@@ -83,6 +85,7 @@ it('advances the card and dispatches the next instruction after a completed turn
   // The saved message is the editor's own state; the board behind the modal is the
   // authoritative proof that the host accepted the workflow.
   await count(page.locator('[data-column-id="review"]'), 1);
+  await page.getByRole('button', { name: /^Close Board configuration · / }).click();
   await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
 
   await page.getByRole('button', { name: 'New task' }).first().click();

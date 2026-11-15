@@ -150,6 +150,11 @@ export class ExecutionPreparationController {
       void this.loadDefaults();
     } else if (plan.worktree === 'blocked') {
       // The dialog only explains the unresolved binding; nothing is provisioned.
+    } else if (plan.worktree === 'create-default') {
+      // The project already settled its own choice: derive the defaults first and fall
+      // back to asking when they cannot be derived, so a preference never blocks.
+      this.set({ pending: true });
+      void this.createDefault();
     } else {
       void this.provision('none');
     }
@@ -193,6 +198,23 @@ export class ExecutionPreparationController {
 
   private draftIsValid(): boolean {
     return this.state.draft !== null && validWorktree(this.state.draft);
+  }
+
+  /**
+   * Create the project's default worktree without asking. The defaults are derived first;
+   * when they are unavailable or invalid the preparation asks instead, keeping the failure
+   * and its retry visible.
+   */
+  private async createDefault(): Promise<void> {
+    const generation = this.generation;
+    await this.loadDefaults();
+    if (generation !== this.generation) return;
+    if (this.state.phase !== 'provisioning') return;
+    if (!this.draftIsValid()) {
+      this.set({ phase: 'worktree', pending: false });
+      return;
+    }
+    await this.provision('create');
   }
 
   private async loadDefaults(): Promise<void> {

@@ -167,7 +167,8 @@ describe('Hub administration confirmations', () => {
     await user.click(within(hubConfirm).getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('alertdialog')).toBeNull();
 
-    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    await user.click(screen.getByRole('tab', { name: 'Boards' }));
+    await user.click(screen.getByRole('button', { name: 'Delete board Second board' }));
     const boardConfirm = screen.getByRole('alertdialog', { name: /Confirm deleting board Second board/ });
     expect(boardConfirm.textContent).toContain('Second board');
     await user.click(within(boardConfirm).getByRole('button', { name: 'Cancel' }));
