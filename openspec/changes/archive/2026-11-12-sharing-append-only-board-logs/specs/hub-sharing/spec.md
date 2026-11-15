@@ -10,7 +10,7 @@ A board key SHALL be assigned when the board first enters the published layout, 
 
 A board that allows every project of its Hub SHALL publish no project scope. A board that allows some projects SHALL publish exactly those project keys and SHALL be able to publish an empty set, which states that the board accepts no new task. Project keys in the published layout are identifiers only. The published layout SHALL NOT contain project records, project paths, Git roots, default branches, tasks, notes, conversations, worktrees, worktree base paths, Hub names, or any other local setting.
 
-A published deterministic stage SHALL carry its authored language, exactly one inline code source or external file reference, directory selector, named exit routes, and requested environment-variable names as workflow configuration. Publishing, checking, and applying that configuration SHALL NOT dereference a script file or publish the file contents captured for a local execution. The published layout SHALL NOT contain resolved local script paths, local credential references or values, executable trust decisions, execution identities, captured run configurations, process state, or execution results. Local variable bindings SHALL remain isolated by local project and stable stage identity; publishing SHALL NOT turn them into project-wide or team-wide bindings.
+A published scripted stage SHALL carry its authored language, exactly one inline code source or external file reference, directory selector, named exit routes, and requested environment-variable names as workflow configuration. Publishing, checking, and applying that configuration SHALL NOT dereference a script file or publish the file contents captured for a local execution. The published layout SHALL NOT contain resolved local script paths, local credential references or values, executable trust decisions, execution identities, captured run configurations, process state, or execution results. Local variable bindings SHALL remain isolated by local project and stable stage identity; publishing SHALL NOT turn them into project-wide or team-wide bindings.
 
 #### Scenario: Publish a board for the first time
 
@@ -58,15 +58,15 @@ A published deterministic stage SHALL carry its authored language, exactly one i
 - **WHEN** the user publishes a workflow containing comments and custom formatting
 - **THEN** the published workflow text in that board's log matches the authored text without normalization
 
-#### Scenario: Publish a deterministic definition without its local authority
+#### Scenario: Publish a scripted definition without its local authority
 
-- **WHEN** a deterministic stage has inline code, named exit routes, requested variable names, locally trusted executable code, and local variable bindings
-- **THEN** that board's log carries the authored deterministic definition and requested names
+- **WHEN** a scripted stage has inline code, named exit routes, requested variable names, locally trusted executable code, and local variable bindings
+- **THEN** that board's log carries the authored scripted definition and requested names
 - **AND** no trust decision, credential reference, credential value, run record, or project-local binding appears in the published layout
 
 #### Scenario: Publish a file reference without resolving its local contents
 
-- **WHEN** a deterministic stage references an external file and a local run has captured that file
+- **WHEN** a scripted stage references an external file and a local run has captured that file
 - **THEN** that board's log carries the authored file reference
 - **AND** publishing does not read or embed the referenced file, its resolved local path, or the run snapshot
 
@@ -87,7 +87,7 @@ Because the log retains every event, the publisher SHALL bound replay: when the 
 
 An event whose kind or format version this installation does not know SHALL NOT be skipped silently. It SHALL stop that board's cursor at that event, SHALL be reported as a board that requires a plugin update, and SHALL NOT prevent another board from being applied.
 
-The event vocabulary SHALL represent a deterministic stage's complete authored definition, including its language, inline code or file reference, directory selection, named exit routes, and requested environment-variable names. Creation, replacement, edits, clearing deterministic configuration, and switching between conventional and deterministic configuration SHALL recover the same valid workflow that was published. Definition changes SHALL be represented without publishing local execution authority or runtime records. Inline source text and external file references SHALL retain their authored meaning and untouched YAML formatting through event application. Retained historical events SHALL keep their original sequence, time, and format-version stamps when new events are appended; a checkpoint SHALL fold no event and SHALL relabel none.
+The event vocabulary SHALL represent a scripted stage's complete authored definition, including its language, inline code or file reference, directory selection, named exit routes, and requested environment-variable names. Creation, replacement, edits, clearing scripted configuration, and switching between conventional and scripted configuration SHALL recover the same valid workflow that was published. Definition changes SHALL be represented without publishing local execution authority or runtime records. Inline source text and external file references SHALL retain their authored meaning and untouched YAML formatting through event application. Retained historical events SHALL keep their original sequence, time, and format-version stamps when new events are appended; a checkpoint SHALL fold no event and SHALL relabel none.
 
 #### Scenario: Append without rewriting the log
 
@@ -137,10 +137,10 @@ The event vocabulary SHALL represent a deterministic stage's complete authored d
 - **THEN** that board's cursor stops at that event and the board reports that the plugin must be updated
 - **AND** another board remains applicable
 
-#### Scenario: Recover deterministic configuration from creation and edits
+#### Scenario: Recover scripted configuration from creation and edits
 
-- **WHEN** a board log creates a deterministic stage and later changes its source, directory, requested variable names, or exit routes
-- **THEN** replay recovers the complete resulting deterministic definition
+- **WHEN** a board log creates a scripted stage and later changes its source, directory, requested variable names, or exit routes
+- **THEN** replay recovers the complete resulting scripted definition
 - **AND** the log contains no local trust, credential bindings or values, or run state
 
 #### Scenario: Keep inline source and external references through a checkpoint
@@ -151,15 +151,15 @@ The event vocabulary SHALL represent a deterministic stage's complete authored d
 
 #### Scenario: Append new grammar without rewriting old event stamps
 
-- **WHEN** a supported log gains deterministic configuration
+- **WHEN** a supported log gains scripted configuration
 - **THEN** retained earlier events keep their sequence numbers, timestamps, and original event format versions
 - **AND** newly appended events state the format they actually use
 
-#### Scenario: Clear deterministic configuration without retaining executable behavior
+#### Scenario: Clear scripted configuration without retaining executable behavior
 
-- **WHEN** a published stage is changed from deterministic configuration to a valid conventional stage
+- **WHEN** a published stage is changed from scripted configuration to a valid conventional stage
 - **THEN** replay produces that conventional configuration
-- **AND** no deterministic definition is retained by an omitted-field or partial-event fallback
+- **AND** no scripted definition is retained by an omitted-field or partial-event fallback
 
 ### Requirement: Layout and event version negotiation
 
@@ -229,7 +229,7 @@ Applying SHALL preserve the authored workflow text of the board. An applied even
 
 After a successful application the stored cursor SHALL advance to the last applied event of that board, and the board SHALL be presented as up to date. Board names, project scopes, and display order SHALL come from the applied identity events, and an identity-only change SHALL be applied without reading or rewriting any board's workflow beyond the log that carries it.
 
-Applying a deterministic stage change SHALL update its authored configuration without authorizing or starting a program. It SHALL NOT replace the script, routes, directory selection, or authorized variable names captured for an existing execution, including the execution recovered after a host restart. For an existing entry with a captured execution, only an explicit Play SHALL replace that execution with one from the latest configuration, subject to local trust and variable admission. A genuine later stage entry SHALL capture the latest configuration under the normal entry-activation rules. A stage rename SHALL preserve the association of local execution records and local variable bindings with that stable stage identity without creating a new execution, granting trust, or copying a binding to another project or stage. A newly created stage that reuses a removed stage identifier SHALL NOT inherit that removed stage's local bindings or trust merely because the identifier matches.
+Applying a scripted stage change SHALL update its authored configuration without authorizing or starting a program. It SHALL NOT replace the script, routes, directory selection, or authorized variable names captured for an existing execution, including the execution recovered after a host restart. For an existing entry with a captured execution, only an explicit Play SHALL replace that execution with one from the latest configuration, subject to local trust and variable admission. A genuine later stage entry SHALL capture the latest configuration under the normal entry-activation rules. A stage rename SHALL preserve the association of local execution records and local variable bindings with that stable stage identity without creating a new execution, granting trust, or copying a binding to another project or stage. A newly created stage that reuses a removed stage identifier SHALL NOT inherit that removed stage's local bindings or trust merely because the identifier matches.
 
 #### Scenario: Apply a team-only change
 
@@ -334,14 +334,14 @@ Applying a deterministic stage change SHALL update its authored configuration wi
 
 #### Scenario: Receive a script update while a run is active
 
-- **WHEN** a team update changes a deterministic stage whose local execution is active
+- **WHEN** a team update changes a scripted stage whose local execution is active
 - **THEN** the authored workflow is updated while the active execution retains its captured configuration
 - **AND** recovery of that execution uses the same captured configuration
 - **AND** only a later explicit Play can adopt the updated configuration
 
 #### Scenario: Preserve local variable isolation through a stage rename
 
-- **WHEN** a team event renames the identifier of a deterministic stage that has local variables in two projects
+- **WHEN** a team event renames the identifier of a scripted stage that has local variables in two projects
 - **THEN** each project retains only its own bindings to the same stable stage identity
 - **AND** the rename grants no additional variable access or executable trust
 
@@ -1408,22 +1408,22 @@ Publishing and receiving SHALL be scoped to one board. Publishing a board SHALL 
 
 ### Requirement: Shared executable configuration carries no local authorization
 
-A shared deterministic definition SHALL NOT grant execution authority to its receiving installation. Saving, publishing, first-connection adoption, applying team updates, and recovery from a board's published log SHALL NOT create executable trust or local variable bindings. Local variable values SHALL remain in the native credential mechanism under their local project-and-stable-stage scope; neither values nor local credential references SHALL be copied through the published layout. Receiving a definition SHALL NOT revoke unrelated local trust or bindings. A stage whose current entry has not been explicitly started SHALL NOT begin a program merely because a received workflow adds or changes its deterministic configuration. Starting a new entry or an explicit Play SHALL still require the local authorization defined for deterministic steps.
+A shared scripted definition SHALL NOT grant execution authority to its receiving installation. Saving, publishing, first-connection adoption, applying team updates, and recovery from a board's published log SHALL NOT create executable trust or local variable bindings. Local variable values SHALL remain in the native credential mechanism under their local project-and-stable-stage scope; neither values nor local credential references SHALL be copied through the published layout. Receiving a definition SHALL NOT revoke unrelated local trust or bindings. A stage whose current entry has not been explicitly started SHALL NOT begin a program merely because a received workflow adds or changes its scripted configuration. Starting a new entry or an explicit Play SHALL still require the local authorization defined for scripted steps.
 
 #### Scenario: A teammate's approval does not authorize local execution
 
-- **WHEN** an installation receives a deterministic stage whose executable version another installation has trusted
+- **WHEN** an installation receives a scripted stage whose executable version another installation has trusted
 - **THEN** receiving the workflow conveys no local trust decision
 - **AND** execution remains subject to the receiving installation's own authorization
 
 #### Scenario: Snapshot recovery does not restore another member's secrets
 
-- **WHEN** a member reconstructs a deterministic board from its published log
+- **WHEN** a member reconstructs a scripted board from its published log
 - **THEN** no local credential binding, credential value, executable trust record, or active run is reconstructed from that layout
 - **AND** existing unrelated local bindings and trust remain unchanged
 
 #### Scenario: Receiving a definition does not manufacture a stage entry
 
-- **WHEN** an existing local task remains in its stage while a team update makes that stage deterministic
+- **WHEN** an existing local task remains in its stage while a team update makes that stage scripted
 - **THEN** applying the configuration does not start a script or create a new task-stage entry
 - **AND** the user can explicitly Play the stage subject to local authorization

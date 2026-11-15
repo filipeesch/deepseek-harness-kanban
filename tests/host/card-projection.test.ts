@@ -16,9 +16,9 @@ function task(overrides: Partial<HubTask> = {}): HubTask {
 
 describe('card projections', () => {
   it('keeps the flow record and the ledger out of the plain card', () => {
-    const projected = plainCard({ ...task(), history: [{ kind: 'created', at: '2026-01-01T00:00:00.000Z', columnId: 'backlog' }], deterministic: { entryId: 'e' } as never });
+    const projected = plainCard({ ...task(), history: [{ kind: 'created', at: '2026-01-01T00:00:00.000Z', columnId: 'backlog' }], scripted: { entryId: 'e' } as never });
     expect('history' in projected).toBe(false);
-    expect('deterministic' in projected).toBe(false);
+    expect('scripted' in projected).toBe(false);
   });
 
   it('omits the description from the compact card and keeps the context in the detail card', () => {

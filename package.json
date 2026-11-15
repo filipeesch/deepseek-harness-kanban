@@ -1,6 +1,6 @@
 {
   "name": "dsh-kanban",
-  "version": "0.35.0",
+  "version": "0.36.0",
   "private": true,
   "type": "module",
   "description": "Task-centered Kanban, worktrees, and native conversations for DeepSeek Harness",
@@ -31,7 +31,7 @@
     "cordis.patch.yml",
     "presets",
     "README.md",
-    "docs/deterministic-steps.md",
+    "docs/scripted-steps.md",
     "THIRD-PARTY-NOTICES.md"
   ],
   "scripts": {

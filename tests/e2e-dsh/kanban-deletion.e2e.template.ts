@@ -50,7 +50,7 @@ async function events(scaffold: WebScaffold, id: SessionId) {
   return await readPersistedEvents(scaffold, id) as Array<{ type: string; data: any }>;
 }
 
-it('deletes a task whose own deterministic subagent child uses the worktree', async () => {
+it('deletes a task whose own scripted subagent child uses the worktree', async () => {
   const sidecarRoot = await mkdtemp(join(tmpdir(), 'dsh-kanban-deletion-'));
   const rootPath = join(sidecarRoot, 'root.jsonl');
   const preparedBase = prepareSessionSnapshotFixtureForComparison(await readFile(BASE_FIXTURE, 'utf8'));

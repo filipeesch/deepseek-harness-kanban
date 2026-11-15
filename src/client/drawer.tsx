@@ -17,10 +17,11 @@ import { resolveNextStageRoute } from '../domain/transition-route.js';
 import type { AutoRunController } from './auto-run.js';
 import { DrawerAutoRunNotice } from './auto-run-view.js';
 import { autoModeView } from './auto-mode.js';
-import { ScriptPanel } from './deterministic-panel.js';
-import { DeterministicHoldNotice } from './deterministic-hold-notice.js';
-import { useScriptSummary } from './deterministic-context.js';
-import { ownedScript, scriptActive } from './deterministic-view.js';
+import { ScriptPanel } from './scripted-panel.js';
+import type { StageEditorTab } from './stage/stage-tabs.js';
+import { ScriptedHoldNotice } from './scripted-hold-notice.js';
+import { useScriptSummary } from './scripted-context.js';
+import { ownedScript, scriptActive } from './scripted-view.js';
 import { DrawerHeader } from './drawer-header.js';
 import { DrawerConversations } from './drawer-conversations.js';
 import type { SessionTitles } from './conversation-label.js';
@@ -34,6 +35,8 @@ interface DrawerProps {
   onClose: () => void;
   onMove: (task: Task, column: Column, beforeTaskId?: string | null) => Promise<boolean>;
   onDanger: (task: Task, type: 'task.delete' | 'worktree.remove') => void;
+  /** Opens the board's stage editor; the script panel asks for its Execution tab. */
+  onEditStage?: (stageId: string, initialTab?: StageEditorTab) => void;
   onToggleAutoMode?: (taskId: string, enabled: boolean) => void;
   autoModePending?: boolean;
   onForce?: (taskId: string) => void;
@@ -48,7 +51,7 @@ const DRAWER_DEFAULT_WIDTH = 620;
 function clampWidth(value: number): number { const max = Math.max(360, (typeof window === 'undefined' ? 1200 : window.innerWidth) * 0.9); return Math.min(Math.max(value, 360), max); }
 function storedWidth(): number { try { const value = Number(window.localStorage.getItem(DRAWER_WIDTH_KEY)); if (Number.isFinite(value) && value > 0) return clampWidth(value === 560 ? DRAWER_DEFAULT_WIDTH : value); } catch { /* storage is optional */ } return clampWidth(DRAWER_DEFAULT_WIDTH); }
 
-export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAttention, state, api, run, autoRun, renderConversation, onClose, onMove, onDanger, onForce, onToggleAutoMode, autoModePending = false, viewState, sessionTitles, conversationLeases, entering = false, closing = false }: DrawerProps) {
+export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAttention, state, api, run, autoRun, renderConversation, onClose, onMove, onDanger, onForce, onToggleAutoMode, autoModePending = false, viewState, sessionTitles, conversationLeases, entering = false, closing = false, onEditStage }: DrawerProps) {
   const script = ownedScript(task, useScriptSummary(task.id));
   const [localViewState] = useState(createTaskPageState); const preferences = viewState ?? localViewState;
   const [section, setSection] = usePageField(preferences, 'section'); const id = useId(); const close = useRef<HTMLButtonElement>(null);
@@ -141,8 +144,8 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
       {task.pendingTransition && <PendingTransitionStatus task={task} run={run} columnName={state.workflow.columns.find(column => column.id === task.pendingTransition?.columnId)?.name ?? task.pendingTransition?.columnId ?? ''} />}
     </div>}
     {stageNotice !== null && <div className="kb-status-stack"><div className="kb-error" role="alert"><strong>The recorded transition is no longer valid</strong><span>{stageNotice}</span></div></div>}
-    {script?.hold && <div className="kb-status-stack"><DeterministicHoldNotice task={task} hold={script.hold} run={run} /></div>}
-    <ScriptPanel task={task} column={state.workflow.columns.find(column => column.id === task.columnId)} projectName={projectName} api={api} run={run} />
+    {script?.hold && <div className="kb-status-stack"><ScriptedHoldNotice task={task} hold={script.hold} run={run} /></div>}
+    <ScriptPanel task={task} column={state.workflow.columns.find(column => column.id === task.columnId)} projectName={projectName} api={api} run={run} {...(onEditStage === undefined ? {} : { onEditStage: () => onEditStage(task.columnId, 'execution') })} />
     {autoRun && !script && <DrawerAutoRunNotice task={task} controller={autoRun} columns={state.workflow.columns} sessionTitles={sessionTitles} />}
     <section className={'kb-drawer-panel ' + (section === 'Conversations' ? 'kb-chat-panel' : '')} role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>
       {section === 'Conversations' && <>{!gitBacked && task.worktree && <p className="kb-hint" role="note" aria-label="Plain checkout">This checkout is no longer Git-managed. Git actions are unavailable and the directory is kept when the task is deleted.</p>}{gitBacked && !task.worktree && !task.worktreeDismissed && <WorktreeNotice task={task} project={project} draft={worktreeDraft} run={run} disabled={blocked} onReview={() => setSection('Git')} />}<DrawerConversations task={task} viewState={preferences} sessionTitles={sessionTitles} run={run} renderConversation={renderConversation} worktreeDecisionRequired={worktreeDecisionRequired} projectUnavailable={project === undefined} conversationAttention={conversationAttention} modelNoticeDismissed={modelNoticeDismissed} onDismissModelNotice={sessionId => setModelNoticeDismissed(current => current.includes(sessionId) ? current : [...current, sessionId])} boardDefaultPreset={state.workflow.agentPreset} presetNoticeDismissed={presetNoticeDismissed} onDismissPresetNotice={sessionId => setPresetNoticeDismissed(current => current.includes(sessionId) ? current : [...current, sessionId])} /></>}

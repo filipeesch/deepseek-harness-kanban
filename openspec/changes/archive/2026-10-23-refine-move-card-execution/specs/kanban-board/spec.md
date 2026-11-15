@@ -53,7 +53,7 @@ The board SHALL move tasks between workflow stages only through drag and drop. A
 **Migration**: Use the card run action to run an instructed stage's instruction, or the drawer stage prefill to insert it into the composer. All moves are organization-only and never run an agent.
 
 ### Requirement: Choose the conversation for an entry instruction
-**Reason**: The board no longer offers a conversation picker when entering an instructed stage. The execution target is deterministic.
+**Reason**: The board no longer offers a conversation picker when entering an instructed stage. The execution target is scripted.
 **Migration**: The card run action uses the task's first open conversation and creates a new conversation when none is open. The drawer prefill uses the active conversation.
 
 ### Requirement: Movement without an entry instruction does not run an agent

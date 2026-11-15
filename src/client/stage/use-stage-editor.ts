@@ -1,10 +1,11 @@
 import { useCallback, useState } from 'react';
-import { useScriptSummaries } from '../deterministic-context.js';
-import { deterministicDraft } from './deterministic-draft.js';
+import { useScriptSummaries } from '../scripted-context.js';
+import { scriptedDraft } from './scripted-draft.js';
 import type { Attention, Column, Task } from '../../shared/types.js';
 import type { RunCommand } from '../ui.js';
 import { useWorkflowSave } from '../workflow-save.js';
-import { draftChanged, draftProblems, duplicateNameWarning, stageDraft, stagePatch, stageRenameBlock, transitionChoices, type StageEditorDraft, type StageEditorProblem, type StageTransitionDraft } from './stage-editor-draft.js';
+import { draftChanged, draftProblems, duplicateNameWarning, stageDraft, stagePatch, stageRenameBlock, transitionChoices, type StageEditorDraft, type StageTransitionDraft } from './stage-editor-draft.js';
+import type { StageProblem } from './stage-problem.js';
 
 export interface StageEditorInput {
   readonly hubId: string;
@@ -25,14 +26,14 @@ export function useStageEditor({ hubId, boardId, revision, column, columns, task
   const [attempted, setAttempted] = useState(false);
   const action = useWorkflowSave(run);
   const otherIds = new Set(transitionChoices(columns, column.id).map(choice => choice.id));
-  const problems: StageEditorProblem[] = draftProblems(draft, otherIds);
+  const problems: StageProblem[] = draftProblems(draft, otherIds);
   const changed = draftChanged(draft, column);
   const warning = duplicateNameWarning(draft, columns, column.id);
-  const deterministic = useScriptSummaries();
-  const renameBlock = stageRenameBlock(tasks, attention, deterministic);
+  const scripted = useScriptSummaries();
+  const renameBlock = stageRenameBlock(tasks, attention, scripted);
 
   const change = useCallback(<K extends keyof StageEditorDraft>(key: K, value: StageEditorDraft[K]) => {
-    setDraft(current => key === 'execution' && value === 'deterministic' ? { ...current, execution: 'deterministic', deterministic: current.deterministic ?? deterministicDraft(), onEnterPrompt: '', mode: 'any', transitions: [] } : { ...current, [key]: value });
+    setDraft(current => key === 'execution' && value === 'scripted' ? { ...current, execution: 'scripted', scripted: current.scripted ?? scriptedDraft(), onEnterPrompt: '', mode: 'any', transitions: [] } : { ...current, [key]: value });
   }, []);
 
   const chooseDestination = useCallback((to: string, chosen: boolean) => {
@@ -48,12 +49,14 @@ export function useStageEditor({ hubId, boardId, revision, column, columns, task
     setDraft(current => ({ ...current, transitions: current.transitions.map(transition => transition.to === to ? { ...transition, when } : transition) }));
   }, []);
 
-  const save = useCallback(async () => {
+  /** Save the draft and report the problems this save validated, even after an await. */
+  const save = useCallback(async (): Promise<readonly StageProblem[]> => {
     setAttempted(true);
-    if (action.pending || problems.length > 0 || !changed) return;
+    if (action.pending || problems.length > 0 || !changed) return problems;
     const result = await action.save({ type: 'board.stage.update', hubId, boardId, stageId: column.id, patch: stagePatch(draft, column), expectedRevision: revision });
     if (result !== null) onSaved();
-  }, [action, changed, column, draft, hubId, boardId, onSaved, problems.length, revision]);
+    return problems;
+  }, [action, changed, column, draft, hubId, boardId, onSaved, problems, revision]);
 
   const transitions: readonly StageTransitionDraft[] = draft.transitions;
   return { draft, change, chooseDestination, changeCondition, transitions, problems, attempted, changed, warning, renameBlock, pending: action.pending, error: action.error, save };

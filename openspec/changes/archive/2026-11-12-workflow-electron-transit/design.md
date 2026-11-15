@@ -8,7 +8,7 @@ See `proposal.md` - Why for the motivation. The current state that shapes the ap
 - The travel is planned from the authoritative task list (`useTravel` keys off `props.state.tasks`) and fires after the commit, while the optimistic override has already placed the card in the destination (`applyOptimistic`, src/client/workflow-view/workflow-view.tsx). The two representations coexist for the whole animation.
 - The travel animation is a Web Animations call owned by a React effect whose dependency array includes `animate`, a default parameter that calls `webAnimations()` per render. Any re-render inside the window cancels the animation and replays it from the source; `fill: 'forwards'` plus `cancel()` is what makes the copy snap back rather than resume.
 - The transit overlay renders inside `ViewportPortal`, so a particle element's coordinates are flow coordinates and its DOM ancestors carry the ReactFlow transform and the diagram's published `--kb-affordance-scale` (set on `.kb-flow-canvas` by `publishMarkScale`).
-- The deterministic exit label is a button in `EdgeLabelRenderer` that opens the stage editor, and it also feeds `hasCondition` in the edge data, which is what currently suppresses the "no condition" mark on those connections.
+- The scripted exit label is a button in `EdgeLabelRenderer` that opens the stage editor, and it also feeds `hasCondition` in the edge data, which is what currently suppresses the "no condition" mark on those connections.
 - jsdom has no Web Animations API, which is why the existing travel tests cannot observe the animation at all.
 
 ## Goals / Non-Goals
@@ -17,8 +17,8 @@ See `proposal.md` - Why for the motivation. The current state that shapes the ap
 
 - One transit per committed stage change, always, regardless of how many times React renders during it.
 - No second representation of a task card at any point of the movement.
-- A transit whose timing is deterministic and testable without a real animation: geometry and duration are pure functions, and the animation itself is declarative.
-- Remove the label plumbing without losing the ability to reach the deterministic stage editor from its connection.
+- A transit whose timing is scripted and testable without a real animation: geometry and duration are pure functions, and the animation itself is declarative.
+- Remove the label plumbing without losing the ability to reach the scripted stage editor from its connection.
 
 **Non-Goals:**
 
@@ -80,9 +80,9 @@ The layer takes its policy, its capability port, and its arrival callback as pro
 
 ### D6. The label leaves the diagram; the routing stays reachable
 
-- `exitLabels` is removed from `CanvasConnection`, the edge data, and `LiveEdge`; the canvas stops folding it into `hasCondition` and publishes a plain `deterministic` flag instead, which the condition mark excludes so no hollow mark appears in the label's place.
-- `EdgeLabelRenderer` use for that button, its styles in src/client/styles/deterministic.ts, and the `aria-label` that named the exits disappear with it.
-- Double-press on a deterministic connection still routes to the stage editor through `openCondition`, and the existing lock gate in the edge component now behaves correctly for those connections: a locked diagram opens nothing, an unlocked one opens the stage editor.
+- `exitLabels` is removed from `CanvasConnection`, the edge data, and `LiveEdge`; the canvas stops folding it into `hasCondition` and publishes a plain `scripted` flag instead, which the condition mark excludes so no hollow mark appears in the label's place.
+- `EdgeLabelRenderer` use for that button, its styles in src/client/styles/scripted.ts, and the `aria-label` that named the exits disappear with it.
+- Double-press on a scripted connection still routes to the stage editor through `openCondition`, and the existing lock gate in the edge component now behaves correctly for those connections: a locked diagram opens nothing, an unlocked one opens the stage editor.
 
 ## Risks / Trade-offs
 
@@ -90,7 +90,7 @@ The layer takes its policy, its capability port, and its arrival callback as pro
 - [A particle in flow coordinates looks wrong at extreme zoom] -> the size uses the diagram's published affordance scale with a clamp, and the trail is expressed relative to the core.
 - [A failed move shows a reverse transit] -> accepted and documented: the card really does return, and the spec already requires the diagram to present that return.
 - [Four DOM nodes per transit] -> bounded by the batch cap of eight, all `pointer-events: none` and `aria-hidden`.
-- [Removing the label removes a visible affordance for the deterministic editor] -> the double-press path and the stage editor remain, and the browser lane keeps a test for it; this is the behavior the owner asked for.
+- [Removing the label removes a visible affordance for the scripted editor] -> the double-press path and the stage editor remain, and the browser lane keeps a test for it; this is the behavior the owner asked for.
 - [The arrival token changes `renderCard`'s identity] -> memoized cards bail out; verified by a browser assertion that a card which did not move does not flash.
 
 ## Migration Plan

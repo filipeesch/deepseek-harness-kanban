@@ -124,9 +124,9 @@ describe('advance arming', () => {
     expect(advanceArmedFor('agent', workflow(), { columnId: 'review', autoMode: { enabled: true } })).toBe(false);
   });
 
-  it('keeps both origins unarmed inside a deterministic stage', () => {
+  it('keeps both origins unarmed inside a scripted stage', () => {
     const wf = flow(
-      column('wait', { deterministic: { language: 'bash', code: 'echo ready', exits: {} } as unknown as Column['deterministic'] }),
+      column('wait', { scripted: { language: 'bash', code: 'echo ready', exits: {} } as unknown as Column['scripted'] }),
       column('done'),
     );
     expect(advanceArmedFor('auto', wf, { columnId: 'wait', autoMode: { enabled: true } })).toBe(false);

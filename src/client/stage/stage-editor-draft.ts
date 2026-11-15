@@ -1,7 +1,8 @@
-import type { DeterministicSummary } from '../../shared/deterministic.js';
+import type { ScriptedSummary } from '../../shared/scripted.js';
 import type { Attention, Column, StagePatch, Task, TransitionRule } from '../../shared/types.js';
-import { deterministicDraft, deterministicDefinition, deterministicProblems, type DeterministicDraft } from './deterministic-draft.js';
-import { deterministicEqual } from '../../domain/deterministic-definition.js';
+import { scriptedDraft, scriptedDefinition, scriptedProblems, type ScriptedDraft } from './scripted-draft.js';
+import type { StageProblem } from './stage-problem.js';
+import { scriptedEqual } from '../../domain/scripted-definition.js';
 import { isDomainId } from '../../domain/validation.js';
 import { sameTransitionRules } from '../../domain/transition-rule.js';
 import { conversationStageActivity, describeStageActivity, persistedStageActivity } from '../../shared/stage-activity.js';
@@ -18,8 +19,8 @@ export type StageTransitionMode = 'any' | 'restricted' | 'none';
 
 /** Everything the stage editor is editing, before any of it is stored. */
 export interface StageEditorDraft {
-  readonly execution?: 'agent' | 'deterministic';
-  readonly deterministic?: DeterministicDraft;
+  readonly execution?: 'agent' | 'scripted';
+  readonly scripted?: ScriptedDraft;
   readonly name: string;
   readonly onEnterPrompt: string;
   readonly mode: StageTransitionMode;
@@ -28,8 +29,7 @@ export interface StageEditorDraft {
   readonly id: string;
 }
 
-/** A problem the editor shows next to the field that caused it. */
-export interface StageEditorProblem { readonly field: 'name' | 'id' | 'transitions' | 'source' | 'env' | 'params' | 'exits' | 'execution'; readonly message: string }
+
 
 /** The mode a stored stage's transition list describes. */
 export function transitionMode(transitions: TransitionRule[] | undefined): StageTransitionMode {
@@ -43,7 +43,7 @@ export function stageDraft(column: Column): StageEditorDraft {
   // treats an empty list as "permits nothing" and an absent one as "permits anything".
   const transitions = column.allowedTransitions;
   return {
-    ...(column.deterministic === undefined ? {} : { execution: 'deterministic' as const, deterministic: deterministicDraft(column.deterministic) }),
+    ...(column.scripted === undefined ? {} : { execution: 'scripted' as const, scripted: scriptedDraft(column.scripted) }),
     name: column.name,
     onEnterPrompt: column.onEnterPrompt ?? '',
     mode: transitionMode(transitions),
@@ -58,7 +58,7 @@ export function draftChanged(draft: StageEditorDraft, column: Column): boolean {
   const stored = stageDraft(column);
   if (draft.name !== stored.name || draft.onEnterPrompt !== stored.onEnterPrompt || draft.id !== stored.id || draft.initial) return true;
   if ((draft.execution ?? 'agent') !== (stored.execution ?? 'agent')) return true;
-  if (draft.execution === 'deterministic') return !deterministicEqual(deterministicDefinition(draft.deterministic ?? deterministicDraft()), column.deterministic);
+  if (draft.execution === 'scripted') return !scriptedEqual(scriptedDefinition(draft.scripted ?? scriptedDraft()), column.scripted);
   if (draft.mode !== stored.mode) return true;
   if (draft.mode !== 'restricted') return false;
   if (draft.transitions.length !== stored.transitions.length) return true;
@@ -69,15 +69,15 @@ export function draftChanged(draft: StageEditorDraft, column: Column): boolean {
 }
 
 /** Every problem that stops the draft from being stored. */
-export function draftProblems(draft: StageEditorDraft, otherStageIds: ReadonlySet<string>): StageEditorProblem[] {
-  const problems: StageEditorProblem[] = [];
+export function draftProblems(draft: StageEditorDraft, otherStageIds: ReadonlySet<string>): StageProblem[] {
+  const problems: StageProblem[] = [];
   if (draft.name.trim().length === 0) problems.push({ field: 'name', message: 'A stage name is required.' });
   if (draft.id.trim().length === 0) problems.push({ field: 'id', message: 'A stage id is required.' });
   else if (!isDomainId(draft.id)) problems.push({ field: 'id', message: 'A stage id must be a nonempty safe identifier, with no spaces.' });
   else if (otherStageIds.has(draft.id)) problems.push({ field: 'id', message: 'Another stage already uses this id.' });
-  if (draft.execution === 'deterministic') {
-    problems.push(...deterministicProblems(draft.deterministic ?? deterministicDraft(), otherStageIds));
-    if (draft.onEnterPrompt.trim() || draft.mode !== 'any' || draft.transitions.length) problems.push({ field: 'execution', message: 'Deterministic execution cannot coexist with an instruction or allowed destinations.' });
+  if (draft.execution === 'scripted') {
+    problems.push(...scriptedProblems(draft.scripted ?? scriptedDraft(), otherStageIds));
+    if (draft.onEnterPrompt.trim() || draft.mode !== 'any' || draft.transitions.length) problems.push({ field: 'execution', message: 'Scripted execution cannot coexist with an instruction or allowed destinations.' });
   } else if (draft.mode === 'restricted') {
     // A stage that permits no destination is a real state with its own mode, so the
     // editor points there instead of quietly storing a list that permits nothing.
@@ -117,14 +117,14 @@ export function stagePatch(draft: StageEditorDraft, column: Column): StagePatch 
   if (instruction !== storedInstruction) patch.onEnterPrompt = instruction.trim().length === 0 ? null : instruction;
   if (draft.id !== column.id) patch.id = draft.id;
   if (draft.initial) patch.initial = true;
-  if (draft.execution === 'deterministic') {
-    const wanted = deterministicDefinition(draft.deterministic ?? deterministicDraft());
-    if (!deterministicEqual(wanted, column.deterministic)) patch.deterministic = wanted;
+  if (draft.execution === 'scripted') {
+    const wanted = scriptedDefinition(draft.scripted ?? scriptedDraft());
+    if (!scriptedEqual(wanted, column.scripted)) patch.scripted = wanted;
     if (column.onEnterPrompt !== undefined) patch.onEnterPrompt = null;
     if (column.allowedTransitions !== undefined) patch.allowedTransitions = null;
     return patch;
   }
-  if (column.deterministic !== undefined) patch.deterministic = null;
+  if (column.scripted !== undefined) patch.scripted = null;
   const wanted = draftDestinations(draft);
   if (!sameTransitionRules(column.allowedTransitions, wanted)) patch.allowedTransitions = wanted;
   return patch;
@@ -139,8 +139,8 @@ export function transitionChoices(columns: readonly Column[], stageId: string): 
  * Why the board cannot rename a stage identifier right now, or null when it can.
  * The host repeats this check: here it only explains the field before a save.
  */
-export function stageRenameBlock(tasks: readonly Task[], attention: Readonly<Record<string, Attention>>, scripts: Readonly<Record<string, DeterministicSummary>> = {}): string | null {
-  if (tasks.some(task => scripts[task.id] && ['capture-pending', 'active', 'stopping', 'result-ready', 'delivering'].includes(scripts[task.id]!.phase))) return 'The id cannot change while the board has deterministic execution in flight. Finish it first.';
+export function stageRenameBlock(tasks: readonly Task[], attention: Readonly<Record<string, Attention>>, scripts: Readonly<Record<string, ScriptedSummary>> = {}): string | null {
+  if (tasks.some(task => scripts[task.id] && ['capture-pending', 'active', 'stopping', 'result-ready', 'delivering'].includes(scripts[task.id]!.phase))) return 'The id cannot change while the board has scripted execution in flight. Finish it first.';
   const reasons: string[] = [];
   for (const task of tasks) {
     reasons.push(...persistedStageActivity(task), ...conversationStageActivity(attention[task.id]));

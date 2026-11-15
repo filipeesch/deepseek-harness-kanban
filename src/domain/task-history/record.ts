@@ -13,14 +13,14 @@ import type { StageEntryOrigin, TaskHistoryEntry } from '../../shared/task-histo
 type RecordTarget = Pick<Task, 'history'>;
 
 /** Append each logical execution outcome once, never starts, attempts, or polling output. */
-export function recordDeterministicExecution(target: RecordTarget, entry: Omit<Extract<TaskHistoryEntry, { kind: 'deterministic-execution' }>, 'kind'>): void {
-  if (target.history?.some(value => value.kind === 'deterministic-execution' && value.executionId === entry.executionId)) return;
-  append(target, { kind: 'deterministic-execution', ...entry });
+export function recordScriptedExecution(target: RecordTarget, entry: Omit<Extract<TaskHistoryEntry, { kind: 'scripted-execution' }>, 'kind'>): void {
+  if (target.history?.some(value => value.kind === 'scripted-execution' && value.executionId === entry.executionId)) return;
+  append(target, { kind: 'scripted-execution', ...entry });
 }
 /** A failed delivery and later acceptance are distinct settled facts; recovery repeats neither. */
-export function recordDeterministicHandoff(target: RecordTarget, entry: Omit<Extract<TaskHistoryEntry, { kind: 'deterministic-handoff' }>, 'kind'>): void {
-  if (target.history?.some(value => value.kind === 'deterministic-handoff' && value.deliveryId === entry.deliveryId && value.outcome === entry.outcome)) return;
-  append(target, { kind: 'deterministic-handoff', ...entry });
+export function recordScriptedHandoff(target: RecordTarget, entry: Omit<Extract<TaskHistoryEntry, { kind: 'scripted-handoff' }>, 'kind'>): void {
+  if (target.history?.some(value => value.kind === 'scripted-handoff' && value.deliveryId === entry.deliveryId && value.outcome === entry.outcome)) return;
+  append(target, { kind: 'scripted-handoff', ...entry });
 }
 
 function append(target: RecordTarget, entry: TaskHistoryEntry): void {

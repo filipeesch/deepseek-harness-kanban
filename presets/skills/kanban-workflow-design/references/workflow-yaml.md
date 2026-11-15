@@ -12,7 +12,7 @@ Load for one board's stages, instructions, routes, and presentation; verify agai
 
 IDs: 1–256 characters, ASCII letter/digit first, then letters/digits/`.`/`_`/`:`/`-`; `__proto__`, `prototype`, `constructor` are reserved. `key` is stable stage identity for sharing: preserve across edits/renames; do not add keys merely to reformat unpublished workflows.
 
-Unknown fields are rejected: no WIP limits, stage `auto_mode`, engine settings, per-stage agents or presets, dependencies, parent/child fields, retry/schedule settings, or arbitrary `metadata`. Use `on_enter_prompt`, not `prompt`; use `columns`, not `stages`. Criteria belong in instructions; coordination belongs in prose protocols.
+Unknown fields are rejected: no WIP limits, stage `auto_mode`, engine settings, per-stage agents or presets, dependencies, parent/child fields, or arbitrary `metadata`. Use `on_enter_prompt`, not `prompt`; use `columns`, not `stages`. Criteria belong in instructions; coordination belongs in prose protocols.
 
 ## Routes and conditions
 
@@ -22,9 +22,9 @@ Unknown fields are rejected: no WIP limits, stage `auto_mode`, engine settings, 
 - **Nonempty:** configured destinations in authored order; the first is default when no route is declared, regardless of conditions. Avoid self-targets: they are reorders, not routing targets.
 - **`[]`:** no permitted destinations/default advance; humans can still confirm restricted moves. This is terminal policy, not “wait until dependency.”
 
-A deterministic version is approved once per board and stable stage, never by saving YAML.
+A scripted version is approved once per board and stable stage. An author's inline save authorizes it; a file source, tool write, shared update, publish, or restore needs review.
 
-A deterministic stage may declare required `params`. A value comes from the transition, the preceding script's completion, or the panel. Exact names bind; extras do not; a missing name repairs in place. Conversation destinations see the sent values as context; script destinations only declared names. Reserved exits: `error` takes script/completion failures, `infrastructure` guard/runtime failures (fallback `error`); configuration refusals follow none and no exit may self-target.
+A scripted stage may declare required `params`. A value comes from the transition, the preceding script's completion, or the panel. Exact names bind; extras do not; a missing name repairs in place. Conversation destinations see the sent values as context; script destinations only declared names. Reserved exits: `error` takes script/completion failures, `infrastructure` guard/runtime failures (fallback `error`); configuration refusals follow none and no exit may self-target.
 
 No cross-board YAML transitions; handoffs create separate tasks through the [coordination protocol](coordination.md).
 
@@ -47,7 +47,7 @@ Connection layout adjusts drawn arrows; it permits no transitions. Undrawn pairs
 
 ## Complete review example
 
-Manual intake, one executing review, terminal result. Assume auto mode off for manual intake; this example itself authorizes no creation/message. Review explicitly selects its route after evidence checks.
+Manual intake, one review, terminal result. Auto mode is off for intake; this example authorizes no creation or message.
 
 ```yaml
 name: Evidence Review

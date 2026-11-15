@@ -24,12 +24,12 @@ function routedBoard(): Board {
   value.workflow.columns[0] = { ...value.workflow.columns[0]!, allowedTransitions: transitions('done', 'plan') };
   return value;
 }
-/** The same stages with the initial stage turned deterministic, as a workflow edit can do. */
-function deterministicBoard(): Board {
+/** The same stages with the initial stage turned scripted, as a workflow edit can do. */
+function scriptedBoard(): Board {
   const value = board();
   value.workflow.columns[0] = {
     ...value.workflow.columns[0]!,
-    deterministic: { language: 'bash', code: 'echo ready', exits: {} } as unknown as Column['deterministic'],
+    scripted: { language: 'bash', code: 'echo ready', exits: {} } as unknown as Column['scripted'],
   };
   return value;
 }
@@ -118,13 +118,13 @@ describe('turn-end advance admission', () => {
     expect(f.dispatched).toHaveLength(0);
   });
 
-  it('skips an auto turn whose stage turned deterministic instead of pausing', async () => {
+  it('skips an auto turn whose stage turned scripted instead of pausing', async () => {
     // A workflow edit between the settle read and this admission can make the
-    // entry deterministic; the deterministic supervisor owns routing then, so the
+    // entry scripted; the scripted supervisor owns routing then, so the
     // admission drops the turn silently and records no failure.
-    const deterministic = deterministicBoard();
-    const f = fixture({}, { board: deterministic });
-    await admitAuto(f.deps, 'task', resolveAutoAdvance(deterministic.workflow, 'backlog'));
+    const scripted = scriptedBoard();
+    const f = fixture({}, { board: scripted });
+    await admitAuto(f.deps, 'task', resolveAutoAdvance(scripted.workflow, 'backlog'));
     expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
     expect(f.dispatched).toHaveLength(0);
     expect(f.reported).toHaveLength(0);
@@ -205,12 +205,12 @@ describe('turn-end advance admission', () => {
     expect(f.state.hub.tasks[0]!.recordedTransition).toEqual(declared('plan'));
   });
 
-  it('refuses to commit when the entry turned deterministic before the transaction', async () => {
+  it('refuses to commit when the entry turned scripted before the transaction', async () => {
     const f = fixture();
     const pending = f.deps.pending;
     f.deps.pending = async value => {
       const result = await pending(value);
-      f.state.hub.boards[0] = deterministicBoard();
+      f.state.hub.boards[0] = scriptedBoard();
       return result;
     };
     await expect(admitAuto(f.deps, 'task', plan())).rejects.toMatchObject({ code: 'INVALID_TARGET' });

@@ -1,0 +1,37 @@
+name: Local scripted CI
+initial_column: wait_ci
+columns:
+  - id: wait_ci
+    label: Wait for local CI
+    scripted:
+      language: typescript
+      directory: task
+      file: wait-ci.ts
+      params:
+        - name: pipeline
+          description: Local CI pipeline identifier.
+      exits:
+        passed: deploy
+        rejected: fix
+        error: repair
+  - id: deploy
+    label: Deploy the checked artifact
+    # The legacy spelling stays readable; a write of this stage authors scripted:.
+    deterministic:
+      language: typescript
+      directory: task
+      file: wait-ci.ts
+      params:
+        - name: pipeline
+          description: Pipeline forwarded by the previous script step.
+      exits:
+        passed: review
+        rejected: fix
+        error: repair
+  - id: review
+    label: Review
+    on_enter_prompt: Review the local CI result supplied in the incoming handoff.
+  - id: fix
+    label: Fix implementation
+  - id: repair
+    label: Repair wait step

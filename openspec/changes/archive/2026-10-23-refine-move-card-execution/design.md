@@ -15,7 +15,7 @@ The New task dialog initializes its project from `state.projects[0]?.id` (`src/c
 **Goals:**
 
 - Make every permitted move immediate and organization-only; no move starts an agent.
-- Make instruction execution explicit, deterministic, and available after the move.
+- Make instruction execution explicit, scripted, and available after the move.
 - Give each task conversation its task context exactly once, through a native model-facing context message, not repeated message envelopes.
 - Keep the drawer flow native: the instruction becomes an editable composer draft and the user presses Send.
 - Remove the dialog, the conversation picker, and the run-mode pending transition from the UI path.
@@ -132,7 +132,7 @@ Verification is layered so the plugin-owned behavior runs in memory, and only th
 - Update the card drag test for the stretched open button; the article's pointer-down handler must treat that button as the surface, not a nested control.
 - Update the instructed-move client tests to immediate moves plus the card action.
 - Update the legacy `task.move` run text assertions from the envelope to instruction-only in the host app and product walkthrough; keep the pending/retry and changed-instruction coverage.
-- Keep the native execution-guard tests and the deterministic adapter tests unchanged.
+- Keep the native execution-guard tests and the scripted adapter tests unchanged.
 
 **One bounded acceptance smoke (not the cheap suite):**
 

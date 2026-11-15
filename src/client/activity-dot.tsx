@@ -9,7 +9,7 @@ export type ActivityFacts = Pick<Attention, 'running' | 'background'> & { script
 export function activityFacts({ running, background, script }: ActivityFacts): string[] {
   const facts: string[] = [];
   if (running) facts.push('Agent running');
-  if (script) facts.push('Deterministic script running');
+  if (script) facts.push('Scripted step running');
   const details = backgroundDetails(background);
   if (details) facts.push('Background activity: ' + details);
   return facts;

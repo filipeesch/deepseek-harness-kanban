@@ -1,6 +1,6 @@
 import type { Task } from '../shared/types.js';
-import { parseDeterministicDefinition, deterministicEqual } from './deterministic-definition.js';
-import { renameDeterministicTargets, updateDeterministicFields } from './deterministic-write.js';
+import { parseScriptedDefinition, scriptedEqual } from './scripted-definition.js';
+import { migrateScriptedKey, renameScriptedTargets, SCRIPTED_FIELD_KEYS, updateScriptedFields } from './scripted-write.js';
 import type { TaskHistoryEntry } from '../shared/task-history.js';
 import type { StagePatch, TransitionRule } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
@@ -20,7 +20,7 @@ export interface StageUpdateInput {
 export interface StageReferencingTask {
   columnId: string;
   stageEntry?: Task['stageEntry'];
-  deterministicHandoff?: Task['deterministicHandoff'];
+  scriptedHandoff?: Task['scriptedHandoff'];
   pendingTransition?: { fromColumnId: string; columnId: string };
   recordedTransition?: { fromColumnId: string; columnId: string };
   instructionPending?: { columnId: string };
@@ -36,9 +36,9 @@ export function renameTaskStage(task: StageReferencingTask, from: string, to: st
   let changed = false;
   if (task.columnId === from) { task.columnId = to; changed = true; }
   if (task.stageEntry?.columnId === from) { task.stageEntry.columnId = to; changed = true; }
-  if (task.deterministicHandoff !== undefined) {
-    if (task.deterministicHandoff.columnId === from) { task.deterministicHandoff.columnId = to; changed = true; }
-    if (task.deterministicHandoff.fromColumnId === from) { task.deterministicHandoff.fromColumnId = to; changed = true; }
+  if (task.scriptedHandoff !== undefined) {
+    if (task.scriptedHandoff.columnId === from) { task.scriptedHandoff.columnId = to; changed = true; }
+    if (task.scriptedHandoff.fromColumnId === from) { task.scriptedHandoff.fromColumnId = to; changed = true; }
   }
   if (task.pendingTransition !== undefined) {
     if (task.pendingTransition.fromColumnId === from) { task.pendingTransition.fromColumnId = to; changed = true; }
@@ -63,8 +63,8 @@ export function renameTaskStage(task: StageReferencingTask, from: string, to: st
 
 /** Carry a renamed stage identifier into one recorded entry, keeping its kind and moment. */
 function renameHistoryStage(entry: TaskHistoryEntry, from: string, to: string): TaskHistoryEntry {
-  if (entry.kind === 'created' || entry.kind === 'deterministic-execution') return entry.columnId === from ? { ...entry, columnId: to } : entry;
-  if (entry.kind === 'stage' || entry.kind === 'intent' || entry.kind === 'deterministic-handoff') {
+  if (entry.kind === 'created' || entry.kind === 'scripted-execution') return entry.columnId === from ? { ...entry, columnId: to } : entry;
+  if (entry.kind === 'stage' || entry.kind === 'intent' || entry.kind === 'scripted-handoff') {
     const fromColumnId = entry.fromColumnId === from ? to : entry.fromColumnId;
     const columnId = entry.columnId === from ? to : entry.columnId;
     return fromColumnId === entry.fromColumnId && columnId === entry.columnId ? entry : { ...entry, fromColumnId, columnId };
@@ -161,10 +161,10 @@ export function updateStage({ text, stageId, patch }: StageUpdateInput): StageUp
     writeColumn(stageId, ['on_enter_prompt'], (_existing, indent, key, flow) => instruction === null || instruction.trim().length === 0 ? null : textField(key, instruction, indent, flow));
   }
 
-  if (patch.deterministic !== undefined && (patch.deterministic === null || !deterministicEqual(stage.deterministic, patch.deterministic))) {
-    const definition = patch.deterministic === null ? null : parseDeterministicDefinition(patch.deterministic);
-    if (definition !== null && stage.deterministic !== undefined) next = updateDeterministicFields(next, stageId, stage.deterministic, definition);
-    else writeColumn(stageId, ['deterministic'], (_existing, _indent, key) => definition === null ? null : key + ': ' + JSON.stringify(definition));
+  if (patch.scripted !== undefined && (patch.scripted === null || !scriptedEqual(stage.scripted, patch.scripted))) {
+    const definition = patch.scripted === null ? null : parseScriptedDefinition(patch.scripted);
+    if (definition !== null && stage.scripted !== undefined) next = updateScriptedFields(next, stageId, stage.scripted, definition);
+    else writeColumn(stageId, SCRIPTED_FIELD_KEYS, (_existing, _indent, _key) => definition === null ? null : SCRIPTED_FIELD_KEYS[0] + ': ' + JSON.stringify(definition));
   }
 
   if (rules !== undefined) writeColumn(stageId, ['allowed_transitions'], (existing, indent, _key, flow) => rules === null ? null : transitionsField(rules, existing, indent, flow));
@@ -173,9 +173,9 @@ export function updateStage({ text, stageId, patch }: StageUpdateInput): StageUp
     // Renaming carries the identifier into every authored reference by replacing
     // only the scalar that names it, so comments, quoting, and order stay authored.
     const rendered = authoredScalar(newId);
-    const deterministicTargets = renameDeterministicTargets(next, stageId, newId);
-    next = deterministicTargets.text;
-    rewrittenReferences += deterministicTargets.replaced;
+    const scriptedTargets = renameScriptedTargets(next, stageId, newId);
+    next = scriptedTargets.text;
+    rewrittenReferences += scriptedTargets.replaced;
     for (const column of workflow.columns) {
       if (column.id === stageId) continue;
       if (!(column.allowedTransitions ?? []).some(rule => rule.to === stageId)) continue;
@@ -211,6 +211,12 @@ export function updateStage({ text, stageId, patch }: StageUpdateInput): StageUp
   if (patch.initial === true && workflow.initialColumnId !== newId) {
     next = writeRootField({ text: next, fieldKeys: ['initial_column'], render: (_existing, _indent, key) => key + ': ' + authoredScalar(newId), invalid });
   }
+
+  // A write that names the stage converges its authored program key on the current
+  // spelling; a stage no write names keeps the spelling its author used.
+  const touchesStage = name !== undefined || patch.onEnterPrompt !== undefined || patch.scripted !== undefined
+    || patch.allowedTransitions !== undefined || condition !== undefined || renamed || patch.initial === true;
+  if (touchesStage) next = migrateScriptedKey(next, newId);
 
   parseWorkflow(next);
   return renamed

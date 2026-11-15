@@ -13,9 +13,9 @@ Three of these defects are silent rather than loud, which is why they cost the m
 - Add a response `detail` mode: `summary` by default (stages changed, the names of the fields that changed, the digest, grouped warnings, authorization impact, affected cards) and `full` for the current per-field payload.
 - Add `dry_run` to every workflow write and a standalone `validate_workflow` that reviews a supplied document without a board change.
 - Extend `edit_board_yaml` so each edit may name the stage and field it targets, and so a failed anchor reports the edit index, the occurrence line numbers, and the closest matching text. **BREAKING**: a successful or refused write reports a `sharing` outcome of a local save rather than a publication.
-- Add `set_stage_script`, a partial write over one stage's deterministic configuration: language, source, directory, environment names, declared parameters, and named exits, changing only the parts the call names.
+- Add `set_stage_script`, a partial write over one stage's scripted configuration: language, source, directory, environment names, declared parameters, and named exits, changing only the parts the call names.
 - Rebase a workflow write onto the document the board holds at write time when every anchor still matches, instead of refusing because the Hub revision moved for unrelated reasons. A real conflict reports the current revision and what changed on the target board.
-- Match stage identifiers in instructions only when they are cited explicitly, demote a plain prose mention to an informational observation, and group and de-duplicate every warning. Report authorization impact once per deterministic stage instead of once per project.
+- Match stage identifiers in instructions only when they are cited explicitly, demote a plain prose mention to an informational observation, and group and de-duplicate every warning. Report authorization impact once per scripted stage instead of once per project.
 - Add cross-stage lint: a destination stage that declares a parameter its origin stage's instruction never names, and a card parked in a stage that declares parameters it has no values for.
 - Add `test_script`, which runs one stage's authored program against a declared input and a simulated `tools.bash`, returning the chosen exit, the message, the destination, the recorded shell calls, and any error, without capturing, approving, routing, or moving anything.
 - Give the local revision log a creation baseline, reconcile it against the stored document, number revisions with a counter that never renumbers, and declare the storage version compatibility that today silently treats an unreadable record as an absent log.
@@ -32,15 +32,15 @@ None. Every behavior below belongs to a capability the project already specifies
 ### Modified Capabilities
 
 - `product-tools`: the declared agent tool surface gains `get_script_execution`, `set_stage_script`, `validate_workflow`, `test_script`, and `diff_published_board` for the workflow architect preset; `edit_board_yaml` accepts a target scope per edit, a digest expectation, and a response mode; the write result's publishing outcome changes; and a board tool write no longer publishes.
-- `workflow-authoring`: writing a workflow document gains scoped anchors and indexable anchor failures, an expected-digest refusal, a dry review, a summary report shape, cross-stage lint, instruction size, and one partial write over a stage's deterministic configuration.
+- `workflow-authoring`: writing a workflow document gains scoped anchors and indexable anchor failures, an expected-digest refusal, a dry review, a summary report shape, cross-stage lint, instruction size, and one partial write over a stage's scripted configuration.
 - `workflow-revisions`: the local change log gains a creation baseline, startup reconciliation against the stored document, revision identity that survives folding, and an explicit storage-version compatibility contract.
 - `hub-sharing`: a board-owning tool write is local only and leaves the board a draft; a read-only comparison between the local board and the last applied team version becomes available to the workflow architect.
-- `deterministic-steps`: an agent can read one task's scripted execution state and the reason a saved result is held, and can run a stage's authored program in an isolated test execution that simulates the shell and never captures, approves, routes, or moves a card.
+- `scripted-steps`: an agent can read one task's scripted execution state and the reason a saved result is held, and can run a stage's authored program in an isolated test execution that simulates the shell and never captures, approves, routes, or moves a card.
 
 ## Impact
 
 - Tools: five new tool definitions, all gated to the `kanban-workflow-architect` preset; changed parameters and result shape on `edit_board_yaml`, `update_board`, `create_board`, and every stage-authoring tool.
-- Host: `BoardAdministration` publishing policy for the tool path, revision storage format and startup reconciliation, the deterministic supervisor's read projection and a new isolated test execution, and card-independent script execution.
-- Specs and docs: `hub-sharing`'s automatic-publishing requirement is replaced; the preset skill and its three references are at the 7,000-character ceiling, so tool guidance is rewritten rather than appended, and `README.md` and `docs/deterministic-steps.md` follow.
+- Host: `BoardAdministration` publishing policy for the tool path, revision storage format and startup reconciliation, the scripted supervisor's read projection and a new isolated test execution, and card-independent script execution.
+- Specs and docs: `hub-sharing`'s automatic-publishing requirement is replaced; the preset skill and its three references are at the 7,000-character ceiling, so tool guidance is rewritten rather than appended, and `README.md` and `docs/scripted-steps.md` follow.
 - Tests: the existing tool-publishing tests invert their expectation; card projection tests stay unchanged; new coverage for every real case in the source report.
 - Compatibility: a team-bound Hub stops receiving agent writes automatically, so an operator must publish after an agent edits a board. Revision numbering changes for existing logs, which migrate on first read.

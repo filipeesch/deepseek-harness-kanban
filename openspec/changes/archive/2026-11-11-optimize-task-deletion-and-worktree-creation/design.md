@@ -149,7 +149,7 @@ No latency measurement and no spawn-count assertion is added, by explicit decisi
 
 **Trade-off accepted:** nothing objectively blocks a future change from reintroducing redundant repository or checkout reads. D10 and the collaborator boundaries in D8 are the mitigation.
 
-**Alternative rejected:** an assertion over Git executor call counts on the hot paths — deterministic and cheap, but the maintainer declined any performance assertion.
+**Alternative rejected:** an assertion over Git executor call counts on the hot paths — scripted and cheap, but the maintainer declined any performance assertion.
 
 ### D10. Lane, ordering, and resume invariants are preserved
 

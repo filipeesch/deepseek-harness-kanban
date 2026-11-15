@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { Context } from '@deepseek-ai/cordis';
 import Sandbox from '@deepseek-ai/dsh-sandbox-local';
 import { describe, expect, it } from 'vitest';
-import { createProcessOwnership, type ProcessOwnership } from '../../src/host/deterministic/process/index.js';
+import { createProcessOwnership, type ProcessOwnership } from '../../src/host/scripted/process/index.js';
 import { buildGuard } from '../support/guard-artifact.js';
 
 /** The exact argv the mounted sandbox provider would run for this policy. */

@@ -52,7 +52,7 @@ describe('layout metrics', () => {
   });
 
   it('counts a named-exit label a stage covers', () => {
-    const workflow = parseWorkflow('initial_column: wait\ncolumns:\n  - id: wait\n    label: Wait\n    deterministic:\n      language: bash\n      code: exit 0\n      directory: project\n      exits: {passed: done}\n  - id: done\n    label: Done\n');
+    const workflow = parseWorkflow('initial_column: wait\ncolumns:\n  - id: wait\n    label: Wait\n    scripted:\n      language: bash\n      code: exit 0\n      directory: project\n      exits: {passed: done}\n  - id: done\n    label: Done\n');
     const value = layoutMetrics({ workflow, scene: scene([node('wait', 0, 0), node('done', 300, 0), node('cover', 120, 0, 60, 40)], [
       edge('wait->done:0', 'wait', 'done', [{ x: 100, y: 50 }, { x: 300, y: 50 }]),
     ]) });

@@ -4,7 +4,7 @@ import { parseWorkflow } from '../../src/domain/workflow.js';
 import { STAGE_MIN_SIZE } from '../../src/domain/stage-size.js';
 import type { Task } from '../../src/shared/types.js';
 
-const FLOW = 'initial_column: todo\ncolumns:\n  - id: todo\n    label: Todo\n    allowed_transitions: [wait]\n  - id: wait\n    label: Wait\n    deterministic:\n      language: bash\n      code: exit 0\n      directory: project\n      exits: {passed: done}\n  - id: done\n    label: Done\n';
+const FLOW = 'initial_column: todo\ncolumns:\n  - id: todo\n    label: Todo\n    allowed_transitions: [wait]\n  - id: wait\n    label: Wait\n    scripted:\n      language: bash\n      code: exit 0\n      directory: project\n      exits: {passed: done}\n  - id: done\n    label: Done\n';
 
 function task(id: string, columnId: string): Task {
   return { id, columnId } as unknown as Task;

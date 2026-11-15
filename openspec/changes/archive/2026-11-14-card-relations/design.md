@@ -4,7 +4,7 @@
 
 The Hub document already holds `tasks`, `notes`, and `schedules` as optional collections, and opening a stored Hub validates the whole aggregate. Two validation seams exist today: a per-task invariant pass shared by both aggregates (`createTaskInvariantChecker`), which receives one task at a time, and the Hub schema, which sees the whole document. Task deletion runs through one aggregate operation (`deleteTask`), and no tool deletes a task.
 
-Card reads today are produced by two tools that each assemble their own object from the stored task, sharing only a helper that strips `history` and `deterministic` (`withoutHistory`). Activity is already computed per conversation by the host — `running`, `background`, `pending`, `settledTurn` — cached by an attention coordinator and published to the client in the host snapshot. No product tool reads it.
+Card reads today are produced by two tools that each assemble their own object from the stored task, sharing only a helper that strips `history` and `scripted` (`withoutHistory`). Activity is already computed per conversation by the host — `running`, `background`, `pending`, `settledTurn` — cached by an attention coordinator and published to the client in the host snapshot. No product tool reads it.
 
 See proposal.md for motivation; see the spec deltas for required behavior.
 

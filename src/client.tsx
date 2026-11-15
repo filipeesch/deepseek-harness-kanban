@@ -27,7 +27,7 @@ import type { NativeLocaleSource, NativeSlotSource } from './client/native-slot-
 import type { PreparationSeat } from './client/execution-preparation/model-seat.js';
 import { TASK_CONTEXT_NODE_KIND, TaskContextNodeView, taskContextDefinition } from './client/task-context-node.js';
 import { STAGE_CONTEXT_NODE_KIND, StageInstructionNodeView, stageInstructionDefinition } from './client/stage-instruction-node.js';
-import { HANDOFF_CONTEXT_NODE_KIND, DeterministicHandoffNodeView, deterministicHandoffDefinition } from './client/deterministic-handoff-node.js';
+import { HANDOFF_CONTEXT_NODE_KIND, ScriptedHandoffNodeView, scriptedHandoffDefinition } from './client/scripted-handoff-node.js';
 import { TASK_MESSAGE_NODE_KIND, TaskMessageNodeView, taskMessageDefinition } from './client/task-message-node.js';
 import type { ClientApi } from './shared/types.js';
 
@@ -155,8 +155,8 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       t={props.t}
     />;
   }
-  function DeterministicHandoffChatNode(props: ChatNodeViewProps<'kanban-deterministic-handoff'>) {
-    return <DeterministicHandoffNodeView node={props.node} slots={ctx.slots as unknown as NativeSlotSource} t={props.t} />;
+  function ScriptedHandoffChatNode(props: ChatNodeViewProps<'kanban-scripted-handoff'>) {
+    return <ScriptedHandoffNodeView node={props.node} slots={ctx.slots as unknown as NativeSlotSource} t={props.t} />;
   }
   function TaskMessageChatNode(props: ChatNodeViewProps<'kanban-task-message'>) {
     return <TaskMessageNodeView
@@ -230,19 +230,19 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
 
   const offTaskContext = ctx.uiConversation.events.register(taskContextDefinition);
   const offStageInstruction = ctx.uiConversation.events.register(stageInstructionDefinition);
-  const offHandoff = ctx.uiConversation.events.register(deterministicHandoffDefinition);
+  const offHandoff = ctx.uiConversation.events.register(scriptedHandoffDefinition);
   const offTaskMessage = ctx.uiConversation.events.register(taskMessageDefinition);
   ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'kanban', children: { 'kanban.conversation': { kind: 'single', scope: 'session' } } }, Main));
   ctx.slots.inject('kanban.conversation', () => ctx.slots.register({ name: 'kanban.conversation' }, ConversationWindowSeat));
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: TASK_CONTEXT_NODE_KIND, locale: 'chat', inject: () => ({}) }, TaskContextChatNode));
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: STAGE_CONTEXT_NODE_KIND, locale: 'chat', inject: () => ({}) }, StageInstructionChatNode));
-  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: HANDOFF_CONTEXT_NODE_KIND, locale: 'chat', inject: () => ({}) }, DeterministicHandoffChatNode));
+  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: HANDOFF_CONTEXT_NODE_KIND, locale: 'chat', inject: () => ({}) }, ScriptedHandoffChatNode));
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: TASK_MESSAGE_NODE_KIND, locale: 'chat', inject: () => ({}) }, TaskMessageChatNode));
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: 'kanban', order: 80, label: 'Kanban' }, BoardIcon));
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'kanban-decision-questions', order: 20 }, props => <QuestionDock sessionId={props.sessionId} services={questionDockServices} />));
   ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: 'decision_request' }, HiddenDecisionRow));
   // This subscription is the only reconciler for the shared controller; install it eagerly.
-  const unsubscribeAutoRun = bridge.api.subscribe(snapshot => autoRun.reconcile(allTasks(snapshot), snapshot.deterministic));
+  const unsubscribeAutoRun = bridge.api.subscribe(snapshot => autoRun.reconcile(allTasks(snapshot), snapshot.scripted));
   bridge.start();
   return async () => {
     lifetime.abort(); autoRun.dispose(); unsubscribeAutoRun();

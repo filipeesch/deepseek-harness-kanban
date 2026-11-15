@@ -47,7 +47,7 @@ describe('the history panel', () => {
 
   it('presents the values a script handoff sent in the Detail cell', () => {
     render(<HistoryPanel columns={COLUMNS} history={[
-      { kind: 'deterministic-handoff', at: MOVED, deliveryId: 'delivery', executionId: 'run', fromColumnId: 'intake', columnId: 'doing', outcome: 'accepted', exit: 'passed', message: 'CI passed', parameters: { pipeline: 'ci-main' } },
+      { kind: 'scripted-handoff', at: MOVED, deliveryId: 'delivery', executionId: 'run', fromColumnId: 'intake', columnId: 'doing', outcome: 'accepted', exit: 'passed', message: 'CI passed', parameters: { pipeline: 'ci-main' } },
     ]} />);
     const row = within(screen.getByRole('table', { name: 'Task history' })).getAllByRole('row')[1]!;
     expect(within(row).getAllByRole('cell')[2]!.textContent).toContain('Sent parameters pipeline=ci-main');

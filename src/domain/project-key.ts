@@ -10,7 +10,7 @@ export function projectKeyFromName(name: string): string {
 }
 
 /**
- * A deterministic key that no project of the Hub uses yet. Two installations that
+ * A scripted key that no project of the Hub uses yet. Two installations that
  * register the same repository name derive the same key without configuration.
  */
 export function allocateProjectKey(name: string, taken: Iterable<string>): string {
@@ -26,7 +26,7 @@ export function allocateProjectKey(name: string, taken: Iterable<string>): strin
 }
 
 /**
- * Assign a deterministic key to every record that predates project keys. Existing keys
+ * Assign a scripted key to every record that predates project keys. Existing keys
  * are kept and seed the taken set, so a backfill never produces a duplicate.
  */
 export function withProjectKeys<T extends { name: string; projectKey?: string }>(projects: readonly T[]): T[] {

@@ -18,7 +18,7 @@ columns:
     allowed_transitions: []
   - id: wait
     label: Wait
-    deterministic:
+    scripted:
       language: bash
       code: |
         echo waiting
@@ -154,7 +154,7 @@ describe('single-stage reads', () => {
 
   it('withholds the source of a flow-style column too', async () => {
     const f = await setup();
-    const flow = "name: Flow\ninitial_column: wait\ncolumns: [{id: wait, label: Wait, deterministic: {language: bash, code: 'echo secret', directory: project, exits: {passed: done}}}, {id: done, label: Done}]\n";
+    const flow = "name: Flow\ninitial_column: wait\ncolumns: [{id: wait, label: Wait, scripted: {language: bash, code: 'echo secret', directory: project, exits: {passed: done}}}, {id: done, label: Done}]\n";
     const boardId = await boardWith(f, flow);
     const value = await run(f, 'get_stage', { board_id: boardId, stage_id: 'wait' });
     expect(value.yaml).not.toContain('echo secret');

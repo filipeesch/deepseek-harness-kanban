@@ -31,7 +31,7 @@ The workflow stage control SHALL be presented in the drawer header and SHALL lis
 
 The header SHALL also present the task's auto-mode control defined by Auto mode on a task card in `kanban-board`, with the same pressed state, effect, indication, and enabled or disabled behavior as the card control, including the held state while the task has pending user work. The auto-mode control's accessible name and tooltip SHALL carry the automatic-advance state, including the destination stage while an advance is admitted, the failure when an admitted advance failed, and the pause reason when auto mode is paused. The drawer SHALL NOT add a separate automatic-advance notice above its section panel, SHALL NOT add a separate entry for the held state, and SHALL NOT make reading or acknowledging a conversation clear a pause. An admitted or failed advance SHALL remain presented through the task's transition status as before.
 
-The drawer SHALL additionally expose the current deterministic execution state and its applicable Stop and Play controls as defined by `deterministic-steps`, independently of Auto mode and of whether a native conversation exists. These controls and their action-local progress SHALL remain available without selecting a conversation or changing the current section. Their execution ownership SHALL follow the durable activation or control state of the current entry rather than a later saved stage mode; an owned active run SHALL keep Stop after a saved agent/manual mode change. Play SHALL not substitute an agent instruction when the latest configuration is no longer valid deterministic configuration and SHALL instead explain the configuration or new-entry action required. A script failure or trust request SHALL NOT be presented as a failed or unread conversation turn. A stage change through the header SHALL revoke the prior deterministic run when the move is accepted and SHALL admit a deterministic destination's entry subject to its own authorization, without an agent countdown, model preparation, or composer mutation. The section list, ordinary agent countdown, conversation controls, and automatic-advance status behavior SHALL otherwise remain unchanged.
+The drawer SHALL additionally expose the current scripted execution state and its applicable Stop and Play controls as defined by `scripted-steps`, independently of Auto mode and of whether a native conversation exists. These controls and their action-local progress SHALL remain available without selecting a conversation or changing the current section. Their execution ownership SHALL follow the durable activation or control state of the current entry rather than a later saved stage mode; an owned active run SHALL keep Stop after a saved agent/manual mode change. Play SHALL not substitute an agent instruction when the latest configuration is no longer valid scripted configuration and SHALL instead explain the configuration or new-entry action required. A script failure or trust request SHALL NOT be presented as a failed or unread conversation turn. A stage change through the header SHALL revoke the prior scripted run when the move is accepted and SHALL admit a scripted destination's entry subject to its own authorization, without an agent countdown, model preparation, or composer mutation. The section list, ordinary agent countdown, conversation controls, and automatic-advance status behavior SHALL otherwise remain unchanged.
 
 #### Scenario: Open a task from the board
 - **WHEN** a user opens a card on the Kanban board
@@ -146,15 +146,15 @@ The drawer SHALL additionally expose the current deterministic execution state a
 
 #### Scenario: Control a script from the current drawer section
 
-- **WHEN** the user inspects Info, Git, Notes, or History for a task in a deterministic stage
-- **THEN** the current deterministic state and applicable Stop or Play action remain reachable
+- **WHEN** the user inspects Info, Git, Notes, or History for a task in a scripted stage
+- **THEN** the current scripted state and applicable Stop or Play action remain reachable
 - **AND** invoking that action does not change the selected section, insert a composer draft, or create a conversation
 
 ### Requirement: Drawer conversation activity indicator
 
 The drawer SHALL present the task's agent execution status and unsettled background activity through a single activity indicator on the Conversations section tab. The indicator SHALL remain visible while the user inspects any of the drawer's sections. It SHALL be presented as a dot without text, and it SHALL pulse while at least one agent owned by the task's conversations is running or while the task owns unsettled background work. The indicator SHALL NOT visually distinguish agent execution from background activity. Its accessible name and tooltip SHALL name the facts behind the indicator, including the labels of the task's unsettled background activities, and SHALL stop reporting background activity when none remains. Agent execution SHALL include the task conversations' own assistant turns and their owned subagent descendants, and a running owned subagent SHALL NOT be reported as background activity. The drawer header SHALL NOT present a separate Working or Background line, and the indicator SHALL NOT introduce a second live region for this state.
 
-A directly owned active deterministic script SHALL be included among the task's non-agent activity facts even when no native conversation exists. The indicator's tooltip and accessible name SHALL identify that script activity without calling it an assistant turn or creating a conversation tab. When no other activity remains, a stopped, failed, or untrusted deterministic entry SHALL NOT keep the indicator pulsing merely because it needs an action; its deterministic status SHALL remain available through the drawer controls.
+A directly owned active scripted script SHALL be included among the task's non-agent activity facts even when no native conversation exists. The indicator's tooltip and accessible name SHALL identify that script activity without calling it an assistant turn or creating a conversation tab. When no other activity remains, a stopped, failed, or untrusted scripted entry SHALL NOT keep the indicator pulsing merely because it needs an action; its scripted status SHALL remain available through the drawer controls.
 
 #### Scenario: Show the indicator while an agent runs
 - **WHEN** the user opens the drawer for a task whose conversation is running an owned agent
@@ -185,7 +185,7 @@ A directly owned active deterministic script SHALL be included among the task's 
 
 #### Scenario: Represent a script without a conversation tab
 
-- **WHEN** a task with no native conversation is running a deterministic script
+- **WHEN** a task with no native conversation is running a scripted script
 - **THEN** the drawer activity indicator reports the task-owned script activity
 - **AND** no native conversation tab, agent execution, or conversation attention is fabricated
 - **AND** stopping the only active script clears the activity indicator without hiding its stopped status
@@ -329,11 +329,11 @@ instruction, or by a cross-card message delivery use the board's default model w
 one and the deployment default otherwise, and SHALL use the board's default agent preset when the
 board names one and the host default preset otherwise.
 
-A deterministic entry SHALL NOT create a conversation, select a preset or model, or start a model
-turn solely to execute code. A task whose first execution is deterministic SHALL remain able to have
+A scripted entry SHALL NOT create a conversation, select a preset or model, or start a model
+turn solely to execute code. A task whose first execution is scripted SHALL remain able to have
 zero native conversations. When that execution later selects an agent destination whose instruction
 needs a conversation, the host SHALL create or resolve only the conversation required by that
-instruction using the normal directory and board-model and board-preset rules; the deterministic
+instruction using the normal directory and board-model and board-preset rules; the scripted
 handoff SHALL accompany the instruction. A script or manual destination SHALL receive or retain its
 handoff without creating a conversation.
 
@@ -408,17 +408,17 @@ handoff without creating a conversation.
 - **WHEN** the task has a ready worktree, an attached worktree, or a recorded base-project choice
 - **THEN** the card start creates the first conversation at the task's current effective directory
 
-#### Scenario: Run a deterministic first stage without creating a chat
+#### Scenario: Run a scripted first stage without creating a chat
 
-- **WHEN** a newly created task enters a deterministic initial stage
+- **WHEN** a newly created task enters a scripted initial stage
 - **THEN** its script-only execution has no native conversation tab
 - **AND** the normal explicit native conversation actions remain available under their existing preconditions
 
 #### Scenario: Create a conversation only for a downstream agent instruction
 
-- **WHEN** a deterministic output enters an agent stage and the task has no open conversation
+- **WHEN** a scripted output enters an agent stage and the task has no open conversation
 - **THEN** one conversation is created in the task's effective directory for that agent instruction
-- **AND** the instruction includes the identified deterministic handoff
+- **AND** the instruction includes the identified scripted handoff
 - **AND** no conversation was required for the source script
 
 ### Requirement: Model selection for the first conversation
@@ -1183,40 +1183,40 @@ While a task drawer remains mounted, a conversation tab that has been opened SHA
 
 ### Requirement: Stage instruction delivery as context
 
-When a task's current stage has an entry instruction and the host delivers that instruction to a task conversation, the host SHALL deliver exactly one plugin-sourced native message and SHALL NOT send it as a user prompt. The message SHALL start the turn that executes the instruction. Its durable source SHALL identify the stage-instruction producer and the delivery identity. Its model-facing content SHALL be the entry instruction, then the reason the recorded transition carried when the advance consumed one, then an identified deterministic handoff block when one is pending for this entry, then the transition briefing defined by `kanban-board` when that briefing applies.
+When a task's current stage has an entry instruction and the host delivers that instruction to a task conversation, the host SHALL deliver exactly one plugin-sourced native message and SHALL NOT send it as a user prompt. The message SHALL start the turn that executes the instruction. Its durable source SHALL identify the stage-instruction producer and the delivery identity. Its model-facing content SHALL be the entry instruction, then the reason the recorded transition carried when the advance consumed one, then an identified scripted handoff block when one is pending for this entry, then the transition briefing defined by `kanban-board` when that briefing applies.
 
 The reason SHALL appear only when the delivery follows a transition the agent declared for the stage the task left, and SHALL be presented as its own block that names the stage the task came from and quotes the reason the agent recorded. A delivery that consumed no recorded reason SHALL contain no reason block.
 
 The message SHALL declare the host's notice context form with a one-line summary. The summary SHALL name the entering stage and, when a transition destination applies, that destination — the task's recorded transition while it resolves, otherwise the first configured transition, otherwise the next stage in workflow order. A stage with no applicable destination SHALL produce a summary that names only the entering stage. The summary SHALL be bounded by the host's notice-summary limit and SHALL NOT include the reason block.
 
-The plugin SHALL claim the message with an exclusive Chat Definition and SHALL present it with the host's native context-injection presentation as part of the transcript flow: one collapsed row that expands to the full instruction text, including the declared-reason block, deterministic handoff block, and briefing when they apply. If that presentation is unavailable, an inline fallback row SHALL preserve the full text. The row SHALL be visible wherever the task conversation is rendered, including the task drawer and ordinary native DSH chat.
+The plugin SHALL claim the message with an exclusive Chat Definition and SHALL present it with the host's native context-injection presentation as part of the transcript flow: one collapsed row that expands to the full instruction text, including the declared-reason block, scripted handoff block, and briefing when they apply. If that presentation is unavailable, an inline fallback row SHALL preserve the full text. The row SHALL be visible wherever the task conversation is rendered, including the task drawer and ordinary native DSH chat.
 
 The delivery SHALL NOT be recorded as user input. It SHALL NOT be presented as a user message, SHALL NOT count as pending user work, and SHALL NOT derive a conversation title.
 
-A delivery SHALL be admitted at most once per delivery identity. Before delivering, the host SHALL read the conversation's durable log and SHALL NOT deliver another message when a stage-instruction message with the same identity is already delivered or still pending. A delivery that has a recorded failure SHALL report the failure, SHALL leave the stage entry unresolved, and SHALL NOT be retried automatically, including after a host restart. A durable deterministic handoff whose admission was interrupted or uncertain without a recorded delivery failure SHALL instead be reconciled on startup using its same delivery identity: the host SHALL first recognize already-recorded or pending context and SHALL resume only the interrupted admission when needed. This reconciliation SHALL NOT rerun the source script, duplicate accepted context, or turn a recorded failure into an automatic retry.
+A delivery SHALL be admitted at most once per delivery identity. Before delivering, the host SHALL read the conversation's durable log and SHALL NOT deliver another message when a stage-instruction message with the same identity is already delivered or still pending. A delivery that has a recorded failure SHALL report the failure, SHALL leave the stage entry unresolved, and SHALL NOT be retried automatically, including after a host restart. A durable scripted handoff whose admission was interrupted or uncertain without a recorded delivery failure SHALL instead be reconciled on startup using its same delivery identity: the host SHALL first recognize already-recorded or pending context and SHALL resume only the interrupted admission when needed. This reconciliation SHALL NOT rerun the source script, duplicate accepted context, or turn a recorded failure into an automatic retry.
 
-A deterministic handoff block SHALL identify the source stage and execution, the named exit, the output message, and its delivery provenance. It SHALL remain separate from an agent-declared reason: a script result SHALL NOT fabricate a declaration or populate the agent's recorded-transition reason. The block SHALL accompany the destination's own instruction within the same identified native context message, not as a second user prompt or a second model turn. Its message SHALL NOT be included in the collapsed summary, SHALL NOT derive a conversation title, and SHALL NOT repeat the conversation's first-turn task context. Known secret values SHALL be redacted before persistence or display as defined by `deterministic-steps`. A source recovery or delivery retry SHALL preserve the same delivery identity, and a handoff bound to another stage entry SHALL NOT be injected here. At actual native admission, after every awaited conversation resume, execution-context check, and durable-log read, the host SHALL confirm that both the destination entry identity and the handoff delivery identity are still authorized for the task. The final identity check and context enqueue SHALL be serialized with entry replacement. Matching only the stage identifier or finding no duplicate message SHALL NOT authorize delivery into an entry that has been replaced.
+A scripted handoff block SHALL identify the source stage and execution, the named exit, the output message, and its delivery provenance. It SHALL remain separate from an agent-declared reason: a script result SHALL NOT fabricate a declaration or populate the agent's recorded-transition reason. The block SHALL accompany the destination's own instruction within the same identified native context message, not as a second user prompt or a second model turn. Its message SHALL NOT be included in the collapsed summary, SHALL NOT derive a conversation title, and SHALL NOT repeat the conversation's first-turn task context. Known secret values SHALL be redacted before persistence or display as defined by `scripted-steps`. A source recovery or delivery retry SHALL preserve the same delivery identity, and a handoff bound to another stage entry SHALL NOT be injected here. At actual native admission, after every awaited conversation resume, execution-context check, and durable-log read, the host SHALL confirm that both the destination entry identity and the handoff delivery identity are still authorized for the task. The final identity check and context enqueue SHALL be serialized with entry replacement. Matching only the stage identifier or finding no duplicate message SHALL NOT authorize delivery into an entry that has been replaced.
 
 #### Scenario: Deliver the instruction as context
 
 - **WHEN** the card run action, the timed stage instruction after a move, a confirmed transition, the automatic advance, or the first execution of a task created by an agent delivers a stage instruction
 - **THEN** the conversation receives one plugin-sourced stage-instruction message
 - **AND** that message starts the turn that executes the instruction
-- **AND** its content is the entry instruction, then the declared transition's reason when one applies, then the deterministic handoff when one applies, then the transition briefing when the stage configures two or more targets
+- **AND** its content is the entry instruction, then the declared transition's reason when one applies, then the scripted handoff when one applies, then the transition briefing when the stage configures two or more targets
 
 #### Scenario: Include the declared reason
 
 - **WHEN** an advance follows a transition the agent declared and the destination stage has an entry instruction
 - **THEN** the delivered message contains the reason block after the instruction
 - **AND** the block names the stage the task came from and quotes the recorded reason
-- **AND** the deterministic handoff, when it applies, follows the reason block
+- **AND** the scripted handoff, when it applies, follows the reason block
 - **AND** the transition briefing, when it applies, follows those context blocks
 
 #### Scenario: Omit the reason without a declared transition
 
 - **WHEN** a stage instruction is delivered for a move or an advance that consumed no recorded reason
 - **THEN** the delivered message contains no reason block
-- **AND** its content is the instruction followed by any pending deterministic handoff and then the briefing when that briefing applies
+- **AND** its content is the instruction followed by any pending scripted handoff and then the briefing when that briefing applies
 
 #### Scenario: Do not record user input
 
@@ -1229,7 +1229,7 @@ A deterministic handoff block SHALL identify the source stage and execution, the
 
 - **WHEN** a delivered stage instruction is displayed in a task conversation
 - **THEN** it appears as a collapsed context-injection row at its position in the transcript
-- **AND** expanding the row shows the instruction text, the declared-reason block, deterministic handoff, and briefing when they apply
+- **AND** expanding the row shows the instruction text, the declared-reason block, scripted handoff, and briefing when they apply
 - **AND** the plugin Definition delegates to the host renderer, with an inline fallback that keeps the text visible
 
 #### Scenario: Name the stage and its target in the summary
@@ -1277,31 +1277,31 @@ A deterministic handoff block SHALL identify the source stage and execution, the
 - **AND** the stage entry remains unresolved
 - **AND** no automatic retry occurs
 
-#### Scenario: Deliver a deterministic result with the destination instruction
+#### Scenario: Deliver a scripted result with the destination instruction
 
-- **WHEN** a saved deterministic result selects an agent destination while Auto mode is disabled
+- **WHEN** a saved scripted result selects an agent destination while Auto mode is disabled
 - **THEN** the destination conversation receives its own entry instruction and one identified handoff block in the same native context message
 - **AND** the block contains the named exit and redacted message without pretending an agent declared a transition
 - **AND** Auto mode remains disabled
 - **AND** no user message, queued user work, or second model turn is created for the handoff
 
-#### Scenario: Reconcile an interrupted deterministic admission
+#### Scenario: Reconcile an interrupted scripted admission
 
-- **WHEN** the host restarts with a durable deterministic handoff whose native admission was interrupted and has no recorded delivery failure
+- **WHEN** the host restarts with a durable scripted handoff whose native admission was interrupted and has no recorded delivery failure
 - **THEN** recovery checks the same delivery identity against recorded and pending native context
 - **AND** it resumes only the unfinished admission when no prior admission exists
 - **AND** it does not run the source script again
 
-#### Scenario: Keep an actual deterministic delivery failure manual after restart
+#### Scenario: Keep an actual scripted delivery failure manual after restart
 
-- **WHEN** a deterministic handoff has a recorded delivery failure and the host restarts
+- **WHEN** a scripted handoff has a recorded delivery failure and the host restarts
 - **THEN** the failure and unresolved destination entry remain visible
 - **AND** no automatic delivery retry is performed
 - **AND** a user-requested retry retains the same delivery identity
 
-#### Scenario: Do not duplicate a recovered deterministic handoff
+#### Scenario: Do not duplicate a recovered scripted handoff
 
-- **WHEN** host recovery retries delivery of a deterministic handoff whose native context identity is already recorded or pending
+- **WHEN** host recovery retries delivery of a scripted handoff whose native context identity is already recorded or pending
 - **THEN** no second context message or handoff block is delivered
 - **AND** the source script is not executed again to recover that delivery
 
@@ -1417,7 +1417,7 @@ conversation whose board names no default model or whose default model was appli
 
 ### Requirement: Manual destination handoff before explicit conversation execution
 
-When a deterministic result enters a manual destination and preserves a handoff for that exact entry, the host SHALL inject it as identified plugin-sourced native context before the input of the next explicit native conversation execution in that entry. This SHALL cover an explicit user prompt or a turn initiated by the user's normal native preset action when that action actually executes. Merely opening a preset or conversation SHALL NOT force a turn. The handoff SHALL contain its named exit, redacted message, and source provenance and SHALL use native inline context presentation with an inline fallback. It SHALL NOT become user input, pending user work, a system prompt, or composer text, start a second turn, or derive a conversation title. First-turn task context SHALL NOT be repeated; when it also applies, that context SHALL precede the handoff and explicit input.
+When a scripted result enters a manual destination and preserves a handoff for that exact entry, the host SHALL inject it as identified plugin-sourced native context before the input of the next explicit native conversation execution in that entry. This SHALL cover an explicit user prompt or a turn initiated by the user's normal native preset action when that action actually executes. Merely opening a preset or conversation SHALL NOT force a turn. The handoff SHALL contain its named exit, redacted message, and source provenance and SHALL use native inline context presentation with an inline fallback. It SHALL NOT become user input, pending user work, a system prompt, or composer text, start a second turn, or derive a conversation title. First-turn task context SHALL NOT be repeated; when it also applies, that context SHALL precede the handoff and explicit input.
 
 The handoff SHALL NOT create or select a conversation itself. Explicit conversation creation through the normal preset or plus action SHALL keep native creation and model rules unchanged; the handoff SHALL wait for that conversation's eligible execution. Native execution and permission gates SHALL run before consuming it. Rejected or canceled admission SHALL retain it unless durable native state proves the same identified context was admitted. Injection SHALL be admitted at most once for the destination entry and handoff delivery identity, including across concurrent conversations and restart. A later entry into the same stage SHALL NOT receive an unrelated old entry's handoff.
 
@@ -1425,7 +1425,7 @@ After every awaited resume, execution-context, or durable-history read, actual n
 
 #### Scenario: Inject before an explicit user message in the manual destination
 
-- **WHEN** a task remains in its manual destination entry with a pending deterministic handoff and the user sends a native conversation message
+- **WHEN** a task remains in its manual destination entry with a pending scripted handoff and the user sends a native conversation message
 - **THEN** that same execution receives the identified handoff before the user input
 - **AND** the composer text and attachments are unchanged
 - **AND** no additional turn is started for the handoff

@@ -5,7 +5,7 @@ import type { HubSchedule } from '../shared/types.js';
 /** One stored schedule and the Hub that owns it. */
 export interface ScheduledEntry { readonly hubId: string; readonly schedule: HubSchedule }
 
-/** Timer boundary, injectable so admission and re-arming are deterministic in tests. */
+/** Timer boundary, injectable so admission and re-arming are scripted in tests. */
 export interface ScheduleTimerPort {
   schedule(run: () => void, delayMs: number): unknown;
   cancel(handle: unknown): void;

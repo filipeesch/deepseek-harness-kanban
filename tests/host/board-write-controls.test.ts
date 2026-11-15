@@ -49,7 +49,7 @@ function largeFlow(stages = 30, sourceBytes = 100 * 1024): string {
   const lines = ['name: Large', 'initial_column: stage-0', 'columns:'];
   for (let index = 0; index < stages; index += 1) {
     if (index === 1) {
-      lines.push('  - id: stage-1', '    label: Scripted', '    deterministic:', '      language: bash', '      directory: task', '      exits: {passed: stage-2}', '      code: |', '        echo marker');
+      lines.push('  - id: stage-1', '    label: Scripted', '    scripted:', '      language: bash', '      directory: task', '      exits: {passed: stage-2}', '      code: |', '        echo marker');
       const body = 'echo ' + 'x'.repeat(80);
       for (let written = 0; written < sourceBytes; written += body.length + 1) lines.push('        ' + body);
       continue;
@@ -133,7 +133,7 @@ describe('workflow write controls', () => {
     const summary = await run(f, 'edit_board_yaml', { board_id: boardId, edits: [{ old: 'echo marker', new: 'echo marker changed' }] });
     expect(summary.saved).toBe(true);
     expect(JSON.stringify(summary).length).toBeLessThan(30_000);
-    expect(summary.report.stages).toEqual([{ stage: 'stage-1', change: 'changed', fields: ['deterministic'] }]);
+    expect(summary.report.stages).toEqual([{ stage: 'stage-1', change: 'changed', fields: ['scripted'] }]);
     expect(summary.report.sizes).toEqual([{ stage: 'stage-1', sourceBytes: expect.any(Number) }]);
     expect(JSON.stringify(summary)).not.toContain('echo marker changed');
     const full = await run(f, 'edit_board_yaml', { board_id: boardId, edits: [{ old: 'echo marker changed', new: 'echo marker again' }], detail: 'full' });
@@ -174,7 +174,7 @@ describe('write report observations', () => {
   const PARAMETER_FLOW = [
     'name: Parameterized', 'initial_column: todo', 'columns:',
     '  - id: todo', '    label: Todo', '    allowed_transitions: [check]', '    on_enter_prompt: Send the work on without naming the required value.',
-    '  - id: check', '    label: Check', '    deterministic:', '      language: bash', '      code: echo hi', '      params:', '        - name: pipeline', '      exits: {passed: done}',
+    '  - id: check', '    label: Check', '    scripted:', '      language: bash', '      code: echo hi', '      params:', '        - name: pipeline', '      exits: {passed: done}',
     '  - id: done', '    label: Done',
     '',
   ].join('\n');

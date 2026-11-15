@@ -53,7 +53,7 @@ function stageLines(stage: StageDefinition): string[] {
       }
     }
   }
-  if (stage.deterministic !== undefined) lines.push('deterministic: ' + JSON.stringify(stage.deterministic));
+  if (stage.scripted !== undefined) lines.push('scripted: ' + JSON.stringify(stage.scripted));
   if (stage.position !== undefined) lines.push('position: {x: ' + stage.position.x + ', y: ' + stage.position.y + '}');
   if (stage.size !== undefined) lines.push('size: {width: ' + stage.size.width + ', height: ' + stage.size.height + '}');
   return lines;
@@ -71,7 +71,7 @@ function stageFlow(stage: StageDefinition): string {
     const rules = stage.allowedTransitions.map(rule => (rule.when === undefined ? '{to: ' + scalar(rule.to) + '}' : '{to: ' + scalar(rule.to) + ', when: ' + scalar(rule.when) + '}'));
     fields.push('allowed_transitions: [' + rules.join(', ') + ']');
   }
-  if (stage.deterministic !== undefined) fields.push('deterministic: ' + JSON.stringify(stage.deterministic));
+  if (stage.scripted !== undefined) fields.push('scripted: ' + JSON.stringify(stage.scripted));
   if (stage.position !== undefined) fields.push('position: {x: ' + stage.position.x + ', y: ' + stage.position.y + '}');
   if (stage.size !== undefined) fields.push('size: {width: ' + stage.size.width + ', height: ' + stage.size.height + '}');
   return '{' + fields.join(', ') + '}';
@@ -187,12 +187,12 @@ export function materialize(text: string, change: BoardChange): string {
           invalid,
         });
       }
-      if (change.field === 'deterministic') return updateStage({ text, stageId, patch: { deterministic: change.value, ...(change.value === null ? {} : { onEnterPrompt: null, allowedTransitions: null }) } }).text;
+      if (change.field === 'scripted') return updateStage({ text, stageId, patch: { scripted: change.value, ...(change.value === null ? {} : { onEnterPrompt: null, allowedTransitions: null }) } }).text;
       const patch = change.field === 'name'
         ? { name: change.value }
         : change.field === 'onEnterPrompt'
-          ? { onEnterPrompt: change.value, ...(change.value?.trim() ? { deterministic: null } : {}) }
-          : { allowedTransitions: change.value, ...(change.value !== null ? { deterministic: null } : {}) };
+          ? { onEnterPrompt: change.value, ...(change.value?.trim() ? { scripted: null } : {}) }
+          : { allowedTransitions: change.value, ...(change.value !== null ? { scripted: null } : {}) };
       return updateStage({ text, stageId, patch }).text;
     }
     case 'stage.id-changed': {

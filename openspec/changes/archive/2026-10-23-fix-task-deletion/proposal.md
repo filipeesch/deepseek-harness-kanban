@@ -36,5 +36,5 @@ None.
 - Host: `src/host/worktrees.ts`, `src/host/native.ts`, `src/host/app.ts`, `src/shared/ports.ts`, plus a new domain lineage helper and sharing guard.
 - Client: `src/client/board.tsx` (extraction), new destructive-dialog and operation-status modules, `src/client/drawer.tsx`, `src/client/git.tsx`, `src/client/ui.tsx`, and `src/client/styles.ts`.
 - Specs and docs: the three capabilities above; `README.md` and `docs/operations.md` deletion/recovery guidance.
-- Verification: fast module and integration suites, focused Playwright specs, and a manual real-DSH deterministic-subagent e2e lane; no real-model calls, and the normal suite does not depend on a DSH checkout.
+- Verification: fast module and integration suites, focused Playwright specs, and a manual real-DSH scripted-subagent e2e lane; no real-model calls, and the normal suite does not depend on a DSH checkout.
 - Compatibility: persisted boards and operations remain readable. Existing failed operations require only an explicit retry; no migration or data rewrite is needed. No public tool or remote API is added. Native DSH session, archive, Git, and permission behavior remain host-owned.

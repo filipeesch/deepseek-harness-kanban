@@ -91,7 +91,7 @@ describe('task payloads', () => {
     expect(read.history).toBeUndefined();
     const batch = await run(f, 'get_cards', { task_ids: [task.id] });
     expect(batch.cards[0].history).toBeUndefined();
-    expect(batch.cards[0].deterministic).toBeUndefined();
+    expect(batch.cards[0].scripted).toBeUndefined();
     const created = await run(f, 'create_card', { board_id: f.board.id, project_id: f.project.id, title: 'Another', description: '' });
     expect(created.history).toBeUndefined();
     const edited = await run(f, 'edit_card', { task_id: task.id, title: 'Renamed' });
