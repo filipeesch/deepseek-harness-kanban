@@ -87,13 +87,17 @@ export function ConversationWorkspace({ sessionId, port, renderPanel, children }
   const extra = plan.kind === 'split' ? plan.extra : 0;
 
   // Reserve before the browser paints, so the first frame with the panel is
-  // already wide enough for the conversation minimum. Every close path is an
-  // effect cleanup, so the drawer cannot stay reserved after the panel collapses.
+  // already wide enough for the conversation minimum. The reservation is only
+  // released when the split itself goes away: releasing on every rail-width
+  // change would forget the drawer width the person chose with the panel open
+  // and snap the drawer back to its base width while the rail was being dragged.
   useLayoutEffect(() => {
     if (!split) return undefined;
-    reserve(extra);
     return () => { release(); };
-  }, [split, extra, reserve, release]);
+  }, [split, release]);
+  useLayoutEffect(() => {
+    if (split) reserve(extra);
+  }, [split, extra, reserve]);
 
   // While the panel covers the conversation it takes focus, so keyboard users do
   // not fall back to the page top; collapsing restores the previous focus when it
