@@ -19,6 +19,7 @@ import { BoardView, createBoardPageState, type BoardPageState } from './client/b
 import { allTasks } from './client/snapshot-normalize.js';
 import { AutoRunController } from './client/auto-run.js';
 import { QuestionDock, createQuestionDockServices, type QuestionDockSessions } from './client/question-dock.js';
+import { createSessionStatusPort, type SessionStatusHost } from './client/session-status.js';
 import { RetainedConversation, TaskConversationWindow, type ConversationSurfaceMode, type ConversationSurfaceOwner, type ConversationSurfaceServices } from './client/conversation-surface.js';
 import { AgentPresetProvider } from './client/agent-preset-context.js';
 import { createAgentPresetPortSource } from './client/agent-preset-port.js';
@@ -114,7 +115,15 @@ export async function apply(raw: Context): Promise<() => Promise<void>> {
 function initializeClient(raw: Context, pageState: BoardPageState): () => Promise<void> {
   const ctx = raw as unknown as ClientContext;
   const lifetime = new AbortController();
-  const bridge = new ClientBridge(ctx.remote, ctx.uiSession.sessionStatus);
+  // The native Session status table is a service under `uiSession` on current
+  // hosts and a member of that service on older ones; the port reads whichever
+  // this host publishes without making activation depend on the newer shape.
+  const sessionStatus = createSessionStatusPort({
+    get: name => ctx.get(name),
+    uiSession: ctx.uiSession,
+    inject: (dependencies, initialize) => ctx.inject([...dependencies], scoped => initialize(scoped as unknown as SessionStatusHost)),
+  });
+  const bridge = new ClientBridge(ctx.remote, sessionStatus.status);
   // The command port belongs to this client generation, not to a mounted board.
   const autoRun = new AutoRunController({ run: command => bridge.api.command(command) });
   const scopedSessions = ctx.sessions;
@@ -300,6 +309,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     offTaskContext(); offStageInstruction(); offTaskMessage(); offHandoff();
     try { await presetInjection?.dispose(); } catch { /* the optional namespace fiber is best effort */ }
     try { stopNavigation?.(); navigation.detach(); } catch { /* the navigation subscription is best effort */ }
+    sessionStatus.dispose();
     await bridge.dispose();
   };
 }

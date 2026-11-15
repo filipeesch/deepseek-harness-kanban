@@ -121,6 +121,8 @@ it('edits a grouped workflow, grows columns, and animates the drawer', async () 
   const stageDialog = page.getByRole('dialog', { name: 'Edit stage' });
   await expect(stageDialog).toBeVisible();
   await stageDialog.getByRole('textbox', { name: 'Stage name', exact: true }).fill('Ship');
+  // The editor splits authoring into tabs; the entry instruction belongs to Execution.
+  await stageDialog.getByRole('tab', { name: 'Execution' }).click();
   await stageDialog.getByRole('textbox', { name: 'Stage entry instruction', exact: true }).fill('Ship the change.');
   await stageDialog.getByRole('button', { name: 'Save stage' }).click();
   await expect(stageDialog).toBeHidden();

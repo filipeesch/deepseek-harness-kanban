@@ -1,4 +1,4 @@
-import type { Context } from '@deepseek-ai/cordis';
+import { Context } from '@deepseek-ai/cordis';
 import os from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { createScriptedRuntime } from './host/scripted/index.js';
@@ -185,6 +185,21 @@ function scheduleEntries(hubs:HubRepository):ScheduledEntry[]{
  for(const hub of hubs.list())for(const schedule of hub.schedules??[])entries.push({hubId:hub.id,schedule});
  return entries;
 }
+/**
+ * Mirror the root context as the `ctx.root` property the inlined Typert protocol
+ * copy reads when it binds a Remote service. Current Cordis keys the root by
+ * symbol and rejects that property read, while an older Cordis exposes the
+ * property itself, so only the symbol-keyed host needs the alias.
+ * @param ctx - host plugin context.
+ */
+export function exposeRootContext(ctx:Context):void{
+ const symbol=(Context as unknown as {root?:unknown}).root;
+ if(typeof symbol!=='symbol')return;
+ const root=(ctx as unknown as Record<symbol,Context|undefined>)[symbol];
+ if(root===undefined||'root' in root.reflect.props)return;
+ root.reflect.accessor('root',{get:()=>root});
+}
+
 export const name='kanban';
 export const inject=['storageDomain','sessionController','sessionQuery','sessions','agents','workingDirectory','workspaceRegistry','sandboxPolicy','tools','typert','credentials','llm'];
 export async function apply(ctx:Context):Promise<void>{
@@ -281,6 +296,7 @@ export async function apply(ctx:Context):Promise<void>{
   }
  });
  offWire=ctx.typert.register(TYPERT_HOST);
+ exposeRootContext(ctx);
  ctx.plugin(KanbanController,app);
  offTools=registerProductTools(ctx,app,taskMessages,{revisions,images:createWorkflowImagePort(ctx)});
  ctx.on('session/event',(session,event)=>{app.observe(session.id,event);if(event.type==='turn/end')scheduleWatcher.observe(String(session.id));});
