@@ -34,20 +34,21 @@ function modelSeat(): NativeSeat {
   };
 }
 
-function boardOf(stored: { model?: ModelSelection; preset?: string } = {}): Board {
-  const workflow = { ...parseWorkflow(AUTHORED), ...(stored.model === undefined ? {} : { model: stored.model }), ...(stored.preset === undefined ? {} : { agentPreset: stored.preset }) };
+function boardOf(stored: { model?: ModelSelection; preset?: string; mcp?: string[] } = {}): Board {
+  const workflow = { ...parseWorkflow(AUTHORED), ...(stored.model === undefined ? {} : { model: stored.model }), ...(stored.preset === undefined ? {} : { agentPreset: stored.preset }), ...(stored.mcp === undefined ? {} : { mcp: stored.mcp }) };
   return { id: 'b1', name: 'Flow', workflowYaml: AUTHORED, workflow, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
 }
 function hubOf(board: Board): HubState {
   return { id: 'h1', name: 'My Hub', revision: 7, projects: [], boards: [board], tasks: [], notes: [], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
 }
 
-function harness(options: { stored?: { model?: ModelSelection; preset?: string }; catalog?: ModelCatalog | null; yaml?: string; workflowEditing?: boolean; seat?: NativeSeat | null; preset?: ReturnType<typeof presetPort> } = {}) {
+function harness(options: { stored?: { model?: ModelSelection; preset?: string; mcp?: string[] }; catalog?: ModelCatalog | null; yaml?: string; workflowEditing?: boolean; seat?: NativeSeat | null; preset?: ReturnType<typeof presetPort>; mcpServers?: string[] | null } = {}) {
   const board = boardOf(options.stored);
   const hub = hubOf(board);
   const run = vi.fn(async (_command: unknown) => ({}) as KanbanSnapshot);
   const api = {
     modelCatalog: options.catalog === null ? vi.fn(async () => { throw new Error('catalog offline'); }) : vi.fn(async () => options.catalog ?? catalog),
+    mcpServers: options.mcpServers === null ? vi.fn(async () => { throw new Error('servers offline'); }) : vi.fn(async () => options.mcpServers ?? ['atlassian', 'trino']),
   } as unknown as ClientApi;
   const onOpenWorkflow = vi.fn();
   const onDirtyChange = vi.fn();
@@ -66,8 +67,8 @@ function harness(options: { stored?: { model?: ModelSelection; preset?: string }
   return { ...view, board, hub, run, api, port, onOpenWorkflow, onDirtyChange, user };
 }
 
-function saved(command: unknown): { model?: ModelSelection; agent_preset?: string } {
-  return (parse((command as { yaml: string }).yaml) as { model?: ModelSelection; agent_preset?: string });
+function saved(command: unknown): { model?: ModelSelection; agent_preset?: string; mcp?: string[] } {
+  return (parse((command as { yaml: string }).yaml) as { model?: ModelSelection; agent_preset?: string; mcp?: string[] });
 }
 function saveButton(): HTMLButtonElement {
   return screen.getByRole('button', { name: 'Save defaults' }) as HTMLButtonElement;
@@ -197,5 +198,101 @@ describe('the board defaults panel', () => {
     expect(await screen.findByText(/The model catalog is unavailable: catalog offline/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Retry models' })).toBeTruthy();
     expect(api.modelCatalog).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the board MCP allowlist control', () => {
+  it('keeps every server by removing the field', async () => {
+    const { user, run } = harness({ stored: { mcp: ['atlassian'] } });
+    await user.click(screen.getByRole('radio', { name: 'Every server' }));
+    await user.click(saveButton());
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(saved(run.mock.calls[0]![0]).mcp).toBeUndefined();
+    expect((run.mock.calls[0]![0] as { yaml: string }).yaml).not.toContain('mcp');
+  });
+
+  it('saves a selected server as its own entry', async () => {
+    const { user, run } = harness();
+    await user.click(screen.getByRole('radio', { name: 'Selected servers' }));
+    await user.click(await screen.findByRole('checkbox', { name: /atlassian/ }));
+    await user.click(saveButton());
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(saved(run.mock.calls[0]![0]).mcp).toEqual(['atlassian']);
+  });
+
+  it('saves an explicit selection with nothing selected as an empty list', async () => {
+    const { user, run } = harness();
+    await user.click(screen.getByRole('radio', { name: 'Selected servers' }));
+    expect(await screen.findByText(/No server is allowed/)).toBeTruthy();
+    await user.click(saveButton());
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(saved(run.mock.calls[0]![0]).mcp).toEqual([]);
+  });
+
+  it('accepts a server/tool entry typed by the person', async () => {
+    const { user, run } = harness();
+    await user.click(screen.getByRole('radio', { name: 'Selected servers' }));
+    await user.type(screen.getByLabelText('Add MCP server or tool'), 'atlassian/search{Enter}');
+    expect(await screen.findByText('atlassian/search')).toBeTruthy();
+    await user.click(saveButton());
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(saved(run.mock.calls[0]![0]).mcp).toEqual(['atlassian/search']);
+  });
+
+  it('refuses a typed entry the parser would reject', async () => {
+    const { user } = harness();
+    await user.click(screen.getByRole('radio', { name: 'Selected servers' }));
+    await user.type(screen.getByLabelText('Add MCP server or tool'), 'a/b/c');
+    await user.click(screen.getByRole('button', { name: 'Add entry' }));
+    expect(await screen.findByText(/Enter a server name/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Remove a/b/c' })).toBeNull();
+  });
+
+  it('keeps a server with only some tools allowed unchecked and names the tools', async () => {
+    const { user } = harness({ stored: { mcp: ['trino/query'] } });
+    await user.click(screen.getByRole('radio', { name: 'Selected servers' }));
+    const row = await screen.findByRole('checkbox', { name: /trino/ });
+    expect((row as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByText('1 tool selected')).toBeTruthy();
+  });
+
+  it('replaces single-tool entries with the whole server when the server is checked', async () => {
+    const { user, run } = harness({ stored: { mcp: ['trino/query'] } });
+    await user.click(screen.getByRole('radio', { name: 'Selected servers' }));
+    await user.click(await screen.findByRole('checkbox', { name: /trino/ }));
+    await user.click(saveButton());
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(saved(run.mock.calls[0]![0]).mcp).toEqual(['trino']);
+  });
+
+  it('presents a stored entry the host does not report and keeps it', async () => {
+    const { user, run } = harness({ stored: { mcp: ['retired-server'] }, mcpServers: ['atlassian'] });
+    await user.click(screen.getByRole('radio', { name: 'Selected servers' }));
+    const row = await screen.findByRole('checkbox', { name: /retired-server/ });
+    expect((row as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText(/Not reported by this host/)).toBeTruthy();
+    await user.click(await screen.findByRole('checkbox', { name: /atlassian/ }));
+    await user.click(saveButton());
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(saved(run.mock.calls[0]![0]).mcp).toEqual(['retired-server', 'atlassian']);
+  });
+
+  it('reports an unreadable server list with a retry and keeps the stored entries', async () => {
+    const { user, run } = harness({ stored: { mcp: ['atlassian'] }, mcpServers: null });
+    await user.click(screen.getByRole('radio', { name: 'Selected servers' }));
+    expect(await screen.findByText(/The MCP server list is unavailable: servers offline/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry servers' })).toBeTruthy();
+    expect((screen.getByRole('checkbox', { name: /atlassian/ }) as HTMLInputElement).checked).toBe(true);
+    await user.click(saveButton());
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('removes one entry without disturbing the others', async () => {
+    const { user, run } = harness({ stored: { mcp: ['atlassian', 'trino/query'] } });
+    await user.click(screen.getByRole('radio', { name: 'Selected servers' }));
+    await user.click(await screen.findByRole('button', { name: 'Remove trino/query' }));
+    await user.click(saveButton());
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(saved(run.mock.calls[0]![0]).mcp).toEqual(['atlassian']);
   });
 });

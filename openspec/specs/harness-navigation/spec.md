@@ -31,8 +31,8 @@ board management. The Projects section SHALL list the active Hub's project regis
 embed the project creation or editing form; creating or editing a project SHALL open the project
 editor dialog described by the Project editor dialog requirement. The Board section SHALL contain the
 active board's configuration in five sub-sections: General, containing the board name; Projects,
-containing the board's project scope; Defaults, containing the board's default model and default
-agent preset; Workflow, containing the board's workflow; and Danger zone, containing board deletion.
+containing the board's project scope; Defaults, containing the board's default model, default agent
+preset, and MCP tool allowlist; Workflow, containing the board's workflow; and Danger zone, containing board deletion.
 The Board section and its sub-sections SHALL be unavailable when the active Hub has no board. The
 empty-board Configure projects action SHALL open the Projects section. The create-board empty state
 SHALL open the Hub section or an equivalent board-creation action.
@@ -67,7 +67,13 @@ SHALL open the Hub section or an equivalent board-creation action.
 #### Scenario: Configure the board defaults
 
 - **WHEN** the user opens the Board section's Defaults sub-section
-- **THEN** the board's default model and default agent preset are available
+- **THEN** the board's default model, default agent preset, and MCP tool allowlist are available
+
+#### Scenario: Configure the board MCP allowlist
+
+- **WHEN** the user opens the Board section's Defaults sub-section of a board whose conversations use MCP servers
+- **THEN** the board's MCP tool allowlist is available beside its default model and default agent preset
+
 
 #### Scenario: Delete a board from the Danger zone
 

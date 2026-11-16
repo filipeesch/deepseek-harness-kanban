@@ -106,7 +106,7 @@ export interface ConnectionAnchor { side: StageSide; at: number }
 export interface ConnectionSegmentOffset { axis: ConnectionAxis; offset: number }
 /** One authored connection layout, identified by its source and target stage. */
 export interface ConnectionLayout { from: string; to: string; source?: ConnectionAnchor; target?: ConnectionAnchor; segments?: ConnectionSegmentOffset[] }
-export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[]; /** Absent means the board opens the column board. */ defaultView?: WorkflowView; /** The model every new conversation of the board starts on; absent keeps the deployment default. */ model?: ModelSelection; /** The agent preset every new conversation of the board starts on; absent keeps the host default preset. */ agentPreset?: string; /** Authored connection layouts; an absent entry keeps the automatic route. */ connections?: ConnectionLayout[] }
+export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[]; /** Absent means the board opens the column board. */ defaultView?: WorkflowView; /** The model every new conversation of the board starts on; absent keeps the deployment default. */ model?: ModelSelection; /** The agent preset every new conversation of the board starts on; absent keeps the host default preset. */ agentPreset?: string; /** The MCP servers and tools every conversation of the board may use; absent keeps every server visible and an empty list keeps none. */ mcp?: string[]; /** Authored connection layouts; an absent entry keeps the automatic route. */ connections?: ConnectionLayout[] }
 export interface Worktree { path: string; branch: string; owned: boolean; status: 'preparing' | 'ready' | 'error'; error?: Problem }
 export interface CreateWorktree { mode: 'new' | 'existing'; path: string; branchName: string; sourceBranch?: string }
 /**
@@ -607,6 +607,8 @@ export interface ClientApi {
   branches(taskId: string): Promise<string[]>;
   /** The host model catalog; `refresh` asks the host to rebuild it for a newly opened editor. */
   modelCatalog(refresh?: boolean): Promise<ModelCatalog>;
+  /** The MCP servers this host reports, for the board's allowlist control; absent reports none. */
+  mcpServers?(): Promise<string[]>;
   worktreeDefault(taskId: string): Promise<WorktreeDefaults>;
   detectProject(path: string): Promise<ProjectLocation>;
   subscribe(listener: (snapshot: KanbanSnapshot) => void): () => void;

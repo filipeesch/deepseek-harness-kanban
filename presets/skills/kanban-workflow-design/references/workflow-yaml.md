@@ -4,15 +4,16 @@ Load for one board's stages, instructions, routes, and presentation; verify agai
 
 ## Accepted structure
 
-- Root: nonempty `columns` sequence; optional `id`, `name`, `initial_column`, `default_view`, `groups`, `model`, `agent_preset`, `connections`. Name defaults to `Workflow`; initial stage defaults to the first column. Root `id` is metadata, not a board selector.
-- Column: required `id` and `label` (alias `name`); optional `key`, `description`, `allowed_transitions`, `on_enter_prompt`, `position`, `size`. Both display aliases must agree if present. `description` is text, not an instruction; preserve it in exact YAML even though the parsed column payload omits it.
+- Root: nonempty `columns` sequence; optional `id`, `name`, `initial_column`, `default_view`, `groups`, `model`, `agent_preset`, `mcp`, `connections`. Name defaults to `Workflow`; initial stage defaults to the first column; root `id` is metadata.
+- Column: required `id` and `label` (alias `name`); optional `key`, `description`, `allowed_transitions`, `on_enter_prompt`, `position`, `size`. Both display aliases must agree if present. `description` is text, not an instruction; preserve it in exact YAML though the parsed payload omits it.
 - Group: `label` (alias `name`), nonempty `columns` IDs, optional `id` (otherwise `group-1`, etc.). Groups are presentation, not destinations. Each column belongs to at most one group; group IDs are unique and cannot equal column IDs.
 - `model`: nonempty `provider`, `model`, optional nonempty `reasoning_effort`. It sets the board default for **new conversations**, not a stage model, installation default, or existing conversations. Omission means DSH default. Check host routes: the parser validates shape, not availability; an unavailable route can fall back with a notice.
 - `agent_preset`: nonempty roster identity; the agent preset **new conversations** start on. Omission means the host default preset; shape, not roster membership, is validated, and a missing preset can fall back with a notice.
+- `mcp`: optional allowlist of MCP servers; an entry is a server (all its tools) or `server/tool`. Omission keeps every server visible, `[]` keeps none; shape is validated, not availability.
 
 IDs: 1–256 characters, ASCII letter/digit first, then letters/digits/`.`/`_`/`:`/`-`; `__proto__`, `prototype`, `constructor` are reserved. `key` is stable stage identity for sharing: preserve across edits/renames; do not add keys merely to reformat unpublished workflows.
 
-Unknown fields are rejected: no WIP limits, stage `auto_mode`, engine settings, per-stage agents or presets, dependencies, parent/child fields, or arbitrary `metadata`. Use `on_enter_prompt`, not `prompt`; use `columns`, not `stages`. Criteria belong in instructions; coordination belongs in prose protocols.
+Unknown fields are rejected: no WIP limits, stage `auto_mode`, per-stage agents or presets, dependencies, parent/child fields, or `metadata`. Use `on_enter_prompt`, not `prompt`; use `columns`, not `stages`. Criteria belong in instructions; coordination belongs in prose protocols.
 
 ## Routes and conditions
 
@@ -30,7 +31,7 @@ No cross-board YAML transitions; handoffs create separate tasks through the [coo
 
 ## Entry instructions and gates
 
-`on_enter_prompt` accepts multiline text; null/empty/whitespace means no instruction. Use `|`. Each executing stage needs objective/scope, required inputs, bounded actions, output/validation/acceptance evidence, failure/missing-input escalation, and routing responsibility. Explicitly state whether it requests transition discovery/declaration and what evidence justifies each route. Coordination obligations remain conditional on actual user authorization/tool scope.
+`on_enter_prompt` accepts multiline text; null/empty/whitespace means no instruction. Use `|`. Each executing stage needs objective/scope, required inputs, bounded actions, output/validation/acceptance evidence, failure/missing-input escalation, and routing responsibility. Explicitly state whether it requests transition discovery/declaration and what evidence justifies each route. Coordination obligations stay conditional on user authorization and tool scope.
 
 Do not tell every stage to declare a route automatically: this arms a completed-turn move even with auto mode off. No instruction can be intentional manual intake, but it is not inherently a gate; see [execution mechanics](operations.md#automation-and-human-gates).
 
@@ -43,7 +44,7 @@ Preserve:
 - Column `size`: `{width, height}`, finite minimums; width 264–10,000, height 140–10,000.
 - `connections`: unique `{from, to}` pairs; optional `source`/`target` anchors `{side, at}` (`top`/`right`/`bottom`/`left`, integer 0–4); optional `segments` entries `{axis, offset}` (`x`/`y`, finite absolute offset at most 1,000,000).
 
-Connection layout adjusts drawn arrows; it permits no transitions. Undrawn pairs are kept/ignored, not converted into edges. Do not regenerate layout for an instruction edit.
+Connection layout adjusts drawn arrows; it permits no transitions. Undrawn pairs are ignored, not converted into edges. Do not regenerate layout for an instruction edit.
 
 ## Complete review example
 
@@ -81,4 +82,4 @@ groups:
     columns: [intake, review]
 ```
 
-Display-label edits are not ID migrations. Literal/whole-document writes do not migrate tasks: removing or renaming an occupied ID, or an admitted pending transition's reference, is rejected. A declared but unadmitted route can become stale and block progression; inspect it rather than relying on orphan checks. Preserve IDs unless an approved migration is verified; do not promise UI stage-editor migration from text replacement.
+Literal or whole-document writes do not migrate tasks: removing or renaming an occupied ID, or an admitted pending transition's reference, is rejected. A declared but unadmitted route can become stale and block progression; inspect it rather than relying on orphan checks. Preserve IDs unless an approved migration is verified.

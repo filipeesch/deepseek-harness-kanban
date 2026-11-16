@@ -5,9 +5,10 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseDocument } from 'yaml';
 import { parseWorkflow } from '../../src/domain/workflow.js';
+import { PRODUCT_TOOL_NAMES } from '../../src/host/tools/names.js';
 
 const root = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
-const skillRoot = path.join(root, 'presets/skills/kanban-workflow-design');
+const skillRoot = path.join(root, 'presets/skills');
 interface Expression { __jsExpr: string }
 interface Entry {
   id: string;
@@ -18,6 +19,20 @@ interface Entry {
   config?: Record<string, unknown>;
 }
 interface Patch { insert: Entry[] }
+
+interface PresetRow {
+  readonly rowId: string;
+  readonly id: string;
+  readonly name: string;
+  readonly order: number;
+  readonly skill: string;
+}
+
+const PRESETS: readonly PresetRow[] = [
+  { rowId: 'preset-kanban-workflow-architect', id: 'kanban-workflow-architect', name: 'Kanban Workflow Architect', order: 20, skill: 'kanban-workflow-design' },
+  { rowId: 'preset-kanban-project-planner', id: 'kanban-project-planner', name: 'Kanban Project Planner', order: 21, skill: 'kanban-project-planning' },
+  { rowId: 'preset-kanban-project-manager', id: 'kanban-project-manager', name: 'Kanban Project Manager', order: 22, skill: 'kanban-project-orchestration' },
+];
 
 // Preserve Loader expressions rather than quietly treating !!js as plain text.
 // The real-composition lane also exercises the actual Host Loader and schemas.
@@ -34,9 +49,12 @@ function readPatch(text: string): Patch[] {
 async function composition() {
   const patch = readPatch(await readFile(path.join(root, 'cordis.patch.yml'), 'utf8'));
   const rows = patch.flatMap(layer => layer.insert);
-  const preset = rows.find(row => row.id === 'preset-kanban-workflow-architect')!;
-  expect(preset).toBeDefined();
-  return { rows, preset, plugins: preset.config!.plugins as Entry[] };
+  const presets = PRESETS.map(definition => {
+    const row = rows.find(candidate => candidate.id === definition.rowId);
+    expect(row, definition.rowId).toBeDefined();
+    return { definition, row: row!, plugins: (row!.config!.plugins ?? []) as Entry[] };
+  });
+  return { rows, presets };
 }
 
 function evaluate(expression: Expression, baseUrl: string, platform = process.platform) {
@@ -66,76 +84,147 @@ afterEach(async () => {
   }
 });
 
-describe('shipped Kanban Workflow Architect preset', () => {
-  it('adds an independent scoped declaration without remounting Host services or Kanban', async () => {
-    const { rows, preset, plugins } = await composition();
-    expect(rows.map(row => row.name)).toEqual(['dsh-kanban', '@deepseek-ai/dsh-agent-preset']);
-    expect(preset.config).toMatchObject({
-      id: 'kanban-workflow-architect', name: 'Kanban Workflow Architect', order: 20,
-    });
-    expect(new Set(plugins.map(row => row.id)).size).toBe(plugins.length);
-    const persona = plugins.find(row => row.name === '@deepseek-ai/dsh-persona')!;
-    const prefix = persona.config!.prefix as string;
-    expect(prefix.length).toBeLessThan(4000);
-    expect(prefix).toContain('kanban-workflow-design');
-    expect(prefix).toContain('decision_request');
-    expect(persona.config!.complete).not.toBe(true);
-    expect(persona.config!.includeRuntimeContext).not.toBe(false);
-    expect(plugins.some(row => row.name === 'dsh-kanban')).toBe(false);
+function allowed(preset: { plugins: Entry[] }): string[] {
+  const row = preset.plugins.find(plugin => plugin.id === 'preset-tools');
+  expect(row, 'preset-tools').toBeDefined();
+  return row!.config!.allow as string[];
+}
+
+function plugin(preset: { plugins: Entry[] }, id: string): Entry | undefined {
+  return preset.plugins.find(entry => entry.id === id);
+}
+
+describe('shipped agent presets', () => {
+  it('declares one independent preset per role without remounting the host', async () => {
+    const { rows, presets } = await composition();
+    expect(rows.filter(row => row.name === 'dsh-kanban')).toHaveLength(1);
+    const declared = rows.filter(row => row.name === '@deepseek-ai/dsh-agent-preset');
+    expect(declared.map(row => row.id)).toEqual(PRESETS.map(definition => definition.rowId));
+    for (const { definition, row, plugins } of presets) {
+      expect(row.config).toMatchObject({ id: definition.id, name: definition.name, order: definition.order });
+      expect(typeof row.config!.description).toBe('string');
+      expect(new Set(plugins.map(entry => entry.id)).size).toBe(plugins.length);
+      expect(plugins.some(entry => entry.name === 'dsh-kanban')).toBe(false);
+      const persona = plugin({ plugins }, 'persona')!;
+      const prefix = persona.config!.prefix as string;
+      expect(prefix.length, definition.id).toBeLessThan(4000);
+      expect(prefix).toContain(definition.skill);
+      expect(persona.config!.complete).not.toBe(true);
+      expect(plugin({ plugins }, 'kanban-skills')!.config).toMatchObject({ providerName: 'kanban-bundled', includeDefaultRoots: false });
+      expect(plugin({ plugins }, 'tool-skill')).toBeDefined();
+      // The two project roles declare a tool boundary; the architect keeps the gate it ships.
+      expect(plugin({ plugins }, 'preset-tools') === undefined, definition.id).toBe(definition.id === 'kanban-workflow-architect');
+      // A question to the person goes through decision_request in both project roles.
+      expect(plugin({ plugins }, 'tool-ask-user') === undefined, definition.id).toBe(definition.id !== 'kanban-workflow-architect');
+    }
   });
 
-  it('retains development tools and keeps service-providing groups isolated', async () => {
-    const { plugins } = await composition();
-    const names = plugins.map(row => row.name);
+  it('keeps the architect able to inspect and validate a workflow', async () => {
+    const { presets } = await composition();
+    const architect = presets[0]!;
+    const names = architect.plugins.map(entry => entry.name);
     for (const name of [
       'agent-instructions', 'time-context', 'tool-bash', 'tool-pwsh', 'tool-fs',
       'tool-fs-search', 'tool-jobs', 'tool-schedule', 'skill-filesystem', 'tool-skill',
       'tool-cordis', 'tool-goal', 'tool-ask-user', 'tool-todo', 'tool-web', 'tool-present',
     ]) expect(names).toContain('@deepseek-ai/dsh-' + name);
-    const compaction = plugins.find(row => row.id === 'compaction')!;
+    const compaction = plugin(architect, 'compaction')!;
     expect(compaction.group).toBe(true);
     expect(compaction.isolate).toEqual({ compaction: true, toolResultPruner: true });
-    const delegation = plugins.find(row => row.id === 'delegation')!;
+    const delegation = plugin(architect, 'delegation')!;
     expect(delegation.group).toBe(true);
     expect(delegation.isolate).toEqual({ workflowEngine: true });
-    expect((delegation.config as unknown as Entry[]).map(row => row.name)).toContain('@deepseek-ai/dsh-tool-subagent');
-    const base = pathToFileURL(path.join(root, 'cordis.patch.yml')).href;
-    const bash = plugins.find(row => row.id === 'tool-bash')!.disabled!;
-    const pwsh = plugins.find(row => row.id === 'tool-pwsh')!.disabled!;
-    expect(evaluate(bash, base, 'win32')).toBe(true);
-    expect(evaluate(pwsh, base, 'win32')).toBe(false);
-    expect(evaluate(bash, base, 'linux')).toBe(false);
-    expect(evaluate(pwsh, base, 'linux')).toBe(true);
+    expect((delegation.config as unknown as Entry[]).map(entry => entry.name)).toContain('@deepseek-ai/dsh-tool-subagent');
   });
 
-  it('resolves packaged resources after relocation without depending on a checkout or cwd', async () => {
+  it('gives the planner repository reads and shell but no way to write a file', async () => {
+    const { presets } = await composition();
+    const planner = presets[1]!;
+    const names = planner.plugins.map(entry => entry.name);
+    expect(names).toContain('@deepseek-ai/dsh-tool-bash');
+    expect(names).toContain('@deepseek-ai/dsh-tool-fs');
+    expect(names).toContain('@deepseek-ai/dsh-tool-fs-search');
+    expect(names).toContain('@deepseek-ai/dsh-tool-web');
+    expect(names).toContain('@deepseek-ai/dsh-tool-subagent');
+    expect(plugin(planner, 'tool-subagent-fork')!.config).toMatchObject({ provider: 'fork', toolName: 'subagent_fork' });
+    // The planner mounts no job tools, so a command must not become a job it cannot read.
+    for (const id of ['tool-bash', 'tool-pwsh']) {
+      expect(plugin(planner, id)!.config).toMatchObject({ enableRunInBackground: false, promoteOnTimeout: false });
+    }
+    const fileTools = plugin(planner, 'tool-fs')!;
+    expect(fileTools.config).toMatchObject({ write: false, edit: false });
+    const gate = plugin(planner, 'preset-tools')!;
+    expect(gate.config).toMatchObject({ denyMcp: false });
+  });
+
+  it('lets the planner plan and write cards but never administer a board', async () => {
+    const { presets } = await composition();
+    const entries = allowed(presets[1]!);
+    for (const name of ['create_card', 'edit_card', 'create_relation', 'send_task_message', 'set_next_transition', 'decision_request', 'create_note', 'delete_team_file']) {
+      expect(entries, name).toContain(name);
+    }
+    for (const name of ['create_board', 'update_board', 'edit_board_yaml', 'add_stage', 'validate_workflow', 'revert_board']) {
+      expect(entries, name).not.toContain(name);
+    }
+    // Every allowlisted name is a product tool, so a typo cannot silently allow nothing.
+    expect(entries.every(name => PRODUCT_TOOL_NAMES.includes(name))).toBe(true);
+  });
+
+  it('gives the manager no repository, web, delegation, or MCP capability', async () => {
+    const { presets } = await composition();
+    const manager = presets[2]!;
+    const names = manager.plugins.map(entry => entry.name);
+    for (const forbidden of [
+      '@deepseek-ai/dsh-tool-bash', '@deepseek-ai/dsh-tool-pwsh', '@deepseek-ai/dsh-tool-fs',
+      '@deepseek-ai/dsh-tool-fs-search', '@deepseek-ai/dsh-tool-web', '@deepseek-ai/dsh-tool-subagent',
+      '@deepseek-ai/dsh-tool-subagent-fork', '@deepseek-ai/dsh-agent-instructions',
+    ]) expect(names).not.toContain(forbidden);
+    expect(plugin(manager, 'preset-tools')!.config).toMatchObject({ denyMcp: true });
+    expect(manager.plugins.map(entry => entry.id).sort()).toEqual(['compaction', 'kanban-skills', 'persona', 'preset-tools', 'skill-filesystem', 'time-context', 'tool-skill']);
+  });
+
+  it('lets the manager read, note, message, and route without writing a card', async () => {
+    const { presets } = await composition();
+    const entries = allowed(presets[2]!);
+    for (const name of ['get_card', 'get_cards', 'list_cards', 'get_board_summary', 'create_note', 'update_note', 'send_task_message', 'list_allowed_transitions', 'set_next_transition', 'pause_task', 'resume_task', 'decision_request']) {
+      expect(entries, name).toContain(name);
+    }
+    for (const name of ['create_card', 'edit_card', 'create_relation', 'delete_relation', 'create_team_file', 'read_team_file', 'create_board', 'update_board']) {
+      expect(entries, name).not.toContain(name);
+    }
+    expect(entries.every(name => PRODUCT_TOOL_NAMES.includes(name))).toBe(true);
+  });
+
+  it('resolves each preset skill after relocation without depending on a checkout or cwd', async () => {
     const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
     expect(manifest.files).toContain('presets');
     expect(manifest.exports['./package.json']).toBe('./package.json');
+    expect(manifest.exports['./preset-tools']).toBeDefined();
     const directory = await mkdtemp(path.join(tmpdir(), 'dsh-kanban-preset-'));
     temporaryRoots.push({ directory, canonical: await realpath(directory) });
     for (const entry of ['package.json', 'cordis.patch.yml', 'presets']) {
       await cp(path.join(root, entry), path.join(directory, entry), { recursive: true });
     }
-    const { plugins } = await composition();
-    expect(plugins.find(row => row.id === 'skill-filesystem')!.config).toBeUndefined();
-    const provider = plugins.find(row => row.id === 'kanban-skills')!;
-    expect(provider.config).toMatchObject({ providerName: 'kanban-bundled', includeDefaultRoots: false });
-    const expression = provider.config!.bundledSkillDir as Expression;
-    expect(expression.__jsExpr).not.toContain(root);
-    const resolved = evaluate(expression, pathToFileURL(path.join(directory, 'cordis.patch.yml')).href);
-    expect(await realpath(resolved)).toBe(await realpath(path.join(directory, 'presets/skills')));
-    const skill = await readFile(path.join(resolved, 'kanban-workflow-design/SKILL.md'), 'utf8');
-    const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(skill);
-    expect(frontmatter).not.toBeNull();
-    const metadata = parseDocument(frontmatter![1]!).toJS();
-    expect(metadata.name).toBe('kanban-workflow-design');
-    expect(metadata.description.length).toBeGreaterThan(20);
+    const baseUrl = pathToFileURL(path.join(directory, 'cordis.patch.yml')).href;
+    const { presets } = await composition();
+    for (const { definition, plugins } of presets) {
+      const provider = plugin({ plugins }, 'kanban-skills')!;
+      const expression = provider.config!.bundledSkillDir as Expression;
+      expect(expression.__jsExpr).not.toContain(root);
+      const resolved = evaluate(expression, baseUrl);
+      expect(await realpath(resolved)).toBe(await realpath(path.join(directory, 'presets/skills')));
+      const skill = await readFile(path.join(resolved, definition.skill, 'SKILL.md'), 'utf8');
+      const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(skill);
+      expect(frontmatter, definition.skill).not.toBeNull();
+      const metadata = parseDocument(frontmatter![1]!).toJS();
+      expect(metadata.name).toBe(definition.skill);
+      expect(metadata.description.length).toBeGreaterThan(20);
+    }
   });
 
   it('keeps progressive resources bounded and all local links inside the shipped package', async () => {
     const files = await markdownFiles(skillRoot);
-    expect(files.length).toBeGreaterThan(1);
+    expect(files.length).toBeGreaterThan(3);
     for (const file of files) {
       const content = await readFile(file, 'utf8');
       expect(content.length, path.relative(root, file)).toBeLessThan(7000);

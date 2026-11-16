@@ -9,6 +9,7 @@ import { isAbsolutePath, isDomainId } from './validation.js';
 import { AUTO_MODE_PAUSE_REASONS, HUB_RELATION_TYPES, WORKTREE_POLICIES } from '../shared/types.js';
 import { ANCHOR_POINTS_PER_SIDE, CONNECTION_OFFSET_LIMIT } from './connection-anchor.js';
 import { taskHistorySchema } from './task-history/entry.js';
+import { mcpAllowlistEntry as parseMcpAllowlistEntry } from './mcp-allowlist.js';
 
 /**
  * Shared persisted-schema fragments. The legacy board aggregate and the Hub
@@ -109,10 +110,13 @@ export const column = z.strictObject({
 export const group = z.strictObject({ id, name: nonempty, columnIds: z.array(id).min(1) });
 /** One model route: a provider, the provider-owned model, and an optional adapter-owned effort. */
 export const modelSelection = z.strictObject({ provider: nonempty, model: nonempty, reasoningEffort: nonempty.optional() });
+/** One authored MCP allowlist entry: a server, or one `server/tool` pair. */
+export const mcpAllowlistEntry = z.string().refine(value => parseMcpAllowlistEntry(value) !== undefined, 'Expected a server or server/tool entry.');
 export const workflow = z.strictObject({
   name: nonempty, initialColumnId: id, defaultView: z.enum(['board', 'workflow']).optional(), columns: z.array(column).min(1), groups: z.array(group),
   model: modelSelection.optional(),
   agentPreset: nonempty.optional(),
+  mcp: z.array(mcpAllowlistEntry).optional(),
   connections: z.array(connectionLayout).optional(),
 }).superRefine((value, context) => {
   const ids = new Set(value.columns.map(column => column.id));
@@ -224,6 +228,7 @@ function workflowShape(value: Workflow, includeLayout: boolean, includeIdentity 
     groups: value.groups.map(item => ({ id: item.id, name: item.name, columnIds: item.columnIds })),
     model: value.model === undefined ? undefined : { provider: value.model.provider, model: value.model.model, reasoningEffort: value.model.reasoningEffort },
     agentPreset: value.agentPreset,
+    mcp: value.mcp === undefined ? undefined : [...value.mcp],
     ...(includeLayout ? { connections: sortedConnections(value.connections).map(shapeConnection) } : {}),
   });
 }

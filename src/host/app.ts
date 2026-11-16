@@ -100,7 +100,7 @@ function boardSharingPort(sharing:HubSharingService):BoardSharingPort{
 }
 /** One created conversation and, when its board named defaults, how the model and preset fared. */
 export interface CreatedConversation { sessionId: string; model?: ConversationModelOutcome; preset?: ConversationPresetOutcome }
-export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; /** Records each accepted workflow write; absent keeps no local history. */ revisions?:BoardRevisionPort; questionStore?:QuestionStore; questionDraftStore?:QuestionDraftStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; /** Applies a board's default agent preset to one conversation; absent means no board preset is applied. */ presets?:SessionPresetPort; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number }
+export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; /** Records each accepted workflow write; absent keeps no local history. */ revisions?:BoardRevisionPort; questionStore?:QuestionStore; questionDraftStore?:QuestionDraftStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; /** Applies a board's default agent preset to one conversation; absent means no board preset is applied. */ presets?:SessionPresetPort; /** The MCP servers this host reports for the board allowlist control; absent reports none. */ mcpServers?:()=>readonly string[]; /** Applies a board's MCP tool policy to one conversation agent; absent means no board policy is applied. */ tools?:{apply:(sessionId:string)=>Promise<void>}; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number }
 /** Coordinates Hub-scoped commands while the host continues to own sessions and execution. */
 export class KanbanApp {
  readonly questions=new QuestionIndex();
@@ -214,6 +214,14 @@ export class KanbanApp {
   const models=this.options.models;
   if(models!==undefined)return models.catalog(refresh);
   return this.requireScheduleRuntime().modelCatalog(refresh);
+ }
+ /**
+  * The MCP servers this host reports. A deployment without the manager reports
+  * none, which the allowlist control presents as an empty live list rather than
+  * hiding the stored entries.
+  */
+ mcpServers():readonly string[]{
+  try{return [...(this.options.mcpServers?.()??[])];}catch(error){this.options.report?.(error);return [];}
  }
  /** Attach isolated execution after composition; task records remain the only authority. */
  attachScriptedRuntime(nativeRuntime:ScriptedRuntime):()=>Promise<void>{
@@ -934,6 +942,16 @@ export class KanbanApp {
   * someone asked for is still created, and the outcome rides on the receipt so
   * the client can say which preset it actually starts on.
   */
+ /**
+  * Apply the board's MCP tool policy to the conversation agent. The board already
+  * owns the conversation, so the policy can read it; a failure is reported and
+  * never fails the conversation someone asked for.
+  */
+ private async applyBoardToolPolicy(sessionId:string):Promise<void>{
+  const tools=this.options.tools;
+  if(tools===undefined)return;
+  try{await tools.apply(sessionId);}catch(error){this.options.report?.(error);}
+ }
  private async applyBoardDefaultPreset(board:Board,sessionId:string):Promise<ConversationPresetOutcome|undefined>{
   const presets=this.options.presets;
   const requested=board.workflow.agentPreset;
@@ -973,7 +991,7 @@ export class KanbanApp {
    // per-session selection applied afterwards.
    const preset=await this.applyBoardDefaultPreset(located.board,id);
    const model=await this.applyBoardDefaultModel(located.board,id);
-   this.assertContext(taskId);const current=store.requireTask(taskId);invariant(current.effectiveCwd===before.effectiveCwd,'CONTEXT_CHANGED','Task directory changed while the conversation was being created.');await store.addSession(taskId,id);
+   this.assertContext(taskId);const current=store.requireTask(taskId);invariant(current.effectiveCwd===before.effectiveCwd,'CONTEXT_CHANGED','Task directory changed while the conversation was being created.');await store.addSession(taskId,id);await this.applyBoardToolPolicy(id);
    return {...(preset===undefined?{}:{preset}),...(model===undefined?{}:{model}),sessionId:id};}
   catch(error){try{await this.sessions.archive(id);}catch(archiveError){this.options.report?.(archiveError);}throw error;}
  }

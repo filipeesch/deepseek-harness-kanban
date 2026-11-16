@@ -5,6 +5,7 @@ import { KanbanError } from '../shared/errors.js';
 import { createYamlFields, invalidWorkflow } from './yaml-fields.js';
 import { STAGE_MIN_SIZE, STAGE_SIZE_LIMIT } from './stage-size.js';
 import { ANCHOR_POINTS_PER_SIDE, CONNECTION_AXES, STAGE_SIDES, connectionKey, isAcceptedAnchorPoint, isAcceptedOffset } from './connection-anchor.js';
+import { normalizeMcpAllowlist } from './mcp-allowlist.js';
 
 export const DEFAULT_WORKFLOW_YAML = [
   'name: Delivery Flow',
@@ -143,7 +144,7 @@ export function parseWorkflow(yaml: string): Workflow {
     invalidWorkflow('Invalid workflow YAML: ' + (error instanceof Error ? error.message : String(error)));
   }
   const input = record(raw, 'Workflow');
-  keys(input, ['id', 'name', 'initial_column', 'default_view', 'columns', 'groups', 'model', 'agent_preset', 'connections'], 'workflow', COLUMN_NOTE);
+  keys(input, ['id', 'name', 'initial_column', 'default_view', 'columns', 'groups', 'model', 'agent_preset', 'mcp', 'connections'], 'workflow', COLUMN_NOTE);
   if (input.id !== undefined) id(input.id, 'Workflow ID');
   const name = input.name === undefined ? 'Workflow' : text(input.name, 'Workflow name');
   if (!Array.isArray(input.columns) || input.columns.length === 0) invalidWorkflow('Workflow requires at least one column.');
@@ -209,6 +210,7 @@ export function parseWorkflow(yaml: string): Workflow {
   if (input.default_view !== undefined) workflow.defaultView = view(input.default_view);
   if (input.model !== undefined) workflow.model = modelSelection(input.model, 'Workflow model');
   if (input.agent_preset !== undefined) workflow.agentPreset = text(input.agent_preset, 'Workflow agent_preset');
+  if (input.mcp !== undefined) workflow.mcp = normalizeMcpAllowlist(input.mcp, invalidWorkflow);
   if (input.connections !== undefined) {
     if (!Array.isArray(input.connections)) invalidWorkflow('Workflow connections must be an array.');
     const parsed = input.connections.map((item, index) => connectionLayout(item, 'Connection ' + index));

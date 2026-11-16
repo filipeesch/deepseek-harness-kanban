@@ -65,6 +65,7 @@ function fixture(options: { storage?: KeyValueStorage } = {}) {
       scriptedVariables: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { env: [], variables: [] } } }),
       branches: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['main'] } }),
       modelCatalog: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { default: { provider: 'deepseek', model: 'chat' }, providers: [], failures: [] } } }),
+      mcpServers: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['atlassian', 'trino'] } }),
       worktreeDefault: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { branchName: 'task', path: '' } } }),
       detectProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { kind: 'git', projectPath: '/repo/apps/web', gitRootPath: '/repo', defaultBranch: 'main' } } }),
       localDrive: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { action: 'roots', discovery: { state: 'empty', locations: [] } } } }),

@@ -6,6 +6,7 @@
     "src/domain/**/*.ts",
     "src/shared/**/*.ts",
     "src/remote.ts",
+    "src/preset-tools.ts",
     "src/questions/**/*.ts",
     "src/questions/**/*.tsx",
     "tests/host/**/*.ts",
