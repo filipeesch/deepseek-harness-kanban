@@ -229,7 +229,7 @@ export async function apply(ctx:Context):Promise<void>{
   // Optional child injection grants access without making conventional boards
   // depend on providers that might not be installed in this profile.
   const runtimeFiber=ctx.inject(['fs','shell','ptcRuntime','sandbox'],child=>{
-   const detach=app.attachScriptedRuntime(createScriptedRuntime({context:child,privateDirectory:join(profile.dir,'kanban-private','scripted')}));
+   const detach=app.attachScriptedRuntime(createScriptedRuntime({context:child,privateDirectory:join(profile.dir,'kanban-private','scripted'),report}));
    child.effect(()=>detach,'kanban.scriptedRuntime');
   });
   ctx.effect(()=>()=>runtimeFiber.dispose(),'kanban.optionalScriptedRuntime');

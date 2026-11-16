@@ -80,6 +80,33 @@ describe('workflow warnings', () => {
     expect(value.some((warning: any) => warning.parameter === 'pipeline')).toBe(false);
   });
 
+  it('reports a parameter a program reads without declaring it', () => {
+    const value = warnings("initial_column: check\ncolumns:\n  - id: check\n    label: Check\n    scripted:\n      language: typescript\n      code: 'const app = input.params.app; return input.params.pipeline;'\n      params:\n        - name: app\n      exits: {passed: done}\n  - id: done\n    label: Done\n");
+    expect(value).toContainEqual({ kind: 'scripted-parameter-undeclared', stage: 'check', parameter: 'pipeline' });
+    expect(value.some((warning: any) => warning.parameter === 'app')).toBe(false);
+  });
+
+  it('reports a parameter a program destructures without declaring it', () => {
+    const value = warnings("initial_column: check\ncolumns:\n  - id: check\n    label: Check\n    scripted:\n      language: typescript\n      code: 'const { pipeline, app: renamed = \"ci\" } = input.params;'\n      params:\n        - name: app\n      exits: {passed: done}\n  - id: done\n    label: Done\n");
+    expect(value).toContainEqual({ kind: 'scripted-parameter-undeclared', stage: 'check', parameter: 'pipeline' });
+    expect(value.some((warning: any) => warning.parameter === 'app')).toBe(false);
+  });
+
+  it('does not read a Bash program body as a parameter access', () => {
+    const value = warnings("initial_column: check\ncolumns:\n  - id: check\n    label: Check\n    scripted:\n      language: bash\n      code: echo 'params.pipeline' | jq .\n      params: []\n      exits: {passed: done}\n  - id: done\n    label: Done\n");
+    expect(value.some((warning: any) => warning.kind === 'scripted-parameter-undeclared')).toBe(false);
+  });
+
+  it('groups a repeated undeclared parameter read', () => {
+    const value = warnings("initial_column: check\ncolumns:\n  - id: check\n    label: Check\n    scripted:\n      language: typescript\n      code: 'input.params.pipeline; input.params.pipeline;'\n      params: []\n      exits: {passed: done}\n  - id: done\n    label: Done\n");
+    expect(value.filter((warning: any) => warning.kind === 'scripted-parameter-undeclared')).toEqual([{ kind: 'scripted-parameter-undeclared', stage: 'check', parameter: 'pipeline', count: 2 }]);
+  });
+
+  it('does not guess about a program held in an external file', () => {
+    const value = warnings("initial_column: check\ncolumns:\n  - id: check\n    label: Check\n    scripted:\n      language: typescript\n      file: wait.ts\n      params:\n        - name: app\n      exits: {passed: done}\n  - id: done\n    label: Done\n");
+    expect(value.some((warning: any) => warning.kind === 'scripted-parameter-undeclared')).toBe(false);
+  });
+
   it('reports a card without the values its stage declares', () => {
     const workflow = parseWorkflow('initial_column: check\ncolumns:\n  - id: check\n    label: Check\n    scripted:\n      language: bash\n      code: echo hi\n      params:\n        - name: pipeline\n      exits: {passed: done}\n  - id: done\n    label: Done\n');
     const value = workflowWarnings(workflow, [{ id: 'task-1', columnId: 'check', parameters: [] }, { id: 'task-2', columnId: 'check', parameters: ['pipeline'] }]);

@@ -407,6 +407,29 @@ describe('scripted stage parameters', () => {
     await h.close();
   });
 
+  it('names the step that owed the missing parameter when the record knows how the entry began', async () => {
+    const h = harness();
+    await declare(h, [{ name: 'pipeline' }]);
+    await h.edit(value => {
+      value.task.history = [{ kind: 'stage', at: '2026-01-01T00:00:00.000Z', fromColumnId: 'todo', columnId: value.task.columnId, origin: 'script:passed' }];
+    });
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.control().error?.code).toBe('PARAMETERS_REQUIRED');
+    expect(h.control().error?.message).toContain('program that produced it must correct it');
+    expect(h.calls).toHaveLength(0);
+    expect(h.routes).toHaveLength(0);
+    await h.close();
+  });
+
+  it('falls back to the repair sentence when the record does not say how the entry began', async () => {
+    const h = harness();
+    await declare(h, [{ name: 'pipeline' }]);
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.control().error?.message).toContain('Fix the stage or the entry, then press Play.');
+    expect(h.control().error?.message).not.toContain('must correct it');
+    await h.close();
+  });
+
   it('fails in place without an error route', async () => {
     const h = harness();
     await declare(h, [{ name: 'pipeline' }]);
@@ -520,6 +543,22 @@ describe('scripted failure settlement by origin', () => {
     const s = h.supervisor(); s.start(); await s.settle();
     expect(h.control().phase).toBe('failed');
     expect(h.control().error).toMatchObject({ code: 'EXECUTION_CONTEXT_CHANGED', details: { origin: 'configuration' } });
+    expect(h.control().result).toBeUndefined();
+    expect(h.routes).toHaveLength(0);
+    await h.close();
+  });
+
+  it('delivers the product-owned refusal diagnosis with the observed shape', async () => {
+    const h = harness();
+    await h.edit(value => { value.task.scripted!.definition.exits.infrastructure = 'review'; value.task.scripted!.definition.exits.error = 'review'; });
+    // The reader's own sentence carries the shape; settlement must not replace it with a provider sentence.
+    h.execute(async () => {
+      throw new KanbanError('TYPESCRIPT_RESULT_UNSUPPORTED', 'The TypeScript provider returned no readable program output: the result publishes neither ordered output nor a per-call log list. keys: value, images; output: undefined; logs: undefined.', { origin: 'configuration' });
+    });
+    const s = h.supervisor(); s.start(); await s.settle();
+    expect(h.control().phase).toBe('failed');
+    expect(h.control().error?.message).toContain('keys: value, images');
+    expect(h.control().error?.message).toContain('Update the DeepSeek Harness build');
     expect(h.control().result).toBeUndefined();
     expect(h.routes).toHaveLength(0);
     await h.close();

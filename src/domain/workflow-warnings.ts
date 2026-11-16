@@ -17,7 +17,9 @@ export type WorkflowWarning =
   /** A destination stage declares a parameter its origin stage's instruction never names. */
   | { readonly kind: 'destination-parameter-unmentioned'; readonly stage: string; readonly destination: string; readonly parameter: string }
   /** A card parked in a stage declares parameters it holds no value for. */
-  | { readonly kind: 'card-missing-parameters'; readonly stage: string; readonly taskId: string; readonly parameters: readonly string[] };
+  | { readonly kind: 'card-missing-parameters'; readonly stage: string; readonly taskId: string; readonly parameters: readonly string[] }
+  /** A scripted program reads a parameter its stage never declares. */
+  | { readonly kind: 'scripted-parameter-undeclared'; readonly stage: string; readonly parameter: string; readonly count?: number };
 
 /** The verb phrases an instruction uses to cite a destination stage. */
 const ROUTE_CITATION = /\b(?:declare|route\s+to|transition\s+to|move\s+to|advance\s+to|go\s+to)\s+`?([a-z][a-z0-9_-]{1,63})`?/gi;
@@ -25,6 +27,12 @@ const ROUTE_CITATION = /\b(?:declare|route\s+to|transition\s+to|move\s+to|advanc
 const BACKTICK_CITATION = /`([a-z][a-z0-9_-]{1,63})`/g;
 /** A token shaped like a stage identifier, used only to report a prose mention. */
 const IDENTIFIER_TOKEN = /\b[a-z][a-z0-9_-]{2,63}\b/g;
+/** A parameter a TypeScript program reads directly from its input context. */
+const PARAMETER_READ = /\bparams\s*\.\s*([A-Za-z_$][A-Za-z0-9_$]*)/g;
+/** A parameter a TypeScript program destructures from its input context. */
+const PARAMETER_DESTRUCTURE = /\{([^{}]*)\}\s*=\s*(?:input\s*\.\s*)?params\b/g;
+/** One identifier-shaped name inside a destructuring pattern. */
+const DESTRUCTURED_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
 function destinations(column: Column): Set<string> | null {
   // A stage that authors no restriction permits any other stage, so nothing it
@@ -51,12 +59,19 @@ function reachableStages(workflow: Workflow, initial: string): Set<string> {
   return reached;
 }
 
+/** The identity one observation repeats by, when it names a reference or a parameter. */
+function groupingKey(warning: WorkflowWarning): string | undefined {
+  if ('reference' in warning) return warning.kind + '\u0000' + warning.stage + '\u0000' + warning.reference;
+  if (warning.kind === 'scripted-parameter-undeclared') return warning.kind + '\u0000' + warning.stage + '\u0000' + warning.parameter;
+  return undefined;
+}
+
 /** One repeated observation per stage and reference, with how many times it occurred. */
 class ObservationList {
   private readonly list: WorkflowWarning[] = [];
   private readonly counts = new Map<string, number>();
   push(warning: WorkflowWarning): void {
-    const key = 'reference' in warning ? warning.kind + '\u0000' + warning.stage + '\u0000' + warning.reference : undefined;
+    const key = groupingKey(warning);
     if (key === undefined) { this.list.push(warning); return; }
     const seen = this.counts.get(key);
     this.counts.set(key, (seen ?? 0) + 1);
@@ -66,8 +81,9 @@ class ObservationList {
   /** The grouped warnings, each carrying the number of occurrences behind it. */
   values(): WorkflowWarning[] {
     return this.list.map(warning => {
-      if (!('reference' in warning)) return warning;
-      const count = this.counts.get(warning.kind + '\u0000' + warning.stage + '\u0000' + warning.reference) ?? 1;
+      const key = groupingKey(warning);
+      if (key === undefined) return warning;
+      const count = this.counts.get(key) ?? 1;
       return count > 1 ? { ...warning, count } : warning;
     });
   }
@@ -128,6 +144,46 @@ function destinationParameterWarnings(workflow: Workflow): WorkflowWarning[] {
   return warnings;
 }
 
+/** The parameter names one destructuring pattern binds, ignoring defaults and renames. */
+function destructuredNames(pattern: string): string[] {
+  const names: string[] = [];
+  for (const part of pattern.split(',')) {
+    const name = part.split('=')[0]!.split(':')[0]!.trim();
+    if (DESTRUCTURED_NAME.test(name)) names.push(name);
+  }
+  return names;
+}
+
+/**
+ * One parameter a TypeScript program reads that its stage never declares.
+ *
+ * This is a text observation over an inline TypeScript program: it sees a direct
+ * `params.name` read and a simple destructuring of the input parameters, and it
+ * cannot see a computed access or a source held in an external file, which is
+ * resolved at capture time and is not part of the composed document. A Bash
+ * program receives its input document on stdin, so its body is never inspected.
+ */
+function undeclaredParameterWarnings(workflow: Workflow): WorkflowWarning[] {
+  const warnings: WorkflowWarning[] = [];
+  for (const column of workflow.columns) {
+    if (column.scripted?.language !== 'typescript') continue;
+    const code = column.scripted.code;
+    if (code === undefined) continue;
+    const declared = new Set((column.scripted.params ?? []).map(parameter => parameter.name));
+    const observations = new ObservationList();
+    const read = (name: string): void => {
+      if (declared.has(name)) return;
+      observations.push({ kind: 'scripted-parameter-undeclared', stage: column.id, parameter: name });
+    };
+    for (const match of code.matchAll(PARAMETER_READ)) read(match[1]!);
+    for (const match of code.matchAll(PARAMETER_DESTRUCTURE)) {
+      for (const name of destructuredNames(match[1]!)) read(name);
+    }
+    warnings.push(...observations.values());
+  }
+  return warnings;
+}
+
 /** One card parked in a stage that declares parameters it holds no value for. */
 function cardParameterWarnings(workflow: Workflow, cards: readonly { readonly id: string; readonly columnId: string; readonly parameters?: readonly string[] }[]): WorkflowWarning[] {
   const byId = new Map(workflow.columns.map(column => [column.id, column]));
@@ -150,8 +206,9 @@ function cardParameterWarnings(workflow: Workflow, cards: readonly { readonly id
  * stage that is not the last one and leaves nowhere to go, a connection layout
  * for a pair the diagram does not draw, a stage no group claims, an instruction
  * that cites a stage the workflow does not define or that the stage does not
- * permit, a destination parameter the origin instruction never names, and a card
- * without the values its stage declares.
+ * permit, a destination parameter the origin instruction never names, a parameter
+ * a scripted program reads without declaring, and a card without the values its
+ * stage declares.
  *
  * A citation is an identifier written between backticks, or an identifier the
  * workflow defines that follows one of the authored citing phrases. A plain word
@@ -184,6 +241,7 @@ export function workflowWarnings(
     if (!drawn.has(layout.from + '\u0000' + layout.to)) warnings.push({ kind: 'undrawn-connection', from: layout.from, to: layout.to });
   }
   warnings.push(...destinationParameterWarnings(workflow));
+  warnings.push(...undeclaredParameterWarnings(workflow));
   warnings.push(...cardParameterWarnings(workflow, cards));
   return warnings;
 }
