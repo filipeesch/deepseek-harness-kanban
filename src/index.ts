@@ -38,6 +38,9 @@ import { GitAdapter } from './host/git.js';
 import { KanbanApp } from './host/app.js';
 import { KanbanController } from './host/controller.js';
 import { registerProductTools } from './host/tools.js';
+import { createBoardToolPolicy, type PolicyAgent } from './host/board-tool-policy.js';
+import { boardAllowlistFor } from './host/board-policy-source.js';
+import { createPresetReadOnlyPin, READ_ONLY_PRESET_IDS } from './host/preset-readonly.js';
 import { KanbanError } from './shared/errors.js';
 import { registerTaskContextInjection } from './host/task-context.js';
 import { registerScriptedHandoffInjection } from './host/scripted-handoff.js';
@@ -48,8 +51,10 @@ import { ScheduleArchiveWatcher } from './host/schedule-archive.js';
 import { ScheduleRunner } from './host/schedule-runner.js';
 import { ScheduleCoordinator, type ScheduledEntry } from './host/schedule-coordinator.js';
 import { createSessionModelPort } from './host/session-model.js';
-import { createSessionPresetPort } from './host/session-preset.js';
+import { createSessionPresetPort, resolveSessionAgent } from './host/session-preset.js';
 import { SessionId } from '@deepseek-ai/dsh-session';
+import type { Session } from '@deepseek-ai/dsh-session';
+import { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy';
 import { abortableSleep, ForkAdopter } from './host/conversation-adoption.js';
 import { createForkClaim, createInheritedPrefixCheck } from './host/fork-claim.js';
 import type { TaskLocator } from './host/task-locator.js';
@@ -223,7 +228,29 @@ export async function apply(ctx:Context):Promise<void>{
  const teamFiles=new TeamFiles({store:hubId=>sharing.service.fileStoreFor(hubId),exclusive:(hubId,operation)=>sharing.service.exclusive(hubId,operation)});
  const sessionModels=createSessionModelPort(ctx);
  const sessionPresets=createSessionPresetPort(ctx);
- const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,models:sessionModels,presets:sessionPresets,report,revisions,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
+ // The board's tool policy needs the app's task lookup, and the app needs the
+ // policy port. One deferred hop keeps the dependency one-directional.
+ let applyBoardToolPolicy:(sessionId:string)=>Promise<void>=async()=>undefined;
+ const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,models:sessionModels,presets:sessionPresets,tools:{apply:sessionId=>applyBoardToolPolicy(sessionId)},mcpServers:()=>{const manager=ctx.get('mcpManager') as {list?:()=>ReadonlyArray<{name:string}>}|undefined;try{return manager?.list?.().map(server=>server.name)??[];}catch{return [];}},report,revisions,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
+ // Two independent policies: the board owns the MCP namespace, and the preset ships
+ // its own product-tool boundary. Neither names a tool of the other's namespace, so
+ // their deny masks compose by union instead of intersecting into an empty surface.
+ const boardToolPolicy=createBoardToolPolicy({
+  // A fork or a delegated child is created before it is attached to its task, so the
+  // lookup follows the session's ancestry instead of waiting for the attachment.
+  policy:{allowlist:id=>boardAllowlistFor({boardOf:sessionId=>app.locator.bySession(sessionId)?.board.workflow,parentOf:sessionId=>{try{const header=ctx.sessions.get(SessionId(sessionId))?.header;return header?.parentSession===undefined?undefined:String(header.parentSession);}catch{return undefined;}}},id)},
+  catalog:()=>ctx.tools.definitions().map(definition=>definition.name),
+  restrict:(agent,deny)=>(agent as unknown as {ctx:Context}).ctx.tools.restrict({deny:[...deny]}),
+  report,
+ });
+ const readOnlyPin=createPresetReadOnlyPin({
+  presetOf:session=>{const presets=ctx.get('agentPresets') as {presetForSession?:(session:unknown)=>string|null;stateOf?:(session:unknown)=>string|null}|undefined;const read=presets?.presetForSession??presets?.stateOf;try{return read===undefined||presets===undefined?null:read.call(presets,session);}catch{return null;}},
+  presets:new Set(READ_ONLY_PRESET_IDS),
+  currentMode:session=>{const policy=ctx.get('sandboxPolicy') as {overrideOf?:(session:Session)=>string|undefined}|undefined;try{return policy?.overrideOf?.(session as Session);}catch{return undefined;}},
+  pin:session=>setSandboxMode(session as Session,'read-only'),
+  report,
+ });
+ applyBoardToolPolicy=async sessionId=>{const agent=await resolveSessionAgent(ctx,sessionId);if(agent!==undefined){boardToolPolicy.track(agent as PolicyAgent);readOnlyPin.track(agent as {session:unknown});}};
  const profile=ctx.get('profileContext') as {readonly dir:string}|undefined;
  if(profile&&isAbsolute(profile.dir)){
   // Optional child injection grants access without making conventional boards
@@ -271,9 +298,9 @@ export async function apply(ctx:Context):Promise<void>{
   runtime:()=>scheduleRuns.runtimeByHub(),
   modelCatalog:refresh=>sessionModels.catalog(refresh),
  });
- let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offHandoff:(()=>void)|undefined;let offSignals:(()=>void)|undefined;let offAdoption:(()=>void)|undefined;let offScheduleStatus:(()=>void)|undefined;
+ let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offHandoff:(()=>void)|undefined;let offSignals:(()=>void)|undefined;let offAdoption:(()=>void)|undefined;let offScheduleStatus:(()=>void)|undefined;let offBoardPolicy:(()=>void)|undefined;
  ctx.effect(()=>async()=>{
-  lifetime.abort();offTools?.();offWire?.();offGuards?.();offContext?.();offHandoff?.();offSignals?.();offAdoption?.();offScheduleStatus?.();offSchedules();
+  lifetime.abort();offBoardPolicy?.();boardToolPolicy.dispose();offTools?.();offWire?.();offGuards?.();offContext?.();offHandoff?.();offSignals?.();offAdoption?.();offScheduleStatus?.();offSchedules();
   scheduleCoordinator.dispose();
   try{await scheduleCoordinator.settle();}finally{
    scheduleWatcher.dispose();
@@ -299,6 +326,12 @@ export async function apply(ctx:Context):Promise<void>{
  exposeRootContext(ctx);
  ctx.plugin(KanbanController,app);
  offTools=registerProductTools(ctx,app,taskMessages,{revisions,images:createWorkflowImagePort(ctx)});
+ // An agent starts here for every lifecycle edge: a new conversation, a resume, and
+ // a delegated child that joins its parent's preset revision.
+ const offAgentCreated=ctx.on('agent/created',({agent})=>{boardToolPolicy.track(agent);readOnlyPin.track(agent);return undefined;},{global:true});
+ const offToolsChanged=ctx.on('tools/change',()=>boardToolPolicy.refresh(),{global:true});
+ const offAgentDisposed=ctx.on('agent/disposed',({agent})=>boardToolPolicy.forget(agent),{global:true});
+ offBoardPolicy=()=>{offAgentCreated();offToolsChanged();offAgentDisposed();};
  ctx.on('session/event',(session,event)=>{app.observe(session.id,event);if(event.type==='turn/end')scheduleWatcher.observe(String(session.id));});
  offScheduleStatus=ctx.on('agent/status',({agent})=>scheduleWatcher.observe(String(agent.id)));
  offSignals=registerAttentionSignals(ctx,app);
@@ -309,7 +342,9 @@ export async function apply(ctx:Context):Promise<void>{
   locate:sessionId=>{const located=app.locator.bySession(sessionId);return located===undefined?undefined:{hubId:located.hubId,taskId:located.task.id,effectiveCwd:located.task.effectiveCwd};},
   directory:sessionId=>native.sessions.directory(sessionId),
   setDirectory:(sessionId,directory,signal)=>native.sessions.setDirectory(sessionId,directory,signal),
-  attach:(hubId,taskId,sessionId,expectedEffectiveCwd)=>hubs.hub(hubId).addSession(taskId,sessionId,expectedEffectiveCwd).then(()=>undefined),
+  // Adoption runs detached, after the agent was created, so the board policy is
+  // applied here too: an adopted fork belongs to its task only once attached.
+  attach:async(hubId,taskId,sessionId,expectedEffectiveCwd)=>{await hubs.hub(hubId).addSession(taskId,sessionId,expectedEffectiveCwd);await applyBoardToolPolicy(sessionId);},
   sleep:abortableSleep,
   report,
  });

@@ -20,6 +20,7 @@ export class KanbanController extends TypertRemoteService {
  @Remote async scriptedReview(request:{boardId?:string;stageId?:string;taskId?:string}):Promise<Outcome<ScriptedStageReview>>{return this.attempt(()=>this.app.scriptedReview(request));}
  @Remote async scriptedVariables(request:{taskId:string}):Promise<Outcome<ScriptedVariablesView>>{return this.attempt(()=>this.app.scriptedVariables(request.taskId));}
  @Remote async modelCatalog(request:{refresh?:boolean}):Promise<Outcome<ModelCatalog>>{return this.attempt(()=>this.app.modelCatalog(request.refresh===true));}
+ @Remote async mcpServers(_request:Record<string,never>):Promise<Outcome<string[]>>{return this.attempt(async()=>[...this.app.mcpServers()]);}
  @Remote({mode:'stream'}) async *follow(signal:AbortSignal):AsyncGenerator<HostSnapshot>{
   this.owner();let dirty=true;let wake:(()=>void)|undefined;let lastRevision=-1;
   const changed=()=>{dirty=true;wake?.();};const off=this.app.subscribe(changed);

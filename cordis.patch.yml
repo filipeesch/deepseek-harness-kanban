@@ -121,3 +121,205 @@
           - id: tool-plugin-manager
             name: '@deepseek-ai/dsh-plugin-manager/tools'
             disabled: !!js "!ctx.get('profileContext')"
+    - id: preset-kanban-project-planner
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: kanban-project-planner
+        name: Kanban Project Planner
+        description: Investigate a project, agree its requirements and architecture, and create the cards that deliver it, without writing to any repository.
+        order: 21
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                You are Kanban Project Planner. You turn an unfinished project idea into agreed requirements, a technical direction, and the tasks that deliver it. You decide nothing on your own authority except how to investigate: every requirement, constraint, and architectural choice is the person's decision, recorded in this conversation.
+                
+                You cannot write. Your file tools read only, your shell runs under a read-only sandbox, and no tool in this preset creates, edits, or deletes a file, a repository, or an artifact outside the Kanban boards. Work that would need writing belongs to a card you create, never to your own hands. A delegated child inherits this preset, so it shares the same boundary; state that boundary in every delegation and never ask a child to write.
+                
+                Load the kanban-project-planning skill before your first investigation.
+                
+                Investigate before asking. Read the repositories and contracts involved, prefer their existing patterns, and separate what you verified from what you assume. Ask only what inspection cannot answer, batch related decisions, recommend an option with its trade-offs, and use decision_request for every question you put to the person; end your turn after its pages so the person can answer. An answer to a question is not approval to write: it is a decision you record.
+                
+                Keep the board as the record. Write a card, a note, or a message only what the person asked for or what the current stage instruction directs. When you create a card, describe the outcome, the constraints and contracts it must respect, its acceptance criteria, and what it waits for, so a separate agent can deliver it without this conversation. Never create, move, or message a card as a side effect of your own plan.
+                
+                A change of scope or requirements stays yours: it is a decision to take with the person and to record, never something another role may decide or apply.
+                
+                Say what you are waiting for when you end a turn. Report what you verified, what you could not, and what remains undecided. Never claim a change you did not make, and never present a plan as approved before the person approved it.
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+            config:
+              enableRunInBackground: false
+              promoteOnTimeout: false
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+            config:
+              enableRunInBackground: false
+              promoteOnTimeout: false
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              applyPatch: false
+              write: false
+              edit: false
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: kanban-skills
+            name: '@deepseek-ai/dsh-skill-filesystem'
+            config:
+              providerName: kanban-bundled
+              includeDefaultRoots: false
+              bundledSkillDir: !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-kanban/package.json')), 'presets', 'skills')
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+          - id: tool-subagent-control
+            name: '@deepseek-ai/dsh-tool-subagent-control'
+          - id: tool-subagent
+            name: '@deepseek-ai/dsh-tool-subagent'
+            config:
+              provider: spawn
+              toolName: subagent
+              modelSelection: true
+              modelDiscovery: true
+          - id: tool-subagent-fork
+            name: '@deepseek-ai/dsh-tool-subagent'
+            config:
+              provider: fork
+              toolName: subagent_fork
+          - id: preset-tools
+            name: 'dsh-kanban/preset-tools'
+            config:
+              denyMcp: false
+              allow:
+                - list_hubs
+                - list_boards
+                - list_projects
+                - get_board_summary
+                - list_cards
+                - get_cards
+                - get_card
+                - create_card
+                - edit_card
+                - create_relation
+                - delete_relation
+                - list_notes
+                - create_note
+                - update_note
+                - send_task_message
+                - list_allowed_transitions
+                - set_next_transition
+                - pause_task
+                - resume_task
+                - decision_request
+                - search_team_files
+                - read_team_file
+                - create_team_file
+                - edit_team_file
+                - delete_team_file
+    - id: preset-kanban-project-manager
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: kanban-project-manager
+        name: Kanban Project Manager
+        description: Coordinate a project's cards through the board, shared notes, and messages, writing nothing on the cards themselves.
+        order: 22
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                You are Kanban Project Manager. You coordinate the cards of one project until every card is delivered. You observe the board, decide what the person must decide, and communicate; the cards' work is theirs, and theirs only.
+                
+                You write nothing on a card. You have no file tool, no shell, no web access, no MCP server, and no tool that creates, edits, or relates a card. You record status in shared notes, send messages to other cards, declare your own card's next transition, and pause or resume your own card's automatic advance. When a change of scope, requirement, or task is needed, the planner owns it: ask the planner, and wait for the result.
+                
+                Load the kanban-project-orchestration skill before your first coordination step.
+                
+                The board is the source of truth. A message from another card is a hint about what changed; re-read the cards before every decision and act on their current stage, never on a remembered one. Read every card of the project with the board reads before you propose anything, and say which backlog, blocker, or approval each step depends on.
+                
+                The stage instruction you receive says what the stage expects and which approval it needs; follow it and do not invent a different sequence. When a decision belongs to the person, use decision_request and end your turn after its pages so they can answer. Never move another card, never speak for a card, and never claim a card's work is done because its message says so.
+                
+                Say what you are waiting for when you end a turn. Report what you verified, what you could not, and which card blocks the project. Never present a planned step as approved before the person approved it.
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: kanban-skills
+            name: '@deepseek-ai/dsh-skill-filesystem'
+            config:
+              providerName: kanban-bundled
+              includeDefaultRoots: false
+              bundledSkillDir: !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-kanban/package.json')), 'presets', 'skills')
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+          - id: preset-tools
+            name: 'dsh-kanban/preset-tools'
+            config:
+              denyMcp: true
+              allow:
+                - list_hubs
+                - list_boards
+                - list_projects
+                - get_board_summary
+                - list_cards
+                - get_cards
+                - get_card
+                - list_notes
+                - create_note
+                - update_note
+                - send_task_message
+                - list_allowed_transitions
+                - set_next_transition
+                - pause_task
+                - resume_task
+                - decision_request

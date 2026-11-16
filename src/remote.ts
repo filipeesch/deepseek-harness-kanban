@@ -192,6 +192,7 @@ const contribution=createTypertContribution({package:PACKAGE_NAME,methods:{
  'kanban/scriptedReview':{...base,parameters:[parameter('request',z.object({boardId:id.optional(),stageId:id.optional(),taskId:id.optional()}).strict(),'ScriptedReviewLookup')],result:codec('ScriptedReviewOutcome',()=>outcome(ScriptedStageReviewSchema))},
  'kanban/scriptedVariables':{...base,parameters:[parameter('request',z.object({taskId:id}).strict(),'TaskLookup')],result:codec('ScriptedVariablesOutcome',()=>outcome(ScriptedVariablesSchema))},
  'kanban/modelCatalog':{...base,parameters:[parameter('request',z.object({refresh:z.boolean().optional()}).strict(),'ModelCatalogLookup')],result:codec('ModelCatalogOutcome',()=>outcome(ModelCatalogSchema))},
+ 'kanban/mcpServers':{...base,parameters:[parameter('request',z.object({}).strict(),'McpServerLookup')],result:codec('McpServersOutcome',()=>outcome(z.array(z.string())))},
  'kanban/questionsFollow':{...base,mode:'stream',parameters:[parameter('request',z.object({sessionId:id}).strict(),'SessionLookup')],cancellation:{parameter:'signal'},result:codec('QuestionFeedFrame',()=>QuestionFeedFrameSchema)},
  'kanban/follow':{...base,mode:'stream',parameters:[],cancellation:{parameter:'signal'},result:codec('Snapshot',()=>SnapshotSchema)},
 }},z);
@@ -210,6 +211,7 @@ export interface KanbanRemote {
  scriptedReview(request:{boardId?:string;stageId?:string;taskId?:string}):Promise<RemoteResult<Outcome<ScriptedStageReview>>>;
  scriptedVariables(request:{taskId:string}):Promise<RemoteResult<Outcome<ScriptedVariablesView>>>;
  modelCatalog(request:{refresh?:boolean}):Promise<RemoteResult<Outcome<ModelCatalog>>>;
+ mcpServers(request:Record<string,never>):Promise<RemoteResult<Outcome<string[]>>>;
  questionsFollow(request:{sessionId:string},signal?:AbortSignal):RemoteStreamHandle<QuestionFeedFrame,never>;
  follow(signal?:AbortSignal):RemoteStreamHandle<HostSnapshot, never>;
 }
@@ -219,7 +221,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
   'kanban/scriptedReview':KanbanRemote['scriptedReview'];
   'kanban/scriptedVariables':KanbanRemote['scriptedVariables'];
   'kanban/snapshot':KanbanRemote['snapshot']; 'kanban/command':KanbanRemote['command']; 'kanban/sharing':KanbanRemote['sharing'];
-  'kanban/branches':KanbanRemote['branches']; 'kanban/worktreeDefault':KanbanRemote['worktreeDefault']; 'kanban/detectProject':KanbanRemote['detectProject']; 'kanban/localDrive':KanbanRemote['localDrive']; 'kanban/dismissQuestions':KanbanRemote['dismissQuestions']; 'kanban/saveQuestionDraft':KanbanRemote['saveQuestionDraft']; 'kanban/modelCatalog':KanbanRemote['modelCatalog']; 'kanban/questionsFollow':KanbanRemote['questionsFollow']; 'kanban/follow':KanbanRemote['follow'];
+  'kanban/branches':KanbanRemote['branches']; 'kanban/worktreeDefault':KanbanRemote['worktreeDefault']; 'kanban/detectProject':KanbanRemote['detectProject']; 'kanban/localDrive':KanbanRemote['localDrive']; 'kanban/dismissQuestions':KanbanRemote['dismissQuestions']; 'kanban/saveQuestionDraft':KanbanRemote['saveQuestionDraft']; 'kanban/modelCatalog':KanbanRemote['modelCatalog']; 'kanban/mcpServers':KanbanRemote['mcpServers']; 'kanban/questionsFollow':KanbanRemote['questionsFollow']; 'kanban/follow':KanbanRemote['follow'];
  }
 }
 export default TYPERT_REMOTE;

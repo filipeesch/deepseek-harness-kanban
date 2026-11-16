@@ -312,3 +312,43 @@ describe('the board default agent preset', () => {
     expect(both.agentPreset).toBe('standard');
   });
 });
+
+describe('the board MCP allowlist', () => {
+  const base = 'columns:\n  - id: todo\n    label: To do\n  - id: done\n    label: Done\n';
+
+  it('accepts a server entry and a single-tool entry, in authored order', () => {
+    const workflow = parseWorkflow(base + 'mcp:\n  - atlassian\n  - atlassian/search\n  - trino\n');
+    expect(workflow.mcp).toEqual(['atlassian', 'atlassian/search', 'trino']);
+  });
+
+  it('keeps an absent field and an authored empty list distinct', () => {
+    expect(parseWorkflow(base).mcp).toBeUndefined();
+    expect(parseWorkflow(base + 'mcp: []\n').mcp).toEqual([]);
+  });
+
+  it('normalizes entries and drops a repeated one', () => {
+    expect(parseWorkflow(base + 'mcp: [ atlassian , atlassian ,  trino/query  ]\n').mcp).toEqual(['atlassian', 'trino/query']);
+  });
+
+  it('rejects a blank, spaced, empty-segment, or over-segmented entry', () => {
+    for (const authored of ['mcp: [""]', 'mcp: [" "]', 'mcp: [atlassian/search/extra]', 'mcp: [atlassian, /search]', 'mcp: [atlassian, search/]']) {
+      expect(() => parseWorkflow(base + authored + '\n'), authored).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+    }
+  });
+
+  it('rejects a field that is not a list', () => {
+    expect(() => parseWorkflow(base + 'mcp: atlassian\n')).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+  });
+
+  it('counts an allowlist change as a workflow meaning change', () => {
+    const one = parseWorkflow(base + 'mcp: [atlassian]\n');
+    const two = parseWorkflow(base + 'mcp: [trino]\n');
+    expect(workflowMeaning(one)).not.toBe(workflowMeaning(two));
+  });
+
+  it('keeps the meaning equal when the list does not change', () => {
+    const one = parseWorkflow(base + 'mcp: [atlassian]\n');
+    const two = parseWorkflow(base + 'mcp: [ atlassian ]\n');
+    expect(workflowMeaning(one)).toBe(workflowMeaning(two));
+  });
+});

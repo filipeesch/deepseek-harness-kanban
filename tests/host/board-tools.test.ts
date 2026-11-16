@@ -11,6 +11,8 @@ const MODEL_FLOW = 'name: Modelled\ninitial_column: todo\nmodel:\n  provider: de
 const MALFORMED_MODEL_FLOW = 'name: Broken\ninitial_column: todo\nmodel:\n  provider: deepseek\n  temperature: 0.2\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
 const PRESET_FLOW = 'name: Preset\ninitial_column: todo\nagent_preset: standard\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
 const MALFORMED_PRESET_FLOW = 'name: Broken\ninitial_column: todo\nagent_preset: ""\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
+const MCP_FLOW = 'name: With MCP\ninitial_column: todo\nmcp:\n  - atlassian\n  - trino/query\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
+const EMPTY_MCP_FLOW = 'name: No MCP\ninitial_column: todo\nmcp: []\ncolumns:\n  - id: todo\n    label: Todo\n  - id: done\n    label: Done\n';
 const GROUPED_FLOW = 'name: Grouped\ninitial_column: todo\ncolumns:\n  - id: todo\n    label: Todo\n    on_enter_prompt: Do it.\n    allowed_transitions: [done]\n  - id: done\n    label: Done\ngroups:\n  - id: flow\n    label: Flow\n    columns: [todo, done]\n';
 
 class FakeSharing {
@@ -117,6 +119,24 @@ describe('board workflow reads', () => {
     expect(value.workflow.columns.map((column: { id: string }) => column.id)).toEqual(['backlog', 'plan', 'in_progress', 'in_review', 'done']);
     expect(value.initialColumnId).toBe('backlog');
     expect(value.sharing).toMatchObject({ status: 'not-published', bound: false });
+  });
+
+  it('reports the board MCP allowlist, keeping an absent field distinct from an empty list', async () => {
+    const f = await setup();
+    expect((await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true })).mcp).toBeNull();
+    const withList = await run(f, 'create_board', { hub_id: f.hub.id, name: 'With MCP', workflow_yaml: MCP_FLOW });
+    expect((await run(f, 'get_board_summary', { board_id: withList.id, include_workflow: true })).mcp).toEqual(['atlassian', 'trino/query']);
+    const withNone = await run(f, 'create_board', { hub_id: f.hub.id, name: 'No MCP', workflow_yaml: EMPTY_MCP_FLOW });
+    expect((await run(f, 'get_board_summary', { board_id: withNone.id, include_workflow: true })).mcp).toEqual([]);
+  });
+
+  it('refuses a board whose MCP allowlist entry is malformed', async () => {
+    const f = await setup();
+    const value = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Bad MCP', workflow_yaml: MCP_FLOW.replace('trino/query', 'a/b/c') });
+    expect(value.saved).toBe(false);
+    expect(value.report.valid).toBe(false);
+    expect(JSON.stringify(value.report.problems)).toContain('server or server/tool');
+    expect(boards(f)).toHaveLength(1);
   });
 
   it('rejects an unknown board', async () => {

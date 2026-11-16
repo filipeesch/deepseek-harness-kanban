@@ -102,7 +102,7 @@ The latest source installation attempt initially failed fetching from the defaul
 
 ## Hubs and boards
 
-A **Hub** is a logical group of projects and boards. It has a name only: no filesystem root and no native DSH workspace. Projects belong to one Hub, and every task belongs to one board and one project in that Hub. Boards are selected inside the active Hub; each board owns its own YAML workflow and its own project scope. A board with no recorded scope accepts tasks from every project of the Hub; a board can instead allow only chosen projects, and a board that allows none accepts no new task. The scope lives on the board, never in the workflow YAML, and the **New task** dialog offers only the projects the active board allows. The active Hub and the last board used per Hub are remembered in browser local storage. An installation always has at least one Hub; the last Hub cannot be deleted. Deleting a Hub is allowed only when none of its boards has a task, and it removes its empty boards and task-free project registrations without deleting project directories, worktrees, branches, native conversations, or native workspaces. The worktree base path remains global. A board can also name the **defaults** its conversations start on, in the board's own configuration under **Configuration → Boards → Edit → Defaults**. A **default model** is a `model:` mapping with `provider`, `model`, and an optional `reasoning_effort` at the root of the board's workflow YAML, chosen with a **Host default** / **Specific model** mode control and DSH's native model selector, which stays presented in both modes and is disabled while the host default is chosen; the selector is offered only when the host composes it, and otherwise the stored route is shown read-only. A **default agent preset** is a root `agent_preset` scalar chosen from the host's roster with an explicit **Host default preset** choice. Every new conversation of that board — from a preset card, the first-execution preparation, a stage instruction, an agent tool, or a cross-card message — starts on those defaults unless the activated card overrides them. Both fields travel with the published board and participate in workflow conflict detection like any other workflow field. When the host no longer offers a stored route or preset, or cannot apply it to one conversation, the conversation is still created and runs on the host default, and the conversation says so with a dismissible notice naming what the board asked for. The installation-wide defaults are never written by this setting.
+A **Hub** is a logical group of projects and boards. It has a name only: no filesystem root and no native DSH workspace. Projects belong to one Hub, and every task belongs to one board and one project in that Hub. Boards are selected inside the active Hub; each board owns its own YAML workflow and its own project scope. A board with no recorded scope accepts tasks from every project of the Hub; a board can instead allow only chosen projects, and a board that allows none accepts no new task. The scope lives on the board, never in the workflow YAML, and the **New task** dialog offers only the projects the active board allows. The active Hub and the last board used per Hub are remembered in browser local storage. An installation always has at least one Hub; the last Hub cannot be deleted. Deleting a Hub is allowed only when none of its boards has a task, and it removes its empty boards and task-free project registrations without deleting project directories, worktrees, branches, native conversations, or native workspaces. The worktree base path remains global. A board can also name the **defaults** its conversations start on, in the board's own configuration under **Configuration → Boards → Edit → Defaults**. A **default model** is a `model:` mapping with `provider`, `model`, and an optional `reasoning_effort` at the root of the board's workflow YAML, chosen with a **Host default** / **Specific model** mode control and DSH's native model selector, which stays presented in both modes and is disabled while the host default is chosen; the selector is offered only when the host composes it, and otherwise the stored route is shown read-only. A **default agent preset** is a root `agent_preset` scalar chosen from the host's roster with an explicit **Host default preset** choice. An **MCP allowlist** is a root `mcp` list of `server` or `server/tool` entries: an absent list keeps every server visible to that board's conversations, and an empty list keeps none. The Defaults panel offers the servers the host reports, accepts a typed entry for a server it does not report, and keeps a stored entry it cannot offer. Every new conversation of that board — from a preset card, the first-execution preparation, a stage instruction, an agent tool, or a cross-card message — starts on those defaults unless the activated card overrides them. Both fields travel with the published board and participate in workflow conflict detection like any other workflow field. When the host no longer offers a stored route or preset, or cannot apply it to one conversation, the conversation is still created and runs on the host default, and the conversation says so with a dismissible notice naming what the board asked for. The installation-wide defaults are never written by this setting.
 
 ## First use
 
@@ -432,6 +432,35 @@ use the updated preset definition; running agents retain their existing composit
 A profile override of the declaration replaces its complete configuration and can
 mask later shipped changes. [Maintenance rules](<AGENTS.md#kanban-workflow-architect-preset>)
 keep guidance aligned with product changes without accumulating a second project manual.
+
+## Project role presets
+
+Two further presets split project work by role, without changing your default preset.
+
+**Kanban Project Planner** (`kanban-project-planner`) investigates a project and agrees
+its requirements, architecture, and task breakdown. It reads repositories and runs shell
+commands under a session pinned to the sandbox's read-only mode, has no tool that writes a
+file, and holds the card and note tools it needs to plan, plus web access and delegation.
+Its delegated children join the same preset revision and are pinned the same way. It
+cannot administer a board or edit a workflow.
+
+**Kanban Project Manager** (`kanban-project-manager`) coordinates a project's cards. It
+has no file, shell, web, delegation, or MCP tool, and no product tool that creates, edits,
+or relates a card: it reads the board, writes shared notes, messages other cards, declares
+its own card's next transition, and pauses or resumes its own automatic advance. A change
+of scope or requirements goes to the planner, never to a card the manager edits itself.
+
+Each role declares the product tools it receives in its own preset row, and every product
+tool outside that list is absent from the agent rather than refused when called. Each role
+ships its own skill — [planning](<presets/skills/kanban-project-planning/SKILL.md>) and
+[orchestration](<presets/skills/kanban-project-orchestration/SKILL.md>) — that states the
+role, its boundary, and its writing conventions, and deliberately says nothing about
+stages, handoffs, or approvals: those belong to the stage instructions of the board that
+selects the preset.
+
+Both roles are meant for a board that names them as its default preset; the manager and
+the planner then talk to each other across cards of the same Hub. [Maintenance rules](<AGENTS.md#kanban-workflow-architect-preset>)
+cover the role presets too.
 
 ## Development and evidence
 

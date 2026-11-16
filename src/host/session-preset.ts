@@ -58,19 +58,21 @@ function unavailableReason(code: unknown): PresetApplyReason {
  * optional host service: a deployment without it reports `unsupported` and the
  * conversation keeps the host default preset.
  */
+export async function resolveSessionAgent(ctx: Context, sessionId: string): Promise<unknown | undefined> {
+  try {
+    const result = await (ctx.sessionController as unknown as ResolveAgentFace).resolveAgent(SessionId(sessionId));
+    if (result.error !== undefined) return undefined;
+    return result.agent;
+  } catch { return undefined; }
+}
+
 export function createSessionPresetPort(ctx: Context): SessionPresetPort {
   return {
     async apply(sessionId, presetId) {
       const presets = presetsOf(ctx);
       if (presets === undefined) return { applied: false, reason: 'unsupported' };
-      let agent: unknown;
-      try {
-        const result = await (ctx.sessionController as unknown as ResolveAgentFace).resolveAgent(SessionId(sessionId));
-        if (result.error !== undefined || result.agent === undefined) return { applied: false, reason: 'failed' };
-        agent = result.agent;
-      } catch {
-        return { applied: false, reason: 'failed' };
-      }
+      const agent = await resolveSessionAgent(ctx, sessionId);
+      if (agent === undefined) return { applied: false, reason: 'failed' };
       try {
         await presets.select(agent, presetId);
         return { applied: true };

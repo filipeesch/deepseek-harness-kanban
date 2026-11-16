@@ -87,6 +87,7 @@ export class ClientBridge {
       scriptedVariables: async (taskId: string) => unwrap(await remote.kanban.scriptedVariables({ taskId })),
       branches: async (taskId: string) => unwrap(await remote.kanban.branches({ taskId })),
       modelCatalog: async (refresh = false) => unwrap(await remote.kanban.modelCatalog(refresh ? { refresh: true } : {})),
+      mcpServers: async () => unwrap(await remote.kanban.mcpServers({})),
       worktreeDefault: async (taskId: string) => unwrap(await remote.kanban.worktreeDefault({ taskId })),
       detectProject: async (path: string) => unwrap(await remote.kanban.detectProject({ path })),
       subscribe: (listener) => {

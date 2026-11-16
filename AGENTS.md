@@ -11,7 +11,7 @@
 - Hide a pre-existing worktree workspace once, at its first binding. Never hide workspaces retroactively and never re-hide one after a reader reveals hidden workspaces; startup reconciliation only repairs workspaces.
 - Use the positional workspace API and keep workspaces visible on hosts without visibility support. A failed hide is reported and never blocks conversation creation.
 
-## Kanban workflow architect preset
+## Kanban agent presets
 
 - Ship the `kanban-workflow-architect` preset with this bundle. Keep its stable
   role, interview, approval, language, and safety rules in `cordis.patch.yml`;
@@ -37,6 +37,27 @@
   pruning threshold. These are ceilings, not targets; remove repetition before
   adding text. Never use real-model traffic or the owner's profile for acceptance
   checks.
+- Ship the `kanban-project-planner` and `kanban-project-manager` presets as one
+  role each, and keep their boundaries enforced by composition, the sandbox, and
+  tool masks rather than by persona wording. A role's product-tool allowlist lives
+  in its own preset row through `dsh-kanban/preset-tools`; a board's MCP allowlist
+  lives in the root `mcp` field of its workflow. The two policies own different
+  namespaces, so a deny mask on one never intersects the other into an empty tool
+  set. Never widen a role's allowlist to make an instruction work: change the
+  instruction, or explain that the role cannot do it.
+- Keep a role preset independent of any board: no stage, handoff sequence, approval
+  gate, or scope-change cycle belongs in its persona or skill. Those are authored in
+  the stage instructions of the board that selects the preset. A role skill states
+  the role, its tools and their absence, how it investigates or observes, when it
+  asks the person, and how it writes notes, cards, and messages.
+- Keep the read-only guarantee real. The planner mounts file tools without write or
+  edit and its session is pinned to the sandbox's read-only mode at every agent
+  start, including a resumed conversation and an inherited delegated child. A pin
+  the host records is a person-owned setting: the guarantee is that the agent starts
+  confined and cannot widen it, never that a person cannot.
+- Treat the manager as a coordinator: it reads the board and writes notes, messages,
+  its own transition, and its own pause state, and nothing else. Any change of a
+  card, of scope, or of requirements is the planner's work.
 
 ## Releases
 

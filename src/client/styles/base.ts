@@ -2,6 +2,11 @@
 export const baseStyles = String.raw`
 .dsh-kanban{position:relative;display:flex;flex-direction:column;min-height:420px;height:100%;max-width:100%;overflow:hidden;font:inherit;color:inherit;color-scheme:inherit;--kb-surface:var(--color-background,var(--background-color,Canvas));--kb-line:color-mix(in srgb,currentColor 20%,transparent);--kb-soft:color-mix(in srgb,currentColor 5%,var(--kb-surface))}
 .dsh-kanban .kb-hint{font-size:12px;opacity:.76;margin:4px 0;overflow-wrap:anywhere}
+.dsh-kanban .kb-mcp-servers{display:flex;flex-direction:column;gap:6px}
+.dsh-kanban .kb-mcp-choice-body{display:flex;flex-direction:column;gap:2px;min-width:0}
+.dsh-kanban .kb-mcp-entries{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.dsh-kanban .kb-mcp-entries li{display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid var(--kb-line);padding:6px 8px;border-radius:6px}
+.dsh-kanban .kb-mcp-entries code{overflow-wrap:anywhere}
 .dsh-kanban .kb-visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
 .dsh-kanban .kb-claim-pending{display:flex;align-items:center;gap:7px;min-height:22px;margin:6px 0;font-size:12px;opacity:.86}
 .dsh-kanban .kb-claim-spinner{width:11px;height:11px;flex:none;border:2px solid color-mix(in srgb,currentColor 30%,transparent);border-top-color:currentColor;border-radius:50%;animation:kb-claim-spin 900ms linear infinite}
