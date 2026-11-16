@@ -1,14 +1,16 @@
 // Plugin-owned real-composition scenario for the drawer's embedded right Sidebar panel.
 // Copied into $DSH_CHECKOUT/apps/web/tests/ by scripts/e2e-dsh.mjs.
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Browser, Locator } from 'playwright';
 import { chromium } from 'playwright';
 import { expect, it, onTestFinished } from 'vitest';
 import { launchWebScaffold, type WebScaffold } from './scaffold.ts';
-import { newEnglishPage } from './support.ts';
+import { newEnglishPage, writeComposerDraft } from './support.ts';
 
 const KANBAN_ROOT = process.env.KANBAN_ROOT!;
+/** A workspace file the conversation links; the open must preview it. */
+const FILE_FIXTURE = 'sidebar-fixture.md';
 
 /** The checkout's Vitest runner registers no Playwright matchers; wait and poll instead. */
 async function visible(locator: Locator): Promise<void> {
@@ -57,6 +59,7 @@ it('hosts the native right Sidebar panel inside the task drawer', async () => {
   const page = await newEnglishPage(browser);
   await page.addInitScript(() => { try { localStorage.setItem('dsh-kanban.drawer.width', '620'); } catch { /* storage is optional */ } });
   await createProjectAndTask(page, scaffold, 'Sidebar panel task');
+  await writeFile(join(scaffold.workspaceCwd, FILE_FIXTURE), '# Sidebar fixture\n\nOpened from a drawer conversation link.\n', 'utf8');
 
   const drawer = page.locator('.kb-drawer');
   await startStandardConversation(drawer);
@@ -115,4 +118,38 @@ it('hosts the native right Sidebar panel inside the task drawer', async () => {
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect.poll(async () => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('');
   await page.screenshot({ path: join(out, 'sidebar-drawer-dark.png') });
-}, 150_000);
+
+  // A link opens the panel even while it is collapsed: the drawer settles the open
+  // for the conversation it presents instead of letting the host fail for lack of a
+  // Session surface. Collapse through the host's own control first.
+  await drawer.locator('[data-sidebar-right-toggle]').click();
+  await expectCount(drawer.locator('.kb-workspace-rail'), 0);
+  const composer = drawer.locator('[data-composer-input][contenteditable="true"]').last();
+  await visible(composer);
+  await writeComposerDraft(page, composer, 'Open @sidebar-fixture');
+  const triggerMenu = page.locator('[data-trigger-menu]');
+  await visible(triggerMenu);
+  const candidate = triggerMenu.getByRole('option').filter({ hasText: FILE_FIXTURE }).first();
+  await visible(candidate);
+  await candidate.click();
+  await composer.press('Enter');
+  const chip = drawer.getByRole('button', { name: FILE_FIXTURE, exact: true });
+  await visible(chip);
+  // Evidence for review: the conversation with its file reference and no panel yet.
+  await page.screenshot({ path: join(out, 'sidebar-link-collapsed.png') });
+  await chip.click();
+  const reopened = drawer.getByRole('region', { name: 'Right Sidebar' });
+  await visible(reopened);
+  await expect.poll(
+    async () => (await reopened.locator('[role="tab"]').allTextContents()).some(text => text.includes(FILE_FIXTURE)),
+    { timeout: 10_000 },
+  ).toBe(true);
+  // Activating the same link again reveals the open tab instead of duplicating it.
+  const openTabs = await reopened.locator('[role="tab"]').count();
+  await chip.click();
+  await expect.poll(() => reopened.locator('[role="tab"]').count()).toBe(openTabs);
+  // The host's own failure dialog must not appear for an open the drawer settled.
+  await expectCount(page.getByRole('dialog').filter({ hasText: /open file/i }), 0);
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.screenshot({ path: join(out, 'sidebar-open-from-link.png') });
+}, 180_000);
