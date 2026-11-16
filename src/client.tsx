@@ -33,6 +33,7 @@ import { STAGE_CONTEXT_NODE_KIND, StageInstructionNodeView, stageInstructionDefi
 import { HANDOFF_CONTEXT_NODE_KIND, ScriptedHandoffNodeView, scriptedHandoffDefinition } from './client/scripted-handoff-node.js';
 import { TASK_MESSAGE_NODE_KIND, TaskMessageNodeView, taskMessageDefinition } from './client/task-message-node.js';
 import { createSidebarPanelPort } from './client/sidebar-panel-port.js';
+import { HostOpenFallback, drawerConversationSession } from './client/host-open-fallback.js';
 import type { ClientApi, KanbanSnapshot } from './shared/types.js';
 
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
@@ -76,6 +77,17 @@ function developerToolsSource(ctx: Context): DeveloperToolsSource | undefined {
 
 function developerToolsEnabled(ctx: Context): boolean {
   try { return developerToolsSource(ctx)?.getSnapshot() === false ? false : true; } catch { return true; }
+}
+
+/**
+ * Read the optional right-Sidebar service.
+ * It may be provided after this client generation applies, so callers resolve it
+ * at the seat that first needs it; a host without the service answers undefined.
+ * @param ctx - the client context.
+ * @returns the service value, or undefined.
+ */
+function sidebarService(ctx: Context): unknown {
+  try { return ctx.get('sidebarRight'); } catch { return undefined; }
 }
 
 function agentPresetsNamespace(ctx: Context): unknown {
@@ -170,6 +182,11 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     sessions: ctx.sessions as unknown as QuestionDockSessions,
   });
   const viewSession = (sessionId: string) => bridge.viewSession(sessionId);
+  // The Session the drawer presents, read when an open needs a destination: while a
+  // board fills the frame's main column the host has no Session on screen to open
+  // into, so a collapsed drawer panel would fail every link. The source is stable so
+  // the fallback below is not re-installed on every render.
+  const drawerSession = () => drawerConversationSession(pageState);
   function ConversationWindowSeat(props: ConversationSeatProps) {
     // The seat is the only place that knows the host Factory name; the workspace
     // receives a plain render prop, so tests can render it without a host.
@@ -180,19 +197,22 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     // The Sidebar service may be provided after this client generation applies,
     // so the optional port is resolved on each seat mount, when the drawer first
     // renders it, not at boot. A host without the capability keeps its markup.
+    const service = sidebarService(ctx);
     const sidebar = useMemo(() => {
-      let raw: unknown;
-      try { raw = ctx.get('sidebarRight'); } catch { raw = undefined; }
-      const port = createSidebarPanelPort(raw);
+      const port = createSidebarPanelPort(service);
       return port === undefined ? undefined : { port, renderPanel };
-    }, [renderPanel]);
-    return <TaskConversationWindow
-      sessionId={props.sessionId}
-      useSession={props.useSession as never}
-      renderFactorySlot={props.renderFactorySlot}
-      viewSession={viewSession}
-      {...(sidebar === undefined ? {} : { sidebar })}
-    />;
+    }, [service, renderPanel]);
+    return <>
+      {/* An open the host cannot target is settled in the conversation this seat draws. */}
+      <HostOpenFallback service={service} drawerSession={drawerSession} />
+      <TaskConversationWindow
+        sessionId={props.sessionId}
+        useSession={props.useSession as never}
+        renderFactorySlot={props.renderFactorySlot}
+        viewSession={viewSession}
+        {...(sidebar === undefined ? {} : { sidebar })}
+      />
+    </>;
   }
   function TaskContextChatNode(props: ChatNodeViewProps<'kanban-task-context'>) {
     return <TaskContextNodeView
