@@ -1,5 +1,6 @@
 import { bounded } from '../shared/bounded.js';
 import type { FailureDetail, FailureOrigin } from '../shared/scripted-failure.js';
+import type { StageEntryOrigin } from '../shared/task-history.js';
 
 /** The accepted size of a message handed to a destination stage. */
 export const FAILURE_MESSAGE_MAX_BYTES = 4 * 1024;
@@ -18,6 +19,12 @@ export function sanitizeFailureText(text: string): string {
   return withoutStack.replace(POSIX_PATH, '$1[path]').replace(WINDOWS_PATH, '$1[path]').replace(UNC_PATH, '$1[path]');
 }
 
+/**
+ * Codes whose own message is product-owned and already names the facts a person
+ * needs, so no provider sentence replaces it.
+ */
+const OWN_DIAGNOSIS = new Set(['TYPESCRIPT_RESULT_UNSUPPORTED']);
+
 /** The controlled sentence for a provider or runtime failure whose text is not ours. */
 const PROVIDER_MESSAGES: Readonly<Record<string, string>> = {
   EXECUTOR_FAILED: 'The execution provider failed before returning a result.',
@@ -35,6 +42,7 @@ const PROVIDER_MESSAGES: Readonly<Record<string, string>> = {
  * delivered message; it stays in the redacted detail.
  */
 export function providerFailureMessage(code: string): string | undefined {
+  if (OWN_DIAGNOSIS.has(code)) return undefined;
   if (Object.hasOwn(PROVIDER_MESSAGES, code)) return PROVIDER_MESSAGES[code];
   return code.startsWith('TYPESCRIPT_') && code !== 'TYPESCRIPT_EXCEPTION' ? 'The TypeScript execution provider failed before returning a result.' : undefined;
 }
@@ -45,6 +53,35 @@ export interface FailureMessageInput {
   /** The failure's own words, exactly as the producer reported them. */
   message: string;
   details?: FailureDetail;
+  /** The sentence naming the step that owed a missing parameter value, when one is known. */
+  debtor?: string;
+}
+
+/** The escalation guidance one origin adds after its own words. */
+const OWNERS: Readonly<Record<FailureOrigin, string>> = {
+  script: ' The program must be corrected by the user: escalate this problem to the user instead of working around it.',
+  contract: ' The program must be corrected by the user: escalate this problem to the user instead of working around it.',
+  configuration: '',
+  infrastructure: ' This is a defect in the DeepSeek Harness or the Kanban plugin, not in the work: escalate it to the user so the application developers can address it.',
+};
+/** The configuration sentence for a code whose cause no stage or entry can repair. */
+const CONFIGURATION_GUIDANCE: Readonly<Record<string, string>> = {
+  TYPESCRIPT_RESULT_UNSUPPORTED: ' Update the DeepSeek Harness build that hosts this plugin, then press Play: escalate this problem to the user.',
+};
+/** The sentence a configuration failure the entry can repair carries. */
+const REPAIR_GUIDANCE = ' Fix the stage or the entry, then press Play.';
+
+/**
+ * The sentence naming who owed one missing parameter value, from the origin of
+ * the entry that lacked it. Absent for a record written before origins existed.
+ */
+export function parameterDebtor(origin?: StageEntryOrigin): string | undefined {
+  if (origin === undefined) return undefined;
+  if (origin === 'agent') return ' The transition into this stage was declared without it, so the agent that declared it must correct it.';
+  if (origin === 'auto') return ' The automatic advance supplied no value, so the user must provide it.';
+  if (origin === 'manual') return ' This entry was created by hand, so the user must provide it.';
+  if (origin.startsWith('script:')) return ' The scripted result that delivered this entry did not supply it, so the program that produced it must correct it.';
+  return ' The failure route created this entry without a value, so the user must provide it.';
 }
 
 /**
@@ -57,10 +94,10 @@ export function failureMessage(input: FailureMessageInput): string {
   const count = attempts === 0 ? '' : ' (' + attempts + (attempts === 1 ? ' attempt' : ' attempts') + ')';
   let rendered: string;
   switch (input.origin) {
-    case 'script': rendered = input.message; break;
-    case 'contract': rendered = 'The script completion was rejected: ' + sanitizeFailureText(input.message); break;
-    case 'configuration': rendered = 'Configuration failure: ' + sanitizeFailureText(input.message) + ' Fix the stage or the entry, then press Play.'; break;
-    case 'infrastructure': rendered = 'Infrastructure failure: ' + sanitizeFailureText(input.message) + count + ' Detail: the task History.'; break;
+    case 'script': rendered = input.message + OWNERS.script; break;
+    case 'contract': rendered = 'The script completion was rejected: ' + sanitizeFailureText(input.message) + OWNERS.contract; break;
+    case 'configuration': rendered = 'Configuration failure: ' + sanitizeFailureText(input.message) + (CONFIGURATION_GUIDANCE[input.code] ?? REPAIR_GUIDANCE) + (input.debtor ?? ''); break;
+    case 'infrastructure': rendered = 'Infrastructure failure: ' + sanitizeFailureText(input.message) + count + ' Detail: the task History.' + OWNERS.infrastructure; break;
   }
   return bounded(rendered, FAILURE_MESSAGE_MAX_BYTES);
 }

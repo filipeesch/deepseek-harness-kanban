@@ -1,4 +1,5 @@
-import type { PtcJsonValue, PtcRuntime } from '@deepseek-ai/dsh-ptc-runtime';
+import type { PtcJsonValue, PtcRunSpec, PtcRuntime } from '@deepseek-ai/dsh-ptc-runtime';
+import type { NativePtcRunResult } from './runtime-result.js';
 import type { ShellExecutor } from '@deepseek-ai/dsh-shell';
 import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox';
 import type { ScriptedApprovalOrigin, ScriptedCapture, ScriptedDefinition, ScriptedTarget, StepCompletion } from '../../shared/scripted.js';
@@ -81,7 +82,17 @@ export interface ScriptedRuntime {
   trust: ScriptedTrust;
   variables: ScriptedVariables;
 }
-export type NativePtcPort = Pick<PtcRuntime, 'language' | 'isolation' | 'programFormat' | 'retainsState' | 'sandboxMode' | 'resolve' | 'run'>;
+/**
+ * The host program runtime this plugin drives.
+ *
+ * The result shape is spelled out locally because the newer host contract is not
+ * in the released SDK graph the plugin builds against: the port owns what it
+ * reads instead of borrowing a type the installed SDK may not publish.
+ */
+export type NativePtcPort = Pick<PtcRuntime, 'language' | 'isolation' | 'programFormat' | 'retainsState' | 'sandboxMode' | 'resolve'> & {
+  run(spec: PtcRunSpec): Promise<NativePtcRunResult>;
+};
+export type { NativePtcOutput, NativePtcRunResult, ProgramOutput, ProgramOutputContract } from './runtime-result.js';
 
 /** One declared answer to a command a tested program may run. */
 export interface SimulatedShellResponse {

@@ -3,11 +3,12 @@ import { mkdtemp, mkdir, readdir, readFile, writeFile, rm, realpath } from 'node
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { CredentialRecord } from '@deepseek-ai/dsh-credentials';
-import type { PtcRunResult, PtcRunSpec } from '@deepseek-ai/dsh-ptc-runtime';
+import type { PtcRunSpec } from '@deepseek-ai/dsh-ptc-runtime';
 import type { ShellExecSpec, ShellRunResult } from '@deepseek-ai/dsh-shell';
 import type { CredentialStore } from '../../src/host/sharing/credentials.js';
-import { createScriptedRuntime, type ScriptedPolicyPort, type NativePtcPort, type NativeShellPort } from '../../src/host/scripted/index.js';
+import { createScriptedRuntime, type ScriptedPolicyPort, type NativePtcPort, type NativePtcRunResult, type NativeShellPort } from '../../src/host/scripted/index.js';
 import { createBashRetry } from '../../src/host/scripted/retry.js';
+import { PROGRAM_OUTPUT_MAX_BYTES } from '../../src/host/scripted/runtime-result.js';
 import { executeCapturedProgram } from '../../src/host/scripted/executor.js';
 import type { NativeLifetime } from '../../src/host/scripted/lifetime.js';
 import type { ExecutionOutcome, ExecuteRequest } from '../../src/host/scripted/ports.js';
@@ -47,7 +48,7 @@ function shell(run = async (_spec: ShellExecSpec) => shellResult()): NativeShell
     }),
   };
 }
-function ptc(run: (spec: PtcRunSpec) => Promise<PtcRunResult>): NativePtcPort {
+function ptc(run: (spec: PtcRunSpec) => Promise<NativePtcRunResult>): NativePtcPort {
   return { language: 'typescript', isolation: 'process', programFormat: 'function-body', retainsState: false, sandboxMode: undefined, resolve: vi.fn(request => ({ ...request, cwd: request.cwd!, timeoutMs: request.timeoutMs ?? null })), run: vi.fn(run) };
 }
 /** A shell whose result is returned untouched, for guard-failure cases. */
@@ -69,7 +70,7 @@ function guardFailure(patch: Partial<ShellRunResult> = {}): ShellRunResult {
 function envelope(stdout: string, stderr = ''): ShellRunResult {
   return shellResult({ stdout: { text: JSON.stringify({ stdout, stderr, overflow: false }), truncated: false }, stderr: { text: '', truncated: false } });
 }
-async function fixture(options: { shell?: NativeShellPort; ptc?: NativePtcPort; retry?: { attempts?: number; delaysMs?: readonly number[] } } = {}) {
+async function fixture(options: { shell?: NativeShellPort; ptc?: NativePtcPort; retry?: { attempts?: number; delaysMs?: readonly number[] }; report?: (error: unknown) => void } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'kanban-runtime-')); roots.push(root);
   const project = join(root, 'project'); const task = join(root, 'task'); await mkdir(project); await mkdir(task);
   const policy: ScriptedPolicyPort = {
@@ -79,7 +80,7 @@ async function fixture(options: { shell?: NativeShellPort; ptc?: NativePtcPort; 
   };
   const credential = credentials();
   const context = { credentials: credential.store, shell: options.shell ?? shell(), ptcRuntime: options.ptc };
-  const runtime = createScriptedRuntime({ context, privateDirectory: join(root, 'private'), policy, ...(options.retry === undefined ? {} : { retry: options.retry }) });
+  const runtime = createScriptedRuntime({ context, privateDirectory: join(root, 'private'), policy, ...(options.retry === undefined ? {} : { retry: options.retry }), ...(options.report === undefined ? {} : { report: options.report }) });
   const capture = (language: 'bash' | 'typescript' = 'bash', changes: Record<string, unknown> = {}) => runtime.capture({ definition: { language, code: 'return {exit:"passed",message:"ready"};', directory: 'task', exits: { passed: 'review' }, ...changes }, projectDirectory: project, taskDirectory: task, exits });
   return { root, project, task, policy, runtime, capture, context, credential };
 }
@@ -192,7 +193,7 @@ describe('public native execution boundary', () => {
     const native = ptc(async spec => {
       observed = spec; expect(await binding(spec, 'stepContext', 'read')).toEqual({ title: 'untrusted task text' });
       const facts = await binding(spec, 'tools', 'bash', { command: 'exit 7', timeoutMs: 123 }) as { exitCode: number };
-      return { value: { exit: 'passed', message: 'Handled ' + facts.exitCode }, logs: [] };
+      return { value: { exit: 'passed', message: 'Handled ' + facts.exitCode }, output: [] };
     });
     const bash = shell(async () => shellResult({ exitCode: 7 })); const f = await fixture({ shell: bash, ptc: native }); const capture = await f.capture('typescript'); await f.runtime.trust.approve(approvalScope, capture.fingerprint, 'review');
     expect(await f.runtime.execute({ capture, input: { title: 'untrusted task text' }, scope, approvalScope, signal: new AbortController().signal })).toMatchObject({ kind: 'completed', completion: { message: 'Handled 7' } });
@@ -202,7 +203,7 @@ describe('public native execution boundary', () => {
   it.each(['return', 'throw'])('cancels and drains unawaited nested Bash on TypeScript %s', async ending => {
     const started = deferred(); const drained = deferred(); let childSignal: AbortSignal | undefined;
     const bash = shell(async spec => { childSignal = spec.signal; started.resolve(); await new Promise<void>(resolve => spec.signal!.addEventListener('abort', () => { drained.resolve(); resolve(); }, { once: true })); return shellResult({ aborted: true }); });
-    const native = ptc(async spec => { void binding(spec, 'tools', 'bash', { command: 'sleep 99999' }); await started.promise; return ending === 'return' ? { value: { exit: 'passed', message: 'done' }, logs: [] } : { error: { kind: 'exception', message: 'failed' }, logs: [] }; });
+    const native = ptc(async spec => { void binding(spec, 'tools', 'bash', { command: 'sleep 99999' }); await started.promise; return ending === 'return' ? { value: { exit: 'passed', message: 'done' }, output: [] } : { error: { kind: 'exception', message: 'failed' }, output: [] }; });
     const f = await fixture({ shell: bash, ptc: native }); const capture = await f.capture('typescript'); await f.runtime.trust.approve(approvalScope, capture.fingerprint, 'review');
     const outcome = await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal });
     await drained.promise; expect(childSignal?.aborted).toBe(true); expect(outcome.kind).toBe(ending === 'return' ? 'completed' : 'failed');
@@ -217,7 +218,7 @@ describe('public native execution boundary', () => {
     expect(spec.stdin).not.toContain('synthetic-value'); expect(JSON.stringify(capture)).not.toContain('synthetic-value');
   });
   it('redacts actual resolved values and refuses unauthorized variable access', async () => {
-    const native = ptc(async spec => { const secret = await binding(spec, 'authorizedEnvironment', 'get', 'CI_TOKEN'); await expect(binding(spec, 'authorizedEnvironment', 'get', 'OTHER')).rejects.toMatchObject({ code: 'VARIABLE_UNAUTHORIZED' }); return { value: { exit: 'passed', message: 'result ' + secret }, logs: ['log ' + secret] }; });
+    const native = ptc(async spec => { const secret = await binding(spec, 'authorizedEnvironment', 'get', 'CI_TOKEN'); await expect(binding(spec, 'authorizedEnvironment', 'get', 'OTHER')).rejects.toMatchObject({ code: 'VARIABLE_UNAUTHORIZED' }); return { value: { exit: 'passed', message: 'result ' + secret }, output: [{ type: 'text', text: 'log ' + secret }] }; });
     const f = await fixture({ ptc: native }); await f.runtime.variables.set(scope, 'CI_TOKEN', 'synthetic-only-secret'); const capture = await f.capture('typescript', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(approvalScope, capture.fingerprint, 'review');
     const result = await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal }); expect(JSON.stringify(result)).not.toContain('synthetic-only-secret'); expect(JSON.stringify(result)).toContain('[REDACTED]');
   });
@@ -230,7 +231,7 @@ describe('public native execution boundary', () => {
     expect(JSON.stringify(result)).not.toContain('synthetic-only-secret');
   });
   it('carries bounded sent values through a TypeScript completion', async () => {
-    const native = ptc(async () => ({ value: { exit: 'passed', message: 'ok', params: { pipeline: 'ci-main', commit: 'abc' } }, logs: [] }));
+    const native = ptc(async () => ({ value: { exit: 'passed', message: 'ok', params: { pipeline: 'ci-main', commit: 'abc' } }, output: [] }));
     const f = await fixture({ ptc: native }); const capture = await f.capture('typescript'); await f.runtime.trust.approve(approvalScope, capture.fingerprint, 'review');
     expect(await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal })).toMatchObject({ kind: 'completed', completion: { exit: 'passed', message: 'ok', params: { pipeline: 'ci-main', commit: 'abc' } } });
   });
@@ -240,7 +241,7 @@ describe('public native execution boundary', () => {
     expect(await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal })).toMatchObject({ kind: 'failed', diagnostic: { code: 'INVALID_COMPLETION' } });
   });
   it.each([{ programFormat: 'repl' }, { programFormat: 'script' }, { language: 'python' }, { retainsState: true }, { isolation: 'worker-thread' }])('refuses incompatible TypeScript provider %j', async patch => {
-    const native = ptc(async () => ({ logs: [] })); Object.assign(native, patch); const f = await fixture({ ptc: native }); const capture = await f.capture('typescript'); await expect(f.runtime.verify(capture)).rejects.toMatchObject({ code: 'TYPESCRIPT_FORMAT_UNSUPPORTED' }); expect(native.run).not.toHaveBeenCalled();
+    const native = ptc(async () => ({ output: [] })); Object.assign(native, patch); const f = await fixture({ ptc: native }); const capture = await f.capture('typescript'); await expect(f.runtime.verify(capture)).rejects.toMatchObject({ code: 'TYPESCRIPT_FORMAT_UNSUPPORTED' }); expect(native.run).not.toHaveBeenCalled();
   });
   it('does not require credentials for an empty authorized set and fails explicitly otherwise', async () => {
     const f = await fixture(); f.context.credentials = undefined as never; const runtime = createScriptedRuntime({ context: f.context, privateDirectory: join(f.root, 'other-private'), policy: f.policy });
@@ -275,7 +276,7 @@ describe('additional fail-closed execution contracts', () => {
     expect(f.credential.records.size).toBe(0);
   });
   it('redacts native exception and standalone stderr before returning diagnostics', async () => {
-    const native = ptc(async () => ({ logs: [], error: { kind: 'exception', message: 'synthetic-secret error' } }));
+    const native = ptc(async () => ({ output: [], error: { kind: 'exception', message: 'synthetic-secret error' } }));
     const f = await fixture({ ptc: native }); await f.runtime.variables.set(scope, 'CI_TOKEN', 'synthetic-secret');
     const capture = await f.capture('typescript', { env: ['CI_TOKEN'] }); await f.runtime.trust.approve(approvalScope, capture.fingerprint, 'review');
     const outcome = await f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal });
@@ -436,7 +437,7 @@ describe('guarded Bash failure diagnostics and bounded retry', () => {
     const bash = rawShell(() => guardFailure({ stderr: { text: 'NATIVE_LIFETIME_UNCLEAN: unknown\n', truncated: false } }));
     const native = ptc(async spec => {
       await expect(binding(spec, 'tools', 'bash', { command: 'gh api user' })).rejects.toMatchObject({ code: 'BASH_PROTOCOL' });
-      return { error: { kind: 'exception', message: 'Error: The isolated Bash guard did not return a valid result.\n    at bindingFailure (/tmp/bootstrap.ts:246:61)' }, logs: [] };
+      return { error: { kind: 'exception', message: 'Error: The isolated Bash guard did not return a valid result.\n    at bindingFailure (/tmp/bootstrap.ts:246:61)' }, output: [] };
     });
     const f = await fixture({ shell: bash, ptc: native, retry: { delaysMs: [0, 0] } });
     const outcome = await run(f, 'typescript');
@@ -451,7 +452,7 @@ describe('guarded Bash failure diagnostics and bounded retry', () => {
     const bash = rawShell(() => guardFailure({ stderr: { text: 'NATIVE_LIFETIME_UNCLEAN: unknown\n', truncated: false } }));
     const native = ptc(async spec => {
       await expect(binding(spec, 'tools', 'bash', { command: 'gh api user' })).rejects.toMatchObject({ code: 'BASH_PROTOCOL' });
-      return { value: { exit: 'passed', message: 'handled the guard failure' }, logs: [] };
+      return { value: { exit: 'passed', message: 'handled the guard failure' }, output: [] };
     });
     const f = await fixture({ shell: bash, ptc: native, retry: { delaysMs: [0, 0] } });
     expect(await run(f, 'typescript')).toMatchObject({ kind: 'completed', completion: { message: 'handled the guard failure' } });
@@ -501,7 +502,7 @@ describe('guarded Bash failure diagnostics and bounded retry', () => {
   it('keeps an uncaught environment authorization rejection a configuration failure', async () => {
     const native = ptc(async spec => {
       await expect(binding(spec, 'authorizedEnvironment', 'get', 'OTHER')).rejects.toMatchObject({ code: 'VARIABLE_UNAUTHORIZED' });
-      return { error: { kind: 'exception', message: 'Error: the environment read was refused' }, logs: [] };
+      return { error: { kind: 'exception', message: 'Error: the environment read was refused' }, output: [] };
     });
     const f = await fixture({ ptc: native });
     const outcome = await run(f, 'typescript');
@@ -519,7 +520,7 @@ describe('guarded Bash failure diagnostics and bounded retry', () => {
 
   it('keeps the earlier diagnostic when native cleanup cannot confirm quiescence', async () => {
     const entered = deferred(); const release = deferred();
-    const native = ptc(async () => { entered.resolve(); await release.promise; return { error: { kind: 'exception', message: 'program failed' }, logs: [] }; });
+    const native = ptc(async () => { entered.resolve(); await release.promise; return { error: { kind: 'exception', message: 'program failed' }, output: [] }; });
     const f = await fixture({ ptc: native });
     const capture = await f.capture('typescript'); await f.runtime.trust.approve(approvalScope, capture.fingerprint, 'review');
     const running = f.runtime.execute({ capture, input: {}, scope, approvalScope, signal: new AbortController().signal });
@@ -535,7 +536,7 @@ describe('guarded Bash failure diagnostics and bounded retry', () => {
 
   it('records a stop as the cause when cleanup cannot be confirmed', async () => {
     const entered = deferred(); const aborted = deferred();
-    const native = ptc(async spec => { entered.resolve(); await new Promise<void>(resolve => spec.signal!.addEventListener('abort', () => resolve())); aborted.resolve(); return { error: { kind: 'abort', message: 'stopped' }, logs: [] }; });
+    const native = ptc(async spec => { entered.resolve(); await new Promise<void>(resolve => spec.signal!.addEventListener('abort', () => resolve())); aborted.resolve(); return { error: { kind: 'abort', message: 'stopped' }, output: [] }; });
     const f = await fixture({ ptc: native });
     const capture = await f.capture('typescript'); await f.runtime.trust.approve(approvalScope, capture.fingerprint, 'review');
     const controller = new AbortController();
@@ -561,12 +562,62 @@ describe('guarded Bash failure diagnostics and bounded retry', () => {
     const native = ptc(async spec => {
       await expect(binding(spec, 'tools', 'bash', { command: 'first' })).resolves.toBeDefined();
       await expect(binding(spec, 'tools', 'bash', { command: 'second' })).rejects.toMatchObject({ code: 'BASH_PROTOCOL' });
-      return { error: { kind: 'exception', message: 'Error: the guard left no result' }, logs: [] };
+      return { error: { kind: 'exception', message: 'Error: the guard left no result' }, output: [] };
     });
     const f = await fixture({ shell: bash, ptc: native, retry: { delaysMs: [0, 0] } });
     const outcome = await run(f, 'typescript');
     expect(failed(outcome).code).toBe('BASH_PROTOCOL');
     expect((failed(outcome).details as { attempts?: unknown[] }).attempts).toHaveLength(3);
+  });
+});
+
+describe('program output contract across hosts', () => {
+  it('completes on a host that publishes only the earlier per-call list and reports it once', async () => {
+    const report = vi.fn();
+    const native = ptc(async () => ({ value: { exit: 'passed', message: 'ok' }, logs: ['first call', 'second call'] }));
+    const f = await fixture({ ptc: native, report });
+    const capture = await f.capture('typescript'); await f.runtime.trust.approve(approvalScope, capture.fingerprint, 'review');
+    for (const executionId of ['legacy-a', 'legacy-b']) {
+      const outcome = await f.runtime.execute({ executionId, taskId: 'task', capture, input: {}, scope, approvalScope, signal: new AbortController().signal });
+      expect(outcome).toMatchObject({ kind: 'completed', completion: { exit: 'passed' }, diagnostics: ['first call\nsecond call'] });
+    }
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(report).mock.calls[0]![0]).toMatchObject({ code: 'SCRIPTED_OUTPUT_CONTRACT_LEGACY' });
+    // The report states that the earlier contract ends with the declared host floor.
+    expect((vi.mocked(report).mock.calls[0]![0] as Error).message).toContain('support ends when the declared host floor rises');
+  });
+
+  it('refuses a host whose result cannot be read and reports the unknown contract once', async () => {
+    const report = vi.fn();
+    const native = ptc(async () => ({ value: undefined } as unknown as NativePtcRunResult));
+    const f = await fixture({ ptc: native, report });
+    const capture = await f.capture('typescript'); await f.runtime.trust.approve(approvalScope, capture.fingerprint, 'review');
+    for (const executionId of ['unknown-a', 'unknown-b']) {
+      const outcome = await f.runtime.execute({ executionId, taskId: 'task', capture, input: {}, scope, approvalScope, signal: new AbortController().signal });
+      expect(outcome).toMatchObject({ kind: 'failed', diagnostic: { code: 'TYPESCRIPT_RESULT_UNSUPPORTED', details: { origin: 'configuration' } } });
+    }
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(report).mock.calls[0]![0]).toMatchObject({ code: 'TYPESCRIPT_RESULT_UNSUPPORTED' });
+  });
+
+  it('refuses an over-bound program output as a contract failure', async () => {
+    const native = ptc(async () => ({ value: { exit: 'passed', message: 'ok' }, output: [{ type: 'text', text: 'x'.repeat(PROGRAM_OUTPUT_MAX_BYTES + 1) }] }));
+    const f = await fixture({ ptc: native });
+    const capture = await f.capture('typescript'); await f.runtime.trust.approve(approvalScope, capture.fingerprint, 'review');
+    const outcome = await f.runtime.execute({ executionId: 'overflow-execution', taskId: 'task', capture, input: {}, scope, approvalScope, signal: new AbortController().signal });
+    expect(outcome).toMatchObject({ kind: 'failed', diagnostic: { code: 'OUTPUT_LIMIT', details: { origin: 'contract' } } });
+  });
+
+  it('reports the same program output for a real execution and an isolated test', async () => {
+    const native = ptc(async () => ({ value: { exit: 'passed', message: 'ok' }, output: [{ type: 'text', text: 'line one\n' }, { type: 'image', attachment: {} }] }));
+    const f = await fixture({ ptc: native });
+    const definition = { language: 'typescript' as const, code: 'return {exit:"passed",message:"ok"};', directory: 'project' as const, exits: { passed: 'review' } };
+    const capture = await f.runtime.capture({ definition, projectDirectory: f.project, taskDirectory: f.project, exits });
+    await f.runtime.trust.approve(approvalScope, capture.fingerprint, 'review');
+    const executed = await f.runtime.execute({ executionId: 'parity-execution', taskId: 'task', capture, input: {}, scope, approvalScope, signal: new AbortController().signal });
+    const tested = await f.runtime.test!({ definition, code: definition.code, input: {}, directory: f.project, responses: [], signal: new AbortController().signal });
+    expect(executed).toMatchObject({ kind: 'completed', diagnostics: ['line one\n[1 image output omitted]'] });
+    expect(tested).toMatchObject({ kind: 'completed', diagnostics: ['line one\n[1 image output omitted]'] });
   });
 });
 

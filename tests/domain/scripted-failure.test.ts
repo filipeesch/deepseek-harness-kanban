@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FailureDetail, GuardFacts } from '../../src/shared/scripted-failure.js';
 import { classifyFailureCode, DEFAULT_FAILURE_ORIGIN, FAILURE_DETAIL_MAX_BYTES, failureDetail, failureDetailValues, neverRoutes } from '../../src/domain/scripted-failure.js';
-import { failureMessage, providerFailureMessage, sanitizeFailureText } from '../../src/domain/scripted-failure-message.js';
+import { failureMessage, parameterDebtor, providerFailureMessage, sanitizeFailureText } from '../../src/domain/scripted-failure-message.js';
 import { redactExact, redactRecord } from '../../src/shared/redact.js';
 import { utf8Length } from '../../src/shared/bounded.js';
 import { settleFailureRoute } from '../../src/domain/scripted-failure-settlement.js';
@@ -102,6 +102,7 @@ describe('scripted failure origin classification', () => {
     ['POLICY_DENIED', 'configuration'],
     ['BASH_UNAVAILABLE', 'configuration'],
     ['TYPESCRIPT_FORMAT_UNSUPPORTED', 'configuration'],
+    ['TYPESCRIPT_RESULT_UNSUPPORTED', 'configuration'],
     ['REDACTION_LIMIT', 'configuration'],
   ] as const)('classifies %s as %s', (code, origin) => {
     expect(classifyFailureCode(code)).toBe(origin);
@@ -160,6 +161,44 @@ describe('scripted failure message', () => {
     expect(failureMessage({ code: 'EXECUTION_CONTEXT_CHANGED', origin: 'configuration', message: 'The captured directory changed.' })).toContain('press Play');
     expect(failureMessage({ code: 'INVALID_COMPLETION', origin: 'contract', message: 'Return only exit and message.' })).toContain('completion was rejected');
   });
+
+  it('keeps the product-owned refusal diagnosis and names the host build', () => {
+    // The reader's own sentence names the observed shape, so no provider sentence replaces it.
+    expect(providerFailureMessage('TYPESCRIPT_RESULT_UNSUPPORTED')).toBeUndefined();
+    const message = failureMessage({ code: 'TYPESCRIPT_RESULT_UNSUPPORTED', origin: 'configuration', message: stack });
+    expect(message).toContain('Configuration failure');
+    expect(message).toContain('Update the DeepSeek Harness build');
+    expect(message).toContain('escalate this problem to the user');
+    expect(message).not.toContain('Fix the stage or the entry');
+    expect(message).not.toContain('    at ');
+    expect(message).not.toContain('/Users/someone');
+  });
+
+  it('asks the reader to escalate a program failure and a rejected completion', () => {
+    const program = failureMessage({ code: 'TYPESCRIPT_EXCEPTION', origin: 'script', message: 'boom' });
+    expect(program).toContain('escalate this problem to the user');
+    expect(program).toContain('boom');
+    expect(failureMessage({ code: 'INVALID_COMPLETION', origin: 'contract', message: 'no exit' })).toContain('escalate this problem to the user');
+  });
+
+  it('names the application owners for an infrastructure failure', () => {
+    const message = failureMessage({ code: 'BASH_PROTOCOL', origin: 'infrastructure', message: 'boom', details: detail });
+    expect(message).toContain('defect in the DeepSeek Harness or the Kanban plugin');
+    expect(message).toContain('escalate it to the user');
+  });
+
+  it('names the step that owed a missing parameter from the entry origin', () => {
+    expect(parameterDebtor(undefined)).toBeUndefined();
+    expect(parameterDebtor('agent')).toContain('agent that declared it');
+    expect(parameterDebtor('auto')).toContain('user must provide it');
+    expect(parameterDebtor('manual')).toContain('created by hand');
+    expect(parameterDebtor('script:passed')).toContain('program that produced it');
+    expect(parameterDebtor('error:boom')).toContain('failure route');
+    const message = failureMessage({ code: 'PARAMETERS_REQUIRED', origin: 'configuration', message: 'Missing required parameter: pipeline.', debtor: parameterDebtor('agent') });
+    expect(message).toContain('press Play');
+    expect(message).toContain('agent that declared it');
+    expect(message).not.toContain('escalate');
+  });
 });
 
 describe('scripted failure settlement', () => {
@@ -176,6 +215,7 @@ describe('scripted failure settlement', () => {
 
   it('never routes a configuration failure or an ownership uncertainty', () => {
     expect(settleFailureRoute({ code: 'EXECUTION_CONTEXT_CHANGED', origin: 'configuration', exits: ['infrastructure', 'error'] })).toBeNull();
+    expect(settleFailureRoute({ code: 'TYPESCRIPT_RESULT_UNSUPPORTED', origin: 'configuration', exits: ['infrastructure', 'error'] })).toBeNull();
     expect(settleFailureRoute({ code: 'OWNERSHIP_UNCERTAIN', origin: 'infrastructure', exits: ['infrastructure', 'error'] })).toBeNull();
   });
 });

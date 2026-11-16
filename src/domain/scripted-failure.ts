@@ -73,6 +73,7 @@ const ORIGINS: Readonly<Record<string, FailureOrigin>> = {
   BASH_LIFETIME_UNSUPPORTED: 'configuration',
   TYPESCRIPT_UNAVAILABLE: 'configuration',
   TYPESCRIPT_FORMAT_UNSUPPORTED: 'configuration',
+  TYPESCRIPT_RESULT_UNSUPPORTED: 'configuration',
   TYPESCRIPT_LIFETIME_UNSUPPORTED: 'configuration',
   TYPESCRIPT_SANDBOX_UNAVAILABLE: 'configuration',
   POLICY_UNAVAILABLE: 'configuration',

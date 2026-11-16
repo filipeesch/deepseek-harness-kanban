@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ScriptedCapture, ScriptedControl, ScriptedHold, ScriptedInput, ScriptedResult, StepCompletion } from '../shared/scripted.js';
 import type { HubTask, Problem } from '../shared/types.js';
+import type { StageEntryOrigin } from '../shared/task-history.js';
 import { KanbanError } from '../shared/errors.js';
 import type { LocatedTask } from './hub-repository.js';
 import { captureScriptedTargets } from '../domain/scripted-state.js';
@@ -8,7 +9,7 @@ import { boundedRedactedParameters, declaredParameterNames, declaredParameterVal
 import { recordScriptedExecution, recordScriptedHandoff } from '../domain/task-history/record.js';
 import { classifyFailureCode, failureDetail, failureDetailValues } from '../domain/scripted-failure.js';
 import type { FailureDetail } from '../shared/scripted-failure.js';
-import { failureMessage, providerFailureMessage } from '../domain/scripted-failure-message.js';
+import { failureMessage, parameterDebtor, providerFailureMessage } from '../domain/scripted-failure-message.js';
 import { settleFailureRoute } from '../domain/scripted-failure-settlement.js';
 import { validateCompletion } from '../domain/scripted-completion.js';
 import { PARAMETER_LIMITS } from '../domain/scripted-definition.js';
@@ -99,6 +100,17 @@ function completion(value: unknown): StepCompletion {
   if (!result.ok) throw new KanbanError(result.code, result.message);
   return result.completion;
 }
+/** How the entry that holds the task now was created, from the latest matching history row. */
+function entryOriginOf(task: HubTask): StageEntryOrigin | undefined {
+  const history = task.history ?? [];
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const entry = history[index]!;
+    if (entry.kind === 'stage' && entry.columnId === task.columnId) return entry.origin;
+    if (entry.kind === 'created' && entry.columnId === task.columnId) return undefined;
+  }
+  return undefined;
+}
+
 /** Redact one sent value and keep it inside the accepted value bound. */
 function safeParameter(value: string, secrets: Readonly<Record<string, string>>): string {
   const redacted = redactExact(value, Object.values(secrets));
@@ -466,7 +478,8 @@ export class ScriptedSupervisor {
       if (!Object.hasOwn(capture.exits, output.exit)) throw new KanbanError('UNMAPPED_EXIT', 'The program returned an exit that is not mapped in its approved capture.');
     } catch (error) {
       if (error instanceof SupervisorPersistenceFailure) throw error.cause;
-      if (!this.valid(taskId, owner)) return;
+      const currentTask = this.valid(taskId, owner);
+      if (!currentTask) return;
       const errorCode = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'SCRIPTED_EXECUTION_FAILED';
       // The runtime already knows the origin; a code that reaches here without one is
       // classified from its code so every settled failure can be routed and presented.
@@ -474,6 +487,8 @@ export class ScriptedSupervisor {
       // bound can no longer be matched, so the order matters here too.
       const recorded = failureDetail(redactRecord(error instanceof KanbanError ? error.details : undefined, Object.values(secrets)));
       const origin = recorded?.origin ?? classifyFailureCode(errorCode);
+      // A parameter refusal names the step that owed the value, when the record says how the entry began.
+      const debtor = errorCode === 'PARAMETERS_REQUIRED' ? parameterDebtor(entryOriginOf(currentTask.task)) : undefined;
       const raw = error instanceof Error ? error.message : String(error);
       // Redact before any bound: a truncation that cuts a known value leaves a
       // fragment that exact-value matching can no longer recognize.
@@ -486,7 +501,7 @@ export class ScriptedSupervisor {
         : { ...(recorded ?? {}), origin };
       const diagnostic: Problem = {
         code: errorCode,
-        message: safeText(failureMessage({ code: errorCode, origin, message: provider ?? safeRaw, details: detail }), secrets, MAX_DIAGNOSTIC),
+        message: safeText(failureMessage({ code: errorCode, origin, message: provider ?? safeRaw, details: detail, ...(debtor === undefined ? {} : { debtor }) }), secrets, MAX_DIAGNOSTIC),
         details: redactRecord(failureDetailValues(detail), Object.values(secrets)) ?? failureDetailValues(detail),
       };
       output = undefined;

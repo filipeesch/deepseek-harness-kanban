@@ -197,6 +197,22 @@ describe('write report observations', () => {
     expect(value.report.warnings).toContainEqual({ kind: 'destination-parameter-unmentioned', stage: 'todo', destination: 'check', parameter: 'pipeline' });
   });
 
+  it('reports a parameter the program reads without declaring it and still publishes', async () => {
+    const f = await setup();
+    const flow = [
+      'name: Undeclared', 'initial_column: todo', 'columns:',
+      '  - id: todo', '    label: Todo', '    allowed_transitions: [check]',
+      '  - id: check', '    label: Check', '    scripted:', '      language: typescript',
+      "      code: 'return input.params.pipeline;'", '      params: []', '      exits: {passed: done}',
+      '  - id: done', '    label: Done',
+      '',
+    ].join('\n');
+    const boardId = (await run(f, 'create_board', { hub_id: f.hub.id, name: 'Undeclared board', workflow_yaml: flow })).id;
+    const value = await run(f, 'edit_board_yaml', { board_id: boardId, edits: [{ old: 'label: Todo', new: 'label: To do' }] });
+    expect(value.report.warnings).toContainEqual({ kind: 'scripted-parameter-undeclared', stage: 'check', parameter: 'pipeline' });
+    expect(await document(f, boardId)).toContain('label: To do');
+  });
+
   it('reports a card parked in a stage whose parameters it does not have', async () => {
     const f = await setup();
     const boardId = (await run(f, 'create_board', { hub_id: f.hub.id, name: 'Card board', workflow_yaml: PARAMETER_FLOW })).id;
