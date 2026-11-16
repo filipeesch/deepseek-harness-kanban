@@ -208,7 +208,7 @@ Every tool that writes a board's workflow document SHALL compose the result, val
 
 The graph warnings SHALL cover an unreachable stage, a stage that is not a terminal one and authors no outgoing route, a connection layout entry naming a pair the workflow does not draw, a stage outside every group, an instruction that cites a stage the workflow does not define, an instruction that cites a stage the stage does not permit, and an instruction that mentions a stage identifier only in prose. A citation SHALL be an identifier written between backticks, or an identifier the workflow defines that follows one of the authored citation phrases. A bare word after a citing phrase that the workflow does not define, and any plain prose token that happens to equal a stage identifier, SHALL be reported as an informational observation, distinguishable from a citation problem, and SHALL NOT be counted as a routing defect.
 
-The report SHALL also carry cross-stage observations: a destination stage that declares a parameter its origin stage's instruction never names, naming the origin stage, the destination stage, and each unnamed parameter; and a card parked in a stage that declares parameters for which that card holds no value, naming the cards by identifier and the missing parameter names. A parameter value SHALL NOT appear in the report.
+The report SHALL also carry cross-stage observations: a destination stage that declares a parameter its origin stage's instruction never names, naming the origin stage, the destination stage, and each unnamed parameter; and a card parked in a stage that declares parameters for which that card holds no value, naming the cards by identifier and the missing parameter names; and a TypeScript scripted stage whose program reads a parameter its declaration never names, naming the stage and each undeclared name without reporting a routing defect. A parameter value SHALL NOT appear in the report.
 
 A composition that refuses its own edit SHALL contribute the failing edit index, the occurrence lines and stages, and the closest authored line to the report's problems, so a caller that reads only the report still sees where it failed. The report SHALL group and de-duplicate its warnings so a repeated fact about the same stage and the same reference appears once, and SHALL bound every listed group and count what it left out.
 
@@ -309,3 +309,10 @@ The authorization state SHALL be reported once per scripted stage for the board 
 - **WHEN** a write removes a stage or a route that cards depend on
 - **THEN** the report names those cards by identifier and count
 - **AND** it carries no card title, description, note, task message, or conversation content
+
+#### Scenario: Report a parameter the program reads but the stage never declares
+
+- **WHEN** a composed document keeps a TypeScript scripted stage whose captured program reads a parameter name its declaration does not list
+- **THEN** the report observes that undeclared name for that stage
+- **AND** the write still succeeds when nothing else is wrong
+- **AND** the observation is not reported as a routing defect

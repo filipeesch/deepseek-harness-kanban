@@ -10,6 +10,8 @@ import { createScriptedVariables } from './variables.js';
 import { TYPESCRIPT_PRELUDE, executeCapturedProgram, verifyExecutors, verifyProgramRuntime } from './executor.js';
 import { createBashRetry, type BashRetryOptions } from './retry.js';
 import type { ScriptedPolicyPort, ScriptedRuntime, ExecuteRequest, ExecutionOutcome, NativePtcPort, NativeShellPort, SimulatedShellCall, SimulatedShellResponse, TestProgramOutcome, TestProgramRequest } from './ports.js';
+import { PROGRAM_OUTPUT_MAX_BYTES, programOutput, type ProgramOutputContract } from './runtime-result.js';
+import { KanbanError } from '../../shared/errors.js';
 import { ScriptedRuntimeError, failure } from './ports.js';
 import { bounded, parseCompletion } from './safety.js';
 import type { PtcBindingNamespace, PtcJsonValue } from '@deepseek-ai/dsh-ptc-runtime';
@@ -21,8 +23,6 @@ export { SecretRedactor, parseCompletion } from './safety.js';
 const TEST_CALL_LIMIT = 50;
 /** The longest command or match string one test result quotes back. */
 const TEST_COMMAND_LIMIT = 200;
-/** The bounded total of a test program's own diagnostics. */
-const TEST_LOG_LIMIT = 64 * 1024;
 
 export interface ScriptedRuntimeOptions {
   context: unknown;
@@ -32,6 +32,8 @@ export interface ScriptedRuntimeOptions {
   retry?: BashRetryOptions;
   /** The built guard artifact; resolved next to the host bundle when absent. */
   guardPath?: string;
+  /** Reports one host-compatibility fact once per runtime; never a task change. */
+  report?: (error: unknown) => void;
 }
 /** Missing optional native services fail per script, not at conventional Kanban startup. */
 export function createScriptedRuntime(options: ScriptedRuntimeOptions): ScriptedRuntime {
@@ -46,6 +48,21 @@ export function createScriptedRuntime(options: ScriptedRuntimeOptions): Scripted
   const processOwnership = createProcessOwnership();
   const retry = createBashRetry(options.retry ?? {});
   const active = new Map<string, Promise<ExecutionOutcome>>();
+  // A host compatibility fact is reported once per runtime, never per execution:
+  // the reader sees the same contract on every run it makes.
+  const reported = new Set<string>();
+  const reportOnce = (kind: string, error: unknown): void => {
+    if (reported.has(kind)) return;
+    reported.add(kind);
+    options.report?.(error);
+  };
+  const reportContract = (contract: ProgramOutputContract): void => {
+    if (contract === 'ordered') return;
+    reportOnce('earlier', new KanbanError('SCRIPTED_OUTPUT_CONTRACT_LEGACY', 'The host publishes the earlier per-call program-output contract. This plugin accepts it now; its support ends when the declared host floor rises.'));
+  };
+  const reportUnsupportedContract = (): void => {
+    reportOnce('unknown', new KanbanError('TYPESCRIPT_RESULT_UNSUPPORTED', 'The host does not publish a program-output contract this plugin can read. Update the DeepSeek Harness build that hosts this plugin.'));
+  };
   const services = () => ({ shell: optionalService<NativeShellPort>(options.context, 'shell'), runtime: optionalService<NativePtcPort>(options.context, 'ptcRuntime') });
   const verify = async (capture: ScriptedCapture, signal?: AbortSignal) => {
     signal?.throwIfAborted();
@@ -111,9 +128,11 @@ export function createScriptedRuntime(options: ScriptedRuntimeOptions): Scripted
       const completion = parseCompletion(result.value);
       if (!Object.hasOwn(request.definition.exits, completion.exit)) failure('UNMAPPED_EXIT', 'The returned exit is not present in the authored exit mapping.');
       // A program that logs in a loop must not inflate the tool result this session reads.
-      if (result.logs.reduce((sum, text) => sum + Buffer.byteLength(text), 0) > TEST_LOG_LIMIT) failure('OUTPUT_LIMIT', 'Test diagnostics exceeded the bounded output limit.');
-      return { kind: 'completed', completion, calls, diagnostics: result.logs.map(text => bounded(text)), ...(callsOmitted === 0 ? {} : { callsOmitted }) };
+      const output = programOutput(result, PROGRAM_OUTPUT_MAX_BYTES);
+      reportContract(output.contract);
+      return { kind: 'completed', completion, calls, diagnostics: [bounded(output.text, PROGRAM_OUTPUT_MAX_BYTES)], ...(callsOmitted === 0 ? {} : { callsOmitted }) };
     } catch (error) {
+      if (error instanceof ScriptedRuntimeError && error.code === 'TYPESCRIPT_RESULT_UNSUPPORTED') reportUnsupportedContract();
       return {
         kind: 'failed', calls, ...(callsOmitted === 0 ? {} : { callsOmitted }),
         diagnostic: {
@@ -147,7 +166,7 @@ export function createScriptedRuntime(options: ScriptedRuntimeOptions): Scripted
         request.signal.throwIfAborted();
         const { shell, runtime } = services();
         if (!shell) failure('BASH_UNAVAILABLE', 'Mount the public native Bash executor.');
-        outcome = await executeCapturedProgram({ request, code, policy: executionPolicy, shell, runtime, variables, lifetime, retry });
+        outcome = await executeCapturedProgram({ request, code, policy: executionPolicy, shell, runtime, variables, lifetime, retry, reportContract });
       } catch (error) {
         outcome = request.signal.aborted
           ? { kind: 'aborted' }
@@ -157,6 +176,7 @@ export function createScriptedRuntime(options: ScriptedRuntimeOptions): Scripted
             ...(error instanceof ScriptedRuntimeError && error.detail !== undefined ? { details: error.detail } : {}),
           } };
       }
+      if (outcome.kind === 'failed' && outcome.diagnostic.code === 'TYPESCRIPT_RESULT_UNSUPPORTED') reportUnsupportedContract();
       try {
         await lifetime?.close();
         await release?.();

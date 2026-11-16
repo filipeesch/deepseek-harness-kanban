@@ -11,6 +11,7 @@ import type { NativeLifetime } from './lifetime.js';
 import type { ScriptedVariables, ExecuteRequest, ExecutionOutcome, NativePtcPort, NativeShellPort } from './ports.js';
 import { ScriptedRuntimeError, failure } from './ports.js';
 import { COMPLETION_MAX_BYTES, DIAGNOSTIC_MAX_BYTES, SecretRedactor, bounded, parseCompletion } from './safety.js';
+import { PROGRAM_OUTPUT_MAX_BYTES, programOutput, type ProgramOutputContract } from './runtime-result.js';
 
 export const TYPESCRIPT_PRELUDE = 'const input = await stepContext.read(null);\nconst env = Object.freeze({ get: async (name) => authorizedEnvironment.get(name) });\n';
 function samePolicy(actual: SandboxExecutionPolicy | undefined, expected: SandboxExecutionPolicy): boolean {
@@ -58,6 +59,8 @@ export async function executeCapturedProgram(options: {
   shell: NativeShellPort; runtime?: NativePtcPort; variables: ScriptedVariables; lifetime?: NativeLifetime;
   /** Bounded repetition policy for a guarded Bash call the host did not admit. */
   retry?: BashRetry;
+  /** Notified with the program-output contract one run observed, for a one-time report. */
+  reportContract?: (contract: ProgramOutputContract) => void;
 }): Promise<ExecutionOutcome> {
   const { request, code, policy, shell, runtime, variables } = options;
   const retry = options.retry ?? createBashRetry();
@@ -141,7 +144,7 @@ export async function executeCapturedProgram(options: {
     signal.throwIfAborted();
     await resolveValues();
     let value: unknown;
-    let logs: string[];
+    let diagnostics: string;
     if (request.capture.language === 'bash') {
       const result = await runBash(code, undefined, JSON.stringify(request.input));
       if (result.aborted || request.signal.aborted) return { kind: 'aborted' };
@@ -149,7 +152,7 @@ export async function executeCapturedProgram(options: {
       if (result.timedOut || result.exitCode !== 0 || result.signal !== null) failure('BASH_FAILED', 'Standalone Bash must exit with status zero. ' + result.stderr.text);
       if (result.stdout.truncated || Buffer.byteLength(result.stdout.text) > COMPLETION_MAX_BYTES) failure('INVALID_COMPLETION', 'Standalone Bash completion was truncated or exceeds the output limit.');
       try { value = JSON.parse(result.stdout.text); } catch { failure('INVALID_COMPLETION', 'Standalone Bash stdout must contain exactly one JSON completion document.'); }
-      logs = [result.stderr.text];
+      diagnostics = result.stderr.text;
     } else {
       if (!runtime) failure('TYPESCRIPT_UNAVAILABLE', 'Mount the native TypeScript function-body runtime.');
       const bindings: PtcBindingNamespace[] = [
@@ -164,14 +167,15 @@ export async function executeCapturedProgram(options: {
       if (request.signal.aborted || result.error?.kind === 'abort') return { kind: 'aborted' };
       checkPolicyResult(result, policy);
       if (result.error) failure('TYPESCRIPT_' + result.error.kind.toUpperCase().replaceAll('-', '_'), result.error.message);
-      if (result.logs.reduce((sum, text) => sum + Buffer.byteLength(text), 0) > 64 * 1024) failure('OUTPUT_LIMIT', 'TypeScript diagnostics exceeded the bounded output limit.');
+      const output = programOutput(result, PROGRAM_OUTPUT_MAX_BYTES);
+      options.reportContract?.(output.contract);
       value = result.value;
-      logs = result.logs;
+      diagnostics = output.text;
     }
     const completion = parseCompletion(value);
     if (!Object.hasOwn(request.capture.exits, completion.exit)) failure('UNMAPPED_EXIT', 'The returned exit is not present in the reviewed mapping.');
     const params = completion.params === undefined ? undefined : boundedRedactedParameters(Object.fromEntries(Object.entries(completion.params).map(([name, text]) => [name, redactor.parameter(text)])));
-    return { kind: 'completed', completion: { exit: completion.exit, message: redactor.text(completion.message, COMPLETION_MAX_BYTES), ...(params === undefined ? {} : { params }) }, diagnostics: [redactor.text(logs.join('\n'))].filter(Boolean) };
+    return { kind: 'completed', completion: { exit: completion.exit, message: redactor.text(completion.message, COMPLETION_MAX_BYTES), ...(params === undefined ? {} : { params }) }, diagnostics: [redactor.text(diagnostics, PROGRAM_OUTPUT_MAX_BYTES)].filter(Boolean) };
   } catch (error) {
     if (request.signal.aborted) return { kind: 'aborted' };
     const code = error instanceof ScriptedRuntimeError ? error.code : 'EXECUTOR_FAILED';
