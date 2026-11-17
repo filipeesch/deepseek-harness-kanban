@@ -7,6 +7,7 @@ import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots';
 import { parse } from 'yaml';
 import type { Board, ClientApi, HubState, KanbanSnapshot, ModelCatalog, ModelSelection } from '../../src/shared/types.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
+import { writeBoardDefaultsField } from '../../src/domain/board-defaults-field.js';
 import { BoardDefaultsPanel } from '../../src/client/settings/board/board-defaults-panel.js';
 import { MODEL_SELECTION_SLOT, type NativeSeat } from '../../src/client/native-slot-host.js';
 import { PresetProvider, PRESET_OPTIONS, presetPort } from './agent-preset-fixture.js';
@@ -34,15 +35,16 @@ function modelSeat(): NativeSeat {
   };
 }
 
-function boardOf(stored: { model?: ModelSelection; preset?: string; mcp?: string[] } = {}): Board {
-  const workflow = { ...parseWorkflow(AUTHORED), ...(stored.model === undefined ? {} : { model: stored.model }), ...(stored.preset === undefined ? {} : { agentPreset: stored.preset }), ...(stored.mcp === undefined ? {} : { mcp: stored.mcp }) };
-  return { id: 'b1', name: 'Flow', workflowYaml: AUTHORED, workflow, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
+function boardOf(stored: { model?: ModelSelection; preset?: string; mcp?: string[]; mode?: 'operator' | 'host' } = {}): Board {
+  const workflowYaml = writeBoardDefaultsField(AUTHORED, { model: stored.model, preset: stored.preset, ...(stored.mcp === undefined ? {} : { mcp: { mode: 'selected', entries: stored.mcp } }) });
+  const workflow = parseWorkflow(workflowYaml);
+  return { id: 'b1', name: 'Flow', workflowYaml, workflow, ...(stored.mode === undefined ? {} : { defaultPresetMode: stored.mode }), createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
 }
 function hubOf(board: Board): HubState {
   return { id: 'h1', name: 'My Hub', revision: 7, projects: [], boards: [board], tasks: [], notes: [], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
 }
 
-function harness(options: { stored?: { model?: ModelSelection; preset?: string; mcp?: string[] }; catalog?: ModelCatalog | null; yaml?: string; workflowEditing?: boolean; seat?: NativeSeat | null; preset?: ReturnType<typeof presetPort>; mcpServers?: string[] | null } = {}) {
+function harness(options: { stored?: { model?: ModelSelection; preset?: string; mcp?: string[]; mode?: 'operator' | 'host' }; catalog?: ModelCatalog | null; yaml?: string; workflowEditing?: boolean; seat?: NativeSeat | null; preset?: ReturnType<typeof presetPort>; mcpServers?: string[] | null } = {}) {
   const board = boardOf(options.stored);
   const hub = hubOf(board);
   const run = vi.fn(async (_command: unknown) => ({}) as KanbanSnapshot);
@@ -58,7 +60,7 @@ function harness(options: { stored?: { model?: ModelSelection; preset?: string; 
   const view = render(<PresetProvider port={port}>
     <BoardDefaultsPanel
       hub={hub} board={board} run={run} api={api}
-      yaml={options.yaml ?? AUTHORED} baseRevision={7}
+      yaml={options.yaml ?? board.workflowYaml} baseRevision={7}
       workflowEditing={options.workflowEditing === true}
       onOpenWorkflow={onOpenWorkflow} onDirtyChange={onDirtyChange}
       {...(seat === undefined ? {} : { seat })}
@@ -75,6 +77,67 @@ function saveButton(): HTMLButtonElement {
 }
 
 describe('the board defaults panel', () => {
+  it('can explicitly select the current implicit operator', async () => {
+    const operator = { id: 'kanban-workflow-operator', name: 'Workflow Operator' };
+    const port = presetPort({ list: async () => [...PRESET_OPTIONS, operator] });
+    const { user, run } = harness({ stored: { mode: 'operator' }, preset: port });
+    expect(screen.getByText(/Current origin: new-board operator default/)).toBeTruthy();
+    const radio = await screen.findByRole('radio', { name: /Workflow Operator/ });
+    expect((radio as HTMLInputElement).checked).toBe(true);
+    await user.click(radio);
+    await user.click(saveButton());
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0]![0]).toMatchObject({ presetChoice: 'named' });
+    expect(saved(run.mock.calls[0]![0]).agent_preset).toBe(operator.id);
+    expect((run.mock.calls[0]![0] as { yaml: string }).yaml).toContain('label: Backlog # keep me');
+  });
+
+  it('can explicitly select the legacy host default', async () => {
+    const { user, run } = harness();
+    expect(screen.getByText(/Current origin: legacy host default/)).toBeTruthy();
+    await user.click(screen.getByRole('radio', { name: /Host default preset/ }));
+    await user.click(saveButton());
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0]![0]).toMatchObject({ presetChoice: 'host', yaml: AUTHORED });
+  });
+
+  it('reverting an implicit operator draft keeps the original provenance on another edit', async () => {
+    const operator = { id: 'kanban-workflow-operator', name: 'Workflow Operator' };
+    const { user, run } = harness({ stored: { mode: 'operator' }, preset: presetPort({ list: async () => [...PRESET_OPTIONS, operator] }) });
+    await user.click(await screen.findByRole('radio', { name: /PTC/ }));
+    await user.click(screen.getByRole('radio', { name: /Workflow Operator/ }));
+    expect(saveButton().disabled).toBe(true);
+    await user.click(screen.getByRole('radio', { name: 'Specific model' }));
+    await user.click(await screen.findByRole('button', { name: 'Choose Chat' }));
+    await user.click(saveButton());
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0]![0]).not.toHaveProperty('presetChoice');
+    expect(saved(run.mock.calls[0]![0]).agent_preset).toBeUndefined();
+  });
+
+  it('reverting a legacy host draft keeps the legacy provenance on another edit', async () => {
+    const { user, run } = harness();
+    await user.click(await screen.findByRole('radio', { name: /PTC/ }));
+    await user.click(screen.getByRole('radio', { name: /Host default preset/ }));
+    expect(saveButton().disabled).toBe(true);
+    await user.click(screen.getByRole('radio', { name: 'Specific model' }));
+    await user.click(await screen.findByRole('button', { name: 'Choose Chat' }));
+    await user.click(saveButton());
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0]![0]).not.toHaveProperty('presetChoice');
+    expect(saved(run.mock.calls[0]![0]).agent_preset).toBeUndefined();
+  });
+
+  it('preserves an unavailable authored preset byte-for-byte on model-only edits', async () => {
+    const text = "agent_preset: 'retired' # preserve preset\n" + AUTHORED;
+    const { user, run } = harness({ stored: { preset: 'retired' }, yaml: text });
+    await user.click(screen.getByRole('radio', { name: 'Specific model' }));
+    await user.click(await screen.findByRole('button', { name: 'Choose Chat' }));
+    await user.click(saveButton());
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect((run.mock.calls[0]![0] as { yaml: string }).yaml).toContain("agent_preset: 'retired' # preserve preset");
+    expect(run.mock.calls[0]![0]).not.toHaveProperty('presetChoice');
+  });
   it('saves the model and the preset in one guarded workflow write', async () => {
     const { user, run } = harness();
     await user.click(screen.getByRole('radio', { name: 'Specific model' }));

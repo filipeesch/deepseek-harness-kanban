@@ -138,8 +138,9 @@ describe('project scope on the agent surface', () => {
     await f.store.transact(draft => { draft.projects.push({ id: 'placeholder', name: 'ops', projectKey: 'ops', origin: 'published' }); });
     await f.app.command({ type: 'board.projects.save', hubId: f.hub.id, boardId: f.board.id, projectKeys: [f.project.projectKey] });
     const tool = toolFor(f.app);
-    const summary = await tool('get_board_summary', { board_id: f.board.id }) as { acceptsNewTasks: boolean; projectScope: { mode: string } };
-    expect(summary).toMatchObject({ acceptsNewTasks: true, projectScope: { mode: 'restricted' } });
+    const summary = await tool('get_workflow_summary', { board_id: f.board.id }) as { records: Array<Record<string, unknown>> };
+    expect(summary.records).toContainEqual(expect.objectContaining({ kind: 'projectScope', mode: 'restricted', projectCount: 1 }));
+    expect(summary.records).toContainEqual({ kind: 'project', key: f.project.projectKey });
     const projects = await tool('list_projects', { board_id: f.board.id }) as Array<{ id: string; allowed: boolean }>;
     expect(projects.find(project => project.id === f.project.id)).toMatchObject({ allowed: true });
     expect(projects.find(project => project.id === second.id)).toMatchObject({ allowed: false });
@@ -152,7 +153,7 @@ describe('project scope on the agent surface', () => {
     const second = await f.store.saveProject({ name: 'API', projectPath: f.gitRoot, gitRootPath: f.gitRoot });
     await f.app.command({ type: 'board.projects.save', hubId: f.hub.id, boardId: f.board.id, projectKeys: [] });
     const tool = toolFor(f.app);
-    expect(await tool('get_board_summary', { board_id: f.board.id })).toMatchObject({ acceptsNewTasks: false });
+    expect(await tool('get_workflow_summary', { board_id: f.board.id })).toMatchObject({ records: expect.arrayContaining([{ kind: 'projectScope', mode: 'restricted', projectCount: 0 }]) });
     await expect(tool('create_card', { board_id: f.board.id, project_id: second.id, title: 'Blocked' })).rejects.toMatchObject({ code: 'PROJECT_NOT_ALLOWED_ON_BOARD' });
     expect(f.hubs.requireHub(f.hub.id).tasks).toHaveLength(0);
     await f.close();

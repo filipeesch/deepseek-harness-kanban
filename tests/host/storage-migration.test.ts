@@ -54,6 +54,13 @@ describe('Hub storage migration wiring', () => {
     await second.close();
   });
 
+  it('does not advertise cached domain reads as authoritative after a failed save', async () => {
+    const f = facility();
+    const opened = await openKanbanStorage(f.ctx);
+    try { expect(opened.storage.verifiedReadAfterFailedSave).toBeUndefined(); }
+    finally { await opened.close(); }
+  });
+
   it('accepts the legacy version-one document and rejects archived cards', async () => {
     const f = facility(); const v1 = initialState() as unknown as Record<string, unknown>;
     v1.schemaVersion = 1;

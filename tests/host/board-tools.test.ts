@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools';
 import { productToolDefinitions } from '../../src/host/tools.js';
+import { parseWorkflow } from '../../src/domain/workflow.js';
 import type { HubSharingService } from '../../src/host/sharing/service.js';
 import type { HubSharingView } from '../../src/shared/types.js';
 import { fixture, taskWithConversation } from './helpers.js';
@@ -102,32 +103,28 @@ describe('task payloads', () => {
 });
 
 describe('board workflow reads', () => {
-  it('summarizes a board and includes the Hub revision without the workflow payload', async () => {
+  it('returns a compact workflow and board scope without authored content', async () => {
     const f = await setup();
-    const value = await run(f, 'get_board_summary', { board_id: f.board.id });
-    expect(value).toMatchObject({ id: f.board.id, hubId: f.hub.id, hubRevision: revision(f) });
-    expect(value.columns.find((column: { id: string }) => column.id === 'backlog').count).toBe(0);
+    const value = await run(f, 'get_workflow_summary', { board_id: f.board.id });
+    expect(value.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'workflow', board: expect.objectContaining({ id: f.board.id }), hub: expect.objectContaining({ id: f.hub.id }), initialStageId: 'backlog' }),
+      expect.objectContaining({ kind: 'stage', id: 'backlog' }),
+    ]));
+    expect(value.nextCursor).toBeNull();
     expect(value.workflowYaml).toBeUndefined();
-    expect(value.sharing).toBeUndefined();
+    const exact = await run(f, 'get_board_yaml', { board_id: f.board.id });
+    expect(exact.yaml).toBe(f.board.workflowYaml);
+    expect(exact.hubRevision).toBe(revision(f));
   });
 
-  it('returns the parsed workflow, revision, and publishing state on request', async () => {
+  it('reads the board MCP allowlist from exact YAML, distinguishing absent and empty', async () => {
     const f = await setup();
-    const value = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
-    expect(value.workflowYaml).toBeUndefined();
-    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).toBe(f.board.workflowYaml);
-    expect(value.workflow.columns.map((column: { id: string }) => column.id)).toEqual(['backlog', 'plan', 'in_progress', 'in_review', 'done']);
-    expect(value.initialColumnId).toBe('backlog');
-    expect(value.sharing).toMatchObject({ status: 'not-published', bound: false });
-  });
-
-  it('reports the board MCP allowlist, keeping an absent field distinct from an empty list', async () => {
-    const f = await setup();
-    expect((await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true })).mcp).toBeNull();
+    const readWorkflow = async (id: string) => parseWorkflow((await run(f, 'get_board_yaml', { board_id: id })).yaml);
+    expect((await readWorkflow(f.board.id)).mcp).toBeUndefined();
     const withList = await run(f, 'create_board', { hub_id: f.hub.id, name: 'With MCP', workflow_yaml: MCP_FLOW });
-    expect((await run(f, 'get_board_summary', { board_id: withList.id, include_workflow: true })).mcp).toEqual(['atlassian', 'trino/query']);
+    expect((await readWorkflow(withList.id)).mcp).toEqual(['atlassian', 'trino/query']);
     const withNone = await run(f, 'create_board', { hub_id: f.hub.id, name: 'No MCP', workflow_yaml: EMPTY_MCP_FLOW });
-    expect((await run(f, 'get_board_summary', { board_id: withNone.id, include_workflow: true })).mcp).toEqual([]);
+    expect((await readWorkflow(withNone.id)).mcp).toEqual([]);
   });
 
   it('refuses a board whose MCP allowlist entry is malformed', async () => {
@@ -141,15 +138,15 @@ describe('board workflow reads', () => {
 
   it('rejects an unknown board', async () => {
     const f = await setup();
-    await expect(run(f, 'get_board_summary', { board_id: 'missing' })).rejects.toMatchObject({ code: 'BOARD_NOT_FOUND' });
+    await expect(run(f, 'get_workflow_summary', { board_id: 'missing' })).rejects.toMatchObject({ code: 'BOARD_NOT_FOUND' });
   });
 
   it('returns groups, entry prompts, and transitions for a grouped workflow', async () => {
     const f = await setup();
     const created = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Grouped', workflow_yaml: GROUPED_FLOW });
-    const value = await run(f, 'get_board_summary', { board_id: created.id, include_workflow: true });
+    const value = parseWorkflow((await run(f, 'get_board_yaml', { board_id: created.id })).yaml);
     expect(value.groups).toEqual([{ id: 'flow', name: 'Flow', columnIds: ['todo', 'done'] }]);
-    expect(value.workflow.columns[0]).toMatchObject({ id: 'todo', onEnterPrompt: 'Do it.', allowedTransitions: [{ to: 'done' }] });
+    expect(value.columns[0]).toMatchObject({ id: 'todo', onEnterPrompt: 'Do it.', allowedTransitions: [{ to: 'done' }] });
   });
 
   it('reports the board publishing state when the board is bound', async () => {
@@ -157,16 +154,16 @@ describe('board workflow reads', () => {
     sharing.bound.add('board');
     sharing.viewValue = sharingView({ boards: [{ boardId: 'board', name: 'Kanban', state: 'draft', bound: true, draft: true }] });
     const f = await setup({ sharing });
-    const value = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
-    expect(value.sharing).toMatchObject({ status: 'published', bound: true, boardState: 'draft' });
+    const value = await run(f, 'get_workflow_summary', { board_id: f.board.id });
+    expect(value.records).toContainEqual({ kind: 'sharing', status: 'published', bound: true, boardState: 'draft' });
   });
 
   it('reads a task conversation board while board writes stay unavailable there', async () => {
     const f = await setup();
     const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Read only', description: '' });
     const sessionId = task.sessionIds[0]!;
-    const value = await run(f, 'get_board_summary', {}, sessionId);
-    expect(value).toMatchObject({ id: f.board.id, hubId: f.hub.id });
+    const value = await run(f, 'get_workflow_summary', {}, sessionId);
+    expect(value.records).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'workflow', board: expect.objectContaining({ id: f.board.id }), hub: expect.objectContaining({ id: f.hub.id }) }), expect.objectContaining({ kind: 'task', id: task.id })]));
     await expect(run(f, 'create_board', { hub_id: f.hub.id, name: 'Forbidden' }, sessionId)).rejects.toMatchObject({ code: 'BOARD_ADMIN_REQUIRES_ORDINARY_CHAT' });
   });
 
@@ -184,15 +181,16 @@ describe('board creation tools', () => {
     // The write result stays compact; the document is read through its own tool.
     expect(value.workflowYaml).toBeUndefined();
     expect(boards(f).map(board => board.name)).toEqual(['Kanban', 'Second']);
-    const read = await run(f, 'get_board_summary', { board_id: value.id, include_workflow: true });
-    expect(read.workflow.columns.map((column: { id: string }) => column.id)).toEqual(['backlog', 'plan', 'in_progress', 'in_review', 'done']);
+    const read = await run(f, 'get_board_yaml', { board_id: value.id });
+    expect(parseWorkflow(read.yaml).columns.map(column => column.id)).toEqual(['backlog', 'plan', 'in_progress', 'in_review', 'done']);
+    expect(read.effectiveDefaultPreset).toEqual({ preset: 'kanban-workflow-operator', origin: 'implicit-operator' });
   });
 
   it('creates a board with a supplied workflow', async () => {
     const f = await setup();
     const value = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Custom', workflow_yaml: CUSTOM_FLOW });
     expect((await run(f, 'get_board_yaml', { board_id: value.id })).yaml).toBe(CUSTOM_FLOW);
-    expect((await run(f, 'get_board_summary', { board_id: value.id, include_workflow: true })).workflow.columns.map((column: { id: string }) => column.id)).toEqual(['todo', 'done']);
+    expect(parseWorkflow((await run(f, 'get_board_yaml', { board_id: value.id })).yaml).columns.map((column: { id: string }) => column.id)).toEqual(['todo', 'done']);
   });
 
   it('rejects a duplicate board name', async () => {
@@ -270,7 +268,7 @@ describe('board update tools', () => {
     const f = await setup();
     const value = await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: CUSTOM_FLOW });
     expect(value.workflowYaml).toBeUndefined();
-    expect((await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true })).workflow.columns.map((column: { id: string }) => column.id)).toEqual(['todo', 'done']);
+    expect(parseWorkflow((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).columns.map((column: { id: string }) => column.id)).toEqual(['todo', 'done']);
   });
 
   it('requires a name or a workflow', async () => {
@@ -310,7 +308,7 @@ describe('partial workflow edit tools', () => {
       board_id: f.board.id,
       edits: [{ old: '  - id: plan\n    label: Plan\n', new: '  - id: plan\n    label: Plan\n    on_enter_prompt: Plan first.\n' }],
     });
-    expect((await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true })).workflow.columns[1].onEnterPrompt).toBe('Plan first.');
+    expect(parseWorkflow((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).columns.find(column => column.id === 'plan')?.onEnterPrompt).toBe('Plan first.');
   });
 
   it('applies several edits in order', async () => {
@@ -322,7 +320,7 @@ describe('partial workflow edit tools', () => {
         { old: '    label: Planning\n', new: '    label: Planning\n    allowed_transitions: [backlog]\n' },
       ],
     });
-    expect((await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true })).workflow.columns[1].allowedTransitions).toEqual([{ to: 'backlog' }]);
+    expect(parseWorkflow((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).columns.find(column => column.id === 'plan')?.allowedTransitions).toEqual([{ to: 'backlog' }]);
   });
 
   it('rejects a missing match without changing the board', async () => {
@@ -501,91 +499,83 @@ describe('board tool publishing', () => {
 });
 
 describe('the board default model', () => {
-  it('states the model a board names and the absence of one', async () => {
+  it('reads an authored model and its absence from exact YAML', async () => {
     const f = await setup();
-    const named = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Modelled', workflow_yaml: MODEL_FLOW });
-    const withModel = await run(f, 'get_board_summary', { board_id: named.id, include_workflow: true });
-    expect(withModel.defaultModel).toEqual({ provider: 'deepseek', model: 'chat', reasoningEffort: 'high' });
-    expect(withModel.workflow.model).toEqual({ provider: 'deepseek', model: 'chat', reasoningEffort: 'high' });
-    const withoutModel = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
-    expect(withoutModel.defaultModel).toBeNull();
-    expect(withoutModel.workflow.model).toBeUndefined();
+    const namedBoard = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Modelled', workflow_yaml: MODEL_FLOW });
+    const namedRead = await run(f, 'get_board_yaml', { board_id: namedBoard.id });
+    expect(namedRead.yaml).toBe(MODEL_FLOW);
+    expect(parseWorkflow(namedRead.yaml).model).toEqual({ provider: 'deepseek', model: 'chat', reasoningEffort: 'high' });
+    expect(parseWorkflow((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).model).toBeUndefined();
   });
 
-  it('sets the model through a replacement workflow', async () => {
+  it('sets and clears the model through replacement YAML', async () => {
     const f = await setup();
     await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MODEL_FLOW });
-    const value = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
-    expect(value.defaultModel).toEqual({ provider: 'deepseek', model: 'chat', reasoningEffort: 'high' });
-    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).toBe(MODEL_FLOW);
-  });
-
-  it('clears the model when the replacement workflow omits it', async () => {
-    const f = await setup();
-    await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MODEL_FLOW });
+    const withModel = await run(f, 'get_board_yaml', { board_id: f.board.id });
+    expect(withModel.yaml).toBe(MODEL_FLOW);
+    expect(parseWorkflow(withModel.yaml).model).toEqual({ provider: 'deepseek', model: 'chat', reasoningEffort: 'high' });
     await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: CUSTOM_FLOW });
-    const value = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
-    expect(value.defaultModel).toBeNull();
-    expect(value.workflow.model).toBeUndefined();
+    expect(parseWorkflow((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).model).toBeUndefined();
   });
 
   it('rejects a malformed model mapping and leaves the board unchanged', async () => {
     const f = await setup();
     await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MODEL_FLOW });
-    const before = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
+    const before = await run(f, 'get_board_yaml', { board_id: f.board.id });
     const value = await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MALFORMED_MODEL_FLOW });
     expect(value.saved).toBe(false);
     expect(value.report.problems[0].message).toContain('temperature');
-    const after = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
-    expect(after).toEqual(before);
-    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).toBe(MODEL_FLOW);
+    expect(await run(f, 'get_board_yaml', { board_id: f.board.id })).toEqual(before);
+    expect(before.yaml).toBe(MODEL_FLOW);
   });
 
-  it('guides the agent to the model mapping before it writes a workflow', async () => {
+  it('guides the agent to authored and effective defaults before a workflow write', async () => {
     const f = await setup();
     const create = named(f.tools, 'create_board');
     const update = named(f.tools, 'update_board');
-    const summary = named(f.tools, 'get_board_summary');
     const described = (tool: ToolDefinition, parameter: string): string =>
       String((tool.parameters as { properties?: Record<string, { description?: string }> }).properties?.[parameter]?.description ?? '');
-    expect(described(create, 'workflow_yaml')).toContain('board default model');
+    expect(described(create, 'workflow_yaml')).toContain('default model');
     expect(described(create, 'workflow_yaml')).toContain('agent_preset');
-    expect(described(update, 'workflow_yaml')).toContain('defaultModel');
-    expect(described(update, 'workflow_yaml')).toContain('defaultAgentPreset');
-    expect(summary.description).toContain("board's default model");
-    expect(summary.description).toContain('default agent preset');
+    expect(described(update, 'workflow_yaml')).toContain('get_board_yaml');
+    expect(described(update, 'workflow_yaml')).toContain('effective preset');
   });
 });
 
 describe('the board default agent preset', () => {
-  it('states the preset a board names and the absence of one', async () => {
+  it('distinguishes authored, implicit, and legacy preset origins', async () => {
     const f = await setup();
-    const named = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Preset', workflow_yaml: PRESET_FLOW });
-    const withPreset = await run(f, 'get_board_summary', { board_id: named.id, include_workflow: true });
-    expect(withPreset.defaultAgentPreset).toBe('standard');
-    expect(withPreset.workflow.agentPreset).toBe('standard');
-    const withoutPreset = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
-    expect(withoutPreset.defaultAgentPreset).toBeNull();
-    expect(withoutPreset.workflow.agentPreset).toBeUndefined();
+    const namedBoard = await run(f, 'create_board', { hub_id: f.hub.id, name: 'Preset', workflow_yaml: PRESET_FLOW });
+    const withPreset = await run(f, 'get_board_yaml', { board_id: namedBoard.id });
+    expect(withPreset.effectiveDefaultPreset).toEqual({ preset: 'standard', origin: 'authored' });
+    expect(parseWorkflow(withPreset.yaml).agentPreset).toBe('standard');
+    const withoutPreset = await run(f, 'get_board_yaml', { board_id: f.board.id });
+    expect(withoutPreset.effectiveDefaultPreset).toEqual({ preset: 'kanban-workflow-operator', origin: 'implicit-operator' });
+    expect(parseWorkflow(withoutPreset.yaml).agentPreset).toBeUndefined();
+    await f.store.transact(draft => { delete draft.boards.find(board => board.id === f.board.id)!.defaultPresetMode; });
+    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).effectiveDefaultPreset).toEqual({ origin: 'legacy-host' });
+    await f.store.transact(draft => { draft.boards.find(board => board.id === f.board.id)!.defaultPresetMode = 'host'; });
+    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).effectiveDefaultPreset).toEqual({ origin: 'explicit-host' });
   });
 
   it('sets and clears the preset through a replacement workflow', async () => {
     const f = await setup();
     await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: PRESET_FLOW });
-    expect((await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true })).defaultAgentPreset).toBe('standard');
-    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).toBe(PRESET_FLOW);
+    const read = await run(f, 'get_board_yaml', { board_id: f.board.id });
+    expect(read.effectiveDefaultPreset).toEqual({ preset: 'standard', origin: 'authored' });
+    expect(read.yaml).toBe(PRESET_FLOW);
     await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: CUSTOM_FLOW });
-    expect((await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true })).defaultAgentPreset).toBeNull();
+    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).effectiveDefaultPreset).toEqual({ preset: 'kanban-workflow-operator', origin: 'implicit-operator' });
   });
 
   it('rejects an empty preset and leaves the board unchanged', async () => {
     const f = await setup();
     await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: PRESET_FLOW });
-    const before = await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true });
+    const before = await run(f, 'get_board_yaml', { board_id: f.board.id });
     const value = await run(f, 'update_board', { board_id: f.board.id, workflow_yaml: MALFORMED_PRESET_FLOW });
     expect(value.saved).toBe(false);
     expect(value.report.problems[0].message).toContain('agent_preset');
-    expect(await run(f, 'get_board_summary', { board_id: f.board.id, include_workflow: true })).toEqual(before);
-    expect((await run(f, 'get_board_yaml', { board_id: f.board.id })).yaml).toBe(PRESET_FLOW);
+    expect(await run(f, 'get_board_yaml', { board_id: f.board.id })).toEqual(before);
+    expect(before.yaml).toBe(PRESET_FLOW);
   });
 });

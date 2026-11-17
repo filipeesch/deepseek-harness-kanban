@@ -11,6 +11,7 @@ import { composeWorkflowReport, reviewWorkflowText, summarizeWorkflowReport, wit
 import type { WorkflowProblem } from '../domain/workflow-diagnostics.js';
 import { diffWorkflow } from '../domain/workflow-difference.js';
 import { parseWorkflow } from '../domain/workflow.js';
+import { effectiveBoardPreset } from '../domain/board-preset.js';
 import type { ScriptedImpactPort } from './scripted-impact.js';
 import { describeStageActivity, hasInFlightWork } from '../shared/stage-activity.js';
 
@@ -99,11 +100,11 @@ export interface RevisionAttribution { readonly actor: RevisionActor; readonly o
 
 /** The revision log a board write records into; absent reports no history. */
 export interface BoardRevisionPort {
-  record(input: { hubId: string; boardId: string; previous: string | null; next: string; actor: RevisionActor; origin: RevisionOrigin }): Promise<void>;
+  record(input: { hubId: string; boardId: string; previous: string | null; next: string; previousPresetMode?: 'operator' | 'host'; nextPresetMode?: 'operator' | 'host'; actor: RevisionActor; origin: RevisionOrigin }): Promise<void>;
   /** The document the most recent recorded write replaced, when the log retains it. */
   previousText?(boardId: string): Promise<string | undefined>;
   /** Append a recovery revision when the stored document no longer matches the log head. */
-  reconcile?(input: { readonly hubId: string; readonly boardId: string; readonly storedText: string }): Promise<void>;
+  reconcile?(input: { readonly hubId: string; readonly boardId: string; readonly storedText: string; readonly storedPresetMode?: 'operator' | 'host' }): Promise<void>;
   /** Drop one board's history with the board itself. */
   remove?(boardId: string): Promise<void>;
   /** Drop every board's history with the Hub itself. */
@@ -111,8 +112,8 @@ export interface BoardRevisionPort {
 }
 
 export interface CreateBoardInput { hubId?: string; name: string; workflowYaml?: string; revision?: RevisionAttribution | false }
-export interface UpdateBoardInput { hubId?: string; boardId: string; name?: string; workflowYaml?: string; expectedRevision?: number; revision?: RevisionAttribution | false }
-export interface SaveBoardWorkflowInput { hubId?: string; boardId: string; yaml: string; expectedRevision?: number; revision?: RevisionAttribution }
+export interface UpdateBoardInput { hubId?: string; boardId: string; name?: string; workflowYaml?: string; expectedRevision?: number; revision?: RevisionAttribution | false; presetChoice?: 'host' | 'named'; restorePresetMode?: { value: 'operator' | 'host' | undefined } }
+export interface SaveBoardWorkflowInput { hubId?: string; boardId: string; yaml: string; expectedRevision?: number; revision?: RevisionAttribution; presetChoice?: 'host' | 'named' }
 /** An absent `projectKeys` allows every project of the Hub; an empty list closes the board. */
 export interface SaveBoardProjectScopeInput { hubId?: string; boardId: string; projectKeys?: string[]; expectedRevision?: number }
 export interface EditBoardWorkflowInput { hubId?: string; boardId: string; edits: readonly WorkflowTextEdit[]; expectedRevision?: number; revision?: RevisionAttribution }
@@ -152,6 +153,10 @@ export interface ComposeBoardWorkflowInput {
   detail?: WorkflowWriteDetail;
   /** The write replaces the whole document, so it cannot be rebased onto a concurrent change. */
   replace?: boolean;
+  /** An explicit settings selection, applied atomically with the reviewed text. */
+  presetChoice?: 'host' | 'named';
+  /** Restore an exact historical selection, including legacy absence. */
+  restorePresetMode?: { value: 'operator' | 'host' | undefined };
 }
 /** A reviewed board creation; an omitted document uses the default workflow. */
 export interface CreateBoardReviewedInput extends CreateBoardInput {
@@ -262,7 +267,7 @@ export class BoardAdministration {
         return operations.requireBoard(draft, created.id);
       });
       this.noteLocalChange(hubId);
-      if (input.revision !== false) await this.noteRevision(hubId, board.id, null, board.workflowYaml, input.revision);
+      if (input.revision !== false) await this.noteRevision(hubId, board.id, null, board.workflowYaml, undefined, board.defaultPresetMode, input.revision);
       return this.result(hubId, board, await this.publishOutcome(hubId, board.id, policy));
     });
   }
@@ -276,26 +281,41 @@ export class BoardAdministration {
     invariant(input.name !== undefined || input.workflowYaml !== undefined, 'INVALID_EDIT', 'Provide a board name or a workflow YAML.');
     const located = this.locate(input.boardId, input.hubId);
     const previous = located.board.workflowYaml;
+    const previousPresetMode = located.board.defaultPresetMode;
     const deps = this.deps();
     const board = await this.options.hubs.hub(located.hubId).transact(draft => {
       if (input.name !== undefined) operations.renameBoard(draft, input.boardId, input.name, deps);
       if (input.workflowYaml !== undefined) operations.saveBoardWorkflow(draft, input.boardId, input.workflowYaml, deps);
-      return operations.requireBoard(draft, input.boardId);
+      const board = operations.requireBoard(draft, input.boardId);
+      if (input.presetChoice === 'host') {
+        invariant(board.workflow.agentPreset === undefined, 'INVALID_INPUT', 'Host default requires no authored agent preset.');
+        board.defaultPresetMode = 'host';
+      } else if (input.presetChoice === 'named') {
+        invariant(board.workflow.agentPreset !== undefined, 'INVALID_INPUT', 'A named preset requires an authored agent preset.');
+        delete board.defaultPresetMode;
+      }
+      if (input.restorePresetMode !== undefined) {
+        invariant(input.presetChoice === undefined, 'INVALID_INPUT', 'A restore cannot also select a preset.');
+        if (input.restorePresetMode.value === undefined) delete board.defaultPresetMode;
+        else board.defaultPresetMode = input.restorePresetMode.value;
+      }
+      return board;
     }, input.expectedRevision);
     this.noteLocalChange(located.hubId);
-    if (input.workflowYaml !== undefined && input.revision !== false) await this.noteRevision(located.hubId, board.id, previous, board.workflowYaml, input.revision);
+    if ((input.workflowYaml !== undefined || input.restorePresetMode !== undefined || input.presetChoice !== undefined) && input.revision !== false) await this.noteRevision(located.hubId, board.id, previous, board.workflowYaml, previousPresetMode, board.defaultPresetMode, input.revision);
     return this.result(located.hubId, board, await this.publishOutcome(located.hubId, board.id, policy));
   }
 
   async saveWorkflow(input: SaveBoardWorkflowInput, policy: BoardPublishingPolicy = 'never'): Promise<BoardWriteResult> {
-    return this.enqueue(async () => {
-      const located = this.locate(input.boardId, input.hubId);
-      await this.options.hubs.hub(located.hubId).saveBoardWorkflow(input.boardId, input.yaml, input.expectedRevision);
-      const board = this.requireBoard(located.hubId, input.boardId);
-      this.noteLocalChange(located.hubId);
-      await this.noteRevision(located.hubId, input.boardId, located.board.workflowYaml, board.workflowYaml, input.revision);
-      return this.result(located.hubId, board, await this.publishOutcome(located.hubId, board.id, policy));
-    });
+    const result = await this.saveWorkflowReviewed({
+      boardId: input.boardId, ...(input.hubId === undefined ? {} : { hubId: input.hubId }),
+      compose: () => input.yaml, replace: true,
+      ...(input.expectedRevision === undefined ? {} : { expectedRevision: input.expectedRevision }),
+      ...(input.presetChoice === undefined ? {} : { presetChoice: input.presetChoice }),
+      ...(input.revision === undefined ? {} : { actor: input.revision.actor, origin: input.revision.origin }),
+    }, policy);
+    invariant(result.saved, 'INVALID_INPUT', 'The workflow was not saved.');
+    return result;
   }
 
   /** Replace one board's project scope through the same write path and publishing policy. */
@@ -313,6 +333,7 @@ export class BoardAdministration {
     return this.enqueue(async () => {
       const located = this.locate(input.boardId, input.hubId);
       const previous = located.board.workflowYaml;
+      const previousPresetMode = located.board.defaultPresetMode;
       const renaming = input.patch.id !== undefined && input.patch.id !== input.stageId;
       if (renaming) {
         const reasons = (await this.options.activity?.inFlight(located.hubId, input.boardId)) ?? [];
@@ -325,16 +346,16 @@ export class BoardAdministration {
       );
       const board = this.requireBoard(located.hubId, input.boardId);
       this.noteLocalChange(located.hubId);
-      await this.noteRevision(located.hubId, input.boardId, previous, board.workflowYaml, input.revision);
+      await this.noteRevision(located.hubId, input.boardId, previous, board.workflowYaml, previousPresetMode, board.defaultPresetMode, input.revision);
       return this.result(located.hubId, board, await this.publishOutcome(located.hubId, board.id, policy));
     });
   }
 
   /** Record one accepted workflow write, reporting a log failure without undoing the write. */
-  private async noteRevision(hubId: string, boardId: string, previous: string | null, next: string, attribution: RevisionAttribution | undefined): Promise<void> {
+  private async noteRevision(hubId: string, boardId: string, previous: string | null, next: string, previousPresetMode: 'operator' | 'host' | undefined, nextPresetMode: 'operator' | 'host' | undefined, attribution: RevisionAttribution | undefined): Promise<void> {
     const revisions = this.options.revisions;
     if (revisions === undefined) return;
-    try { await revisions.record({ hubId, boardId, previous, next, actor: attribution?.actor ?? { kind: 'operator' }, origin: attribution?.origin ?? 'editor' }); }
+    try { await revisions.record({ hubId, boardId, previous, next, previousPresetMode, nextPresetMode, actor: attribution?.actor ?? { kind: 'operator' }, origin: attribution?.origin ?? 'editor' }); }
     catch (error) { this.options.report?.(error); }
   }
 
@@ -450,7 +471,31 @@ export class BoardAdministration {
             expected: input.expectSha256, actual: sha256, sha256,
           });
         }
-        const shaped = this.shaped(report, this.workflowOf(nextText), input.detail ?? 'summary');
+        const nextWorkflow = this.workflowOf(nextText)!;
+        invariant(input.restorePresetMode === undefined || input.presetChoice === undefined, 'INVALID_INPUT', 'A restore cannot also select a preset.');
+        if (input.presetChoice === 'host') invariant(nextWorkflow.agentPreset === undefined, 'INVALID_INPUT', 'Host default requires no authored agent preset.');
+        if (input.presetChoice === 'named') invariant(nextWorkflow.agentPreset !== undefined, 'INVALID_INPUT', 'A named preset requires an authored agent preset.');
+        const beforeMode = located.board.defaultPresetMode;
+        const afterMode = input.restorePresetMode !== undefined ? input.restorePresetMode.value
+          : input.presetChoice === 'host' ? 'host' : input.presetChoice === 'named' ? undefined : beforeMode;
+        const baseReport = this.shaped(report, nextWorkflow, input.detail ?? 'summary');
+        // The document digest does not cover board-owned metadata. Report its change
+        // separately, even when an authored preset keeps the effective choice unchanged.
+        const shaped = beforeMode === afterMode ? baseReport : {
+          ...baseReport,
+          boardDefaultPreset: input.detail === 'full' ? {
+            before: { mode: beforeMode ?? null, ...effectiveBoardPreset(located.board) },
+            after: { mode: afterMode ?? null, ...effectiveBoardPreset({ workflow: nextWorkflow, defaultPresetMode: afterMode }) },
+          } : { changed: true },
+          sha256Scope: 'workflow-yaml-only' as const,
+        };
+        // A composed YAML anchor cannot prove the caller observed board metadata.
+        // Refuse stale preset writes and previews rather than rebasing them silently.
+        const writesPresetMetadata = input.presetChoice !== undefined || input.restorePresetMode !== undefined;
+        if (writesPresetMetadata) {
+          const current = this.locate(input.boardId, input.hubId);
+          if (current.hubRevision !== expectedRevision) throw await this.conflict(input, current, report, { rebased, initialText });
+        }
         if (input.dryRun === true) {
           return { saved: false, dryRun: true, hubId: located.hubId, boardId: input.boardId, name: located.board.name, hubRevision: located.hubRevision, sha256, report: shaped };
         }
@@ -459,11 +504,11 @@ export class BoardAdministration {
         // the tool's revision must describe the text the tool actually saved.
         const attribution: RevisionAttribution = { actor: input.actor ?? { kind: 'operator' }, origin: input.origin ?? 'editor' };
         try {
-          const written = await this.saveBoardWorkflowNow({ boardId: input.boardId, ...(input.hubId === undefined ? {} : { hubId: input.hubId }), ...(input.name === undefined ? {} : { name: input.name }), workflowYaml: nextText, expectedRevision, revision: attribution }, policy);
+          const written = await this.saveBoardWorkflowNow({ boardId: input.boardId, ...(input.hubId === undefined ? {} : { hubId: input.hubId }), ...(input.name === undefined ? {} : { name: input.name }), workflowYaml: nextText, expectedRevision, revision: attribution, ...(input.presetChoice === undefined ? {} : { presetChoice: input.presetChoice }), ...(input.restorePresetMode === undefined ? {} : { restorePresetMode: input.restorePresetMode }) }, policy);
           return { ...written, saved: true, sha256, report: shaped };
         } catch (error) {
           if (!(error instanceof KanbanError) || error.code !== 'REVISION_CONFLICT') throw attachReport(error, report);
-          if (rebased || input.replace === true) throw await this.conflict(input, this.locate(input.boardId, input.hubId), report, { rebased, initialText });
+          if (rebased || input.replace === true || writesPresetMetadata) throw await this.conflict(input, this.locate(input.boardId, input.hubId), report, { rebased, initialText });
           // One rebase attempt: re-read the board and compose again. The composition
           // succeeding again is the proof that every anchor still matched.
           rebased = true;
@@ -512,9 +557,10 @@ export class BoardAdministration {
     return this.enqueue(async () => {
       const located = this.locate(input.boardId, input.hubId);
       const previous = located.board.workflowYaml;
+      const previousPresetMode = located.board.defaultPresetMode;
       const board = await this.options.hubs.hub(located.hubId).editBoardWorkflow(input.boardId, input.edits, input.expectedRevision);
       this.noteLocalChange(located.hubId);
-      await this.noteRevision(located.hubId, input.boardId, previous, board.workflowYaml, input.revision);
+      await this.noteRevision(located.hubId, input.boardId, previous, board.workflowYaml, previousPresetMode, board.defaultPresetMode, input.revision);
       return this.result(located.hubId, board, await this.publishOutcome(located.hubId, board.id, policy));
     });
   }

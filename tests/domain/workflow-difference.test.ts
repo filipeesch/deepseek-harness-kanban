@@ -27,6 +27,11 @@ function change(mutate: (text: string) => string) {
 }
 
 describe('workflow difference', () => {
+  it('reports workflow and stage description changes', () => {
+    const difference = change(text => text.replace('name: Flow', 'name: Flow\ndescription: Overall purpose').replace('label: Todo', 'label: Todo\n    description: Start here'));
+    expect(difference.workflow).toContainEqual({ field: 'description', from: null, to: 'Overall purpose' });
+    expect(difference.stages.find(stage => stage.stage === 'todo')?.fields).toContainEqual({ field: 'description', from: null, to: 'Start here' });
+  });
   it('reports no difference for the same document', () => {
     expect(isWorkflowDifferenceEmpty(diffWorkflow(parseWorkflow(BASE), parseWorkflow(BASE)))).toBe(true);
   });

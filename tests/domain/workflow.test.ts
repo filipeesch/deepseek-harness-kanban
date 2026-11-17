@@ -75,7 +75,25 @@ describe('workflow configuration', () => {
 
   it('accepts source-style IDs and cosmetic descriptions without engine semantics', () => {
     const result = parseWorkflow('id: delivery\nname: Delivery\ncolumns:\n  - id: one\n    label: One\n    description: Only a caption\n');
-    expect(result).toEqual({ name: 'Delivery', initialColumnId: 'one', columns: [{ id: 'one', name: 'One' }], groups: [] });
+    expect(result).toEqual({ name: 'Delivery', initialColumnId: 'one', columns: [{ id: 'one', name: 'One', description: 'Only a caption' }], groups: [] });
+  });
+
+  it('retains authored workflow and stage descriptions without a 150-character limit', () => {
+    const long = 'Long description '.repeat(20);
+    const result = parseWorkflow('description: "  ' + long + '  "\ncolumns:\n  - id: one\n    label: One\n    description: |\n      First line\n      Second line\n');
+    expect(result.description).toBe('  ' + long + '  ');
+    expect(result.columns[0]!.description).toBe('First line\nSecond line\n');
+  });
+
+  it('leaves missing and whitespace-only descriptions absent', () => {
+    const result = parseWorkflow('description: "  "\ncolumns:\n  - id: one\n    label: One\n    description: " "\n  - id: two\n    label: Two\n');
+    expect(result.description).toBeUndefined();
+    expect(result.columns.map(column => column.description)).toEqual([undefined, undefined]);
+  });
+
+  it.each(['null', 'true', '123', '[]', '{}'])('rejects non-string description %s at both levels', value => {
+    expect(() => parseWorkflow('description: ' + value + '\ncolumns: [{id: one, label: One}]\n')).toThrow();
+    expect(() => parseWorkflow('columns: [{id: one, label: One, description: ' + value + '}]\n')).toThrow();
   });
 
   it('treats blank or null entry instructions as disabled', () => {

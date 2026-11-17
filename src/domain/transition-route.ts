@@ -4,7 +4,7 @@ import { resolveAutoAdvance, type AutoAdvancePlan } from './auto-advance.js';
 import { defaultDestination, nextStage } from './transitions.js';
 
 /** The task fields the routing rules read. */
-export type RoutedTask = Pick<Task, 'columnId' | 'recordedTransition'> & Partial<Pick<Task, 'stageEntry' | 'scripted'>>;
+export type RoutedTask = Pick<Task, 'columnId' | 'recordedTransition'> & Partial<Pick<Task, 'stageEntry' | 'scripted' | 'scriptedHandoff'>>;
 
 /** Why a recorded transition no longer applies to the task's current stage. */
 export type TransitionStaleReason = 'missing-stage' | 'not-configured' | 'not-allowed';
@@ -24,7 +24,9 @@ export type RecordedTransitionResolution =
 export function recordedTransition(workflow: Workflow, task: RoutedTask): RecordedTransitionResolution {
   if (ownsScriptedEntry(task) || workflow.columns.find(column => column.id === task.columnId)?.scripted !== undefined) return { kind: 'none' };
   const recorded = task.recordedTransition;
-  if (recorded === undefined || recorded.fromColumnId !== task.columnId) return { kind: 'none' };
+  // Exceptional intent is never a normal durable route: only its originating
+  // observed turn may resolve it through the separate admission path.
+  if (recorded === undefined || recorded.exception !== undefined || recorded.fromColumnId !== task.columnId) return { kind: 'none' };
   const source = workflow.columns.find(column => column.id === recorded.fromColumnId);
   if (source === undefined) return { kind: 'none' };
   const column = workflow.columns.find(value => value.id === recorded.columnId);
@@ -32,6 +34,28 @@ export function recordedTransition(workflow: Workflow, task: RoutedTask): Record
   if (source.allowedTransitions === undefined) return { kind: 'stale', reason: 'not-configured' };
   if (!source.allowedTransitions.some(rule => rule.to === recorded.columnId)) return { kind: 'stale', reason: 'not-allowed' };
   return recorded.reason === undefined ? { kind: 'resolved', column } : { kind: 'resolved', column, reason: recorded.reason };
+}
+
+/** Identity captured by an exceptional declaration; it does not verify user intent. */
+export interface ExceptionalTransitionIdentity {
+  id: string; sessionId: string; turn: number; entryId: string; fromColumnId: string; columnId: string;
+}
+
+/** Resolve only the precise exceptional declaration and entry an observed turn owns. */
+export function resolveExceptionalTransition(workflow: Workflow, task: RoutedTask, expected: ExceptionalTransitionIdentity): Column | undefined {
+  const recorded = task.recordedTransition;
+  const exception = recorded?.exception;
+  const sameEntry = task.stageEntry === undefined
+    ? expected.entryId === expected.id && task.scripted === undefined && task.scriptedHandoff === undefined
+    : task.stageEntry.id === expected.entryId && task.stageEntry.columnId === expected.fromColumnId;
+  if (!recorded || !exception || exception.id !== expected.id || exception.sessionId !== expected.sessionId
+      || exception.turn !== expected.turn || exception.entryId !== expected.entryId
+      || !sameEntry
+      || task.columnId !== expected.fromColumnId || recorded.fromColumnId !== expected.fromColumnId
+      || recorded.columnId !== expected.columnId || !recorded.reason || routesThroughScriptedEntry(workflow, task)) return undefined;
+  const source = workflow.columns.find(column => column.id === expected.fromColumnId);
+  if (!source || expected.columnId === expected.fromColumnId) return undefined;
+  return workflow.columns.find(column => column.id === expected.columnId);
 }
 
 /** The task fields the advance-arming rule reads. */

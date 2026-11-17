@@ -156,6 +156,11 @@ export function updateStage({ text, stageId, patch }: StageUpdateInput): StageUp
 
   if (name !== undefined) writeColumn(stageId, ['label', 'name'], (_existing, indent, key, flow) => textField(key, name, indent, flow));
 
+  if (patch.description !== undefined) {
+    const description = patch.description;
+    writeColumn(stageId, ['description'], (_existing, indent, key, flow) => description === null || description.trim().length === 0 ? null : textField(key, description, indent, flow));
+  }
+
   if (patch.onEnterPrompt !== undefined) {
     const instruction = patch.onEnterPrompt;
     writeColumn(stageId, ['on_enter_prompt'], (_existing, indent, key, flow) => instruction === null || instruction.trim().length === 0 ? null : textField(key, instruction, indent, flow));

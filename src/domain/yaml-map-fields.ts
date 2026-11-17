@@ -28,6 +28,9 @@ export function textField(key: string, value: string, indent: string, flow: bool
   // A flow mapping cannot hold a block scalar, so a multiline value is quoted there.
   if (flow) return key + ': ' + authoredScalar(value);
   if (!value.includes('\n')) return key + ': ' + authoredScalar(value);
+  // YAML's clip chomping keeps only one trailing newline. Quote values with
+  // multiple trailing newlines so an authored description round-trips exactly.
+  if (value.endsWith('\n\n')) return key + ': ' + JSON.stringify(value);
   const lines = value.split('\n');
   const trailingNewline = value.endsWith('\n');
   const body = trailingNewline ? lines.slice(0, -1) : lines;

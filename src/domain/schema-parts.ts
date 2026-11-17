@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseWorkflow } from './workflow.js';
 import { canonicalScripted, scriptedDefinitionSchema } from './scripted-definition.js';
 import { scriptedControlSchema, scriptedHandoffSchema, parameterValuesSchema, taskStageEntrySchema } from './scripted-state.js';
 import type { ConnectionLayout, Task, TransitionRule, Workflow } from '../shared/types.js';
@@ -58,13 +59,14 @@ export const operation = z.strictObject({
 });
 export const pendingTransition = z.strictObject({
   id, fromColumnId: id, columnId: id, mode: z.enum(['move', 'run']), sessionId: id.optional(), text: z.string().optional(), beforeTaskId: id.nullable().optional(),
-  worktreeRequest: createWorktree.optional(), transitionOverride: z.boolean().optional(), status: z.enum(['waiting', 'sending', 'failed']), error: problem.optional(),
+  worktreeRequest: createWorktree.optional(), transitionOverride: z.boolean().optional(), exceptionUnfinalized: id.optional(), status: z.enum(['waiting', 'sending', 'failed']), error: problem.optional(),
   origin: z.enum(['auto', 'agent']).optional(), reason: nonempty.optional(), parameters: parameterValuesSchema.optional(),
 }).superRefine((value, context) => {
   // An agent-declared advance exists to carry its reason to the destination stage
   // and to the manual retry; a record without one would promise a justification it
   // cannot deliver.
   if (value.origin === 'agent' && value.reason === undefined) context.addIssue({ code: 'custom', path: ['reason'], message: 'An agent-declared advance requires the reason it carries.' });
+  if (value.exceptionUnfinalized && (value.origin !== 'agent' || value.transitionOverride !== true || value.status !== 'waiting')) context.addIssue({ code: 'custom', path: ['exceptionUnfinalized'], message: 'An unfinalized exception must be a waiting agent override.' });
 });
 export const autoModePause = z.strictObject({
   reason: z.enum(AUTO_MODE_PAUSE_REASONS),
@@ -105,7 +107,7 @@ export const connectionLayout = z.strictObject({
   from: id, to: id, source: connectionAnchor.optional(), target: connectionAnchor.optional(), segments: z.array(connectionSegment).optional(),
 });
 export const column = z.strictObject({
-  id, key: id.optional(), name: nonempty, scripted: scriptedDefinitionSchema.optional(), onEnterPrompt: z.string().optional(), allowedTransitions: z.array(transitionRule).optional(), position: stagePosition.optional(), size: stageSize.optional(),
+  id, key: id.optional(), name: nonempty, description: nonempty.optional(), scripted: scriptedDefinitionSchema.optional(), onEnterPrompt: z.string().optional(), allowedTransitions: z.array(transitionRule).optional(), position: stagePosition.optional(), size: stageSize.optional(),
 });
 export const group = z.strictObject({ id, name: nonempty, columnIds: z.array(id).min(1) });
 /** One model route: a provider, the provider-owned model, and an optional adapter-owned effort. */
@@ -113,7 +115,7 @@ export const modelSelection = z.strictObject({ provider: nonempty, model: nonemp
 /** One authored MCP allowlist entry: a server, or one `server/tool` pair. */
 export const mcpAllowlistEntry = z.string().refine(value => parseMcpAllowlistEntry(value) !== undefined, 'Expected a server or server/tool entry.');
 export const workflow = z.strictObject({
-  name: nonempty, initialColumnId: id, defaultView: z.enum(['board', 'workflow']).optional(), columns: z.array(column).min(1), groups: z.array(group),
+  name: nonempty, description: nonempty.optional(), initialColumnId: id, defaultView: z.enum(['board', 'workflow']).optional(), columns: z.array(column).min(1), groups: z.array(group),
   model: modelSelection.optional(),
   agentPreset: nonempty.optional(),
   mcp: z.array(mcpAllowlistEntry).optional(),
@@ -192,7 +194,7 @@ export const baseTask = z.strictObject({
   unclaimedWorktrees: z.array(z.strictObject({ path: absolutePath, branch: nonempty, error: problem })).optional(),
   worktreeWorkspaceId: id.optional(), worktreeWorkspaceOwned: z.boolean().optional(),
   operation: operation.nullable(), pendingTransition: pendingTransition.optional(), instructionPending: z.strictObject({ columnId: id, enteredAt: z.number().finite() }).optional(), autoMode: autoMode.optional(),
-  recordedTransition: z.strictObject({ fromColumnId: id, columnId: id, at: timestamp, reason: nonempty.optional(), parameters: parameterValuesSchema.optional() }).optional(), history: taskHistorySchema.optional(), createdAt: timestamp, updatedAt: timestamp,
+  recordedTransition: z.strictObject({ fromColumnId: id, columnId: id, at: timestamp, reason: nonempty.optional(), parameters: parameterValuesSchema.optional(), exception: z.strictObject({ id, sessionId: id, turn: z.number().int().nonnegative(), entryId: id }).optional() }).optional(), history: taskHistorySchema.optional(), createdAt: timestamp, updatedAt: timestamp,
 });
 
 /** The task fields the shared invariant check reads. */
@@ -217,10 +219,11 @@ function shapeConnection(value: ConnectionLayout): Record<string, unknown> {
 function workflowShape(value: Workflow, includeLayout: boolean, includeIdentity = true): string {
   return JSON.stringify({
     name: value.name,
+    description: value.description,
     defaultView: value.defaultView,
     initialColumnId: value.initialColumnId,
     columns: value.columns.map(item => ({
-      id: item.id, ...(includeIdentity ? { key: item.key } : {}), name: item.name, onEnterPrompt: item.onEnterPrompt,
+      id: item.id, ...(includeIdentity ? { key: item.key } : {}), name: item.name, description: item.description, onEnterPrompt: item.onEnterPrompt,
       scripted: canonicalScripted(item.scripted),
       allowedTransitions: item.allowedTransitions?.map(rule => normalizeTransitionRule(rule.to, rule.when)),
       ...(includeLayout ? { position: item.position, size: item.size } : {}),
@@ -231,6 +234,21 @@ function workflowShape(value: Workflow, includeLayout: boolean, includeIdentity 
     mcp: value.mcp === undefined ? undefined : [...value.mcp],
     ...(includeLayout ? { connections: sortedConnections(value.connections).map(shapeConnection) } : {}),
   });
+}
+
+/** Recover stage descriptions omitted by older persisted projections, without changing YAML. */
+export function restoreLegacyStageDescriptions(value: Workflow, yaml: string): Workflow {
+  let authored: Workflow;
+  try { authored = parseWorkflow(yaml); } catch { return value; }
+  const descriptions = new Map(authored.columns.map(column => [column.id, column.description]));
+  let changed = false;
+  const columns = value.columns.map(column => {
+    const description = descriptions.get(column.id);
+    if (column.description !== undefined || description === undefined) return column;
+    changed = true;
+    return { ...column, description };
+  });
+  return changed ? { ...value, columns } : value;
 }
 
 /** The persisted workflow identity, including its diagram layout. */

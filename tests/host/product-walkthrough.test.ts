@@ -86,7 +86,7 @@ async function setup() {
     const boardId = app.store.snapshot().boards[0]!.id; const hubId = app.hubs.defaultHubId();
     const scoped = name === 'list_hubs' ? args
       : name === 'list_boards' ? { hub_id: hubId, ...args }
-      : ['list_projects', 'get_board_summary', 'list_cards', 'create_card'].includes(name) ? { board_id: boardId, ...args }
+      : ['list_projects', 'get_workflow_summary', 'list_cards', 'create_card'].includes(name) ? { board_id: boardId, ...args }
       : args;
     return definition.execute(scoped, execution(id));
   }
@@ -300,8 +300,10 @@ describe('bounded integrated product walkthrough', () => {
     expect(await f.tool('list_projects', {}, a.a)).toEqual(await f.tool('list_projects', {}));
     const boardId = f.app.store.snapshot().boards[0]!.id; const hubId = f.app.hubs.defaultHubId(); expect(await f.tool('list_boards', {})).toEqual([expect.objectContaining({ id: boardId, hubId, name: 'Kanban' })]);
     expect(await f.tool('list_boards', {}, a.b)).toEqual(await f.tool('list_boards', {}));
-    expect(await f.tool('get_board_summary', {})).toMatchObject({ id: boardId, hubId, columns: expect.arrayContaining([expect.objectContaining({ id: 'backlog', count: 2 })]) });
-    expect(await f.tool('get_board_summary', {}, a.a)).toEqual(await f.tool('get_board_summary', {}));
+    const ordinarySummary = await f.tool('get_workflow_summary', {}) as { records: Array<Record<string, unknown>> };
+    expect(ordinarySummary.records).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'workflow', board: expect.objectContaining({ id: boardId }), hub: expect.objectContaining({ id: hubId }) }), expect.objectContaining({ kind: 'stage', id: 'backlog' })]));
+    const taskSummary = await f.tool('get_workflow_summary', {}, a.a) as { records: Array<Record<string, unknown>> };
+    expect(taskSummary.records).toEqual(expect.arrayContaining([...ordinarySummary.records, expect.objectContaining({ kind: 'task', id: a.id })]));
     expect(await f.tool('list_cards', { project_id: f.project.id, query: 'PRODUCT WALKTHROUGH', limit: 1 })).toEqual([compactCardOf(f.app.store.requireTask(a.id), hubId)]);
     expect(await f.tool('list_cards', { project_id: 'root-project', limit: 1 }, a.b)).toEqual([compactCardOf(b, hubId)]);
     expect(await f.tool('list_cards', { query: 'does not match', limit: 1 })).toEqual([]);

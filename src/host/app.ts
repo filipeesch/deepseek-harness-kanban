@@ -11,8 +11,12 @@ import { openSessionIds } from '../shared/conversations.js';
 import { aggregateTaskActivity, UNAVAILABLE_TASK_ACTIVITY, type TaskActivity, type TaskActivityOptions, type TaskActivityScope } from '../domain/task-activity.js';
 import { entryInstruction, nextEnteredAt } from '../domain/stage-entry.js';
 import { placementFromAnchor } from '../domain/placement.js';
-import { TURN_ADVANCE_SETTLE_MS, TurnAdvanceCoordinator } from './turn-advance.js';
-import type { AutoAdvancePlan } from '../domain/auto-advance.js';
+import { TURN_ADVANCE_SETTLE_MS, TURN_ADVANCE_SETTLE_ATTEMPTS, TurnAdvanceCoordinator } from './turn-advance.js';
+import { resolveAdvanceDecision, type AutoAdvancePlan } from '../domain/auto-advance.js';
+import { resolveExceptionalTransition, type ExceptionalTransitionIdentity } from '../domain/transition-route.js';
+import { ExceptionalTurnObserver } from './exceptional-turn.js';
+import { admitExceptionalTurnAdvance } from './exceptional-admission.js';
+import { openTurnIdentity, type TurnBoundaryPort } from './turn-identity.js';
 import { admitTurnAdvance } from './advance-admission.js';
 import { readPendingUserWork, withQuestionPending } from './pending-source.js';
 import type { ConversationFactsSource } from './native-facts.js';
@@ -47,6 +51,7 @@ import { createsDefaultWorktree, requiresWorktreeDecision, unresolvedWorktreeBin
 import { worktreePolicy } from '../shared/worktree-policy.js';
 import { HubRepository, HubStore } from './hub-repository.js';
 import { BoardAdministration, type BoardRevisionPort, type BoardSharingPort } from './board-administration.js';
+import { effectiveBoardPreset } from '../domain/board-preset.js';
 import type { LocatedTask, TaskSummary } from './hub-repository.js';
 import { RepositoryWorktreeStore, TaskLocator } from './task-locator.js';
 import { QuestionIndex } from '../questions/indexer.js';
@@ -100,7 +105,7 @@ function boardSharingPort(sharing:HubSharingService):BoardSharingPort{
 }
 /** One created conversation and, when its board named defaults, how the model and preset fared. */
 export interface CreatedConversation { sessionId: string; model?: ConversationModelOutcome; preset?: ConversationPresetOutcome }
-export interface AppOptions { history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; /** Records each accepted workflow write; absent keeps no local history. */ revisions?:BoardRevisionPort; questionStore?:QuestionStore; questionDraftStore?:QuestionDraftStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; /** Applies a board's default agent preset to one conversation; absent means no board preset is applied. */ presets?:SessionPresetPort; /** The MCP servers this host reports for the board allowlist control; absent reports none. */ mcpServers?:()=>readonly string[]; /** Applies a board's MCP tool policy to one conversation agent; absent means no board policy is applied. */ tools?:{apply:(sessionId:string)=>Promise<void>}; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number }
+export interface AppOptions { turnBoundary?:TurnBoundaryPort; history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; /** Records each accepted workflow write; absent keeps no local history. */ revisions?:BoardRevisionPort; questionStore?:QuestionStore; questionDraftStore?:QuestionDraftStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; /** Applies a board's default agent preset to one conversation; absent means no board preset is applied. */ presets?:SessionPresetPort; /** The MCP servers this host reports for the board allowlist control; absent reports none. */ mcpServers?:()=>readonly string[]; /** Applies a board's MCP tool policy to one conversation agent; absent means no board policy is applied. */ tools?:{apply:(sessionId:string)=>Promise<void>}; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number }
 /** Coordinates Hub-scoped commands while the host continues to own sessions and execution. */
 export class KanbanApp {
  readonly questions=new QuestionIndex();
@@ -136,6 +141,9 @@ export class KanbanApp {
  private retainedPruneTimer:ReturnType<typeof setTimeout>|undefined;
  private pruningRetained=false;
  private readonly turnAdvance:TurnAdvanceCoordinator;
+ private readonly exceptionalTurn:ExceptionalTurnObserver;
+ /** Prevent the subscription drain from racing an exceptional admission commit. */
+ private readonly exceptionalAdmissionTasks=new Set<string>();
  /** The one conversation-fact read every host consumer shares; the question projection is folded in here. */
  private readonly factsSource:ConversationFactsSource;
  private readonly workspaceCoordinator?:WorkspaceCoordinator;
@@ -189,6 +197,14 @@ export class KanbanApp {
    pause:(taskId,reason,message,expectedColumnId)=>this.pauseAutoMode(taskId,reason,message,expectedColumnId),
    schedule:callback=>setTimeout(callback,TURN_ADVANCE_SETTLE_MS),
    cancel:handle=>clearTimeout(handle as ReturnType<typeof setTimeout>),
+   report:error=>this.options.report?.(error),
+  });
+  this.exceptionalTurn=new ExceptionalTurnObserver({
+   taskForSession:sessionId=>this.locator.bySession(sessionId)?.task.id,
+   matches:(taskId,identity)=>{const located=this.locator.byTask(taskId);return !!located&&openSessionIds(located.task).includes(identity.sessionId)&&resolveExceptionalTransition(located.board.workflow,located.task,identity)!==undefined;},
+   admit:(taskId,identity,isObserved)=>this.settleExceptionalTurn(taskId,identity,isObserved),
+   expire:(taskId,id)=>this.expireExceptionalTurn(taskId,id),
+   ownerCompleted:taskId=>this.turnAdvance.forget(taskId),
    report:error=>this.options.report?.(error),
   });
   this.assembler=new SnapshotAssembler({hubs,onChange:()=>this.markChanged(),...(options.report===undefined?{}:{report:options.report}),...(options.sharing===undefined?{}:{sharing:()=>options.sharing!.views()}),...(options.sharingAuth===undefined?{}:{sharingAuth:options.sharingAuth})});
@@ -439,7 +455,7 @@ export class KanbanApp {
   const revisions=this.options.revisions;
   if(revisions?.reconcile===undefined)return;
   for(const hub of this.hubs.list())for(const board of hub.boards){
-   try{await revisions.reconcile({hubId:hub.id,boardId:board.id,storedText:board.workflowYaml});}
+   try{await revisions.reconcile({hubId:hub.id,boardId:board.id,storedText:board.workflowYaml,storedPresetMode:board.defaultPresetMode});}
    catch(error){this.options.report?.(error);}
   }
  }
@@ -469,6 +485,11 @@ export class KanbanApp {
  async whenSettled():Promise<void>{await this.startup.whenSettled();await this.retainedPrune;}
  private async repairInterruptedTransition(summary:TaskSummary):Promise<void>{
   const located=this.locator.byTask(summary.taskId);const task=located?.task;if(!located||!task)return;
+  const interrupted=task.pendingTransition;
+  if(interrupted?.exceptionUnfinalized!==undefined){
+   await this.hubStore(located.hubId).transact(d=>{const t=d.tasks.find(value=>value.id===task.id);if(t?.pendingTransition?.id!==interrupted.id||t.pendingTransition.exceptionUnfinalized!==interrupted.exceptionUnfinalized)return;delete t.pendingTransition;if(t.recordedTransition?.exception?.id===interrupted.exceptionUnfinalized)delete t.recordedTransition;});
+   return;
+  }
   if(task.pendingTransition?.status==='sending')await this.hubStore(located.hubId).transact(d=>{const t=d.tasks.find(t=>t.id===task.id);if(t?.pendingTransition?.status==='sending'){t.pendingTransition.status='failed';t.pendingTransition.error={code:'DELIVERY_UNCERTAIN',message:'A prior prompt admission was interrupted. Retry explicitly; the same native request identity will be reused.'};}});
   const p=task.pendingTransition;
   if(p?.status==='waiting'&&p.worktreeRequest&&!task.operation&&task.worktree?.status!=='ready'){try{await this.worktrees.request(task.id,{kind:'create',...p.worktreeRequest});}catch(error){await this.failPending(located.hubId,task.id,p.id,error);}}
@@ -705,7 +726,7 @@ export class KanbanApp {
   const questionChanged=isEvent(event)&&this.questions.apply(sessionId,event);
   if(questionChanged){this.schedulePersist(sessionId);this.scheduleDraftPrune(sessionId);}
   const taskRelevant=this.locator.hasSession(sessionId);
-  if(taskRelevant)this.turnAdvance.observe(sessionId,event);
+  if(taskRelevant&&!this.exceptionalTurn.observe(sessionId,event))this.turnAdvance.observe(sessionId,event);
   if(taskRelevant)this.attention.touch(sessionId);
   if(taskRelevant&&!questionChanged)this.markChanged();
  }
@@ -954,8 +975,9 @@ export class KanbanApp {
  }
  private async applyBoardDefaultPreset(board:Board,sessionId:string):Promise<ConversationPresetOutcome|undefined>{
   const presets=this.options.presets;
-  const requested=board.workflow.agentPreset;
-  if(presets===undefined||requested===undefined)return undefined;
+  const requested=effectiveBoardPreset(board).preset;
+  if(requested===undefined)return undefined;
+  if(presets===undefined)return {requested,applied:false,reason:'unsupported'};
   try{
    const outcome=await presets.apply(sessionId,requested);
    return {requested,...outcome};
@@ -1103,6 +1125,40 @@ export class KanbanApp {
  recordTransition(taskId:string,write:{columnId?:string;reason?:string;parameters?:Record<string,string>}):Promise<LocatedTask>{
   return this.command({type:'task.recordTransition',taskId,...(write.columnId===undefined?{}:{columnId:write.columnId}),...(write.reason===undefined?{}:{reason:write.reason}),...(write.parameters===undefined?{}:{parameters:write.parameters})}).then(()=>this.locatedTask(taskId));
  }
+ /** A restart cannot reconstruct the live token from persisted exception metadata. */
+ exceptionalTransitionArmed(taskId:string,id:string):boolean{
+  const located=this.locator.byTask(taskId),recorded=located?.task.recordedTransition,owner=recorded?.exception;
+  if(!located||!recorded||!owner||owner.id!==id||!openSessionIds(located.task).includes(owner.sessionId))return false;
+  const state=this.exceptionalTurn.state(taskId,id);
+  if(state===undefined)return false;
+  if(state==='open'&&(this.options.turnBoundary===undefined||openTurnIdentity(this.options.turnBoundary,owner.sessionId)?.turn!==owner.turn)){
+   this.exceptionalTurn.forget(taskId);return false;
+  }
+  return resolveExceptionalTransition(located.board.workflow,located.task,{...owner,fromColumnId:recorded.fromColumnId,columnId:recorded.columnId})!==undefined;
+ }
+ /** Declare a non-configured route only while the exact caller turn remains open. */
+ recordExceptionalTransition(taskId:string,write:{columnId:string;reason?:string;parameters?:Record<string,string>},sessionId:string):Promise<LocatedTask>{
+  const port=this.options.turnBoundary;
+  const turn=port===undefined?undefined:openTurnIdentity(port,sessionId);
+  invariant(turn,'EXCEPTION_TURN_UNAVAILABLE','The originating open turn cannot be verified. Retry in the task conversation or use a configured transition.');
+  const before=this.locatedTask(taskId).task;
+  invariant(openSessionIds(before).includes(sessionId),'EXCEPTION_TURN_UNAVAILABLE','The calling conversation is not open on this task.');
+  const entryId=before.stageEntry?.id,fromColumnId=before.columnId;
+  const isCurrent=()=>openTurnIdentity(port!,sessionId)?.turn===turn.turn;
+  return this.serial(async()=>{
+   invariant(!this.disposed&&!this.closing,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');
+   const located=this.locatedTask(taskId);
+   const saved=await this.hubs.hub(located.hubId).transact(draft=>operations.recordExceptionalTransition(draft,taskId,write.columnId,write.reason,write.parameters,{sessionId,turn:turn.turn,...(entryId===undefined?{}:{entryId}),fromColumnId,isCurrent},this.hubs.operationDeps()));
+   const owner=saved.recordedTransition!.exception!;const id=owner.id;
+   if(!isCurrent()){
+    await this.hubs.hub(located.hubId).transact(draft=>operations.clearExceptionalTransition(draft,taskId,id,this.hubs.operationDeps()));
+    throw new KanbanError('EXCEPTION_TURN_UNAVAILABLE','The originating turn ended before the declaration could be recorded.');
+   }
+   this.turnAdvance.forget(taskId);
+   this.exceptionalTurn.register(taskId,{id,sessionId,turn:turn.turn,entryId:owner.entryId,fromColumnId,columnId:write.columnId});
+   return this.locatedTask(taskId);
+  });
+ }
  private async execute(command:Command):Promise<FullHostSnapshot>{
   invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');
   let commandReceipt:HostSnapshot['commandReceipt'];
@@ -1120,7 +1176,7 @@ export class KanbanApp {
    case 'board.create':{const value=await this.boards.create({hubId:command.hubId,name:command.name},'never');commandReceipt={kind:'board',id:value.board.id};break;}
    case 'board.rename':{await this.boards.update({hubId:command.hubId,boardId:command.boardId,name:command.name,expectedRevision:command.expectedRevision},'never');break;}
    case 'board.delete':{await this.boards.remove({hubId:command.hubId,boardId:command.boardId,confirmed:command.confirmed,expectedRevision:command.expectedRevision,sharing:command.sharing},'never');break;}
-   case 'board.workflow.save':await this.boards.saveWorkflow({hubId:command.hubId,boardId:command.boardId,yaml:command.yaml,expectedRevision:command.expectedRevision},'never');break;
+   case 'board.workflow.save':await this.boards.saveWorkflow({hubId:command.hubId,boardId:command.boardId,yaml:command.yaml,expectedRevision:command.expectedRevision,...(command.presetChoice===undefined?{}:{presetChoice:command.presetChoice})},'never');break;
    case 'board.stage.update':{
     // findBoard hands back live objects the write then mutates, so the pre-write
     // definition is copied before the comparison can observe it.
@@ -1189,7 +1245,7 @@ export class KanbanApp {
    case 'task.scriptedParameters':await this.requireScripted().parameters(command.taskId,command.entryId,command.values);break;
    case 'task.edit':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).editTask(command.taskId,{...(command.title!==undefined?{title:command.title}:{}),...(command.description!==undefined?{description:command.description}:{})},command.expectedRevision);break;}
    case 'conversation.create':{const created=await this.createConversationNow(command.taskId,{ensureFirst:command.ensureFirst===true});commandReceipt={kind:'conversation',id:created.sessionId,...(created.model===undefined?{}:{model:created.model}),...(created.preset===undefined?{}:{preset:created.preset})};break;}
-   case 'conversation.close':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).closeSession(command.taskId,command.sessionId);break;}
+   case 'conversation.close':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).closeSession(command.taskId,command.sessionId);if(located.task.recordedTransition?.exception?.sessionId===command.sessionId)this.exceptionalTurn.forget(command.taskId);break;}
    case 'conversation.reopen':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).reopenSession(command.taskId,command.sessionId);break;}
    case 'conversation.attach':{
     const located=this.locatedTask(command.taskId);
@@ -1217,12 +1273,12 @@ export class KanbanApp {
    case 'operation.return':this.assertScriptContextStopped(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'returning to the base project');await this.clearPending(command.taskId);await this.worktrees.returnToBase(command.taskId);break;
    case 'operation.dismiss':await this.dismissFailedAdvance(command.taskId);break;
    case 'retainedCheckout.dismiss':this.dismissRetainedCheckouts(command.paths);break;
-   case 'task.move':await this.move(command);break;
+   case 'task.move':await this.move(command);this.exceptionalTurn.forget(command.taskId);break;
    // Changing the setting forgets a turn that has not settled yet, so enabling — or
    // resuming a paused task — never advances a turn that ended before the change.
    case 'task.autoMode':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).setAutoMode(command.taskId,command.enabled);this.turnAdvance.forget(command.taskId);break;}
-   case 'task.recordTransition':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).recordTransition(command.taskId,command.columnId,command.reason,command.parameters);break;}
-   case 'task.pause':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).pauseTask(command.taskId,command.reason);this.turnAdvance.forget(command.taskId);break;}
+   case 'task.recordTransition':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).recordTransition(command.taskId,command.columnId,command.reason,command.parameters);this.exceptionalTurn.forget(command.taskId);break;}
+   case 'task.pause':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).pauseTask(command.taskId,command.reason);this.turnAdvance.forget(command.taskId);this.exceptionalTurn.forget(command.taskId);break;}
    case 'task.resume':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).resumeTask(command.taskId);this.turnAdvance.forget(command.taskId);this.scriptedRuntime?.wake(command.taskId);break;}
    case 'task.runInstruction':await this.runInstruction(command);break;
    case 'schedule.save':{
@@ -1301,13 +1357,55 @@ export class KanbanApp {
    ...(recovering===undefined||recovering.reason===undefined?{}:{transition:{fromColumnId:recovering.fromColumnId,reason:recovering.reason}}),
   });
  }
+ private expireExceptionalTurn(taskId:string,id:string):Promise<void>{
+  return this.serial(()=>this.expireExceptionalTurnNow(taskId,id));
+ }
+ private async expireExceptionalTurnNow(taskId:string,id:string):Promise<void>{
+  if(this.exceptionalAdmissionTasks.has(taskId))return;
+  const located=this.locator.byTask(taskId);if(!located)return;
+  await this.hubs.hub(located.hubId).transact(draft=>{operations.clearExceptionalTransition(draft,taskId,id,this.hubs.operationDeps());});
+ }
+ /** Wait for the host activity projection, then re-read it in the command lane. */
+ private async settleExceptionalTurn(taskId:string,identity:ExceptionalTransitionIdentity,isObserved:()=>boolean):Promise<void>{
+  try{
+   for(let attempt=0;attempt<TURN_ADVANCE_SETTLE_ATTEMPTS;attempt++){
+    await new Promise<void>(resolve=>setTimeout(resolve,TURN_ADVANCE_SETTLE_MS));
+    if(!isObserved())return;
+    const located=this.locator.byTask(taskId);if(!located){return;}
+    const facts=new Map(await Promise.all(located.task.sessionIds.map(async id=>[id,await this.factsSource.read(id)] as const)));
+    const decision=resolveAdvanceDecision(located.task,facts);
+    if(decision.kind==='running'&&decision.sessions.includes(identity.sessionId)&&attempt+1<TURN_ADVANCE_SETTLE_ATTEMPTS)continue;
+    if(decision.kind!=='advance'){await this.expireExceptionalTurn(taskId,identity.id);return;}
+    await this.serial(async()=>{
+     if(!isObserved())return;
+     const latest=this.locator.byTask(taskId);if(!latest)return;
+     const currentFacts=new Map(await Promise.all(latest.task.sessionIds.map(async id=>[id,await this.factsSource.read(id)] as const)));
+     if(resolveAdvanceDecision(latest.task,currentFacts).kind!=='advance'){await this.expireExceptionalTurnNow(taskId,identity.id);return;}
+     this.exceptionalAdmissionTasks.add(taskId);
+     let release=true;
+     try{
+      await admitExceptionalTurnAdvance({
+       locate:id=>this.locatedTask(id),transact:(hubId,change)=>this.hubs.hub(hubId).transact(change),
+       resolveSession:async task=>firstOpenSessionId(task)??(await this.createConversationNow(task.id,{allowUndecided:true})).sessionId,
+       pending:task=>readPendingUserWork(this.factsSource,task.sessionIds),
+       ready:async task=>{const withoutPrepared={...task};delete withoutPrepared.pendingTransition;const facts=new Map(await Promise.all(task.sessionIds.map(async id=>[id,await this.factsSource.read(id)] as const)));return resolveAdvanceDecision(withoutPrepared,facts).kind==='advance';},
+       reconcileFinalization:(hubId,id,pendingId,exceptionId)=>this.hubs.reconcileExceptionalFinalization(hubId,id,pendingId,exceptionId),
+       dispatch:async()=>{},report:error=>this.options.report?.(error),
+      },taskId,identity,isObserved);
+     }catch(error){if(error instanceof KanbanError&&error.code==='EXCEPTION_CLEANUP_FAILED')release=false;throw error;}
+     finally{if(release){this.exceptionalAdmissionTasks.delete(taskId);await this.dispatchPending();}}
+    });
+    return;
+   }
+  }catch(error){this.options.report?.(error);if(!(error instanceof KanbanError&&error.code==='EXCEPTION_CLEANUP_FAILED'))await this.expireExceptionalTurn(taskId,identity.id);}
+ }
  private admitTurnAdvance(taskId:string,plan:AutoAdvancePlan,origin:AdvanceOrigin,isCurrent:()=>boolean):Promise<void>{
   // The drain shares the command lane, so a pause or resume queued ahead of this
   // admission must still win: the settle's own generation decides.
-  return this.serial(()=>isCurrent()?this.admitTurnAdvanceNow(taskId,plan,origin):Promise.resolve());
+  return this.serial(()=>isCurrent()?this.admitTurnAdvanceNow(taskId,plan,origin,isCurrent):Promise.resolve());
  }
  /** The serialized adapter around the one turn-end advance admission path. */
- private admitTurnAdvanceNow(taskId:string,plan:AutoAdvancePlan,origin:AdvanceOrigin):Promise<void>{
+ private admitTurnAdvanceNow(taskId:string,plan:AutoAdvancePlan,origin:AdvanceOrigin,isCurrent:()=>boolean):Promise<void>{
   return admitTurnAdvance({
    locate:taskId=>this.locatedTask(taskId),
    transact:(hubId,change)=>this.hubs.hub(hubId).transact(change),
@@ -1315,7 +1413,7 @@ export class KanbanApp {
    pending:task=>readPendingUserWork(this.factsSource,task.sessionIds),
    dispatch:()=>this.dispatchPending(),
    report:error=>this.options.report?.(error),
-  },taskId,plan,origin);
+  },taskId,plan,origin,isCurrent);
  }
  private async dismissFailedAdvance(taskId:string):Promise<void>{
   const located=this.locatedTask(taskId);const pending=located.task.pendingTransition;
@@ -1340,12 +1438,12 @@ export class KanbanApp {
  }
  private async drainPending():Promise<void>{
   if(this.disposed)return;if(this.driving){this.driveAgain=true;return;}this.driving=true;
-  try{do{this.driveAgain=false;this.pendingTransitions.refresh(this.locator.summaries());for(const taskId of [...this.pendingTransitions.list()]){const located=this.locator.byTask(taskId);const task=located?.task;const pending=task?.pendingTransition;if(!located||!task||!pending||pending.status!=='waiting'||task.operation||this.scriptedSurface.isReserved(task.id)||(pending.worktreeRequest&&task.worktree?.status!=='ready'))continue;const store=this.hubs.hub(located.hubId);
+  try{do{this.driveAgain=false;this.pendingTransitions.refresh(this.locator.summaries());for(const taskId of [...this.pendingTransitions.list()]){const located=this.locator.byTask(taskId);const task=located?.task;const pending=task?.pendingTransition;if(!located||!task||!pending||pending.status!=='waiting'||pending.exceptionUnfinalized!==undefined||task.operation||this.exceptionalAdmissionTasks.has(task.id)||this.scriptedSurface.isReserved(task.id)||(pending.worktreeRequest&&task.worktree?.status!=='ready'))continue;const store=this.hubs.hub(located.hubId);
    // The pending transition distinguishes a declared transition from an automatic
    // advance; an absent origin is the operator's own move.
    const origin:StageEntryOrigin=pending.origin==='agent'?'agent':pending.origin==='auto'?'auto':'manual';
    try{
-    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');if(pending.parameters!==undefined){const destination=board.workflow.columns.find(column=>column.id===pending.columnId);const checked=validateParameterValues(declaredParameterNames(destination?.scripted?.params),pending.parameters);invariant(checked.ok,'INVALID_PARAMETERS',checked.ok?'':checked.message);}
+    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');if(pending.parameters!==undefined||(pending.origin==='agent'&&pending.transitionOverride===true)){const destination=board.workflow.columns.find(column=>column.id===pending.columnId);const names=declaredParameterNames(destination?.scripted?.params);if(names.length>0||pending.parameters!==undefined){const checked=validateParameterValues(names,pending.parameters);invariant(checked.ok,'INVALID_PARAMETERS',checked.ok?'':checked.message);}}
       operations.placeTask(d,t.id,pending.columnId,placementFromAnchor(pending.beforeTaskId),nextEnteredAt(),{retainAgentPause:pending.origin!==undefined,origin,at:this.hubs.operationDeps().now(),...(pending.parameters===undefined?{}:{parameters:pending.parameters})});if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});if(pending.origin===undefined)this.turnAdvance.forget(task.id);
     if(pending.mode==='run'){
      invariant(pending.sessionId&&pending.text,'INVALID_TARGET','Confirmed execution is missing its target or instruction.');
@@ -1372,5 +1470,5 @@ export class KanbanApp {
   this.draftPruneTimers.clear();
   await Promise.allSettled(pendingPrunes.map(sessionId=>this.enqueueDraftWrite(sessionId,()=>this.pruneAnsweredDrafts(sessionId))));
   await this.retentionPrune;
-  await this.flushQuestions();await this.flushQuestionDrafts();this.publisher.flush();this.disposed=true;this.publisher.dispose();this.attention.dispose();this.turnAdvance.dispose();for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();this.relocations.dispose();this.operationQueue.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.relocations.settle();}
+  await this.flushQuestions();await this.flushQuestionDrafts();this.publisher.flush();this.disposed=true;this.publisher.dispose();this.attention.dispose();this.turnAdvance.dispose();this.exceptionalTurn.dispose();for(const dispose of this.disposers)dispose();this.listeners.clear();this.worktrees.dispose();this.relocations.dispose();this.operationQueue.dispose();await this.commandTail;await this.drivePromise?.catch(error=>this.options.report?.(error));this.questions.dispose();await this.relocations.settle();}
 }

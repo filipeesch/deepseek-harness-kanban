@@ -3,8 +3,9 @@ import { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { SessionId } from '@deepseek-ai/dsh-session';
-import { buildTaskContextText, registerTaskContextInjection } from '../../src/host/task-context.js';
-import type { Board, HubState, HubTask } from '../../src/shared/types.js';
+import { buildTaskContextText, createTaskContextMessage, registerTaskContextInjection } from '../../src/host/task-context.js';
+import { projectWorkflowSummary, workflowSummaryPage } from '../../src/host/workflow-summary.js';
+import type { Board, ConversationFacts, HubSharingView, HubState, HubTask } from '../../src/shared/types.js';
 
 const task: HubTask = {
   id: 'task-1', boardId: 'board', projectId: 'project', title: 'Alpha task', description: 'Task details', columnId: 'plan', position: 0,
@@ -19,12 +20,12 @@ const locator = { bySession: (id: string) => id === 'session-1' ? { hubId: 'hub'
 const userMessage = (text: string) => createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } });
 const enter = (messages: ReturnType<typeof userMessage>[]) => async () => ({ kind: 'enter' as const, messages });
 
-function setup(options: { events?: readonly unknown[]; read?: (id: string) => Promise<{ events: readonly unknown[] }> } = {}) {
+function setup(options: { events?: readonly unknown[]; read?: (id: string) => Promise<{ events: readonly unknown[] }>; conversationFacts?: (id: string) => Promise<ConversationFacts>; sharingView?: (id: string) => HubSharingView | undefined } = {}) {
   const ctx = new Context();
   let events = options.events ?? [];
   const read = vi.fn(options.read ?? (async () => ({ events })));
   const report = vi.fn();
-  const dispose = registerTaskContextInjection(ctx, locator, { history: { read }, report });
+  const dispose = registerTaskContextInjection(ctx, locator, { history: { read }, report, conversationFacts: options.conversationFacts, sharingView: options.sharingView });
   const signal = new AbortController().signal;
   const step = (agent: Agent, messages: ReturnType<typeof userMessage>[]) => ctx.waterfall('agent/pre-step', { agent, turn: 1, step: 1, modelSelection: { provider: 'fixture', model: 'fixture' }, signal, messages }, enter(messages));
   return { ctx, read, report, dispose, step, setEvents: (next: readonly unknown[]) => { events = next; }, agent: { id: SessionId('session-1') } as Agent };
@@ -40,15 +41,59 @@ describe('task context injection', () => {
     expect(text).toContain('Workflow stage at first contact: Plan');
   });
 
+  it('embeds the bounded first-contact snapshot with a usable continuation', () => {
+    const longBoard = { ...board, workflow: { ...workflow, description: '🧭'.repeat(5000) } };
+    const message = createTaskContextMessage(task, longBoard.workflow, hub.name, longBoard, hub.id);
+    const text = (message.content[0] as { text: string }).text;
+    const label = 'Workflow first-contact snapshot (not live; use get_workflow_summary for current details):\n';
+    const part = text.slice(text.indexOf(label));
+    expect(Buffer.byteLength(part)).toBeLessThanOrEqual(6144);
+    const page = JSON.parse(part.slice(label.length)) as { records: Array<{ kind: string }>; nextCursor: string };
+    expect(page.records[0]).toMatchObject({ kind: 'task', currentStage: { id: 'plan', name: 'Plan' } });
+    expect(page.nextCursor).toBeTruthy();
+    expect(workflowSummaryPage(projectWorkflowSummary(longBoard, hub, 'unavailable', task), page.nextCursor).records[0]).toMatchObject({ kind: 'oversizedRecordFragment' });
+  });
+
+  it('reads pending facts and distinguishes unpublished from unavailable sharing', async () => {
+    const facts: ConversationFacts = { running: false, background: [], settledTurn: null, pending: { kinds: ['native-question'], queuedPrompts: 0 } };
+    const f = setup({ conversationFacts: async () => facts, sharingView: () => undefined });
+    const result = await f.step(f.agent, [userMessage('Hello')]);
+    if (result.kind !== 'enter') throw new Error('expected enter');
+    const text = (result.messages[0]!.content[0] as { text: string }).text;
+    expect(text).toContain('"paused": false');
+    expect(text).toContain('"held": true');
+    expect(text).toContain('"status": "not-published"');
+    expect(text).toContain('"bound": false');
+    f.dispose();
+    const failed = setup({ conversationFacts: async () => { throw new Error('facts offline'); }, sharingView: () => { throw new Error('sharing offline'); } });
+    const fallback = await failed.step(failed.agent, [userMessage('Hello')]);
+    if (fallback.kind !== 'enter') throw new Error('expected enter');
+    const fallbackText = (fallback.messages[0]!.content[0] as { text: string }).text;
+    expect(fallbackText).toContain('"held": "unavailable"');
+    expect(fallbackText).toContain('"status": "unavailable"');
+    failed.dispose();
+    const published = setup({ conversationFacts: async () => ({ ...facts, pending: { kinds: [], queuedPrompts: 0 } }), sharingView: () => ({ status: 'synced', boards: [{ boardId: 'board', bound: true, state: 'clean' }] } as unknown as HubSharingView) });
+    const synced = await published.step(published.agent, [userMessage('Hello')]);
+    if (synced.kind !== 'enter') throw new Error('expected enter');
+    const syncedText = (synced.messages[0]!.content[0] as { text: string }).text;
+    expect(syncedText).toContain('"held": false');
+    expect(syncedText).toContain('"status": "synced"');
+    expect(syncedText).toContain('"bound": true');
+    published.dispose();
+  });
+
   it('prepends the context on the first step with messages and marks the agent checked', async () => {
     const f = setup();
     const first = await f.step(f.agent, [userMessage('Hello')]);
     expect(first.kind).toBe('enter');
     if (first.kind !== 'enter') throw new Error('expected enter');
     expect(first.messages).toHaveLength(2);
+    expect((first.messages[0]!.content[0] as { text: string }).text).toContain('"held": "unavailable"');
+    expect((first.messages[0]!.content[0] as { text: string }).text).toContain('"status": "unavailable"');
     expect(first.messages[0]!.role).toBe('user');
     expect(first.messages[0]!.source).toMatchObject({ kind: 'kanban-task' });
     expect((first.messages[0]!.content[0] as { text: string }).text).toContain('Workflow stage at first contact: Plan');
+    expect((first.messages[0]!.content[0] as { text: string }).text).toContain('Workflow first-contact snapshot');
     expect(first.messages[1]!.content).toEqual([{ type: 'text', text: 'Hello' }]);
 
     f.setEvents([{ type: 'user/message' }]);

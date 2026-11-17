@@ -80,13 +80,17 @@ it('mounts the installed architect preset, scopes its persona and skill, and reu
   const standardTools = scaffold.ctx.tools.schemas(standard).map(tool => tool.name);
   const architectAdmitted = await admitted(architect);
   const standardAdmitted = await admitted(standard);
+  expect(architectTools).not.toContain('get_board_summary');
+  expect(standardTools).not.toContain('get_board_summary');
+  expect(architectAdmitted).toContain('get_workflow_summary');
+  expect(standardAdmitted).toContain('get_workflow_summary');
   expect(new Set(architectTools).size).toBe(architectTools.length);
   expect(architectTools).toEqual(expect.arrayContaining([
     'read', 'write', 'edit', 'glob', 'grep', 'job_output', 'job_kill',
     'schedule_create', 'create_goal', 'subagent', 'subagent_fork', 'workflow',
     'ask_user_question', 'todo_write', 'web_fetch', 'present', 'plugin_manager',
     'skill', 'cordis_inspect_list', 'cordis_inspect_query',
-    'decision_request', 'list_hubs', 'list_boards', 'get_board_summary', 'create_board', 'edit_board_yaml',
+    'decision_request', 'list_hubs', 'list_boards', 'get_workflow_summary', 'create_board', 'edit_board_yaml',
   ]));
   // The workflow design tools are registered globally but admitted only to the
   // Architect; another agent shares the registry without ever being offered them.
@@ -150,4 +154,29 @@ it('mounts the installed architect preset, scopes its persona and skill, and reu
     page: { question: 'Who approves the review stage?', type: 'exclusive' },
   });
   expect(await scaffold.ctx.agentPresets.resolve('standard')).toEqual({ id: 'standard' });
+});
+
+it('mounts the workflow operator with the PTC executor and the ordinary gated catalog', { timeout: 120_000 }, async () => {
+  const scaffold = await launchWebScaffold({ profile: { packages: [{ dir: KANBAN_ROOT, enabled: true }] } });
+  onTestFinished(async () => { await scaffold.close(); });
+  expect(scaffold.mode).toBe('replay');
+  expect(await realpath(scaffold.harnessHome)).not.toBe(process.env.HOME + '/.dsh');
+  expect(await scaffold.ctx.agentPresets.resolve('kanban-workflow-operator')).toEqual({ id: 'kanban-workflow-operator' });
+  const session = await scaffold.ctx.sessionController.create({ cwd: scaffold.workspaceCwd, agentPreset: 'kanban-workflow-operator' });
+  const agent = scaffold.ctx.agents.get(session.sessionId)!;
+  const admitted = await scaffold.ctx.tools.resolve({ agent, modelSelection: { provider: 'test', model: 'test' }, signal: new AbortController().signal });
+  const names = [...admitted.view(agent).keys()];
+  admitted.dispose();
+  expect(names).toEqual(expect.arrayContaining(['read', 'write', 'edit', 'glob', 'grep', 'skill', 'subagent', 'subagent_fork', 'list_hubs', 'get_workflow_summary', 'list_allowed_transitions', 'set_next_transition']));
+  expect(scaffold.ctx.tools.schemas(agent).map(tool => tool.name)).toContain('exit_plan_mode');
+  expect(names).not.toContain('get_board_yaml');
+  expect(names).not.toContain('set_stage_prompt');
+  const prompt = await scaffold.ctx.systemPrompt.assemble(assembleContextFor(agent));
+  expect(prompt.sections.some(row => row.name === 'tools:ptc-only' && row.text.includes('run_code'))).toBe(true);
+  const direct = await scaffold.ctx.tools.execute({ agent, signal: new AbortController().signal, calls: [{ type: 'tool-call', id: ToolCallId('operator-direct'), name: 'list_hubs', arguments: '{}' }] });
+  expect(direct.results[0]!.result.isError).toBe(true);
+  const nested = await scaffold.ctx.tools.execute({ agent, signal: new AbortController().signal, calls: [{ type: 'tool-call', id: ToolCallId('operator-nested'), name: 'run_code', arguments: JSON.stringify({ code: 'return await tools.list_hubs({})', description: 'List available Kanban hubs' }) }] });
+  expect(nested.results[0]!.result.isError, JSON.stringify(nested.results[0]!.result)).toBe(false);
+  const skills = await scaffold.ctx.skills.list({ cwd: scaffold.workspaceCwd, scope: agent });
+  expect(skills.some(skill => skill.name === 'kanban-workflow-operation')).toBe(true);
 });

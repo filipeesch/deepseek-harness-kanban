@@ -187,14 +187,14 @@ describe('drawer conversation tabs and close action', () => {
     await waitFor(() => expect(select).toHaveBeenCalledWith('s3', 'ptc'));
   });
 
-  it('does not re-select the host default preset', async () => {
+  it('explicitly selects the host default even if creation applied a board default', async () => {
     const select = vi.fn(async () => ({ ok: true }));
     const { command } = mount({ preset: presetPort({ select }) });
     await screen.findByRole('tab', { name: 'Agent 1' });
     fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
     fireEvent.click(await screen.findByRole('button', { name: /^Standard/ }));
     await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'conversation.create', taskId: 't1' }));
-    expect(select).not.toHaveBeenCalled();
+    await waitFor(() => expect(select).toHaveBeenCalledWith('s3', 'standard'));
   });
 
   it('keeps the created conversation when the board default card selection fails', async () => {

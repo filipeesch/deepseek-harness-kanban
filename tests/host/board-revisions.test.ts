@@ -58,6 +58,22 @@ async function boardWith(f: F, name: string, yaml: string): Promise<string> {
 }
 
 describe('board revisions', () => {
+  it('records and restores a metadata-only preset change without rewriting YAML', async () => {
+    const f = await setup();
+    const boardId = await boardWith(f, 'Preset flow', FLOW);
+    const original = await run(f, 'get_board_yaml', { board_id: boardId });
+    expect(original.effectiveDefaultPreset).toMatchObject({ origin: 'implicit-operator' });
+    await f.app.command({ type: 'board.workflow.save', hubId: f.hub.id, boardId, yaml: original.yaml, presetChoice: 'host', expectedRevision: f.hubs.requireHub(f.hub.id).revision });
+    const changed = await run(f, 'get_board_yaml', { board_id: boardId });
+    expect(changed.yaml).toBe(original.yaml);
+    expect(changed.effectiveDefaultPreset).toMatchObject({ origin: 'explicit-host' });
+    const revisions = await run(f, 'list_board_revisions', { board_id: boardId });
+    expect(revisions.revisions).toHaveLength(2);
+    await run(f, 'revert_board', { board_id: boardId, to_revision: revisions.revisions[1].revision, confirmed: true, expected_revision: f.hubs.requireHub(f.hub.id).revision });
+    const restored = await run(f, 'get_board_yaml', { board_id: boardId });
+    expect(restored.yaml).toBe(original.yaml);
+    expect(restored.effectiveDefaultPreset).toMatchObject({ origin: 'implicit-operator' });
+  });
   it('records the creation of a board as its first revision', async () => {
     const f = await setup();
     const boardId = await boardWith(f, 'Archived flow', FLOW);
@@ -138,6 +154,40 @@ describe('board revisions', () => {
     expect(after.revisions).toHaveLength(3);
     expect(after.revisions[0]).toMatchObject({ origin: 'tool' });
     expect(after.revisions.some((revision: { summary: string }) => revision.summary === 'Created the board workflow.')).toBe(true);
+  });
+
+  it('restores operator, host and legacy metadata with byte-identical YAML', async () => {
+    const f = await setup();
+    const yaml = '# Preserve comment and formatting\n' + FLOW;
+    const boardId = await boardWith(f, 'Preset flow', yaml);
+    const board = () => f.hubs.requireHub(f.hub.id).boards.find(value => value.id === boardId)!;
+    expect(board().defaultPresetMode).toBe('operator');
+    await f.app.boards.saveWorkflowReviewed({ boardId, compose: text => text, presetChoice: 'host' });
+    expect(board().defaultPresetMode).toBe('host');
+    await f.app.boards.saveWorkflowReviewed({ boardId, compose: text => text, restorePresetMode: { value: undefined } });
+    expect(board().defaultPresetMode).toBeUndefined();
+    expect(board().workflowYaml).toBe(yaml);
+    expect(await f.revisions.stateAt(boardId, 1)).toEqual({ text: yaml, presetMode: 'operator' });
+    expect(await f.revisions.stateAt(boardId, 2)).toEqual({ text: yaml, presetMode: 'host' });
+    expect(await f.revisions.stateAt(boardId, 3)).toEqual({ text: yaml, presetMode: undefined });
+    const diff = await run(f, 'diff_board_revisions', { board_id: boardId, from: 1, to: 3 });
+    expect(diff.difference.defaultPresetMode).toEqual({ from: 'operator', to: null });
+    const restore = (revision: number, extra: Record<string, unknown> = {}) => run(f, 'revert_board', {
+      board_id: boardId, to_revision: revision, confirmed: true, expected_revision: f.hubs.requireHub(f.hub.id).revision, ...extra,
+    });
+    await restore(1);
+    expect(board().defaultPresetMode).toBe('operator');
+    await restore(2, { dry_run: true });
+    expect(board().defaultPresetMode).toBe('operator');
+    const stale = await restore(2, { expected_revision: 0 });
+    expect(stale.saved).toBe(false);
+    expect(board().defaultPresetMode).toBe('operator');
+    await restore(2);
+    expect(board().defaultPresetMode).toBe('host');
+    await restore(3);
+    expect(board().defaultPresetMode).toBeUndefined();
+    expect(board().workflowYaml).toBe(yaml);
+    expect((await f.revisions.list(boardId)).revisions).toHaveLength(6);
   });
 
   it('refuses a revert without confirmation', async () => {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools';
 import { productToolDefinitions } from '../../src/host/tools.js';
+import { parseWorkflow } from '../../src/domain/workflow.js';
 import { fixture } from './helpers.js';
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
@@ -86,8 +87,10 @@ describe('stage script writes', () => {
       board_id: boardId, stage_id: 'todo', language: 'typescript', code: 'return { exit: "passed", message: "ok" }', exits: { passed: 'done' },
     });
     expect(value.saved).toBe(true);
-    const workflow = (await run(f, 'get_board_summary', { board_id: boardId, include_workflow: true })).workflow;
-    const column = workflow.columns.find((value: { id: string }) => value.id === 'todo');
+    const workflow = parseWorkflow((await run(f, 'get_board_yaml', { board_id: boardId })).yaml);
+    const column = workflow.columns.find(value => value.id === 'todo');
+    expect(column?.scripted).toBeDefined();
+    if (!column?.scripted) throw new Error('Expected scripted todo stage');
     expect(column.scripted).toMatchObject({ language: 'typescript', directory: 'task', exits: { passed: 'done' } });
     expect(column.scripted.code).toContain('return { exit: "passed"');
   });
@@ -111,9 +114,11 @@ describe('stage script writes', () => {
     const f = await setup();
     const boardId = await boardWith(f, 'Scripted', SCRIPTED);
     await run(f, 'set_stage_script', { board_id: boardId, stage_id: 'check', params: [{ name: 'pipeline' }, { name: 'app' }] });
-    const workflow = (await run(f, 'get_board_summary', { board_id: boardId, include_workflow: true })).workflow;
-    const column = workflow.columns.find((value: { id: string }) => value.id === 'check');
-    expect(column.scripted.params.map((parameter: { name: string }) => parameter.name)).toEqual(['pipeline', 'app']);
+    const workflow = parseWorkflow((await run(f, 'get_board_yaml', { board_id: boardId })).yaml);
+    const column = workflow.columns.find(value => value.id === 'check');
+    expect(column?.scripted).toBeDefined();
+    if (!column?.scripted) throw new Error('Expected scripted check stage');
+    expect(column.scripted.params?.map((parameter: { name: string }) => parameter.name)).toEqual(['pipeline', 'app']);
     expect(column.scripted.code).toContain('echo hello');
     expect(column.scripted.exits).toEqual({ passed: 'done', error: 'todo' });
   });
