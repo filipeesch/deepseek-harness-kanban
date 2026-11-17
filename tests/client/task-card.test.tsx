@@ -121,12 +121,21 @@ describe('task card status strip', () => {
   });
 
 
-  it('keeps generic copy for non-destructive operations', () => {
-    const create: ContextOperation = { ...failedOperation, id: 'create-op', request: { kind: 'create', mode: 'new', path: '/tree', branchName: 'feature' }, phase: 'preflight' };
-    const { card } = setup({ task: { ...baseTask, operation: create } });
-    const line = card.querySelector('.kb-card-status-line')!;
-    expect(line.textContent).toBe('Operation: preflight');
-    expect(line.className).toContain('is-pending');
+  it('names the creation step a background worktree operation is in', () => {
+    const create = (phase: ContextOperation['phase']): ContextOperation => ({ ...failedOperation, id: 'create-op', request: { kind: 'create', mode: 'new', path: '/tree', branchName: 'feature' }, phase });
+    const cases: Array<[ContextOperation['phase'], string]> = [
+      ['queued', 'Worktree creation queued'],
+      ['git', 'Creating worktree…'],
+      ['switching', 'Preparing the first conversation…'],
+      ['failed', 'Worktree creation needs attention'],
+    ];
+    for (const [phase, label] of cases) {
+      const { card, unmount } = setup({ task: { ...baseTask, operation: create(phase) } });
+      const line = card.querySelector('.kb-card-status-line')!;
+      expect(line.textContent).toBe(label);
+      expect(line.className).toContain(phase === 'failed' ? 'is-danger' : 'is-pending');
+      unmount();
+    }
   });
   it('shows a pending-toned transition status', () => {
     const { card } = setup({ task: { ...baseTask, pendingTransition: { id: 'p', fromColumnId: 'intake', columnId: 'doing', mode: 'move', status: 'waiting' } } });

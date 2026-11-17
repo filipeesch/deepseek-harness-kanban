@@ -3,6 +3,7 @@ import { transitionAccess } from '../domain/transitions.js';
 import { placementFromAnchor, type Placement } from '../domain/placement.js';
 import type { BoardState, Column, Command, KanbanSnapshot, Problem, Task } from '../shared/types.js';
 import { asProblem } from './ui.js';
+import { NO_PREPARATION, type PreparationDecision } from './execution-preparation/contract.js';
 
 export interface OptimisticMove { taskId: string; columnId: string; placement: Placement }
 
@@ -28,9 +29,9 @@ export interface MoveRequestOptions {
   state: BoardState | null;
   run: (command: Command) => Promise<KanbanSnapshot>;
   onImmediateError: (error: unknown) => void;
-  onMoved?: (result: KanbanSnapshot, task: Task, column: Column) => void;
-  /** Runs after every validation and the restricted-move confirmation; false cancels the move. */
-  beforeApply?: (intent: MoveIntent) => Promise<boolean>;
+  onMoved?: (result: KanbanSnapshot, task: Task, column: Column, authorization: PreparationDecision) => void;
+  /** Runs after every validation and the restricted-move confirmation; a refused decision cancels the move. */
+  beforeApply?: (intent: MoveIntent) => Promise<PreparationDecision>;
 }
 
 export interface MoveRequest {
@@ -104,7 +105,7 @@ export function useMoveRequest({ state, run, onImmediateError, onMoved, beforeAp
     setError(asProblem(problem)); setCanRetry(retry); setPending(false);
   }
 
-  const apply = useCallback(async (task: Task, column: Column, beforeTaskId: string | null | undefined, override: boolean): Promise<boolean> => {
+  const apply = useCallback(async (task: Task, column: Column, beforeTaskId: string | null | undefined, override: boolean, authorization: PreparationDecision): Promise<boolean> => {
     setOptimistic({ taskId: task.id, columnId: column.id, placement: placementFromAnchor(beforeTaskId) });
     try {
       const result = await runRef.current({
@@ -112,7 +113,7 @@ export function useMoveRequest({ state, run, onImmediateError, onMoved, beforeAp
         ...(beforeTaskId !== undefined ? { beforeTaskId } : {}),
         ...(override ? { overrideTransition: true } : {}),
       });
-      try { onMovedRef.current?.(result, task, column); } catch { /* arming is best effort after a committed move */ }
+      try { onMovedRef.current?.(result, task, column, authorization); } catch { /* arming is best effort after a committed move */ }
       return true;
     } finally {
       if (alive.current) setOptimistic(null);
@@ -130,11 +131,12 @@ export function useMoveRequest({ state, run, onImmediateError, onMoved, beforeAp
     if (access === null) { errorRef.current({ code: 'INVALID_TARGET', message: 'The destination stage does not exist.' }); return false; }
     if (access === 'reorder' || access === 'allowed') {
       try {
+        let authorization: PreparationDecision = NO_PREPARATION;
         if (access === 'allowed' && beforeApplyRef.current !== undefined) {
-          const proceed = await beforeApplyRef.current({ task: currentTask, column: currentColumn, beforeTaskId });
-          if (!proceed) return false;
+          authorization = await beforeApplyRef.current({ task: currentTask, column: currentColumn, beforeTaskId });
+          if (!authorization.proceed) return false;
         }
-        return await apply(currentTask, currentColumn, beforeTaskId, false);
+        return await apply(currentTask, currentColumn, beforeTaskId, false, authorization);
       }
       catch (failure) { if (alive.current) errorRef.current(failure); return false; }
     }
@@ -170,11 +172,12 @@ export function useMoveRequest({ state, run, onImmediateError, onMoved, beforeAp
     submitting.current = true;
     setPending(true); setError(null); setCanRetry(true);
     try {
+      let authorization: PreparationDecision = NO_PREPARATION;
       if (beforeApplyRef.current !== undefined) {
-        const proceed = await beforeApplyRef.current({ task, column: destination, beforeTaskId: request.beforeTaskId });
-        if (!proceed) { settle(false); return; }
+        authorization = await beforeApplyRef.current({ task, column: destination, beforeTaskId: request.beforeTaskId });
+        if (!authorization.proceed) { settle(false); return; }
       }
-      await apply(task, destination, request.beforeTaskId, access === 'restricted');
+      await apply(task, destination, request.beforeTaskId, access === 'restricted', authorization);
       settle(true);
     } catch (failure) {
       fail(failure, !staleConfirmation(request, stateRef.current));

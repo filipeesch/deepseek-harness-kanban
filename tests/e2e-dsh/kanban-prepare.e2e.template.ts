@@ -93,22 +93,15 @@ it('prepares the worktree and the first conversation before the first execution'
   };
   const startMove = async (): Promise<Locator> => {
     await page.getByRole('combobox', { name: 'Move task to' }).selectOption('plan');
-    const dialog = page.getByRole('dialog', { name: 'Prepare the first execution' });
+    const dialog = page.getByRole('dialog', { name: 'Create a worktree?' });
     await visible(dialog);
     return dialog;
   };
   const finishPreparation = async () => {
-    const preparation = page.getByRole('dialog', { name: 'Prepare the first execution' });
-    const modelDialog = page.getByRole('dialog', { name: 'Choose the conversation model' });
-    await expect.poll(async () => (await modelDialog.count()) + (await page.locator('.kb-drawer-autorun').count()), { timeout: 30_000 }).toBeGreaterThan(0);
-    if (await modelDialog.count() > 0) {
-      await visible(modelDialog);
-      // The dialog only appears while the native selector is composed; its trigger is a native button.
-      expect(await modelDialog.locator('[data-native-model-seat] button').count()).toBeGreaterThan(0);
-      await modelDialog.getByRole('button', { name: 'Start execution' }).click();
-      await hidden(modelDialog);
-    }
-    await hidden(preparation);
+    // The answer closes the question immediately; the worktree and the first
+    // conversation continue in the background until the countdown is armed.
+    await hidden(page.getByRole('dialog', { name: 'Create a worktree?' }));
+    await visible(page.locator('.kb-drawer-autorun'));
   };
   const cancelCountdown = async () => {
     const notice = page.locator('.kb-drawer-autorun');
@@ -117,7 +110,7 @@ it('prepares the worktree and the first conversation before the first execution'
     await hidden(notice);
   };
 
-  // Base-project choice: the first conversation is created before the move and nothing is sent.
+  // Base-project choice: the move is applied first, the first conversation follows, and nothing is sent.
   await createTask('Prepared base');
   await openTask('Prepared base');
   const baseDialog = await startMove();
@@ -133,7 +126,7 @@ it('prepares the worktree and the first conversation before the first execution'
   await page.getByRole('button', { name: 'Close task details' }).click();
   await hidden(page.locator('.kb-drawer'));
 
-  // Worktree choice: the checkout is created before the conversation and the move follows.
+  // Worktree choice: the move is applied first and the checkout is created in the background before the conversation.
   await createTask('Prepared worktree');
   await openTask('Prepared worktree');
   const worktreeDialog = await startMove();

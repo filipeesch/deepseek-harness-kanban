@@ -1,102 +1,70 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import type { ClientApi, ConversationCreationOutcome } from '../../shared/types.js';
-import { ConversationLeaseRegistry, type ConversationLeaseEnvironment } from '../conversation-leases.js';
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import type { ClientApi, ConversationCreationOutcome, KanbanSnapshot } from '../../shared/types.js';
+import { allTasks } from '../snapshot-normalize.js';
 import { creationModelOutcome, creationPresetOutcome, creationReceiptId, type RunCommand } from '../ui.js';
-import type { PrepareExecution, PreparationRequest } from './contract.js';
+import type { CompletePreparation, PreparationDecision, PreparationRequest, PrepareExecution } from './contract.js';
 import { ExecutionPreparationController } from './controller.js';
 import { ExecutionPreparationDialog } from './dialog.js';
-import { MODEL_SELECTION_SLOT, type PreparationSeat } from './model-seat.js';
+import { PreparationRunController } from './preparation-run.js';
 
 export interface ExecutionPreparationOptions {
   api: ClientApi;
   run: RunCommand;
-  /** The native slots and locale; absent in isolated render harnesses. */
-  seat?: PreparationSeat;
-  /** The client session services; absent in isolated render harnesses. */
-  leases?: ConversationLeaseEnvironment;
   /** Report what became of the board's model and preset on the conversation this preparation created. */
   onConversationCreated?: (sessionId: string, outcome: ConversationCreationOutcome) => void;
 }
 
 export interface ExecutionPreparation {
+  /** Ask the one question the move or run needs before it is applied. */
   prepare: PrepareExecution;
+  /** Continue after the move: record the worktree answer and create the first conversation. */
+  complete: CompletePreparation;
   dialog: React.ReactNode;
 }
 
-function retained(registry: ConversationLeaseRegistry | null, sessionId: string, signal: AbortSignal | undefined): Promise<void> {
-  if (registry === null) return Promise.reject(new Error('No native session environment is available.'));
-  const leases = registry;
-  return new Promise<void>((resolve, reject) => {
-    let settled = false;
-    let unsubscribe = (): void => {};
-    function cleanup(): void { unsubscribe(); signal?.removeEventListener('abort', aborted); }
-    function aborted(): void {
-      if (settled) return;
-      settled = true; cleanup();
-      reject(new Error('The board closed before the conversation could be retained.'));
-    }
-    function finish(): void {
-      if (settled) return;
-      const state = leases.getSnapshot()[sessionId];
-      if (state === undefined) return;
-      if (state.status === 'ready') { settled = true; cleanup(); resolve(); }
-      else if (state.status === 'error') { settled = true; cleanup(); reject(new Error(state.error ?? 'The conversation could not be retained.')); }
-    }
-    if (signal?.aborted) { reject(new Error('The board closed before the conversation could be retained.')); return; }
-    signal?.addEventListener('abort', aborted, { once: true });
-    unsubscribe = leases.subscribe(finish);
-    finish();
-    leases.acquireRoot(sessionId);
-    finish();
-  });
-}
-
 /**
- * Owns the first-execution preparation for one mounted board: the controller,
- * the session lease used by the native model seat, and the dialog element.
+ * Owns the first-execution preparation for one mounted board: the decision the
+ * move pipeline awaits and the in-memory run that completes it after the move.
  */
-export function useExecutionPreparation({ api, run, seat, leases, onConversationCreated }: ExecutionPreparationOptions): ExecutionPreparation {
+export function useExecutionPreparation({ api, run, onConversationCreated }: ExecutionPreparationOptions): ExecutionPreparation {
   const [controller] = useState(() => new ExecutionPreparationController());
-  const registry = useMemo(() => leases === undefined ? null : new ConversationLeaseRegistry(leases), [leases]);
-  useEffect(() => () => { registry?.dispose(); }, [registry]);
-  const [seatAvailable, setSeatAvailable] = useState(false);
-  useEffect(() => {
-    if (seat === undefined) { setSeatAvailable(false); return; }
-    const update = (): void => setSeatAvailable(seat.slots.entriesOfSlot(MODEL_SELECTION_SLOT).length > 0);
-    update();
-    return seat.slots.subscribe(MODEL_SELECTION_SLOT, update);
-  }, [seat]);
-  const latest = useRef({ api, run, registry, seatAvailable, lifetime: leases?.lifetime, onConversationCreated });
-  latest.current = { api, run, registry, seatAvailable, lifetime: leases?.lifetime, onConversationCreated };
+  const snapshot = useRef<KanbanSnapshot | null>(null);
+  const latest = useRef({ api, run, onConversationCreated });
+  latest.current = { api, run, onConversationCreated };
+  const [runner] = useState(() => new PreparationRunController({
+    createWorktree: async taskId => { await latest.current.run({ type: 'worktree.create', taskId, mode: 'new', background: true }); },
+    dismissWorktree: async taskId => { await latest.current.run({ type: 'worktree.dismiss', taskId }); },
+    createConversation: async taskId => {
+      const result = await latest.current.run({ type: 'conversation.create', taskId, ensureFirst: true });
+      const sessionId = creationReceiptId(result, 'conversation');
+      if (sessionId === undefined) throw new Error('The created conversation could not be identified from its creation receipt.');
+      // The preparation reports the outcomes; the conversation presents them, so the
+      // move is never blocked by a model or preset fallback.
+      const model = creationModelOutcome(result);
+      const preset = creationPresetOutcome(result);
+      latest.current.onConversationCreated?.(sessionId, { ...(model === undefined ? {} : { model }), ...(preset === undefined ? {} : { preset }) });
+    },
+    task: taskId => {
+      const current = snapshot.current;
+      return current === null ? undefined : allTasks(current).find(value => value.id === taskId);
+    },
+  }));
 
   useEffect(() => {
-    controller.configure({
-      defaults: taskId => latest.current.api.worktreeDefault(taskId),
-      createWorktree: async (taskId, draft) => { await latest.current.run({ type: 'worktree.create', taskId, ...draft }); },
-      dismissWorktree: async taskId => { await latest.current.run({ type: 'worktree.dismiss', taskId }); },
-      createConversation: async taskId => {
-        const result = await latest.current.run({ type: 'conversation.create', taskId, ensureFirst: true });
-        const sessionId = creationReceiptId(result, 'conversation');
-        if (sessionId === undefined) throw new Error('The created conversation could not be identified from its creation receipt.');
-        // The preparation itself is not the place to announce a fallback: it reports
-        // the outcomes and the conversation presents them, so the move is never blocked.
-        const model = creationModelOutcome(result);
-        const preset = creationPresetOutcome(result);
-        latest.current.onConversationCreated?.(sessionId, { ...(model === undefined ? {} : { model }), ...(preset === undefined ? {} : { preset }) });
-        return sessionId;
-      },
-      retainSession: sessionId => retained(latest.current.registry, sessionId, latest.current.lifetime),
-      releaseSession: sessionId => latest.current.registry?.release(sessionId),
-      seatAvailable: () => latest.current.registry !== null && latest.current.seatAvailable,
-      modelCatalog: async () => {
-        try { return await latest.current.api.modelCatalog(false); }
-        catch { return null; }
-      },
+    // The run settles from the live projection, so a background creation reports its
+    // progress without the run polling the host.
+    return api.subscribe(value => {
+      snapshot.current = value;
+      runner.observe(allTasks(value));
     });
-  }, [controller]);
+  }, [api, runner]);
+  // Disposal is keyed on the runner alone: a changed subscription must never abandon
+  // the preparations a still-mounted board owns.
+  useEffect(() => () => { runner.dispose(); }, [runner]);
 
-  const prepare = useCallback((request: PreparationRequest): Promise<boolean> => controller.open(request), [controller]);
+  const prepare = useCallback((request: PreparationRequest): Promise<PreparationDecision> => controller.open(request), [controller]);
+  const complete = useCallback<CompletePreparation>((entry, worktree) => runner.start(entry, worktree), [runner]);
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
-  const dialog = state.phase === 'closed' ? null : <ExecutionPreparationDialog state={state} controller={controller} seat={seat} />;
-  return { prepare, dialog };
+  const dialog = state.phase === 'closed' ? null : <ExecutionPreparationDialog state={state} controller={controller} />;
+  return { prepare, complete, dialog };
 }

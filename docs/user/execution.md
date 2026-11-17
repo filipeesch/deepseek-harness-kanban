@@ -10,17 +10,23 @@ The drawer's stage control lists every workflow stage in order, marks stages tha
 
 ## First execution preparation
 
-When a move or the card play action would start the task's first execution (the task has no conversation), a preparation dialog comes first. It asks whether to create a worktree when the task has none and no recorded base choice, then creates the task's first conversation after that choice is resolved.
+When a move or the card play action would start the task's first execution (the task has no conversation), the worktree question comes before the move. The dialog asks whether to create a worktree when the task has none and no recorded base choice, and it closes as soon as the choice is recorded, so the card moves immediately afterwards.
 
-When the board names a default model the host offers, the conversation is created on it and the model step is skipped; otherwise the dialog presents DSH's native model selector for the new conversation, showing the deployment default and submitting nothing unless it is changed.
+The rest of the preparation runs in the background. For a Git-backed project the default worktree is created as a background operation that keeps running while the panel is closed or reloaded. The first conversation is created once the worktree is ready, and the five-second countdown below is armed only then. While that work runs, the card's status region names the step, and the card's play action is unavailable.
 
-Canceling the preparation keeps any worktree or conversation it already created and leaves the card in place. A worktree binding that is preparing or in error blocks that first execution until it is resolved in the Git section; a task that already has a conversation keeps executing.
+A project whose policy is **Always create** skips the question and creates the default worktree. A task that already has a ready worktree, recorded a base-project choice, belongs to a folder project, or whose project never creates worktrees needs no dialog: the move applies and the countdown is armed as soon as the first conversation exists.
 
-Task creation does not show that dialog. When the initial stage is instructed and the start option is enabled, it prepares the default worktree and the first conversation automatically; [Getting started](getting-started.md) describes the dialog.
+The preparation presents no model choice. The first conversation uses the board's default model when the board names one the host offers and the deployment default otherwise, and DSH's own model selector stays available in the conversation afterwards.
+
+Canceling the question leaves the card in place and creates nothing. A worktree binding that is preparing or in error blocks that first execution until it is resolved in the Git section; a task that already has a conversation keeps executing.
+
+A failed background creation keeps the stage the card moved to and reports the failure in the card's status region; when the host recorded the operation, the drawer's operation status and the Git section report it too, and their recovery actions resolve it. The play action stays unavailable while a failed operation is recorded. A reload between the worktree becoming ready and the conversation being created leaves the worktree in place, creates no conversation, and leaves the entry unresolved with the play action available.
+
+Task creation does not show that dialog. When the initial stage is instructed and the start option is enabled, it creates the default worktree in the background and follows the same flow; [Getting started](getting-started.md) describes the dialog.
 
 ## The timed stage instruction
 
-After preparation, a move into a stage with an entry instruction starts a cancelable five-second countdown. The card's play slot becomes a countdown that cancels when clicked, and the drawer shows the same countdown above its panel without changing sections.
+A move into a stage with an entry instruction starts a cancelable five-second countdown once the move is applied and, when the first execution needs one, the first conversation exists. The card's play slot becomes a countdown that cancels when clicked, and the drawer shows the same countdown above its panel without changing sections.
 
 When the window elapses, the stage's exact instruction is sent to the task's first open conversation, creating one when none is open (for example, when every conversation is closed). **Cancel** stops only the automatic send: the move stays, the entry remains unresolved, and the card's **play** action returns.
 

@@ -50,9 +50,8 @@ test('asks for the worktree before the first execution in both appearances', asy
   await page.getByRole('button', { name: 'Open task First execution task' }).click();
   const select = page.getByRole('combobox', { name: 'Move task to' });
   await select.selectOption('propose');
-  const dialog = page.getByRole('dialog', { name: 'Prepare the first execution' });
+  const dialog = page.getByRole('dialog', { name: 'Create a worktree?' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByText(/Create a worktree for this task\?/)).toBeVisible();
   await expect(dialog.getByText('First execution task')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeFocused();
   expect(await commands(page)).toEqual([]);
@@ -77,20 +76,37 @@ test('asks for the worktree before the first execution in both appearances', asy
   expect(await commands(page)).toEqual([]);
 });
 
-test('continues in the base project, creates the first conversation, and arms the countdown', async ({ page }) => {
+test('continues in the base project, moves the card, and arms the countdown once the conversation exists', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'light' });
   await page.goto(HARNESS + '?scenario=prepare');
   await page.getByRole('button', { name: 'Open task First execution task' }).click();
   await page.getByRole('combobox', { name: 'Move task to' }).selectOption('propose');
-  const dialog = page.getByRole('dialog', { name: 'Prepare the first execution' });
+  const dialog = page.getByRole('dialog', { name: 'Create a worktree?' });
   await expect(dialog).toBeVisible();
   await page.clock.install({ time: new Date() });
   await dialog.getByRole('button', { name: 'Continue in base project' }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByRole('button', { name: 'Cancel automatic Propose instruction' }).first()).toBeVisible();
   const sent = await commands(page);
-  expect(sent.map(command => command.type)).toEqual(['worktree.dismiss', 'conversation.create', 'task.move']);
+  // The move leads; the preparation that needs the host follows it.
+  expect(sent.map(command => command.type)).toEqual(['task.move', 'worktree.dismiss', 'conversation.create']);
   expect(sent.find(command => command.type === 'task.move')).toMatchObject({ type: 'task.move', columnId: 'propose' });
+});
+
+test('creates the worktree in the background after the move', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto(HARNESS + '?scenario=prepare');
+  await page.getByRole('button', { name: 'Open task First execution task' }).click();
+  await page.getByRole('combobox', { name: 'Move task to' }).selectOption('propose');
+  const dialog = page.getByRole('dialog', { name: 'Create a worktree?' });
+  await expect(dialog).toBeVisible();
+  await page.clock.install({ time: new Date() });
+  await dialog.getByRole('button', { name: 'Create worktree' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Cancel automatic Propose instruction' }).first()).toBeVisible();
+  const sent = await commands(page);
+  expect(sent.map(command => command.type)).toEqual(['task.move', 'worktree.create', 'conversation.create']);
+  expect(sent.find(command => command.type === 'worktree.create')).toMatchObject({ type: 'worktree.create', mode: 'new', background: true });
 });
 
 test('blocks the first execution while the worktree binding is not ready', async ({ page }) => {
@@ -109,7 +125,6 @@ test('blocks the first execution while the worktree binding is not ready', async
   expect(await commands(page)).toEqual([]);
 });
 
-
 test('prepares the first execution on an actual board drop', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'light' });
   await page.goto(HARNESS + '?scenario=prepare');
@@ -122,7 +137,7 @@ test('prepares the first execution on an actual board drop', async ({ page }) =>
   await page.mouse.down();
   await page.mouse.move(applyBox.x + applyBox.width / 2, applyBox.y + 80, { steps: 12 });
   await page.mouse.up();
-  const dialog = page.getByRole('dialog', { name: 'Prepare the first execution' });
+  const dialog = page.getByRole('dialog', { name: 'Create a worktree?' });
   await expect(dialog).toBeVisible();
   expect(await commands(page)).toEqual([]);
   await page.screenshot({ path: path.join(OUT, 'execution-preparation-drop.png') });

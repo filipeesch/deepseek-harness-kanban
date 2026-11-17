@@ -6,7 +6,7 @@ import { canonicalPath } from './git.js';
 import { isGitProject, requireGitProject } from '../shared/project.js';
 import { WorktreeSharingGuard } from './worktree-sharing.js';
 import { DestructiveExecution, type DestructiveOperationHost } from './destructive-operation.js';
-import { DestructiveAdmission } from './destructive-admission.js';
+import { ContextOperationAdmission, isBackgroundOperationKind } from './context-operation-admission.js';
 import { OperationQueue } from './operation-queue.js';
 import { OperationJournal, ProgressJournal, recoveryPendingError, requireTask } from './operation-journal.js';
 import { blocksCreate } from './worktree-checkout-state.js';
@@ -54,7 +54,7 @@ export class WorktreeCoordinator {
   private readonly progress: ProgressJournal;
   private readonly worktreeDefaults: WorktreeDefaultsPort | undefined;
   private readonly index: TaskBindingIndex;
-  private readonly admission: DestructiveAdmission;
+  private readonly admission: ContextOperationAdmission;
   private readonly destructive: DestructiveExecution;
   private readonly queue: OperationQueue;
   private readonly ownsQueue: boolean;
@@ -68,6 +68,9 @@ export class WorktreeCoordinator {
   private resumed: Promise<void> | undefined;
   private resumeAgain = false;
   private disposed = false;
+  /** Tasks with an admitted job that has not finished yet. */
+  private readonly admitted = new Set<string>();
+  private readonly settledWaiters = new Map<string, Array<{ resolve: () => void; reject: (error: unknown) => void }>>();
 
   constructor(private readonly store: WorktreeStore, private readonly sessions: SessionPort, private readonly git: GitPort, options: WorktreeCoordinatorOptions = {}) {
     this.signal = options.signal ? AbortSignal.any([this.controller.signal, options.signal]) : this.controller.signal;
@@ -81,7 +84,7 @@ export class WorktreeCoordinator {
     this.sharing = options.sharing ?? new WorktreeSharingGuard(store, sessions, this.index);
     this.journal = new OperationJournal(store, this.now);
     this.progress = new ProgressJournal(this.journal);
-    this.admission = new DestructiveAdmission({ locate: taskId => this.read(taskId) }, this.journal);
+    this.admission = new ContextOperationAdmission({ locate: taskId => this.read(taskId) }, this.journal);
     this.checkout = new CheckoutStateProbe(this.now);
     this.recovery = new CreateRecovery({
       git: this.git,
@@ -100,7 +103,15 @@ export class WorktreeCoordinator {
     };
   }
 
-  dispose(): void { this.disposed = true; if (this.ownsQueue) this.queue.dispose(); this.controller.abort(); }
+  dispose(): void {
+    this.disposed = true;
+    if (this.ownsQueue) this.queue.dispose();
+    this.controller.abort();
+    // Dropped jobs never run, so a caller waiting for settlement is released and
+    // reads the journal for the outcome it actually has.
+    for (const waiting of this.settledWaiters.values()) for (const waiter of waiting) waiter.resolve();
+    this.settledWaiters.clear();
+  }
 
   async settle(): Promise<void> {
     for (;;) {
@@ -184,7 +195,7 @@ export class WorktreeCoordinator {
         if (task.worktree && (normalized.kind === 'create' || (normalized.kind === 'attach' && task.worktree.path !== normalized.path))) throw new KanbanError('WORKTREE_ALREADY_BOUND', 'Remove or recover the current worktree before choosing another target.');
         await this.start(taskId, normalized);
       }
-      if ((normalized.kind === 'delete' || normalized.kind === 'remove') && options.background === true) {
+      if (options.background === true && isBackgroundOperationKind(normalized.kind)) {
         await this.admitAndQueue(taskId);
       } else {
         // Reusing a leftover branch is a retry behavior: a fresh request never
@@ -219,10 +230,10 @@ export class WorktreeCoordinator {
       this.cancelled.delete(taskId);
       const { task } = this.read(taskId);
       if (!task.operation) throw new KanbanError('NO_OPERATION', 'There is no operation to retry.');
-      const destructive = task.operation.request.kind === 'delete' || task.operation.request.kind === 'remove';
+      const backgroundEligible = isBackgroundOperationKind(task.operation.request.kind);
       const previousPhase = task.operation.phase;
       await this.update(taskId, task.operation.id, (_task, operation) => { if (operation.phase === 'failed') operation.phase = 'waiting'; });
-      if (destructive && options.background === true) {
+      if (backgroundEligible && options.background === true) {
         try { await this.admitAndQueue(taskId); }
         catch (error) {
           // Keep the previous failure visible when retry could not even be admitted.
@@ -291,7 +302,7 @@ export class WorktreeCoordinator {
     const operationId = this.read(taskId).task.operation?.id;
     try {
       const job = await this.admission.prepare(taskId);
-      this.enqueue(job.lane, job.taskId, job.operationId);
+      this.enqueue(job.lane, job.ownerId, job.operationId);
     } catch (error) {
       // A rejected admission must not leave the journal in 'waiting': that phase
       // hides the recovery actions and blocks every other context operation.
@@ -326,7 +337,51 @@ export class WorktreeCoordinator {
   }
 
   private enqueue(lane: string, ownerId: string, operationId: string): void {
-    this.queue.enqueue({ lane, ownerId, operationId, run: () => this.serial(ownerId, async () => { await this.drive(ownerId); }).then(() => {}) });
+    // The waiters are keyed by task, and a task can hold at most one context
+    // operation, so the settlement of this job is the settlement of that task.
+    this.admitted.add(ownerId);
+    const accepted = this.queue.enqueue({
+      lane, ownerId, operationId,
+      run: () => this.serial(ownerId, async () => { await this.drive(ownerId); }).then(() => {}).finally(() => { this.admitted.delete(ownerId); this.releaseSettled(ownerId); }),
+    });
+    // A disposed queue drops the job, so nothing would ever settle it.
+    if (!accepted) { this.admitted.delete(ownerId); this.releaseSettled(ownerId); }
+  }
+
+  /**
+   * Resolve once the admitted work for this task stopped running. The caller
+   * reads the journal for the outcome; this is the one hook the agent tool path
+   * needs so its wait does not poll.
+   */
+  whenSettled(taskId: string): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    if (!this.admitted.has(taskId) && !this.tails.has(taskId)) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const waiting = this.settledWaiters.get(taskId) ?? [];
+      waiting.push({ resolve, reject });
+      this.settledWaiters.set(taskId, waiting);
+    });
+  }
+
+  private releaseSettled(taskId: string): void {
+    if (this.admitted.has(taskId) || this.tails.has(taskId)) return;
+    const waiting = this.settledWaiters.get(taskId);
+    if (waiting === undefined) return;
+    this.settledWaiters.delete(taskId);
+    // The caller learns the outcome from the journal: a failed operation rejects,
+    // and every other outcome (ready, still waiting, task gone) resolves.
+    const failure = this.settledFailure(taskId);
+    for (const waiter of waiting) {
+      if (failure === undefined) waiter.resolve(); else waiter.reject(failure);
+    }
+  }
+
+  private settledFailure(taskId: string): unknown | undefined {
+    try {
+      const operation = this.read(taskId).task.operation;
+      if (operation?.phase !== 'failed') return undefined;
+      return operation.error ?? new KanbanError('OPERATION_FAILED', 'The admitted operation failed.');
+    } catch { return undefined; }
   }
 
   async returnToBase(taskId: string): Promise<HubState> {

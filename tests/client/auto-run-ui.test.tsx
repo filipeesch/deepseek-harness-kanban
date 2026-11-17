@@ -391,6 +391,24 @@ describe('creation preparation presentation', () => {
     expect(within(drawer()).getByText('Sending the Intake instruction to a new conversation in 5s.')).toBeTruthy();
     controller.dispose();
   });
+
+  it('reports a failed preparation as a preparation failure, not a failed instruction', async () => {
+    const initial = fixture();
+    const hub = initial.state.hubs[0]!;
+    const task = hub.tasks[0]!;
+    task.columnId = 'intake'; task.instructionPending = { columnId: 'intake', enteredAt: 7 }; task.sessionIds = [];
+    hub.boards[0]!.workflow.columns.find(column => column.id === 'intake')!.onEnterPrompt = 'Start work.';
+    const controller = new AutoRunController({ run: vi.fn(async () => initial) });
+    const mock = fakeApi(initial);
+    render(<BoardView api={mock.api} autoRun={controller} renderConversation={native} />);
+    await screen.findByRole('button', { name: 'Open task Alpha task' });
+    await openAlpha();
+    void controller.prepare({ taskId: 't1', columnId: 'intake', enteredAt: 7, instruction: 'Start work.' }, async () => { throw { code: 'WORKTREE_CREATION_FAILED', message: 'The checkout could not be created.' }; });
+    await settle();
+    expect(within(drawer()).getByText('First execution preparation failed')).toBeTruthy();
+    expect(within(drawer()).getByText('The checkout could not be created.')).toBeTruthy();
+    controller.dispose();
+  });
 });
 
   it('lets the card play action recover a failed declared advance', async () => {

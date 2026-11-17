@@ -1,12 +1,14 @@
 import React, { useCallback, useRef, useState, type ReactNode } from 'react';
-import type { BoardState, ConversationCreationOutcome, KanbanSnapshot, Project } from '../shared/types.js';
+import type { BoardState, KanbanSnapshot, Project } from '../shared/types.js';
 import { isRegisteredProject } from '../shared/project.js';
 import { entryInstruction } from '../domain/stage-entry.js';
 import { NEW_TASK_LABEL } from './board-copy.js';
 import type { AutoRunController } from './auto-run.js';
+import { automaticPreparationOutcome } from './execution-preparation/gate.js';
+import type { CompletePreparation } from './execution-preparation/contract.js';
 import { NewTaskDialog, type CreatedTaskOptions } from './forms.js';
 import { PlusIcon } from './icons.js';
-import { creationModelOutcome, creationPresetOutcome, creationReceiptId, type RunCommand } from './ui.js';
+import type { RunCommand } from './ui.js';
 
 /** What the board owns and task creation only drives. */
 export interface UseTaskCreationPort {
@@ -17,18 +19,12 @@ export interface UseTaskCreationPort {
   readonly closedForCreation: boolean;
   readonly run: RunCommand;
   readonly autoRun: AutoRunController;
+  /** Completes the first execution's preparation, exactly as a move does. */
+  readonly complete: CompletePreparation;
   /** Opens the task drawer; a created task is always shown. */
   readonly onOpenTask: (taskId: string) => void;
   /** The newest snapshot, read when a created task's start is decided. */
   readonly latest: () => KanbanSnapshot | null;
-  /**
-   * Report what became of the board's model and preset for the conversation an
-   * automatic first execution just created. A task created straight into an
-   * instructed stage never passes through the preparation dialog, so without this
-   * the person who started it would never learn it did not start on the board's
-   * defaults.
-   */
-  readonly onConversationCreated?: (sessionId: string, outcome: ConversationCreationOutcome) => void;
 }
 
 export interface TaskCreation {
@@ -60,7 +56,8 @@ export function useTaskCreation(port: UseTaskCreationPort): TaskCreation {
   const openDialog = useCallback(() => { setOpen(true); }, []);
   const closeDialog = useCallback(() => { setOpen(false); }, []);
   // Creation opens the drawer immediately; an instructed initial stage then prepares
-  // the first execution and arms the countdown through the existing controller.
+  // the default worktree in the background and arms the countdown once the first
+  // conversation exists, exactly as a move into that stage does.
   const onCreated = useCallback((taskId: string, options: CreatedTaskOptions) => {
     const current = portRef.current;
     current.onOpenTask(taskId);
@@ -73,18 +70,10 @@ export function useTaskCreation(port: UseTaskCreationPort): TaskCreation {
     const instruction = entryInstruction(board?.workflow.columns.find(value => value.id === task.columnId));
     const marker = task.instructionPending;
     if (instruction === undefined || marker?.columnId !== task.columnId) return;
-    void current.autoRun.prepare({ taskId, columnId: task.columnId, enteredAt: marker.enteredAt, instruction }, async () => {
-      // The command receipt is the only place this automatic creation says which
-      // model the conversation started on, so reading it here is what lets the
-      // board announce a fallback the same way it does for a hand-started one.
-      const snapshot = await current.run({ type: 'task.prepareFirstExecution', taskId, columnId: task.columnId, expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
-      const sessionId = creationReceiptId(snapshot, 'conversation');
-      if (sessionId !== undefined) {
-        const model = creationModelOutcome(snapshot);
-        const preset = creationPresetOutcome(snapshot);
-        current.onConversationCreated?.(sessionId, { ...(model === undefined ? {} : { model }), ...(preset === undefined ? {} : { preset }) });
-      }
-    });
+    const project = current.projects.find(value => value.id === task.projectId);
+    const worktree = automaticPreparationOutcome(task, project);
+    const entry = { taskId, columnId: task.columnId, enteredAt: marker.enteredAt, instruction };
+    void current.autoRun.prepare(entry, () => current.complete(entry, worktree));
   }, []);
   // Availability asks the Hub registry one question: is there a project that could own
   // a task at all. A published placeholder has no directory and is never offered by the

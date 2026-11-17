@@ -53,7 +53,7 @@ import { useBoardMoves } from './board-moves.js';
 import { useExecutionPreparation } from './execution-preparation/use-execution-preparation.js';
 import { ModelFallbacksProvider, useModelFallbackRegistry } from './model-fallbacks.js';
 import { PresetFallbacksProvider, usePresetFallbackRegistry } from './preset-fallbacks.js';
-import type { PreparationSeat } from './execution-preparation/model-seat.js';
+import type { NativeSeat } from './native-slot-host.js';
 import { createBoardPageState, taskPageState, usePageField, type BoardPageState } from './page-state.js';
 import type { ConversationSurfaceMode } from './conversation-surface.js';
 import type { DrawerNavigationSource } from './drawer-navigation-coordinator.js';
@@ -73,8 +73,8 @@ export interface BoardViewProps {
   autoRun?: AutoRunController;
   /** Owned by its provider, which also reconciles it; the board reconciles only its own fallback. */
   decisionWindow?: DecisionWindowController;
-  /** Native slots and locale used by the first-execution model stage; absent in isolated harnesses. */
-  nativeSeat?: PreparationSeat;
+  /** Native slots and locale used by the configuration model fields; absent in isolated harnesses. */
+  nativeSeat?: NativeSeat;
   /** Opens one native conversation, used by a schedule's last-run link. */
   onOpenSession?: (sessionId: string) => void;
   /** Acknowledges the settled turns of the given conversations; absent in isolated harnesses. */
@@ -211,8 +211,6 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   const preparation = useExecutionPreparation({
     api,
     run,
-    ...(nativeSeat === undefined ? {} : { seat: nativeSeat }),
-    ...(conversationLeases === undefined ? {} : { leases: conversationLeases }),
     onConversationCreated: (sessionId, outcome) => { modelFallbacks.record(sessionId, outcome.model); presetFallbacks.record(sessionId, outcome.preset); },
   });
   const moves = useBoardMoves({
@@ -221,6 +219,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     autoRun,
     selectionMode,
     prepare: preparation.prepare,
+    complete: preparation.complete,
     onError: error => setActionError(asProblem(error)),
     onMoveStart: () => setActionError(null),
   });
@@ -307,9 +306,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     autoRun,
     onOpenTask: openTask,
     latest: () => latest.current,
-    // The same memory serves both creation paths, so a task created straight into
-    // an instructed stage announces its model exactly like the preparation does.
-    onConversationCreated: (sessionId, outcome) => { modelFallbacks.record(sessionId, outcome.model); presetFallbacks.record(sessionId, outcome.preset); },
+    complete: preparation.complete,
   });
   const containers = useCreationDialogs({
     activateHub: hubId => { setActiveHubIdState(hubId); writeStorage(ACTIVE_HUB_KEY, hubId); },

@@ -394,15 +394,6 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
         firstHub.tasks.push(created);
         receipt = { kind: 'task', id };
       }
-      if (command.type === 'task.prepareFirstExecution') {
-        const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);
-        const hub = task ? value.state.hubs.find(item => item.tasks.some(candidate => candidate.id === task.id)) : undefined;
-        const project = task ? hub?.projects.find(item => item.id === task.projectId) : undefined;
-        if (task) {
-          if (project?.gitRootPath && task.worktree === null && task.worktreeDismissed !== true) { task.worktree = { path: '/worktrees/' + task.id, branch: task.title, owned: true, status: 'ready' }; task.effectiveCwd = task.worktree.path; }
-          if (task.sessionIds.length === 0) { const id = 's-created-' + commands.length; task.sessionIds.push(id); receipt = { kind: 'conversation', id, ...(options.conversationPreset === undefined ? {} : { preset: structuredClone(options.conversationPreset) }) }; }
-        }
-      }
       if (command.type === 'worktree.create') { const task = firstHub.tasks.find(item => item.id === command.taskId); if (task) { const path = command.path ?? '/worktrees/derived'; task.worktree = { path, branch: command.branchName ?? 'derived', owned: true, status: 'ready' }; task.effectiveCwd = path; } }
       if (command.type === 'worktree.dismiss') { const task = firstHub.tasks.find(item => item.id === command.taskId); if (task) task.worktreeDismissed = true; }
       if (command.type === 'conversation.create') {

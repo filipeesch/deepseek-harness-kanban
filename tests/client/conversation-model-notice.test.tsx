@@ -63,7 +63,7 @@ async function createConversationInDrawer(user: ReturnType<typeof userEvent.setu
 async function prepareFirstExecution(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.click(await screen.findByRole('button', { name: 'Open task Alpha task' }));
   await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
-  const preparation = await screen.findByRole('dialog', { name: 'Prepare the first execution' });
+  const preparation = await screen.findByRole('dialog', { name: 'Create a worktree?' });
   await user.click(within(preparation).getByRole('button', { name: 'Continue in base project' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 }
@@ -124,8 +124,8 @@ describe('conversation model fallback notice', () => {
     await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Project' }), 'p1');
     await user.click(within(dialog).getByRole('button', { name: 'Create task' }));
     // The only announcement of the model this automatic creation started on is the
-    // command receipt, so this is the path that proves the board reads it.
-    await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'task.prepareFirstExecution' })));
+    // conversation receipt, so this is the path that proves the board reads it.
+    await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'conversation.create' })));
     expect(await noticeText()).toContain('deepseek · chat');
   });
 

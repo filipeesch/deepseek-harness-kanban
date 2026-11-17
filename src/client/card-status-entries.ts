@@ -1,6 +1,7 @@
 import type { SessionObservation, Task } from '../shared/types.js';
 import { sessionObservationLabel } from '../domain/session-observation.js';
 import type { AutoModeStatus } from './auto-mode.js';
+import { cardOperationStatus } from './operation-description.js';
 
 export interface CardStatusEntry { key: string; tone: 'danger' | 'pending'; label: string; alert?: boolean }
 
@@ -13,22 +14,8 @@ export interface CardStatusEntry { key: string; tone: 'danger' | 'pending'; labe
 export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: AutoModeStatus, pauseStatuses: readonly AutoModeStatus[] = [], sessionObservation?: SessionObservation, decision?: string): CardStatusEntry[] {
   const entries: CardStatusEntry[] = [];
   if (task.operation) {
-    const operation = task.operation;
-    const failed = operation.phase === 'failed';
-    const destructive = operation.request.kind === 'delete' || operation.request.kind === 'remove';
-    const deleteKind = operation.request.kind === 'delete';
-    const label = destructive
-      ? failed
-        ? (deleteKind ? 'Deletion needs attention' : 'Worktree removal needs attention')
-        : operation.phase === 'queued'
-          ? (deleteKind ? 'Queued to delete' : 'Queued to remove worktree')
-          : operation.phase === 'waiting'
-            ? (deleteKind ? 'Deletion waiting for idle' : 'Removal waiting for idle')
-            : operation.phase === 'preflight'
-              ? (deleteKind ? 'Checking before deleting…' : 'Checking before removing…')
-              : (deleteKind ? 'Deleting…' : 'Removing worktree…')
-      : failed ? 'Operation failed' : 'Operation: ' + operation.phase;
-    entries.push({ key: 'operation', tone: failed ? 'danger' : 'pending', label });
+    const status = cardOperationStatus(task.operation);
+    entries.push({ key: 'operation', tone: status.tone, label: status.label });
   }
   if (task.pendingTransition && task.pendingTransition.origin !== 'auto') {
     const pending = task.pendingTransition;

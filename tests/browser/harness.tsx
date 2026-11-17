@@ -534,6 +534,24 @@ function DecisionScenario() {
   </div>;
 }
 
+/** One card whose first execution is being prepared, before the countdown arms. */
+function PreparingCardScenario() {
+  const base = harness.snapshot().state.hubs[0]!.tasks[0]!;
+  const column: Column = { id: 'review', name: 'Review', onEnterPrompt: 'Review carefully.' };
+  const task: Task = { ...base, id: 'preparing-task', title: 'Preparing task', columnId: 'review', position: 0, operation: null, pendingTransition: undefined, sessionIds: [], closedSessionIds: [], worktree: null, instructionPending: { columnId: 'review', enteredAt: 7 } };
+  const [autoRun] = useState(() => {
+    const controller = new AutoRunController({ run: async () => harness.snapshot() });
+    // The run never resolves: this is the window the preparation owns before the countdown.
+    void controller.prepare({ taskId: task.id, columnId: 'review', enteredAt: 7, instruction: 'Review carefully.' }, () => new Promise<void>(() => {}));
+    return controller;
+  });
+  return <div className="dsh-kanban" style={{ display: 'grid', gap: 18, alignContent: 'start', padding: 24, width: 460 }}>
+    <TaskCard task={task} column={column} projectName="API" attention={EMPTY_ATTENTION} selectionMode={false} selected={false}
+      autoRun={autoRun} autoMode={autoModeView(task, { name: 'Flow', initialColumnId: 'review', columns: [column], groups: [] })}
+      onToggleAutoMode={() => {}} onOpen={() => {}} onToggleSelect={() => {}} onBeginDrag={() => {}} shouldSuppressClick={() => false} />
+  </div>;
+}
+
 /** The stage editor opened on a stage that authors a decision gate. */
 function DecisionEditorScenario() {
   const columns: Column[] = [
@@ -551,6 +569,10 @@ function DecisionEditorScenario() {
 }
 
 function App() {
+  if (scenario === 'preparing-card') return <>
+    <style>{themeFixture}</style><style>{styles}</style><ThemeSync />
+    <PreparingCardScenario />
+  </>;
   if (scenario === 'session-diagnosis') return <>
     <style>{themeFixture}</style><style>{styles}</style><ThemeSync />
     <BoardView api={harness.api} renderConversation={id => <div data-native={id} />} />

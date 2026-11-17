@@ -629,13 +629,12 @@ export type Command =
   /** An omitted `columnId` clears the recording. */
   | { type: 'task.recordTransition'; hubId?: string; taskId: string; columnId?: string; reason?: string; parameters?: Record<string, string> }
   | { type: 'task.runInstruction'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction: string }
-  | { type: 'task.prepareFirstExecution'; hubId?: string; taskId: string; columnId: string; expectedEnteredAt: number; expectedInstruction?: string }
   | { type: 'conversation.create'; hubId?: string; taskId: string; /** A first-start request reuses a conversation created while it was queued. */ ensureFirst?: boolean }
   | { type: 'conversation.close' | 'conversation.reopen'; hubId?: string; taskId: string; sessionId: string }
   /** Attach a branch the task drawer claimed; the source must be a conversation of the task. */
   | { type: 'conversation.attach'; hubId?: string; taskId: string; parentSessionId: string; sessionId: string }
   | { type: 'task.delete'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; force?: boolean }
-  | ({ type: 'worktree.create'; hubId?: string; taskId: string } & CreateWorktreeInput)
+  | ({ type: 'worktree.create'; hubId?: string; taskId: string; /** Admit the creation to the repository lane and return before Git runs. */ background?: boolean } & CreateWorktreeInput)
   | { type: 'worktree.attach'; hubId?: string; taskId: string; path: string }
   | { type: 'worktree.dismiss'; hubId?: string; taskId: string }
   | { type: 'worktree.remove'; hubId?: string; taskId: string; confirmed: boolean; expectedWorktreePath: string | null; discardChanges?: boolean; force?: boolean }

@@ -269,9 +269,10 @@ describe('scoped Kanban page', () => {
     await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'Started task');
     await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Project' }), 'p1');
     await user.click(within(dialog).getByRole('button', { name: 'Create task' }));
-    await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'task.prepareFirstExecution', columnId: 'intake', expectedInstruction: 'Start work.' })));
+    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'worktree.create', taskId: expect.any(String), mode: 'new', background: true }));
     const card = (await screen.findByRole('button', { name: 'Open task Started task' })).closest('.kb-card') as HTMLElement;
     await waitFor(() => expect(within(card).getByRole('button', { name: 'Cancel automatic Intake instruction' })).toBeTruthy());
+    expect(command).toHaveBeenCalledWith({ type: 'conversation.create', taskId: expect.any(String), ensureFirst: true });
   });
 
   it('creates without starting when the start option is disabled', async () => {
@@ -286,7 +287,8 @@ describe('scoped Kanban page', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Create task' }));
     const card = (await screen.findByRole('button', { name: 'Open task Capture only' })).closest('.kb-card') as HTMLElement;
     await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({ type: 'task.create', title: 'Capture only' })));
-    expect(command.mock.calls.some(([value]) => value.type === 'task.prepareFirstExecution')).toBe(false);
+    expect(command.mock.calls.some(([value]) => value.type === 'worktree.create')).toBe(false);
+    expect(command.mock.calls.some(([value]) => value.type === 'conversation.create')).toBe(false);
     expect(within(card).getByRole('button', { name: 'Run Intake instruction' })).toBeTruthy();
   });
 
@@ -317,7 +319,7 @@ describe('scoped Kanban page', () => {
     const { user, command } = mount(data); await loaded();
     const original = command.getMockImplementation()!;
     command.mockImplementation(async (input: Command) => {
-      if (input.type === 'task.prepareFirstExecution') throw { code: 'WORKTREE_FAILED', message: 'No checkout could be created.' };
+      if (input.type === 'worktree.create') throw { code: 'WORKTREE_FAILED', message: 'No checkout could be created.' };
       return original(input);
     });
     await user.click(screen.getByRole('button', { name: 'New task' }));
@@ -681,7 +683,7 @@ describe('accessibility, pending, subscriptions and errors', () => {
   });
 
   it('shows initial load errors and permits retry, unsubscribing on unmount', async () => {
-    const mock = fakeApi(); vi.mocked(mock.api.snapshot).mockRejectedValueOnce({ code: 'OFFLINE', message: 'Reconnect to the host.' }); const user = userEvent.setup(); const view = render(<BoardView api={mock.api} renderConversation={id => <span>{id}</span>} />); expect(await screen.findByText('Reconnect to the host.')).toBeTruthy(); await user.click(screen.getByRole('button', { name: 'Retry loading board' })); await loaded(); expect(mock.listeners.size).toBe(1); view.unmount(); expect(mock.listeners.size).toBe(0);
+    const mock = fakeApi(); vi.mocked(mock.api.snapshot).mockRejectedValueOnce({ code: 'OFFLINE', message: 'Reconnect to the host.' }); const user = userEvent.setup(); const view = render(<BoardView api={mock.api} renderConversation={id => <span>{id}</span>} />); expect(await screen.findByText('Reconnect to the host.')).toBeTruthy(); await user.click(screen.getByRole('button', { name: 'Retry loading board' })); await loaded(); expect(mock.listeners.size).toBeGreaterThan(0); view.unmount(); expect(mock.listeners.size).toBe(0);
   });
 
   it('does not replace a newer subscribed snapshot with a late initial snapshot', async () => {

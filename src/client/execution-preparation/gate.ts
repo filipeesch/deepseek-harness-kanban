@@ -1,49 +1,38 @@
-import type { ModelCatalog, ModelSelection, Project, Task } from '../../shared/types.js';
-import { modelIsAvailable } from '../../domain/model-preference.js';
-import { planFirstExecution } from '../../domain/first-execution.js';
+import type { Project, Task } from '../../shared/types.js';
+import { planFirstExecution, worktreeDecision } from '../../domain/first-execution.js';
+import type { PreparationOutcome } from './contract.js';
 
-/** The worktree part of a preparation: ask, create the derived default, blocked by a binding, or nothing. */
-export type PreparationWorktree = 'ask' | 'create-default' | 'blocked' | 'none';
+/** The worktree part of a preparation: ask, create the derived default, or report a blocked binding. */
+export type PreparationWorktree = 'ask' | 'create-default' | 'blocked';
 
-/** What the board has already settled about the model its conversations start on. */
-export interface PreparationModel {
-  /** The model the board names, when it names one. */
-  readonly boardModel: ModelSelection | undefined;
-  /** The host catalog the route was checked against; null when it could not be read. */
-  readonly catalog: ModelCatalog | null;
-}
-
-/**
- * The execution preparation a task's first execution needs. The dialog is only
- * presented when at least one part applies, so the caller keeps the current
- * move and run behavior for every other task.
- */
+/** The preparation a task's first execution needs, or null when the move or run already applies. */
 export interface ExecutionPreparationPlan {
   readonly worktree: PreparationWorktree;
-  /** Whether DSH's native model selector is composed for this host generation. */
-  readonly model: boolean;
 }
 
 /**
- * Decide whether the move or run action needs the first-execution preparation.
- * @param task - the task that is about to execute; it must have no conversation.
- * @param project - its project, which decides Git-backed worktree rules.
- * @param modelSeatAvailable - whether the native model selector slot is registered.
- * @param model - the model the board names for its conversations and the catalog it was
- *   checked against. A board that names a route the host offers has already settled that
- *   step, so the seat is not composed; a catalog that could not be read counts as
- *   unavailable, which keeps the step open rather than guessing.
- * @returns the preparation plan, or null when the current flow already applies.
+ * Decide whether a move or run needs the first-execution preparation. With the
+ * model step gone, the preparation applies only when a worktree decision applies:
+ * a task that already has a ready worktree, recorded a base-project choice, belongs
+ * to a folder project, or whose project never creates worktrees needs no dialog.
  */
 export function executionPreparationPlan(
   task: Pick<Task, 'sessionIds' | 'worktree' | 'worktreeDismissed'>,
   project: Project | undefined,
-  modelSeatAvailable: boolean,
-  model: PreparationModel,
 ): ExecutionPreparationPlan | null {
-  const needsSeat = modelSeatAvailable && !modelIsAvailable(model.catalog ?? undefined, model.boardModel);
-  const plan = planFirstExecution({ task, project, modelSeatAvailable: needsSeat, mode: 'interactive' });
-  if (plan === null) return null;
-  const worktree: PreparationWorktree = plan.worktree === 'ask' ? 'ask' : plan.worktree === 'blocked' ? 'blocked' : plan.worktree === 'create-default' ? 'create-default' : 'none';
-  return { worktree, model: plan.model };
+  const plan = planFirstExecution({ task, project, mode: 'interactive' });
+  if (plan === null || plan.worktree === 'none' || plan.worktree === 'base') return null;
+  return { worktree: plan.worktree };
+}
+
+/**
+ * The worktree outcome a task creation takes without asking. It uses the same rule
+ * as the automatic first execution: the project's default worktree when the policy
+ * does not forbid it, and no worktree otherwise.
+ */
+export function automaticPreparationOutcome(
+  task: Pick<Task, 'sessionIds' | 'worktree' | 'worktreeDismissed'>,
+  project: Project | undefined,
+): Exclude<PreparationOutcome, 'base'> {
+  return worktreeDecision(task, project) === 'create-default' ? 'create' : 'none';
 }

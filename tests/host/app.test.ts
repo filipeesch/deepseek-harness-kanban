@@ -238,15 +238,12 @@ describe('host command orchestration',()=>{
   expect(CommandSchema.parse(forcedRemove)).toEqual(forcedRemove);
   expect(()=>CommandSchema.parse({...forcedRemove,force:1})).toThrow();
  });
- it('accepts the first-execution and auto-mode creation wire commands',()=>{
-  const prepare={type:'task.prepareFirstExecution' as const,taskId:'task-1',columnId:'plan',expectedEnteredAt:42,expectedInstruction:'Plan exactly.'};
-  expect(CommandSchema.parse(prepare)).toEqual(prepare);
-  expect(CommandSchema.parse({...prepare,expectedInstruction:undefined})).toEqual({type:'task.prepareFirstExecution',taskId:'task-1',columnId:'plan',expectedEnteredAt:42});
-  expect(()=>CommandSchema.parse({type:'task.prepareFirstExecution',taskId:'task-1',columnId:'plan'})).toThrow();
-  expect(()=>CommandSchema.parse({...prepare,columnId:undefined})).toThrow();
-  expect(()=>CommandSchema.parse({...prepare,expectedEnteredAt:Infinity})).toThrow();
-  expect(()=>CommandSchema.parse({...prepare,expectedEnteredAt:'42'})).toThrow();
-  expect(()=>CommandSchema.parse({...prepare,extra:true})).toThrow();
+ it('accepts the background-creation and auto-mode wire commands',()=>{
+  const backgroundCreate={type:'worktree.create' as const,taskId:'task-1',mode:'new' as const,background:true};
+  expect(CommandSchema.parse(backgroundCreate)).toEqual(backgroundCreate);
+  expect(CommandSchema.parse({type:'worktree.create',taskId:'task-1',mode:'new'})).toEqual({type:'worktree.create',taskId:'task-1',mode:'new'});
+  expect(()=>CommandSchema.parse({...backgroundCreate,background:'yes'})).toThrow();
+  expect(()=>CommandSchema.parse({...backgroundCreate,extra:true})).toThrow();
   const create={type:'task.create' as const,projectId:'project-1',title:'Task',description:'',autoMode:true};
   expect(CommandSchema.parse(create)).toEqual(create);
   expect(CommandSchema.parse({type:'task.create',projectId:'project-1',title:'Task',description:''})).toEqual({type:'task.create',projectId:'project-1',title:'Task',description:''});

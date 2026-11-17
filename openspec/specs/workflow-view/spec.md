@@ -279,7 +279,7 @@ A running transit SHALL continue without restarting when the presented view re-r
 
 ### Requirement: Card drag between stages in the diagram
 
-A card SHALL be draggable from one stage region to another, and the resulting stage change SHALL follow the same rules as a card move on the board: a permitted transition moves the card, a restricted transition asks for explicit confirmation before moving, a first execution presents the first-execution preparation, and a move into a stage with an entry instruction arms the same timed instruction. A drop inside the destination stage SHALL place the card at the requested position in that stage. A same-stage drop SHALL reorder the card inside its stage. Canceling a confirmation or a preparation SHALL leave the card in its stage. The diagram SHALL present the card in the destination before the move is confirmed by the host, and SHALL return it to its source when the move fails.
+A card SHALL be draggable from one stage region to another, and the resulting stage change SHALL follow the same rules as a card move on the board: a permitted transition moves the card, a restricted transition asks for explicit confirmation before moving, a first execution presents its worktree question before the move and continues the remaining preparation in the background after it, and a move into a stage with an entry instruction arms the same timed instruction. A drop inside the destination stage SHALL place the card at the requested position in that stage. A same-stage drop SHALL reorder the card inside its stage. Canceling a confirmation or the worktree question SHALL leave the card in its stage. The diagram SHALL present the card in the destination before the move is confirmed by the host, and SHALL return it to its source when the move fails.
 
 #### Scenario: Drop a card on a permitted stage
 
@@ -296,8 +296,9 @@ A card SHALL be draggable from one stage region to another, and the resulting st
 #### Scenario: Drop a card that has no conversation
 
 - **WHEN** the user drops a card on a stage and the task has no conversation
-- **THEN** the first-execution preparation is presented before the move is dispatched
-- **AND** canceling the preparation leaves the card in its stage
+- **THEN** the worktree question is presented before the move is dispatched
+- **AND** canceling it leaves the card in its stage
+- **AND** answering it dispatches the move and continues the preparation in the background
 
 #### Scenario: Drop a card on an instructed stage
 

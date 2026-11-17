@@ -27,13 +27,14 @@ Opening a task card SHALL display a task drawer with a header and Conversations,
 
 The section navigation SHALL be presented in the header as icon-only tabs. Each tab SHALL keep the section name in its accessible name and SHALL expose that name as a tooltip; the Conversations tab SHALL extend both with the activity facts defined by Drawer conversation activity indicator. The selected section SHALL be visibly distinguishable, and the tabs SHALL keep their keyboard navigation. The drawer SHALL keep the task title, the section navigation, and the conversation controls visible at every supported drawer width; when the available width cannot present them in one row, the header SHALL wrap into two rows instead of hiding a control.
 
-The workflow stage control SHALL be presented in the drawer header and SHALL list every workflow stage in workflow order, including the current stage. Stages that the active board's workflow does not permit from the current stage SHALL remain selectable and SHALL be presented with lower visual emphasis than permitted stages, with the restriction also available to assistive technology. Selecting a permitted stage SHALL move the task immediately; when the task has no conversation and the destination has an entry instruction, the execution preparation defined by Execution preparation before a task's first execution in `kanban-board` SHALL be presented first, and the task SHALL NOT move until that preparation completes. Selecting a restricted stage SHALL require the explicit confirmation defined by the Explicit confirmation for a restricted transition requirement; when the confirmed destination would start the task's first execution, that preparation SHALL follow the confirmation and precede the move. An instructed destination SHALL arm the timed stage instruction defined by the Timed stage instruction after a move requirement in `kanban-board`; the drawer SHALL present that countdown notice above its section panel and SHALL expose the same cancel action. The drawer SHALL NOT insert text into the composer for a stage change.
+The workflow stage control SHALL be presented in the drawer header and SHALL list every workflow stage in workflow order, including the current stage. Stages that the active board's workflow does not permit from the current stage SHALL remain selectable and SHALL be presented with lower visual emphasis than permitted stages, with the restriction also available to assistive technology. Selecting a permitted stage SHALL move the task immediately; when the task has no conversation and the destination has an entry instruction, the worktree question defined by Execution preparation before a task's first execution in `kanban-board` SHALL be presented first, the task SHALL move once that question is answered, and the remaining preparation SHALL continue in the background without holding the task. Selecting a restricted stage SHALL require the explicit confirmation defined by the Explicit confirmation for a restricted transition requirement; when the confirmed destination would start the task's first execution, that question SHALL follow the confirmation and precede the move. An instructed destination SHALL arm the timed stage instruction defined by the Timed stage instruction after a move requirement in `kanban-board`; the drawer SHALL present that countdown notice above its section panel and SHALL expose the same cancel action. The drawer SHALL NOT insert text into the composer for a stage change.
 
 The header SHALL also present the task's auto-mode control defined by Auto mode on a task card in `kanban-board`, with the same pressed state, effect, indication, and enabled or disabled behavior as the card control, including the held state while the task has pending user work. The auto-mode control's accessible name and tooltip SHALL carry the automatic-advance state, including the destination stage while an advance is admitted, the failure when an admitted advance failed, and the pause reason when auto mode is paused. The drawer SHALL NOT add a separate automatic-advance notice above its section panel, SHALL NOT add a separate entry for the held state, and SHALL NOT make reading or acknowledging a conversation clear a pause. An admitted or failed advance SHALL remain presented through the task's transition status as before.
 
 The drawer SHALL additionally expose the current scripted execution state and its applicable Stop and Play controls as defined by `scripted-steps`, independently of Auto mode and of whether a native conversation exists. These controls and their action-local progress SHALL remain available without selecting a conversation or changing the current section. Their execution ownership SHALL follow the durable activation or control state of the current entry rather than a later saved stage mode; an owned active run SHALL keep Stop after a saved agent/manual mode change. Play SHALL not substitute an agent instruction when the latest configuration is no longer valid scripted configuration and SHALL instead explain the configuration or new-entry action required. A script failure or trust request SHALL NOT be presented as a failed or unread conversation turn. A stage change through the header SHALL revoke the prior scripted run when the move is accepted and SHALL admit a scripted destination's entry subject to its own authorization, without an agent countdown, model preparation, or composer mutation. The section list, ordinary agent countdown, conversation controls, and automatic-advance status behavior SHALL otherwise remain unchanged.
 
 #### Scenario: Open a task from the board
+
 - **WHEN** a user opens a card on the Kanban board
 - **THEN** the drawer header shows the task title, its project as a chip beside the title, and the section navigation
 - **AND** the workflow stage control is part of that header
@@ -42,12 +43,14 @@ The drawer SHALL additionally expose the current scripted execution state and it
 - **AND** the project is not repeated on a second header line
 
 #### Scenario: Keep the header compact at a narrow width
+
 - **WHEN** the drawer is narrow enough that the title, section navigation, and conversation controls cannot share one row
 - **THEN** the header wraps into two rows
 - **AND** no header control or section is hidden
 - **AND** the title truncates with an ellipsis instead of wrapping
 
 #### Scenario: Present icon-only section navigation
+
 - **WHEN** the user inspects the drawer header
 - **THEN** each section is an icon-only tab
 - **AND** each tab keeps its section name in its accessible name and tooltip
@@ -56,36 +59,41 @@ The drawer SHALL additionally expose the current scripted execution state and it
 - **AND** arrow-key navigation between the tabs keeps working
 
 #### Scenario: List the complete workflow
+
 - **WHEN** the user opens the drawer for a task
 - **THEN** the stage control lists every workflow stage in workflow order
 - **AND** the current stage is included
 
 #### Scenario: Present restricted stages with lower emphasis
+
 - **WHEN** the active board's workflow does not permit a transition from the current stage to another listed stage
 - **THEN** that stage is presented with lower visual emphasis than permitted stages
 - **AND** it remains selectable
 - **AND** its restriction is available to assistive technology without adding visible explanatory text
 
 #### Scenario: Change stage from the drawer
+
 - **WHEN** the user selects a permitted destination from the drawer's stage control
 - **THEN** the same workflow transition rules apply as for a board drop
-- **AND** the task moves immediately after any required first-execution preparation
+- **AND** the task moves immediately after any required worktree question is answered
 - **AND** the drawer stays in its current section
-- **AND** an instructed destination presents the countdown notice with the stage and remaining time
+- **AND** an instructed destination presents the countdown notice with the stage and remaining time once the task's first conversation exists
 - **AND** the composer is not changed
 
 #### Scenario: Prepare the first execution from the drawer
+
 - **WHEN** the user selects a permitted instructed destination for a task that has no conversation
-- **THEN** the execution preparation is presented before the task moves
-- **AND** the task remains in its current stage until the preparation completes
-- **AND** canceling the preparation leaves the task in its current stage and the drawer in its current section
+- **THEN** the worktree question is presented before the task moves
+- **AND** the task remains in its current stage while that question is open
+- **AND** canceling leaves the task in its current stage and the drawer in its current section
+- **AND** answering it moves the task and continues the preparation in the background
 
 #### Scenario: Change to a restricted stage from the drawer
 - **WHEN** the user selects a destination that the workflow does not permit from the current stage
 - **THEN** the same explicit confirmation applies as for a restricted board drop
 - **AND** the task remains in its current stage until the user confirms
 - **AND** canceling leaves the task in its current stage and the stage control at its current value
-- **AND** after confirmation, any required first-execution preparation is presented before the move
+- **AND** after confirmation, the worktree question is presented before the move when the destination would start the task's first execution
 - **AND** after confirmation, an instructed destination presents the countdown notice instead of writing to the composer
 
 #### Scenario: Cancel a drawer countdown
@@ -192,7 +200,7 @@ A directly owned active scripted script SHALL be included among the task's non-a
 
 ### Requirement: Next-stage action in the drawer header
 
-The drawer header SHALL offer an action that moves the task to the destination that resolves for its current stage: the task's recorded transition while that transition resolves, otherwise the stage that follows the current stage in workflow order. The action SHALL follow the same move rules as the drawer's stage control: a restricted transition SHALL require the same explicit confirmation, a first execution SHALL present the same execution preparation before the move, and an instructed destination SHALL arm the same timed stage instruction and present the same countdown notice with its cancel action. A recorded transition that no longer resolves SHALL make the action refuse without moving the task, presenting the same explanation used for the `transition-stale` pause. The action SHALL be unavailable while the task has an unresolved operation or confirmed transition or while a move is in flight. The action SHALL NOT be presented when no destination resolves. Its accessible name and tooltip SHALL name the destination stage and SHALL identify a destination that requires confirmation.
+The drawer header SHALL offer an action that moves the task to the destination that resolves for its current stage: the task's recorded transition while that transition resolves, otherwise the stage that follows the current stage in workflow order. The action SHALL follow the same move rules as the drawer's stage control: a restricted transition SHALL require the same explicit confirmation, a first execution SHALL present the same worktree question before the move, and an instructed destination SHALL arm the same timed stage instruction and present the same countdown notice with its cancel action. A recorded transition that no longer resolves SHALL make the action refuse without moving the task, presenting the same explanation used for the `transition-stale` pause. The action SHALL be unavailable while the task has an unresolved operation or confirmed transition or while a move is in flight. The action SHALL NOT be presented when no destination resolves. Its accessible name and tooltip SHALL name the destination stage and SHALL identify a destination that requires confirmation.
 
 #### Scenario: Advance to the next stage
 
@@ -229,8 +237,9 @@ The drawer header SHALL offer an action that moves the task to the destination t
 #### Scenario: Prepare a first execution before advancing
 
 - **WHEN** the task has no conversation and the destination stage has an entry instruction
-- **THEN** the execution preparation is presented before the task moves
-- **AND** the task remains in its current stage until the preparation completes or is canceled
+- **THEN** the worktree question is presented before the task moves
+- **AND** the task remains in its current stage while that question is open
+- **AND** answering it moves the task and continues the preparation in the background
 
 #### Scenario: Hide the action in the last stage
 
@@ -310,32 +319,9 @@ The task drawer SHALL be resizable within defined minimum and maximum bounds and
 
 ### Requirement: Nested native conversation tabs
 
-A task SHALL begin with no native DSH conversation in its Conversations section. The section SHALL
-provide an explicit start action, presented as the agent-preset cards, that creates the first
-distinct native DSH conversation as a tab within the same task, and a plus action that opens the same
-preset choice to create another distinct native DSH conversation. The first conversation SHALL be
-created only by that explicit choice, by the execution preparation that precedes a task's first
-execution, including the automatic first-execution preparation on task creation, by a stage
-instruction that needs a conversation and finds none open, including a stage instruction dispatched
-from a card, a confirmed transition, or an automatic advance, or by a cross-card message delivery
-that needs a conversation and finds none open. When an execution preparation creates the first
-conversation, it SHALL do so after the worktree is ready and before the move or run action is
-applied, and the conversation SHALL use that directory. For a Git-backed task without a worktree, the
-explicit start action SHALL remain unavailable until the worktree choice is resolved as defined by
-`worktree-management`. The first conversation SHALL use the task's current effective directory at
-creation time. A conversation created from a card SHALL receive the card's preset; conversations
-created by the execution preparation, including the automatic creation preparation, by a stage
-instruction, or by a cross-card message delivery use the board's default model when the board names
-one and the deployment default otherwise, and SHALL use the board's default agent preset when the
-board names one and the host default preset otherwise.
+A task SHALL begin with no native DSH conversation in its Conversations section. The section SHALL provide an explicit start action, presented as the agent-preset cards, that creates the first distinct native DSH conversation as a tab within the same task, and a plus action that opens the same preset choice to create another distinct native DSH conversation. The first conversation SHALL be created only by that explicit choice, by the execution preparation that follows a first-execution move or run action and its worktree question, including the automatic first-execution preparation on task creation, by a stage instruction that needs a conversation and finds none open, including a stage instruction dispatched from a card, a confirmed transition, or an automatic advance, or by a cross-card message delivery that needs a conversation and finds none open. When an execution preparation creates the first conversation, it SHALL do so after the worktree is ready and after the move or run action is applied, and the conversation SHALL use that directory. For a Git-backed task without a worktree, the explicit start action SHALL remain unavailable until the worktree choice is resolved as defined by `worktree-management`. The first conversation SHALL use the task's current effective directory at creation time. A conversation created from a card SHALL receive the card's preset; conversations created by the execution preparation, including the automatic creation preparation, by a stage instruction, or by a cross-card message delivery use the board's default model when the board names one and the deployment default otherwise, and SHALL use the board's default agent preset when the board names one and the host default preset otherwise.
 
-A scripted entry SHALL NOT create a conversation, select a preset or model, or start a model
-turn solely to execute code. A task whose first execution is scripted SHALL remain able to have
-zero native conversations. When that execution later selects an agent destination whose instruction
-needs a conversation, the host SHALL create or resolve only the conversation required by that
-instruction using the normal directory and board-model and board-preset rules; the scripted
-handoff SHALL accompany the instruction. A script or manual destination SHALL receive or retain its
-handoff without creating a conversation.
+A scripted entry SHALL NOT create a conversation, select a preset or model, or start a model turn solely to execute code. A task whose first execution is scripted SHALL remain able to have zero native conversations. When that execution later selects an agent destination whose instruction needs a conversation, the host SHALL create or resolve only the conversation required by that instruction using the normal directory and board-model and board-preset rules; the scripted handoff SHALL accompany the instruction. A script or manual destination SHALL receive or retain its handoff without creating a conversation.
 
 #### Scenario: Open a newly created task
 
@@ -346,7 +332,7 @@ handoff without creating a conversation.
 #### Scenario: Open a created task that started
 
 - **WHEN** a user opens a newly created task whose creation started the agent first-execution preparation
-- **THEN** the first native DSH conversation created by the preparation is present as a tab
+- **THEN** the first native DSH conversation created by the preparation is present as a tab once its worktree is ready
 - **AND** it uses the task's effective directory resolved by the preparation
 
 #### Scenario: Start the first conversation
@@ -364,9 +350,9 @@ handoff without creating a conversation.
 
 #### Scenario: Prepare the first conversation
 
-- **WHEN** an execution preparation runs for a task that has no conversation
-- **THEN** the first native DSH conversation is created after the worktree choice is resolved
-- **AND** it is created before the move or run action is applied
+- **WHEN** an execution preparation runs for a task that has no conversation and its worktree question is answered
+- **THEN** the first native DSH conversation is created after the worktree is ready
+- **AND** it is created after the move or run action is applied
 - **AND** it uses the task's current effective directory
 
 #### Scenario: Prepare the first conversation on task creation
@@ -420,73 +406,6 @@ handoff without creating a conversation.
 - **THEN** one conversation is created in the task's effective directory for that agent instruction
 - **AND** the instruction includes the identified scripted handoff
 - **AND** no conversation was required for the source script
-
-### Requirement: Model selection for the first conversation
-
-When the execution preparation defined by Execution preparation before a task's first execution in
-`kanban-board` creates a task's first conversation and DSH's native model selector is available
-and the board's default model rules in `kanban-board` make the model step apply, the preparation
-SHALL present that native model selector for the created conversation before the first execution
-is admitted. The selector SHALL show the deployment default selection while the task's board names
-no default model and the conversation has no recorded selection, and presenting it SHALL NOT submit
-a selection. When the user chooses a different model or reasoning effort, the selection SHALL apply
-to that conversation and SHALL follow DSH's native behavior for the deployment default. When DSH's
-native model selector is not available, the preparation SHALL omit the model step and the
-conversation SHALL use the deployment default unless the board names an available default model.
-The automatic first-execution preparation on task creation SHALL NOT present the native model
-selector and SHALL NOT submit a selection; its first conversation SHALL use the board's default
-model when the board names one and the deployment default otherwise. The cross-card message
-delivery that creates a task's first conversation SHALL NOT present the native model selector and
-SHALL NOT submit a selection; its first conversation SHALL use the board's default model when the
-board names one and the deployment default otherwise. The selection SHALL NOT be persisted on the
-task, SHALL NOT be presented for later conversations, and SHALL NOT be presented when the task
-already has a conversation.
-
-#### Scenario: Show the default without submitting
-
-- **WHEN** the preparation presents the native model selector for a conversation with no recorded selection on a board that names no default model
-- **THEN** the selector shows the deployment default model
-- **AND** no model selection is submitted to the host
-- **AND** the conversation will use the deployment default
-
-#### Scenario: Choose another model
-
-- **WHEN** the user chooses a different model or reasoning effort in the native selector
-- **THEN** that selection applies to the created conversation
-- **AND** the deployment default follows DSH's native behavior
-
-#### Scenario: Omit the model step when the selector is unavailable
-
-- **WHEN** DSH's native model selector is not composed in the running host
-- **THEN** the preparation omits the model step
-- **AND** the first conversation uses the deployment default, or the board's default model when the board names one that is available
-- **AND** the rest of the preparation and the execution proceed
-
-#### Scenario: No model step for the creation preparation
-
-- **WHEN** the automatic first execution on task creation creates the first conversation
-- **THEN** the native model selector is not presented
-- **AND** no model selection is submitted
-- **AND** the conversation uses the board's default model when the board names one and the deployment default otherwise
-
-#### Scenario: No model step for a cross-card message
-
-- **WHEN** a cross-card message delivery creates the target task's first conversation
-- **THEN** the native model selector is not presented
-- **AND** no model selection is submitted
-- **AND** the conversation uses the board's default model when the board names one and the deployment default otherwise
-
-#### Scenario: Model step without a worktree question
-
-- **WHEN** the task already has a ready worktree, is a folder project, or has a recorded base-project choice, the task has no conversation, and the board names no available default model
-- **THEN** the preparation presents the model step only
-- **AND** the first conversation is created in the task's current effective directory
-
-#### Scenario: Do not offer a model for later conversations
-
-- **WHEN** a task already has a conversation
-- **THEN** no preparation and no model step is presented
-- **AND** a later conversation of that task starts on the board's default model when the board names one and on the deployment default otherwise
 
 ### Requirement: Continuous sessions retain separate histories
 Each conversation tab SHALL represent a continuous native DSH session with its own retained identity and history. Switching between task conversation tabs or reopening the task drawer SHALL return to those existing sessions instead of replacing them with newly created sessions. Within a mounted task drawer, returning to a conversation that was already visited SHALL reuse its already-open native Session without opening it or downloading its history again.

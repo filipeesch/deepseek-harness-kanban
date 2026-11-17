@@ -48,7 +48,7 @@ function setup(initial = restrictedState()) {
 function setupWithPreparation(initial = restrictedState()) {
   const run = vi.fn(async (_command: Command): Promise<KanbanSnapshot> => fixture());
   const onImmediateError = vi.fn();
-  const beforeApply = vi.fn(async () => true);
+  const beforeApply = vi.fn(async () => ({ proceed: true, worktree: 'none' as const }));
   const hook = renderHook(({ state }: { state: BoardState }) => useMoveRequest({ state, run, onImmediateError, beforeApply }), { initialProps: { state: initial } });
   return { ...hook, run, onImmediateError, beforeApply };
 }
@@ -78,7 +78,7 @@ describe('useMoveRequest', () => {
 
   it('cancels an allowed move when the preparation is cancelled', async () => {
     const { result, run, beforeApply } = setupWithPreparation();
-    beforeApply.mockResolvedValueOnce(false);
+    beforeApply.mockResolvedValueOnce({ proceed: false, worktree: 'none' as const });
     const state = restrictedState();
     let moved = true;
     await act(async () => { moved = await result.current.move(state.tasks[0]!, column(state, 'doing')); });
@@ -94,7 +94,7 @@ describe('useMoveRequest', () => {
     let pending!: Promise<boolean>;
     act(() => { pending = result.current.move(state.tasks[0]!, column(state, 'blocked')); });
     await waitFor(() => expect(result.current.confirmation).not.toBeNull());
-    beforeApply.mockResolvedValueOnce(false);
+    beforeApply.mockResolvedValueOnce({ proceed: false, worktree: 'none' as const });
     let moved = true;
     await act(async () => {
       const confirmed = result.current.confirm();
