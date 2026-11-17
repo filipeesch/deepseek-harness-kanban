@@ -45,6 +45,7 @@ import { KanbanError } from './shared/errors.js';
 import { registerTaskContextInjection } from './host/task-context.js';
 import { registerScriptedHandoffInjection } from './host/scripted-handoff.js';
 import { createSessionHistory } from './host/session-history.js';
+import { createHostSessionRepair } from './host/session-repair-host.js';
 import { openScheduleRunStorage } from './host/schedule-run-storage.js';
 import { ScheduleRunRegistry } from './host/schedule-runs.js';
 import { ScheduleArchiveWatcher } from './host/schedule-archive.js';
@@ -232,6 +233,13 @@ export async function apply(ctx:Context):Promise<void>{
  // policy port. One deferred hop keeps the dependency one-directional.
  let applyBoardToolPolicy:(sessionId:string)=>Promise<void>=async()=>undefined;
  const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,models:sessionModels,presets:sessionPresets,tools:{apply:sessionId=>applyBoardToolPolicy(sessionId)},mcpServers:()=>{const manager=ctx.get('mcpManager') as {list?:()=>ReadonlyArray<{name:string}>}|undefined;try{return manager?.list?.().map(server=>server.name)??[];}catch{return [];}},report,revisions,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
+ // The repair is composed here so the app keeps no file-system or format dependency:
+ // it delegates to a pipeline whose safety rules are its own.
+ app.attachSessionRepair(createHostSessionRepair({
+  live:id=>native.sessions.live?.(id)??false,
+  location:id=>native.sessions.locate?.(id)??Promise.resolve(undefined),
+  observe:async id=>{await app.conversationFacts(id);},
+ }));
  // Two independent policies: the board owns the MCP namespace, and the preset ships
  // its own product-tool boundary. Neither names a tool of the other's namespace, so
  // their deny masks compose by union instead of intersecting into an empty surface.

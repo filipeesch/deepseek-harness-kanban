@@ -44,6 +44,8 @@ function fixture() {
       mcpServers: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['atlassian', 'trino'] } }),
       worktreeDefault: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { branchName: 'task', path: '' } } }),
       detectProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { kind: 'git', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' } } }),
+      sessionInspect: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { observation: null } } }),
+      sessionRepair: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { backupPath: '/backups/s', renamed: 1 } } }),
       localDrive: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { action: 'roots', discovery: { state: 'empty', locations: [] } } } }),
       questionsFollow: vi.fn(() => { throw new Error('Question feed is not used in this test'); }) as unknown as BridgeRemote['kanban']['questionsFollow'],
       dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),

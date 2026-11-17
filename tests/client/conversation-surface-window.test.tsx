@@ -61,11 +61,12 @@ describe('TaskConversationWindow', () => {
     expect(screen.getByRole('alert').textContent).not.toContain('opening');
   });
 
-  it('reports an open failure instead of mounting the window', () => {
+  it('mounts the native window on a failed open instead of preempting it with a plugin message', () => {
     const { factory } = seat({ session: sessionState({ openState: 'error', openError: { message: 'history unavailable' } }) });
-    expect(factory).not.toHaveBeenCalled();
-    expect(screen.getByRole('alert').textContent).toContain('history unavailable');
-    expect(screen.getByRole('alert').textContent).toContain('Close and reopen this tab');
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('window')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(document.body.textContent).not.toContain('Close and reopen');
   });
 
   it('keeps its previous markup when the drawer has no panel port', () => {

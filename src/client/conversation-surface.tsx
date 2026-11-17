@@ -32,6 +32,10 @@ export interface ConversationWindowSession {
 /** Props for the public conversation.window occurrence embedded in a task drawer. */
 export interface TaskConversationWindowProps {
   sessionId: string;
+  /**
+   * The slot's standard Session source. This surface no longer gates on it: a failed
+   * open belongs to the host window, and the diagnosis seat states it.
+   */
   useSession: (selector: (value: ConversationWindowSession) => unknown) => unknown;
   renderFactorySlot: RenderFactorySlot;
   viewSession(sessionId: string): (() => void) | undefined;
@@ -70,13 +74,13 @@ export function useConversationSurfaceMode(): ConversationSurfaceMode {
 
 /**
  * Render the host's public conversation window for one retained task Session.
- * The plugin keeps only the gates the window does not own: read tracking and
- * the open-failure report.
+ * The plugin keeps only the gates the window does not own: read tracking. A failed
+ * open is the host's own presentation plus the diagnosis the conversation seat
+ * contributes, so this surface never preempts the window with a message of its own.
  * @param props - retained Session identity, standard Session source, and renderer.
- * @returns the window occurrence, or the open-failure notice.
+ * @returns the window occurrence.
  */
-export function TaskConversationWindow({ sessionId, useSession, renderFactorySlot, viewSession, sidebar }: TaskConversationWindowProps) {
-  const session = useSession(value => value) as ConversationWindowSession | undefined;
+export function TaskConversationWindow({ sessionId, renderFactorySlot, viewSession, sidebar }: TaskConversationWindowProps) {
   const mode = useConversationSurfaceMode();
   useEffect(() => {
     // A peeked descendant belongs to its own conversation lineage; reading it must
@@ -90,11 +94,6 @@ export function TaskConversationWindow({ sessionId, useSession, renderFactorySlo
     sync(); document.addEventListener('visibilitychange', sync);
     return () => { document.removeEventListener('visibilitychange', sync); release?.(); };
   }, [sessionId, viewSession, mode]);
-  if (session?.openState === 'error') {
-    return <div className="kanban-native-state" role="alert">
-      Native conversation could not open: {session.openError?.message ?? 'Unknown error'}. Close and reopen this tab to retry.
-    </div>;
-  }
   const renderWindow = renderFactorySlot as unknown as ConversationWindowRenderer;
   const window = <div className="kb-conversation-window">
     <div data-kanban-conversation-window="">

@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import type { Attention, Column, Task, Workflow } from '../shared/types.js';
+import type { Attention, Column, SessionObservation, Task, Workflow } from '../shared/types.js';
 import { TaskCard } from './task-card.js';
 import { autoModeView } from './auto-mode.js';
 import { advanceDestination } from '../domain/transitions.js';
@@ -29,6 +29,8 @@ export interface BoardCardProps {
   arrivalToken?: number;
   /** Clears the arrival pulse once the card presented that exact token. */
   onArrivalEnd?: (taskId: string, token: number) => void;
+  /** The resolved Session observation of the card's conversations, when one failed. */
+  sessionObservation?: SessionObservation;
 }
 
 /**
@@ -40,7 +42,7 @@ export interface BoardCardProps {
 export const BoardCard = memo(function BoardCard({
   task, column, projectName, attention, workflow, selectionMode, selected, autoRun, autoModePending,
   onToggleAutoMode, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick, onMoveTask, advancePending = false, onRun,
-  arrivalToken, onArrivalEnd,
+  arrivalToken, onArrivalEnd, sessionObservation,
 }: BoardCardProps) {
   const scriptOwned = ownedScript(task, useScriptSummary(task.id)) !== undefined;
   return <TaskCard
@@ -64,5 +66,6 @@ export const BoardCard = memo(function BoardCard({
     {...(onRun === undefined ? {} : { onRun })}
     {...(arrivalToken === undefined ? {} : { arrivalToken })}
     {...(onArrivalEnd === undefined ? {} : { onArrivalEnd })}
+    {...(sessionObservation === undefined ? {} : { sessionObservation })}
   />;
 });
