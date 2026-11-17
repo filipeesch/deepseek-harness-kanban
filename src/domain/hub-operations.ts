@@ -1,4 +1,5 @@
-import { captureScriptedTargets, establishStageEntry, ensureLocalStageIdentity, reconcileLocalStageIdentities } from './scripted-state.js';
+import { captureScriptedTargets, establishStageEntry, ensureLocalStageIdentity, ownsScriptedEntry, reconcileLocalStageIdentities } from './scripted-state.js';
+import { openSessionIds } from '../shared/conversations.js';
 import { declaredParameterNames, validateParameterValues } from './scripted-parameters.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 import type { AutoModePause, AutoModeState, Board, BoardSettings, HubRelation, HubRelationType, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ModelSelection, StagePatch, Workflow } from '../shared/types.js';
@@ -479,12 +480,12 @@ export function recordTransition(hub: HubState, taskId: string, columnId: string
   const board = boardForTask(hub, task);
   const source = board.workflow.columns.find(column => column.id === task.columnId);
   invariant(source, 'INVALID_TARGET', 'The task stage does not exist.');
-  invariant(source.allowedTransitions !== undefined, 'TRANSITIONS_NOT_CONFIGURED', 'The current stage does not configure transitions.');
   if (columnId === undefined) {
     invariant(parameters === undefined, 'INVALID_PARAMETERS', 'Parameters require a destination stage. Omit parameters to clear the recorded transition.');
     if (task.recordedTransition === undefined) return task;
     delete task.recordedTransition;
   } else {
+    invariant(source.allowedTransitions !== undefined, 'TRANSITIONS_NOT_CONFIGURED', 'The current stage does not configure transitions.');
     assertId(columnId, 'Column ID');
     invariant(columnId !== task.columnId, 'INVALID_TARGET', 'A recorded transition must target another stage.');
     invariant(transitionTargets(board.workflow, task.columnId).some(target => target.column.id === columnId),
@@ -498,7 +499,7 @@ export function recordTransition(hub: HubState, taskId: string, columnId: string
       invariant(parameters === undefined, 'INVALID_PARAMETERS', 'The destination stage declares no parameters. Omit parameters.');
     } else {
       const checked = validateParameterValues(declared, parameters);
-      invariant(checked.ok, 'INVALID_PARAMETERS', checked.ok ? '' : checked.message);
+      invariant(checked.ok, 'INVALID_PARAMETERS', checked.ok ? '' : checked.message + ' Accepted names: ' + declared.join(', ') + '.');
       values = checked.values;
     }
     const fromColumnId = task.columnId;
@@ -509,6 +510,63 @@ export function recordTransition(hub: HubState, taskId: string, columnId: string
   task.updatedAt = timestamp(deps);
   hub.updatedAt = task.updatedAt;
   return task;
+}
+
+/** The host must recheck the live boundary synchronously inside the serialized write. */
+export interface ExceptionalTurnWrite {
+  sessionId: string; turn: number; entryId?: string; fromColumnId: string; isCurrent(): boolean;
+}
+
+/** Store exceptional intent only for the verified entry and live originating turn. */
+export function recordExceptionalTransition(hub: HubState, taskId: string, columnId: string, reason: unknown, parameters: unknown, owner: ExceptionalTurnWrite, deps: OperationDeps): HubTask {
+  const task = requireTask(hub, taskId);
+  const board = boardForTask(hub, task);
+  const source = board.workflow.columns.find(column => column.id === task.columnId);
+  invariant(source && source.scripted === undefined && !ownsScriptedEntry(task), 'INVALID_TARGET', 'A scripted entry controls its own exits.');
+  const sameEntry = owner.entryId === undefined
+    ? task.stageEntry === undefined && task.scripted === undefined && task.scriptedHandoff === undefined
+    : task.stageEntry?.id === owner.entryId && task.stageEntry.columnId === owner.fromColumnId;
+  invariant(sameEntry && task.columnId === owner.fromColumnId,
+    'TRANSITION_STALE', 'The task entry changed or cannot be verified before the exceptional declaration was recorded.');
+  invariant(openSessionIds(task).includes(owner.sessionId) && Number.isSafeInteger(owner.turn) && owner.turn > 0 && owner.isCurrent(),
+    'EXCEPTION_TURN_UNAVAILABLE', 'The originating open turn can no longer be verified.');
+  invariant(!task.operation && !task.pendingTransition && !task.autoMode?.hold, 'TASK_BUSY', 'The task is held or has work in flight.');
+  assertId(columnId, 'Column ID');
+  const destination = board.workflow.columns.find(column => column.id === columnId);
+  invariant(destination && columnId !== task.columnId, 'INVALID_TARGET', 'An exceptional destination must be another existing stage.');
+  invariant(!transitionTargets(board.workflow, task.columnId).some(target => target.column.id === columnId), 'INVALID_TARGET', 'The destination is configured; declare it as a normal transition.');
+  const declared = declaredParameterNames(destination.scripted?.params);
+  let values: Record<string, string> | undefined;
+  if (declared.length === 0) invariant(parameters === undefined, 'INVALID_PARAMETERS', 'The destination stage declares no parameters. Omit parameters.');
+  else {
+    const checked = validateParameterValues(declared, parameters);
+    invariant(checked.ok, 'INVALID_PARAMETERS', checked.ok ? '' : checked.message + ' Accepted names: ' + declared.join(', ') + '.');
+    values = checked.values;
+  }
+  const normalizedReason = normalizeTransitionReason(reason);
+  const at = timestamp(deps);
+  const id = deps.id();
+  task.recordedTransition = {
+    fromColumnId: task.columnId, columnId, at, reason: normalizedReason,
+    // For an unambiguous legacy entry, the fresh declaration id is a sentinel.
+    // Any later real stage placement establishes a distinct stageEntry.
+    exception: { id, sessionId: owner.sessionId, turn: owner.turn, entryId: owner.entryId ?? id },
+    ...(values === undefined ? {} : { parameters: values }),
+  };
+  recordIntent(task, task.columnId, columnId, at);
+  task.updatedAt = at;
+  hub.updatedAt = at;
+  return task;
+}
+
+/** Expire one unadmitted declaration without clearing a concurrent replacement. */
+export function clearExceptionalTransition(hub: HubState, taskId: string, exceptionId: string, deps: OperationDeps): boolean {
+  const task = requireTask(hub, taskId);
+  if (task.recordedTransition?.exception?.id !== exceptionId) return false;
+  delete task.recordedTransition;
+  task.updatedAt = timestamp(deps);
+  hub.updatedAt = task.updatedAt;
+  return true;
 }
 
 export function editTask(hub: HubState, taskId: string, patch: TaskTextPatch, deps: OperationDeps): HubTask {

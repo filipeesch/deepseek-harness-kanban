@@ -84,6 +84,21 @@ describe('board change derivation', () => {
     for (const change of changes) expect(JSON.stringify(change)).not.toContain('undefined');
   });
 
+  it('derives and replays workflow, stage and newly created stage descriptions', () => {
+    const after = BEFORE.replace('name: Delivery', 'name: Delivery' + NL + 'description: Workflow details')
+      .replace('    label: Plan', '    label: Plan' + NL + '    description: Stage details')
+      .replace('groups:', '  - id: review' + NL + '    key: s3' + NL + '    label: Review' + NL + '    description: New stage details' + NL + 'groups:');
+    const changes = deriveChanges({ text: BEFORE }, { text: after });
+    expect(changes).toContainEqual({ kind: 'workflow.field-changed', field: 'description', value: 'Workflow details' });
+    expect(changes).toContainEqual({ kind: 'stage.field-changed', key: 's2', field: 'description', value: 'Stage details' });
+    expect(changes).toContainEqual({ kind: 'stage.created', stage: { id: 'review', key: 's3', name: 'Review', description: 'New stage details' } });
+    const result = changes.reduce((value, change) => materialize(value, change), BEFORE);
+    expect(parseWorkflow(result)).toEqual(parseWorkflow(after));
+    const removed = deriveChanges({ text: result }, { text: BEFORE });
+    expect(removed).toContainEqual({ kind: 'workflow.field-changed', field: 'description', value: null });
+    expect(removed).toContainEqual({ kind: 'stage.field-changed', key: 's2', field: 'description', value: null });
+  });
+
   it('derives one identifier event for a rename', () => {
     const after = BEFORE.replace('initial_column: backlog', 'initial_column: inbox').replace('  - id: backlog', '  - id: inbox').replace('columns: [backlog, plan]', 'columns: [inbox, plan]').replace('from: backlog', 'from: inbox');
     const changes = deriveChanges({ text: BEFORE }, { text: after });

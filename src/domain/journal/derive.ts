@@ -40,6 +40,7 @@ export interface DeriveOptions {
 
 function definition(stage: Workflow['columns'][number]): StageDefinition {
   const result: StageDefinition = { id: stage.id, key: stage.key!, name: stage.name };
+  if (stage.description !== undefined) result.description = stage.description;
   if (stage.scripted !== undefined) result.scripted = structuredClone(stage.scripted);
   if (stage.onEnterPrompt !== undefined) result.onEnterPrompt = stage.onEnterPrompt;
   if (stage.allowedTransitions !== undefined) result.allowedTransitions = stage.allowedTransitions.map(rule => cloneRule(rule));
@@ -111,6 +112,7 @@ export function deriveChanges(previous: BoardVersion | null, local: BoardVersion
   const beforeIdentity = identityMap(before);
   const afterIdentity = identityMap(after);
 
+  if ((before.description ?? null) !== (after.description ?? null)) changes.push({ kind: 'workflow.field-changed', field: 'description', value: after.description ?? null });
   if (before.name !== after.name) changes.push({ kind: 'workflow.field-changed', field: 'name', value: after.name });
   if (before.defaultView !== after.defaultView) changes.push({ kind: 'workflow.field-changed', field: 'defaultView', value: after.defaultView ?? null });
 
@@ -122,6 +124,7 @@ export function deriveChanges(previous: BoardVersion | null, local: BoardVersion
     const previousColumn = beforeById.get(column.key!);
     if (previousColumn === undefined) { changes.push({ kind: 'stage.created', stage: definition(column) }); continue; }
     if (previousColumn.id !== column.id) changes.push({ kind: 'stage.id-changed', key: column.key!, from: previousColumn.id, id: column.id });
+    if ((previousColumn.description ?? null) !== (column.description ?? null)) changes.push({ kind: 'stage.field-changed', key: column.key!, field: 'description', value: column.description ?? null });
     if (previousColumn.name !== column.name) changes.push({ kind: 'stage.field-changed', key: column.key!, field: 'name', value: column.name });
     if ((previousColumn.onEnterPrompt ?? null) !== (column.onEnterPrompt ?? null)) {
       changes.push({ kind: 'stage.field-changed', key: column.key!, field: 'onEnterPrompt', value: column.onEnterPrompt ?? null });

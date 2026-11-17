@@ -1,4 +1,5 @@
 import type { Board, BoardRelation, BoardSettings, BoardState, HubRelation, HubState, HubTask, KanbanSnapshot } from '../shared/types.js';
+import { effectiveBoardPreset } from '../domain/board-preset.js';
 
 /** One endpoint as the drawer reads it: the title, the stage name, and the board it lives on. */
 interface RelationEndpoint {
@@ -42,7 +43,8 @@ export function boardView(hub: HubState, board: Board, settings: KanbanSnapshot[
   const taskIds = new Set(tasks.map(task => task.id));
   const viewSettings: BoardSettings = settings.worktreeBasePath ? { worktreeBasePath: settings.worktreeBasePath } : {};
   const relations = (hub.relations ?? []).filter(relation => taskIds.has(relation.from) || taskIds.has(relation.to)).map(relation => relationView(hub, relation));
-  return { boardId: board.id, schemaVersion: 2, revision: hub.revision, workflowYaml: board.workflowYaml, workflow: board.workflow, projects: hub.projects, tasks, notes: hub.notes.filter(note => taskIds.has(note.taskId)), relations, settings: viewSettings };
+  const preset = effectiveBoardPreset(board).preset;
+  return { boardId: board.id, ...(preset === undefined ? {} : { effectiveDefaultPreset: preset }), schemaVersion: 2, revision: hub.revision, workflowYaml: board.workflowYaml, workflow: board.workflow, projects: hub.projects, tasks, notes: hub.notes.filter(note => taskIds.has(note.taskId)), relations, settings: viewSettings };
 }
 export function hubProjectView(hub: HubState): BoardState {
   const relations = (hub.relations ?? []).map(relation => relationView(hub, relation));

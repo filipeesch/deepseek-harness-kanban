@@ -97,3 +97,5 @@ A removal is an event too. When the team removes a board, that board's log gains
 ## Recovery
 
 Storage failures are typed and recoverable without losing local work. [Recovery](../operations/recovery.md) lists the error conditions, the conflict-copy procedure, the refused-update path, the authorization failures, and the rollback and quarantine behavior.
+
+New workflow metadata — authored workflow and stage descriptions, and the new-board preset default — cannot be synchronized safely while the supported providers cannot exclude older writers from the same storage: such a board stays local and its publishing or synchronization is refused with `SHARING_COMPATIBILITY_UNAVAILABLE`. Legacy-compatible board content may still be shared.

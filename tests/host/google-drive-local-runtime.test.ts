@@ -33,7 +33,7 @@ const flow = (name: string): string => ['name: Flow', 'initial_column: backlog',
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 
-async function fixture() {
+async function fixture(legacy = true) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'kanban-drive-runtime-')));
   roots.push(root);
   const driveRoot = path.join(root, 'Drive');
@@ -48,11 +48,24 @@ async function fixture() {
   const discovery = new GoogleDriveLocalDiscovery({ adapter, fs: nodeDiscoveryFs, cacheMs: 0 });
   const f = facility();
   const hubs = await HubRepository.open(new MemoryHubStorage());
+  if (legacy) {
+    const hubId = hubs.defaultHubId();
+    await hubs.hub(hubId).transact(draft => { delete draft.boards[0]!.defaultPresetMode; }, hubs.requireHub(hubId).revision);
+  }
   const runtime = await openHubSharing(f.ctx, hubs, { root: path.join(root, 'managed'), home: root, discovery, report: () => {} });
   return { root, driveRoot, folder, runtime, hubs, f };
 }
 
 describe('Google Drive Local runtime wiring', () => {
+  it('refuses new board provenance when the provider cannot protect it', async () => {
+    const f = await fixture(false);
+    const hubId = f.hubs.defaultHubId();
+    await expect(f.runtime.service.connect({ type: 'sharing.connect', hubId, provider: 'google-drive-local', settings: { path: f.folder } })).rejects.toMatchObject({ code: 'SHARING_COMPATIBILITY_UNAVAILABLE' });
+    await expect(readFile(path.join(f.folder, SHARED_LAYOUT_FILE), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    await f.runtime.close();
+    await f.hubs.close();
+  });
+
   it('connects a discovered folder and publishes the document', async () => {
     const f = await fixture();
     const hubId = f.hubs.defaultHubId();

@@ -477,7 +477,7 @@ describe('the board default model on a new conversation', () => {
     const result = await f.app.command({ type: 'conversation.create', taskId: t.id });
     const created = f.store.requireTask(t.id).sessionIds[0]!;
     expect(h.applied).toEqual([{ sessionId: created, selection }]);
-    expect(result.commandReceipt).toEqual({ kind: 'conversation', id: created, model: { requested: selection, applied: true } });
+    expect(result.commandReceipt).toMatchObject({ kind: 'conversation', id: created, model: { requested: selection, applied: true }, preset: { requested: 'kanban-workflow-operator', applied: false, reason: 'unsupported' } });
     expect(SnapshotSchema.safeParse(result).success).toBe(true);
   });
 
@@ -487,7 +487,7 @@ describe('the board default model on a new conversation', () => {
     const result = await f.app.command({ type: 'conversation.create', taskId: t.id });
     const created = f.store.requireTask(t.id).sessionIds[0]!;
     expect(h.applied).toEqual([]);
-    expect(result.commandReceipt).toEqual({ kind: 'conversation', id: created });
+    expect(result.commandReceipt).toEqual({ kind: 'conversation', id: created, preset: { requested: 'kanban-workflow-operator', applied: false, reason: 'unsupported' } });
     expect(SnapshotSchema.safeParse(result).success).toBe(true);
   });
 
@@ -499,7 +499,7 @@ describe('the board default model on a new conversation', () => {
     const result = await f.app.command({ type: 'conversation.create', taskId: t.id });
     const created = f.store.requireTask(t.id).sessionIds[0]!;
     expect(f.sessions.dirs.size).toBe(1);
-    expect(result.commandReceipt).toEqual({ kind: 'conversation', id: created, model: { requested: selection, applied: false, reason: 'unavailable', inUse: DEPLOYMENT } });
+    expect(result.commandReceipt).toMatchObject({ kind: 'conversation', id: created, model: { requested: selection, applied: false, reason: 'unavailable', inUse: DEPLOYMENT }, preset: { requested: 'kanban-workflow-operator', applied: false, reason: 'unsupported' } });
     // What the client renders is the decoded receipt, so the route it is told the
     // conversation is on has to survive the wire codec.
     expect(SnapshotSchema.parse(result).commandReceipt?.model).toEqual({ requested: selection, applied: false, reason: 'unavailable', inUse: DEPLOYMENT });
@@ -590,6 +590,7 @@ describe('the board default agent preset on a new conversation', () => {
 
   it('leaves a board without a preset on the host default and receipts no preset', async () => {
     const h = presetHarness(); const f = await setupWith(h.port);
+    await f.app.hubs.hub(f.hub.id).transact(draft => { delete draft.boards[0]!.defaultPresetMode; });
     const t = await taskAwaitingFirstConversation(f);
     const result = await f.app.command({ type: 'conversation.create', taskId: t.id });
     const created = f.store.requireTask(t.id).sessionIds[0]!;
@@ -646,7 +647,7 @@ describe('the board default agent preset on a new conversation', () => {
     await authorBoardPreset(f, 'standard');
     const t = await taskAwaitingFirstConversation(f);
     const result = await f.app.command({ type: 'conversation.create', taskId: t.id });
-    expect(result.commandReceipt?.preset).toBeUndefined();
+    expect(result.commandReceipt?.preset).toEqual({ requested: 'standard', applied: false, reason: 'unsupported' });
     expect(f.store.requireTask(t.id).sessionIds).toHaveLength(1);
   });
 });

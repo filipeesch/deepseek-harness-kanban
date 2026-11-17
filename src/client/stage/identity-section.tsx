@@ -1,16 +1,19 @@
 import React from 'react';
 import type { StageProblem } from './stage-problem.js';
 import { ProblemNotice } from './problem-notice.js';
+import { DescriptionField } from './description-field.js';
 
 /** The Stage tab: the stage's display name, its identifier, and why a rename is unavailable. */
-export function IdentitySection({ name, id, disabled, renameBlock, problem, onName, onId }: {
+export function IdentitySection({ name, description, id, disabled, renameBlock, problem, onName, onDescription, onId }: {
   readonly name: string;
+  readonly description: string;
   readonly id: string;
   readonly disabled: boolean;
   /** Why the identifier cannot be edited right now; null when it can. */
   readonly renameBlock: string | null;
   readonly problem: (field: StageProblem['field']) => string | undefined;
   readonly onName: (value: string) => void;
+  readonly onDescription: (value: string) => void;
   readonly onId: (value: string) => void;
 }) {
   const nameProblem = problem('name');
@@ -21,6 +24,7 @@ export function IdentitySection({ name, id, disabled, renameBlock, problem, onNa
       <input className="kb-input" aria-label="Stage name" value={name} disabled={disabled} aria-invalid={nameProblem !== undefined} onChange={event => onName(event.target.value)} />
     </label>
     <ProblemNotice message={nameProblem} />
+    <DescriptionField value={description} disabled={disabled} onChange={onDescription} />
     <label className="kb-field">Id
       <input className="kb-input" aria-label="Stage id" value={id} disabled={disabled} aria-invalid={idProblem !== undefined} readOnly={renameBlock !== null} aria-readonly={renameBlock !== null} onChange={event => onId(event.target.value)} />
     </label>

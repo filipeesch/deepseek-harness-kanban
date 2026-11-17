@@ -20,7 +20,7 @@
 
 ## Kanban agent presets
 
-Maintenance rules for the three shipped presets live in [Preset maintenance](docs/development/presets.md). Never widen a role's product-tool allowlist to make an instruction work; change the instruction or explain that the role cannot do it. Keep the planner's read-only guarantee real, and treat the manager as a coordinator with no card, scope, or requirement writes.
+Maintenance rules for the four shipped presets live in [Preset maintenance](docs/development/presets.md). New boards default to the workflow operator preset; keep workflow-administration tools out of its declaration. Never widen a role's product-tool allowlist to make an instruction work; change the instruction or explain that the role cannot do it. Keep the planner's read-only guarantee real, and treat the manager as a coordinator with no card, scope, or requirement writes.
 
 ## Releases
 

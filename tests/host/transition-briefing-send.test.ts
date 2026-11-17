@@ -52,6 +52,20 @@ describe('transition briefing on every send path', () => {
     const briefing = briefingOf(f.sessions.sent[0]!.text);
     expect(briefing).toContain('- Done — The plan approved the task without further work.');
     expect(briefing).toContain('- Review — The plan needs a review before implementation.');
+    expect(f.sessions.sent[0]!.text).toContain('Plan it.');
+    expect(briefing).not.toContain('Declare the transition');
+  });
+
+  it('preserves an authored instruction that explicitly requests a route', async () => {
+    const f = await setup();
+    const instruction = 'Plan it and declare the review transition.';
+    await f.store.setWorkflow(BRANCHED.replace('on_enter_prompt: Plan it.', 'on_enter_prompt: ' + instruction));
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Requested route', description: '' });
+    await f.app.command({ type: 'task.move', taskId: task.id, columnId: 'plan' });
+    const entered = f.store.requireTask(task.id);
+    await f.app.command({ type: 'task.runInstruction', taskId: task.id, columnId: 'plan', expectedEnteredAt: entered.instructionPending!.enteredAt, expectedInstruction: instruction });
+    expect(f.sessions.sent[0]!.text).toContain(instruction);
+    expect(briefingOf(f.sessions.sent[0]!.text)).not.toContain('Declare the transition');
   });
 
   it('includes the briefing in a confirmed transition dispatch', async () => {

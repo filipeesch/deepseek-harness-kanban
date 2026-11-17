@@ -8,7 +8,7 @@ Board and note writes require the user's explicit request; they are not an inter
 
 | Scope | Tools |
 | --- | --- |
-| Discover Hubs, boards, projects, and tasks | `list_hubs`, `list_boards`, `list_projects`, `get_board_summary`, `list_cards`, `get_cards`, `get_card` |
+| Discover Hubs, boards, projects, and tasks | `list_hubs`, `list_boards`, `list_projects`, `get_workflow_summary`, `list_cards`, `get_cards`, `get_card` |
 | Explicitly requested card creation and text changes | `create_card`, `edit_card` |
 | Recorded relations between cards | `create_relation`, `delete_relation` |
 | Declaring the transition the turn ends in | `list_allowed_transitions`, `set_next_transition` |
@@ -31,7 +31,11 @@ The board is the discovery anchor: use `list_hubs`, then `list_boards`, then pas
 
 ## Reading and changing a workflow
 
-Read the exact authored YAML with `get_board_yaml`, one stage with `get_stage`, and the parsed workflow, default model, default agent preset, and MCP allowlist with `get_board_summary` and `include_workflow: true`.
+Read the exact authored YAML with `get_board_yaml` — which also reports the Hub revision and `effectiveDefaultPreset` with the origin of that choice — one stage with `get_stage`, and the compact live workflow with `get_workflow_summary`.
+
+The summary returns board and Hub identity, the optional workflow description, the initial stage, each stage's identifier, name, optional description, and type, the routing policy with its documentary conditions or named script exits, the project scope, and the sharing status. It omits task counts, Hub revision, model, preset, MCP configuration, layout, full YAML, script code, and full entry prompts. Each page fits in 6 KiB, an omitted or oversized record is reported with a cursor and an explicit fragment, and the calling task's stage and auto-mode state appear only when the requested board is that task's own.
+
+`get_board_summary` no longer exists and cannot be dispatched.
 
 The workflow-design tools are registered globally but declared only for the `kanban-workflow-architect` preset, so other agents share the registry without seeing them.
 
@@ -39,9 +43,9 @@ Prefer the structured edits (`set_stage_prompt`, `set_stage_routes`, `set_stage_
 
 Use `edit_board_yaml` for spans those tools do not cover: each `old` text must occur exactly once inside the stage and field the edit names when it names one, every edit in the call is applied together, and a failure reports the failing edit index, the occurrence lines and stages, and the closest authored line. Use `update_board` with the complete YAML only when restructuring.
 
-Every workflow write reports the sha256 digest of the exact document it stored and the same report on success and on refusal: the changed stages with their changed field names, graph warnings, the board-level reviewed authorization of each scripted stage once, and the affected cards. `detail: full` returns the per-field values, `expect_sha256` refuses a document that does not match, and `dry_run` returns the report without saving anything. `validate_workflow` reviews a supplied document with no board. A refused write saves nothing.
+Every workflow write reports the sha256 digest of the exact document it stored and the same report on success and on refusal: the changed stages with their changed field names, graph warnings, the board-level reviewed authorization of each scripted stage once, and the affected cards. The digest covers workflow YAML only; board-default preset metadata changes are reported separately. `detail: full` returns the per-field values, `expect_sha256` refuses a document that does not match, and `dry_run` returns the report without saving anything. `validate_workflow` reviews a supplied document with no board. A refused write saves nothing.
 
-A stale Hub revision no longer forces a re-read: a composed write is reapplied to the current document when every anchor still matches, and only a real conflict refuses, naming the current revision and what changed; a whole-document replacement still requires the current revision.
+A stale Hub revision no longer forces a re-read: a composed write is reapplied to the current document when every anchor still matches, and only a real conflict refuses, naming the current revision and what changed; a whole-document replacement or a board-default preset change still requires the current revision.
 
 `list_board_revisions` and `diff_board_revisions` show what changed and who changed it, state where the retained history starts, and `revert_board` restores a retained revision as a new revision. The log is local and never published. `diff_published_board` compares a board with the version this installation last applied from the team.
 

@@ -73,13 +73,23 @@ columns:
 
 Groups present real columns, not extra destinations. A column's omitted `allowed_transitions` permits any other existing column; `[]` permits none and makes it a terminal stage. Entry instructions use `on_enter_prompt`.
 
-The root accepts `name`, `initial_column`, `default_view`, `columns`, `groups`, `model`, `agent_preset`, `mcp`, and `connections`. Unsupported fields, invalid YAML, unknown stage references, and updates that orphan an existing card's stage are rejected without replacing the last valid workflow. The parser lives in [the workflow domain](<../../src/domain/workflow.ts>) and the durable store in [the store](<../../src/domain/store.ts>).
+The root accepts `name`, `description`, `initial_column`, `default_view`, `columns`, `groups`, `model`, `agent_preset`, `mcp`, and `connections`; a stage accepts `id`, `label`, `description`, transitions, an instruction, a script, placement, and size. Unsupported fields, invalid YAML, unknown stage references, and updates that orphan an existing card's stage are rejected without replacing the last valid workflow.
+
+Workflow and stage descriptions are optional authored context, distinct from `on_enter_prompt`. A root `description` and a column `description` are preserved character for character, a missing or blank description stays absent, and no length limit is imposed on other authors. The workflow architect's guidance asks it to write and maintain a description of at most 150 characters for the workflow and for every stage. Descriptions participate in semantic comparison, revision, diff, replay, restore, and sharing conflict detection, and a peer that cannot preserve them reports incompatibility instead of dropping them.
+
+```yaml
+description: Delivery flow for one product slice
+columns:
+  - id: plan
+    label: Plan
+    description: Agree the approach before code changes.
+``` The parser lives in [the workflow domain](<../../src/domain/workflow.ts>) and the durable store in [the store](<../../src/domain/store.ts>).
 
 A stage can run code instead of an agent instruction; see [Scripted steps](scripted-steps.md) for the fields that replace a stage's instruction and transitions.
 
 ## Edit one stage
 
-The stage editor's **Edit stage** action, and the pencil on every stage header, opens one dialog for a single stage. The board always presents it; the workflow diagram presents it disabled while its layout is locked.
+The stage editor's **Edit stage** action, and the pencil on every stage header, opens one dialog for a single stage. Its identity section edits the stage name, the optional **Stage description**, and the stable ID. The board always presents it; the workflow diagram presents it disabled while its layout is locked.
 
 Allowed destinations have three modes: allow any other stage, choose specific destinations with an optional condition for each, or no destinations for a terminal stage. A condition is a multiline field you can resize, and clearing it stores no condition. Saving changes only the fields you edited, and every other authored character of the workflow stays as its author wrote it.
 

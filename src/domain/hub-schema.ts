@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { localStageIdentitiesSchema } from './scripted-state.js';
 import type { Board, HubSchedule, HubState, HubTask, KanbanMeta, KanbanSettings } from '../shared/types.js';
 import { DEFAULT_WORKFLOW_YAML, parseWorkflow } from './workflow.js';
-import { absolutePath, baseTask, canonicalWorkflow, createTaskInvariantChecker, hubRelation, id, modelSelection, nonempty, note, project, projectKey, revision, storedProject, timestamp, workflow } from './schema-parts.js';
+import { absolutePath, baseTask, canonicalWorkflow, createTaskInvariantChecker, hubRelation, id, modelSelection, nonempty, note, project, projectKey, revision, restoreLegacyStageDescriptions, storedProject, timestamp, workflow } from './schema-parts.js';
 import { relationIssues } from './card-relation.js';
 import { isTimeZone, parseCron } from './cron.js';
 import { normalizeLegacyHubRecord } from './legacy-hub-record.js';
@@ -11,10 +11,11 @@ export { canonicalWorkflow } from './schema-parts.js';
 
 const board = z.strictObject({
   id, name: nonempty, workflowYaml: nonempty, workflow, localStageIdentities: localStageIdentitiesSchema.optional(),
+  defaultPresetMode: z.enum(['operator', 'host']).optional(),
   /** Absent means every project of the Hub; an empty list closes the board to creation. */
   allowedProjectKeys: z.array(projectKey).optional(),
   createdAt: timestamp, updatedAt: timestamp,
-});
+}).transform(value => ({ ...value, workflow: restoreLegacyStageDescriptions(value.workflow, value.workflowYaml) }));
 const task = baseTask.extend({ boardId: id });
 
 /** One Hub-scoped session schedule; the operations layer owns the field limits. */
@@ -117,7 +118,7 @@ export const KanbanStateSchema = z.strictObject({
 });
 
 export function createBoard(idValue: string, name: string, now: string, workflowYaml = DEFAULT_WORKFLOW_YAML): Board {
-  return { id: idValue, name, workflowYaml, workflow: parseWorkflow(workflowYaml), createdAt: now, updatedAt: now };
+  return { id: idValue, name, workflowYaml, workflow: parseWorkflow(workflowYaml), defaultPresetMode: 'operator', createdAt: now, updatedAt: now };
 }
 
 export function initialHubState(idValue: string, name: string, now = new Date().toISOString()): HubState {

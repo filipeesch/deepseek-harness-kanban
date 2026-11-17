@@ -1,6 +1,16 @@
 # Presets
 
-The bundle registers three presets without changing your default preset. A board can name one as its default agent preset, and you can select one for an ordinary DSH chat.
+The bundle registers four presets without changing your default preset. A board can name one as its default agent preset — new boards that author no preset start their conversations on the workflow operator — and you can select one for an ordinary DSH chat.
+
+## Kanban Workflow Operator
+
+**Kanban Workflow Operator** (`kanban-workflow-operator`) is the default for a new board that authors no preset. It is a PTC-based coding preset that carries out the task's current stage; it does not design workflows.
+
+It keeps its PTC execution and ordinary coding, filesystem, shell, skill, delegation, planning, and safety capabilities under the host's normal permissions, and it does not receive workflow-architect tools.
+
+Its guidance explains the three stage types — an agent instruction, a configured script with named exits, and a stage with neither — treats the current stage as its scope, and does not run another stage's instruction early. It reads the current allowed transitions before deciding, declares a route only when the stage instruction or the user asks, and otherwise finishes its work and waits for a manual move. That rule never disables an automatic mode enabled independently. An unconfigured route needs the user's explicit direct request and follows the exceptional transition contract in [Execution](execution.md).
+
+An explicit board preset wins, the host default stays selectable, and existing boards and conversations are not changed. When the host does not offer the operator, conversation creation falls back to the host default and the conversation is still created.
 
 ## Kanban Workflow Architect
 

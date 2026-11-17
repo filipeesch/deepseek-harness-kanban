@@ -216,7 +216,7 @@ describe('prepareFirstExecution', () => {
     const conversation = f.store.requireTask(task.id).sessionIds[0]!;
     expect(h.applied).toEqual([{ sessionId: conversation, selection: BOARD_MODEL }]);
     // Without this the preparation dialog would show a model choice it never applied.
-    expect(snapshot.commandReceipt).toEqual({ kind: 'conversation', id: conversation, model: { requested: BOARD_MODEL, applied: true } });
+    expect(snapshot.commandReceipt).toEqual({ kind: 'conversation', id: conversation, model: { requested: BOARD_MODEL, applied: true }, preset: { requested: 'kanban-workflow-operator', applied: false, reason: 'unsupported' } });
   });
 
   it('announces no model for a conversation the preparation did not create', async () => {

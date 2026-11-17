@@ -22,6 +22,7 @@ export interface StageEditorDraft {
   readonly execution?: 'agent' | 'scripted';
   readonly scripted?: ScriptedDraft;
   readonly name: string;
+  readonly description: string;
   readonly onEnterPrompt: string;
   readonly mode: StageTransitionMode;
   readonly transitions: readonly StageTransitionDraft[];
@@ -45,6 +46,7 @@ export function stageDraft(column: Column): StageEditorDraft {
   return {
     ...(column.scripted === undefined ? {} : { execution: 'scripted' as const, scripted: scriptedDraft(column.scripted) }),
     name: column.name,
+    description: column.description ?? '',
     onEnterPrompt: column.onEnterPrompt ?? '',
     mode: transitionMode(transitions),
     transitions: (transitions ?? []).map(rule => ({ to: rule.to, when: rule.when ?? '' })),
@@ -56,7 +58,7 @@ export function stageDraft(column: Column): StageEditorDraft {
 /** True when the draft still describes the stage exactly as it is stored. */
 export function draftChanged(draft: StageEditorDraft, column: Column): boolean {
   const stored = stageDraft(column);
-  if (draft.name !== stored.name || draft.onEnterPrompt !== stored.onEnterPrompt || draft.id !== stored.id || draft.initial) return true;
+  if (draft.name !== stored.name || draft.description !== stored.description || draft.onEnterPrompt !== stored.onEnterPrompt || draft.id !== stored.id || draft.initial) return true;
   if ((draft.execution ?? 'agent') !== (stored.execution ?? 'agent')) return true;
   if (draft.execution === 'scripted') return !scriptedEqual(scriptedDefinition(draft.scripted ?? scriptedDraft()), column.scripted);
   if (draft.mode !== stored.mode) return true;
@@ -112,6 +114,7 @@ export function draftDestinations(draft: StageEditorDraft): TransitionRule[] | n
 export function stagePatch(draft: StageEditorDraft, column: Column): StagePatch {
   const patch: StagePatch = {};
   if (draft.name !== column.name) patch.name = draft.name.trim();
+  if (draft.description !== (column.description ?? '')) patch.description = draft.description.trim().length === 0 ? null : draft.description;
   const instruction = draft.onEnterPrompt;
   const storedInstruction = column.onEnterPrompt ?? '';
   if (instruction !== storedInstruction) patch.onEnterPrompt = instruction.trim().length === 0 ? null : instruction;

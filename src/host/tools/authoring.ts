@@ -10,6 +10,7 @@ import type { WorkflowCardReference, WorkflowWriteReport } from '../../domain/wo
 import { composeWorkflowReport, summarizeWorkflowReport } from '../../domain/workflow-report.js';
 import { invariant } from '../../shared/errors.js';
 import { parseWorkflow } from '../../domain/workflow.js';
+import { effectiveBoardPreset } from '../../domain/board-preset.js';
 import { updateStage } from '../../domain/stage-update.js';
 import { addStage, removeStage } from '../../domain/workflow-stage-edit.js';
 import { readStage } from '../../domain/workflow-stage-read.js';
@@ -230,7 +231,7 @@ export function authoringTools(app: KanbanApp, port: WorkflowAuthoringPort = app
       const limit = Math.max(1, args.limit ?? READ_LINE_LIMIT);
       const end = Math.min(lines.length, offset + limit);
       return {
-        boardId: board.id, hubId, hubRevision: hub.revision, totalLines: lines.length,
+        boardId: board.id, hubId, hubRevision: hub.revision, effectiveDefaultPreset: effectiveBoardPreset(board), totalLines: lines.length,
         offset, limit, yaml: lines.slice(offset, end).join('\n'),
         path: await exactDocument(board.id, board.workflowYaml),
         ...(end < lines.length ? { nextOffset: end } : {}),

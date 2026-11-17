@@ -36,7 +36,13 @@ Every new conversation of that board starts on those defaults unless the activat
 
 When the host no longer offers a stored route or preset, or cannot apply it to one conversation, the conversation is still created and runs on the host default, with a dismissible notice naming what the board asked for. A board default never blocks a move, a preparation, or a send. The installation-wide defaults are never written by this setting.
 
-The model, preset, and allowlist are part of the workflow's meaning: they publish with the board, participate in workflow conflict detection, and are returned by `get_board_summary` with `include_workflow` as `defaultModel`, `defaultAgentPreset`, and `mcp` (`null` when the board names none). While the Workflow sub-section holds unsaved edits, the Defaults controls stay available and only the save is unavailable, with a way to open Workflow.
+The authored model and preset are part of the workflow and are covered by workflow conflict detection. The workflow architect reads them in the exact YAML with `get_board_yaml`, which also reports `effectiveDefaultPreset` and the origin of that choice — including a default held outside the authored YAML. [Agent tools](agent-tools.md) describes the compact summary.
+
+New boards that author no preset start their conversations on **Kanban Workflow Operator**, a default held outside the YAML: an explicit host choice and a legacy absence remain distinct, and the author can still choose another roster preset. Existing boards and conversations are not changed.
+
+Workflow and stage descriptions and the new-board preset default are new team metadata. While the supported providers cannot exclude older writers from the same storage, a board that carries them stays local and its publish or synchronization is refused with `SHARING_COMPATIBILITY_UNAVAILABLE` instead of risking data loss; legacy-compatible board content may still be shared. See [Team sharing](team-sharing.md).
+
+While the Workflow sub-section holds unsaved edits, the Defaults controls stay available and only the save is unavailable, with a way to open Workflow.
 
 ## Board presentation and order
 

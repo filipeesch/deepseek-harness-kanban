@@ -49,7 +49,14 @@ describe('journal event codec', () => {
   });
 
   it('reports a newer event version instead of guessing', () => {
-    expect(decodeEvent({ ...base, v: 4, kind: 'stage.removed', key: 's1' })).toEqual({ ok: false, reason: 'unsupported-version', version: 4 });
+    expect(decodeEvent({ ...base, v: 5, kind: 'stage.removed', key: 's1' })).toEqual({ ok: false, reason: 'unsupported-version', version: 5 });
+  });
+
+  it('requires version 4 for description fields', () => {
+    const event = { ...base, v: 4, kind: 'stage.field-changed', key: 's1', field: 'description', value: 'Details' };
+    expect(decodeEvent(event)).toEqual({ ok: true, event });
+    expect(decodeEvent({ ...event, v: 3 })).toEqual({ ok: false, reason: 'unsupported-version', version: 4 });
+    expect(decodeEvent({ ...event, value: [] }).ok).toBe(false);
   });
 
   it('reports an unknown event kind instead of skipping it', () => {

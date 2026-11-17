@@ -17,7 +17,7 @@ Start with the [README](../README.md) if you are installing the plugin.
 | [Git and worktrees](user/git-worktrees.md) | Creating, attaching, and removing a task worktree, and understanding the workspace model. |
 | [Schedules](user/schedules.md) | Running a prompt unattended on a cron schedule. |
 | [Agent tools](user/agent-tools.md) | Understanding the product tools an agent can call and what each one requires. |
-| [Presets](user/presets.md) | Choosing the workflow architect, project planner, or project manager preset. |
+| [Presets](user/presets.md) | Choosing the workflow operator, workflow architect, project planner, or project manager preset. |
 | [Scripted steps](user/scripted-steps.md) | Running repeatable Bash or TypeScript in a stage instead of an agent instruction. |
 
 ## Operations

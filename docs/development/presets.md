@@ -1,6 +1,6 @@
 # Preset Maintenance
 
-The bundle ships the `kanban-workflow-architect` preset, plus the `kanban-project-planner` and `kanban-project-manager` roles. This document states the maintenance rules for all three.
+The bundle ships four presets: the default `kanban-workflow-operator`, `kanban-workflow-architect`, `kanban-project-planner`, and `kanban-project-manager`. This document states the maintenance rules for all four.
 
 ## Bundle declaration and structure
 
@@ -15,6 +15,12 @@ Keep each fact out of two places: the persona states the role and the standing r
 ## Validation
 
 Validate the bundle declaration, the packaged skill paths and links, YAML examples against the current parser, and preset mounting in an isolated DSH composition. Keep the persona under 4,000 characters and each skill or reference under 7,000 characters, leaving room for tool-result wrappers below the 8,192-character pruning threshold. These are ceilings, not targets; remove repetition before adding text. Never use real-model traffic or the owner's profile for acceptance checks.
+
+## The workflow operator
+
+The operator is the default for a new board that authors no preset. Keep its PTC capabilities under the host's ordinary permissions, keep workflow-architect tools out of its declaration, and keep its skill concise: current-stage scope, the three stage types, no startup summary call, and a route declaration only when the stage instruction or the user asks. Its skill is [workflow operation](<../../presets/skills/kanban-workflow-operation/SKILL.md>); the architect's persona and interview rules do not apply to it.
+
+An explicit board preset wins, and a host that does not offer the operator falls back to the host default without blocking conversation creation. New-board preset provenance and authored descriptions are not publishable while the providers cannot exclude older writers; [Team sharing](../user/team-sharing.md) states the refusal.
 
 ## Boundaries between the roles
 

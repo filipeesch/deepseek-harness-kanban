@@ -33,6 +33,16 @@ describe('legacy Kanban migration', () => {
     expect(migrated.meta.worktreeBasePath).toBe('/trees');
   });
 
+  it('migrates a legacy authored stage description without rewriting the source', () => {
+    const legacy = initialState();
+    legacy.workflowYaml = '# legacy bytes\nname: Legacy\ncolumns:\n  - id: backlog\n    label: Backlog\n    description: Legacy stage text\n';
+    legacy.workflow = { name: 'Legacy', initialColumnId: 'backlog', columns: [{ id: 'backlog', name: 'Backlog' }], groups: [] };
+    const migrated = migrateLegacyState(legacy, { now });
+    expect(migrated.hub.boards[0]!.workflowYaml).toBe(legacy.workflowYaml);
+    expect(migrated.hub.boards[0]!.workflow.columns[0]!.description).toBe('Legacy stage text');
+    expect(legacy.workflow.columns[0]!.description).toBeUndefined();
+  });
+
   it('fails rather than dropping an invalid task context', () => {
     const legacy = initialState();
     legacy.tasks = [{ id: 'task', projectId: 'project', title: 'Legacy', description: '', columnId: 'missing', position: 0, sessionIds: ['session'], closedSessionIds: [], effectiveCwd: '/repo', worktree: null, operation: null, createdAt: now(), updatedAt: now() }];

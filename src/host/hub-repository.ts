@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { KanbanError, invariant } from '../shared/errors.js';
 import type { AutoModePause, Board, BoardSettings, ContextOperation, HubRelation, HubSchedule, HubState, HubTask, KanbanMeta, KanbanState, NewTask, Note, OperationRequest, Project, ProjectInput, Workflow } from '../shared/types.js';
 import { repositoryLane } from './repository-lane.js';
@@ -102,6 +103,8 @@ function parseHub(value: unknown, message: string): HubState {
  */
 export class HubRepository {
   private readonly hubs = new Map<string, HubState>();
+  /** A failed uncertain reconciliation blocks writes until the repository is reopened. */
+  private readonly uncertainHubs = new Set<string>();
   private summaries: readonly TaskSummary[] | undefined;
   private bindings: readonly WorktreeBinding[] | undefined;
   private projectSummaryCache: readonly ProjectSummary[] | undefined;
@@ -223,6 +226,7 @@ export class HubRepository {
   }
 
   private async persistHub(hub: HubState): Promise<void> {
+    invariant(!this.uncertainHubs.has(hub.id), 'EXCEPTION_COMMIT_UNCERTAIN', 'Reopen the repository before writing this Hub; an exceptional finalization remains unverified.');
     try { await this.storage.saveHub(structuredClone(hub)); }
     catch (error) { throw storageFailure('save', error); }
   }
@@ -496,6 +500,7 @@ export class HubRepository {
   async deleteHub(hubId: string): Promise<HubState> {
     return this.mutate(async () => {
       const hub = this.requireHub(hubId);
+      invariant(!this.uncertainHubs.has(hubId), 'EXCEPTION_COMMIT_UNCERTAIN', 'Reopen the repository before deleting this Hub.');
       invariant(this.hubs.size > 1, 'LAST_HUB', 'At least one Hub must exist.');
       invariant(hub.tasks.length === 0, 'HUB_IN_USE', 'Delete the tasks in every board before deleting the Hub.');
       try { await this.storage.deleteHub(hubId); }
@@ -526,6 +531,7 @@ export class HubRepository {
   async transact<T>(hubId: string, change: (draft: HubState) => T | Promise<T>, expectedRevision?: number, validate?: (draft: HubState) => void): Promise<T> {
     return this.mutate(async () => {
       const current = this.requireHub(hubId);
+      invariant(!this.uncertainHubs.has(hubId), 'EXCEPTION_COMMIT_UNCERTAIN', 'Reopen the repository before writing this Hub; an exceptional finalization remains unverified.');
       if (expectedRevision !== undefined) {
         assertRevision(expectedRevision);
         invariant(expectedRevision === current.revision, 'REVISION_CONFLICT', 'Hub state has changed since this revision.');
@@ -543,10 +549,50 @@ export class HubRepository {
       draft.updatedAt = this.now();
       const next = parseHub(draft, 'Kanban state is invalid.');
       this.assertCrossHubOwnership(next);
-      await this.persistHub(next);
+      try { await this.persistHub(next); }
+      catch (error) {
+        if (current.tasks.some(task => task.pendingTransition?.exceptionUnfinalized !== undefined)
+            || next.tasks.some(task => task.pendingTransition?.exceptionUnfinalized !== undefined)) this.uncertainHubs.add(hubId);
+        throw error;
+      }
       this.hubs.set(hubId, next);
       this.changed();
       return structuredClone(result);
+    });
+  }
+
+  /** Resolve an uncertain exceptional finalization without guessing whether storage committed. */
+  async reconcileExceptionalFinalization(hubId: string, taskId: string, pendingId: string, exceptionId: string): Promise<'prepared' | 'finalized'> {
+    return this.mutate(async () => {
+      try {
+      const current = this.requireHub(hubId);
+      invariant(this.storage.verifiedReadAfterFailedSave === true, 'EXCEPTION_COMMIT_UNCERTAIN', 'This storage cannot verify an uncertain save without reopening.');
+      let raw: HubState | undefined;
+      try { raw = (await this.storage.loadAll()).hubs.find(hub => hub.id === hubId); }
+      catch (error) { throw storageFailure('load', error); }
+      invariant(raw, 'EXCEPTION_COMMIT_UNCERTAIN', 'The stored Hub could not be verified after the exceptional finalization.');
+      const stored = parseHub(raw, 'The stored Hub could not be verified after the exceptional finalization.');
+      const oldTask = current.tasks.find(task => task.id === taskId);
+      invariant(oldTask?.pendingTransition?.id === pendingId && oldTask.pendingTransition.exceptionUnfinalized === exceptionId
+        && oldTask.recordedTransition?.exception?.id === exceptionId, 'EXCEPTION_COMMIT_UNCERTAIN', 'The prepared exceptional admission changed during reconciliation.');
+      if (isDeepStrictEqual(stored, current)) { this.uncertainHubs.delete(hubId); return 'prepared'; }
+      const finalized = structuredClone(current);
+      const task = finalized.tasks.find(value => value.id === taskId)!;
+      delete task.pendingTransition!.exceptionUnfinalized;
+      delete task.recordedTransition;
+      if (task.autoMode?.pause !== undefined) delete task.autoMode.pause;
+      finalized.revision = stored.revision;
+      finalized.updatedAt = stored.updatedAt;
+      invariant(stored.revision === current.revision + 1 && isDeepStrictEqual(stored, finalized), 'EXCEPTION_COMMIT_UNCERTAIN', 'The stored Hub does not match either expected exceptional admission state.');
+      this.assertCrossHubOwnership(stored);
+      this.hubs.set(hubId, stored);
+      this.uncertainHubs.delete(hubId);
+      this.changed();
+      return 'finalized';
+      } catch (error) {
+        this.uncertainHubs.add(hubId);
+        throw error;
+      }
     });
   }
 

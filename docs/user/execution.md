@@ -34,7 +34,11 @@ The card's **play** action sends the current unresolved instruction immediately,
 
 ## Task context
 
-Every task conversation receives a native, model-facing task-context message before its first user message, once per conversation. The message contains the task title and ID, description, and workflow stage at first contact. It does not start a turn. The plugin presents it through a visible inline native Chat context row: a custom visible node claims the plugin-owned `kanban-task` message and delegates to the host's context-row renderer, so the row is part of the transcript and scrolls with it in the drawer and in ordinary native Chat. It names `kanban-task` and reveals the full text on expansion.
+Every task conversation receives a native, model-facing task-context message before its first user message, once per conversation. The message contains the task title and ID, description, the owning Hub and board names, the workflow stage at first contact, and a compact first-contact workflow snapshot: the workflow and stage descriptions, the routing policy with its conditions, the project scope, the sharing state, and the task's automatic-mode state. It does not start a turn, and it requires no startup tool call.
+
+The snapshot is first-contact context, not live routing authority: after a workflow change, read `get_workflow_summary` for the current projection before deciding a route. When the snapshot exceeds its 6 KiB budget it identifies the omitted content instead of silently truncating an authored description or condition, and the summary tool offers the continuation.
+
+The plugin presents the context through a visible inline native Chat context row: a custom visible node claims the plugin-owned `kanban-task` message and delegates to the host's context-row renderer, so the row is part of the transcript and scrolls with it in ordinary native Chat and in the drawer when the host supports the native conversation window. It names `kanban-task` and reveals the full text on expansion.
 
 Later stage instructions contain only the instruction, followed by the transition briefing described below when the stage configures two or more targets. New conversations get their own context; conversations whose first message already exists are not backfilled.
 
@@ -52,9 +56,11 @@ Clearing the declaration, by calling the tool with no destination, needs no reas
 
 The write tool acts only on the task that owns the calling conversation, while the read tool can still resolve another task. A declaration belongs to the stage it was declared in and is discarded when the task leaves that stage. A declared transition is downgrade-sensitive: [Recovery](../operations/recovery.md) states how to prepare the Hub before selecting an older plugin build. If a workflow edit removes the target, the declaration no longer resolves: no advance is admitted, auto mode pauses with `transition-stale` when it is enabled, and the drawer's next-stage action refuses with the same explanation instead of moving the card. Moving the card by hand, or choosing another stage in the drawer, clears the pause.
 
+An existing destination the stage does not configure can be declared only with the `exception` flag and only when the user directly and explicitly requested that destination in the same task conversation. The flag is the model's assertion, not independent proof of intent. The host binds it to that task entry and originating turn, admits it only after that turn is observed completing successfully, and keeps the usual pending-work, destination, and scripted-approval guards. A turn that fails, aborts, is interrupted, or cannot be verified invalidates the exception; it is never retried by a later turn or reused as an automatic-mode destination. An admitted move keeps normal durable recovery. This does not change the manual confirmation for restricted moves or enable auto mode.
+
 ## Transition briefing
 
-When a stage configures two or more transition targets, the host appends a briefing to the stage instruction it sends: every target with its authored condition, the transition already declared, the target used when nothing is declared, and the `set_next_transition` call with the reason it requires. The briefing states that the declared transition is followed at the end of the turn. It is built from the live workflow at send time, so an edited workflow never leaves a stale description in the message. A stage with fewer than two targets gets no briefing.
+When a stage configures two or more transition targets, the host appends a briefing to the stage instruction it sends: every target with its authored condition, the transition already declared, the target used when nothing is declared, and the available `set_next_transition` call with the reason it requires. The briefing describes routing without directing the agent to declare a transition. It is built from the live workflow at send time, so an edited workflow never leaves a stale description in the message. A stage with fewer than two targets gets no briefing.
 
 ## Auto mode
 

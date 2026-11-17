@@ -35,6 +35,7 @@ export const ModelCatalogSchema:z.ZodType<ModelCatalog>=z.object({
 const worktreeDefault=z.discriminatedUnion('kind',[z.object({kind:z.literal('derived'),branchName:z.string().min(1),path:z.string().min(1),sourceBranch:z.string().optional()}).strict(),z.object({kind:z.literal('unavailable'),reason:problem}).strict()]);
 const stagePatchSchema=z.object({
  name:z.string().optional(),
+ description:z.string().nullable().optional(),
  onEnterPrompt:z.string().nullable().optional(),
  scripted:scriptedDefinitionSchema.nullable().optional(),
  initial:z.literal(true).optional(),
@@ -51,7 +52,7 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('board.create'),hubId:id,name:z.string().min(1)}).strict(),
  z.object({type:z.literal('board.rename'),hubId:id,boardId:id,name:z.string().min(1),expectedRevision:revision}).strict(),
  z.object({type:z.literal('board.delete'),hubId:id,boardId:id,confirmed:z.boolean(),expectedRevision:revision,sharing:z.enum(['local','team']).optional()}).strict(),
- z.object({type:z.literal('board.workflow.save'),hubId:id,boardId:id,yaml:z.string(),expectedRevision:revision}).strict(),
+ z.object({type:z.literal('board.workflow.save'),hubId:id,boardId:id,yaml:z.string(),expectedRevision:revision,presetChoice:z.enum(['host','named']).optional()}).strict(),
  z.object({type:z.literal('board.stage.update'),hubId:id,boardId:id,stageId:id,patch:stagePatchSchema,expectedRevision:revision}).strict(),
  z.object({type:z.literal('board.projects.save'),hubId:id,boardId:id,projectKeys:z.array(z.string().min(1)).refine(keys=>new Set(keys).size===keys.length,'Project keys must be unique.').optional(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('project.save'),hubId,project,expectedRevision:revision}).strict(),

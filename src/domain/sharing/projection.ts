@@ -6,6 +6,8 @@ export interface LocalSharedBoard {
   boardId: string;
   name: string;
   workflow: string;
+  /** Version 3 sharing does not carry board-default provenance. */
+  defaultPresetMode?: 'operator' | 'host';
   /** Present only while the board is bound to a published key. */
   key?: string;
   /** Absent means the board allows every project; an empty list closes it to creation. */
@@ -32,6 +34,7 @@ export function projectSharingBoards(hub: HubState, bindings: Readonly<BoardBind
       boardId: board.id,
       name: board.name,
       workflow: board.workflowYaml,
+      ...(board.defaultPresetMode === undefined ? {} : { defaultPresetMode: board.defaultPresetMode }),
       ...(key === undefined ? {} : { key }),
       projectKeys: board.allowedProjectKeys === undefined ? null : [...board.allowedProjectKeys],
       tasks,

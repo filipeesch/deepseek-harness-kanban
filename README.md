@@ -1,6 +1,6 @@
 # DSH Kanban
 
-An independent host and client plugin for **DeepSeek Harness (DSH)**: Hub-scoped Kanban boards, per-board workflows with a column board and a workflow diagram, optional team publishing, optional Git worktrees, shared task notes, and task drawers that reuse native DSH conversations. It does not replace the DSH core, start another server, or clone the chat and agent runtime.
+An independent host and client plugin for **DeepSeek Harness (DSH)**: Hub-scoped Kanban boards, per-board workflows with a column board and a workflow diagram, optional team publishing, optional Git worktrees, shared task notes, and task drawers that reuse native DSH conversations. New board conversations start on the shipped **Kanban Workflow Operator** preset unless the board names another. It does not replace the DSH core, start another server, or clone the chat and agent runtime.
 
 **Verification boundary:** the plugin is checked through public DSH extension-point contracts, real temporary Git repositories, client integration tests, and isolated real DSH composition lanes. Native conversation, model, scheduler, and history engines remain DSH responsibilities. Acceptance uses a scripted, test-only model adapter; no real-model request is part of the acceptance path. See [verification](docs/development/verification.md).
 
@@ -91,14 +91,14 @@ Then use the already-running DSH GUI: **Plugins → Add plugin**, add the absolu
 | Area | Guide |
 | --- | --- |
 | Hubs, boards, project scope, board defaults, and board configuration | [Hubs and boards](docs/user/hubs-and-boards.md) |
-| Workflow YAML, stage editor, and the workflow diagram | [Workflows](docs/user/workflows.md) |
+| Workflow YAML, workflow and stage descriptions, the stage editor, and the workflow diagram | [Workflows](docs/user/workflows.md) |
 | Moving cards, stage instructions, declared transitions, and auto mode | [Execution](docs/user/execution.md) |
 | The task drawer, native conversations, notes, history, relations, and question rounds | [Conversations](docs/user/conversations.md) |
 | Publishing a Hub through Git, Google Drive, or a local folder, and team files | [Team sharing](docs/user/team-sharing.md) |
 | Worktrees, the workspace model, and task deletion | [Git and worktrees](docs/user/git-worktrees.md) |
 | Unattended cron schedules | [Schedules](docs/user/schedules.md) |
 | The product tools an agent can call | [Agent tools](docs/user/agent-tools.md) |
-| The workflow architect, project planner, and project manager presets | [Presets](docs/user/presets.md) |
+| The workflow operator, workflow architect, project planner, and project manager presets | [Presets](docs/user/presets.md) |
 | Repeatable Bash or TypeScript steps in a stage | [Scripted steps](docs/user/scripted-steps.md) |
 
 ## Documentation

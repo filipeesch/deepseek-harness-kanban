@@ -125,11 +125,13 @@ export function StageEditorDialog({ hubId, boardId, revision, initialStageId, co
       render: () => <>
         <IdentitySection
           name={draft.name}
+          description={draft.description}
           id={draft.id}
           disabled={editor.pending}
           renameBlock={editor.renameBlock}
           problem={problem}
           onName={value => editor.change('name', value)}
+          onDescription={value => editor.change('description', value)}
           onId={value => editor.change('id', value)}
         />
         <fieldset className="kb-fieldset">
