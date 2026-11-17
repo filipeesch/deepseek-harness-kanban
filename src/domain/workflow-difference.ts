@@ -53,6 +53,7 @@ function stageFields(before: Column, after: Column): FieldChange[] {
   const add = (field: string, from: unknown, to: unknown) => { if (signature(from) !== signature(to)) fields.push({ field, from: from ?? null, to: to ?? null }); };
   add('key', before.key, after.key);
   add('name', before.name, after.name);
+  add('description', before.description, after.description);
   add('onEnterPrompt', before.onEnterPrompt, after.onEnterPrompt);
   add('allowedTransitions', rulesOf(before), rulesOf(after));
   add('scripted', canonicalScripted(before.scripted), canonicalScripted(after.scripted));
@@ -88,6 +89,7 @@ export function diffWorkflow(before: Workflow | null, after: Workflow): Workflow
   const workflow: FieldChange[] = [];
   const addWorkflow = (field: string, from: unknown, to: unknown) => { if (signature(from) !== signature(to)) workflow.push({ field, from: from ?? null, to: to ?? null }); };
   addWorkflow('name', before.name, after.name);
+  addWorkflow('description', before.description, after.description);
   addWorkflow('initialColumnId', before.initialColumnId, after.initialColumnId);
   addWorkflow('defaultView', before.defaultView, after.defaultView);
   addWorkflow('model', before.model, after.model);

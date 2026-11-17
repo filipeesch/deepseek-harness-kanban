@@ -45,6 +45,35 @@ describe('revision storage', () => {
     expect((await revisions(table).read('board'))?.commits[0]?.summary).toBe('Created the board workflow.');
   });
 
+  it('records and recovers metadata-only changes without changing the workflow', async () => {
+    const table = new MemoryTable();
+    const service = revisions(table);
+    const base = { hubId: 'hub', boardId: 'board', actor: { kind: 'operator' as const }, origin: 'editor' as const };
+    await service.record({ ...base, previous: null, next: FLOW, nextPresetMode: 'operator' });
+    await service.record({ ...base, previous: FLOW, next: FLOW, previousPresetMode: 'operator', nextPresetMode: 'host' });
+    await service.record({ ...base, previous: FLOW, next: FLOW, previousPresetMode: 'host', nextPresetMode: undefined });
+    const reopened = revisions(table);
+    expect(await reopened.stateAt('board', 1)).toEqual({ text: FLOW, presetMode: 'operator' });
+    expect(await reopened.stateAt('board', 2)).toEqual({ text: FLOW, presetMode: 'host' });
+    expect(await reopened.stateAt('board', 3)).toEqual({ text: FLOW, presetMode: undefined });
+    await reopened.reconcile({ hubId: 'hub', boardId: 'board', storedText: FLOW, storedPresetMode: 'operator' });
+    expect(await reopened.stateAt('board', 4)).toEqual({ text: FLOW, presetMode: 'operator' });
+    expect((await reopened.list('board')).revisions[0]).toMatchObject({ origin: 'recovery' });
+  });
+
+  it('records the missed previous metadata after a save failure before returning to the old head', async () => {
+    const table = new MemoryTable();
+    const service = revisions(table);
+    const base = { hubId: 'hub', boardId: 'board', actor: { kind: 'operator' as const }, origin: 'editor' as const };
+    await service.record({ ...base, previous: null, next: FLOW, nextPresetMode: 'operator' });
+    table.failNextPut = true;
+    await expect(service.record({ ...base, previous: FLOW, next: FLOW, previousPresetMode: 'operator', nextPresetMode: 'host' })).rejects.toMatchObject({ code: 'STORAGE_SAVE_FAILED' });
+    await service.record({ ...base, previous: FLOW, next: FLOW, previousPresetMode: 'host', nextPresetMode: 'operator' });
+    expect(await service.stateAt('board', 2)).toEqual({ text: FLOW, presetMode: 'host' });
+    expect(await service.stateAt('board', 3)).toEqual({ text: FLOW, presetMode: 'operator' });
+    expect((await service.list('board')).revisions.map(revision => revision.origin)).toEqual(['editor', 'recovery', 'editor']);
+  });
+
   it('reports a broken record instead of returning a partial log', async () => {
     const table = new MemoryTable();
     table.records.set('board', { version: 1, hubId: 'hub', boardId: 'board', dropped: 0, board: { version: 99 }, commits: [] } as unknown as EncodedRevisionLog);
@@ -81,7 +110,7 @@ describe('revision storage', () => {
     const table = new MemoryTable();
     const service = revisions(table);
     await service.record({ hubId: 'hub', boardId: 'board', previous: FLOW, next: FLOW.replace('label: Todo', 'label: First'), actor: { kind: 'operator' }, origin: 'editor' });
-    await service.record({ hubId: 'hub', boardId: 'board', previous: FLOW, next: FLOW.replace('label: Todo', 'label: Second'), actor: { kind: 'operator' }, origin: 'editor' });
+    await service.record({ hubId: 'hub', boardId: 'board', previous: FLOW.replace('label: Todo', 'label: First'), next: FLOW.replace('label: Todo', 'label: Second'), actor: { kind: 'operator' }, origin: 'editor' });
     const log = await service.read('board');
     expect(await service.textAt('board', log!.commits[1]!.to)).toBe(FLOW.replace('label: Todo', 'label: Second'));
     // The snapshot boundary and any sequence that is not a listed revision are refused.

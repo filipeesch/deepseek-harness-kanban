@@ -124,6 +124,16 @@ describe('transition tools', () => {
     expect(f.app.hubs.requireTask(f.task.id).task.recordedTransition).toMatchObject({ columnId: 'plan' });
   });
 
+  it('fails closed rather than treating the exception flag as proof of an admissible turn', async () => {
+    const f = await setup(BRANCHED_WORKFLOW + '  - id: extra\n    label: Extra\n');
+    const set = f.named('set_next_transition');
+    await set.execute({ column_id: 'plan', reason: 'A plan is needed.' }, f.exec());
+    await expect(set.execute({ column_id: 'extra', reason: 'Go back.' }, f.exec())).rejects.toMatchObject({ code: 'TRANSITION_NOT_ALLOWED' });
+    await expect(set.execute({ column_id: 'extra', reason: 'Go back.', exception: true }, f.exec()))
+      .rejects.toMatchObject({ code: 'EXCEPTION_TURN_UNAVAILABLE' });
+    expect(f.app.hubs.requireTask(f.task.id).task.recordedTransition).toMatchObject({ columnId: 'plan' });
+  });
+
   it('reports a stage that configures no transitions', async () => {
     const f = await setup();
     const listed = await f.named('list_allowed_transitions').execute({ task_id: f.task.id }, f.exec()) as Record<string, unknown>;
@@ -191,6 +201,24 @@ describe('parameterized transition targets', () => {
     const f = await setup(PARAMETERIZED_WORKFLOW);
     const value = await f.named('list_allowed_transitions').execute({}, f.exec()) as Record<string, unknown>;
     expect(value.targets).toEqual([{ columnId: 'wait', name: 'Wait', parameters: [{ name: 'pipeline', description: 'CI workflow' }] }]);
+  });
+
+  it('inspects an explicitly requested destination without adding it to configured targets', async () => {
+    const f = await setup(PARAMETERIZED_WORKFLOW.replace('      - to: wait', '      - to: done'));
+    const list = f.named('list_allowed_transitions');
+    const value = await list.execute({ destination_id: 'wait' }, f.exec()) as Record<string, unknown>;
+    expect(value.targets).toEqual([{ columnId: 'done', name: 'Done' }]);
+    expect(value.requestedDestination).toEqual({ columnId: 'wait', name: 'Wait', parameters: [{ name: 'pipeline', description: 'CI workflow' }] });
+    expect(JSON.stringify(value)).not.toContain('echo ok');
+    await expect(list.execute({ destination_id: 'missing' }, f.exec())).rejects.toMatchObject({ code: 'INVALID_TARGET' });
+  });
+
+  it('resolves requested destinations only on the task board', async () => {
+    const f = await setup(PARAMETERIZED_WORKFLOW);
+    const other = await f.store.addBoard('Other');
+    await f.store.saveBoardWorkflow(other.id, 'name: Other\ninitial_column: foreign\ncolumns:\n  - id: foreign\n    label: Foreign\n');
+    const list = f.named('list_allowed_transitions');
+    await expect(list.execute({ task_id: f.task.id, destination_id: 'foreign' }, f.exec())).rejects.toMatchObject({ code: 'INVALID_TARGET' });
   });
 
   it('records every declared value and echoes the recorded set', async () => {

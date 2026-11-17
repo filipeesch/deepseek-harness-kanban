@@ -8,9 +8,9 @@ Start with a bounded check: `cordis_inspect_list` and its Host Tool provider for
 
 ## Read before writing
 
-- `get_board_yaml`: the exact authored document, in line ranges, with the Hub revision and a path for file reading.
+- `get_board_yaml`: the exact authored document, in line ranges, with the Hub revision, effective board preset and origin, and a path for file reading.
 - `get_stage`: one stage's authored block; inline source is withheld as a digest and byte length unless requested.
-- `get_board_summary` with `include_workflow: true`: parsed workflow, defaults, Hub revision, publishing state.
+- `get_workflow_summary`: compact current workflow, project scope, and sharing state; use continuation for omitted records.
 - `get_route_stats`: route and exit usage, parked cards, loops.
 - `list_board_revisions` / `diff_board_revisions`: what changed, who changed it, and where retained history starts. The log is local and never published.
 - `get_script_execution`: a task's scripted phase, saved result, the hold that withholds delivery with the action that clears it, values, captured version, recent records.
@@ -46,14 +46,14 @@ Delete only a confirmed empty board, with local or team scope when bound; projec
 
 ## Local success versus publishing
 
-A tool write never publishes. It saves locally and leaves a bound board a draft; publishing stays the operator's action in the interface, and no tool reports “published”. Inspect `sharing` for the board's state and use `diff_published_board` to say what the team would receive. A publishing failure keeps local data. Other boards' drafts are not atomic parts of this work; report per board. Sharing carries workflows, not local tasks or coordinator IDs.
+Writes remain local until published. Inspect `sharing` and `diff_published_board`; failures keep local data. Current providers cannot safely sync descriptions or preset metadata against older writers: report `SHARING_COMPATIBILITY_UNAVAILABLE`. Sharing carries workflows, not tasks.
 
 ## Automation and human gates
 
 Choose **work start**, **destination selector**, and **default advance** separately. There is no per-stage YAML automation switch.
 
 - **Manual:** no entry instruction means no work starts on entry. With auto mode off and no declared route, completed turns do not move the card.
-- **Agent-selected:** the stage reads `list_allowed_transitions`, chooses a configured target from evidence, and calls `set_next_transition` with a reason. Only its own card moves, at its next completed-turn end, even with auto mode off. A scripted entry routes only through its captured exit. Parameters are entry data, never secrets or YAML.
+- **Agent-selected:** when its current instruction or the user requests routing, the stage reads `list_allowed_transitions`, chooses a configured target from evidence, and calls `set_next_transition` with a reason. Only its own card moves, at its next completed-turn end, even with auto mode off. A scripted entry routes only through its captured exit. Parameters are entry data, never secrets or YAML.
 - **Task auto mode:** eligible completed turns advance by the first configured target, or workflow order when omitted, unless a route is declared. Default resolution crosses uninstructed stages without revisiting one.
 
 An uninstructed stage or auto mode off alone is not a human gate. Ask for approval instead of predeclaring a gated route; for a durable hold use `pause_task` and ask the human to resume. `[]` prevents default exit. Unanswered questions, pending approvals, and queued messages hold advance; dismissing a question is not approval. `resume_task` neither enables auto mode nor moves a card.

@@ -169,7 +169,15 @@ it('runs local Bash/TypeScript loops, repairs via Play, reloads captures, and ha
   expect(content).toContain('pipeline: local-ci');
   expect(events.filter(event => event.type === 'user/message' && event.data.source?.kind === 'user')).toHaveLength(0);
   expect(events.filter(event => event.type === 'turn/start')).toHaveLength(1);
-  expect(events.filter(event => event.type === 'user/message' && event.data.source?.kind === 'kanban-task')).toHaveLength(1);
+  const contexts = events.filter(event => event.type === 'user/message' && event.data.source?.kind === 'kanban-task');
+  expect(contexts).toHaveLength(1);
+  const taskContext = JSON.stringify(contexts[0].data.content);
+  expect(taskContext).toContain('Workflow first-contact snapshot');
+  expect(taskContext).toContain('Scripted native lane');
+  expect(taskContext).toContain('Wait Bash');
+  expect(taskContext).toContain('Review');
+  expect(taskContext).not.toContain('Review the scripted result.');
+  expect(taskContext).not.toContain('wait-ci.sh');
   const safe = await snapshot();
   expect(JSON.stringify(safe)).not.toContain('sourceRef');
   expect(JSON.stringify(safe)).not.toContain('Unapproved replacement must not run');

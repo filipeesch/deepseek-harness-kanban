@@ -1,5 +1,5 @@
 import type { RevisionActor, RevisionBaseline, RevisionOrigin, BoardRevisionLog, RevisionCommit } from '../domain/revisions/log.js';
-import { appendRevision, commitOf, createRevisionLog, headText, revisionOf, textAtRevision } from '../domain/revisions/log.js';
+import { appendRevision, commitOf, createRevisionLog, headPresetMode, headText, revisionOf, stateAtRevision, textAtRevision } from '../domain/revisions/log.js';
 import type { RevisionStore } from './revision-storage.js';
 
 /** One write the revision log records, with the document it replaced. */
@@ -9,6 +9,9 @@ export interface RevisionRecordInput {
   /** The document before the write; null when the board is being created. */
   readonly previous: string | null;
   readonly next: string;
+  /** Undefined denotes the legacy absence of board preset metadata. */
+  readonly previousPresetMode?: 'operator' | 'host';
+  readonly nextPresetMode?: 'operator' | 'host';
   readonly actor: RevisionActor;
   readonly origin: RevisionOrigin;
 }
@@ -80,17 +83,23 @@ export class BoardRevisions {
       if (existing === undefined) {
         if (input.previous === null) {
           // A board created now starts its own history; nothing was lost.
-          const created = createRevisionLog({ hubId: input.hubId, boardId: input.boardId, text: input.next, at, baseline: { kind: 'created', at } });
-          await this.options.store.save({ ...created, commits: [{ from: 0, to: 0, at, actor: input.actor, origin: input.origin, summary: 'Created the board workflow.' }] });
+          const created = createRevisionLog({ hubId: input.hubId, boardId: input.boardId, text: input.next, presetMode: input.nextPresetMode, at, baseline: { kind: 'created', at } });
+          await this.options.store.save({ ...created, commits: [{ from: 0, to: 0, at, actor: input.actor, origin: input.origin, summary: 'Created the board workflow.', presetMode: input.nextPresetMode ?? null }] });
           return;
         }
         // A board that already holds a document has a history this installation never saw.
         // Recording the first write as its creation would be a lie.
-        const seeded = createRevisionLog({ hubId: input.hubId, boardId: input.boardId, text: input.previous, at, baseline: { kind: 'recovered', at } });
-        await this.options.store.save(appendRevision(seeded, { text: input.next, at, actor: input.actor, origin: input.origin }));
+        const seeded = createRevisionLog({ hubId: input.hubId, boardId: input.boardId, text: input.previous, presetMode: input.previousPresetMode, at, baseline: { kind: 'recovered', at } });
+        await this.options.store.save(appendRevision(seeded, { text: input.next, presetMode: input.nextPresetMode, at, actor: input.actor, origin: input.origin }));
         return;
       }
-      await this.options.store.save(appendRevision(existing, { text: input.next, at, actor: input.actor, origin: input.origin }));
+      // A failed earlier log save may leave the head behind the actual previous state.
+      // Record that gap first, otherwise a write back to the old head looks like a no-op.
+      const previousMode = input.previousPresetMode ?? null;
+      const head = input.previous !== null && (headText(existing) !== input.previous || headPresetMode(existing) !== previousMode)
+        ? appendRevision(existing, { text: input.previous, presetMode: previousMode, at, actor: { kind: 'operator' }, origin: 'recovery' })
+        : existing;
+      await this.options.store.save(appendRevision(head, { text: input.next, presetMode: input.nextPresetMode, at, actor: input.actor, origin: input.origin }));
     });
   }
 
@@ -111,6 +120,14 @@ export class BoardRevisions {
     const log = await this.options.store.load(boardId);
     if (log === undefined || commitOf(log, revision) === undefined) return undefined;
     return textAtRevision(log, revision);
+  }
+
+  /** The retained document and metadata; undefined mode means legacy absence. */
+  async stateAt(boardId: string, revision: number): Promise<{ text: string; presetMode: 'operator' | 'host' | undefined } | undefined> {
+    const log = await this.options.store.load(boardId);
+    if (log === undefined) return undefined;
+    const state = stateAtRevision(log, revision);
+    return state === undefined ? undefined : { text: state.text, presetMode: state.presetMode ?? undefined };
   }
 
   /** What the board holds now. */
@@ -141,12 +158,12 @@ export class BoardRevisions {
    * Append a recovery revision when the stored workflow no longer matches the log
    * head, so a history never continues from a document it no longer describes.
    */
-  async reconcile(input: { readonly hubId: string; readonly boardId: string; readonly storedText: string }): Promise<void> {
+  async reconcile(input: { readonly hubId: string; readonly boardId: string; readonly storedText: string; readonly storedPresetMode?: 'operator' | 'host' }): Promise<void> {
     await this.serial(input.hubId + '/' + input.boardId, async () => {
       const log = await this.options.store.load(input.boardId);
-      if (log === undefined || headText(log) === input.storedText) return;
+      if (log === undefined || (headText(log) === input.storedText && headPresetMode(log) === (input.storedPresetMode ?? null))) return;
       const at = this.now();
-      await this.options.store.save(appendRevision(log, { text: input.storedText, at, actor: { kind: 'operator' }, origin: 'recovery' }));
+      await this.options.store.save(appendRevision(log, { text: input.storedText, presetMode: input.storedPresetMode, at, actor: { kind: 'operator' }, origin: 'recovery' }));
     });
   }
 

@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Board, ClientApi, HubState, ModelSelection, Problem } from '../../../shared/types.js';
 import { modelIsAvailable, modelSelectionKey } from '../../../domain/model-preference.js';
-import { writeBoardDefaultsField, type BoardMcpSelection } from '../../../domain/board-defaults-field.js';
+import { effectiveBoardPreset } from '../../../domain/board-preset.js';
+import { writeBoardAgentPresetField } from '../../../domain/board-agent-preset-field.js';
+import { writeBoardModelField } from '../../../domain/board-model-field.js';
+import { writeBoardMcpField } from '../../../domain/board-mcp-field.js';
 import { mcpAllowlistEntry, mcpAllowlistText } from '../../../domain/mcp-allowlist.js';
 import { asProblem } from '../../problem.js';
 import type { RunCommand } from '../../ui.js';
@@ -19,6 +22,7 @@ export interface BoardDefaultsController {
   readonly selection: ModelSelection | undefined;
   readonly preset: string | undefined;
   readonly storedPreset: string | undefined;
+  readonly presetOrigin: ReturnType<typeof effectiveBoardPreset>['origin'];
   readonly storedModel: ModelSelection | undefined;
   readonly mcpMode: BoardMcpMode;
   readonly mcpEntries: readonly string[];
@@ -71,7 +75,8 @@ export function useBoardDefaults(options: {
 }): BoardDefaultsController {
   const { hub, board, run, api, yaml, baseRevision, workflowEditing, presetPort, translate } = options;
   const storedModel = board.workflow.model;
-  const storedPreset = board.workflow.agentPreset;
+  const effectivePreset = effectiveBoardPreset(board);
+  const storedPreset = effectivePreset.preset;
   const storedMcp = board.workflow.mcp;
   const storedMode: BoardModelMode = storedModel === undefined ? 'host' : 'specific';
   const storedKey = modelSelectionKey(storedModel);
@@ -81,6 +86,7 @@ export function useBoardDefaults(options: {
   const [mode, setMode] = useState<BoardModelMode>(storedMode);
   const [selection, setSelection] = useState<ModelSelection | undefined>(storedModel);
   const [preset, setPreset] = useState<string | undefined>(storedPreset);
+  const [presetTouched, setPresetTouched] = useState(false);
   const [mcpMode, setMcpMode] = useState<BoardMcpMode>(storedMcpMode);
   const [mcpEntries, setMcpEntries] = useState<string[]>([...(storedMcp ?? [])]);
   const [mcpEntryProblem, setMcpEntryProblem] = useState<string | null>(null);
@@ -90,7 +96,7 @@ export function useBoardDefaults(options: {
 
   const nextModel = mode === 'specific' ? selection : undefined;
   const modelDirty = mode !== storedMode || modelSelectionKey(nextModel) !== storedKey;
-  const presetDirty = (preset ?? undefined) !== (storedPreset ?? undefined);
+  const presetDirty = presetTouched && (preset !== storedPreset || (preset === undefined ? effectivePreset.origin !== 'explicit-host' : effectivePreset.origin !== 'authored'));
   const nextMcpKey = mcpMode === 'all' ? 'all' : 'selected:' + mcpEntries.join(',');
   const mcpDirty = nextMcpKey !== storedMcpKey;
   const dirty = modelDirty || presetDirty || mcpDirty;
@@ -113,15 +119,19 @@ export function useBoardDefaults(options: {
     setMode(storedMode);
     setSelection(storedModel);
     setPreset(storedPreset);
+    setPresetTouched(false);
     setMcpMode(storedMcpMode);
     setMcpEntries([...(storedMcp ?? [])]);
     setMcpEntryProblem(null);
-  }, [storedKey, storedPreset, storedMcpKey, dirty]);
+  }, [storedKey, storedPreset, effectivePreset.origin, storedMcpKey, dirty]);
 
   const chooseHostModel = useCallback(() => { setMode('host'); setSaved(false); setError(null); }, []);
   const chooseSpecificModel = useCallback(() => { setMode('specific'); setSaved(false); setError(null); }, []);
   const chooseModel = useCallback((value: ModelSelection) => { setMode('specific'); setSelection(value); setSaved(false); setError(null); }, []);
-  const choosePreset = useCallback((value: string | undefined) => { setPreset(value); setSaved(false); setError(null); }, []);
+  const choosePreset = useCallback((value: string | undefined) => {
+    setPresetTouched(!(value === storedPreset && preset !== storedPreset));
+    setPreset(value); setSaved(false); setError(null);
+  }, [preset, storedPreset]);
   const chooseMcpMode = useCallback((value: BoardMcpMode) => { setMcpMode(value); setMcpEntryProblem(null); setSaved(false); setError(null); }, []);
   const toggleMcpServer = useCallback((server: string) => {
     setMcpMode('selected');
@@ -157,11 +167,14 @@ export function useBoardDefaults(options: {
   async function save(): Promise<void> {
     if (!canSave || pending) return;
     setPending(true); setError(null);
-    const mcp: BoardMcpSelection = mcpMode === 'all' ? { mode: 'all' } : { mode: 'selected', entries: mcpEntries };
     try {
+      let nextYaml = modelDirty ? writeBoardModelField(yaml, mode === 'specific' ? selection : undefined) : yaml;
+      if (presetDirty) nextYaml = writeBoardAgentPresetField(nextYaml, preset);
+      if (mcpDirty) nextYaml = writeBoardMcpField(nextYaml, mcpMode === 'all' ? undefined : mcpEntries);
       await run({
         type: 'board.workflow.save', hubId: hub.id, boardId: board.id,
-        yaml: writeBoardDefaultsField(yaml, { model: mode === 'specific' ? selection : undefined, preset, mcp }),
+        yaml: nextYaml,
+        ...(presetDirty ? { presetChoice: preset === undefined ? 'host' as const : 'named' as const } : {}),
         expectedRevision: baseRevision,
       });
       setSaved(true);
@@ -173,7 +186,7 @@ export function useBoardDefaults(options: {
   }
 
   return {
-    mode, selection, preset, storedPreset, storedModel, mcpMode, mcpEntries, storedMcp, knownMcpServers, mcpEntryProblem,
+    mode, selection, preset, storedPreset, presetOrigin: effectivePreset.origin, storedModel, mcpMode, mcpEntries, storedMcp, knownMcpServers, mcpEntryProblem,
     dirty, valid, canSave, pending, saved, error,
     catalog, roster: roster.state, mcpServers, translate, storedModelMissing,
     chooseHostModel, chooseSpecificModel, chooseModel, choosePreset, chooseMcpMode, toggleMcpServer, addMcpEntry, removeMcpEntry, retryPresets, save,

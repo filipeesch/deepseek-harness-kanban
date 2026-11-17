@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { localStageIdentitiesSchema } from './scripted-state.js';
 import { DATA_VERSION, type BoardState } from '../shared/types.js';
-import { absolutePath, baseTask, canonicalWorkflow, createTaskInvariantChecker, nonempty, note, project, revision, workflow } from './schema-parts.js';
+import { absolutePath, baseTask, canonicalWorkflow, createTaskInvariantChecker, nonempty, note, project, revision, restoreLegacyStageDescriptions, workflow } from './schema-parts.js';
 import { DEFAULT_WORKFLOW_YAML, parseWorkflow } from './workflow.js';
 
 const settings = z.strictObject({ worktreeBasePath: absolutePath.optional() });
@@ -11,7 +11,7 @@ export const BoardStateSchema = z.strictObject({
   localStageIdentities: localStageIdentitiesSchema.optional(),
   schemaVersion: z.literal(DATA_VERSION), revision, workflowYaml: nonempty, workflow,
   projects: z.array(project), tasks: z.array(baseTask), notes: z.array(note), settings: settings.optional(),
-}).superRefine((state, context) => {
+}).transform(state => ({ ...state, workflow: restoreLegacyStageDescriptions(state.workflow, state.workflowYaml) })).superRefine((state, context) => {
   const issue = (path: (string | number)[], message: string): void => {
     context.addIssue({ code: 'custom', path, message });
   };

@@ -10,7 +10,7 @@ const columns: Column[] = [
 describe('stage editor draft', () => {
   it('opens on the stored stage', () => {
     const draft = stageDraft(columns[1]!);
-    expect(draft).toEqual({ name: 'Done', onEnterPrompt: '', mode: 'restricted', transitions: [{ to: 'plan', when: 'needs work' }], initial: false, id: 'done' });
+    expect(draft).toEqual({ name: 'Done', description: '', onEnterPrompt: '', mode: 'restricted', transitions: [{ to: 'plan', when: 'needs work' }], initial: false, id: 'done' });
     expect(draftChanged(draft, columns[1]!)).toBe(false);
   });
 
@@ -46,6 +46,19 @@ describe('stage editor draft', () => {
     expect(stagePatch({ ...base, initial: true }, columns[1]!)).toEqual({ initial: true });
     expect(stagePatch({ ...base, mode: 'any' }, columns[1]!)).toEqual({ allowedTransitions: null });
     expect(stagePatch({ ...base, transitions: [{ to: 'plan', when: 'needs review' }] }, columns[1]!)).toEqual({ allowedTransitions: [{ to: 'plan', when: 'needs review' }] });
+  });
+
+  it('preserves optional and long descriptions and only patches edits', () => {
+    const long = 'A'.repeat(200);
+    const column: Column = { id: 'plan', name: 'Plan', description: long };
+    const draft = stageDraft(column);
+    expect(draft.description).toBe(long);
+    expect(draftChanged(draft, column)).toBe(false);
+    expect(stagePatch({ ...draft, name: 'Planning' }, column)).toEqual({ name: 'Planning' });
+    expect(stagePatch({ ...draft, description: '  Updated context  ' }, column)).toEqual({ description: '  Updated context  ' });
+    expect(stagePatch({ ...draft, description: '  ' }, column)).toEqual({ description: null });
+    expect(draftChanged({ ...draft, description: '' }, column)).toBe(true);
+    expect(draftProblems({ ...draft, description: long }, new Set())).toEqual([]);
   });
 
   it('distinguishes the stage that permits nothing from the one that permits anything', () => {

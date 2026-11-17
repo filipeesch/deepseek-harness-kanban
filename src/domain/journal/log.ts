@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { BoardChange, JournalEvent } from './event.js';
 import { decodeEvent, encodeEvent, EVENT_FORMAT_VERSION } from './event.js';
 import { applyEvents } from './conflict.js';
+import { hasAuthoredDescriptions } from './descriptions.js';
 
 /**
  * One board's published log: an append-only sequence of events, one JSON object per
@@ -44,7 +45,15 @@ export function headToken(log: BoardLog): string {
 /** Append events to a log, stamped with their positions. */
 export function appendEvents(log: BoardLog, changes: readonly BoardChange[], at: string): BoardLog {
   let seq = nextSequence(log);
-  return [...log, ...changes.map(change => ({ ...change, seq: seq++, at, v: EVENT_FORMAT_VERSION } as JournalEvent))];
+  return [...log, ...changes.map(change => ({ ...change, seq: seq++, at, v: requiresDescriptionFormat(change) ? EVENT_FORMAT_VERSION : 3 } as JournalEvent))];
+}
+
+/** Version legacy-compatible events separately from events that carry descriptions. */
+function requiresDescriptionFormat(change: BoardChange): boolean {
+  if (change.kind === 'workflow.field-changed' || change.kind === 'stage.field-changed') return change.field === 'description';
+  if (change.kind === 'stage.created') return change.stage.description !== undefined;
+  if (change.kind !== 'workflow.replaced') return false;
+  return hasAuthoredDescriptions(change.text);
 }
 
 /** The events a member at the given cursor has not seen yet. */

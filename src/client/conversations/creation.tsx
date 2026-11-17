@@ -109,7 +109,7 @@ export function useConversationCreation(options: ConversationCreationOptions): C
   }
 
   /** Create (once), select the chosen preset on that conversation, and open its window. */
-  async function pick(presetId: string, isDefault: boolean) {
+  async function pick(presetId: string, _isDefault: boolean) {
     if (presetBusy || blocked || busy || pending) return;
     const attempt = generation.current;
     setPresetError(null);
@@ -122,14 +122,12 @@ export function useConversationCreation(options: ConversationCreationOptions): C
         if (attempt !== generation.current) return;
         setPendingConversation(sessionId);
       }
-      // The created conversation already runs the deployment default; selecting
-      // that same preset again would only ask the host to reapply it.
-      if (!isDefault) {
-        if (presetPort === null) throw new Error('The native agent-preset roster is unavailable.');
-        const result = await presetPort.select(sessionId, presetId);
-        if (attempt !== generation.current) return;
-        if (!result.ok) throw new Error(result.message ?? 'The agent preset could not be selected.');
-      }
+      // Creation may already have applied the board default, so even the host's
+      // default card must be explicitly selected when the person chooses it.
+      if (presetPort === null) throw new Error('The native agent-preset roster is unavailable.');
+      const result = await presetPort.select(sessionId, presetId);
+      if (attempt !== generation.current) return;
+      if (!result.ok) throw new Error(result.message ?? 'The agent preset could not be selected.');
       select(sessionId);
       onFocus(sessionId);
     } catch (error) {

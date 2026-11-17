@@ -21,7 +21,9 @@ const provider = { id: 'local-folder' as const, label: 'Local folder', address: 
 
 describe('sharing view', () => {
   it('reports an unchanged board as in sync', () => {
-    const view = buildSharingView(record(), hubWith([{ id: 'board', name: 'Flow' }]), { provider });
+    const legacy = hubWith([{ id: 'board', name: 'Flow' }]);
+    delete legacy.boards[0]!.defaultPresetMode;
+    const view = buildSharingView(record(), legacy, { provider });
     expect(view.boards[0]).toMatchObject({ boardId: 'board', key: 'flow', state: 'in-sync', bound: true, draft: false });
     expect(view.drafts).toBe(0);
     expect(view.status).toBe('published');

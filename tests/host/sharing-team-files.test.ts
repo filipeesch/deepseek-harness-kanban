@@ -69,7 +69,10 @@ function resolverWithoutFiles(): SharingProviderResolver {
 
 async function hubs(): Promise<{ hubs: HubRepository; hubId: string }> {
   const repository = await HubRepository.open(new MemoryHubStorage(), { id: (() => { let n = 0; return () => 'id-' + (++n); })(), now: () => NOW });
-  return { hubs: repository, hubId: repository.defaultHubId() };
+  const hubId = repository.defaultHubId();
+  // These file-store cases use a legacy-shareable board.
+  await repository.hub(hubId).transact(draft => { for (const board of draft.boards) delete board.defaultPresetMode; }, repository.requireHub(hubId).revision);
+  return { hubs: repository, hubId };
 }
 
 function providersFor(base: string): SharingProviderRegistry {

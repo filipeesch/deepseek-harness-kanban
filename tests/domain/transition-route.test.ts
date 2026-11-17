@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Column, Workflow } from '../../src/shared/types.js';
-import { advanceArmed, advanceArmedFor, declaredTransitionReason, recordedTransition, resolveAdvanceRoute, resolveNextStageRoute, routeDestination } from '../../src/domain/transition-route.js';
+import { advanceArmed, advanceArmedFor, declaredTransitionReason, recordedTransition, resolveExceptionalTransition, resolveAdvanceRoute, resolveNextStageRoute, routeDestination } from '../../src/domain/transition-route.js';
 import { transitions } from '../support/transition-rules.js';
 
 const column = (id: string, extra: Partial<Column> = {}): Column => ({ id, name: id.toUpperCase(), ...extra });
@@ -45,6 +45,30 @@ describe('recorded transition resolution', () => {
   it('reports a target the stage no longer configures', () => {
     const wf = flow(column('backlog'), column('review', { allowedTransitions: transitions('done') }), column('rework'), column('done'));
     expect(recordedTransition(wf, { columnId: 'review', recordedTransition: recorded('review', 'rework') })).toEqual({ kind: 'stale', reason: 'not-allowed' });
+  });
+});
+
+describe('exceptional transition identity', () => {
+  const identity = { id: 'exception-1', sessionId: 'session-1', turn: 1, entryId: 'entry-1', fromColumnId: 'review', columnId: 'backlog' };
+  const task = {
+    columnId: 'review',
+    stageEntry: { id: 'entry-1', columnId: 'review', stageIdentity: 'review-id', enteredAt: '2026-01-01T00:00:00.000Z' },
+    recordedTransition: { ...recorded('review', 'backlog', 'Requested.'), exception: { id: identity.id, sessionId: identity.sessionId, turn: identity.turn, entryId: identity.entryId } },
+  };
+  it('requires the exact declaration, session, turn, entry, source and destination', () => {
+    expect(resolveExceptionalTransition(workflow(), task, identity)?.id).toBe('backlog');
+    for (const changed of [{ id: 'other' }, { sessionId: 'other' }, { turn: 2 }, { entryId: 'other' }, { fromColumnId: 'other' }, { columnId: 'done' }]) {
+      expect(resolveExceptionalTransition(workflow(), task, { ...identity, ...changed })).toBeUndefined();
+    }
+    expect(resolveExceptionalTransition(workflow(), { ...task, stageEntry: { ...task.stageEntry, id: 'new-entry' } }, identity)).toBeUndefined();
+    expect(resolveExceptionalTransition(workflow(), { ...task, recordedTransition: undefined }, identity)).toBeUndefined();
+    expect(resolveExceptionalTransition(flow(column('review')), task, identity)).toBeUndefined();
+  });
+  it('never exposes an exception through ordinary routing even after a policy edit', () => {
+    const wf = flow(column('review', { allowedTransitions: transitions('backlog') }), column('backlog'));
+    expect(recordedTransition(wf, task)).toEqual({ kind: 'none' });
+    expect(advanceArmed(wf, task)).toBe(false);
+    expect(routeDestination(wf, task)).toMatchObject({ kind: 'resolved', source: 'default' });
   });
 });
 

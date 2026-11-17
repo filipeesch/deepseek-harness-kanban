@@ -547,7 +547,7 @@ The plugin SHALL NOT add dedicated task-card-to-main-chat or main-chat-to-task-c
 
 ### Requirement: First-turn task context
 
-The plugin SHALL inject a durable task-context message into the first model step of a task conversation before the first message of the conversation, whatever that message's source. The context SHALL contain the task title, task identifier, description, workflow stage at first contact, the owning Hub name, and the owning board name. The message SHALL be a plugin-sourced native message, SHALL NOT be a user-authored chat message or a system prompt, and SHALL NOT start a turn.
+The plugin SHALL inject a durable task-context message into the first model step of a task conversation before the first message of the conversation, whatever that message's source. The context SHALL contain the task title, task identifier, description, workflow stage at first contact, the owning Hub name, and the owning board name. It SHALL also contain the compact workflow summary defined by the board workflow read payload, including task-specific state for this task, as a first-contact snapshot, regardless of the conversation's preset. It SHALL NOT require a startup tool call. The context SHALL distinguish absent descriptions from authored text and SHALL NOT include other stages' full instructions, scripts, or the exact YAML. The message SHALL be a plugin-sourced native message, SHALL NOT be a user-authored chat message or a system prompt, and SHALL NOT start a turn.
 
 The conversation SHALL present the context as an inline visible context row using the host's native context-row presentation. If that presentation is unavailable, an inline fallback row SHALL preserve the context text. The row SHALL be part of the transcript flow, SHALL appear at the injected message's position, and SHALL scroll with the transcript rather than remaining fixed over it. It SHALL be visible wherever the task conversation is rendered, including the drawer and ordinary native DSH chat. The context SHALL be injected at most once per conversation; later turns and stage instructions SHALL NOT repeat it. Each new conversation SHALL receive its own first-turn context. A conversation with existing messages SHALL NOT receive a new first-turn context, and conversations whose first message predates this behavior SHALL NOT be backfilled.
 
@@ -602,6 +602,25 @@ The conversation SHALL present the context as an inline visible context row usin
 - **WHEN** a task conversation whose first message already exists is resumed
 - **THEN** no new task-context message is injected
 - **AND** the durable history and existing context row remain
+
+#### Scenario: Preserve access to an oversized snapshot
+
+- **WHEN** the compact workflow projection exceeds the 6 KiB first-contact budget
+- **THEN** the context identifies omitted content without silently truncating an authored description or condition
+- **AND** the summary tool provides authorized continuation or paginated record reads
+
+#### Scenario: Inject workflow context for every task preset
+
+- **WHEN** the first model step of a task conversation starts using any preset
+- **THEN** the existing task-context message contains the compact workflow snapshot for the task's board
+- **AND** it identifies the current stage, stage descriptions and route conditions, project scope, sharing state, and automatic-mode state available at first contact
+- **AND** the agent does not need to call a summary tool to obtain that initial context
+
+#### Scenario: Do not pretend the first-contact snapshot is current
+
+- **WHEN** the workflow or task changes after the first context message was delivered
+- **THEN** the original context remains labeled as a first-contact snapshot and is not silently replaced
+- **AND** current transition choices are read through the transition discovery tool before a routing decision
 
 ### Requirement: Fork adoption into the task conversation
 

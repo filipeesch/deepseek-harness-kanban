@@ -28,13 +28,11 @@ export function buildTransitionBriefing(workflow: Workflow, task: BriefedTask): 
   lines.push('');
   const recorded = recordedTransition(workflow, task);
   if (recorded.kind === 'resolved') lines.push('Recorded transition: ' + recorded.column.name + '.');
-  else if (recorded.kind === 'stale') lines.push('The recorded transition no longer applies: ' + staleTransitionMessage(workflow, task, recorded.reason) + ' Record another one, or the advance pauses.');
+  else if (recorded.kind === 'stale') lines.push('The recorded transition no longer applies: ' + staleTransitionMessage(workflow, task, recorded.reason) + ' An advance using it pauses.');
   else lines.push('No transition recorded.');
   const fallback = defaultDestination(workflow, task.columnId);
-  // The declaration is what makes the turn end move the task, so the briefing states
-  // both halves of the contract: the reason is required, and the move happens then.
-  lines.push('Declare the transition this turn ends in with ' + RECORD_TOOL + ': pass ' + TARGET_PARAM + ' with the target listed above and '
-    + REASON_PARAM + ' with the reason for it. A declared transition requires a reason, and the task follows it at the end of the turn'
-    + (fallback === undefined ? '; with none declared the task does not advance.' : '; with none declared the advance uses ' + fallback.name + '.'));
+  lines.push('A transition can be declared with ' + RECORD_TOOL + ', passing ' + TARGET_PARAM + ' and ' + REASON_PARAM + '. '
+    + 'A declared transition requires a reason and can advance the task after a completed turn. '
+    + (fallback === undefined ? 'Without a declaration there is no configured default.' : 'Without a declaration, an independently enabled automatic advance uses ' + fallback.name + '.'));
   return lines.join('\n');
 }

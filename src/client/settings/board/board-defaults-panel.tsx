@@ -79,8 +79,9 @@ export function BoardDefaultsPanel({ hub, board, run, api, yaml, baseRevision, w
 
     <fieldset className="kb-fieldset" aria-label="Board default agent preset">
       <legend>Default agent preset</legend>
+      <p className="kb-hint">Current origin: {controller.presetOrigin === 'implicit-operator' ? 'new-board operator default' : controller.presetOrigin === 'authored' ? 'authored workflow' : controller.presetOrigin === 'explicit-host' ? 'explicit host default' : 'legacy host default'}.</p>
       <label className="kb-choice kb-preset-choice">
-        <input type="radio" name={group} checked={controller.preset === undefined} disabled={controller.pending} onChange={() => controller.choosePreset(undefined)} />
+        <input type="radio" name={group} checked={controller.preset === undefined} disabled={controller.pending} onClick={() => { if (controller.preset === undefined) controller.choosePreset(undefined); }} onChange={() => controller.choosePreset(undefined)} />
         <span><strong>Host default preset</strong><span className="kb-hint">Leave the choice to DSH</span></span>
       </label>
       {controller.roster.status === 'loading' && <p className="kb-hint" role="status">Loading agent presets…</p>}
@@ -88,7 +89,7 @@ export function BoardDefaultsPanel({ hub, board, run, api, yaml, baseRevision, w
       {controller.roster.status === 'ready' && rosterOptions.map(option => {
         const display = displayPreset(option, controller.translate);
         return <label className="kb-choice kb-preset-choice" key={option.id}>
-          <input type="radio" name={group} checked={controller.preset === option.id} disabled={controller.pending} data-preset-id={option.id} data-host-default={option.isDefault === true ? 'true' : 'false'} onChange={() => controller.choosePreset(option.id)} />
+          <input type="radio" name={group} checked={controller.preset === option.id} disabled={controller.pending} data-preset-id={option.id} data-host-default={option.isDefault === true ? 'true' : 'false'} onClick={() => { if (controller.preset === option.id) controller.choosePreset(option.id); }} onChange={() => controller.choosePreset(option.id)} />
           <span><strong>{display.name}</strong>{display.description === undefined ? null : <span className="kb-hint">{display.description}</span>}</span>
         </label>;
       })}

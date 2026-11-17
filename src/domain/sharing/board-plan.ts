@@ -2,6 +2,7 @@ import { canonicalWorkflow } from '../schema-parts.js';
 import { parseWorkflow } from '../workflow.js';
 import type { SharingChangeSummary } from '../../shared/types.js';
 import { summarizeChanges } from '../journal/summary.js';
+import { hasAuthoredDescriptions } from '../journal/descriptions.js';
 import { deriveBoardChanges, sameScope } from '../journal/derive.js';
 import type { LocalSharedBoard } from './projection.js';
 
@@ -80,13 +81,13 @@ export function evaluateBoard(input: BoardEvaluationInput): BoardEvaluation {
   if (mirror?.conflict != null) return { ...base, key, state: 'needs-review', draft: false, updates: mirror.updates, conflict: mirror.conflict };
   // Local work and team updates can coexist: the state names the blocking action, but
   // the draft flag still records that this installation has unpublished changes.
-  const localDraft = mirror !== null && mirror.workflow !== null && (!sameWorkflow(local.workflow, mirror.workflow)
+  const localDraft = mirror !== null && mirror.workflow !== null && (local.defaultPresetMode !== undefined || hasAuthoredDescriptions(local.workflow) || !sameWorkflow(local.workflow, mirror.workflow)
     || mirror.name !== local.name
     || !sameScope(mirror.projectKeys, local.projectKeys)
     || mirror.rank !== rank);
   if ((mirror?.updates ?? 0) > 0) return { ...base, key, state: 'updates-available', draft: localDraft, updates: mirror!.updates, conflict: null };
   if (mirror === null || mirror.workflow === null || mirror.present === false) return { ...base, key, state: 'draft', draft: true, updates: 0, conflict: null };
-  const draft = !sameWorkflow(local.workflow, mirror.workflow)
+  const draft = local.defaultPresetMode !== undefined || hasAuthoredDescriptions(local.workflow) || !sameWorkflow(local.workflow, mirror.workflow)
     || mirror.name !== local.name
     || !sameScope(mirror.projectKeys, local.projectKeys)
     || mirror.rank !== rank;

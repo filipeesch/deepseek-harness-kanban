@@ -40,6 +40,21 @@ describe('per-board evaluation', () => {
     expect(evaluateBoard({ local: local({ key: 'delivery' }), mirror: mirror(), orphaned: false, rank: 'n' }).state).toBe('draft');
   });
 
+  it('retains description-only local drafts while team updates wait', () => {
+    for (const workflow of [BASE.replace('name: Delivery', 'name: Delivery\ndescription: Local'), BASE.replace('label: Plan', 'label: Plan\n    description: Local')]) {
+      const evaluation = evaluateBoard({ local: local({ key: 'delivery', workflow }), mirror: mirror({ updates: 1 }), orphaned: false, rank: 'i' });
+      expect(evaluation).toMatchObject({ state: 'updates-available', draft: true });
+      expect(boardChanges({ local: local({ key: 'delivery', workflow }), mirror: mirror(), rank: 'i' })).not.toEqual([]);
+    }
+  });
+
+  it('treats preset metadata and authored blank descriptions as local drafts', () => {
+    for (const candidate of [local({ key: 'delivery', defaultPresetMode: 'host' }), local({ key: 'delivery', defaultPresetMode: 'operator' }), local({ key: 'delivery', workflow: BASE.replace('name: Delivery', 'name: Delivery\ndescription: ""') })]) {
+      expect(evaluateBoard({ local: candidate, mirror: mirror(), orphaned: false, rank: 'i' })).toMatchObject({ state: 'draft', draft: true });
+      expect(evaluateBoard({ local: candidate, mirror: mirror({ updates: 1 }), orphaned: false, rank: 'i' })).toMatchObject({ state: 'updates-available', draft: true });
+    }
+  });
+
   it('reports the events a member has not applied', () => {
     const evaluation = evaluateBoard({ local: local({ key: 'delivery' }), mirror: mirror({ updates: 2 }), orphaned: false, rank: 'i' });
     expect(evaluation.state).toBe('updates-available');

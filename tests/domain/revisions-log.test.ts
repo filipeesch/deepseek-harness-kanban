@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  appendRevision, createRevisionLog, describeChange, encodeRevisionLog, headText, RETAINED_REVISIONS, revisionLogSchema, revisionOf, textAtRevision,
+  appendRevision, createRevisionLog, decodeRevisionLog, describeChange, encodeRevisionLog, headPresetMode, headText, RETAINED_REVISIONS, revisionLogSchema, revisionOf, stateAtRevision, textAtRevision,
 } from '../../src/domain/revisions/log.js';
 
 const BASE = '# A comment\nname: Flow\ninitial_column: todo\ncolumns:\n  - id: todo\n    label: Todo\n    allowed_transitions: [done]\n  - id: done\n    label: Done\n';
@@ -66,6 +66,42 @@ describe('revision log', () => {
     expect(describeChange(BASE, BASE.replace('allowed_transitions: [done]', 'allowed_transitions: []'))).toBe('changed 1 stage');
     expect(describeChange(BASE, BASE.replace('initial_column: todo', 'initial_column: done'))).toBe('workflow settings changed');
     expect(describeChange(BASE, BASE.replace('label: Todo', 'label: Todo\n    position: {x: 1, y: 2}'))).toBe('changed 1 stage, layout changed');
+  });
+
+  it('retains metadata-only revisions, including legacy absence and exact bytes', () => {
+    let log = createRevisionLog({ hubId: 'hub', boardId: 'board', text: BASE, at: 'now', presetMode: null });
+    for (const presetMode of ['operator', 'host', null] as const) {
+      log = appendRevision(log, { text: BASE, presetMode, at: 'now', actor: { kind: 'operator' }, origin: 'editor' });
+    }
+    expect(log.commits).toHaveLength(3);
+    expect([1, 2, 3].map(revision => stateAtRevision(log, revision))).toEqual([
+      { text: BASE, presetMode: 'operator' }, { text: BASE, presetMode: 'host' }, { text: BASE, presetMode: null },
+    ]);
+    const decoded = decodeRevisionLog(encodeRevisionLog(log))!;
+    expect(stateAtRevision(decoded, 1)).toEqual({ text: BASE, presetMode: 'operator' });
+    expect(headPresetMode(decoded)).toBeNull();
+  });
+
+  it('reads older formats as legacy absence, and rejects incomplete v3 metadata', () => {
+    const old = encodeRevisionLog(logWith(BASE, EDITED));
+    const { checkpointPresetMode: _checkpoint, ...rest } = old;
+    const commits = old.commits.map(({ presetMode: _presetMode, ...commit }) => commit);
+    for (const version of [1, 2]) {
+      const decoded = decodeRevisionLog({ ...rest, version, commits })!;
+      expect(stateAtRevision(decoded, 1)).toEqual({ text: EDITED, presetMode: null });
+      expect(decodeRevisionLog(encodeRevisionLog(decoded))).toBeDefined();
+    }
+    expect(decodeRevisionLog({ ...rest, version: 3, commits })).toBeUndefined();
+  });
+
+  it('retains preset snapshots when metadata-only commits are pruned', () => {
+    let log = createRevisionLog({ hubId: 'hub', boardId: 'board', text: BASE, at: 'now' });
+    for (let i = 1; i <= RETAINED_REVISIONS + 5; i++) {
+      log = appendRevision(log, { text: BASE, presetMode: i % 2 ? 'operator' : 'host', at: 'now', actor: { kind: 'operator' }, origin: 'editor' });
+    }
+    expect(log.dropped).toBe(5);
+    expect(stateAtRevision(log, 6)).toEqual({ text: BASE, presetMode: 'host' });
+    expect(stateAtRevision(decodeRevisionLog(encodeRevisionLog(log))!, 105)).toEqual({ text: BASE, presetMode: 'operator' });
   });
 
   it('round-trips through the stored form', () => {
