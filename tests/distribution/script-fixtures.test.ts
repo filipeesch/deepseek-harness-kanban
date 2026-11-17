@@ -32,7 +32,7 @@ async function setup() {
 
 describe('documented scripted examples', () => {
   it('keeps the TypeScript example byte-identical to its executable fixture', async () => {
-    const guide = await readFile(new URL('../../docs/scripted-steps.md', import.meta.url), 'utf8');
+    const guide = await readFile(new URL('../../docs/user/scripted-steps.md', import.meta.url), 'utf8');
     const script = await readFile(join(fixture, 'wait-ci.ts'), 'utf8');
     expect(guide).toContain(script.trimEnd());
     const workflow = parseWorkflow(await readFile(join(fixture, 'workflow.yaml'), 'utf8'));

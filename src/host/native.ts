@@ -325,6 +325,13 @@ export function createNativePorts(ctx: Context, options: NativePortsOptions = {}
     async facts(id) {
       return sessionFacts.read(id);
     },
+    async locate(id) {
+      // Metadata only: the artifact path and its revision, never the log body.
+      return history.locate(id);
+    },
+    live(id) {
+      return ctx.sessions.get(SessionId(id)) !== undefined;
+    },
     async directories(within?: string) {
       const target = within ? await directoryPath(within) : undefined;
       const listed = await ctx.sessionController.list({}, AbortSignal.timeout(READ_TIMEOUT_MS));

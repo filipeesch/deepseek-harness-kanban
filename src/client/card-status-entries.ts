@@ -1,15 +1,16 @@
-import type { Task } from '../shared/types.js';
+import type { SessionObservation, Task } from '../shared/types.js';
+import { sessionObservationLabel } from '../domain/session-observation.js';
 import type { AutoModeStatus } from './auto-mode.js';
 
 export interface CardStatusEntry { key: string; tone: 'danger' | 'pending'; label: string; alert?: boolean }
 
 /**
  * The card's status lines, in a stable order: operation, transition,
- * stage-instruction failure, then auto mode. The diagnostic pause is a separate
- * line so a turn that failed while the task was paused is never hidden by the
- * pause the agent requested.
+ * stage-instruction failure, unobservable Session, then auto mode. The
+ * diagnostic pause is a separate line so a turn that failed while the task was
+ * paused is never hidden by the pause the agent requested.
  */
-export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: AutoModeStatus, pauseStatuses: readonly AutoModeStatus[] = [], decision?: string): CardStatusEntry[] {
+export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: AutoModeStatus, pauseStatuses: readonly AutoModeStatus[] = [], sessionObservation?: SessionObservation, decision?: string): CardStatusEntry[] {
   const entries: CardStatusEntry[] = [];
   if (task.operation) {
     const operation = task.operation;
@@ -39,6 +40,9 @@ export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: 
   }
   if (decision !== undefined) entries.push({ key: 'decision', tone: 'pending', label: decision });
   if (runFailure !== undefined) entries.push({ key: 'instruction', tone: 'danger', label: runFailure, alert: true });
+  // A Session the plugin cannot observe is a failure about the conversation, so it
+  // sits with the other conversation-derived facts and never replaces them.
+  if (sessionObservation !== undefined) entries.push({ key: 'session-observation', tone: 'danger', label: sessionObservationLabel(sessionObservation.state), alert: true });
   if (autoStatus !== undefined) entries.push({ key: 'auto', tone: autoStatus.tone, label: autoStatus.label, ...(autoStatus.alert === true ? { alert: true } : {}) });
   for (const [index, value] of pauseStatuses.entries()) entries.push({ key: 'auto-pause-' + index, tone: value.tone, label: value.label, ...(value.alert === true ? { alert: true } : {}) });
   return entries;

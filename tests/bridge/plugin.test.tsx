@@ -207,11 +207,21 @@ describe('public SDK plugin binding contracts', () => {
     expect(f.mount).toHaveBeenCalledWith(TYPERT_REMOTE); expect(f.entries.size).toBe(0);
     f.openMount(); const dispose = await pending; disposers.push(dispose);
     expect(inject).toContain('remote'); expect(inject).toContain('uiConversation'); expect(inject).not.toContain('remote.kanban');
-    expect([...f.entries.keys()]).toEqual(['main:kanban', 'kanban.conversation:', 'conversation.chat.node:kanban-task-context', 'conversation.chat.node:kanban-stage-context', 'conversation.chat.node:kanban-scripted-handoff', 'conversation.chat.node:kanban-task-message', 'sidebar.panellist:kanban', 'conversation.input.dock:kanban-decision-questions', 'tool.call.toolview:decision_request']);
+    expect([...f.entries.keys()]).toEqual(['main:kanban', 'kanban.conversation:', 'conversation.chat.node:kanban-task-context', 'conversation.chat.node:kanban-stage-context', 'conversation.chat.node:kanban-scripted-handoff', 'conversation.chat.node:kanban-task-message', 'sidebar.panellist:kanban', 'conversation.input.dock:kanban-decision-questions', 'conversation.input.dock:kanban-session-diagnosis', 'tool.call.toolview:decision_request']);
     expect(f.entries.get('main:kanban')?.options.children).toEqual({ 'kanban.conversation': { kind: 'single', scope: 'session' } });
     expect(f.uiConversation.events.register).toHaveBeenCalledTimes(4);
     expect(f.entries.get('sidebar.panellist:kanban')?.options).toMatchObject({ label: 'Kanban', order: 80 });
     expect(f.nativeSelect).not.toHaveBeenCalled(); await dispose(); expect(f.unmount).toHaveBeenCalledOnce();
+  });
+  it('registers one Session diagnosis seat for every native conversation', async () => {
+    const f = await installed();
+    const entry = f.entries.get('conversation.input.dock:kanban-session-diagnosis');
+    expect(entry).toBeTruthy();
+    expect(entry!.options).toMatchObject({ name: 'conversation.input.dock', id: 'kanban-session-diagnosis', order: 30 });
+    // An unread seat renders nothing instead of taking the composer down.
+    const Seat = entry!.Component;
+    const { container } = render(<Seat sessionId="a" />);
+    expect(container.textContent).toBe('');
   });
   it('ordinary native chats get the fixed strip, the transcript row stays silent, and only scoped human text is sent', async () => {
     const f = await installed();
@@ -562,12 +572,14 @@ describe('public SDK plugin binding contracts', () => {
     expect(screen.getByText('Native conversation window')).toBeTruthy();
     expect(f.nativeSelect).not.toHaveBeenCalled();
   });
-  it('reports an open failure instead of mounting the window', async () => {
+  it('mounts the public window on a failed open and leaves the message to the host and the diagnosis seat', async () => {
     const f = await installed(); const Seat = f.entries.get('kanban.conversation:')!.Component;
     const factory = vi.fn(() => <div>Native conversation window</div>);
     render(<Seat sessionId="a" useSession={(select: (value: object) => unknown) => select({ openState: 'error', openError: { message: 'history unavailable' } })} renderFactorySlot={factory} />);
-    expect(factory).not.toHaveBeenCalled();
-    expect(screen.getByRole('alert').textContent).toContain('history unavailable');
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Native conversation window')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(document.body.textContent).not.toContain('Close and reopen');
   });
 
   it('dismisses the question round through the bridge without sending a native message', async () => {

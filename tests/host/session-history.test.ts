@@ -75,3 +75,31 @@ describe('session history adapter', () => {
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 });
+
+function persistenceContext(sessionPersistence: unknown): Context {
+  return { sessionPersistence } as unknown as Context;
+}
+
+describe('session history locate', () => {
+  it('reads the artifact path and revision from storage metadata', async () => {
+    const stat = vi.fn(async () => ({ location: { kind: 'jsonl', path: '/sessions/session-a/session.v4.jsonl.zstd' }, revision: 'r7' }));
+    const history = createSessionHistory(persistenceContext({ stat }));
+    await expect(history.locate('session-a')).resolves.toEqual({ kind: 'jsonl', path: '/sessions/session-a/session.v4.jsonl.zstd', revision: 'r7' });
+    expect(stat).toHaveBeenCalledWith('session-a', expect.anything());
+  });
+
+  it('reports nothing for a conversation with no materialized artifact', async () => {
+    const history = createSessionHistory(persistenceContext({ stat: async () => undefined }));
+    await expect(history.locate('session-a')).resolves.toBeUndefined();
+  });
+
+  it('reports nothing instead of failing when the metadata read throws', async () => {
+    const history = createSessionHistory(persistenceContext({ stat: async () => { throw new Error('unavailable'); } }));
+    await expect(history.locate('session-a')).resolves.toBeUndefined();
+  });
+
+  it('reports nothing on a host without the persistence service', async () => {
+    const history = createSessionHistory(persistenceContext(undefined));
+    await expect(history.locate('session-a')).resolves.toBeUndefined();
+  });
+});

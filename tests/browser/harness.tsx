@@ -19,6 +19,7 @@ import { autoModeView } from '../../src/client/auto-mode.js';
 import { EMPTY_ATTENTION } from '../../src/shared/types.js';
 import { FeedStatus } from '../../src/client/feed-status.js';
 import { QuestionDock, type QuestionDockServices } from '../../src/client/question-dock.js';
+import { SessionDiagnosis } from '../../src/client/session-diagnosis.js';
 import type { BoardState, ClientApi, Column, Command, HubSharingView, QuestionRound, RoundPage, StoredQuestionDraft, Task } from '../../src/shared/types.js';
 import { createHarnessApi, workflowYaml, type TestSnapshot } from './fake-api.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
@@ -61,7 +62,9 @@ const boardModel = scenario === 'board-model' || scenario === 'board-model-no-se
       fallback: { requested: { provider: 'deepseek', model: 'reason', reasoningEffort: 'high' }, applied: false as const, reason: 'unavailable' as const, inUse: { provider: 'deepseek', model: 'chat' } },
     }
     : undefined;
-const harness = createHarnessApi({ ...presetOptions, ...(scenario === 'scripted' ? { scripted: (query.get('phase') ?? 'active') as import('../../src/shared/scripted.js').ScriptedPhase, ...(query.get('delivery') === 'failed' ? { scriptedDelivery: 'failed' as const } : {}), ...(query.get('refusal') === 'parameters' ? { scriptedRefusal: true } : {}), ...(query.get('params') === 'many' ? { scriptedManyParameters: true } : {}), ...(query.get('failure') === 'infrastructure' ? { scriptedFailure: 'infrastructure' as const } : {}), ...(query.get('failure') === 'diagnostic' ? { scriptedFailure: 'diagnostic' as const } : {}), ...(query.get('hold') === 'job' ? { scriptedHold: 'job' as const } : query.get('hold') === 'pending' ? { scriptedHold: 'pending' as const } : {}) } : {}), idle: scenario === 'stage-idle', history: scenario === 'history' ? 'short' : scenario === 'history-long' ? 'long' : scenario === 'relations' ? 'short' : undefined, relations: scenario === 'relations', ...(policy === 'always' || policy === 'never' || policy === 'ask' ? { projectPolicy: policy } : {}), ...(boardModel === undefined ? {} : { boardModel }), ...(scenario === 'board-mcp' ? { mcpServers: ['atlassian', 'trino'] } : {}), ...(scenario === 'schedules' ? { schedules: scheduleFixtures, scheduleRuntime: scheduleRuntimeFixture } : {}), recorded: scenario === 'routed', staleRoute: scenario === 'stale-route', attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs' || scenario === 'project-relocation' || scenario === 'flow-presence' || scenario === 'presence',
+const observationScenario = scenario === 'session-diagnosis';
+const recoveredScenario = query.get('recovered') === '1';
+const harness = createHarnessApi({ ...(observationScenario && !recoveredScenario ? { conversationObservations: { 's-long-0': { state: 'unreadable' as const, cause: 'stored session failed validation: PTC dispatch repeats subCallId' }, 's-short': { state: 'missing' as const, cause: 'the stored log no longer exists' } } } : {}), ...presetOptions, ...(scenario === 'scripted' ? { scripted: (query.get('phase') ?? 'active') as import('../../src/shared/scripted.js').ScriptedPhase, ...(query.get('delivery') === 'failed' ? { scriptedDelivery: 'failed' as const } : {}), ...(query.get('refusal') === 'parameters' ? { scriptedRefusal: true } : {}), ...(query.get('params') === 'many' ? { scriptedManyParameters: true } : {}), ...(query.get('failure') === 'infrastructure' ? { scriptedFailure: 'infrastructure' as const } : {}), ...(query.get('failure') === 'diagnostic' ? { scriptedFailure: 'diagnostic' as const } : {}), ...(query.get('hold') === 'job' ? { scriptedHold: 'job' as const } : query.get('hold') === 'pending' ? { scriptedHold: 'pending' as const } : {}) } : {}), idle: scenario === 'stage-idle', history: scenario === 'history' ? 'short' : scenario === 'history-long' ? 'long' : scenario === 'relations' ? 'short' : undefined, relations: scenario === 'relations', ...(policy === 'always' || policy === 'never' || policy === 'ask' ? { projectPolicy: policy } : {}), ...(boardModel === undefined ? {} : { boardModel }), ...(scenario === 'board-mcp' ? { mcpServers: ['atlassian', 'trino'] } : {}), ...(scenario === 'schedules' ? { schedules: scheduleFixtures, scheduleRuntime: scheduleRuntimeFixture } : {}), recorded: scenario === 'routed', staleRoute: scenario === 'stale-route', attention: scenario === 'activity' || scenario === 'appearance' || scenario === 'hubs' || scenario === 'project-relocation' || scenario === 'flow-presence' || scenario === 'presence',
   presence: scenario === 'presence', hubs: scenario === 'hubs' ? 2 : 1, initialInstruction: scenario === 'create', restricted: scenario === 'move' || scenario === 'prepare-restricted' || scenario === 'flow-restricted', ...(scenario === 'restricted-next' || scenario === 'flow-restricted-next' ? { restrictedNext: true } : {}), persist: scenario === 'board' || scenario === 'relocation-board', pending: scenario === 'appearance', auto: scenario === 'auto' || scenario === 'agent-pause', declared: scenario === 'declared' || scenario === 'declared-failed', declaredFailed: scenario === 'declared-failed', ...(scenario === 'agent-pause' ? { agentPause: true } : {}), detect: scenario === 'project-editor' || scenario === 'project-relocation' ? 'git' : 'folder', notes: scenario === 'notes', sharing: sharingViews, ...(driveCase === null ? {} : { drive: driveCase }), shareFailure: sharingCase === 'share-fail', shareRefusal: sharingCase === 'refuse-error', folderRefusal: refuse === 'folder', ...(scenario === 'prepare' ? { prepare: 'plain' as const } : scenario === 'prepare-restricted' ? { prepare: 'restricted' as const } : {}), ...(scenario === 'retained' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo', reason: 'unresolved' as const }] } : scenario === 'retained-many' ? { retained: [{ path: '/worktrees/gone', projectId: 'p', taskTitle: 'Moved repo', reason: 'unresolved' as const }, { path: '/worktrees/plain', projectId: 'p', taskTitle: 'Plain task', reason: 'folder' as const }] } : {}), ...(scenario === 'relocation-list' ? { relocation: ['waiting', 'failed', 'waiting'] as Array<'waiting' | 'failed' | null> } : scenario === 'relocation-board' ? { relocation: ['waiting', 'failed'] as Array<'waiting' | 'failed' | null> } : {}), ...(scenario === 'relocation-list' ? { extraProject: true } : {}), ...(scenario === 'flow-refused' ? { stageUpdateFailure: true } : {}) });
 
 function harnessSharing(kind: string): HubSharingView {
@@ -544,6 +547,27 @@ function DecisionEditorScenario() {
 }
 
 function App() {
+  if (scenario === 'session-diagnosis') return <>
+    <style>{themeFixture}</style><style>{styles}</style><ThemeSync />
+    <BoardView api={harness.api} renderConversation={id => <div data-native={id} />} />
+    {/* The same seat the plugin registers in every native conversation, shown in an ordinary chat. */}
+    <div data-conversation="ordinary" style={{ maxWidth: 760, margin: '24px auto', padding: '0 16px' }}>
+      <SessionDiagnosis
+        sessionId="s-long-0"
+        session={{ openState: 'error', openError: { code: 'SESSION_QUERY_CORRUPT_SESSION', message: 'stored session failed validation: PTC dispatch repeats subCallId' } }}
+        port={{
+          // A repaired fixture reports the conversation as observed on the next check.
+          inspect: async () => recoveredScenario
+            ? { observation: null }
+            : { observation: { state: 'unreadable' as const, cause: 'stored session failed validation: PTC dispatch repeats subCallId' }, location: { kind: 'jsonl', path: '/dsh/sessions/p/session-s-long-0/session.v4.jsonl.zstd', revision: 'r1' } },
+          repair: async () => {
+            (window as unknown as { __kanbanRepairCalls?: number }).__kanbanRepairCalls = ((window as unknown as { __kanbanRepairCalls?: number }).__kanbanRepairCalls ?? 0) + 1;
+            return { backupPath: '/dsh/session-repair-backups/kanban/s-long-0/stamp/session.v4.jsonl.zstd', renamed: 1 };
+          },
+        }}
+      />
+    </div>
+  </>;
   if (scenario === 'scripted') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></>;
   if (scenario === 'handoff') return <><style>{themeFixture}</style><ThemeSync /><div className="dsh-kanban" style={{ padding: 24 }}><ScriptedHandoffNodeView node={{ data: { seq: 1, time: 1, content: [{ type: 'text', text: 'Scripted result from CI · Execution synthetic-run · Exit passed\nCI passed. [REDACTED]' }], source: { kind: 'scripted-handoff', form: 'notice', summary: 'CI → Manual review' }, producer: { role: 'inject', label: 'scripted-handoff' }, form: 'notice' } } as never} slots={{ entriesOfSlot: () => [], subscribe: () => () => {} }} t={((key: string) => key) as never} /></div></>;
   if (scenario === 'history' || scenario === 'history-long' || scenario === 'relations') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;

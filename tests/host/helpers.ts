@@ -68,6 +68,8 @@ export class TestSessions implements SessionPort {
  async deliverStageInstruction(id:string,delivery:StageInstructionDelivery){if(this.failSend)throw new KanbanError('SEND_FAILED','Injected native admission failure.');if(this.requests.has(delivery.requestId))return;this.requests.add(delivery.requestId);this.sent.push({id,text:delivery.text,requestId:delivery.requestId,kind:'stage-instruction',summary:delivery.summary});}
  async archive(id:string){this.archived.push(id);}
  async facts(id:string):Promise<ConversationFacts>{const kinds:PendingUserWorkKind[]=[];if(this.awaiting.has(id))kinds.push('native-question');if(this.approvals.has(id))kinds.push('approval');return {running:this.busy.has(id),background:[],pending:pendingUserWork(kinds,this.queued.has(id)?1:0),settledTurn:this.settled.get(id)??null};}
+ artifacts=new Map<string,{kind:string;path:string;revision:string}>();
+ async locate(id:string){return this.artifacts.get(id);}
  async directories(){return [...this.dirs].map(([sessionId,directory])=>({sessionId,directory}));}
  seedSubagent(parent:string,child:string,directory:string,origin:'subagent'|undefined='subagent'){this.dirs.set(child,directory);this.lineage.set(child,{parentSessionId:parent,...(origin?{origin}:{})});return child;}
  /** Seed a fork of a task conversation: a direct parent link with no subagent origin. */

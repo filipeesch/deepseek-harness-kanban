@@ -57,6 +57,7 @@ function fixture() {
       if (!value) throw new Error('session missing');
       return value;
     }),
+    locate: vi.fn(async (key: string) => key === 'a' ? { kind: 'jsonl', path: '/sessions/session-a/session.v4.jsonl.zstd', revision: 'r1' } : undefined),
   };
   const resolveAgent = vi.fn<Context['sessionController']['resolveAgent']>().mockResolvedValue({ agent });
   const prompt = vi.fn<Context['sessionController']['prompt']>().mockResolvedValue({ accepted: true });

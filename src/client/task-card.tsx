@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import type { Attention, Column, Task } from '../shared/types.js';
+import type { Attention, Column, SessionObservation, Task } from '../shared/types.js';
 import type { TransitionDestination } from '../domain/transitions.js';
 import { WorkingAnnouncement } from './activity.js';
 import { AttentionDots } from './attention-dots.js';
@@ -47,6 +47,8 @@ export interface TaskCardProps {
   arrivalToken?: number;
   /** Clears the arrival pulse once the card presented that exact token. */
   onArrivalEnd?: (taskId: string, token: number) => void;
+  /** The resolved Session observation of the card's conversations, when one failed. */
+  sessionObservation?: SessionObservation;
 }
 
 function CardContext({ taskId, title, projectName, attention, selectionMode, selected, onToggleSelect, onActivate }: {
@@ -93,7 +95,7 @@ function CardStatus({ entries, parameters }: { entries: readonly CardStatusEntry
 }
 
 /** One task card; every board concern arrives through props. */
-export function TaskCard({ task, column, projectName, attention, selectionMode, selected, autoRun, autoMode, autoModePending, decisionWindow, decision, onToggleAutoMode, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick, next, onMove, advancePending = false, onRun, arrivalToken, onArrivalEnd }: TaskCardProps) {
+export function TaskCard({ task, column, projectName, attention, selectionMode, selected, autoRun, autoMode, autoModePending, decisionWindow, decision, onToggleAutoMode, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick, next, onMove, advancePending = false, onRun, arrivalToken, onArrivalEnd, sessionObservation }: TaskCardProps) {
   const openButton = useRef<HTMLButtonElement>(null);
   const script = ownedScript(task, useScriptSummary(task.id));
   const activeScript = scriptActive(script);
@@ -133,7 +135,7 @@ export function TaskCard({ task, column, projectName, attention, selectionMode, 
     </button>
     <CardContext taskId={task.id} title={task.title} projectName={projectName} attention={presenceAttention} selectionMode={selectionMode} selected={selected} onToggleSelect={onToggleSelect} onActivate={activate} />
     <CardActivity attention={attention} label={task.title} controls={controls} script={script && !awaitingApproval ? scriptCardLabel(script) : undefined} {...(script?.hold === undefined || awaitingApproval ? {} : { scriptTitle: scriptLabel(script) })} scriptHeld={script?.hold !== undefined && !awaitingApproval} />
-    <CardStatus parameters={script !== undefined && (column.scripted?.params?.length ?? 0) > 0 ? <CardScriptParameters task={task} column={column} selectionMode={selectionMode} /> : undefined} entries={[...cardStatusEntries(task, runFailure, autoMode.status, autoMode.secondaryStatuses, decision?.label), ...(awaitingApproval ? [{ key: 'script-approval', tone: 'pending' as const, label: 'Awaiting approval' }] : []), ...(script?.error ? [{ key: 'script-error', tone: 'danger' as const, label: script.error.message.slice(0, 512), alert: true }] : [])]} />
+    <CardStatus parameters={script !== undefined && (column.scripted?.params?.length ?? 0) > 0 ? <CardScriptParameters task={task} column={column} selectionMode={selectionMode} /> : undefined} entries={[...cardStatusEntries(task, runFailure, autoMode.status, autoMode.secondaryStatuses, sessionObservation, decision?.label), ...(awaitingApproval ? [{ key: 'script-approval', tone: 'pending' as const, label: 'Awaiting approval' }] : []), ...(script?.error ? [{ key: 'script-error', tone: 'danger' as const, label: script.error.message.slice(0, 512), alert: true }] : [])]} />
     {arrivalToken !== undefined && <span key={arrivalToken} className="kb-card-arrival" aria-hidden="true" onAnimationEnd={() => onArrivalEnd?.(task.id, arrivalToken)} />}
   </article>;
 }

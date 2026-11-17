@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis';
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
-import type { Command, FullHostSnapshot, HostSnapshot, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionDraftContent, QuestionFeedFrame, QuestionRound, ModelCatalog, SharingCommand, SnapshotRequest, StoredQuestionDraft, WorktreeDefaults } from '../shared/types.js';
+import type { Command, FullHostSnapshot, HostSnapshot, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionDraftContent, QuestionFeedFrame, QuestionRound, ModelCatalog, SessionInspection, SessionRepairResult, SharingCommand, SnapshotRequest, StoredQuestionDraft, WorktreeDefaults } from '../shared/types.js';
 import { problem, KanbanError } from '../shared/errors.js';
 import type { KanbanApp } from './app.js';
 import type { ScriptedStageReview, ScriptedVariablesView } from '../shared/scripted.js';
@@ -14,6 +14,8 @@ export class KanbanController extends TypertRemoteService {
  @Remote async branches(request:{taskId:string}):Promise<Outcome<string[]>>{return this.attempt(()=>this.app.branches(request.taskId));}
  @Remote async worktreeDefault(request:{taskId:string}):Promise<Outcome<WorktreeDefaults>>{return this.attempt(()=>this.app.worktreeDefault(request.taskId));}
  @Remote async detectProject(request:{path:string}):Promise<Outcome<ProjectLocation>>{return this.attempt(()=>this.app.detectProject(request.path));}
+ @Remote async sessionInspect(request:{sessionId:string}):Promise<Outcome<SessionInspection>>{return this.attempt(()=>this.app.sessionInspect(request.sessionId));}
+ @Remote async sessionRepair(request:{sessionId:string}):Promise<Outcome<SessionRepairResult>>{return this.attempt(()=>this.app.sessionRepair(request.sessionId));}
  @Remote async localDrive(request:LocalDriveRequest):Promise<Outcome<LocalDriveResult>>{return this.attempt(()=>this.app.localDrive(request));}
  @Remote async dismissQuestions(request:{sessionId:string;roundId:string}):Promise<Outcome<QuestionRound[]>>{return this.attempt(()=>this.app.dismissQuestions(request.sessionId,request.roundId));}
  @Remote async saveQuestionDraft(request:{sessionId:string;roundId:string;draft:QuestionDraftContent|null}):Promise<Outcome<StoredQuestionDraft|null>>{return this.attempt(()=>this.app.saveQuestionDraft(request.sessionId,request.roundId,request.draft));}

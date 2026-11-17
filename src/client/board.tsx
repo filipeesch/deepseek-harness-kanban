@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Board, ClientApi, Column, Command, KanbanSnapshot, Problem, Project, Task, Workflow, WorkflowView as WorkflowPresentation } from '../shared/types.js';
+import { mergeSessionObservations } from '../domain/session-observation.js';
 import { EMPTY_ATTENTION } from '../shared/types.js';
 import { creatableProjects, isBoardClosedForCreation } from '../domain/board-project-scope.js';
 import { Configuration } from './settings/configuration.js';
@@ -409,7 +410,13 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   function renderCard(task: Task, column: Column, workflow: Workflow) {
     const attention = snapshot?.attention[task.id] ?? EMPTY_ATTENTION;
     const project = state?.projects.find(value => value.id === task.projectId)?.name ?? task.projectId;
-    return <BoardCard key={task.id} task={task} column={column} projectName={project} attention={attention} workflow={workflow} selectionMode={selectionMode} selected={selectedIds.has(task.id)} autoRun={autoRun} decisionWindow={decisionWindow} autoModePending={autoModePending.has(task.id)} onToggleAutoMode={toggleAutoMode} onOpen={openTask} onToggleSelect={toggleSelect} onBeginDrag={begin} shouldSuppressClick={shouldSuppressClick} onMoveTask={advanceTask} advancePending={advancePending.has(task.id)} onRun={moves.requestRun} />;
+    // Every conversation of the task counts, closed ones included: closing a tab does
+    // not repair its log, and hiding the state would be the silence this surface exists for.
+    const observation = mergeSessionObservations(task.sessionIds.flatMap(sessionId => {
+      const found = snapshot?.conversationObservations?.[sessionId];
+      return found === undefined ? [] : [found];
+    }));
+    return <BoardCard key={task.id} task={task} column={column} projectName={project} attention={attention} workflow={workflow} selectionMode={selectionMode} selected={selectedIds.has(task.id)} autoRun={autoRun} decisionWindow={decisionWindow} autoModePending={autoModePending.has(task.id)} onToggleAutoMode={toggleAutoMode} onOpen={openTask} onToggleSelect={toggleSelect} onBeginDrag={begin} shouldSuppressClick={shouldSuppressClick} onMoveTask={advanceTask} advancePending={advancePending.has(task.id)} onRun={moves.requestRun} {...(observation === undefined ? {} : { sessionObservation: observation })} />;
   }
 
   function onBoardPointerDown(event: React.PointerEvent<HTMLDivElement>) {
