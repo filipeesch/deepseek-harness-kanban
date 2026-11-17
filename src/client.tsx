@@ -22,6 +22,7 @@ import { QuestionDock, createQuestionDockServices, type QuestionDockSessions } f
 import { createSessionStatusPort, type SessionStatusHost } from './client/session-status.js';
 import { FeedStatus } from './client/feed-status.js';
 import { RetainedConversation, TaskConversationWindow, type ConversationSurfaceMode, type ConversationSurfaceOwner, type ConversationSurfaceServices } from './client/conversation-surface.js';
+import { SessionDiagnosis, type SessionDiagnosisPort, type SessionDiagnosisSession } from './client/session-diagnosis.js';
 import { AgentPresetProvider } from './client/agent-preset-context.js';
 import { createAgentPresetPortSource } from './client/agent-preset-port.js';
 import type { ConversationLeaseEnvironment } from './client/conversation-leases.js';
@@ -181,12 +182,30 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     bridge,
     sessions: ctx.sessions as unknown as QuestionDockSessions,
   });
+  // An older host exposes neither call, and the seat then presents the diagnosis
+  // without actions instead of pretending it can check or repair.
+  const sessionDiagnosisPort: SessionDiagnosisPort | undefined = bridge.api.sessionInspect === undefined
+    ? undefined
+    : {
+      inspect: sessionId => bridge.api.sessionInspect!(sessionId),
+      ...(bridge.api.sessionRepair === undefined ? {} : { repair: (sessionId: string) => bridge.api.sessionRepair!(sessionId) }),
+    };
   const viewSession = (sessionId: string) => bridge.viewSession(sessionId);
   // The Session the drawer presents, read when an open needs a destination: while a
   // board fills the frame's main column the host has no Session on screen to open
   // into, so a collapsed drawer panel would fail every link. The source is stable so
   // the fallback below is not re-installed on every render.
   const drawerSession = () => drawerConversationSession(pageState);
+  /** The native conversation seat that presents a failed Session's diagnosis. */
+  function SessionDiagnosisSeat(props: { sessionId: string; useSession: unknown; port: SessionDiagnosisPort | undefined }) {
+    // A host that composes the dock without the session kit leaves nothing to read,
+    // and an unread seat must not take the composer down with it.
+    const read = typeof props.useSession === 'function'
+      ? props.useSession as (selector: (value: SessionDiagnosisSession | undefined) => unknown) => unknown
+      : undefined;
+    const session = read === undefined ? undefined : read(value => value) as SessionDiagnosisSession | undefined;
+    return <SessionDiagnosis sessionId={props.sessionId} session={session} port={props.port} />;
+  }
   function ConversationWindowSeat(props: ConversationSeatProps) {
     // The seat is the only place that knows the host Factory name; the workspace
     // receives a plain render prop, so tests can render it without a host.
@@ -315,6 +334,9 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: TASK_MESSAGE_NODE_KIND, locale: 'chat', inject: () => ({}) }, TaskMessageChatNode));
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: 'kanban', order: 80, label: 'Kanban' }, BoardIcon));
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'kanban-decision-questions', order: 20 }, props => <QuestionDock sessionId={props.sessionId} services={questionDockServices} />));
+  // One diagnosis for every native conversation: the drawer and ordinary chats share it,
+  // and it is the only plugin-owned message about a Session that could not open.
+  ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'kanban-session-diagnosis', order: 30 }, props => <SessionDiagnosisSeat sessionId={props.sessionId} useSession={props.useSession} port={sessionDiagnosisPort} />));
   ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: 'decision_request' }, HiddenDecisionRow));
   // This subscription is the only reconciler for the shared controller; install it eagerly.
   const unsubscribeAutoRun = bridge.api.subscribe(snapshot => autoRun.reconcile(allTasks(snapshot), snapshot.scripted));

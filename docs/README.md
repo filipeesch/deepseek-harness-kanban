@@ -12,7 +12,7 @@ Start with the [README](../README.md) if you are installing the plugin.
 | [Hubs and boards](user/hubs-and-boards.md) | Organizing projects, boards, board scope, board defaults, and board configuration. |
 | [Workflows](user/workflows.md) | Authoring the workflow YAML, editing a stage, or using the workflow diagram. |
 | [Execution](user/execution.md) | Moving a card, running a stage instruction, auto mode, and declared transitions. |
-| [Conversations](user/conversations.md) | Reading the drawer Conversations section, notes, history, relations, and question rounds. |
+| [Conversations](user/conversations.md) | Reading the drawer Conversations section, notes, history, relations, question rounds, and an unreadable Session log. |
 | [Team sharing](user/team-sharing.md) | Publishing a Hub through Git, Google Drive, or a local folder, and working with team files. |
 | [Git and worktrees](user/git-worktrees.md) | Creating, attaching, and removing a task worktree, and understanding the workspace model. |
 | [Schedules](user/schedules.md) | Running a prompt unattended on a cron schedule. |

@@ -20,7 +20,7 @@ import { openTurnIdentity, type TurnBoundaryPort } from './turn-identity.js';
 import { admitTurnAdvance } from './advance-admission.js';
 import { readPendingUserWork, withQuestionPending } from './pending-source.js';
 import type { ConversationFactsSource } from './native-facts.js';
-import type { AdvanceOrigin, AutoModePauseReason, Board, BoardSettings, Command, ConversationFacts, ConversationModelOutcome, ConversationPresetOutcome, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionDraftContent, QuestionRound, RetainedCheckout, RetainedCheckoutReason, SharingCommand, SnapshotRequest, StoredQuestionDraft, Task, WorktreeDefaults } from '../shared/types.js';
+import type { AdvanceOrigin, AutoModePauseReason, Board, BoardSettings, Command, ConversationFacts, SessionInspection, SessionRepairResult, ConversationModelOutcome, ConversationPresetOutcome, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionDraftContent, QuestionRound, RetainedCheckout, RetainedCheckoutReason, SharingCommand, SnapshotRequest, StoredQuestionDraft, Task, WorktreeDefaults } from '../shared/types.js';
 import type { TaskMessagePreparation } from '../shared/task-message.js';
 import type { StageEntryOrigin } from '../shared/task-history.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
@@ -79,6 +79,8 @@ import { declaredParameterNames, validateParameterValues } from '../domain/scrip
 import { ensureLocalStageIdentity } from '../domain/scripted-state.js';
 import { recordScriptedHandoff } from '../domain/task-history/record.js';
 import { testStageScript, type ScriptTestInput, type ScriptTestResult } from './script-test.js';
+import { ConversationObservationIndex, createObservedFactsSource } from './conversation-observation.js';
+import { classifySessionFailure } from '../domain/session-observation.js';
 
 async function pathExists(value:string):Promise<boolean>{try{await lstat(value);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}}
 function isEvent(value:unknown):value is {type:string;seq:number;data:unknown}{return Boolean(value&&typeof value==='object'&&'type'in value&&typeof value.type==='string'&&'seq'in value&&typeof value.seq==='number'&&Number.isSafeInteger(value.seq)&&'data'in value);}
@@ -146,10 +148,14 @@ export class KanbanApp {
  private readonly exceptionalAdmissionTasks=new Set<string>();
  /** The one conversation-fact read every host consumer shares; the question projection is folded in here. */
  private readonly factsSource:ConversationFactsSource;
+ /** One record per conversation the plugin could not observe; published beside the facts. */
+ private readonly observations:ConversationObservationIndex;
  private readonly workspaceCoordinator?:WorkspaceCoordinator;
  private scheduleRuntime:ScheduleRuntimePort|undefined;
  /** Attaches a branch the task drawer claimed; absent means claims are refused. */
  private forkClaim:ForkClaimPort|undefined;
+ /** Attaches the repair pipeline; absent means the repair action is refused. */
+ private repairer:{repair(sessionId:string):Promise<SessionRepairResult>}|undefined;
  private scriptedRuntime:ScriptedSupervisor|undefined;
  private scriptedApproval:ScriptedApprovalService|undefined;
  /** The native runtime a write report asks for the fingerprint of a proposed executable. */
@@ -176,7 +182,8 @@ export class KanbanApp {
   this.retainedCheckoutPruneIntervalMs=options.retainedCheckoutPruneIntervalMs??15000;
   if(options.teamFiles)this.teamFiles=options.teamFiles;
   this.boards=new BoardAdministration({hubs,...(options.sharing?{sharing:boardSharingPort(options.sharing)}:{}),...(options.report?{report:options.report}:{}),activity:{inFlight:(hubId,boardId)=>this.boardActivity(hubId,boardId)},impact:createScriptedImpact(()=>this.nativeScripted),...(options.revisions?{revisions:options.revisions}:{})});
-  this.factsSource=withQuestionPending({read:id=>this.sessions.facts(id)},this.questions);
+  this.observations=new ConversationObservationIndex({...(options.report===undefined?{}:{report:options.report}),onChange:()=>this.markChanged()});
+  this.factsSource=withQuestionPending(createObservedFactsSource({source:{read:id=>this.sessions.facts(id)},index:this.observations}),this.questions);
   if(workspaces)this.workspaceCoordinator=new WorkspaceCoordinator({
    workspaces,sessions,store:{
     all:()=>this.locator.all().map(located=>({hubId:located.hubId,task:located.task,project:located.project})),
@@ -216,6 +223,19 @@ export class KanbanApp {
  attachScheduleRuntime(port:ScheduleRuntimePort):void{this.scheduleRuntime=port;}
  /** Attach the fork-claim port once the adoption coordinator exists. */
  attachForkClaim(port:ForkClaimPort):void{this.forkClaim=port;}
+ /** Attach the repair pipeline once the host composed it; absent refuses the action. */
+ attachSessionRepair(repairer:{repair(sessionId:string):Promise<SessionRepairResult>}):void{this.repairer=repairer;}
+ /**
+  * Repair one conversation's stored log. The pipeline owns every safety rule and
+  * every refusal; this method only proves the host composed one and republishes.
+  */
+ async sessionRepair(sessionId:string):Promise<SessionRepairResult>{
+  const repairer=this.repairer;
+  invariant(repairer,'SESSION_REPAIR_UNAVAILABLE','This host cannot repair a stored Session log.');
+  const result=await repairer.repair(sessionId);
+  this.markChanged();
+  return result;
+ }
  private requireScheduleRuntime():ScheduleRuntimePort{
   invariant(this.scheduleRuntime,'SCHEDULES_UNAVAILABLE','Session schedules are unavailable in this host.');
   return this.scheduleRuntime;
@@ -750,6 +770,31 @@ export class KanbanApp {
  /** The question-aware conversation facts shared by attention and scheduled archiving. */
  conversationFacts(sessionId:string):Promise<ConversationFacts>{return this.factsSource.read(sessionId);}
  /**
+  * Re-observe one conversation and report its diagnosis with its artifact location.
+  * It answers for any Session, not only a task conversation, so an ordinary DSH chat
+  * can be rechecked; the location is read from metadata and never from the log body.
+  */
+ async sessionInspect(sessionId:string):Promise<SessionInspection>{
+  let failure:unknown;
+  try{await this.factsSource.read(sessionId);}catch(error){failure=error;}
+  // A null observation means "it was observed". A read that failed for a reason this
+  // plugin cannot classify proves nothing, so it is reported instead of being presented
+  // as a recovered conversation; a known-bad record still answers for the conversation.
+  const known=this.observations.get(sessionId)??classifySessionFailure(failure as {code?:unknown;message?:unknown}|undefined);
+  if(known===null&&failure!==undefined)throw failure;
+  const observation=known;
+  const located=observation===null?undefined:await this.sessions.locate?.(sessionId);
+  return {observation,...(located===undefined?{}:{location:located})};
+ }
+ /** Refuse the plugin's own writes into a conversation it cannot observe. */
+ private assertObservableConversation(sessionId:string):void{
+  const observation=this.observations.get(sessionId);
+  if(observation===undefined)return;
+  throw new KanbanError('SESSION_UNOBSERVABLE',observation.state==='missing'
+   ?'The stored Session log for this conversation is missing, so nothing was sent. Start another conversation or restore the log.'
+   :'The stored Session log for this conversation cannot be validated, so nothing was sent. Repair the log or start another conversation.');
+ }
+ /**
   * One task's native execution facts, aggregated over its OPEN conversations. With
   * `wait`, the read is durable and any conversation that cannot be read makes the
   * value unavailable; without it, only facts the host already resolved are used, so
@@ -803,7 +848,9 @@ export class KanbanApp {
   const scheduleRuntime=this.scheduleRuntime?.runtime()??{};
   const scripted=this.scriptedSummaries();
   this.scheduleRetainedPrune();
-  return {...parts,sequence,scripted,...(Object.keys(scheduleRuntime).length===0?{}:{scheduleRuntime}),...(this.retainedCheckouts.length===0?{}:{retainedCheckouts:this.retainedCheckouts.map(value=>({...value}))})};
+  this.observations.prune(new Set(tasks.flatMap(task=>task.sessionIds)));
+  const conversationObservations=this.observations.all();
+  return {...parts,sequence,scripted,...(Object.keys(conversationObservations).length===0?{}:{conversationObservations}),...(Object.keys(scheduleRuntime).length===0?{}:{scheduleRuntime}),...(this.retainedCheckouts.length===0?{}:{retainedCheckouts:this.retainedCheckouts.map(value=>({...value}))})};
  }
  /** Publish a new snapshot after publishing or authorization state changed outside a board command. */
  sharingChanged():void{this.assembler.invalidateAuth();this.assembler.invalidateSharing();this.markChanged();}
@@ -1324,7 +1371,12 @@ export class KanbanApp {
    transact:(hubId,change)=>this.hubs.hub(hubId).transact(change),
    resolveSession:async task=>firstOpenSessionId(task)??(await this.createConversationNow(task.id,{allowUndecided:true})).sessionId,
    assertExecutionContext:sessionId=>this.assertExecutionContext(sessionId),
-   deliver:(sessionId,delivery)=>this.sessions.deliverStageInstruction(sessionId,delivery),
+   deliver:async(sessionId,delivery)=>{
+    // A conversation the plugin cannot observe cannot receive a stage instruction:
+    // the write would fail at the host, so it is refused with the diagnosis instead.
+    this.assertObservableConversation(sessionId);
+    await this.sessions.deliverStageInstruction(sessionId,delivery);
+   },
   };
  }
  private async move(command:Extract<Command,{type:'task.move'}>):Promise<void>{

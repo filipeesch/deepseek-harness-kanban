@@ -88,6 +88,16 @@ A shared Hub keeps its state in its own storage domain. A Git binding also owns 
 
 **Rollback** to a plugin version that only understands the v1 sharing record presents migrated Git Hubs as unpublished (`SHARING_STORAGE_INVALID` on open). Every local board, workflow, task, and note is retained; reconnect the Hub to restore the binding from the team document. Disconnect Google Drive bindings before downgrading so the old version does not attempt to read Drive state. A local folder binding presents the same quarantine on a version that does not know the storage; the folder and its layout stamp are untouched, so reconnecting on the newer version restores the binding.
 
+## Unreadable conversation
+
+A task conversation whose Session log cannot be read reports the state on its card and inside the conversation; what the person sees and the actions available are in [conversations](../user/conversations.md#unreadable-conversation).
+
+Repair is bounded to one corruption class: a repeated PTC dispatch identifier. It renames only an identifier that already started earlier, follows every record that references it, including a job that settles after the invocation closed, and leaves every other record and payload untouched.
+
+The rewritten artifact is validated with the installed loader's chain before anything is written. The original is copied under `session-repair-backups/kanban/<session id>/<timestamp>/` inside the harness home, the replacement is an atomic rename, and a repair the host still rejects restores the original only when the bytes on disk are the ones the repair installed.
+
+The final replacement is not a compare-and-swap: another process that rewrites the log at that instant is outside the plugin's control. A repair refuses every change it can observe and never overwrites bytes it did not write.
+
 ## Metadata, disabling, and rollback
 
 The plugin uses the native storage-domain service's namespaced **kanban** domain, version **1**, single snapshot; see [the adapter](<../../src/host/storage.ts>) and [validated durable store](<../../src/domain/store.ts>). It stores projects, workflows, tasks, notes, and operation references, not a second transcript database. Mutations are serialized, revision checked where supplied, and published after durable writes. One active host and profile writer is the supported boundary; there is no multi-host replication guarantee.

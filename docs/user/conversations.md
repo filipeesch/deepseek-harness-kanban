@@ -70,6 +70,16 @@ The footer has a **Dismiss** action on the left. An untouched round dismisses im
 
 A genuine native ask-user or permission request stays independent. Dismissing a rich form or sending its text does not settle an unrelated native pending interaction.
 
+## Unreadable conversation
+
+A conversation whose Session log cannot be read is reported instead of appearing idle. The task card carries a **Session log unreadable** status line, and the same state appears inside the conversation above the composer, in the task drawer and in ordinary chats alike. A conversation that was never created reports nothing, and a missing log gets its own **Session log missing** line.
+
+The diagnosis names the state, keeps the cause the host reported, identifies the Session, and shows the log path under **Details** with **Copy log path**. **Recheck** reads the log again without restarting anything. **Repair…** appears only for an unreadable log and asks for confirmation before writing.
+
+Repair renumbers only repeated PTC dispatch identifiers, the per-execution counters `run_code` writes, and changes nothing else. The confirmation states that scope, the original is kept as a backup, and the result is validated before it replaces anything. A log with no repeated identifier, a damaged tail, or a conversation open in the host is refused, and a repaired log asks you to reopen the conversation to load it. The guarantees and limits of the write are in [recovery](../operations/recovery.md#unreadable-conversation).
+
+Sending from Kanban into an unreadable conversation is refused with the same diagnosis; the native composer belongs to the host, which reports its own failure. The card stays listable, movable, and editable throughout.
+
 ## Stale views and failed updates
 
 A stream failure keeps the last board state and is presented by the board-update status on the Kanban page, where **Retry updates** restarts the live feed; that status, its message, and its retry never appear in a native conversation. A rejected command is reported by the surface that started it — the board's command-failure notice, a dialog, or the drawer — not by the board-update status, and an initial load failure uses **Retry loading board**. Question rounds report their own failure with **Retry questions**, so an ordinary chat keeps working while the board feed is down. Reopen a failed native tab or use its displayed retry action.

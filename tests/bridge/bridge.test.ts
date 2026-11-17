@@ -68,6 +68,8 @@ function fixture(options: { storage?: KeyValueStorage } = {}) {
       mcpServers: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['atlassian', 'trino'] } }),
       worktreeDefault: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { branchName: 'task', path: '' } } }),
       detectProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { kind: 'git', projectPath: '/repo/apps/web', gitRootPath: '/repo', defaultBranch: 'main' } } }),
+      sessionInspect: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { observation: null } } }),
+      sessionRepair: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { backupPath: '/backups/s', renamed: 1 } } }),
       localDrive: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { action: 'roots', discovery: { state: 'empty', locations: [] } } } }),
       questionsFollow: vi.fn((_request: { sessionId: string }, signal?: AbortSignal) => { const feed = new Feed<QuestionFeedFrame>(); questionFeeds.push(feed); signal?.addEventListener('abort', () => feed.dispose(), { once: true }); return feed; }),
       dismissQuestions: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),

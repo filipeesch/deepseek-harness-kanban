@@ -90,6 +90,10 @@ export class ClientBridge {
       mcpServers: async () => unwrap(await remote.kanban.mcpServers({})),
       worktreeDefault: async (taskId: string) => unwrap(await remote.kanban.worktreeDefault({ taskId })),
       detectProject: async (path: string) => unwrap(await remote.kanban.detectProject({ path })),
+      // A host that predates the Session diagnosis exposes neither method, and the seat
+      // then presents the state without actions instead of failing on every press.
+      ...(remote.kanban.sessionInspect === undefined ? {} : { sessionInspect: async (sessionId: string) => unwrap(await remote.kanban.sessionInspect({ sessionId })) }),
+      ...(remote.kanban.sessionRepair === undefined ? {} : { sessionRepair: async (sessionId: string) => unwrap(await remote.kanban.sessionRepair({ sessionId })) }),
       subscribe: (listener) => {
         this.snapshots.add(listener);
         // A late-mounted surface paints from the snapshot the client already holds instead

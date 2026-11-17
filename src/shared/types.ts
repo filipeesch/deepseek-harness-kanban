@@ -351,6 +351,35 @@ export interface ConversationFacts {
   settledTurn: SettledTurn | null;
 }
 export const EMPTY_CONVERSATION_FACTS: ConversationFacts = { running: false, background: [], pending: NO_PENDING_USER_WORK, settledTurn: null };
+/** How a conversation's failed Session observation is classified. */
+export type SessionObservationState = 'unreadable' | 'missing';
+/**
+ * One conversation the plugin could not observe. It is published beside the
+ * conversation facts, never inside them: a failed read is not a fact about the
+ * conversation, and nothing that consumes facts may treat it as one.
+ */
+export interface SessionObservation {
+  state: SessionObservationState;
+  /** The cause the host reported, preserved for the person rather than reinterpreted. */
+  cause: string;
+}
+/** Where one conversation's durable artifact lives, resolved from storage metadata only. */
+export interface SessionArtifactLocation {
+  kind: string;
+  path: string;
+  /** The artifact's opaque change token; a rewrite must refuse when it moved. */
+  revision: string;
+}
+/** One Session's diagnosis after the host re-observed it; a null observation means it was observed. */
+export interface SessionInspection {
+  observation: SessionObservation | null;
+  location?: SessionArtifactLocation;
+}
+/** The outcome of one successful repair: where the original was kept, and how many identifiers were renamed. */
+export interface SessionRepairResult {
+  backupPath: string;
+  renamed: number;
+}
 /** One conversation's projected attention, including the client-owned read state. */
 export interface Attention { running: boolean; background: BackgroundActivity[]; unread: boolean; awaitingReply: boolean; failed: boolean; pending: PendingUserWork }
 /** Transient identity of the entity created by this exact command, never persisted. */
@@ -522,7 +551,7 @@ export interface RetainedCheckout { path: string; projectId: string; taskTitle: 
  * `state` is present on baselines and command responses and omitted from an update frame that
  * did not change the state revision; the client merges it with the state it already holds.
  */
-export interface HostSnapshot { scripted?: Record<string, ScriptedSummary>; commandReceipt?: CommandReceipt; state?: KanbanState; stateRevision: number; conversations: Record<string, ConversationFacts>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; /** Runtime state of every Hub's schedules; omitted when empty. */ scheduleRuntime?: Record<string, HubScheduleRuntime>; /** Transient, in-memory retained checkouts; omitted when empty. */ retainedCheckouts?: RetainedCheckout[]; sequence: number }
+export interface HostSnapshot { scripted?: Record<string, ScriptedSummary>; commandReceipt?: CommandReceipt; state?: KanbanState; stateRevision: number; conversations: Record<string, ConversationFacts>; /** Conversations the plugin could not observe, keyed by Session id; omitted when empty. */ conversationObservations?: Record<string, SessionObservation>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; /** Runtime state of every Hub's schedules; omitted when empty. */ scheduleRuntime?: Record<string, HubScheduleRuntime>; /** Transient, in-memory retained checkouts; omitted when empty. */ retainedCheckouts?: RetainedCheckout[]; sequence: number }
 /** A snapshot that carries the board state: every unary response, baseline, and command result. */
 export type FullHostSnapshot = HostSnapshot & { state: KanbanState };
 /** A request for one unary snapshot; every field is an optional hint, never a required read. */
@@ -615,6 +644,10 @@ export interface ClientApi {
   mcpServers?(): Promise<string[]>;
   worktreeDefault(taskId: string): Promise<WorktreeDefaults>;
   detectProject(path: string): Promise<ProjectLocation>;
+  /** Re-observe one conversation and report its diagnosis with its artifact location; absent on older hosts. */
+  sessionInspect?(sessionId: string): Promise<SessionInspection>;
+  /** Repair a repeated PTC dispatch identifier in one conversation's artifact; absent on older hosts. */
+  sessionRepair?(sessionId: string): Promise<SessionRepairResult>;
   subscribe(listener: (snapshot: KanbanSnapshot) => void): () => void;
 }
 export interface QuestionOption { title: string; description: string }

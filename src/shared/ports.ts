@@ -1,4 +1,4 @@
-import type { BoardState, ConversationFacts, CreateWorktree, GitProject, HubState, KanbanMeta, ProjectLocation } from './types.js';
+import type { BoardState, ConversationFacts, CreateWorktree, GitProject, HubState, KanbanMeta, ProjectLocation, SessionArtifactLocation } from './types.js';
 import type { TaskMessageDelivery } from './task-message.js';
 import type { ConversationIdleReport } from './conversation-idle.js';
 export interface StateStorage { load(): Promise<unknown | null>; save(state: BoardState): Promise<void> }
@@ -64,6 +64,10 @@ export interface SessionPort extends SessionTopologyPort {
   archive(sessionId: string): Promise<void>;
   /** Native execution facts: running agents, background work, pending interaction, and the last settled turn. */
   facts(sessionId: string): Promise<ConversationFacts>;
+  /** Read-only artifact metadata for a diagnosis; absent when the host exposes no stat. */
+  locate?(sessionId: string): Promise<SessionArtifactLocation | undefined>;
+  /** Whether this host currently holds the Session live in memory; absent reports not live. */
+  live?(sessionId: string): boolean;
   /** Includes cold sessions' projected effective directories where available. */
   directories(within?: string): Promise<Array<{ sessionId: string; directory: string }>>;
 }

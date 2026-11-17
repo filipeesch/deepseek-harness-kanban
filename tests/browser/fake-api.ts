@@ -1,4 +1,4 @@
-import type { BoardState, ClientApi, Command, ConversationModelOutcome, ConversationPresetOutcome, ModelSelection, DriveBrowseView, DriveDiscoveryView, HubSchedule, HubScheduleRuntime, HubSharingView, HubState, HubTask, KanbanSnapshot, KanbanState, LocalDriveRequest, LocalDriveResult, Note, SharingCommand } from '../../src/shared/types.js';
+import type { BoardState, ClientApi, Command, ConversationModelOutcome, ConversationPresetOutcome, ModelSelection, DriveBrowseView, DriveDiscoveryView, HubSchedule, HubScheduleRuntime, HubSharingView, HubState, HubTask, KanbanSnapshot, KanbanState, LocalDriveRequest, LocalDriveResult, Note, SessionObservation, SharingCommand } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { requireProjectPath } from '../../src/shared/project.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
@@ -29,7 +29,9 @@ export interface HarnessOptions { scripted?: import('../../src/shared/scripted.j
   /** Names the board's default agent preset, as the Defaults control writes it. */
   boardPreset?: string;
   /** What the board's default preset outcome is on every conversation this fake creates. */
-  conversationPreset?: ConversationPresetOutcome; }
+  conversationPreset?: ConversationPresetOutcome;
+  /** Conversations the plugin could not observe, keyed by Session id. */
+  conversationObservations?: Record<string, SessionObservation>; }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -212,7 +214,7 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
     };
   });
   const settings = { revision: 1, worktreeBasePath: '/worktrees' };
-  const raw: KanbanSnapshot = { sequence: 1, stateRevision: 1, attention, conversationAttention, sharing: options.sharing ?? {}, ...(options.retained === undefined ? {} : { retainedCheckouts: options.retained }), ...(options.scheduleRuntime === undefined ? {} : { scheduleRuntime: { hub: options.scheduleRuntime } }), state: { hubs: [hub], settings } };
+  const raw: KanbanSnapshot = { sequence: 1, stateRevision: 1, attention, conversationAttention, ...(options.conversationObservations === undefined ? {} : { conversationObservations: options.conversationObservations }), sharing: options.sharing ?? {}, ...(options.retained === undefined ? {} : { retainedCheckouts: options.retained }), ...(options.scheduleRuntime === undefined ? {} : { scheduleRuntime: { hub: options.scheduleRuntime } }), state: { hubs: [hub], settings } };
   if (options.scripted) {
     const column = hub.boards[0]!.workflow.columns[0]!;
     const parameters = options.scriptedManyParameters === true
@@ -530,6 +532,7 @@ function clone(value: KanbanSnapshot): KanbanSnapshot {
     sequence: normalized.sequence, stateRevision: normalized.stateRevision,
     attention: normalized.attention, conversationAttention: normalized.conversationAttention,
     sharing: normalized.sharing ?? {},
+    ...(normalized.conversationObservations === undefined ? {} : { conversationObservations: normalized.conversationObservations }),
     ...(normalized.scripted === undefined ? {} : { scripted: normalized.scripted }),
     ...(normalized.sharingAuth === undefined ? {} : { sharingAuth: normalized.sharingAuth }),
     ...(normalized.retainedCheckouts === undefined ? {} : { retainedCheckouts: normalized.retainedCheckouts }),
