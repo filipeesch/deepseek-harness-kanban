@@ -32,7 +32,7 @@ import { WorktreeCoordinator } from './worktrees.js';
 import { OperationQueue } from './operation-queue.js';
 import { ProjectRelocationCoordinator } from './project-relocation.js';
 import { RepositoryProjectRelocationStore } from './project-relocation-store.js';
-import { bindingMatches } from './destructive-admission.js';
+import { bindingMatches } from './context-operation-admission.js';
 import { replaceableByDeletion } from '../shared/context-operation.js';
 import { AttentionCoordinator, type AttentionTask } from './attention.js';
 import { SnapshotAssembler } from './snapshot-assembler.js';
@@ -141,6 +141,8 @@ export class KanbanApp {
  private readonly publisher=new PublishScheduler({publish:()=>this.changed()});
  private readonly disposers:Array<()=>void>=[];
  private sequence=0; private disposed=false; private driving=false; private driveAgain=false; private drivePromise:Promise<void>|undefined; private commandTail:Promise<void>=Promise.resolve();
+ /** One lane per task for first-execution preparations, separate from the command lane. */
+ private firstExecutionTails=new Map<string,Promise<void>>();
  private readonly saveTimers=new Map<string,ReturnType<typeof setTimeout>>();
  private readonly draftWrites=new Map<string,Promise<void>>();
  private readonly draftPruneTimers=new Map<string,ReturnType<typeof setTimeout>>();
@@ -1087,28 +1089,30 @@ export class KanbanApp {
   return store.createTask({...input,boardId});
  }
  startFirstExecution(taskId:string,request:{send:boolean;columnId:string;expectedEnteredAt?:number;expectedInstruction?:string}):Promise<{sessionId:string;sent:boolean}>{
-  return this.serial(()=>this.startFirstExecutionNow(taskId,request));
+  // Each step re-enters the command lane on its own, because the worktree wait must
+  // not hold the lane: see startFirstExecutionNow.
+  return this.startFirstExecutionNow(taskId,request);
  }
  /**
-  * One serialized creation-and-start use case for agent-created cards. Reading the
-  * board and the created entry inside the same serialization means a queued
-  * workflow save cannot leave the tool deciding from a pre-create snapshot.
+  * The creation-and-start use case for agent-created cards. Creation is admitted in
+  * the command lane, and the first execution that follows re-enters it per step, so
+  * the background worktree wait never holds the lane for other commands.
   */
- createTaskAndStart(input:NewTask&{hubId?:string},send:boolean):Promise<{task:HubTask;firstExecution:FirstExecutionOutcome}>{
-  return this.serial(()=>this.createTaskAndStartNow(input,send));
+ async createTaskAndStart(input:NewTask&{hubId?:string},send:boolean):Promise<{task:HubTask;firstExecution:FirstExecutionOutcome}>{
+  const created=await this.createTask(input);return this.finishTaskAndStart(created.id,send);
  }
- private async createTaskAndStartNow(input:NewTask&{hubId?:string},send:boolean):Promise<{task:HubTask;firstExecution:FirstExecutionOutcome}>{
-  const created=await this.createTaskNow(input);const located=this.locatedTask(created.id);const board=located.board;
+ private async finishTaskAndStart(createdId:string,send:boolean):Promise<{task:HubTask;firstExecution:FirstExecutionOutcome}>{
+  const located=this.locatedTask(createdId);const board=located.board;
   const initial=board.workflow.columns.find(column=>column.id===board.workflow.initialColumnId);
   const instruction=entryInstruction(initial);const marker=located.task.instructionPending;
   if(!send||initial===undefined||instruction===undefined||marker?.columnId!==initial.id){
    return {task:located.task,firstExecution:{status:'not-applicable'}};
   }
   try{
-   await this.startFirstExecutionNow(created.id,{send:true,columnId:initial.id,expectedEnteredAt:marker.enteredAt,expectedInstruction:instruction});
-   return {task:this.locatedTask(created.id).task,firstExecution:{status:'sent'}};
+   await this.startFirstExecutionNow(createdId,{send:true,columnId:initial.id,expectedEnteredAt:marker.enteredAt,expectedInstruction:instruction});
+   return {task:this.locatedTask(createdId).task,firstExecution:{status:'sent'}};
   }catch(error){
-   return {task:this.locatedTask(created.id).task,firstExecution:{status:'failed',error:problem(error)}};
+   return {task:this.locatedTask(createdId).task,firstExecution:{status:'failed',error:problem(error)}};
   }
  }
  /**
@@ -1117,6 +1121,20 @@ export class KanbanApp {
   * the stage instruction through the same admission as a user run action.
   */
  private async startFirstExecutionNow(taskId:string,request:{send:boolean;columnId:string;expectedEnteredAt?:number;expectedInstruction?:string}):Promise<{sessionId:string;sent:boolean;model?:ConversationModelOutcome;preset?:ConversationPresetOutcome}>{
+  // One preparation per task at a time, without holding the command lane: a second
+  // caller then joins the conversation the first created instead of deriving a second
+  // worktree name behind its back.
+  return this.serializeFirstExecution(taskId,()=>this.runFirstExecution(taskId,request));
+ }
+ private serializeFirstExecution<T>(taskId:string,run:()=>Promise<T>):Promise<T>{
+  const previous=this.firstExecutionTails.get(taskId)??Promise.resolve();
+  const result=previous.then(run);
+  const tail=result.then(()=>{},()=>{});
+  this.firstExecutionTails.set(taskId,tail);
+  void tail.then(()=>{if(this.firstExecutionTails.get(taskId)===tail)this.firstExecutionTails.delete(taskId);});
+  return result;
+ }
+ private async runFirstExecution(taskId:string,request:{send:boolean;columnId:string;expectedEnteredAt?:number;expectedInstruction?:string}):Promise<{sessionId:string;sent:boolean;model?:ConversationModelOutcome;preset?:ConversationPresetOutcome}>{
   const located=this.locatedTask(taskId);const marker=located.task.instructionPending;
   invariant(located.task.columnId===request.columnId,'TASK_MOVED','The task moved to another stage. Review the current stage before starting its first execution.');
   invariant(marker!==undefined&&marker.columnId===request.columnId,'INSTRUCTION_ALREADY_RESOLVED','The stage entry is no longer unresolved.');
@@ -1125,11 +1143,20 @@ export class KanbanApp {
   const expectedEnteredAt=request.expectedEnteredAt??marker.enteredAt;
   const prepared=await prepareFirstExecution({
    locate:value=>this.locatedTask(value),
-   createWorktree:async(value,draft)=>{await this.worktrees.request(value,{kind:'create',...draft});},
-   createConversation:value=>this.createConversationNow(value,{ensureFirst:true}),
+   // The checkout is slow: admit it in the lane, wait outside it, then re-enter to
+   // read what the journal settled on. The wait is why this use case is not one lane.
+   createWorktree:async(value,draft)=>{
+    // A concurrent preparation may have created it between the plan and this call.
+    if(this.locatedTask(value).task.worktree?.status==='ready')return;
+    await this.serial(()=>this.worktrees.request(value,{kind:'create',...draft},{background:true}));
+    await this.worktrees.whenSettled(value);
+    const settled=this.locatedTask(value);
+    if(settled.task.worktree?.status!=='ready')throw settled.task.operation?.error??new KanbanError('WORKTREE_NOT_READY','The worktree creation did not complete; resolve it in the Git section before starting the first execution.');
+   },
+   createConversation:value=>this.serial(()=>this.createConversationNow(value,{ensureFirst:true})),
   },{taskId,columnId,expectedEnteredAt,...(request.expectedInstruction===undefined?{}:{expectedInstruction:request.expectedInstruction})});
   if(!request.send)return {...prepared,sent:false};
-  await admitStageInstruction(this.stageInstructionDeps(),{taskId,columnId,instruction,expectedEnteredAt,sessionId:prepared.sessionId});
+  await this.serial(()=>admitStageInstruction(this.stageInstructionDeps(),{taskId,columnId,instruction,expectedEnteredAt,sessionId:prepared.sessionId}));
   return {...prepared,sent:true};
  }
  /** Refuse an unknown task, then abort that task's pass without joining its serial lane. */
@@ -1260,7 +1287,6 @@ export class KanbanApp {
    case 'project.delete':{const store=this.hubStore(command.hubId);invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the project registration.');const project=store.requireProject(command.projectId);invariant(!project.operation,'PROJECT_BUSY','Resolve the project relocation before deleting the project.');await store.deleteProject(command.projectId,command.expectedRevision);break;}
    case 'settings.save':await this.settings(command.settings,command.expectedRevision);break;
    case 'task.create':{const value=await this.createTaskNow(command);commandReceipt={kind:'task',id:value.id};break;}
-   case 'task.prepareFirstExecution':{const value=await this.startFirstExecutionNow(command.taskId,{send:false,columnId:command.columnId,expectedEnteredAt:command.expectedEnteredAt,...(command.expectedInstruction===undefined?{}:{expectedInstruction:command.expectedInstruction})});commandReceipt={kind:'conversation',id:value.sessionId,...(value.model===undefined?{}:{model:value.model}),...(value.preset===undefined?{}:{preset:value.preset})};break;}
    case 'task.scriptedPlay':{
     invariant(!this.contextAdmissions.has(command.taskId),'CONTEXT_ADMISSION_PENDING','A task context operation is being admitted.');
     const task=await this.ensureScriptedEntry(command.taskId);invariant(task.stageEntry,'STAGE_ENTRY_REQUIRED','Move into this stage before starting a script.');
@@ -1320,7 +1346,7 @@ export class KanbanApp {
    case 'note.save':{const value=await this.saveNoteNow(command);commandReceipt={kind:'note',id:value.id};break;}
    case 'note.delete':{const value=await this.deleteNoteNow(command);commandReceipt={kind:'note',id:value.id};break;}
    case 'task.delete':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm task data/worktree removal and native conversation archiving.');this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'delete');this.assertScriptContextStopped(command.taskId);await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'delete',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true});break;
-   case 'worktree.create':this.assertScriptContextStopped(command.taskId);this.assertContext(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'create',mode:command.mode,path:command.path,branchName:command.branchName,sourceBranch:command.sourceBranch});break;
+   case 'worktree.create':this.assertScriptContextStopped(command.taskId);this.assertContext(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'create',mode:command.mode,path:command.path,branchName:command.branchName,sourceBranch:command.sourceBranch},command.background===true?{background:true}:{});break;
    case 'worktree.attach':this.assertScriptContextStopped(command.taskId);this.assertContext(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'attach',path:command.path});break;
    case 'worktree.discardCreate':this.assertScriptContextStopped(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'recovering its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.discardCreate(command.taskId,command.confirmed);break;
    case 'worktree.dismiss':{this.assertContext(command.taskId);const located=this.locatedTask(command.taskId);invariant(isGitProject(located.project),'PROJECT_NOT_GIT','Worktree choices require a Git-backed project.');invariant(!located.task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');invariant(!located.task.worktree,'WORKTREE_EXISTS','The task already has a worktree.');if(located.task.worktreeDismissed!==true)await this.hubs.hub(located.hubId).dismissWorktree(command.taskId);break;}

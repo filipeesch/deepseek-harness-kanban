@@ -21,50 +21,45 @@ const entry = { columnId: 'backlog', enteredAt: 7, instruction: 'Start here.' };
 
 describe('planFirstExecution under an Always create project', () => {
   it('creates the derived default without asking', () => {
-    expect(planFirstExecution({ task: task(), project: always, modelSeatAvailable: true, mode: 'interactive' }))
-      .toEqual({ start: false, worktree: 'create-default', model: true, entry: null });
-    expect(planFirstExecution({ task: task(), project: always, modelSeatAvailable: false, mode: 'interactive' }))
-      .toEqual({ start: false, worktree: 'create-default', model: false, entry: null });
+    expect(planFirstExecution({ task: task(), project: always, mode: 'interactive' }))
+      .toEqual({ start: false, worktree: 'create-default', entry: null });
   });
   it('defers to a choice the task already recorded', () => {
-    expect(planFirstExecution({ task: task({ worktreeDismissed: true }), project: always, modelSeatAvailable: true, mode: 'interactive' }))
-      .toEqual({ start: false, worktree: 'none', model: true, entry: null });
+    expect(planFirstExecution({ task: task({ worktreeDismissed: true }), project: always, mode: 'interactive' })).toBeNull();
   });
   it('still blocks on a binding that is not ready', () => {
-    expect(planFirstExecution({ task: task({ worktree: preparing }), project: always, modelSeatAvailable: false, mode: 'interactive' }))
-      .toEqual({ start: false, worktree: 'blocked', model: false, entry: null });
+    expect(planFirstExecution({ task: task({ worktree: preparing }), project: always, mode: 'interactive' }))
+      .toEqual({ start: false, worktree: 'blocked', entry: null });
   });
 });
 
 describe('planFirstExecution under a Never project', () => {
-  it('prepares only whatever remains, without a worktree part', () => {
-    expect(planFirstExecution({ task: task(), project: never, modelSeatAvailable: true, mode: 'interactive' }))
-      .toEqual({ start: false, worktree: 'none', model: true, entry: null });
-    expect(planFirstExecution({ task: task(), project: never, modelSeatAvailable: false, mode: 'interactive' })).toBeNull();
+  it('presents no preparation, because no worktree decision remains', () => {
+    expect(planFirstExecution({ task: task(), project: never, mode: 'interactive' })).toBeNull();
   });
   it('keeps a ready worktree usable', () => {
-    expect(planFirstExecution({ task: task({ worktree: ready }), project: never, modelSeatAvailable: false, mode: 'interactive' })).toBeNull();
+    expect(planFirstExecution({ task: task({ worktree: ready }), project: never, mode: 'interactive' })).toBeNull();
   });
   it('still blocks on a binding that is not ready', () => {
-    expect(planFirstExecution({ task: task({ worktree: preparing }), project: never, modelSeatAvailable: true, mode: 'interactive' }))
-      .toEqual({ start: false, worktree: 'blocked', model: false, entry: null });
+    expect(planFirstExecution({ task: task({ worktree: preparing }), project: never, mode: 'interactive' }))
+      .toEqual({ start: false, worktree: 'blocked', entry: null });
   });
 });
 
 describe('planFirstExecution automatic under each policy', () => {
   it('creates the default worktree under Ask and Always create', () => {
-    expect(planFirstExecution({ task: task(), project: gitProject, workflow, modelSeatAvailable: true, mode: 'automatic', startRequested: true }))
-      .toEqual({ start: true, worktree: 'create-default', model: false, entry });
-    expect(planFirstExecution({ task: task(), project: always, workflow, modelSeatAvailable: true, mode: 'automatic', startRequested: true }))
-      .toEqual({ start: true, worktree: 'create-default', model: false, entry });
+    expect(planFirstExecution({ task: task(), project: gitProject, workflow, mode: 'automatic', startRequested: true }))
+      .toEqual({ start: true, worktree: 'create-default', entry });
+    expect(planFirstExecution({ task: task(), project: always, workflow, mode: 'automatic', startRequested: true }))
+      .toEqual({ start: true, worktree: 'create-default', entry });
   });
   it('starts a Never project in the base project', () => {
-    expect(planFirstExecution({ task: task(), project: never, workflow, modelSeatAvailable: true, mode: 'automatic', startRequested: true }))
-      .toEqual({ start: true, worktree: 'none', model: false, entry });
+    expect(planFirstExecution({ task: task(), project: never, workflow, mode: 'automatic', startRequested: true }))
+      .toEqual({ start: true, worktree: 'none', entry });
   });
   it('keeps a recorded choice under every policy', () => {
-    expect(planFirstExecution({ task: task({ worktreeDismissed: true }), project: always, workflow, modelSeatAvailable: true, mode: 'automatic', startRequested: true }))
-      .toEqual({ start: true, worktree: 'base', model: false, entry });
+    expect(planFirstExecution({ task: task({ worktreeDismissed: true }), project: always, workflow, mode: 'automatic', startRequested: true }))
+      .toEqual({ start: true, worktree: 'base', entry });
   });
 });
 

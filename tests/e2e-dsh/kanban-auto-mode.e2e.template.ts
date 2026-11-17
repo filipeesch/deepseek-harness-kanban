@@ -111,13 +111,14 @@ it('advances the card and dispatches the next instruction after a completed turn
 
   // Running the current stage instruction starts the turn; the replay completes it,
   // and the host advances the card and dispatches the destination instruction itself.
-  // This play action starts the task's first execution, so the preparation creates
-  // the conversation and asks for the model before it sends anything.
+  // This play action starts the task's first execution, so the worktree question comes
+  // first and the checkout plus the conversation continue in the background.
   await cardInPlan.getByRole('button', { name: 'Run Plan instruction' }).click();
-  const preparation = page.getByRole('dialog');
-  const startExecution = preparation.getByRole('button', { name: 'Start execution' });
-  await visible(startExecution);
-  await startExecution.click();
+  const worktreeQuestion = page.getByRole('dialog', { name: 'Create a worktree?' });
+  if (await worktreeQuestion.isVisible().catch(() => false)) {
+    await worktreeQuestion.getByRole('button', { name: 'Continue in base project' }).click();
+    await hidden(worktreeQuestion);
+  }
   const cardInReview = page.locator('[data-column-id="review"] [data-task-id]').filter({ has: openTask });
   await count(cardInReview, 1);
   await count(page.locator('.kb-card-countdown'), 0);

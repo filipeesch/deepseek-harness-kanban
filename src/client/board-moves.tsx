@@ -6,7 +6,7 @@ import { useCardDrag, type CardDragState } from './useCardDrag.js';
 import { useMoveRequest, type MoveIntent, type OptimisticMove } from './useMoveRequest.js';
 import { TransitionOverrideDialog } from './transition-override-dialog.js';
 import type { AutoRunController, AutoRunInput } from './auto-run.js';
-import type { PrepareExecution } from './execution-preparation/contract.js';
+import type { CompletePreparation, PreparationDecision, PreparationEntry, PrepareExecution } from './execution-preparation/contract.js';
 
 export interface BoardMovesOptions {
   state: BoardState | null;
@@ -14,6 +14,8 @@ export interface BoardMovesOptions {
   autoRun: AutoRunController;
   selectionMode: boolean;
   prepare: PrepareExecution;
+  /** Completes the preparation after the move: worktree, then the first conversation. */
+  complete: CompletePreparation;
   onError: (error: unknown) => void;
   /** Clears a previous board notice when a new move starts. */
   onMoveStart?: () => void;
@@ -31,46 +33,58 @@ export interface BoardMoves {
   overrideDialog: ReactNode;
 }
 
+function preparationEntry(input: AutoRunInput): PreparationEntry {
+  return { taskId: input.taskId, columnId: input.columnId, enteredAt: input.enteredAt, instruction: input.instruction };
+}
+
 /**
  * The board's move pipeline: drag, validated move request, optimistic placement,
  * countdown arming, and the first-execution preparation. It owns every dialog
  * the pipeline opens so `BoardView` only renders the returned nodes.
  */
-export function useBoardMoves({ state, run, autoRun, selectionMode, prepare, onError, onMoveStart }: BoardMovesOptions): BoardMoves {
+export function useBoardMoves({ state, run, autoRun, selectionMode, prepare, complete, onError, onMoveStart }: BoardMovesOptions): BoardMoves {
   const stateRef = useRef(state); stateRef.current = state;
   const autoRunRef = useRef(autoRun); autoRunRef.current = autoRun;
   const prepareRef = useRef(prepare); prepareRef.current = prepare;
+  const completeRef = useRef(complete); completeRef.current = complete;
   const onMoveStartRef = useRef(onMoveStart); onMoveStartRef.current = onMoveStart;
 
-  function armAfterMove(result: KanbanSnapshot, task: Task, column: Column): void {
+  /**
+   * Arm the timed instruction for the entry the move created. A move that still
+   * needs its first conversation waits for the preparation run, so the countdown
+   * never targets a conversation that does not exist yet.
+   */
+  function afterMove(result: KanbanSnapshot, task: Task, column: Column, authorization: PreparationDecision): void {
     if (task.columnId === column.id) return;
     const normalized = normalizeSnapshot(result);
     const moved = normalized.state.hubs.flatMap(hub => hub.tasks).find(value => value.id === task.id);
     const movedBoard = moved ? normalized.state.hubs.flatMap(hub => hub.boards).find(value => value.id === moved.boardId) : undefined;
     const destination = movedBoard?.workflow.columns.find(value => value.id === column.id);
     const instruction = entryInstruction(destination);
-    if (moved && destination && instruction !== undefined && hasUnresolvedEntry(moved, destination.id)) {
-      autoRunRef.current.arm({ taskId: moved.id, columnId: destination.id, enteredAt: moved.instructionPending!.enteredAt, instruction });
-    }
+    if (!moved || !destination || instruction === undefined || !hasUnresolvedEntry(moved, destination.id)) return;
+    const input: AutoRunInput = { taskId: moved.id, columnId: destination.id, enteredAt: moved.instructionPending!.enteredAt, instruction };
+    // Without a first conversation the countdown cannot target anything, so the run
+    // creates it first; a task that already has one arms right away.
+    if (moved.sessionIds.length > 0) { autoRunRef.current.arm(input); return; }
+    const entry = preparationEntry(input);
+    void autoRunRef.current.prepare(input, () => completeRef.current(entry, authorization.worktree));
   }
 
-  const beforeApply = useCallback(async (intent: MoveIntent): Promise<boolean> => {
-    if (intent.task.columnId === intent.column.id) return true;
-    if (entryInstruction(intent.column) === undefined) return true;
+  const beforeApply = useCallback(async (intent: MoveIntent) => {
+    if (intent.task.columnId === intent.column.id) return { proceed: true, worktree: 'none' as const };
+    if (entryInstruction(intent.column) === undefined) return { proceed: true, worktree: 'none' as const };
     const project = stateRef.current?.projects.find(value => value.id === intent.task.projectId);
-    const boardModel = stateRef.current?.workflow.model;
     try {
       return await prepareRef.current({
         kind: 'move', task: intent.task, column: intent.column,
         ...(project === undefined ? {} : { project }),
-        ...(boardModel === undefined ? {} : { boardModel }),
       });
     } catch {
-      return false;
+      return { proceed: false, worktree: 'none' as const };
     }
   }, []);
 
-  const moveRequest = useMoveRequest({ state, run, onImmediateError: onError, onMoved: armAfterMove, beforeApply });
+  const moveRequest = useMoveRequest({ state, run, onImmediateError: onError, onMoved: afterMove, beforeApply });
   const { optimistic, confirmation, pending: movePending, error: moveError, canRetry, confirm: confirmMove, cancel: cancelMove, move } = moveRequest;
 
   function canDrop(columnId: string, taskId: string): boolean {
@@ -102,17 +116,17 @@ export function useBoardMoves({ state, run, autoRun, selectionMode, prepare, onE
     if (!current || !task || !column) return;
     const project = current.projects.find(value => value.id === task.projectId);
     void (async () => {
-      let proceed = true;
-      const boardModel = current.workflow.model;
+      let authorization: PreparationDecision;
       try {
-        proceed = await prepareRef.current({
+        authorization = await prepareRef.current({
           kind: 'run', task, column,
           ...(project === undefined ? {} : { project }),
-          ...(boardModel === undefined ? {} : { boardModel }),
         });
       }
-      catch { proceed = false; }
-      if (proceed) void autoRunRef.current.runNow(input);
+      catch { return; }
+      if (!authorization.proceed) return;
+      if (task.sessionIds.length > 0) { void autoRunRef.current.runNow(input); return; }
+      void autoRunRef.current.prepareThenRun(input, () => completeRef.current(preparationEntry(input), authorization.worktree));
     })();
   }, []);
 

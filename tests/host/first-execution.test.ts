@@ -161,11 +161,11 @@ describe('prepareFirstExecution', () => {
     expect(f.sessions.dirs.size).toBe(0);
   });
 
-  it('rejects a stale destination identity on the command', async () => {
-    const f = await setup(); const instruction = await instructed(f);
+  it('rejects a stale destination identity on the preparation entry', async () => {
+    const f = await setup(); await instructed(f);
     const task = await created(f);
     const marker = f.store.requireTask(task.id).instructionPending!;
-    await expect(f.app.command({ type: 'task.prepareFirstExecution', taskId: task.id, columnId: 'done', expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction }))
+    await expect(f.app.startFirstExecution(task.id, { send: false, columnId: 'done', expectedEnteredAt: marker.enteredAt }))
       .rejects.toMatchObject({ code: 'TASK_MOVED' });
     expect(f.git.created).toBe(0);
   });
@@ -205,21 +205,40 @@ describe('prepareFirstExecution', () => {
     expect(f.sessions.dirs.size).toBe(1);
   });
 
-  it('announces the board model it installed on the conversation it created', async () => {
+  it('does not hold the command lane while the tool creation waits for its checkout', async () => {
+    const f = await setup(); await instructed(f);
+    let release!: () => void;
+    const gate = new Promise<void>(done => { release = done; });
+    const create = f.git.create.bind(f.git);
+    f.git.create = async (...args: Parameters<typeof create>) => { await gate; return create(...args); };
+    const pending = f.app.createTaskAndStart({ projectId: f.project.id, title: 'Lane free', description: '' }, true);
+    // The creation is admitted and its checkout is pending in the queue.
+    await expect.poll(() => f.store.snapshot().tasks.some(task => task.title === 'Lane free' && task.operation !== null), { timeout: 5000 }).toBe(true);
+    const queueing = f.store.snapshot().tasks.find(task => task.title === 'Lane free')!;
+    expect(queueing.operation?.request.kind).toBe('create');
+    // Another write lands on the command lane while the checkout is still pending.
+    await f.app.command({ type: 'task.edit', taskId: queueing.id, title: 'Lane free edited' });
+    expect(f.store.requireTask(queueing.id).title).toBe('Lane free edited');
+    release();
+    const result = await pending;
+    expect(result.firstExecution.status).toBe('sent');
+    expect(f.store.requireTask(queueing.id).worktree?.status).toBe('ready');
+    expect(f.sessions.sent).toHaveLength(1);
+  });
+
+  it('applies the board model to the conversation it created', async () => {
     const h = recordingPort();
     const f = await setupWith(h.port);
     await f.store.saveBoardWorkflow(f.board.id, INSTRUCTED_WORKFLOW + 'model:\n  provider: anthropic\n  model: claude\n');
     const instruction = f.store.snapshot().workflow.columns.find(column => column.id === 'backlog')!.onEnterPrompt!;
     const task = await created(f);
     const marker = f.store.requireTask(task.id).instructionPending!;
-    const snapshot = await f.app.command({ type: 'task.prepareFirstExecution', taskId: task.id, columnId: 'backlog', expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
+    await f.app.startFirstExecution(task.id, { send: false, columnId: 'backlog', expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
     const conversation = f.store.requireTask(task.id).sessionIds[0]!;
     expect(h.applied).toEqual([{ sessionId: conversation, selection: BOARD_MODEL }]);
-    // Without this the preparation dialog would show a model choice it never applied.
-    expect(snapshot.commandReceipt).toEqual({ kind: 'conversation', id: conversation, model: { requested: BOARD_MODEL, applied: true }, preset: { requested: 'kanban-workflow-operator', applied: false, reason: 'unsupported' } });
   });
 
-  it('announces no model for a conversation the preparation did not create', async () => {
+  it('applies no model for a conversation the preparation did not create', async () => {
     const h = recordingPort();
     const f = await setupWith(h.port);
     await f.store.saveBoardWorkflow(f.board.id, INSTRUCTED_WORKFLOW + 'model:\n  provider: anthropic\n  model: claude\n');
@@ -228,13 +247,12 @@ describe('prepareFirstExecution', () => {
     await f.app.command({ type: 'worktree.dismiss', taskId: task.id });
     const existing = await f.app.createConversation(task.id);
     const marker = f.store.requireTask(task.id).instructionPending!;
-    const snapshot = await f.app.command({ type: 'task.prepareFirstExecution', taskId: task.id, columnId: 'backlog', expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
-    expect(snapshot.commandReceipt).toEqual({ kind: 'conversation', id: existing });
+    await f.app.startFirstExecution(task.id, { send: false, columnId: 'backlog', expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
     // The board model was installed once, by the conversation that was made for it.
     expect(h.applied.map(entry => entry.sessionId)).toEqual([existing]);
   });
 
-  it('announces the board agent preset it installed on the conversation it created', async () => {
+  it('applies the board agent preset to the conversation it created', async () => {
     const applied: Array<{ sessionId: string; presetId: string }> = [];
     const port: SessionPresetPort = { apply: async (sessionId, presetId) => { applied.push({ sessionId, presetId }); return { applied: true }; } };
     const f = await fixture({ presets: port }); active.push(f);
@@ -242,18 +260,18 @@ describe('prepareFirstExecution', () => {
     const instruction = f.store.snapshot().workflow.columns.find(column => column.id === 'backlog')!.onEnterPrompt!;
     const task = await created(f);
     const marker = f.store.requireTask(task.id).instructionPending!;
-    const snapshot = await f.app.command({ type: 'task.prepareFirstExecution', taskId: task.id, columnId: 'backlog', expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
+    await f.app.startFirstExecution(task.id, { send: false, columnId: 'backlog', expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
     const conversation = f.store.requireTask(task.id).sessionIds[0]!;
     expect(applied).toEqual([{ sessionId: conversation, presetId: 'standard' }]);
-    expect(snapshot.commandReceipt).toEqual({ kind: 'conversation', id: conversation, preset: { requested: 'standard', applied: true } });
   });
 
-  it('runs through the task.prepareFirstExecution command with its receipt', async () => {
+  it('prepares through the public first-execution entry', async () => {
     const f = await setup(); const instruction = await instructed(f);
     const task = await created(f);
     const marker = f.store.requireTask(task.id).instructionPending!;
-    const snapshot = await f.app.command({ type: 'task.prepareFirstExecution', taskId: task.id, columnId: 'backlog', expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
-    expect(snapshot.commandReceipt).toMatchObject({ kind: 'conversation' });
+    const prepared = await f.app.startFirstExecution(task.id, { send: false, columnId: 'backlog', expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
+    expect(prepared.sent).toBe(false);
+    expect(f.store.requireTask(task.id).sessionIds).toEqual([prepared.sessionId]);
     expect(f.git.created).toBe(1);
     expect(f.sessions.dirs.size).toBe(1);
   });

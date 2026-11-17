@@ -85,20 +85,15 @@ it('runs an instructed move after five seconds, cancels, survives reload, and pr
   };
   const moveToPlan = async () => {
     await page.getByRole('combobox', { name: 'Move task to' }).selectOption('plan');
-    // A newer host composes the native model selector: the first-execution
-    // preparation provisions the conversation and then may ask for the model
-    // before the move is applied. Wait for either that stage or the countdown.
-    const preparation = page.locator('.kb-dialog');
-    const startExecution = preparation.getByRole('button', { name: 'Start execution' });
+    // The worktree question comes before the move; answering it moves the card and
+    // the checkout plus the first conversation continue in the background until the
+    // countdown is armed.
+    const question = page.getByRole('dialog', { name: 'Create a worktree?' });
     const notice = page.locator('.kb-drawer-autorun');
-    await expect.poll(async () => {
-      if (await notice.isVisible().catch(() => false)) return 'armed';
-      if (await startExecution.isVisible().catch(() => false)) return 'model';
-      return 'waiting';
-    }, { timeout: 20_000 }).not.toBe('waiting');
-    if (await startExecution.isVisible().catch(() => false)) {
-      await startExecution.click();
-      await expect(preparation).toHaveCount(0);
+    await expect.poll(async () => (await question.isVisible().catch(() => false)) || (await notice.isVisible().catch(() => false)), { timeout: 20_000 }).toBe(true);
+    if (await question.isVisible().catch(() => false)) {
+      await question.getByRole('button', { name: 'Continue in base project' }).click();
+      await expect(question).toHaveCount(0);
     }
     await expect(notice).toBeVisible();
   };

@@ -111,8 +111,10 @@ it('starts a board conversation on the model the board names', { timeout: 300_00
   };
   const beginPreparation = async () => {
     await page.getByRole('combobox', { name: 'Move task to' }).selectOption('plan');
-    await visible(page.getByRole('dialog', { name: 'Prepare the first execution' }));
-    await page.getByRole('dialog', { name: 'Prepare the first execution' }).getByRole('button', { name: 'Continue in base project' }).click();
+    const question = page.getByRole('dialog', { name: 'Create a worktree?' });
+    await visible(question);
+    await question.getByRole('button', { name: 'Continue in base project' }).click();
+    await hidden(question);
   };
   const cancelCountdown = async () => {
     const notice = page.locator('.kb-drawer-autorun');
@@ -122,18 +124,13 @@ it('starts a board conversation on the model the board names', { timeout: 300_00
   };
 
   // The board names a route the host offers: the conversation is created on it
-  // and the preparation never asks for a model.
+  // in the background, and no preparation asks for a model at all.
   await saveWorkflowWith(OFFERED);
   await createTask('On the board model');
   await openTask('On the board model');
   await beginPreparation();
-  const modelDialog = page.getByRole('dialog', { name: 'Choose the conversation model' });
   const fallbackNotice = page.locator('.kb-model-notice');
   await expect.poll(() => page.locator('.kb-agent-tabs .kb-tab').count(), { timeout: 30_000 }).toBe(1);
-  // The conversation is running, so a model step or a fallback would be on screen by now.
-  // The preparation dialog element stays mounted while closed, so the assertion is
-  // about what the person can see, not about how many nodes exist.
-  expect(await modelDialog.first().isVisible()).toBe(false);
   expect(await fallbackNotice.count()).toBe(0);
   // The two cases in this file are the same flow with a different board route, so the
   // missing notice here and the present notice below are what carry the difference:
@@ -143,21 +140,17 @@ it('starts a board conversation on the model the board names', { timeout: 300_00
   await page.getByRole('button', { name: 'Close task details' }).click();
   await hidden(page.locator('.kb-drawer'));
 
-  // The board names a route the host no longer offers: the model step returns,
-  // the native selector is composed in it, and the conversation says which
-  // model it actually started on. Nothing here reaches a real model.
+  // The board names a route the host no longer offers: the conversation is created
+  // anyway and announces the model it actually started on. Nothing here reaches a
+  // real model, and no preparation step asks for one.
   await saveWorkflowWith(MISSING);
   await createTask('Off the board model');
   await openTask('Off the board model');
   await beginPreparation();
-  await visible(modelDialog);
-  expect(await modelDialog.locator('[data-native-model-seat] button').count()).toBeGreaterThan(0);
+  await expect.poll(() => page.locator('.kb-agent-tabs .kb-tab').count(), { timeout: 30_000 }).toBe(1);
   await visible(fallbackNotice);
   expect(await fallbackNotice.textContent()).toContain(MISSING.model);
   await page.screenshot({ path: join(KANBAN_ROOT, '.verification', 'e2e-board-model-unoffered.png') });
-  await modelDialog.getByRole('button', { name: 'Start execution' }).click();
-  await hidden(modelDialog);
-  await expect.poll(() => page.locator('.kb-agent-tabs .kb-tab').count(), { timeout: 30_000 }).toBe(1);
   await cancelCountdown();
 
   // The Defaults panel uses the host's own model selector, and the board's

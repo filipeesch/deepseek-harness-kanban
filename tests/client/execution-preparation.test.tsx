@@ -3,10 +3,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots';
 import { BoardView } from '../../src/client/board.js';
-import type { ConversationLeaseEnvironment } from '../../src/client/conversation-leases.js';
-import { MODEL_SELECTION_SLOT, type PreparationSeat } from '../../src/client/execution-preparation/model-seat.js';
 import { fakeApi, fixture, restrictedInstructedFixture, type TestSnapshot } from './helpers.js';
 
 afterEach(cleanup);
@@ -31,42 +28,55 @@ function firstTaskWithoutConversation(overrides: Partial<TestSnapshot['state']['
   return value;
 }
 
-function seatEnvironment(): { seat: PreparationSeat; leases: ConversationLeaseEnvironment } {
-  const StubModelSeat = () => <button type="button">DeepSeek Chat</button>;
-  const entry = {
-    component: StubModelSeat,
-    options: { id: 'model-seat' },
-    locale: 'ui-model-selection',
-    inject: () => ({ available: true, directory: { subscribe: () => () => {}, getSnapshot: () => ({}) }, load: async () => undefined, select: async () => ({ ok: true }) }),
-  } as unknown as StoredEntry;
-  const seat: PreparationSeat = {
-    slots: { entriesOfSlot: key => key === MODEL_SELECTION_SLOT ? [entry] : [], subscribe: () => () => {} },
-    locale: { bind: () => key => key, getSnapshot: () => ({ revision: 0 }), subscribe: () => () => {} },
-  };
-  const sessions = {
-    retain: (target: string) => ({ sessionId: target, binding: {}, ready: Promise.resolve({}), release: () => {} }),
-    refresh: async () => {},
-    // The lease catalog check must see the freshly created Session, as the native client does.
-    list: { getSnapshot: () => ({ ids: [], byId: new Proxy({}, { get: (_target, key) => typeof key === 'string' ? { id: key } : undefined }), phase: 'ready', projectionsBySession: {} }), subscribe: () => () => {} },
-    subagentAddress: () => ({ parentSessionId: 'parent', childSessionId: 'child', mode: 'unknown' }),
-  };
-  return { seat, leases: { sessions: sessions as never, lifetime: new AbortController().signal } };
-}
-
 describe('first-execution preparation', () => {
-  it('asks for the worktree before applying a first instructed move', async () => {
+  it('asks for the worktree before moving and completes in the background after the move', async () => {
     const { user, command, get } = mount(firstTaskWithoutConversation());
     await openAlpha(user);
     await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
-    const dialog = await screen.findByRole('dialog', { name: 'Prepare the first execution' });
+    const dialog = await screen.findByRole('dialog', { name: 'Create a worktree?' });
     expect(within(dialog).getByText('Alpha task')).toBeTruthy();
     expect(command).not.toHaveBeenCalled();
     expect(get().state.tasks[0]!.columnId).toBe('intake');
     await user.click(within(dialog).getByRole('button', { name: 'Continue in base project' }));
-    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'review' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(get().state.tasks[0]!.columnId).toBe('review'));
+    // The move leads, and the preparation that needs the host follows it.
+    await waitFor(() => expect(command.mock.calls.map(([value]) => value.type)).toEqual(['task.move', 'worktree.dismiss', 'conversation.create']));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Cancel automatic Review instruction' }).length).toBeGreaterThan(0));
+  });
+
+  it('creates the worktree in the background after the move and arms the countdown once the conversation exists', async () => {
+    const initial = firstTaskWithoutConversation();
+    initial.state.settings = { revision: 2, worktreeBasePath: '/trees' };
+    const { user, command, get } = mount(initial);
+    await openAlpha(user);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
+    const dialog = await screen.findByRole('dialog', { name: 'Create a worktree?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Create worktree' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(command.mock.calls.map(([value]) => value.type)).toEqual(['task.move', 'worktree.create', 'conversation.create']));
+    expect(command).toHaveBeenCalledWith({ type: 'worktree.create', taskId: 't1', mode: 'new', background: true });
+    await waitFor(() => expect(get().state.tasks[0]!.worktree?.status).toBe('ready'));
     expect(get().state.tasks[0]!.columnId).toBe('review');
-    expect(screen.getAllByRole('button', { name: 'Cancel automatic Review instruction' }).length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Cancel automatic Review instruction' }).length).toBeGreaterThan(0));
+  });
+
+  it('reports a refused worktree creation on the card after the move', async () => {
+    const mock = fakeApi(firstTaskWithoutConversation());
+    const original = mock.command.getMockImplementation()!;
+    mock.command.mockImplementation(async input => {
+      if (input.type === 'worktree.create') throw { code: 'WORKTREE_NAME_UNAVAILABLE', message: 'No worktree name can be derived.' };
+      return original(input);
+    });
+    const user = userEvent.setup();
+    render(<BoardView api={mock.api} renderConversation={() => null} />);
+    await openAlpha(user);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
+    const dialog = await screen.findByRole('dialog', { name: 'Create a worktree?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Create worktree' }));
+    await waitFor(() => expect(screen.getAllByText('No worktree name can be derived.').length).toBeGreaterThan(0));
+    expect(mock.get().state.tasks[0]!.columnId).toBe('review');
+    expect(mock.get().state.tasks[0]!.sessionIds).toEqual([]);
   });
 
   it('moves to an uninstructed stage without a preparation for a task without a conversation', async () => {
@@ -77,88 +87,11 @@ describe('first-execution preparation', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('presents the native model stage and starts the move after confirmation', async () => {
-    const environment = seatEnvironment();
-    const mock = fakeApi(firstTaskWithoutConversation());
-    render(<BoardView api={mock.api} renderConversation={id => <div data-testid={'native-' + id} />} nativeSeat={environment.seat} conversationLeases={environment.leases} />);
-    const user = userEvent.setup();
-    await openAlpha(user);
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
-    const preparation = await screen.findByRole('dialog', { name: 'Prepare the first execution' });
-    await user.click(within(preparation).getByRole('button', { name: 'Continue in base project' }));
-    const model = await screen.findByRole('dialog', { name: 'Choose the conversation model' });
-    expect(within(model).getByRole('button', { name: 'DeepSeek Chat' })).toBeTruthy();
-    await user.click(within(model).getByRole('button', { name: 'Start execution' }));
-    await waitFor(() => expect(mock.command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'review' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(mock.get().state.tasks[0]!.columnId).toBe('review');
-  });
-
-  it('cancels the model stage without moving but keeps the created conversation', async () => {
-    const environment = seatEnvironment();
-    const mock = fakeApi(firstTaskWithoutConversation());
-    render(<BoardView api={mock.api} renderConversation={id => <div data-testid={'native-' + id} />} nativeSeat={environment.seat} conversationLeases={environment.leases} />);
-    const user = userEvent.setup();
-    await openAlpha(user);
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
-    const preparation = await screen.findByRole('dialog', { name: 'Prepare the first execution' });
-    await user.click(within(preparation).getByRole('button', { name: 'Continue in base project' }));
-    const model = await screen.findByRole('dialog', { name: 'Choose the conversation model' });
-    await user.click(within(model).getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(mock.command.mock.calls.some(([value]) => value.type === 'task.move')).toBe(false);
-    expect(mock.get().state.tasks[0]!.columnId).toBe('intake');
-    expect(mock.get().state.tasks[0]!.sessionIds).toHaveLength(1);
-  });
-
-  it('creates the worktree from the derived defaults before moving', async () => {
-    const initial = firstTaskWithoutConversation();
-    initial.state.settings = { revision: 2, worktreeBasePath: '/trees' };
-    const { user, command, get } = mount(initial);
-    await openAlpha(user);
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
-    const dialog = await screen.findByRole('dialog', { name: 'Prepare the first execution' });
-    const create = within(dialog).getByRole('button', { name: 'Create worktree' }) as HTMLButtonElement;
-    await waitFor(() => expect(create.disabled).toBe(false));
-    await user.click(create);
-    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'review' }));
-    const calls = command.mock.calls.map(([value]) => value.type);
-    expect(calls).toEqual(['worktree.create', 'conversation.create', 'task.move']);
-    expect(command).toHaveBeenCalledWith({ type: 'worktree.create', taskId: 't1', mode: 'new', branchName: 'alpha-task', path: '/trees/alpha-task', sourceBranch: 'main' });
-    expect(get().state.tasks[0]!.worktree?.status).toBe('ready');
-    expect(get().state.tasks[0]!.columnId).toBe('review');
-  });
-
-  it('creates the worktree beside the repository without a base path', async () => {
-    const { user, command } = mount(firstTaskWithoutConversation());
-    await openAlpha(user);
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
-    const dialog = await screen.findByRole('dialog', { name: 'Prepare the first execution' });
-    const create = within(dialog).getByRole('button', { name: 'Create worktree' }) as HTMLButtonElement;
-    await waitFor(() => expect(create.disabled).toBe(false));
-    await user.click(create);
-    await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'worktree.create', taskId: 't1', mode: 'new', branchName: 'alpha-task', path: '/repo-alpha-task', sourceBranch: 'main' }));
-  });
-
-  it('disables creating a worktree when the defaults are unavailable', async () => {
-    const mock = fakeApi(firstTaskWithoutConversation());
-    vi.mocked(mock.api.worktreeDefault).mockImplementation(async () => ({ kind: 'unavailable', reason: { code: 'WORKTREE_NAME_UNAVAILABLE', message: 'No name.' } }));
-    const user = userEvent.setup(); render(<BoardView api={mock.api} renderConversation={() => null} />);
-    await openAlpha(user);
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
-    const dialog = await screen.findByRole('dialog', { name: 'Prepare the first execution' });
-    await waitFor(() => expect(within(dialog).getByText(/No worktree destination can be derived/)).toBeTruthy());
-    const create = within(dialog).getByRole('button', { name: 'Create worktree' }) as HTMLButtonElement;
-    expect(create.disabled).toBe(true);
-    expect(mock.command).not.toHaveBeenCalled();
-  });
-
   it('cancels without moving or creating anything', async () => {
     const { user, command, get } = mount(firstTaskWithoutConversation());
     await openAlpha(user);
     await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
-    const dialog = await screen.findByRole('dialog', { name: 'Prepare the first execution' });
-    await vi.waitFor(() => expect(within(dialog).getByRole('button', { name: 'Create worktree' })).toBeTruthy());
+    const dialog = await screen.findByRole('dialog', { name: 'Create a worktree?' });
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(command).not.toHaveBeenCalled();
@@ -187,7 +120,7 @@ describe('first-execution preparation', () => {
     const { user, command } = mount(initial);
     await screen.findByRole('button', { name: 'Run Review instruction' });
     await user.click(screen.getByRole('button', { name: 'Run Review instruction' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Prepare the first execution' });
+    const dialog = await screen.findByRole('dialog', { name: 'Create a worktree?' });
     expect(command).not.toHaveBeenCalled();
     await user.click(within(dialog).getByRole('button', { name: 'Continue in base project' }));
     await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.runInstruction', taskId: 't1', columnId: 'review', expectedEnteredAt: 1, expectedInstruction: 'Review **carefully**.' }));
@@ -199,19 +132,18 @@ describe('first-execution preparation', () => {
     const { user, command, get } = mount(firstTaskWithoutConversation());
     await openAlpha(user);
     await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
-    const dialog = await screen.findByRole('dialog', { name: 'Prepare the first execution' });
-    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Create worktree' })).toBeTruthy());
+    await screen.findByRole('dialog', { name: 'Create a worktree?' });
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(command).not.toHaveBeenCalled();
     expect(get().state.tasks[0]!.columnId).toBe('intake');
   });
 
-  it('reports a move rejected after preparation and leaves the card in place', async () => {
+  it('reports a move rejected after the answer and leaves the card in place', async () => {
     const { user, command, get } = mount(firstTaskWithoutConversation());
     await openAlpha(user);
     await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'review');
-    const dialog = await screen.findByRole('dialog', { name: 'Prepare the first execution' });
+    const dialog = await screen.findByRole('dialog', { name: 'Create a worktree?' });
     const original = command.getMockImplementation()!;
     command.mockImplementation(async input => {
       if (input.type === 'task.move') throw { code: 'TASK_BUSY', message: 'The task is busy.' };
@@ -220,7 +152,9 @@ describe('first-execution preparation', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Continue in base project' }));
     await waitFor(() => expect(screen.getByText('The task is busy.')).toBeTruthy());
     expect(get().state.tasks[0]!.columnId).toBe('intake');
-    expect(get().state.tasks[0]!.sessionIds).toHaveLength(1);
+    // The preparation never starts when the move it follows was refused.
+    expect(command.mock.calls.map(([value]) => value.type)).toEqual(['task.move']);
+    expect(get().state.tasks[0]!.sessionIds).toEqual([]);
   });
 
   it('runs immediately for a task that already has a conversation, even with an errored binding', async () => {
@@ -245,7 +179,7 @@ describe('first-execution preparation', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'blocked');
     const override = await screen.findByRole('dialog', { name: 'Move to Blocked?' });
     await user.click(within(override).getByRole('button', { name: 'Move anyway' }));
-    const preparation = await screen.findByRole('dialog', { name: 'Prepare the first execution' });
+    const preparation = await screen.findByRole('dialog', { name: 'Create a worktree?' });
     expect(screen.queryByRole('dialog', { name: 'Move to Blocked?' })).toBeNull();
     await user.click(within(preparation).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -263,11 +197,11 @@ describe('first-execution preparation', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Move task to' }), 'blocked');
     const override = await screen.findByRole('dialog', { name: 'Move to Blocked?' });
     await user.click(within(override).getByRole('button', { name: 'Move anyway' }));
-    const preparation = await screen.findByRole('dialog', { name: 'Prepare the first execution' });
+    const preparation = await screen.findByRole('dialog', { name: 'Create a worktree?' });
     expect(command).not.toHaveBeenCalled();
     await user.click(within(preparation).getByRole('button', { name: 'Continue in base project' }));
     await waitFor(() => expect(command).toHaveBeenCalledWith({ type: 'task.move', taskId: 't1', columnId: 'blocked', overrideTransition: true }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(get().state.tasks[0]!.columnId).toBe('blocked');
+    await waitFor(() => expect(get().state.tasks[0]!.columnId).toBe('blocked'));
   });
 });

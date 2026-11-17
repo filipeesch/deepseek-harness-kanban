@@ -76,7 +76,6 @@ export async function prepareFirstExecution(ports: FirstExecutionPorts, request:
     project: located.project,
     workflow: located.board.workflow,
     columnId: request.columnId,
-    modelSeatAvailable: false,
     mode: 'automatic',
     startRequested: true,
   });

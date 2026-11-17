@@ -107,10 +107,11 @@ it('advances on a declared transition with auto mode off and delivers its reason
   // The play action starts the task's first execution; the replayed turn calls
   // set_next_transition, ends, and the host follows the declaration on its own.
   await cardInPlan.getByRole('button', { name: 'Run Plan instruction' }).click();
-  const preparation = page.getByRole('dialog');
-  const startExecution = preparation.getByRole('button', { name: 'Start execution' });
-  await visible(startExecution);
-  await startExecution.click();
+  const worktreeQuestion = page.getByRole('dialog', { name: 'Create a worktree?' });
+  if (await worktreeQuestion.isVisible().catch(() => false)) {
+    await worktreeQuestion.getByRole('button', { name: 'Continue in base project' }).click();
+    await expect(worktreeQuestion).toHaveCount(0);
+  }
 
   const cardInReview = page.locator('[data-column-id="review"] [data-task-id]').filter({ has: openTask });
   await count(cardInReview, 1);

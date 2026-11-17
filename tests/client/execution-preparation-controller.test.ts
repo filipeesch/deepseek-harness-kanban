@@ -1,370 +1,78 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ExecutionPreparationController, type PreparationPorts } from '../../src/client/execution-preparation/controller.js';
-import type { PreparationRequest } from '../../src/client/execution-preparation/contract.js';
-import type { CreateWorktree, ModelCatalog, Project, Task } from '../../src/shared/types.js';
+import { ExecutionPreparationController } from '../../src/client/execution-preparation/controller.js';
+import { NO_PREPARATION, type PreparationRequest } from '../../src/client/execution-preparation/contract.js';
+import type { Column, Project, Task } from '../../src/shared/types.js';
 
-const now = '2026-10-21T12:00:00Z';
-const gitProject: Project = { id: 'p1', projectKey: 'p1', name: 'API', projectPath: '/repo/apps/api', gitRootPath: '/repo', defaultBranch: 'main' };
-const folderProject: Project = { id: 'p1', projectKey: 'p1', name: 'Folder', projectPath: '/repo/apps/api' };
-const column = { id: 'review', name: 'Review', onEnterPrompt: 'Review carefully.' };
-const catalog: ModelCatalog = {
-  default: { provider: 'deepseek', model: 'chat' },
-  providers: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'chat', name: 'Chat' }, { id: 'reason', name: 'Reason' }] }],
-  failures: [],
-};
+const gitProject: Project = { id: 'p', projectKey: 'p', name: 'Web', projectPath: '/repo/apps/web', gitRootPath: '/repo' };
+const review: Column = { id: 'review', name: 'Review', onEnterPrompt: 'Review carefully.' };
 
 function task(overrides: Partial<Task> = {}): Task {
   return {
-    id: 't1', projectId: 'p1', title: 'Alpha task', description: '', columnId: 'intake', position: 0,
-    sessionIds: [], closedSessionIds: [], effectiveCwd: '/repo/apps/api',
-    worktree: null, operation: null, createdAt: now, updatedAt: now, ...overrides,
+    id: 't1', projectId: 'p', title: 'Alpha task', description: '', columnId: 'intake', position: 0,
+    sessionIds: [], closedSessionIds: [], effectiveCwd: '/repo/apps/web', worktree: null, operation: null,
+    createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', ...overrides,
   };
 }
 
 function request(overrides: Partial<PreparationRequest> = {}): PreparationRequest {
-  return { kind: 'move', task: task(), column, project: gitProject, ...overrides };
-}
-
-interface FakePorts extends PreparationPorts {
-  calls: string[];
-  defaults: ReturnType<typeof vi.fn>;
-  createWorktree: ReturnType<typeof vi.fn>;
-  dismissWorktree: ReturnType<typeof vi.fn>;
-  createConversation: ReturnType<typeof vi.fn>;
-  retainSession: ReturnType<typeof vi.fn>;
-  releaseSession: ReturnType<typeof vi.fn>;
-  modelCatalog: ReturnType<typeof vi.fn>;
-}
-
-function ports(overrides: Partial<PreparationPorts> = {}): FakePorts {
-  const calls: string[] = [];
-  const fakeDefs = {
-    calls,
-    defaults: vi.fn(async () => { calls.push('defaults'); return { kind: 'derived', branchName: 'alpha-task', path: '/trees/alpha-task' }; }),
-    createWorktree: vi.fn(async (_taskId: string, _draft: CreateWorktree) => { calls.push('createWorktree'); }),
-    dismissWorktree: vi.fn(async () => { calls.push('dismissWorktree'); }),
-    createConversation: vi.fn(async () => { calls.push('createConversation'); return 'session-new'; }),
-    retainSession: vi.fn(async () => { calls.push('retainSession'); }),
-    releaseSession: vi.fn((sessionId: string) => { calls.push('release:' + sessionId); }),
-    seatAvailable: () => false,
-    modelCatalog: vi.fn(async () => null),
-  };
-  return Object.assign(fakeDefs, overrides);
-}
-
-function controllerWith(fake: FakePorts): ExecutionPreparationController {
-  const controller = new ExecutionPreparationController();
-  controller.configure(fake);
-  return controller;
-}
-
-async function atPhase(controller: ExecutionPreparationController, phase: string): Promise<void> {
-  await vi.waitFor(() => expect(controller.getSnapshot().phase).toBe(phase));
+  return { kind: 'move', task: task(), column: review, project: gitProject, ...overrides };
 }
 
 describe('ExecutionPreparationController', () => {
-  it('proceeds without a dialog when the task already has a conversation', async () => {
-    const fake = ports();
-    const controller = controllerWith(fake);
-    await expect(controller.open(request({ task: task({ sessionIds: ['session-1'] }) }))).resolves.toBe(true);
-    expect(controller.getSnapshot().phase).toBe('closed');
-    expect(fake.calls).toEqual([]);
-  });
-
-  it('proceeds without a dialog when nothing applies', async () => {
-    const fake = ports();
-    const controller = controllerWith(fake);
-    await expect(controller.open(request({ project: folderProject, task: task({ worktree: { path: '/trees/a', branch: 'a', owned: true, status: 'ready' } }) }))).resolves.toBe(true);
-    expect(fake.calls).toEqual([]);
-  });
-
-  it('asks for the worktree and provisions from the derived defaults', async () => {
-    const fake = ports();
-    const controller = controllerWith(fake);
-    const pending = controller.open(request());
-    await atPhase(controller, 'worktree');
-    await vi.waitFor(() => expect(controller.getSnapshot().draft).not.toBeNull());
-    expect(controller.getSnapshot().destinationMissing).toBe(false);
-    controller.answerWorktree(true);
-    await expect(pending).resolves.toBe(true);
-    expect(fake.createWorktree).toHaveBeenCalledWith('t1', { mode: 'new', branchName: 'alpha-task', path: '/trees/alpha-task', sourceBranch: 'main' });
-    expect(fake.createConversation).toHaveBeenCalledWith('t1');
+  it('needs no preparation when no worktree decision applies', async () => {
+    const controller = new ExecutionPreparationController();
+    const decision = await controller.open(request({ task: task({ worktreeDismissed: true }) }));
+    expect(decision).toEqual(NO_PREPARATION);
     expect(controller.getSnapshot().phase).toBe('closed');
   });
 
-  it('records the base-project choice instead of creating a worktree', async () => {
-    const fake = ports();
-    const controller = controllerWith(fake);
+  it('asks the worktree question and answers it', async () => {
+    const controller = new ExecutionPreparationController();
+    const listener = vi.fn();
+    controller.subscribe(listener);
     const pending = controller.open(request());
-    await atPhase(controller, 'worktree');
-    await vi.waitFor(() => expect(controller.getSnapshot().draft).not.toBeNull());
-    controller.answerWorktree(false);
-    await expect(pending).resolves.toBe(true);
-    expect(fake.dismissWorktree).toHaveBeenCalledWith('t1');
-    expect(fake.createWorktree).not.toHaveBeenCalled();
-    expect(fake.createConversation).toHaveBeenCalledWith('t1');
-  });
-
-  it('disables creating a worktree when the defaults are unavailable', async () => {
-    const fake = ports({ defaults: vi.fn(async () => ({ kind: 'unavailable' as const, reason: { code: 'WORKTREE_NAME_UNAVAILABLE', message: 'No name.' } })) });
-    const controller = controllerWith(fake);
-    const pending = controller.open(request());
-    await atPhase(controller, 'worktree');
-    await vi.waitFor(() => expect(controller.getSnapshot().destinationMissing).toBe(true));
+    expect(controller.getSnapshot()).toEqual({ phase: 'worktree', kind: 'move', taskId: 't1', taskTitle: 'Alpha task', stageName: 'Review' });
     controller.answerWorktree(true);
-    expect(fake.createWorktree).not.toHaveBeenCalled();
-    expect(controller.getSnapshot().phase).toBe('worktree');
-    controller.answerWorktree(false);
-    await expect(pending).resolves.toBe(true);
-  });
-
-  it('reports a defaults failure and retries it without closing the question', async () => {
-    const defaults = vi.fn()
-      .mockRejectedValueOnce(new Error('Defaults failed.'))
-      .mockResolvedValueOnce({ kind: 'derived', branchName: 'alpha-task', path: '/trees/alpha-task' });
-    const fake = ports({ defaults });
-    const controller = controllerWith(fake);
-    const pending = controller.open(request());
-    await vi.waitFor(() => expect(controller.getSnapshot().failedStep).toBe('defaults'));
-    expect(controller.getSnapshot().phase).toBe('worktree');
-    expect(controller.getSnapshot().error?.message).toBe('Defaults failed.');
-    controller.retry();
-    await vi.waitFor(() => expect(controller.getSnapshot().draft).not.toBeNull());
-    controller.answerWorktree(false);
-    await expect(pending).resolves.toBe(true);
-  });
-
-  it('keeps a failed worktree creation in the dialog and retries it', async () => {
-    const createWorktree = vi.fn()
-      .mockRejectedValueOnce({ code: 'WORKTREE_TARGET_EXISTS', message: 'The destination already exists.' })
-      .mockResolvedValueOnce(undefined);
-    const fake = ports({ createWorktree });
-    const controller = controllerWith(fake);
-    const pending = controller.open(request());
-    await atPhase(controller, 'worktree');
-    await vi.waitFor(() => expect(controller.getSnapshot().draft).not.toBeNull());
-    controller.answerWorktree(true);
-    await vi.waitFor(() => expect(controller.getSnapshot().phase).toBe('error'));
-    expect(controller.getSnapshot().failedStep).toBe('worktree');
-    expect(controller.getSnapshot().error?.code).toBe('WORKTREE_TARGET_EXISTS');
-    controller.retry();
-    await expect(pending).resolves.toBe(true);
-    expect(createWorktree).toHaveBeenCalledTimes(2);
-    expect(fake.createConversation).toHaveBeenCalledTimes(1);
-  });
-
-  it('retries only the conversation after a failed conversation creation', async () => {
-    const createConversation = vi.fn()
-      .mockRejectedValueOnce({ code: 'CREATION_FAILED', message: 'The conversation could not be created.' })
-      .mockResolvedValueOnce('session-new');
-    const fake = ports({ createConversation });
-    const controller = controllerWith(fake);
-    const pending = controller.open(request());
-    await atPhase(controller, 'worktree');
-    await vi.waitFor(() => expect(controller.getSnapshot().draft).not.toBeNull());
-    controller.answerWorktree(true);
-    await vi.waitFor(() => expect(controller.getSnapshot().phase).toBe('error'));
-    expect(controller.getSnapshot().failedStep).toBe('conversation');
-    controller.retry();
-    await expect(pending).resolves.toBe(true);
-    expect(fake.createWorktree).toHaveBeenCalledTimes(1);
-    expect(createConversation).toHaveBeenCalledTimes(2);
-  });
-
-  it('presents the native model stage and releases the session when the move proceeds', async () => {
-    const fake = ports({ seatAvailable: () => true });
-    const controller = controllerWith(fake);
-    const pending = controller.open(request());
-    await atPhase(controller, 'worktree');
-    await vi.waitFor(() => expect(controller.getSnapshot().draft).not.toBeNull());
-    controller.answerWorktree(false);
-    await atPhase(controller, 'model');
-    expect(controller.getSnapshot().sessionId).toBe('session-new');
-    expect(fake.retainSession).toHaveBeenCalledWith('session-new');
-    controller.confirmModel();
-    await expect(pending).resolves.toBe(true);
-    expect(fake.releaseSession).toHaveBeenCalledWith('session-new');
+    await expect(pending).resolves.toEqual({ proceed: true, worktree: 'create' });
     expect(controller.getSnapshot().phase).toBe('closed');
+    expect(listener).toHaveBeenCalled();
   });
 
-  it('releases the session and resolves cancel from the model stage', async () => {
-    const fake = ports({ seatAvailable: () => true });
-    const controller = controllerWith(fake);
-    const pending = controller.open(request({ task: task({ worktreeDismissed: true }) }));
-    await atPhase(controller, 'model');
+  it('records the base-project answer without provisioning anything', async () => {
+    const controller = new ExecutionPreparationController();
+    const pending = controller.open(request({ kind: 'run' }));
+    controller.answerWorktree(false);
+    await expect(pending).resolves.toEqual({ proceed: true, worktree: 'base' });
+  });
+
+  it('cancels a question without a decision', async () => {
+    const controller = new ExecutionPreparationController();
+    const pending = controller.open(request());
     controller.cancel();
-    await expect(pending).resolves.toBe(false);
-    expect(fake.releaseSession).toHaveBeenCalledWith('session-new');
-  });
-
-  it('provisions and proceeds without a model stage when the board names a route the catalog offers', async () => {
-    const fake = ports({ seatAvailable: () => true, modelCatalog: vi.fn(async () => catalog) });
-    const controller = controllerWith(fake);
-    const pending = controller.open(request({ boardModel: { provider: 'deepseek', model: 'reason' } }));
-    await atPhase(controller, 'worktree');
-    controller.answerWorktree(false);
-    await expect(pending).resolves.toBe(true);
-    expect(fake.createConversation).toHaveBeenCalledWith('t1');
-    expect(fake.modelCatalog).toHaveBeenCalledTimes(1);
-    expect(fake.retainSession).not.toHaveBeenCalled();
+    await expect(pending).resolves.toEqual({ proceed: false, worktree: 'none' });
     expect(controller.getSnapshot().phase).toBe('closed');
   });
 
-  it('keeps the model stage for a board route the catalog does not offer', async () => {
-    const fake = ports({ seatAvailable: () => true, modelCatalog: vi.fn(async () => catalog) });
-    const controller = controllerWith(fake);
-    const pending = controller.open(request({ task: task({ worktreeDismissed: true }), boardModel: { provider: 'anthropic', model: 'claude' } }));
-    await atPhase(controller, 'model');
-    controller.confirmModel();
-    await expect(pending).resolves.toBe(true);
-    expect(fake.modelCatalog).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps the model stage when the catalog cannot be read', async () => {
-    const fake = ports({ seatAvailable: () => true, modelCatalog: vi.fn(async () => null) });
-    const controller = controllerWith(fake);
-    const pending = controller.open(request({ task: task({ worktreeDismissed: true }), boardModel: { provider: 'deepseek', model: 'reason' } }));
-    await atPhase(controller, 'model');
-    controller.confirmModel();
-    await expect(pending).resolves.toBe(true);
-  });
-
-  it('does not read the catalog while no board names a model', async () => {
-    const fake = ports({ seatAvailable: () => true });
-    const controller = controllerWith(fake);
-    const pending = controller.open(request({ task: task({ worktreeDismissed: true }) }));
-    await atPhase(controller, 'model');
-    controller.confirmModel();
-    await expect(pending).resolves.toBe(true);
-    expect(fake.modelCatalog).not.toHaveBeenCalled();
-  });
-
-  it('does not read the catalog for a task that already has a conversation', async () => {
-    const fake = ports({ seatAvailable: () => true, modelCatalog: vi.fn(async () => catalog) });
-    const controller = controllerWith(fake);
-    const pending = controller.open(request({ task: task({ sessionIds: ['session-old'] }), boardModel: { provider: 'deepseek', model: 'reason' } }));
-    await expect(pending).resolves.toBe(true);
-    expect(fake.modelCatalog).not.toHaveBeenCalled();
-    expect(fake.createConversation).not.toHaveBeenCalled();
-  });
-
-  it('proceeds without the model stage when the native seat cannot be retained', async () => {
-    const retainSession = vi.fn().mockRejectedValue(new Error('No scope.'));
-    const fake = ports({ seatAvailable: () => true, retainSession });
-    const controller = controllerWith(fake);
-    const pending = controller.open(request({ task: task({ worktreeDismissed: true }) }));
-    await expect(pending).resolves.toBe(true);
-    expect(retainSession).toHaveBeenCalledWith('session-new');
-    expect(controller.getSnapshot().phase).toBe('closed');
-  });
-
-  it('blocks a task whose worktree binding is not ready and provisions nothing', async () => {
-    const fake = ports();
-    const controller = controllerWith(fake);
-    const pending = controller.open(request({ task: task({ worktree: { path: '/trees/a', branch: 'a', owned: true, status: 'error' } }) }));
-    await atPhase(controller, 'blocked');
-    expect(controller.getSnapshot().worktree).toBe('blocked');
+  it('explains a binding that is not ready and refuses the execution', async () => {
+    const controller = new ExecutionPreparationController();
+    const pending = controller.open(request({ task: task({ worktree: { path: '/trees/a', branch: 'a', owned: true, status: 'preparing' } }) }));
+    expect(controller.getSnapshot().phase).toBe('blocked');
     controller.cancel();
-    await expect(pending).resolves.toBe(false);
-    expect(fake.calls).toEqual([]);
+    await expect(pending).resolves.toEqual({ proceed: false, worktree: 'none' });
   });
 
-  it('accepts the base-project choice while the worktree defaults are still loading', async () => {
-    let releaseDefaults: ((value: { kind: 'derived'; branchName: string; path: string }) => void) | undefined;
-    const defaults = vi.fn(() => new Promise<{ kind: 'derived'; branchName: string; path: string }>(resolve => { releaseDefaults = resolve; }));
-    const fake = ports({ defaults });
-    const controller = controllerWith(fake);
-    const pending = controller.open(request());
-    await atPhase(controller, 'worktree');
-    expect(controller.getSnapshot().pending).toBe(true);
-    controller.answerWorktree(false);
-    await expect(pending).resolves.toBe(true);
-    expect(fake.dismissWorktree).toHaveBeenCalledWith('t1');
-    expect(fake.createConversation).toHaveBeenCalledTimes(1);
-    releaseDefaults?.({ kind: 'derived', branchName: 'late', path: '/trees/late' });
-    await Promise.resolve();
+  it('creates the derived default without asking under Always create', async () => {
+    const controller = new ExecutionPreparationController();
+    const decision = await controller.open(request({ project: { ...gitProject, worktreePolicy: 'always' } }));
+    expect(decision).toEqual({ proceed: true, worktree: 'create' });
     expect(controller.getSnapshot().phase).toBe('closed');
-    expect(controller.getSnapshot().draft).toBeNull();
-  });
-
-  it('ignores a late defaults response after the dialog is cancelled', async () => {
-    let releaseDefaults: ((value: { kind: 'derived'; branchName: string; path: string }) => void) | undefined;
-    const defaults = vi.fn(() => new Promise<{ kind: 'derived'; branchName: string; path: string }>(resolve => { releaseDefaults = resolve; }));
-    const fake = ports({ defaults });
-    const controller = controllerWith(fake);
-    const pending = controller.open(request());
-    await atPhase(controller, 'worktree');
-    controller.cancel();
-    await expect(pending).resolves.toBe(false);
-    releaseDefaults?.({ kind: 'derived', branchName: 'late', path: '/trees/late' });
-    await Promise.resolve();
-    expect(controller.getSnapshot().phase).toBe('closed');
-    expect(controller.getSnapshot().draft).toBeNull();
   });
 
   it('refuses a second preparation while one is open', async () => {
-    const fake = ports();
-    const controller = controllerWith(fake);
-    const pending = controller.open(request());
-    await atPhase(controller, 'worktree');
-    await expect(controller.open(request())).resolves.toBe(false);
+    const controller = new ExecutionPreparationController();
+    const first = controller.open(request());
+    await expect(controller.open(request())).resolves.toEqual({ proceed: false, worktree: 'none' });
     controller.cancel();
-    await pending;
-  });
-
-  it('ignores worktree answers received outside the question stage', async () => {
-    let releaseCreate: (() => void) | undefined;
-    const createWorktree = vi.fn(() => new Promise<void>(resolve => { releaseCreate = resolve; }));
-    const fake = ports({ createWorktree });
-    const controller = controllerWith(fake);
-    const pending = controller.open(request());
-    await atPhase(controller, 'worktree');
-    await vi.waitFor(() => expect(controller.getSnapshot().draft).not.toBeNull());
-    controller.answerWorktree(true);
-    await atPhase(controller, 'provisioning');
-    controller.answerWorktree(false);
-    releaseCreate?.();
-    await expect(pending).resolves.toBe(true);
-    expect(fake.dismissWorktree).not.toHaveBeenCalled();
-    expect(fake.createConversation).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('ExecutionPreparationController under an Always create project', () => {
-  const alwaysProject: Project = { ...gitProject, worktreePolicy: 'always' };
-
-  it('creates the derived default and provisions the conversation without asking', async () => {
-    const fake = ports();
-    const controller = controllerWith(fake);
-    await expect(controller.open(request({ project: alwaysProject }))).resolves.toBe(true);
-    expect(fake.createWorktree).toHaveBeenCalledWith('t1', { mode: 'new', branchName: 'alpha-task', path: '/trees/alpha-task', sourceBranch: 'main' });
-    expect(fake.dismissWorktree).not.toHaveBeenCalled();
-    expect(fake.createConversation).toHaveBeenCalledWith('t1');
-    expect(controller.getSnapshot().phase).toBe('closed');
-  });
-
-  it('asks instead when the defaults cannot be derived, keeping the failure visible', async () => {
-    const fake = ports({ defaults: vi.fn(async () => ({ kind: 'unavailable' as const, reason: { code: 'WORKTREE_NAME_UNAVAILABLE', message: 'No name.' } })) });
-    const controller = controllerWith(fake);
-    const pending = controller.open(request({ project: alwaysProject }));
-    await atPhase(controller, 'worktree');
-    expect(controller.getSnapshot().error).toMatchObject({ code: 'WORKTREE_NAME_UNAVAILABLE' });
-    expect(controller.getSnapshot().destinationMissing).toBe(true);
-    expect(fake.createWorktree).not.toHaveBeenCalled();
-    controller.answerWorktree(false);
-    await expect(pending).resolves.toBe(true);
-    expect(fake.dismissWorktree).toHaveBeenCalledWith('t1');
-    expect(fake.createConversation).toHaveBeenCalledWith('t1');
-  });
-
-  it('asks instead when the derived destination is invalid', async () => {
-    const fake = ports({ defaults: vi.fn(async () => ({ kind: 'derived' as const, branchName: 'alpha-task', path: '' })) });
-    const controller = controllerWith(fake);
-    const pending = controller.open(request({ project: alwaysProject }));
-    await atPhase(controller, 'worktree');
-    expect(controller.getSnapshot().destinationMissing).toBe(true);
-    expect(fake.createWorktree).not.toHaveBeenCalled();
-    controller.cancel();
-    await expect(pending).resolves.toBe(false);
+    await first;
   });
 });

@@ -225,7 +225,7 @@ describe('automatic advance', () => {
     const instruction = f.store.snapshot().workflow.columns.find(column => column.id === 'plan')!.onEnterPrompt!;
     const marker = f.store.requireTask(task.id).instructionPending!;
 
-    await f.app.command({ type: 'task.prepareFirstExecution', taskId: task.id, columnId: 'plan', expectedEnteredAt: marker.enteredAt });
+    await f.app.startFirstExecution(task.id, { send: false, columnId: 'plan', expectedEnteredAt: marker.enteredAt });
     await f.app.command({ type: 'task.runInstruction', taskId: task.id, columnId: 'plan', expectedEnteredAt: marker.enteredAt, expectedInstruction: instruction });
     const sessionId = f.store.requireTask(task.id).sessionIds[0]!;
     expect(f.sessions.sent).toHaveLength(1);

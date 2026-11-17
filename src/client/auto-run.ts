@@ -32,6 +32,8 @@ export interface AutoRunEntry extends AutoRunInput {
   deadline: number | null;
   status: AutoRunStatus;
   error?: Problem;
+  /** A failure records what failed: preparing the execution, or the send itself. */
+  failedAt?: 'preparation' | 'send';
 }
 
 /** The only task fields reconciliation needs. */
@@ -117,15 +119,46 @@ export class AutoRunController {
       if (this.disposed) return;
       const current = this.entries[input.taskId];
       if (!current || current.status !== 'preparing' || current.columnId !== input.columnId || current.enteredAt !== input.enteredAt) return;
-      this.recordFailure(input, asProblem(error));
+      this.failPreparation(input, error);
     }
   };
 
+  /**
+   * Prepare a first execution the user asked for now; send only once the
+   * preparation completes. A preparation that no longer applies is abandoned
+   * silently, because the entry it targeted moved on.
+   */
+  prepareThenRun = async (input: AutoRunInput, prepare: () => Promise<void>): Promise<KanbanSnapshot | null> => {
+    if (this.disposed) return null;
+    this.clearTimer(input.taskId);
+    this.commit({ ...input, deadline: null, status: 'preparing' });
+    try {
+      await prepare();
+    } catch (error) {
+      if (this.disposed) return null;
+      const current = this.entries[input.taskId];
+      if (!current || current.status !== 'preparing' || current.columnId !== input.columnId || current.enteredAt !== input.enteredAt) return null;
+      this.failPreparation(input, error);
+      return null;
+    }
+    if (this.disposed) return null;
+    const current = this.entries[input.taskId];
+    if (!current || current.status !== 'preparing' || current.columnId !== input.columnId || current.enteredAt !== input.enteredAt) return null;
+    this.remove(input.taskId);
+    return this.runNow(input);
+  };
+
+  /** Record a failed preparation, or drop the entry when it no longer applies. */
+  private failPreparation(input: AutoRunInput, error: unknown): void {
+    if (asProblem(error).code === 'PREPARATION_ABANDONED') { this.remove(input.taskId); return; }
+    this.recordFailure(input, asProblem(error), 'preparation');
+  }
+
   /** Record a failed first-execution preparation without arming a timer. */
-  recordFailure = (input: AutoRunInput, failure: Problem): void => {
+  recordFailure = (input: AutoRunInput, failure: Problem, failedAt: 'preparation' | 'send' = 'send'): void => {
     if (this.disposed) return;
     this.clearTimer(input.taskId);
-    this.commit({ ...input, deadline: null, status: 'failed', error: failure });
+    this.commit({ ...input, deadline: null, status: 'failed', error: failure, failedAt });
   };
 
   /** Cancel a pending window and execute immediately through the shared path. */

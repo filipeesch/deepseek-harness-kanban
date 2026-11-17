@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { executionPreparationPlan, type PreparationModel } from '../../src/client/execution-preparation/gate.js';
-import type { ModelCatalog, ModelSelection, Project, Task } from '../../src/shared/types.js';
+import { automaticPreparationOutcome, executionPreparationPlan } from '../../src/client/execution-preparation/gate.js';
+import type { Project, Task } from '../../src/shared/types.js';
 
 const gitProject: Project = { id: 'p', projectKey: 'p', name: 'Web', projectPath: '/repo/apps/web', gitRootPath: '/repo' };
 const folderProject: Project = { id: 'f', projectKey: 'f', name: 'Folder', projectPath: '/repo/apps/web' };
@@ -10,78 +10,36 @@ const failed: Task['worktree'] = { path: '/trees/web', branch: 'feature', owned:
 function task(overrides: Partial<Pick<Task, 'sessionIds' | 'worktree' | 'worktreeDismissed'>> = {}): Pick<Task, 'sessionIds' | 'worktree' | 'worktreeDismissed'> {
   return { sessionIds: [], worktree: null, ...overrides };
 }
-const catalog: ModelCatalog = {
-  default: { provider: 'deepseek', model: 'chat' },
-  providers: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'chat', name: 'Chat' }, { id: 'reason', name: 'Reason' }] }],
-  failures: [],
-};
-/** A board that leaves the model to the deployment default, with the catalog read anyway. */
-const noModel: PreparationModel = { boardModel: undefined, catalog };
-/** The catalog could not be read at all. */
-const unreadable: PreparationModel = { boardModel: { provider: 'deepseek', model: 'chat' }, catalog: null };
 function plan(
   overrides: Partial<Pick<Task, 'sessionIds' | 'worktree' | 'worktreeDismissed'>> = {},
   project: Project | undefined = gitProject,
-  seat = true,
-  model: PreparationModel = noModel,
 ) {
-  return executionPreparationPlan(task(overrides), project, seat, model);
+  return executionPreparationPlan(task(overrides), project);
 }
 
 describe('executionPreparationPlan', () => {
-  it('asks for the worktree and offers the model for a first Git execution', () => {
-    expect(plan({}, gitProject, true)).toEqual({ worktree: 'ask', model: true });
+  it('asks for the worktree for a first Git execution', () => {
+    expect(plan()).toEqual({ worktree: 'ask' });
   });
-  it('still asks for the worktree when the native selector is absent', () => {
-    expect(plan({}, gitProject, false)).toEqual({ worktree: 'ask', model: false });
+  it('blocks on a preparing or errored binding', () => {
+    expect(plan({ worktree: preparing })).toEqual({ worktree: 'blocked' });
+    expect(plan({ worktree: failed })).toEqual({ worktree: 'blocked' });
   });
-  it('blocks on a preparing or errored binding, with or without the selector', () => {
-    expect(plan({ worktree: preparing }, gitProject, true)).toEqual({ worktree: 'blocked', model: false });
-    expect(plan({ worktree: failed }, gitProject, false)).toEqual({ worktree: 'blocked', model: false });
-  });
-  it('offers only the model when the worktree question does not apply', () => {
-    expect(plan({ worktree: ready }, gitProject, true)).toEqual({ worktree: 'none', model: true });
-    expect(plan({ worktreeDismissed: true }, gitProject, true)).toEqual({ worktree: 'none', model: true });
-    expect(plan({}, folderProject, true)).toEqual({ worktree: 'none', model: true });
-  });
-  it('returns null when there is nothing to prepare', () => {
-    expect(plan({}, folderProject, false)).toBeNull();
-    expect(plan({ worktree: ready }, gitProject, false)).toBeNull();
+  it('opens nothing when the worktree question does not apply', () => {
+    expect(plan({ worktree: ready })).toBeNull();
+    expect(plan({ worktreeDismissed: true })).toBeNull();
+    expect(plan({}, folderProject)).toBeNull();
   });
   it('always returns null for a task that already has a conversation', () => {
-    expect(plan({ sessionIds: ['session-1'], worktree: failed }, gitProject, true)).toBeNull();
-    expect(plan({ sessionIds: ['session-1'] }, gitProject, true)).toBeNull();
-    expect(plan({ sessionIds: ['session-1'] }, folderProject, true)).toBeNull();
+    expect(plan({ sessionIds: ['session-1'], worktree: failed })).toBeNull();
+    expect(plan({ sessionIds: ['session-1'] })).toBeNull();
+    expect(plan({ sessionIds: ['session-1'] }, folderProject)).toBeNull();
   });
   it('does not block a plain checkout whose project is no longer Git-backed', () => {
-    expect(plan({ worktree: failed }, folderProject, true)).toEqual({ worktree: 'none', model: true });
-    expect(plan({ worktree: failed }, folderProject, false)).toBeNull();
+    expect(plan({ worktree: failed }, folderProject)).toBeNull();
   });
-  it('asks on a missing worktree regardless of a recorded base choice only when undecided', () => {
-    expect(plan({ worktreeDismissed: true }, gitProject, false)).toBeNull();
-    expect(plan({ worktreeDismissed: false }, gitProject, false)).toEqual({ worktree: 'ask', model: false });
-  });
-
-  describe('with a model the board names', () => {
-    const boardModel: ModelSelection = { provider: 'deepseek', model: 'reason' };
-    it('drops the model step when the catalog offers the route the board named', () => {
-      expect(plan({}, gitProject, true, { boardModel, catalog })).toEqual({ worktree: 'ask', model: false });
-      expect(plan({}, gitProject, true, { boardModel: { ...boardModel, reasoningEffort: 'high' }, catalog })).toEqual({ worktree: 'ask', model: false });
-    });
-    it('opens nothing at all when the model was the only step left', () => {
-      expect(plan({ worktree: ready }, gitProject, true, { boardModel, catalog })).toBeNull();
-      expect(plan({}, folderProject, true, { boardModel, catalog })).toBeNull();
-    });
-    it('keeps the model step for a route the catalog does not offer', () => {
-      expect(plan({}, gitProject, true, { boardModel: { provider: 'anthropic', model: 'claude' }, catalog })).toEqual({ worktree: 'ask', model: true });
-    });
-    it('keeps the model step when the catalog could not be read', () => {
-      expect(plan({}, gitProject, true, unreadable)).toEqual({ worktree: 'ask', model: true });
-    });
-    it('keeps asking about the worktree even when the model is settled', () => {
-      expect(plan({ worktree: preparing }, gitProject, true, { boardModel, catalog })).toEqual({ worktree: 'blocked', model: false });
-      expect(plan({}, gitProject, false, { boardModel, catalog })).toEqual({ worktree: 'ask', model: false });
-    });
+  it('asks on a missing worktree only while the choice is undecided', () => {
+    expect(plan({ worktreeDismissed: false })).toEqual({ worktree: 'ask' });
   });
 });
 
@@ -90,17 +48,26 @@ describe('executionPreparationPlan under a project worktree policy', () => {
   const never: Project = { ...gitProject, worktreePolicy: 'never' };
 
   it('creates the derived default without asking under Always create', () => {
-    expect(plan({}, always, true)).toEqual({ worktree: 'create-default', model: true });
-    expect(plan({}, always, false)).toEqual({ worktree: 'create-default', model: false });
+    expect(plan({}, always)).toEqual({ worktree: 'create-default' });
   });
-
-  it('asks nothing under Never, keeping only whatever remains', () => {
-    expect(plan({}, never, true)).toEqual({ worktree: 'none', model: true });
-    expect(plan({}, never, false)).toBeNull();
+  it('presents nothing under Never, because no worktree decision remains', () => {
+    expect(plan({}, never)).toBeNull();
   });
-
   it('still blocks on a binding that is not ready under either policy', () => {
-    expect(plan({ worktree: preparing }, always, true)).toEqual({ worktree: 'blocked', model: false });
-    expect(plan({ worktree: failed }, never, true)).toEqual({ worktree: 'blocked', model: false });
+    expect(plan({ worktree: preparing }, always)).toEqual({ worktree: 'blocked' });
+    expect(plan({ worktree: failed }, never)).toEqual({ worktree: 'blocked' });
+  });
+});
+
+describe('automaticPreparationOutcome', () => {
+  it('creates the default worktree unless the policy forbids it', () => {
+    expect(automaticPreparationOutcome(task(), gitProject)).toBe('create');
+    expect(automaticPreparationOutcome(task(), { ...gitProject, worktreePolicy: 'always' })).toBe('create');
+    expect(automaticPreparationOutcome(task(), { ...gitProject, worktreePolicy: 'never' })).toBe('none');
+  });
+  it('needs nothing when the task already has a worktree or a recorded choice', () => {
+    expect(automaticPreparationOutcome(task({ worktree: ready }), gitProject)).toBe('none');
+    expect(automaticPreparationOutcome(task({ worktreeDismissed: true }), gitProject)).toBe('none');
+    expect(automaticPreparationOutcome(task(), folderProject)).toBe('none');
   });
 });

@@ -29,7 +29,7 @@ import { createAgentPresetPortSource } from './client/agent-preset-port.js';
 import type { ConversationLeaseEnvironment } from './client/conversation-leases.js';
 import type { SessionTitles } from './client/conversation-label.js';
 import type { NativeLocaleSource, NativeSlotSource } from './client/native-slot-host.js';
-import type { PreparationSeat } from './client/execution-preparation/model-seat.js';
+import type { NativeSeat } from './client/native-slot-host.js';
 import { TASK_CONTEXT_NODE_KIND, TaskContextNodeView, taskContextDefinition } from './client/task-context-node.js';
 import { STAGE_CONTEXT_NODE_KIND, StageInstructionNodeView, stageInstructionDefinition } from './client/stage-instruction-node.js';
 import { HANDOFF_CONTEXT_NODE_KIND, ScriptedHandoffNodeView, scriptedHandoffDefinition } from './client/scripted-handoff-node.js';
@@ -276,7 +276,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       SessionProvider: props.SessionProvider,
       renderSlot: (key, owner) => props.renderSlot(key, owner as never),
     }), [props.SessionProvider, props.renderSlot]);
-    const nativeSeat = useMemo<PreparationSeat>(() => ({
+    const nativeSeat = useMemo<NativeSeat>(() => ({
       slots: ctx.slots as unknown as NativeSlotSource,
       locale: ctx.locale as unknown as NativeLocaleSource,
     }), [ctx.slots, ctx.locale]);

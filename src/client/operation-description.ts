@@ -1,6 +1,38 @@
 import type { ContextOperation, Task } from '../shared/types.js';
 
 export interface OperationFact { label: string; value: string }
+export interface CardOperationStatus { tone: 'danger' | 'pending'; label: string }
+
+/**
+ * The card's one-line status for a context operation. A creation names the step it
+ * is in, so a background checkout reads as progress instead of a phase token; a
+ * destructive operation keeps the deletion and removal vocabulary.
+ */
+export function cardOperationStatus(operation: ContextOperation): CardOperationStatus {
+  const kind = operation.request.kind;
+  const failed = operation.phase === 'failed';
+  if (kind === 'create' || kind === 'attach') {
+    const noun = kind === 'create' ? 'Worktree creation' : 'Worktree attachment';
+    if (failed) return { tone: 'danger', label: noun + ' needs attention' };
+    switch (operation.phase) {
+      case 'queued': return { tone: 'pending', label: noun + ' queued' };
+      case 'waiting': return { tone: 'pending', label: noun + ' waiting' };
+      case 'preflight': return { tone: 'pending', label: 'Checking the worktree destination…' };
+      case 'git': return { tone: 'pending', label: 'Creating worktree…' };
+      case 'switching': return { tone: 'pending', label: 'Preparing the first conversation…' };
+      default: return { tone: 'pending', label: 'Creating worktree…' };
+    }
+  }
+  if (kind === 'return') return failed ? { tone: 'danger', label: 'Return to project needs attention' } : { tone: 'pending', label: 'Returning to the project…' };
+  const deleteKind = kind === 'delete';
+  if (failed) return { tone: 'danger', label: deleteKind ? 'Deletion needs attention' : 'Worktree removal needs attention' };
+  switch (operation.phase) {
+    case 'queued': return { tone: 'pending', label: deleteKind ? 'Queued to delete' : 'Queued to remove worktree' };
+    case 'waiting': return { tone: 'pending', label: deleteKind ? 'Deletion waiting for idle' : 'Removal waiting for idle' };
+    case 'preflight': return { tone: 'pending', label: deleteKind ? 'Checking before deleting…' : 'Checking before removing…' };
+    default: return { tone: 'pending', label: deleteKind ? 'Deleting…' : 'Removing worktree…' };
+  }
+}
 export interface OperationDescription {
   title: string;
   detail: string;
@@ -82,13 +114,17 @@ export function describeOperation(task: Task, operation: ContextOperation): Oper
   if (failed) detail = failedPhase === 'failed'
     ? 'The operation stopped before completion. Review what completed before retrying.'
     : 'The operation stopped during ' + failedPhase + '. Review what completed before retrying.';
-  else if (operation.phase === 'queued') detail = 'Queued after the other destructive operations.';
+  else if (operation.phase === 'queued') detail = operation.request.kind === 'create' || operation.request.kind === 'attach'
+    ? 'Queued behind another Git operation on this repository.'
+    : 'Queued after the other destructive operations.';
   else if (operation.phase === 'waiting') detail = 'Waiting for every conversation to become idle.';
   else if (operation.phase === 'preflight') detail = 'Checking the task context and permissions.';
   else if (operation.phase === 'git') detail = operation.request.kind === 'create' || operation.request.kind === 'attach'
     ? 'Creating the checkout.'
     : 'Removing the worktree.';
-  else if (operation.phase === 'switching') detail = 'Returning conversations to the project: ' + returned(task, operation) + '.';
+  else if (operation.phase === 'switching') detail = operation.request.kind === 'create' || operation.request.kind === 'attach'
+    ? 'Preparing the task context for the new checkout.'
+    : 'Returning conversations to the project: ' + returned(task, operation) + '.';
   else if (operation.phase === 'removing') detail = 'Removing the worktree.';
   else if (operation.phase === 'archiving') detail = 'Archiving conversations: ' + archived(task, operation) + '.';
   else detail = 'The operation is complete.';

@@ -12,13 +12,11 @@ export type FirstExecutionWorktree = 'ask' | 'create-default' | 'base' | 'blocke
 /** The instructed entry a preparation targets. */
 export interface FirstExecutionEntry { readonly columnId: string; readonly enteredAt: number; readonly instruction: string }
 
-/** One first execution's decision: whether to start, what to do about a worktree, and whether to ask for a model. */
+/** One first execution's decision: whether to start and what to do about a worktree. */
 export interface FirstExecutionPlan {
   /** Automatic mode only: the creation should prepare this task now. */
   readonly start: boolean;
   readonly worktree: FirstExecutionWorktree;
-  /** Interactive mode only: DSH's native model selector is composed for the host. */
-  readonly model: boolean;
   /** The unresolved instructed entry, or null when there is none. */
   readonly entry: FirstExecutionEntry | null;
 }
@@ -30,7 +28,6 @@ export interface FirstExecutionInput {
   readonly workflow?: Workflow;
   /** The instructed column being entered; defaults to the task's current column. */
   readonly columnId?: string;
-  readonly modelSeatAvailable: boolean;
   readonly mode: FirstExecutionMode;
   /** Automatic mode only: whether the creation asked to start now. */
   readonly startRequested?: boolean;
@@ -65,26 +62,27 @@ export function worktreeDecision(
 }
 
 /**
- * Decide one first execution. Interactive reproduces the execution-preparation
- * gate: ask for the worktree while the project's policy leaves the choice to the
- * task, create the derived default without asking under Always create, block on a
- * binding that is not ready, and otherwise present whatever remains. Automatic
- * uses the default worktree and never asks; it starts only when the creation
- * requested it, the instructed entry is unresolved, and no conversation exists.
+ * Decide one first execution. Interactive is the execution-preparation gate: ask
+ * for the worktree while the project's policy leaves the choice to the task, mark
+ * the derived default to create without asking under Always create, and block on a
+ * binding that is not ready. It applies only when a worktree decision applies,
+ * because the preparation no longer presents a model step. Automatic uses the
+ * default worktree and never asks; it starts only when the creation requested it,
+ * the instructed entry is unresolved, and no conversation exists.
  */
 export function planFirstExecution(input: FirstExecutionInput): FirstExecutionPlan | null {
   const { task, project } = input;
   if (input.mode === 'interactive') {
     if (task.sessionIds.length > 0) return null;
-    if (unresolvedWorktreeBinding(task, project)) return { start: false, worktree: 'blocked', model: false, entry: null };
+    if (unresolvedWorktreeBinding(task, project)) return { start: false, worktree: 'blocked', entry: null };
     const worktree: FirstExecutionWorktree = createsDefaultWorktree(task, project)
       ? worktreePolicy(project) === 'always' ? 'create-default' : 'ask'
       : 'none';
-    if (worktree === 'none' && !input.modelSeatAvailable) return null;
-    return { start: false, worktree, model: input.modelSeatAvailable, entry: null };
+    if (worktree === 'none') return null;
+    return { start: false, worktree, entry: null };
   }
   const entry = unresolvedEntry(input);
   const worktree: FirstExecutionWorktree = worktreeDecision(task, project);
   const start = input.startRequested === true && entry !== null && task.sessionIds.length === 0;
-  return { start, worktree: start ? worktree : 'none', model: false, entry };
+  return { start, worktree: start ? worktree : 'none', entry };
 }

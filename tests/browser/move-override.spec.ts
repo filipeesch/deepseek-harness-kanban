@@ -145,7 +145,7 @@ test('confirms the restricted transition before preparing the first execution', 
   const override = page.getByRole('dialog', { name: 'Move to Apply?' });
   await expect(override).toBeVisible();
   await override.getByRole('button', { name: 'Move anyway' }).click();
-  const preparation = page.getByRole('dialog', { name: 'Prepare the first execution' });
+  const preparation = page.getByRole('dialog', { name: 'Create a worktree?' });
   await expect(preparation).toBeVisible();
   await page.clock.install({ time: new Date() });
   await expect(override).toBeHidden();
@@ -157,6 +157,6 @@ test('confirms the restricted transition before preparing the first execution', 
   await expect(override).toBeHidden();
   await expect(page.getByRole('button', { name: 'Cancel automatic Apply instruction' }).first()).toBeVisible();
   const sent = await page.evaluate(() => (window as unknown as { __harness: { commands(): Array<{ type: string; columnId?: string; overrideTransition?: boolean }> } }).__harness.commands());
-  expect(sent.map(command => command.type)).toEqual(['worktree.dismiss', 'conversation.create', 'task.move']);
+  expect(sent.map(command => command.type)).toEqual(['task.move', 'worktree.dismiss', 'conversation.create']);
   expect(sent.find(command => command.type === 'task.move')).toMatchObject({ columnId: 'apply', overrideTransition: true });
 });

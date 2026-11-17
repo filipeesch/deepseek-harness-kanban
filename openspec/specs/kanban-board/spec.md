@@ -256,11 +256,13 @@ Creating a task directly in a scripted initial stage SHALL create a new entry go
 - **AND** the script still requires valid capture and local authorization before launch
 
 ### Requirement: Automatic first execution on task creation
-The system SHALL prepare a task's first execution immediately after its creation when the active board's initial stage has an entry instruction and the creation kept the Start execution now option enabled. The preparation SHALL be a host admission that does not depend on the creating board remaining mounted, SHALL present no dialog, SHALL NOT ask the worktree choice, and SHALL NOT present the native model selector. For a Git-backed project, the preparation SHALL create the task's default worktree using its title-derived defaults and SHALL wait until that worktree is ready. For a folder project, the task SHALL use its project directory. The preparation SHALL then create the task's first conversation and SHALL arm the five-second countdown defined by Timed stage instruction after a move for the created entry; expiry SHALL send the stage instruction through the same admission as a user run action. While the preparation runs, the card and the drawer SHALL present a preparing state, and the card's run action SHALL NOT be available. Canceling the countdown SHALL keep the created worktree and conversation, SHALL leave the unresolved entry, and SHALL expose the card's run action. A failed preparation or send SHALL keep the card and the unresolved entry, SHALL report the failure on the card and in the drawer, SHALL expose the run action, and SHALL NOT retry automatically. The preparation and the countdown SHALL NOT be persisted: a reload or plugin restart before the send SHALL send nothing and SHALL leave the entry unresolved. The agent tool surface SHALL prepare and dispatch the first execution in the same call as defined by the product-tools specification.
+
+The system SHALL prepare a task's first execution immediately after its creation when the active board's initial stage has an entry instruction and the creation kept the Start execution now option enabled. The preparation SHALL present no dialog, SHALL NOT ask the worktree choice, and SHALL NOT present a native model selector. For a Git-backed project, the preparation SHALL admit the task's default worktree, derived from its title-derived defaults, as a background context operation on the host, and SHALL wait until that worktree is ready. For a folder project, the task SHALL use its project directory. The preparation SHALL then create the task's first conversation and SHALL arm the five-second countdown defined by Timed stage instruction after a move for the created entry; expiry SHALL send the stage instruction through the same admission as a user run action. The worktree creation SHALL NOT depend on the creating board remaining mounted; the first conversation and the countdown SHALL belong to the board that started the creation, SHALL be abandoned when it unmounts or the plugin restarts, and SHALL leave the created worktree in place. While the preparation runs, the card and the drawer SHALL present a preparing state, and the card's run action SHALL NOT be available. Canceling the countdown SHALL keep the created worktree and conversation, SHALL leave the unresolved entry, and SHALL expose the card's run action. A failed preparation or send SHALL keep the card and the unresolved entry, SHALL report the failure on the card and in the drawer, SHALL expose the run action once the recorded operation is resolved, and SHALL NOT retry automatically. The countdown SHALL NOT be persisted: a reload or plugin restart before the send SHALL send nothing and SHALL leave the entry unresolved. The agent tool surface SHALL prepare and dispatch the first execution in the same call as defined by the product-tools specification, sharing the same background worktree admission and waiting for it.
 
 This preparation SHALL apply only to an agent entry instruction. A scripted initial entry SHALL follow `scripted-steps` instead and SHALL NOT acquire the default worktree, conversation, model selection, or five-second countdown described here merely because it executes code.
 
 #### Scenario: Prepare and arm after creation
+
 - **WHEN** a task is created in an instructed initial stage with Start execution now enabled and the task has no conversation
 - **THEN** the preparation creates the default worktree for a Git-backed project or uses the project directory for a folder project
 - **AND** the first conversation is created after the worktree is ready
@@ -268,30 +270,36 @@ This preparation SHALL apply only to an agent entry instruction. A scripted init
 - **AND** no preparation dialog and no native model selector are presented
 
 #### Scenario: Use the repository-sibling worktree default
+
 - **WHEN** no worktree base path is configured and the created task's project is Git-backed
 - **THEN** the preparation creates the worktree at the repository-sibling default defined by `worktree-management`
 - **AND** the first conversation uses that worktree directory
 
 #### Scenario: Present the preparing state
+
 - **WHEN** the automatic first-execution preparation is running for a created task
 - **THEN** the card and the drawer present a preparing state
 - **AND** the card's run action is unavailable
 - **AND** no instruction is sent before the countdown is armed
 
 #### Scenario: Cancel the countdown
+
 - **WHEN** the user cancels the countdown armed after the creation preparation
 - **THEN** no instruction is sent
 - **AND** the created worktree and conversation remain
 - **AND** the entry remains unresolved and the card exposes the run action
 
 #### Scenario: Failed preparation keeps the card
+
 - **WHEN** the worktree or the first conversation cannot be prepared during creation
 - **THEN** the card and the unresolved entry remain in the initial stage
-- **AND** the failure is reported on the card and in the drawer
-- **AND** the card exposes the run action
+- **AND** the failure is reported on the card
+- **AND** a failure the host recorded is also reported in the drawer
+- **AND** the card exposes the run action once the recorded operation is resolved
 - **AND** no automatic retry occurs
 
 #### Scenario: Failed timed send keeps the card
+
 - **WHEN** the timed send after the creation preparation fails
 - **THEN** the card and the unresolved entry remain in the initial stage
 - **AND** the failure is reported on the card and in the drawer
@@ -299,12 +307,16 @@ This preparation SHALL apply only to an agent entry instruction. A scripted init
 - **AND** no automatic retry occurs
 
 #### Scenario: Reload before the send
+
 - **WHEN** the board reloads or the plugin restarts during the preparation or the countdown
 - **THEN** no instruction is sent automatically
 - **AND** the entry remains unresolved
+- **AND** the worktree creation already admitted finishes on the host
+- **AND** no first conversation is created once the creating board is gone
 - **AND** the card exposes the run action after reload
 
 #### Scenario: Do not prepare without the start option
+
 - **WHEN** a task is created in an instructed initial stage with Start execution now disabled
 - **THEN** no worktree, first conversation, preparation, or countdown is created
 - **AND** the card exposes the run action for the unresolved entry
@@ -343,66 +355,92 @@ Activating a task card SHALL open its task drawer, giving access to that task's 
 
 ### Requirement: Execution preparation before a task's first execution
 
-When a user move into an instructed stage or a card run action would start a task's first
-execution — the task has no native conversation — the system SHALL present one execution
-preparation before applying the move or admitting the instruction. The preparation SHALL contain
-the worktree choice defined by the Worktree choice before a card's first execution requirement in
-`worktree-management` when that choice applies, and the model selection defined by Model selection
-for the first conversation in `task-conversations` when DSH's native model selector is available
-and the board's default model rules in `kanban-board` make that step apply. When the task already
-has a conversation, or when neither part applies, the system SHALL NOT present the preparation and
-SHALL follow the current move and run behavior. A restricted-transition confirmation SHALL be
-presented before the preparation; canceling that confirmation SHALL present nothing else. The
-preparation SHALL NOT start an agent execution and SHALL NOT change the task's stage or position.
-Completing the preparation SHALL leave the move or run action to proceed as defined by its own
-requirement. Canceling the preparation after it created a worktree or the first conversation SHALL
-keep those resources and SHALL leave the task's stage and position unchanged. The preparation SHALL
-NOT be presented for a same-stage reorder or by an automatic advance.
+When a user move into an instructed stage or a card run action would start a task's first execution — the task has no native conversation — the system SHALL present one execution preparation before that execution starts. The preparation SHALL contain only the worktree choice defined by the Worktree choice before a card's first execution requirement in `worktree-management` when that choice applies, and it SHALL NOT present a model selection step. The worktree question SHALL be answered before the move is applied, and answering it SHALL close the preparation immediately. The remaining preparation — admitting the worktree creation as a background context operation and creating the task's first conversation once that worktree is ready — SHALL continue after the move or run action is applied, SHALL NOT hold the card, and SHALL NOT start an agent execution by itself. When the task already has a conversation, or when no worktree choice applies, the system SHALL NOT present the preparation and SHALL follow the move and run behavior defined by their own requirements. A restricted-transition confirmation SHALL be presented before the preparation; canceling that confirmation SHALL present nothing else. The preparation SHALL NOT change the task's stage or position by itself. Canceling the preparation SHALL leave the task's stage and position unchanged and SHALL NOT create a worktree, a branch, or a conversation. A preparation that fails after the move SHALL keep the move and the unresolved entry, SHALL report the failure in the card status region, SHALL report a failure the host recorded in the drawer operation status and the Git section, and SHALL NOT create the first conversation. The preparation SHALL NOT be presented for a same-stage reorder or by an automatic advance. A worktree binding in the preparing or error state SHALL block the first execution as defined by `worktree-management`.
 
 The first execution described here SHALL mean execution of an agent stage instruction, not a scripted script. A scripted stage's Play action and a move into a scripted stage SHALL NOT create a native conversation or present a model selector through this preparation. Its working directory SHALL follow the task-or-project selection defined by `scripted-steps`.
 
 #### Scenario: Prepare the first instructed drop
+
 - **WHEN** the user drops a task that has no conversation on a permitted stage with an entry instruction
-- **THEN** the board presents the execution preparation before moving the task
-- **AND** the task remains in its source stage and position until the preparation completes
+- **THEN** the board presents the worktree question before moving the task
+- **AND** the task remains in its source stage and position while that question is open
+- **AND** answering it moves the task to the dropped position
 - **AND** no agent instruction is sent by the preparation
 
 #### Scenario: Prepare the first run from a card
+
 - **WHEN** the user activates the run action on a card whose task has no conversation
-- **THEN** the board presents the execution preparation before creating a conversation or admitting the instruction
-- **AND** the task's stage and position are unchanged throughout the preparation
+- **THEN** the board presents the worktree question before creating a conversation or admitting the instruction
+- **AND** the task's stage and position are unchanged while that question is open
+- **AND** answering it proceeds with the run, which creates the worktree in the background and then the first conversation
 
 #### Scenario: Present the preparation after a restricted confirmation
+
 - **WHEN** the confirmed destination would start the task's first execution
 - **THEN** the restricted-transition confirmation is presented first
-- **AND** the preparation is presented only after that confirmation
+- **AND** the worktree question is presented only after that confirmation
 - **AND** canceling the preparation leaves the task in its current stage and position
 
 #### Scenario: Skip the preparation when the task has a conversation
+
 - **WHEN** a task already has a conversation and the user drops it on an instructed stage or activates its run action
 - **THEN** no execution preparation is presented
 - **AND** the move or run behavior follows its own requirement
 
 #### Scenario: Skip the preparation when nothing applies
-- **WHEN** the task has no conversation but neither a worktree choice nor a model selection applies, including because the board's default model is available
+
+- **WHEN** the task has no conversation but no worktree choice applies, because it already has a ready worktree, recorded a base-project choice, belongs to a folder project, or its project never creates worktrees
 - **THEN** no execution preparation is presented
 - **AND** the move or run behavior follows its own requirement
 
 #### Scenario: Prepare the worktree choice without a model step
-- **WHEN** the task has no conversation and no worktree, and the board's default model is available
-- **THEN** the preparation presents the worktree choice only
-- **AND** the first conversation is created on the board's default model
+
+- **WHEN** the task has no conversation and no worktree, and the board names no default model
+- **THEN** the preparation presents the worktree question only
+- **AND** no native model selector is presented before the first execution
+- **AND** the first conversation uses the board's default model when the board names an available one and the deployment default otherwise
+
+#### Scenario: No provisioning before the answer
+
+- **WHEN** the worktree question is open
+- **THEN** no worktree, branch, conversation, or Git command is started by the preparation
 
 #### Scenario: Cancel before any resource exists
-- **WHEN** the user cancels the preparation before a worktree or the first conversation has been created
+
+- **WHEN** the user cancels the preparation while the worktree question is open
 - **THEN** no worktree, branch, or conversation is created
 - **AND** the task's stage, position, and conversations are unchanged
+- **AND** no agent instruction is sent
 
 #### Scenario: Cancel after provisioning
-- **WHEN** the user cancels the preparation after it created a worktree or the first conversation
-- **THEN** the created worktree and conversation are kept
-- **AND** the task's stage and position are unchanged
-- **AND** no agent instruction is sent
+
+- **WHEN** the user tries to cancel the preparation after the worktree question was answered
+- **THEN** the preparation is already closed and cannot be cancelled
+- **AND** the background worktree creation continues
+- **AND** a running checkout can be cancelled from the operation status defined by Visible operation status and recovery in `task-conversations`
+
+#### Scenario: Continue in the background after the move
+
+- **WHEN** the user answers the worktree question and the task moves
+- **THEN** the card presents a preparing state while the worktree is admitted and created
+- **AND** the first conversation is created once the worktree is ready
+- **AND** the timed stage instruction is armed only after that conversation exists
+
+#### Scenario: Failure after the move is reported on the card
+
+- **WHEN** the background worktree creation or the first conversation fails after the task moved
+- **THEN** the task remains in the destination stage with the unresolved entry
+- **AND** the failure is reported in the card status region
+- **AND** a failure the host recorded is also reported in the drawer operation status and the Git section
+- **AND** the run action remains unavailable while a recorded operation is unresolved
+
+#### Scenario: Reload during the background preparation
+
+- **WHEN** the panel reloads or the plugin restarts after the worktree creation was admitted and before the first conversation exists
+- **THEN** the worktree creation finishes on the host
+- **AND** no first conversation is created
+- **AND** no instruction is sent
+- **AND** the entry remains unresolved with the run action available
 
 #### Scenario: Do not prepare a conversation for script execution
 
@@ -411,7 +449,8 @@ The first execution described here SHALL mean execution of an agent stage instru
 - **AND** the absence of a conversation does not by itself prevent authorized scripted execution
 
 ### Requirement: Direct stage manipulation on the board
-The task card SHALL NOT provide an independent stage selector. A user SHALL change a task's stage through board drag and drop or through the stage control in the open task drawer. A stage change that requests no position, including a drawer stage change and a confirmed restricted drawer change, SHALL place the task at the top of the destination stage. A drag SHALL present a distinct dragged representation and a drop indicator, and a drop SHALL place the task at the dropped position, including before a chosen card and after the last card of the destination stage. Dropping on a permitted stage SHALL move the task immediately, whether or not that stage has an entry instruction, except when the drop would start the task's first execution: that drop SHALL present the execution preparation defined by Execution preparation before a task's first execution, and the move SHALL follow the preparation. Hovering a restricted stage during a drag SHALL present a distinct warning affordance. Dropping on a restricted stage SHALL require explicit confirmation before moving the task; canceling SHALL leave the task's stage and position unchanged. An instructed destination SHALL arm the timed stage instruction defined by the Timed stage instruction after a move requirement; neither the drop, the drawer stage change, nor a restricted-move confirmation SHALL initiate an agent execution at the time of the move. Dropping within the current stage SHALL reorder the task relative to its neighbors without arming a new timed instruction. A prohibited or canceled change SHALL leave the task unchanged. The board SHALL offer worktree creation during a drop only through that execution preparation. The host's automatic advance, defined by Automatic advance after a completed turn, SHALL NOT be presented as board stage manipulation, SHALL NOT add a card stage selector, and SHALL NOT require a confirmation.
+
+The task card SHALL NOT provide an independent stage selector. A user SHALL change a task's stage through board drag and drop or through the stage control in the open task drawer. A stage change that requests no position, including a drawer stage change and a confirmed restricted drawer change, SHALL place the task at the top of the destination stage. A drag SHALL present a distinct dragged representation and a drop indicator, and a drop SHALL place the task at the dropped position, including before a chosen card and after the last card of the destination stage. Dropping on a permitted stage SHALL move the task immediately, whether or not that stage has an entry instruction, except when the drop would start the task's first execution: that drop SHALL present the worktree choice defined by Execution preparation before a task's first execution, the move SHALL follow that answer, and the remaining preparation SHALL continue after the move without holding the card. Hovering a restricted stage during a drag SHALL present a distinct warning affordance. Dropping on a restricted stage SHALL require explicit confirmation before moving the task; canceling SHALL leave the task's stage and position unchanged. An instructed destination SHALL arm the timed stage instruction defined by the Timed stage instruction after a move requirement; neither the drop, the drawer stage change, nor a restricted-move confirmation SHALL initiate an agent execution at the time of the move. Dropping within the current stage SHALL reorder the task relative to its neighbors without arming a new timed instruction. A prohibited or canceled change SHALL leave the task unchanged. The board SHALL offer worktree creation during a drop only through that execution preparation. The host's automatic advance, defined by Automatic advance after a completed turn, SHALL NOT be presented as board stage manipulation, SHALL NOT add a card stage selector, and SHALL NOT require a confirmation.
 
 An accepted stage change SHALL durably revoke the scripted execution that owns the previous entry and record any new scripted activation intent in the same operation that places the task into its new entry, before requesting cancellation or reading files, capturing code, resolving credentials, or asking for trust. The previous run SHALL be canceled and its late results invalidated before that execution can move the task again. A refused or canceled move SHALL NOT stop it. Entering a scripted destination SHALL admit its new scripted entry, subject to local trust, regardless of Auto mode and without the agent countdown or conversation preparation. A same-stage reorder SHALL preserve the current scripted entry and SHALL NOT restart its program. The configured destination rules and explicit confirmation for a restricted user move SHALL remain in force.
 
@@ -450,15 +489,17 @@ An accepted stage change SHALL durably revoke the scripted execution that owns t
 
 #### Scenario: Prepare the first instructed drop
 - **WHEN** the user drops a task that has no conversation on a permitted stage that has an entry instruction
-- **THEN** the board presents the execution preparation before moving the task
-- **AND** the task remains in its source stage and position until the preparation completes
-- **AND** after the preparation the task moves to the dropped position and the countdown for that entry is armed
+- **THEN** the board presents the worktree question before moving the task
+- **AND** the task remains in its source stage and position while that question is open
+- **AND** after the answer the task moves to the dropped position
+- **AND** the countdown for that entry is armed once its first conversation exists
 
 #### Scenario: Prepare the first instructed drawer change
 - **WHEN** the user selects a permitted instructed destination in the drawer's stage control for a task that has no conversation
-- **THEN** the board presents the execution preparation before moving the task
-- **AND** the task remains in its source stage and position until the preparation completes
-- **AND** after the preparation the task moves to the top of the destination stage and the countdown for that entry is armed
+- **THEN** the board presents the worktree question before moving the task
+- **AND** the task remains in its source stage and position while that question is open
+- **AND** after the answer the task moves to the top of the destination stage
+- **AND** the countdown for that entry is armed once its first conversation exists
 
 #### Scenario: Warn while hovering a restricted stage
 - **WHEN** the user drags a task over a stage that the workflow does not permit from its current stage
@@ -483,7 +524,8 @@ An accepted stage change SHALL durably revoke the scripted execution that owns t
 #### Scenario: Drop without a worktree
 - **WHEN** the user drops a task that has no worktree and no conversation on a permitted instructed stage
 - **THEN** the execution preparation asks whether to create a worktree
-- **AND** the task remains in its current stage and position until the preparation completes
+- **AND** the task remains in its current stage and position while the question is open
+- **AND** after the answer the task moves and the worktree is created in the background
 
 #### Scenario: Advance without board manipulation
 - **WHEN** an automatic advance moves a task
@@ -785,7 +827,7 @@ A scripted Stop, Play, or approval control SHALL share this same reserved one-li
 
 ### Requirement: Task card status strip
 
-The board SHALL present a card's unresolved context operation, confirmed transition, and automatic-advance state in one status region below the activity region. Each status SHALL carry a tone that distinguishes a failure from a pending state and SHALL present a short label that names the state. A destructive operation's label SHALL use task-deletion or worktree-removal language and SHALL distinguish checking, queued, in progress, and failed states rather than exposing a raw phase token. A status SHALL remain visible while its operation or transition is unresolved. The automatic-advance status SHALL name the destination stage while an advance is admitted, name a failure when an admitted advance failed, and name the pause reason when auto mode is paused, distinguishing a pause requested by the agent from a diagnostic pause. The status region SHALL NOT report the held state defined by Auto mode on a task card, which the auto-mode control presents instead. A run-action admission failure SHALL be reported in the same status region. A failure of the automatic first-execution preparation on task creation SHALL be reported in the same status region. When a card has more than one such fact, the status region SHALL present them together without replacing one with another.
+The board SHALL present a card's unresolved context operation, confirmed transition, and automatic-advance state in one status region below the activity region. Each status SHALL carry a tone that distinguishes a failure from a pending state and SHALL present a short label that names the state. A destructive operation's label SHALL use task-deletion or worktree-removal language and SHALL distinguish checking, queued, in progress, and failed states rather than exposing a raw phase token. A background worktree creation's label SHALL name the step it is in — admitting the worktree, creating the checkout, preparing the first conversation, or needing attention — and SHALL NOT expose a raw operation phase. A status SHALL remain visible while its operation or transition is unresolved. The automatic-advance status SHALL name the destination stage while an advance is admitted, name a failure when an admitted advance failed, and name the pause reason when auto mode is paused, distinguishing a pause requested by the agent from a diagnostic pause. The status region SHALL NOT report the held state defined by Auto mode on a task card, which the auto-mode control presents instead. A run-action admission failure SHALL be reported in the same status region. A failure of the automatic first-execution preparation on task creation SHALL be reported in the same status region. When a card has more than one such fact, the status region SHALL present them together without replacing one with another.
 
 A pause requested by the agent SHALL present the reason the agent recorded, and a diagnostic pause recorded for the same task SHALL remain presented beside it, so a turn that failed while the task was paused is not hidden by the pause.
 
@@ -808,6 +850,16 @@ The same status region SHALL present scripted execution state defined by `script
 #### Scenario: Report a failed deletion
 - **WHEN** a card's task has a failed deletion or worktree removal
 - **THEN** the status region presents a failure-toned status that names the destructive action as needing attention
+
+#### Scenario: Report a background worktree creation
+- **WHEN** a card's task has a worktree creation admitted or running in the background
+- **THEN** the status region presents a pending-toned status naming the creation step in progress
+- **AND** it does not present the raw operation phase or the phase token for Git as the label
+
+#### Scenario: Report a failed background creation
+- **WHEN** a card's task has a worktree creation that failed
+- **THEN** the status region presents a failure-toned status naming the creation as needing attention
+- **AND** the task's stage and position are unchanged
 
 #### Scenario: Report a pending transition
 - **WHEN** a card's task has a confirmed transition that is not settled
@@ -861,7 +913,7 @@ The same status region SHALL present scripted execution state defined by `script
 #### Scenario: Report a creation preparation failure
 - **WHEN** the automatic first-execution preparation for a newly created task fails
 - **THEN** the status region reports the failure
-- **AND** the card exposes the run action for the unresolved entry
+- **AND** the card exposes the run action for the unresolved entry once the recorded operation is resolved
 
 #### Scenario: Clear a resolved status
 - **WHEN** the operation, confirmed transition, or automatic-advance state resolves
@@ -931,7 +983,7 @@ The Kanban configuration experience SHALL include a General section that is pres
 
 ### Requirement: Run a stage instruction from a card
 
-When a task's current stage has an entry instruction, its card SHALL expose a run action only while the current entry into that stage is unresolved. The entry SHALL be unresolved when a persisted entry marker exists for the current stage and no successful user prompt has been sent in any open conversation of the task since that entry. The marker SHALL be created on every move into an instructed stage, including a task created directly in an instructed initial stage. A same-stage reorder SHALL NOT reset the marker; leaving and re-entering the stage SHALL create a new marker. A successful user prompt in any open conversation SHALL clear the marker, and a successful stage-instruction delivery for that entry SHALL clear it as well. An admission failure SHALL NOT clear it. A task already in an instructed stage without a marker SHALL NOT show the action until its next entry. While the timed instruction for the entry is counting down or being sent, the card SHALL expose the countdown control defined by the Timed stage instruction after a move requirement instead of the run action; canceling that countdown or a failed timed send SHALL expose the run action for the same unresolved entry. When visible, the action SHALL deliver the stage's entry instruction to the task's first open conversation in conversation order as the stage-instruction context message defined by Stage instruction delivery as context in `task-conversations`, followed by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies. When the task has no conversation, activating the action SHALL first present the execution preparation defined by Execution preparation before a task's first execution; when no conversation is open after the preparation, the action SHALL create a new conversation and use that conversation as the target. The action SHALL carry the entry identity it was displayed for — the entry's stage and entry timestamp — and the host SHALL reject a request for an entry that has been resolved or replaced. The action SHALL NOT move the task or change its position, SHALL NOT offer a conversation picker, and SHALL NOT be available in selection mode. It SHALL be unavailable while the task has an unresolved context operation or confirmed transition. The delivered context message SHALL contain the stage instruction and, when it applies, the transition briefing; the conversation's first-turn task context supplies the task context. Admission failures SHALL be reported without changing the stage or position and without creating another conversation beyond the resolved target.
+When a task's current stage has an entry instruction, its card SHALL expose a run action only while the current entry into that stage is unresolved. The entry SHALL be unresolved when a persisted entry marker exists for the current stage and no successful user prompt has been sent in any open conversation of the task since that entry. The marker SHALL be created on every move into an instructed stage, including a task created directly in an instructed initial stage. A same-stage reorder SHALL NOT reset the marker; leaving and re-entering the stage SHALL create a new marker. A successful user prompt in any open conversation SHALL clear the marker, and a successful stage-instruction delivery for that entry SHALL clear it as well. An admission failure SHALL NOT clear it. A task already in an instructed stage without a marker SHALL NOT show the action until its next entry. While the timed instruction for the entry is counting down or being sent, the card SHALL expose the countdown control defined by the Timed stage instruction after a move requirement instead of the run action; canceling that countdown or a failed timed send SHALL expose the run action for the same unresolved entry. When visible, the action SHALL deliver the stage's entry instruction to the task's first open conversation in conversation order as the stage-instruction context message defined by Stage instruction delivery as context in `task-conversations`, followed by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies. When the task has no conversation, activating the action SHALL first present the worktree choice defined by Execution preparation before a task's first execution; answering it SHALL start the run, which SHALL admit the worktree creation in the background, create a conversation once the worktree is ready, and admit the instruction to that conversation. When no conversation is open after that preparation, the action SHALL create a new conversation and use that conversation as the target. The action SHALL carry the entry identity it was displayed for — the entry's stage and entry timestamp — and the host SHALL reject a request for an entry that has been resolved or replaced. The action SHALL NOT move the task or change its position, SHALL NOT offer a conversation picker, and SHALL NOT be available in selection mode. It SHALL be unavailable while the task has an unresolved context operation or confirmed transition. The delivered context message SHALL contain the stage instruction and, when it applies, the transition briefing; the conversation's first-turn task context supplies the task context. Admission failures SHALL be reported without changing the stage or position and without creating another conversation beyond the resolved target.
 
 This action and its unresolved-instruction marker SHALL remain specific to agent entry instructions. An entry owned by durable scripted activation or control state SHALL instead expose its own applicable Stop and Play controls, whose availability SHALL NOT be cleared by an ordinary conversation prompt or by a later saved change to the stage mode. While that scripted ownership remains, a newly saved agent instruction SHALL NOT expose an agent stage-run action or countdown for that entry. Play SHALL be available only when the latest saved configuration is valid scripted configuration; otherwise the interface SHALL explain that scripted configuration or a new stage entry is required and SHALL NOT silently start an agent or manual-mode execution. A pending scripted handoff SHALL be included as its own identified block in an agent instruction delivery as defined by `task-conversations`; it SHALL NOT replace the instruction or be recast as an agent-declared transition reason.
 
@@ -1010,8 +1062,9 @@ This action and its unresolved-instruction marker SHALL remain specific to agent
 #### Scenario: Prepare the first run from a card
 
 - **WHEN** the user activates the run action on a card whose task has no conversation
-- **THEN** the execution preparation is presented before a conversation is created or the instruction is admitted
-- **AND** after the preparation the instruction is delivered to the conversation created by it
+- **THEN** the worktree question is presented before a conversation is created or the instruction is admitted
+- **AND** while the worktree is created the card presents a preparing state
+- **AND** after the answer the instruction is delivered to the conversation created once the worktree is ready
 - **AND** the task's stage and position are unchanged
 
 #### Scenario: Run the instruction again
@@ -1446,7 +1499,8 @@ When a user requests a transition that the active board's workflow does not perm
 - **AND** it does not offer a retry that cannot succeed
 
 ### Requirement: Timed stage instruction after a move
-When a permitted move changes a task's stage to a stage with an entry instruction, or a task created directly in an instructed initial stage completes the automatic first-execution preparation defined by Automatic first execution on task creation, the system SHALL arm one five-second countdown for that entry. The countdown SHALL be armed for board drops, drawer stage changes, and the automatic creation preparation. It SHALL NOT be armed for a same-stage reorder, for a creation whose Start execution now option is disabled, or for a move into a stage without an entry instruction. When the task has no conversation, the countdown SHALL be armed only after the first-execution preparation (the interactive preparation defined by Execution preparation before a task's first execution or the automatic creation preparation) completes, and the conversation that preparation created SHALL be the target. The target SHALL be the task's first open conversation in conversation order; when no conversation is open, the system SHALL create a new conversation and use it. When the five seconds elapse without cancellation, the system SHALL deliver that stage's entry instruction to the target as the stage-instruction context message defined by Stage instruction delivery as context in `task-conversations`, followed by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies. Cancel SHALL stop only the automatic send: the task's stage, position, and unresolved entry SHALL remain, and the card's run action SHALL be available. A new instructed entry for the task SHALL replace the pending countdown for the previous entry. The countdown SHALL be canceled without sending when a successful user prompt resolves the entry, when the task is deleted, or when the entry marker is removed for any other reason. The card SHALL present the countdown as a control that cancels when activated. The drawer for the task SHALL present a matching countdown notice above its section panel with the same cancel action. Both notices SHALL identify the stage whose instruction will run. A countdown SHALL continue when its card is not rendered, when the Kanban panel is not visible, or when the user switches to another board or Hub. The automatic send SHALL NOT depend on the board that armed it being mounted or visible. Unsent composer text or attachments in the target conversation SHALL NOT prevent the send and SHALL remain unchanged. The countdown SHALL NOT be persisted: a reload or plugin restart SHALL send nothing and SHALL leave the entry unresolved with its run action available. A failed timed delivery SHALL stop the countdown, report the failure on the card and in the drawer notice, restore the run action for the unresolved entry, and SHALL NOT retry automatically. When admission reports that the entry was already resolved, the countdown SHALL end without reporting a failure. The delay SHALL be fixed at five seconds and SHALL NOT be configurable.
+
+When a permitted move changes a task's stage to a stage with an entry instruction, or a task created directly in an instructed initial stage completes the automatic first-execution preparation defined by Automatic first execution on task creation, the system SHALL arm one five-second countdown for that entry. The countdown SHALL be armed for board drops, drawer stage changes, and the automatic creation preparation. It SHALL NOT be armed for a same-stage reorder, for a creation whose Start execution now option is disabled, or for a move into a stage without an entry instruction. When the task has no conversation, the countdown SHALL be armed only after the first conversation exists, which for a task that needed a worktree SHALL be after the background worktree creation is ready; the countdown SHALL NOT be armed from a conversation that does not exist yet. The target SHALL be the task's first open conversation in conversation order; when no conversation is open, the system SHALL create a new conversation and use it. When the five seconds elapse without cancellation, the system SHALL deliver that stage's entry instruction to the target as the stage-instruction context message defined by Stage instruction delivery as context in `task-conversations`, followed by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies. Cancel SHALL stop only the automatic send: the task's stage, position, and unresolved entry SHALL remain, and the card's run action SHALL be available. A new instructed entry for the task SHALL replace the pending countdown for the previous entry. The countdown SHALL be canceled without sending when a successful user prompt resolves the entry, when the task is deleted, or when the entry marker is removed for any other reason. The card SHALL present the countdown as a control that cancels when activated. The drawer for the task SHALL present a matching countdown notice above its section panel with the same cancel action. Both notices SHALL identify the stage whose instruction will run. A countdown SHALL continue when its card is not rendered, when the Kanban panel is not visible, or when the user switches to another board or Hub. The automatic send SHALL NOT depend on the board that armed it being mounted or visible. Unsent composer text or attachments in the target conversation SHALL NOT prevent the send and SHALL remain unchanged. The countdown SHALL NOT be persisted: a reload or plugin restart SHALL send nothing and SHALL leave the entry unresolved with its run action available. A failed timed delivery SHALL stop the countdown, report the failure on the card and in the drawer notice, restore the run action for the unresolved entry, and SHALL NOT retry automatically. When admission reports that the entry was already resolved, the countdown SHALL end without reporting a failure. The delay SHALL be fixed at five seconds and SHALL NOT be configurable.
 
 This countdown SHALL remain specific to agent entry instructions and SHALL NOT schedule scripted polling or delay a scripted entry. When an agent entry has a pending scripted handoff, its message SHALL include that identified handoff block in the order defined by `task-conversations`, in addition to the instruction and applicable briefing. The countdown's non-durable reload behavior SHALL NOT stop or redefine the separate durable recovery of scripted programs.
 
@@ -1461,9 +1515,10 @@ This countdown SHALL remain specific to agent entry instructions and SHALL NOT s
 - **AND** the card exposes the countdown control for the same entry
 
 #### Scenario: Arm after the first-execution preparation
-- **WHEN** a task without a conversation is dropped on a permitted stage with an entry instruction and the execution preparation completes
-- **THEN** the countdown for that entry is armed only after the preparation
-- **AND** the target is the conversation created by the preparation
+- **WHEN** a task without a conversation is dropped on a permitted stage with an entry instruction and the worktree question has been answered
+- **THEN** the countdown for that entry is armed only after that task's first conversation exists
+- **AND** the target is the conversation created once the background worktree creation is ready
+- **AND** the card presents a preparing state while the worktree and that conversation are pending
 
 #### Scenario: Arm after the creation preparation
 - **WHEN** a task is created directly in an instructed initial stage with Start execution now enabled and the automatic first-execution preparation completes
@@ -2805,7 +2860,7 @@ A task card SHALL present agent execution through one visible execution accent c
 
 ### Requirement: Advance a task from its card
 
-A task card SHALL expose an advance action that moves the task to the next stage in workflow order. The action SHALL present the drawer's next-stage affordance — the same icon, the same accessible name, and the same indication when the next stage requires confirmation — and SHALL use the board's move pipeline, so a restricted next stage requires explicit confirmation, a first execution presents Execution preparation before a task's first execution, and a move into an instructed stage arms the timed stage instruction. The action SHALL be presented only while a next stage exists and the task's current stage authors no decision configuration, because a stage that authors a decision configuration has no next-stage destination and presents the decision gate defined by `decision-steps` instead. It SHALL be hidden while the task's agent execution is running and SHALL be unavailable while the task has an unresolved context operation or a confirmed transition, while selection mode is active, or while a move from the card is in flight. Activating it SHALL NOT open the task drawer, SHALL NOT begin a drag, and SHALL NOT change the task's diagram size or placement.
+A task card SHALL expose an advance action that moves the task to the next stage in workflow order. The action SHALL present the drawer's next-stage affordance — the same icon, the same accessible name, and the same indication when the next stage requires confirmation — and SHALL use the board's move pipeline, so a restricted next stage requires explicit confirmation, a first execution presents the worktree choice defined by Execution preparation before a task's first execution before the move, and a move into an instructed stage arms the timed stage instruction. The action SHALL be presented only while a next stage exists and the task's current stage authors no decision configuration, because a stage that authors a decision configuration has no next-stage destination and presents the decision gate defined by `decision-steps` instead. It SHALL be hidden while the task's agent execution is running and SHALL be unavailable while the task has an unresolved context operation or a confirmed transition, while selection mode is active, or while a move from the card is in flight. Activating it SHALL NOT open the task drawer, SHALL NOT begin a drag, and SHALL NOT change the task's diagram size or placement.
 
 #### Scenario: Advance to the next stage
 
@@ -2829,8 +2884,9 @@ A task card SHALL expose an advance action that moves the task to the next stage
 #### Scenario: Prepare a first execution
 
 - **WHEN** the user activates the advance action on a task that has no conversation
-- **THEN** the execution preparation is presented before the task moves
+- **THEN** the worktree question is presented before the task moves
 - **AND** canceling the preparation leaves the task in its stage
+- **AND** answering it moves the task and continues the preparation in the background
 
 #### Scenario: Arm the timed instruction
 

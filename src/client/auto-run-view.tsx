@@ -72,6 +72,7 @@ export function CardInstructionAction({ task, column, controller, onRun }: { tas
         <span className="kb-countdown-cancel" aria-hidden="true">×</span>
       </> : sending ? '…' : <PlayIcon size={15} />}
     </button>
+    {preparing && <span className="kb-sr" role="status">Preparing the first execution for the {column.name} instruction.</span>}
     {counting && <span className="kb-sr" role="status">Automatic {column.name} instruction armed.</span>}
   </div>;
 }
@@ -90,7 +91,7 @@ export function DrawerAutoRunNotice({ task, controller, columns, sessionTitles }
     <p role="status">Preparing the first execution for the {stage} instruction…</p>
   </div>;
   if (entry.status === 'failed') return <div className="kb-drawer-autorun kb-drawer-autorun-failed" data-status="failed">
-    <p role="alert"><strong>Automatic {stage} instruction failed</strong><span>{entry.error?.message ?? RUN_FAILURE_FALLBACK}</span></p>
+    <p role="alert"><strong>{entry.failedAt === 'preparation' ? 'First execution preparation failed' : 'Automatic ' + stage + ' instruction failed'}</strong><span>{entry.error?.message ?? RUN_FAILURE_FALLBACK}</span></p>
   </div>;
   return <div className={'kb-drawer-autorun kb-drawer-autorun-' + entry.status} data-status={entry.status}>
     <p role={entry.status === 'sending' ? 'status' : undefined}>

@@ -165,7 +165,7 @@ test('narrow header actions retain tooltips and keyboard activation', async ({ p
   }
   await advance.focus();
   await page.keyboard.press('Enter');
-  const dialog = page.getByRole('dialog', { name: 'Prepare the first execution' });
+  const dialog = page.getByRole('dialog', { name: 'Create a worktree?' });
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: 'Cancel' }).click();
   await drawer.getByRole('button', { name: 'Close task details' }).focus();
@@ -176,7 +176,7 @@ test('narrow header actions retain tooltips and keyboard activation', async ({ p
 test('the next-stage action prepares the first execution before moving', async ({ page }) => {
   await openDrawer(page, 620, 'First execution task', 'prepare');
   await page.locator('.kb-drawer').getByRole('button', { name: 'Move to Propose' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Prepare the first execution' });
+  const dialog = page.getByRole('dialog', { name: 'Create a worktree?' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText('First execution task')).toBeVisible();
   expect(await commands(page)).toEqual([]);

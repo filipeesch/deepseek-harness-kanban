@@ -25,7 +25,7 @@ afterEach(cleanup);
 describe('board card render isolation', () => {
   it('re-renders only the card whose attention changed', async () => {
     const data = fixture();
-    let notify: ((snapshot: KanbanSnapshot) => void) | undefined;
+    const listeners = new Set<(snapshot: KanbanSnapshot) => void>();
     const api: ClientApi = {
       snapshot: vi.fn(async () => data),
       command: vi.fn(async () => data),
@@ -35,7 +35,7 @@ describe('board card render isolation', () => {
       modelCatalog: vi.fn(async () => ({ default: { provider: 'deepseek', model: 'chat' }, providers: [], failures: [] })),
       worktreeDefault: vi.fn(async () => ({ kind: 'derived' as const, branchName: 'task', path: '/worktrees/task' })),
       detectProject: vi.fn(async (pathValue: string) => ({ kind: 'folder' as const, projectPath: pathValue })),
-      subscribe: vi.fn(listener => { notify = listener; return () => {}; }),
+      subscribe: vi.fn(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }),
     };
     render(<BoardView api={api} renderConversation={() => null} />);
     await screen.findByRole('button', { name: 'Open task Alpha task' });
@@ -48,7 +48,7 @@ describe('board card render isolation', () => {
       sequence: data.sequence + 1,
       attention: { ...data.attention, t1: { ...data.attention.t1!, unread: false } },
     };
-    act(() => notify!(next));
+    act(() => { for (const listener of listeners) listener(next); });
     await waitFor(() => expect(view).toHaveBeenCalled());
     // Only the card whose attention object changed re-derived its auto-mode view.
     expect(view).toHaveBeenCalledTimes(1);

@@ -28,9 +28,9 @@ An optional **Worktree base path** in **Configuration → General** decides wher
 
 The dialog also offers **Auto mode** (off by default) and, only when the initial stage has an entry instruction, **Start execution now** (on by default).
 
-Saving creates a card in the initial stage. When the start option applies, the host creates the task's default worktree, or uses the project directory for a folder project, creates the first conversation on the board's default model and agent preset when the board names ones the host offers and on the host defaults otherwise, and arms the cancelable five-second countdown for the stage instruction. Cancel keeps the created resources. A failure leaves the card and its **play** action.
+Saving creates a card in the initial stage. When the start option applies, the task's default worktree is created in the background, or the project directory is used for a folder project, the first conversation is created once that worktree is ready on the board's default model and agent preset when the board names ones the host offers and on the host defaults otherwise, and the cancelable five-second countdown for the stage instruction is armed when that conversation exists. Cancel keeps the created resources. A failure leaves the card and its **play** action.
 
-Without the start option, saving creates no conversation and starts no agent. [Execution](execution.md) describes the first-execution preparation that precedes an instructed move or the card play action.
+Without the start option, saving creates no conversation and starts no agent. [Execution](execution.md) describes the worktree question that precedes an instructed move or the card play action, and the background preparation that follows it.
 
 ## The task drawer
 

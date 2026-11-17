@@ -1,52 +1,15 @@
-import type { CreateWorktree, ModelCatalog, ModelSelection, Problem, Project, WorktreeDefaults } from '../../shared/types.js';
-import { asProblem } from '../problem.js';
-import { cleanWorktree, validWorktree } from '../worktree-draft.js';
-import type { PreparationRequest } from './contract.js';
-import { executionPreparationPlan, type PreparationModel, type PreparationWorktree } from './gate.js';
+import { NO_PREPARATION, type PreparationDecision, type PreparationRequest } from './contract.js';
+import { executionPreparationPlan } from './gate.js';
 
-/** No board model to check: the preparation keeps the native model seat for the user. */
-const NO_BOARD_MODEL: PreparationModel = Object.freeze({ boardModel: undefined, catalog: null });
+export type PreparationPhase = 'closed' | 'worktree' | 'blocked';
 
-/** Everything the controller needs from the host, the board, and the native seat. */
-export interface PreparationPorts {
-  defaults(taskId: string): Promise<WorktreeDefaults>;
-  createWorktree(taskId: string, draft: CreateWorktree): Promise<void>;
-  dismissWorktree(taskId: string): Promise<void>;
-  /** Creates the task's first conversation and returns its native session identity. */
-  createConversation(taskId: string): Promise<string>;
-  /** Resolves when the session is retained and its native scope exists. */
-  retainSession(sessionId: string): Promise<void>;
-  releaseSession(sessionId: string): void;
-  seatAvailable(): boolean;
-  /** The host model catalog, or null when it cannot be read; only asked for when a board names a model. */
-  modelCatalog(): Promise<ModelCatalog | null>;
-}
-
-export type PreparationPhase = 'closed' | 'worktree' | 'blocked' | 'provisioning' | 'model' | 'error';
-
-/** The step a retry resumes from; `defaults` keeps the worktree question open. */
-export type PreparationFailedStep = 'defaults' | 'worktree' | 'conversation';
-
+/** The one question a first-execution preparation can ask. */
 export interface PreparationState {
   readonly phase: PreparationPhase;
   readonly kind: 'move' | 'run';
   readonly taskId: string;
   readonly taskTitle: string;
   readonly stageName: string;
-  readonly worktree: PreparationWorktree;
-  readonly model: boolean;
-  /**
-   * The model this board names for new conversations, when it names one. The model
-   * step shows it so the person can see what they are accepting by pressing Start
-   * execution, rather than guessing which default they are leaving behind.
-   */
-  readonly boardModel: ModelSelection | null;
-  readonly draft: CreateWorktree | null;
-  readonly destinationMissing: boolean;
-  readonly sessionId: string | null;
-  readonly pending: boolean;
-  readonly error: Problem | null;
-  readonly failedStep: PreparationFailedStep | null;
 }
 
 const CLOSED: PreparationState = Object.freeze({
@@ -55,41 +18,18 @@ const CLOSED: PreparationState = Object.freeze({
   taskId: '',
   taskTitle: '',
   stageName: '',
-  worktree: 'none' as const,
-  model: false,
-  boardModel: null,
-  draft: null,
-  destinationMissing: true,
-  sessionId: null,
-  pending: false,
-  error: null,
-  failedStep: null,
 });
 
-type WorktreeAnswer = 'create' | 'base' | 'none';
-
 /**
- * Owns one first-execution preparation: the worktree question, provisioning,
- * the native model stage, and the single proceed/cancel promise the move
- * pipeline awaits. It never retries on its own and never starts an agent.
+ * Owns one first-execution preparation decision: the worktree question, or the
+ * explanation of a worktree binding that is not ready. It never provisions and
+ * never starts an agent; the move or run continues with the answer, and the
+ * background work belongs to the preparation run.
  */
 export class ExecutionPreparationController {
   private state: PreparationState = CLOSED;
   private readonly listeners = new Set<() => void>();
-  private ports: PreparationPorts | null = null;
-  private request: PreparationRequest | null = null;
-  private project: Project | undefined;
-  private plan: { worktree: PreparationWorktree; model: boolean } | null = null;
-  private answer: WorktreeAnswer = 'none';
-  private worktreeResolved = false;
-  private sessionId: string | null = null;
-  private resolve: ((proceed: boolean) => void) | null = null;
-  /** Invalidates async continuations after the user closed the dialog. */
-  private generation = 0;
-
-  configure(ports: PreparationPorts): void {
-    this.ports = ports;
-  }
+  private resolve: ((decision: PreparationDecision) => void) | null = null;
 
   getSnapshot = (): PreparationState => this.state;
   subscribe = (listener: () => void): (() => void) => {
@@ -101,212 +41,50 @@ export class ExecutionPreparationController {
     for (const listener of [...this.listeners]) listener();
   }
 
-  private set(patch: Partial<PreparationState>): void {
-    this.state = { ...this.state, ...patch };
+  private set(state: PreparationState): void {
+    this.state = state;
     this.publish();
   }
 
   /**
    * Present the preparation when the task's first execution needs it.
-   * @returns true when the caller may proceed, false when the user cancelled.
+   * @returns the decision; a refused decision cancels the move or run.
    */
-  async open(request: PreparationRequest): Promise<boolean> {
-    const ports = this.ports;
-    // The catalog is only asked for when its answer can change the plan: a seat the host
-    // composes, a task that has no conversation yet, and a board that names a route. A
-    // failed read leaves the model step open instead of silently skipping the choice.
-    const mayCheckModel = ports !== null && request.boardModel !== undefined
-      && ports.seatAvailable() && request.task.sessionIds.length === 0;
-    const model: PreparationModel = mayCheckModel
-      ? { boardModel: request.boardModel, catalog: await ports.modelCatalog() }
-      : NO_BOARD_MODEL;
-    const plan = executionPreparationPlan(request.task, request.project, ports?.seatAvailable() === true, model);
-    if (plan === null) return true;
+  async open(request: PreparationRequest): Promise<PreparationDecision> {
+    const plan = executionPreparationPlan(request.task, request.project);
+    if (plan === null) return NO_PREPARATION;
+    // The project already settled its own choice, so there is nothing to ask.
+    if (plan.worktree === 'create-default') return { proceed: true, worktree: 'create' };
     // Only a second preparation is refused; requests that need none never reach this point.
-    if (this.resolve !== null) return false;
-    if (ports === null) return true;
-    this.request = request;
-    this.project = request.project;
-    this.plan = plan;
-    this.answer = 'none';
-    this.worktreeResolved = false;
-    this.sessionId = null;
-    this.generation += 1;
-    const promise = new Promise<boolean>(resolve => { this.resolve = resolve; });
-    this.state = {
-      ...CLOSED,
+    if (this.resolve !== null) return { proceed: false, worktree: 'none' };
+    const promise = new Promise<PreparationDecision>(resolve => { this.resolve = resolve; });
+    this.set({
+      phase: plan.worktree === 'blocked' ? 'blocked' : 'worktree',
       kind: request.kind,
       taskId: request.task.id,
       taskTitle: request.task.title,
       stageName: request.column.name,
-      worktree: plan.worktree,
-      model: plan.model,
-      boardModel: model.boardModel ?? null,
-      phase: plan.worktree === 'blocked' ? 'blocked' : plan.worktree === 'ask' ? 'worktree' : 'provisioning',
-    };
-    this.publish();
-    if (plan.worktree === 'ask') {
-      this.set({ pending: true });
-      void this.loadDefaults();
-    } else if (plan.worktree === 'blocked') {
-      // The dialog only explains the unresolved binding; nothing is provisioned.
-    } else if (plan.worktree === 'create-default') {
-      // The project already settled its own choice: derive the defaults first and fall
-      // back to asking when they cannot be derived, so a preference never blocks.
-      this.set({ pending: true });
-      void this.createDefault();
-    } else {
-      void this.provision('none');
-    }
+    });
     return promise;
   }
 
-  /**
-   * Answer the worktree question and start provisioning. Continuing in the base
-   * project does not need the derived defaults, so it is accepted while they load.
-   */
+  /** Answer the worktree question; the answer closes the preparation either way. */
   answerWorktree(create: boolean): void {
     if (this.state.phase !== 'worktree') return;
-    if (create && (this.state.pending || !this.draftIsValid())) return;
-    this.answer = create ? 'create' : 'base';
-    void this.provision(this.answer);
+    this.settle({ proceed: true, worktree: create ? 'create' : 'base' });
   }
 
-  /** Confirm the model stage and let the move or run action proceed. */
-  confirmModel(): void {
-    if (this.state.phase !== 'model' || this.state.pending) return;
-    this.settle(true);
-  }
-
-  /** Abandon the preparation; provisioning commands are never interrupted. */
+  /** Abandon the preparation without an answer. */
   cancel(): void {
-    if (this.state.phase === 'provisioning') return;
-    this.settle(false);
+    if (this.state.phase === 'closed') return;
+    this.settle({ proceed: false, worktree: 'none' });
   }
 
-  /** Resume the failed step without retrying the steps that already completed. */
-  retry(): void {
-    if (this.state.pending) return;
-    if (this.state.failedStep === 'defaults') {
-      this.set({ error: null, failedStep: null, pending: true });
-      void this.loadDefaults();
-      return;
-    }
-    if (this.state.phase !== 'error') return;
-    void this.provision(this.answer);
-  }
-
-  private draftIsValid(): boolean {
-    return this.state.draft !== null && validWorktree(this.state.draft);
-  }
-
-  /**
-   * Create the project's default worktree without asking. The defaults are derived first;
-   * when they are unavailable or invalid the preparation asks instead, keeping the failure
-   * and its retry visible.
-   */
-  private async createDefault(): Promise<void> {
-    const generation = this.generation;
-    await this.loadDefaults();
-    if (generation !== this.generation) return;
-    if (this.state.phase !== 'provisioning') return;
-    if (!this.draftIsValid()) {
-      this.set({ phase: 'worktree', pending: false });
-      return;
-    }
-    await this.provision('create');
-  }
-
-  private async loadDefaults(): Promise<void> {
-    const request = this.request;
-    if (request === null || this.ports === null) return;
-    const generation = this.generation;
-    try {
-      const defaults = await this.ports.defaults(request.task.id);
-      if (generation !== this.generation) return;
-      if (defaults.kind === 'unavailable') {
-        this.set({ pending: false, draft: null, destinationMissing: true, error: defaults.reason, failedStep: null });
-        return;
-      }
-      const draft: CreateWorktree = { mode: 'new', branchName: defaults.branchName, path: defaults.path, sourceBranch: defaults.sourceBranch ?? this.project?.defaultBranch ?? '' };
-      this.set({ pending: false, draft, destinationMissing: !validWorktree(draft), error: null, failedStep: null });
-    } catch (failure) {
-      if (generation !== this.generation) return;
-      this.set({ pending: false, draft: null, destinationMissing: true, error: asProblem(failure), failedStep: 'defaults' });
-    }
-  }
-
-  private async provision(answer: WorktreeAnswer): Promise<void> {
-    const request = this.request;
-    const ports = this.ports;
-    if (request === null || ports === null) { this.settle(false); return; }
-    // Invalidate an in-flight defaults read that the answer just made unnecessary.
-    this.generation += 1;
-    const generation = this.generation;
-    this.set({ phase: 'provisioning', pending: true, error: null, failedStep: null });
-    if (!this.worktreeResolved) {
-      try {
-        if (answer === 'create') {
-          const draft = this.state.draft;
-          if (draft === null || !validWorktree(draft)) { this.fail({ code: 'WORKTREE_DESTINATION_REQUIRED', message: 'Configure a worktree destination before creating a worktree.' }, 'worktree'); return; }
-          await ports.createWorktree(request.task.id, cleanWorktree(draft));
-          if (generation !== this.generation) return;
-          this.worktreeResolved = true;
-        } else if (answer === 'base') {
-          await ports.dismissWorktree(request.task.id);
-          if (generation !== this.generation) return;
-          this.worktreeResolved = true;
-        }
-      } catch (failure) {
-        if (generation !== this.generation) return;
-        this.fail(failure, 'worktree');
-        return;
-      }
-    }
-    if (this.sessionId === null) {
-      try {
-        const created = await ports.createConversation(request.task.id);
-        if (generation !== this.generation) return;
-        this.sessionId = created;
-        this.set({ sessionId: created });
-      } catch (failure) {
-        if (generation !== this.generation) return;
-        this.fail(failure, 'conversation');
-        return;
-      }
-    }
-    this.set({ pending: false });
-    if (this.plan?.model === true && ports.seatAvailable()) {
-      try {
-        await ports.retainSession(this.sessionId);
-        if (generation !== this.generation) return;
-        this.set({ phase: 'model', pending: false, error: null });
-        return;
-      } catch {
-        // A native seat that cannot be retained must not block the execution.
-      }
-    }
-    this.settle(true);
-  }
-
-  private fail(failure: unknown, step: PreparationFailedStep): void {
-    this.set({ phase: 'error', pending: false, error: asProblem(failure), failedStep: step });
-  }
-
-  private settle(proceed: boolean): void {
+  private settle(decision: PreparationDecision): void {
     const resolve = this.resolve;
     this.resolve = null;
-    this.generation += 1;
-    if (this.sessionId !== null) {
-      try { this.ports?.releaseSession(this.sessionId); } catch { /* the lease may already be gone */ }
-    }
-    this.sessionId = null;
-    this.request = null;
-    this.plan = null;
-    this.answer = 'none';
-    this.worktreeResolved = false;
     this.state = CLOSED;
     this.publish();
-    resolve?.(proceed);
+    resolve?.(decision);
   }
 }

@@ -6,13 +6,13 @@ Worktree and Git affordances exist only for Git-backed projects; a folder projec
 
 A task can work directly in its base project. The notice above chat previews the derived branch, destination, and source and offers **Create worktree** to create immediately with those values, **Review in Git**, or **Continue in base project**. The base-project choice is persisted on the task and hides the notice; it creates no Git resources and leaves every effective directory unchanged.
 
-While a Git-backed task has no worktree and no recorded choice, its first explicit Start or **+** is withheld: creating or attaching a ready worktree, or choosing the base project, unlocks it. The first execution from a move or the play action asks the same question in its preparation; the creation start uses the default worktree without asking. A Git-backed project always has a derivable default destination.
+While a Git-backed task has no worktree and no recorded choice, its first explicit Start or **+** is withheld: creating or attaching a ready worktree, or choosing the base project, unlocks it. The first execution from a move or the play action asks the same question before the move and then creates the worktree in the background; the creation start uses the default worktree without asking. A Git-backed project always has a derivable default destination.
 
 Creating a worktree creates a branch and a checkout. Attaching an existing checkout remains a secondary action in the no-worktree state; attachment reuses the checkout and branch rather than creating them. Unclaimed checkouts appear as a compact warning.
 
 ## Derivation and defaults
 
-**Configuration → General** sets an optional worktree base path, and each project's **Worktree** policy decides whether its tasks are asked about a worktree at all. Tasks of a project whose policy is **Always create** start on the derived default, **Never** tasks start in the project directory, and the execution preparation falls back to asking when an always-create destination cannot be derived, keeping the failure visible.
+**Configuration → General** sets an optional worktree base path, and each project's **Worktree** policy decides whether its tasks are asked about a worktree at all. Tasks of a project whose policy is **Always create** start on the derived default, **Never** tasks start in the project directory, and an always-create destination that cannot be derived fails visibly on the card instead of presenting a question.
 
 The Git form derives a new branch name from the task title (lowercase ASCII, hyphenated, at most 48 characters, with `task` as the fallback) and prefills the destination with the base path joined to that branch; without a configured base path it prefills the repository sibling `<repository>-<branch>`. Collisions append `-2`, `-3`, and so on to both values, checking local branches and occupied destinations.
 
