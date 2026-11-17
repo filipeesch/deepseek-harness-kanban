@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { parseWorkflow } from './workflow.js';
 import { canonicalScripted, scriptedDefinitionSchema } from './scripted-definition.js';
+import { canonicalDecision, decisionDefinitionSchema, DECISION_LIMITS } from './decision-definition.js';
 import { scriptedControlSchema, scriptedHandoffSchema, parameterValuesSchema, taskStageEntrySchema } from './scripted-state.js';
 import type { ConnectionLayout, Task, TransitionRule, Workflow } from '../shared/types.js';
 import { STAGE_MIN_SIZE, STAGE_SIZE_LIMIT } from './stage-size.js';
@@ -59,7 +60,7 @@ export const operation = z.strictObject({
 });
 export const pendingTransition = z.strictObject({
   id, fromColumnId: id, columnId: id, mode: z.enum(['move', 'run']), sessionId: id.optional(), text: z.string().optional(), beforeTaskId: id.nullable().optional(),
-  worktreeRequest: createWorktree.optional(), transitionOverride: z.boolean().optional(), exceptionUnfinalized: id.optional(), status: z.enum(['waiting', 'sending', 'failed']), error: problem.optional(),
+  worktreeRequest: createWorktree.optional(), transitionOverride: z.boolean().optional(), exceptionUnfinalized: id.optional(), decision: z.strictObject({ optionId: id, note: z.string().min(1).max(DECISION_LIMITS.noteLength).optional(), destinationIdentity: id }).optional(), status: z.enum(['waiting', 'sending', 'failed']), error: problem.optional(),
   origin: z.enum(['auto', 'agent']).optional(), reason: nonempty.optional(), parameters: parameterValuesSchema.optional(),
 }).superRefine((value, context) => {
   // An agent-declared advance exists to carry its reason to the destination stage
@@ -67,6 +68,8 @@ export const pendingTransition = z.strictObject({
   // cannot deliver.
   if (value.origin === 'agent' && value.reason === undefined) context.addIssue({ code: 'custom', path: ['reason'], message: 'An agent-declared advance requires the reason it carries.' });
   if (value.exceptionUnfinalized && (value.origin !== 'agent' || value.transitionOverride !== true || value.status !== 'waiting')) context.addIssue({ code: 'custom', path: ['exceptionUnfinalized'], message: 'An unfinalized exception must be a waiting agent override.' });
+  // A decision choice is the person's route, not a host advance: it carries its own payload.
+  if (value.decision !== undefined && value.origin !== undefined) context.addIssue({ code: 'custom', path: ['decision'], message: 'A decision route does not carry an advance origin.' });
 });
 export const autoModePause = z.strictObject({
   reason: z.enum(AUTO_MODE_PAUSE_REASONS),
@@ -107,7 +110,7 @@ export const connectionLayout = z.strictObject({
   from: id, to: id, source: connectionAnchor.optional(), target: connectionAnchor.optional(), segments: z.array(connectionSegment).optional(),
 });
 export const column = z.strictObject({
-  id, key: id.optional(), name: nonempty, description: nonempty.optional(), scripted: scriptedDefinitionSchema.optional(), onEnterPrompt: z.string().optional(), allowedTransitions: z.array(transitionRule).optional(), position: stagePosition.optional(), size: stageSize.optional(),
+  id, key: id.optional(), name: nonempty, description: nonempty.optional(), scripted: scriptedDefinitionSchema.optional(), decision: decisionDefinitionSchema.optional(), onEnterPrompt: z.string().optional(), allowedTransitions: z.array(transitionRule).optional(), position: stagePosition.optional(), size: stageSize.optional(),
 });
 export const group = z.strictObject({ id, name: nonempty, columnIds: z.array(id).min(1) });
 /** One model route: a provider, the provider-owned model, and an optional adapter-owned effort. */
@@ -225,6 +228,7 @@ function workflowShape(value: Workflow, includeLayout: boolean, includeIdentity 
     columns: value.columns.map(item => ({
       id: item.id, ...(includeIdentity ? { key: item.key } : {}), name: item.name, description: item.description, onEnterPrompt: item.onEnterPrompt,
       scripted: canonicalScripted(item.scripted),
+      decision: canonicalDecision(item.decision),
       allowedTransitions: item.allowedTransitions?.map(rule => normalizeTransitionRule(rule.to, rule.when)),
       ...(includeLayout ? { position: item.position, size: item.size } : {}),
     })),

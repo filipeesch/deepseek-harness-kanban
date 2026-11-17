@@ -3,7 +3,7 @@ import type { AutoAdvancePlan } from '../domain/auto-advance.js';
 import { hasPendingUserWork } from '../domain/pending-user-work.js';
 import { blocksAdvance } from '../domain/auto-mode-hold.js';
 import { entryInstruction } from '../domain/stage-entry.js';
-import { advanceArmedFor, declaredTransitionReason, resolveAdvanceRoute, routesThroughScriptedEntry } from '../domain/transition-route.js';
+import { advanceArmedFor, declaredTransitionReason, resolveAdvanceRoute, routesThroughDeterministicStage } from '../domain/transition-route.js';
 import { firstOpenSessionId } from '../shared/conversations.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 import type { AdvanceOrigin, Column, HubState, PendingTransition, PendingUserWork, Task, Workflow } from '../shared/types.js';
@@ -56,7 +56,7 @@ function requireArmed(origin: AdvanceOrigin, workflow: Workflow, task: Task): vo
   // The entry can turn scripted between the settle read and this transaction;
   // that is a routing-owner change, not a lost auto-mode setting, so it reports
   // its own failure instead of borrowing the origin's error code.
-  invariant(!routesThroughScriptedEntry(workflow, task), 'INVALID_TARGET', 'The task entered a scripted stage, which routes through its captured exit.');
+  invariant(!routesThroughDeterministicStage(workflow, task), 'INVALID_TARGET', 'The task entered a stage that owns its routing, which does not advance through a turn.');
   invariant(advanceArmedFor(origin, workflow, task),
     origin === 'auto' ? 'AUTO_MODE_DISABLED' : 'TRANSITION_STALE',
     origin === 'auto' ? 'Auto mode is no longer enabled.' : 'The declared transition no longer applies.');

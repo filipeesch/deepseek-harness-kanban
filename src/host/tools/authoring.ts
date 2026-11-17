@@ -4,12 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { KanbanApp } from '../app.js';
 import type { BoardAdministration, BoardPublishingPolicy, BoardView, BoardWriteResult, ComposeBoardWorkflowInput, WorkflowWriteDetail, WorkflowWriteOutcome } from '../board-administration.js';
-import type { ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset, StagePatch, StagePosition, StageSize, TransitionRule, Workflow } from '../../shared/types.js';
+import type { ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset, DecisionDefinition, StagePatch, StagePosition, StageSize, TransitionRule, Workflow } from '../../shared/types.js';
 import type { ScriptedDefinition } from '../../shared/scripted.js';
 import type { WorkflowCardReference, WorkflowWriteReport } from '../../domain/workflow-report.js';
 import { composeWorkflowReport, summarizeWorkflowReport } from '../../domain/workflow-report.js';
 import { invariant } from '../../shared/errors.js';
 import { parseWorkflow } from '../../domain/workflow.js';
+import { parseDecisionDefinition } from '../../domain/decision-definition.js';
 import { effectiveBoardPreset } from '../../domain/board-preset.js';
 import { updateStage } from '../../domain/stage-update.js';
 import { addStage, removeStage } from '../../domain/workflow-stage-edit.js';
@@ -141,6 +142,38 @@ function mergeScriptPatch(current: ScriptedDefinition | undefined, patch: Script
   return next;
 }
 
+
+/** The parts of one stage's decision configuration a patch may name. */
+interface DecisionPatch {
+  readonly question?: string;
+  readonly context?: string | null;
+  readonly options?: ReadonlyArray<{ readonly id: string; readonly title: string; readonly description?: string; readonly to: string }>;
+}
+
+/**
+ * One stage's decision configuration after a partial write: the named parts
+ * replaced, every other part kept as authored, and a first write required to be
+ * complete. Destinations are checked against the workflow before composition.
+ */
+function mergeDecisionPatch(current: DecisionDefinition | undefined, patch: DecisionPatch, workflow: Workflow, stageId: string): DecisionDefinition {
+  const question = patch.question ?? current?.question;
+  invariant(question !== undefined, 'INVALID_INPUT', 'A stage with no decision configuration requires a question.');
+  const context = patch.context === null ? undefined : (patch.context ?? current?.context);
+  const options = patch.options ?? current?.options;
+  invariant(options !== undefined && options.length > 0, 'INVALID_INPUT', 'A decision configuration requires at least one option.');
+  for (const option of options) {
+    invariant(workflow.columns.some(column => column.id === option.to), 'INVALID_TARGET', 'Option ' + option.id + ' names a destination the workflow does not define.');
+    invariant(option.to !== stageId, 'INVALID_TARGET', 'A decision option cannot target its own stage.');
+  }
+  const definition: DecisionDefinition = {
+    question,
+    ...(context === undefined || context.trim().length === 0 ? {} : { context }),
+    options: options.map(option => ({ id: option.id, title: option.title, ...(option.description === undefined || option.description.trim().length === 0 ? {} : { description: option.description }), to: option.to })),
+  };
+  // The same codec the parser uses rejects a partial or oversized definition here.
+  return parseDecisionDefinition(definition);
+}
+
 /** The authored document one write is composed from, as the port reports it. */
 function authored(port: WorkflowAuthoringPort, args: WriteArgs): { view: BoardView; workflow: Workflow } {
   const view = port.read(args.board_id, args.hub_id);
@@ -238,7 +271,7 @@ export function authoringTools(app: KanbanApp, port: WorkflowAuthoringPort = app
       };
     }, true),
 
-    normal('get_stage', 'Read the authored block of one stage exactly as written, including its instruction, transitions, script configuration, placement, and size. Inline script source is withheld by default and represented by its digest and byte length; ask for it explicitly when the source itself matters.', {
+    normal('get_stage', 'Read the authored block of one stage exactly as written, including its instruction, transitions, decision or script configuration, placement, and size. Inline script source is withheld by default and represented by its digest and byte length; ask for it explicitly when the source itself matters.', {
       board_id: text('Board ID.', true),
       stage_id: text('Stage ID.', true),
       include_code: flag('Return the authored inline script source instead of its digest and byte length.'),
@@ -319,6 +352,35 @@ export function authoringTools(app: KanbanApp, port: WorkflowAuthoringPort = app
       });
     }),
 
+
+    normal('set_stage_decision', intent + 'Write one stage decision configuration in parts. Only the parts the call names are rewritten; every other authored character of the stage stays as written. A stage that authors no decision configuration needs the question and its options; a stage that already authors one accepts any subset. Setting a decision configuration replaces the stage entry instruction, allowed-transition list, or scripted configuration, so the stage never authors two modes. Pass clear to remove it.' + preserveNote + reportNote, {
+      board_id: text('Board ID.', true),
+      stage_id: text('Stage ID.', true),
+      question: text('The decision question. Required when the stage authors no decision configuration.'),
+      context: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Optional Markdown context; null clears it.' },
+      options: { type: 'array', description: 'Ordered options the person chooses from. Replaces the whole list; every option needs an id, a title, and a destination stage.', items: { type: 'object', additionalProperties: false, properties: { id: { type: 'string', required: true }, title: { type: 'string', required: true }, description: { type: 'string' }, to: { type: 'string', required: true } } } },
+      clear: flag('Remove the stage decision configuration.'),
+      hub_id: text('Hub ID. Optional when the board identifier is enough.'),
+      expected_revision: revisionParameter,
+      ...workflowWriteControls,
+    }, async (args, exec) => {
+      await assertBoardWriteAllowed(app, exec);
+      invariant(!(args.clear === true && (args.question !== undefined || args.context !== undefined || args.options !== undefined)), 'INVALID_INPUT', 'Clear the decision configuration or write it, not both.');
+      return write(port, args as WriteArgs, exec, current => {
+        const workflow = parseWorkflow(current);
+        const stage = workflow.columns.find(column => column.id === args.stage_id);
+        invariant(stage !== undefined, 'STAGE_NOT_FOUND', 'The workflow has no stage ' + args.stage_id + '.');
+        if (args.clear === true) return updateStage({ text: current, stageId: stage.id, patch: { decision: null } }).text;
+        const options = args.options as ReadonlyArray<{ id: string; title: string; description?: string; to: string }> | undefined;
+        const definition = mergeDecisionPatch(stage.decision, {
+          ...(args.question === undefined ? {} : { question: args.question as string }),
+          ...(args.context === undefined ? {} : { context: args.context as string | null }),
+          ...(options === undefined ? {} : { options }),
+        }, workflow, stage.id);
+        return updateStage({ text: current, stageId: stage.id, patch: { decision: definition } }).text;
+      });
+    }),
+
     normal('set_layout', intent + 'Set stage placements, stage sizes, and connection layouts. Each named value is written and each value set to null or removed clears its entry; everything not named keeps its authored value.' + preserveNote + reportNote, {
       board_id: text('Board ID.', true),
       positions: { type: 'object', additionalProperties: true, description: 'Stage id mapped to {x, y}, or to null to clear its placement.' },
@@ -340,7 +402,7 @@ export function authoringTools(app: KanbanApp, port: WorkflowAuthoringPort = app
       });
     }),
 
-    normal('add_stage', intent + 'Insert one stage into the workflow after a named stage, or at the end of the stage sequence. The stage is given as YAML mapping lines; its id, label, instruction, transitions, and script configuration are authored like any other stage.' + preserveNote + reportNote, {
+    normal('add_stage', intent + 'Insert one stage into the workflow after a named stage, or at the end of the stage sequence. The stage is given as YAML mapping lines; its id, label, instruction, transitions, decision or script configuration are authored like any other stage.' + preserveNote + reportNote, {
       board_id: text('Board ID.', true),
       stage_yaml: text('The stage definition as YAML mapping lines, beginning with its id.', true),
       after: text('The stage the new one follows. Omit to append it at the end.'),

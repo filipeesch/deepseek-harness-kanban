@@ -54,6 +54,18 @@ describe('task context injection', () => {
     expect(workflowSummaryPage(projectWorkflowSummary(longBoard, hub, 'unavailable', task), page.nextCursor).records[0]).toMatchObject({ kind: 'oversizedRecordFragment' });
   });
 
+  it('identifies a decision gate in the first-contact snapshot', () => {
+    const gated = { ...board, workflow: { ...workflow, columns: [
+      { id: 'gate', name: 'Gate', decision: { question: 'Proceed?', options: [{ id: 'ship', title: 'Ship it', to: 'plan' }] } },
+      { id: 'plan', name: 'Plan' },
+    ] } };
+    const message = createTaskContextMessage({ ...task, columnId: 'gate' }, gated.workflow, hub.name, gated, hub.id);
+    const text = (message.content[0] as { text: string }).text;
+    expect(text).toContain('"type": "decision"');
+    expect(text).toContain('"question": "Proceed?"');
+    expect(text).toContain('"kind": "decisionOption"');
+  });
+
   it('reads pending facts and distinguishes unpublished from unavailable sharing', async () => {
     const facts: ConversationFacts = { running: false, background: [], settledTurn: null, pending: { kinds: ['native-question'], queuedPrompts: 0 } };
     const f = setup({ conversationFacts: async () => facts, sharingView: () => undefined });

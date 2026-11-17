@@ -13,6 +13,8 @@ import { useScriptSummary } from './scripted-context.js';
 import { ownedScript, scriptActive, scriptAwaitingApproval, scriptCardLabel, scriptLabel } from './scripted-view.js';
 import { advanceStageLabel } from './stage-advance.js';
 import { AdvanceStageIcon, AlertIcon, ClockIcon } from './icons.js';
+import { DecisionCountdown, useDecisionWindowEntry } from './decision-panel.js';
+import type { DecisionWindowController } from './decision-window.js';
 
 export interface TaskCardProps {
   task: Task;
@@ -22,6 +24,10 @@ export interface TaskCardProps {
   selectionMode: boolean;
   selected: boolean;
   autoRun: AutoRunController;
+  /** The board's decision window; absent only in isolated card harnesses. */
+  decisionWindow?: DecisionWindowController;
+  /** The unanswered decision gate this card presents, if any. */
+  decision?: { label: string };
   autoMode: AutoModeView;
   autoModePending?: boolean;
   onToggleAutoMode: (taskId: string, enabled: boolean) => void;
@@ -44,7 +50,7 @@ export interface TaskCardProps {
 }
 
 function CardContext({ taskId, title, projectName, attention, selectionMode, selected, onToggleSelect, onActivate }: {
-  taskId: string; title: string; projectName: string; attention: Attention & { approval?: boolean }; selectionMode: boolean; selected: boolean;
+  taskId: string; title: string; projectName: string; attention: Attention & { approval?: boolean; decision?: boolean }; selectionMode: boolean; selected: boolean;
   onToggleSelect: (taskId: string) => void; onActivate: () => void;
 }) {
   return <div className="kb-card-context" onClick={onActivate}>
@@ -87,12 +93,13 @@ function CardStatus({ entries, parameters }: { entries: readonly CardStatusEntry
 }
 
 /** One task card; every board concern arrives through props. */
-export function TaskCard({ task, column, projectName, attention, selectionMode, selected, autoRun, autoMode, autoModePending, onToggleAutoMode, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick, next, onMove, advancePending = false, onRun, arrivalToken, onArrivalEnd }: TaskCardProps) {
+export function TaskCard({ task, column, projectName, attention, selectionMode, selected, autoRun, autoMode, autoModePending, decisionWindow, decision, onToggleAutoMode, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick, next, onMove, advancePending = false, onRun, arrivalToken, onArrivalEnd }: TaskCardProps) {
   const openButton = useRef<HTMLButtonElement>(null);
   const script = ownedScript(task, useScriptSummary(task.id));
   const activeScript = scriptActive(script);
   const awaitingApproval = scriptAwaitingApproval(script);
-  const presenceAttention = { ...attention, approval: awaitingApproval };
+  const decisionEntry = useDecisionWindowEntry(decisionWindow, task.id);
+  const presenceAttention = { ...attention, approval: awaitingApproval, decision: decision !== undefined };
   const presence = projectCardDominance(presenceAttention);
   const runEntry = useAutoRunEntry(autoRun, task.id);
   const currentRun = autoRunEntryForColumn(runEntry, column.id);
@@ -109,6 +116,7 @@ export function TaskCard({ task, column, projectName, attention, selectionMode, 
     void onMove(next.column);
   };
   const controls = selectionMode ? null : <>
+    {decisionEntry !== undefined && decisionWindow !== undefined && <DecisionCountdown entry={decisionEntry} onCancel={() => decisionWindow.cancel(task.id)} />}
     <AutoModeControl view={autoMode} pending={autoModePending === true} onToggle={enabled => onToggleAutoMode(task.id, enabled)} />
     <CardScriptActions task={task} column={column} />
     {!script && <CardInstructionAction key={column.id} task={task} column={column} controller={autoRun} {...(onRun === undefined ? {} : { onRun })} />}
@@ -125,7 +133,7 @@ export function TaskCard({ task, column, projectName, attention, selectionMode, 
     </button>
     <CardContext taskId={task.id} title={task.title} projectName={projectName} attention={presenceAttention} selectionMode={selectionMode} selected={selected} onToggleSelect={onToggleSelect} onActivate={activate} />
     <CardActivity attention={attention} label={task.title} controls={controls} script={script && !awaitingApproval ? scriptCardLabel(script) : undefined} {...(script?.hold === undefined || awaitingApproval ? {} : { scriptTitle: scriptLabel(script) })} scriptHeld={script?.hold !== undefined && !awaitingApproval} />
-    <CardStatus parameters={script !== undefined && (column.scripted?.params?.length ?? 0) > 0 ? <CardScriptParameters task={task} column={column} selectionMode={selectionMode} /> : undefined} entries={[...cardStatusEntries(task, runFailure, autoMode.status, autoMode.secondaryStatuses), ...(awaitingApproval ? [{ key: 'script-approval', tone: 'pending' as const, label: 'Awaiting approval' }] : []), ...(script?.error ? [{ key: 'script-error', tone: 'danger' as const, label: script.error.message.slice(0, 512), alert: true }] : [])]} />
+    <CardStatus parameters={script !== undefined && (column.scripted?.params?.length ?? 0) > 0 ? <CardScriptParameters task={task} column={column} selectionMode={selectionMode} /> : undefined} entries={[...cardStatusEntries(task, runFailure, autoMode.status, autoMode.secondaryStatuses, decision?.label), ...(awaitingApproval ? [{ key: 'script-approval', tone: 'pending' as const, label: 'Awaiting approval' }] : []), ...(script?.error ? [{ key: 'script-error', tone: 'danger' as const, label: script.error.message.slice(0, 512), alert: true }] : [])]} />
     {arrivalToken !== undefined && <span key={arrivalToken} className="kb-card-arrival" aria-hidden="true" onAnimationEnd={() => onArrivalEnd?.(task.id, arrivalToken)} />}
   </article>;
 }

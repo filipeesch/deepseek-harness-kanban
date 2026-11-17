@@ -5,6 +5,7 @@ import { parseWorkflow } from './workflow.js';
 import { authoredScalar, writeNestedSequenceItemField, writeRootField, writeSequenceItemField } from './yaml-map-fields.js';
 import { invalidWorkflow } from './yaml-fields.js';
 import { renderTransitionList } from './transition-write.js';
+import { renderDecisionField } from './decision-write.js';
 import { appendSequenceItem, insertSequenceItemAfter, pruneEmptySequence, removeSequenceItem } from './journal/authored-text.js';
 
 /** One stage definition offered to an authored workflow. */
@@ -23,6 +24,8 @@ export interface RemoveStageResult {
   readonly clearedTransitions: number;
   /** The script exits dropped, written as stage:exit. */
   readonly clearedExits: readonly string[];
+  /** The decision options dropped, written as stage:option. */
+  readonly clearedOptions: readonly string[];
   readonly removedConnections: number;
   readonly removedGroups: readonly string[];
 }
@@ -103,6 +106,20 @@ export function removeStage(input: { readonly text: string; readonly stageId: st
       clearedExits.push(column.id + ':' + exit);
     }
   }
+  const clearedOptions: string[] = [];
+  for (const column of workflow.columns) {
+    const definition = column.decision;
+    if (column.id === input.stageId || definition === undefined) continue;
+    const dropped = definition.options.filter(option => option.to === input.stageId);
+    if (dropped.length === 0) continue;
+    invariant(dropped.length < definition.options.length, 'STAGE_ROUTED_FROM_DECISION', 'Stage ' + column.id + ' routes to ' + input.stageId + ' with its only decision option; give it another destination first.');
+    const remaining = { ...definition, options: definition.options.filter(option => option.to !== input.stageId) };
+    text = writeSequenceItemField({
+      text, sequenceKey: 'columns', idKey: 'id', id: column.id, fieldKeys: ['decision'], invalid: invalidWorkflow,
+      render: (_existing, indent, key, flow) => renderDecisionField(key, remaining, indent, flow),
+    });
+    for (const option of dropped) clearedOptions.push(column.id + ':' + option.id);
+  }
   const removedGroups: string[] = [];
   const groupEdits = workflow.groups.flatMap((group, index) => group.columnIds.includes(input.stageId)
     ? [{ index, id: group.id, remaining: group.columnIds.filter(member => member !== input.stageId) }]
@@ -128,7 +145,7 @@ export function removeStage(input: { readonly text: string; readonly stageId: st
   if (removedConnections > 0) text = pruneEmptySequence(text, 'connections');
   text = removeSequenceItem({ text, sequenceKey: 'columns', fields: { id: input.stageId } });
   parseWorkflow(text);
-  return { text, clearedTransitions, clearedExits, removedConnections, removedGroups };
+  return { text, clearedTransitions, clearedExits, clearedOptions, removedConnections, removedGroups };
 }
 
 /** Whether one authored workflow defines a stage. */

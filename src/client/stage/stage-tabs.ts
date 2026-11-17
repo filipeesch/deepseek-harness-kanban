@@ -1,24 +1,25 @@
 import type { StageProblem } from './stage-problem.js';
 
 /**
- * The five authoring concerns one stage edit covers, in the order the editor
- * presents them.
- *
- * A stage that authors a program has an Inputs and an Approval tab; a stage that
- * authors an agent instruction or nothing does not, because both concerns describe
- * a program that does not exist.
+ * The authoring concerns one stage edit covers, in the order the editor presents
+ * them. A stage that authors a program has Inputs and Approval tabs; a stage that
+ * authors a decision has its Decision tab; neither concern describes the other mode.
  */
-export type StageEditorTab = 'stage' | 'execution' | 'routing' | 'inputs' | 'approval';
+export type StageEditorTab = 'stage' | 'execution' | 'routing' | 'inputs' | 'approval' | 'decision';
 
 const LABELS: Readonly<Record<StageEditorTab, string>> = {
-  stage: 'Stage', execution: 'Execution', routing: 'Routing', inputs: 'Inputs', approval: 'Approval',
+  stage: 'Stage', execution: 'Execution', routing: 'Routing', inputs: 'Inputs', approval: 'Approval', decision: 'Decision',
 };
 
-const ORDER: readonly StageEditorTab[] = ['stage', 'execution', 'routing', 'inputs', 'approval'];
+const AGENT_ORDER: readonly StageEditorTab[] = ['stage', 'execution', 'routing'];
+const SCRIPTED_ORDER: readonly StageEditorTab[] = ['stage', 'execution', 'routing', 'inputs', 'approval'];
+const DECISION_ORDER: readonly StageEditorTab[] = ['stage', 'decision'];
 
 /** The tabs one stage presents, in editor order. */
-export function stageEditorTabs(scripted: boolean): StageEditorTab[] {
-  return scripted ? [...ORDER] : ORDER.filter(tab => tab !== 'inputs' && tab !== 'approval');
+export function stageEditorTabs(execution: 'agent' | 'scripted' | 'decision'): StageEditorTab[] {
+  if (execution === 'scripted') return [...SCRIPTED_ORDER];
+  if (execution === 'decision') return [...DECISION_ORDER];
+  return [...AGENT_ORDER];
 }
 
 /** The label of one tab. */
@@ -46,6 +47,8 @@ export function stageTabOfField(field: StageProblem['field']): StageEditorTab {
       return 'inputs';
     case 'source':
       return 'execution';
+    case 'decision':
+      return 'decision';
     default: {
       const unhandled: never = field;
       return unhandled;

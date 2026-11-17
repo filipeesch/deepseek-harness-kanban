@@ -4,7 +4,7 @@ import { workflowGraph } from './workflow-graph.js';
 import { KanbanError } from '../shared/errors.js';
 
 /** How one use of a route was produced. */
-export type RouteOriginKind = 'operator' | 'declared' | 'automatic' | 'script' | 'error' | 'unrecorded';
+export type RouteOriginKind = 'operator' | 'declared' | 'automatic' | 'script' | 'error' | 'decision' | 'unrecorded';
 
 /** One card as the statistics read it: its identity, its stage, and its flow record. */
 export interface RouteStatsCard {
@@ -60,16 +60,19 @@ export interface RouteStats {
   readonly window: { readonly since: string; readonly until: string; readonly projectIds?: readonly string[] };
   readonly transitions: readonly TransitionUsage[];
   readonly exits: ReadonlyArray<{ readonly stage: string; readonly exit: string; readonly count: number }>;
+  /** Every configured decision option with its uses in the window. */
+  readonly decisions: ReadonlyArray<{ readonly stage: string; readonly option: string; readonly to: string; readonly count: number }>;
   readonly stages: readonly StageUsage[];
   readonly parked: readonly ParkedCard[];
   readonly loops: LoopUsage;
   readonly unused: {
     readonly routes: ReadonlyArray<{ readonly from: string; readonly to: string }>;
     readonly exits: ReadonlyArray<{ readonly stage: string; readonly exit: string }>;
+    readonly decisions: ReadonlyArray<{ readonly stage: string; readonly option: string }>;
   };
 }
 
-const ORIGINS: readonly RouteOriginKind[] = ['operator', 'declared', 'automatic', 'script', 'error', 'unrecorded'];
+const ORIGINS: readonly RouteOriginKind[] = ['operator', 'declared', 'automatic', 'script', 'error', 'decision', 'unrecorded'];
 
 function originOf(entry: Extract<TaskHistoryEntry, { kind: 'stage' }>): { kind: RouteOriginKind; exit?: string } {
   const origin = entry.origin;
@@ -77,6 +80,7 @@ function originOf(entry: Extract<TaskHistoryEntry, { kind: 'stage' }>): { kind: 
   if (origin === 'manual') return { kind: 'operator' };
   if (origin === 'agent') return { kind: 'declared' };
   if (origin === 'auto') return { kind: 'automatic' };
+  if (origin.startsWith('decision:')) return { kind: 'decision', exit: origin.slice('decision:'.length) };
   const [kind, exit] = origin.startsWith('script:') ? ['script', origin.slice('script:'.length)] as const : ['error', origin.slice('error:'.length)] as const;
   return { kind, exit };
 }
@@ -122,9 +126,12 @@ export function routeStats(input: { readonly workflow: Workflow; readonly cards:
   const loopRoutes = new Map<string, { from: string; to: string; count: number }>();
   const now = Date.parse(input.now ?? new Date().toISOString());
   const configuredExits: Array<{ stage: string; exit: string }> = [];
+  const configuredDecisions: Array<{ stage: string; option: string; to: string }> = [];
+  const decisionUses = new Map<string, number>();
 
   for (const column of input.workflow.columns) {
     for (const exit of Object.keys(column.scripted?.exits ?? {})) configuredExits.push({ stage: column.id, exit });
+    for (const option of column.decision?.options ?? []) configuredDecisions.push({ stage: column.id, option: option.id, to: option.to });
   }
 
   for (const card of cards) {
@@ -158,6 +165,10 @@ export function routeStats(input: { readonly workflow: Workflow; readonly cards:
           const origin = originOf(entry);
           usage.origins[origin.kind] += 1;
           if (origin.exit !== undefined) usage.exits[origin.exit] = (usage.exits[origin.exit] ?? 0) + 1;
+          if (origin.kind === 'decision' && origin.exit !== undefined) {
+            const decisionKey = entry.fromColumnId + '\u0000' + origin.exit;
+            decisionUses.set(decisionKey, (decisionUses.get(decisionKey) ?? 0) + 1);
+          }
           transitions.set(key, usage);
           if (windowVisited.has(entry.columnId)) {
             loops += 1;
@@ -189,6 +200,9 @@ export function routeStats(input: { readonly workflow: Workflow; readonly cards:
     .filter(connection => !usedRoutes.has(connection.from + '\u0000' + connection.to))
     .map(connection => ({ from: connection.from, to: connection.to }));
   const unusedExits = configuredExits.filter(exit => !exits.has(exit.stage + '\u0000' + exit.exit));
+  const decisions = configuredDecisions.map(option => ({ ...option, count: decisionUses.get(option.stage + '\u0000' + option.option) ?? 0 }))
+    .sort((left, right) => right.count - left.count || left.stage.localeCompare(right.stage) || left.option.localeCompare(right.option));
+  const unusedDecisions = decisions.filter(option => option.count === 0).map(option => ({ stage: option.stage, option: option.option }));
 
   const stageUsage: StageUsage[] = input.workflow.columns.map(column => {
     const stays = dwell.get(column.id) ?? [];
@@ -211,6 +225,7 @@ export function routeStats(input: { readonly workflow: Workflow; readonly cards:
       const [stage, exit] = key.split('\u0000') as [string, string];
       return { stage, exit, count };
     }).sort((left, right) => right.count - left.count || left.stage.localeCompare(right.stage) || left.exit.localeCompare(right.exit)),
+    decisions,
     stages: stageUsage,
     parked: parked.sort((left, right) => right.duration - left.duration),
     loops: {
@@ -219,6 +234,6 @@ export function routeStats(input: { readonly workflow: Workflow; readonly cards:
       cards: cardLoops.map(entry => ({ ...entry })),
       routes: [...loopRoutes.values()].sort((left, right) => right.count - left.count),
     },
-    unused: { routes: unusedRoutes, exits: unusedExits },
+    unused: { routes: unusedRoutes, exits: unusedExits, decisions: unusedDecisions },
   };
 }

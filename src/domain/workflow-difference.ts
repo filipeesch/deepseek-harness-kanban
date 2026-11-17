@@ -1,5 +1,6 @@
-import type { ConnectionLayout, Column, ColumnGroup, TransitionRule, Workflow } from '../shared/types.js';
+import type { Column, ColumnGroup, ConnectionLayout, DecisionDefinition, DecisionOption, TransitionRule, Workflow } from '../shared/types.js';
 import { canonicalScripted } from './scripted-definition.js';
+import { canonicalDecision } from './decision-definition.js';
 import { connectionKey } from './connection-anchor.js';
 
 /** One field whose value differs between two workflows. */
@@ -40,12 +41,56 @@ export interface WorkflowDifference {
 
 const EMPTY: WorkflowDifference = { workflow: [], stages: [], groups: [], connections: [] };
 
+/** A difference reduced to field names: the summary carries no authored text. */
+export interface WorkflowDifferenceSummary {
+  readonly workflow: readonly string[];
+  readonly stages: ReadonlyArray<{ readonly stage: string; readonly change: 'added' | 'removed' | 'changed'; readonly fields?: readonly string[] }>;
+  readonly groups: ReadonlyArray<{ readonly group: string; readonly change: 'added' | 'removed' | 'changed'; readonly fields?: readonly string[] }>;
+  readonly connections: WorkflowDifference['connections'];
+}
+
+export function summarizeDifference(difference: WorkflowDifference): WorkflowDifferenceSummary {
+  return {
+    workflow: difference.workflow.map(field => field.field),
+    stages: difference.stages.map(stage => ({ stage: stage.stage, change: stage.change, ...(stage.fields === undefined ? {} : { fields: stage.fields.map(field => field.field) }) })),
+    groups: difference.groups.map(group => ({ group: group.group, change: group.change, ...(group.fields === undefined ? {} : { fields: group.fields.map(field => field.field) }) })),
+    connections: difference.connections,
+  };
+}
+
 function rulesOf(column: Column): TransitionRule[] | null {
   return column.allowedTransitions === undefined ? null : column.allowedTransitions.map(rule => ({ ...rule }));
 }
 
 function signature(value: unknown): string {
   return JSON.stringify(value ?? null);
+}
+
+function canonicalOption(option: DecisionOption | undefined): unknown {
+  return option === undefined ? null : { id: option.id, title: option.title, description: option.description ?? null, to: option.to };
+}
+
+/** A decision configuration compared by question, context, option list, and each option. */
+function addDecisionFields(before: DecisionDefinition | undefined, after: DecisionDefinition | undefined, add: (field: string, from: unknown, to: unknown) => void): void {
+  if (before === undefined && after === undefined) return;
+  if (before === undefined || after === undefined) {
+    add('decision', canonicalDecision(before), canonicalDecision(after));
+    const present = after ?? before;
+    if (present === undefined) return;
+    add('decision.question', before?.question ?? null, after?.question ?? null);
+    add('decision.context', before?.context ?? null, after?.context ?? null);
+    add('decision.options', before?.options.map(option => option.id) ?? null, after?.options.map(option => option.id) ?? null);
+    for (const option of present.options) add('decision.option:' + option.id, before === undefined ? null : canonicalOption(option), after === undefined ? null : canonicalOption(option));
+    return;
+  }
+  add('decision.question', before.question, after.question);
+  add('decision.context', before.context ?? null, after.context ?? null);
+  const beforeIds = before.options.map(option => option.id);
+  const afterIds = after.options.map(option => option.id);
+  add('decision.options', beforeIds, afterIds);
+  for (const id of new Set([...beforeIds, ...afterIds])) {
+    add('decision.option:' + id, canonicalOption(before.options.find(option => option.id === id)), canonicalOption(after.options.find(option => option.id === id)));
+  }
 }
 
 function stageFields(before: Column, after: Column): FieldChange[] {
@@ -57,6 +102,7 @@ function stageFields(before: Column, after: Column): FieldChange[] {
   add('onEnterPrompt', before.onEnterPrompt, after.onEnterPrompt);
   add('allowedTransitions', rulesOf(before), rulesOf(after));
   add('scripted', canonicalScripted(before.scripted), canonicalScripted(after.scripted));
+  addDecisionFields(before.decision, after.decision, add);
   add('position', before.position, after.position);
   add('size', before.size, after.size);
   return fields;

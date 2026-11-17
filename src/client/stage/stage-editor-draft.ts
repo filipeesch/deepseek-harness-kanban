@@ -1,6 +1,7 @@
 import type { ScriptedSummary } from '../../shared/scripted.js';
 import type { Attention, Column, StagePatch, Task, TransitionRule } from '../../shared/types.js';
 import { scriptedDraft, scriptedDefinition, scriptedProblems, type ScriptedDraft } from './scripted-draft.js';
+import { decisionDefinition, decisionDraft, decisionDraftChanged, decisionProblems, emptyDecisionDraft, type DecisionDraft } from './decision-draft.js';
 import type { StageProblem } from './stage-problem.js';
 import { scriptedEqual } from '../../domain/scripted-definition.js';
 import { isDomainId } from '../../domain/validation.js';
@@ -19,8 +20,9 @@ export type StageTransitionMode = 'any' | 'restricted' | 'none';
 
 /** Everything the stage editor is editing, before any of it is stored. */
 export interface StageEditorDraft {
-  readonly execution?: 'agent' | 'scripted';
+  readonly execution?: 'agent' | 'scripted' | 'decision';
   readonly scripted?: ScriptedDraft;
+  readonly decision?: DecisionDraft;
   readonly name: string;
   readonly description: string;
   readonly onEnterPrompt: string;
@@ -45,6 +47,7 @@ export function stageDraft(column: Column): StageEditorDraft {
   const transitions = column.allowedTransitions;
   return {
     ...(column.scripted === undefined ? {} : { execution: 'scripted' as const, scripted: scriptedDraft(column.scripted) }),
+    ...(column.decision === undefined ? {} : { execution: 'decision' as const, decision: decisionDraft(column.decision) }),
     name: column.name,
     description: column.description ?? '',
     onEnterPrompt: column.onEnterPrompt ?? '',
@@ -61,6 +64,7 @@ export function draftChanged(draft: StageEditorDraft, column: Column): boolean {
   if (draft.name !== stored.name || draft.description !== stored.description || draft.onEnterPrompt !== stored.onEnterPrompt || draft.id !== stored.id || draft.initial) return true;
   if ((draft.execution ?? 'agent') !== (stored.execution ?? 'agent')) return true;
   if (draft.execution === 'scripted') return !scriptedEqual(scriptedDefinition(draft.scripted ?? scriptedDraft()), column.scripted);
+  if (draft.execution === 'decision') return decisionDraftChanged(draft.decision ?? emptyDecisionDraft(), column.decision);
   if (draft.mode !== stored.mode) return true;
   if (draft.mode !== 'restricted') return false;
   if (draft.transitions.length !== stored.transitions.length) return true;
@@ -80,6 +84,9 @@ export function draftProblems(draft: StageEditorDraft, otherStageIds: ReadonlySe
   if (draft.execution === 'scripted') {
     problems.push(...scriptedProblems(draft.scripted ?? scriptedDraft(), otherStageIds));
     if (draft.onEnterPrompt.trim() || draft.mode !== 'any' || draft.transitions.length) problems.push({ field: 'execution', message: 'Scripted execution cannot coexist with an instruction or allowed destinations.' });
+  } else if (draft.execution === 'decision') {
+    problems.push(...decisionProblems(draft.decision ?? emptyDecisionDraft(), otherStageIds, draft.id));
+    if (draft.onEnterPrompt.trim() || draft.mode !== 'any' || draft.transitions.length) problems.push({ field: 'execution', message: 'A decision step cannot coexist with an instruction or allowed destinations.' });
   } else if (draft.mode === 'restricted') {
     // A stage that permits no destination is a real state with its own mode, so the
     // editor points there instead of quietly storing a list that permits nothing.
@@ -125,9 +132,19 @@ export function stagePatch(draft: StageEditorDraft, column: Column): StagePatch 
     if (!scriptedEqual(wanted, column.scripted)) patch.scripted = wanted;
     if (column.onEnterPrompt !== undefined) patch.onEnterPrompt = null;
     if (column.allowedTransitions !== undefined) patch.allowedTransitions = null;
+    if (column.decision !== undefined) patch.decision = null;
+    return patch;
+  }
+  if (draft.execution === 'decision') {
+    const wanted = decisionDefinition(draft.decision ?? emptyDecisionDraft());
+    if (decisionDraftChanged(draft.decision ?? emptyDecisionDraft(), column.decision)) patch.decision = wanted;
+    if (column.onEnterPrompt !== undefined) patch.onEnterPrompt = null;
+    if (column.allowedTransitions !== undefined) patch.allowedTransitions = null;
+    if (column.scripted !== undefined) patch.scripted = null;
     return patch;
   }
   if (column.scripted !== undefined) patch.scripted = null;
+  if (column.decision !== undefined) patch.decision = null;
   const wanted = draftDestinations(draft);
   if (!sameTransitionRules(column.allowedTransitions, wanted)) patch.allowedTransitions = wanted;
   return patch;

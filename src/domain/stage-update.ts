@@ -1,6 +1,8 @@
 import type { Task } from '../shared/types.js';
 import { parseScriptedDefinition, scriptedEqual } from './scripted-definition.js';
 import { migrateScriptedKey, renameScriptedTargets, SCRIPTED_FIELD_KEYS, updateScriptedFields } from './scripted-write.js';
+import { parseDecisionDefinition, decisionEqual } from './decision-definition.js';
+import { renameDecisionTargets, renderDecisionField } from './decision-write.js';
 import type { TaskHistoryEntry } from '../shared/task-history.js';
 import type { StagePatch, TransitionRule } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
@@ -116,6 +118,12 @@ export function updateStage({ text, stageId, patch }: StageUpdateInput): StageUp
   const workflow = parseWorkflow(text);
   const stage = workflow.columns.find(column => column.id === stageId);
   if (stage === undefined) invalid('Stage ' + stageId + ' does not exist in this workflow.');
+  // A decision stage owns its mode: another mode is authored only after the
+  // decision configuration is cleared in the same write (which the editor does).
+  if (stage.decision !== undefined && patch.decision !== null
+      && (patch.onEnterPrompt !== undefined || patch.allowedTransitions !== undefined || patch.scripted !== undefined)) {
+    invalid('Stage ' + stage.id + ' authors a decision configuration; clear it before authoring another mode.');
+  }
 
   const name = patch.name === undefined ? undefined : patch.name.trim();
   if (name !== undefined && name.length === 0) invalid('A stage name is required.');
@@ -172,6 +180,18 @@ export function updateStage({ text, stageId, patch }: StageUpdateInput): StageUp
     else writeColumn(stageId, SCRIPTED_FIELD_KEYS, (_existing, _indent, _key) => definition === null ? null : SCRIPTED_FIELD_KEYS[0] + ': ' + JSON.stringify(definition));
   }
 
+  if (patch.decision !== undefined && (patch.decision === null || !decisionEqual(stage.decision, patch.decision))) {
+    const definition = patch.decision === null ? null : parseDecisionDefinition(patch.decision);
+    writeColumn(stageId, ['decision'], (_existing, indent, key, flow) => definition === null ? null : renderDecisionField(key, definition, indent, flow));
+    if (definition !== null) {
+      // A decision stage owns its mode: the fields the other modes author are
+      // removed in the same write, so the document never carries two modes.
+      if (stage.onEnterPrompt !== undefined) writeColumn(stageId, ['on_enter_prompt'], () => null);
+      if (stage.allowedTransitions !== undefined) writeColumn(stageId, ['allowed_transitions'], () => null);
+      if (stage.scripted !== undefined) writeColumn(stageId, SCRIPTED_FIELD_KEYS, () => null);
+    }
+  }
+
   if (rules !== undefined) writeColumn(stageId, ['allowed_transitions'], (existing, indent, _key, flow) => rules === null ? null : transitionsField(rules, existing, indent, flow));
 
   if (renamed) {
@@ -181,6 +201,9 @@ export function updateStage({ text, stageId, patch }: StageUpdateInput): StageUp
     const scriptedTargets = renameScriptedTargets(next, stageId, newId);
     next = scriptedTargets.text;
     rewrittenReferences += scriptedTargets.replaced;
+    const decisionTargets = renameDecisionTargets(next, stageId, newId);
+    next = decisionTargets.text;
+    rewrittenReferences += decisionTargets.replaced;
     for (const column of workflow.columns) {
       if (column.id === stageId) continue;
       if (!(column.allowedTransitions ?? []).some(rule => rule.to === stageId)) continue;
@@ -219,7 +242,7 @@ export function updateStage({ text, stageId, patch }: StageUpdateInput): StageUp
 
   // A write that names the stage converges its authored program key on the current
   // spelling; a stage no write names keeps the spelling its author used.
-  const touchesStage = name !== undefined || patch.onEnterPrompt !== undefined || patch.scripted !== undefined
+  const touchesStage = name !== undefined || patch.onEnterPrompt !== undefined || patch.scripted !== undefined || patch.decision !== undefined
     || patch.allowedTransitions !== undefined || condition !== undefined || renamed || patch.initial === true;
   if (touchesStage) next = migrateScriptedKey(next, newId);
 

@@ -18,6 +18,8 @@ import type { AutoRunController } from './auto-run.js';
 import { DrawerAutoRunNotice } from './auto-run-view.js';
 import { autoModeView } from './auto-mode.js';
 import { ScriptPanel } from './scripted-panel.js';
+import { DecisionPanel } from './decision-panel.js';
+import type { DecisionWindowController } from './decision-window.js';
 import type { StageEditorTab } from './stage/stage-tabs.js';
 import { ScriptedHoldNotice } from './scripted-hold-notice.js';
 import { useScriptSummary } from './scripted-context.js';
@@ -48,6 +50,8 @@ interface DrawerProps {
   onToggleAutoMode?: (taskId: string, enabled: boolean) => void;
   autoModePending?: boolean;
   onForce?: (taskId: string) => void;
+  /** The board's decision window; the panel is absent when the drawer renders without one. */
+  decisionWindow?: DecisionWindowController;
   viewState?: TaskPageState; sessionTitles?: SessionTitles;
   /** Lease scope for this drawer; omitted only by isolated render harnesses. */
   conversationLeases?: ConversationLeaseEnvironment;
@@ -58,7 +62,7 @@ interface DrawerProps {
 const NO_NAVIGATION: DrawerNavigationSource = { subscribe: () => () => {}, getSnapshot: () => 0 };
 
 
-export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAttention, state, api, run, autoRun, renderConversation, onOpenInMain, navigation, onClose, onMove, onDanger, onForce, onToggleAutoMode, autoModePending = false, viewState, sessionTitles, conversationLeases, entering = false, closing = false, onEditStage }: DrawerProps) {
+export function TaskDrawer({ task, decisionWindow, attention = EMPTY_ATTENTION, conversationAttention, state, api, run, autoRun, renderConversation, onOpenInMain, navigation, onClose, onMove, onDanger, onForce, onToggleAutoMode, autoModePending = false, viewState, sessionTitles, conversationLeases, entering = false, closing = false, onEditStage }: DrawerProps) {
   // A client navigation outcome is written to the drawer's page state outside React;
   // this subscription is what re-renders the drawer with the new view.
   const navigationSource = navigation ?? NO_NAVIGATION;
@@ -148,6 +152,7 @@ export function TaskDrawer({ task, attention = EMPTY_ATTENTION, conversationAtte
     </div>}
     {stageNotice !== null && <div className="kb-status-stack"><div className="kb-error" role="alert"><strong>The recorded transition is no longer valid</strong><span>{stageNotice}</span></div></div>}
     {script?.hold && <div className="kb-status-stack"><ScriptedHoldNotice task={task} hold={script.hold} run={run} /></div>}
+    {decisionWindow !== undefined && <DecisionPanel task={task} column={state.workflow.columns.find(column => column.id === task.columnId)} columns={state.workflow.columns} controller={decisionWindow} {...(state.localStageIdentities === undefined ? {} : { stageIdentities: state.localStageIdentities })} />}
     <ScriptPanel task={task} column={state.workflow.columns.find(column => column.id === task.columnId)} projectName={projectName} api={api} run={run} {...(onEditStage === undefined ? {} : { onEditStage: () => onEditStage(task.columnId, 'execution') })} />
     {autoRun && !script && <DrawerAutoRunNotice task={task} controller={autoRun} columns={state.workflow.columns} sessionTitles={sessionTitles} />}
     <section className={'kb-drawer-panel ' + (section === 'Conversations' ? 'kb-chat-panel' : '')} role="tabpanel" id={id + '-panel-' + section} aria-labelledby={id + '-tab-' + section}>

@@ -43,9 +43,14 @@ export function projectWorkflowSummary(board: Board, hub: Pick<HubState, 'id' | 
   records.push({ kind: 'projectScope', mode: board.allowedProjectKeys === undefined ? 'all' : 'restricted', projectCount: board.allowedProjectKeys?.length ?? null });
   for (const key of board.allowedProjectKeys ?? []) records.push({ kind: 'project', key });
   for (const column of workflow.columns) {
-    const routePolicy = column.scripted ? 'scripted' : column.allowedTransitions === undefined ? 'unrestricted' : column.allowedTransitions.length === 0 ? 'empty' : 'configured';
-    records.push({ kind: 'stage', id: column.id, name: column.name, ...(column.description?.trim() ? { description: column.description } : {}), type: column.scripted ? 'scripted' : column.onEnterPrompt?.trim() ? 'agent-instruction' : 'no-instruction', routePolicy });
-    if (column.scripted) {
+    const routePolicy = column.decision ? 'decision' : column.scripted ? 'scripted' : column.allowedTransitions === undefined ? 'unrestricted' : column.allowedTransitions.length === 0 ? 'empty' : 'configured';
+    records.push({ kind: 'stage', id: column.id, name: column.name, ...(column.description?.trim() ? { description: column.description } : {}), type: column.decision ? 'decision' : column.scripted ? 'scripted' : column.onEnterPrompt?.trim() ? 'agent-instruction' : 'no-instruction', routePolicy });
+    if (column.decision) {
+      // The gate's destinations are authored options, not candidate routes; the
+      // question is documentary context and the projection never answers it.
+      records.push({ kind: 'decision', stage: column.id, question: column.decision.question });
+      for (const option of column.decision.options) records.push({ kind: 'decisionOption', stage: column.id, id: option.id, title: option.title, to: option.to });
+    } else if (column.scripted) {
       for (const [exit, to] of Object.entries(column.scripted.exits)) records.push({ kind: 'scriptExit', from: column.id, exit, to });
     } else {
       for (const route of column.allowedTransitions ?? []) records.push({ kind: 'route', from: column.id, to: route.to, ...(route.when?.trim() ? { condition: route.when } : {}) });

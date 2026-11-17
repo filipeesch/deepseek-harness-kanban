@@ -4,12 +4,14 @@ import type { GoogleDriveAuthCoordinator } from './sharing/auth-coordinator.js';
 
 const DEFAULT_AUTH_TTL_MS = 5_000;
 
-/** Execution authority and source references are host-private, never ordinary state. */
+/**
+ * Execution authority and source references are host-private, never ordinary state.
+ * A board's local stage identities are exposed so a decision gate can bind the
+ * destination a person saw; they carry no execution authority and cannot be written
+ * through any command.
+ */
 export function publicKanbanState(state: KanbanState): KanbanState {
-  for (const hub of state.hubs) {
-    for (const task of hub.tasks) delete task.scripted;
-    for (const board of hub.boards) delete board.localStageIdentities;
-  }
+  for (const hub of state.hubs) for (const task of hub.tasks) delete task.scripted;
   return state;
 }
 

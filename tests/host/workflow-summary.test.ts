@@ -39,6 +39,24 @@ describe('workflow summary projection', () => {
     expect(projectWorkflowSummary(board, hub, undefined, { ...task, autoMode: { enabled: true, hold: { reason: 'waiting', at: '' } } }, false)[0]).toMatchObject({ autoMode: { enabled: true, paused: true, held: false } });
     expect(projectWorkflowSummary(board, hub, undefined, { ...task, autoMode: { enabled: true } }, true)[0]).toMatchObject({ autoMode: { enabled: true, paused: false, held: true } });
   });
+
+  it('projects a decision gate as its type, question, and option destinations', () => {
+    const gated: Board = { ...board, workflow: { ...board.workflow, columns: [
+      { id: 'gate', name: 'Gate', decision: { question: 'Proceed?', context: 'SECRET CONTEXT', options: [{ id: 'ship', title: 'Ship it', description: 'SECRET DESC', to: 'done' }, { id: 'fix', title: 'Fix it', to: 'review' }] } },
+      { id: 'review', name: 'Review' },
+      { id: 'done', name: 'Done' },
+    ] } };
+    const records = projectWorkflowSummary(gated, hub, undefined);
+    expect(records).toContainEqual({ kind: 'stage', id: 'gate', name: 'Gate', type: 'decision', routePolicy: 'decision' });
+    expect(records).toContainEqual({ kind: 'decision', stage: 'gate', question: 'Proceed?' });
+    expect(records).toContainEqual({ kind: 'decisionOption', stage: 'gate', id: 'ship', title: 'Ship it', to: 'done' });
+    expect(records).toContainEqual({ kind: 'decisionOption', stage: 'gate', id: 'fix', title: 'Fix it', to: 'review' });
+    const text = JSON.stringify(records);
+    expect(text).not.toContain('SECRET CONTEXT');
+    expect(text).not.toContain('SECRET DESC');
+    expect(records.some(record => record.kind === 'route')).toBe(false);
+  });
+
   it('derives held from all conversations and reports read failures as unavailable', async () => {
     const sessions = { ...task, sessionIds: ['active', 'closed'], closedSessionIds: ['closed'] };
     const facts = vi.fn(async (id: string) => ({ running: false, background: [], settledTurn: null, pending: { kinds: id === 'closed' ? ['approval' as const] : [], queuedPrompts: 0 } }));

@@ -17,7 +17,7 @@ if (args.includes('--only') && only === undefined) {
   process.exit(2);
 }
 if (!checkoutArg) {
-  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only background-delete|board|conversation|deletion|hubs|schedules|override|native-drawer|sidebar|auto-run|auto-mode|declared|create-start|prepare|board-model|project|messages|history|workflow-architect|scripted|transit] [--skip-build]');
+  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only background-delete|board|conversation|decision|deletion|hubs|schedules|override|native-drawer|sidebar|auto-run|auto-mode|declared|create-start|prepare|board-model|project|messages|history|workflow-architect|scripted|transit] [--skip-build]');
   process.exit(2);
 }
 const checkout = resolve(checkoutArg);
@@ -49,6 +49,7 @@ function verify() {
   if (!existsSync(join(root, 'tests/e2e-dsh/declared-transition.replay.override.json'))) fail('missing declared-transition replay override');
   if (!existsSync(join(root, 'tests/e2e-dsh/create-start.replay.override.json'))) fail('missing create-start replay override');
   if (!existsSync(join(root, 'tests/e2e-dsh/native-drawer.replay.override.json'))) fail('missing native-drawer replay override');
+  if (!existsSync(join(root, 'tests/e2e-dsh/decision.replay.override.json'))) fail('missing decision replay override');
   const pinned = pluginDshVersion();
   if (pinned !== undefined && version !== 'unknown' && !semver.satisfies(version, pinned, { includePrerelease: true })) {
     console.warn('e2e-dsh: the plugin expects DSH ' + pinned + ' but the checkout reports ' + version + '; continuing with the checkout as requested.');
@@ -84,6 +85,7 @@ const scenarioTemplates = new Map([
   ['workflow-architect', ['kanban-workflow-architect.e2e.template.ts', 'kanban-workflow-architect.e2e.ts']],
   ['scripted', ['kanban-scripted.e2e.template.ts', 'kanban-scripted.e2e.ts']],
   ['transit', ['kanban-transit.e2e.template.ts', 'kanban-transit.e2e.ts']],
+  ['decision', ['kanban-decision.e2e.template.ts', 'kanban-decision.e2e.ts']],
 ]);
 if (only !== undefined && !scenarioTemplates.has(only)) fail('unknown --only value: ' + only);
 // A group is one [template, target] pair or a list of them, so one selector can
@@ -175,7 +177,7 @@ try {
       KANBAN_ORDINARY_CHAT_FIXTURE: join(root, 'tests/e2e-dsh/ordinary-chat.jsonl'),
       KANBAN_AUTORUN_OVERRIDE: join(root, 'tests/e2e-dsh/auto-run.replay.override.json'), KANBAN_AUTOMODE_OVERRIDE: join(root, 'tests/e2e-dsh/auto-mode.replay.override.json'),
       KANBAN_DECLARED_OVERRIDE: join(root, 'tests/e2e-dsh/declared-transition.replay.override.json'), KANBAN_CREATESTART_OVERRIDE: join(root, 'tests/e2e-dsh/create-start.replay.override.json'),
-      KANBAN_NATIVE_OVERRIDE: join(root, 'tests/e2e-dsh/native-drawer.replay.override.json') },
+      KANBAN_NATIVE_OVERRIDE: join(root, 'tests/e2e-dsh/native-drawer.replay.override.json'), KANBAN_DECISION_OVERRIDE: join(root, 'tests/e2e-dsh/decision.replay.override.json') },
   });
 } finally {
   // stage is the verified, test-owned mkdtemp result, never a computed checkout path.

@@ -236,6 +236,20 @@ describe('per-board publishing service', () => {
     await f.close();
   });
 
+  it('refuses decision team data on an unprotected provider', async () => {
+    const f = await fixture();
+    await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
+    const boardId = boardOf(f);
+    const key = keyOf(f, boardId)!;
+    const snapshot = (await f.layout.readLog(key))!;
+    await f.layout.appendChanges(key, [{ kind: 'stage.field-changed', key: 's2', field: 'decision', value: { question: 'Proceed?', options: [{ id: 'ship', title: 'Ship', to: 'backlog' }] } }], { expectedHead: snapshot.head, message: 'm', at: NOW });
+    await f.service.check('hub', true);
+    expect(stateOf(f, boardId)).toBe('update-required');
+    await expect(f.service.updateBoard('hub', boardId)).rejects.toMatchObject({ code: 'SHARING_COMPATIBILITY_UNAVAILABLE' });
+    expect(f.hubs.requireHub('hub').boards[0]!.workflowYaml).not.toContain('Proceed?');
+    await f.close();
+  });
+
   it('preserves local preset provenance in real team-update and conflict-resolution revisions', async () => {
     for (const mode of [undefined, 'operator', 'host'] as const) {
       for (const resolve of [false, true]) {

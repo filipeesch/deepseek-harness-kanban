@@ -10,6 +10,7 @@ import { writeRootField, writeSequenceItemField } from '../yaml-map-fields.js';
 import { authoredScalar as scalar, textField } from '../yaml-map-fields.js';
 import { seedStageIdentities } from '../stage-identity.js';
 import { appendSequenceItem, pruneEmptySequence, removeSequenceItem, replaceSequenceItem } from './authored-text.js';
+import { renderDecisionField } from '../decision-write.js';
 import type { BoardChange, StageDefinition } from './event.js';
 
 /**
@@ -55,6 +56,7 @@ function stageLines(stage: StageDefinition): string[] {
     }
   }
   if (stage.scripted !== undefined) lines.push('scripted: ' + JSON.stringify(stage.scripted));
+  if (stage.decision !== undefined) lines.push(...renderDecisionField('decision', stage.decision, '', false).split(String.fromCharCode(10)));
   if (stage.position !== undefined) lines.push('position: {x: ' + stage.position.x + ', y: ' + stage.position.y + '}');
   if (stage.size !== undefined) lines.push('size: {width: ' + stage.size.width + ', height: ' + stage.size.height + '}');
   return lines;
@@ -74,6 +76,7 @@ function stageFlow(stage: StageDefinition): string {
     fields.push('allowed_transitions: [' + rules.join(', ') + ']');
   }
   if (stage.scripted !== undefined) fields.push('scripted: ' + JSON.stringify(stage.scripted));
+  if (stage.decision !== undefined) fields.push(renderDecisionField('decision', stage.decision, '', true));
   if (stage.position !== undefined) fields.push('position: {x: ' + stage.position.x + ', y: ' + stage.position.y + '}');
   if (stage.size !== undefined) fields.push('size: {width: ' + stage.size.width + ', height: ' + stage.size.height + '}');
   return '{' + fields.join(', ') + '}';
@@ -190,12 +193,13 @@ export function materialize(text: string, change: BoardChange): string {
         });
       }
       if (change.field === 'description') return writeSequenceItemField({ text, sequenceKey: 'columns', idKey: 'id', id: stageId, fieldKeys: ['description'], render: (_existing, _indent, field) => change.value === null ? null : field + ': ' + scalar(change.value), invalid });
-      if (change.field === 'scripted') return updateStage({ text, stageId, patch: { scripted: change.value, ...(change.value === null ? {} : { onEnterPrompt: null, allowedTransitions: null }) } }).text;
+      if (change.field === 'scripted') return updateStage({ text, stageId, patch: { scripted: change.value, ...(change.value === null ? {} : { onEnterPrompt: null, allowedTransitions: null, decision: null }) } }).text;
+      if (change.field === 'decision') return updateStage({ text, stageId, patch: { decision: change.value } }).text;
       const patch = change.field === 'name'
         ? { name: change.value }
         : change.field === 'onEnterPrompt'
-          ? { onEnterPrompt: change.value, ...(change.value?.trim() ? { scripted: null } : {}) }
-          : { allowedTransitions: change.value, ...(change.value !== null ? { scripted: null } : {}) };
+          ? { onEnterPrompt: change.value, ...(change.value?.trim() ? { scripted: null, decision: null } : {}) }
+          : { allowedTransitions: change.value, ...(change.value !== null ? { scripted: null, decision: null } : {}) };
       return updateStage({ text, stageId, patch }).text;
     }
     case 'stage.id-changed': {

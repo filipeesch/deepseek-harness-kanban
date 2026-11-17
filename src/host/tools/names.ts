@@ -47,6 +47,7 @@ export const PRODUCT_TOOL_NAMES: readonly string[] = [
   'set_stage_prompt',
   'set_stage_routes',
   'set_stage_script',
+  'set_stage_decision',
   'test_script',
   'update_board',
   'update_note',

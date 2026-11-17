@@ -1,5 +1,6 @@
 import { parseDocument } from 'yaml';
 import { parseScriptedDefinition } from './scripted-definition.js';
+import { parseDecisionDefinition } from './decision-definition.js';
 import type { Column, ColumnGroup, ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset, ModelSelection, StagePosition, StageSize, Workflow, WorkflowView } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
 import { createYamlFields, invalidWorkflow } from './yaml-fields.js';
@@ -157,7 +158,7 @@ export function parseWorkflow(yaml: string): Workflow {
   if (!Array.isArray(input.columns) || input.columns.length === 0) invalidWorkflow('Workflow requires at least one column.');
   const columns: Column[] = input.columns.map((item, index) => {
     const value = record(item, 'Column ' + index);
-    keys(value, ['id', 'key', 'label', 'name', 'description', 'allowed_transitions', 'on_enter_prompt', 'scripted', 'deterministic', 'position', 'size'], 'column', COLUMN_NOTE);
+    keys(value, ['id', 'key', 'label', 'name', 'description', 'allowed_transitions', 'on_enter_prompt', 'scripted', 'deterministic', 'decision', 'position', 'size'], 'column', COLUMN_NOTE);
     const column: Column = { id: id(value.id, 'Column ID'), name: label(value, 'Column') };
     const description = optionalDescription(value.description, 'Column description');
     if (description !== undefined) column.description = description;
@@ -175,6 +176,11 @@ export function parseWorkflow(yaml: string): Workflow {
       column.scripted = parseScriptedDefinition(authored);
       if (column.onEnterPrompt !== undefined || column.allowedTransitions !== undefined) invalidWorkflow('A scripted stage cannot also configure an entry prompt or allowed_transitions.');
     }
+    if (value.decision !== undefined) {
+      if (column.scripted !== undefined) invalidWorkflow('Column ' + column.id + ' authors both a decision and a scripted configuration. Keep one mode.');
+      if (column.onEnterPrompt !== undefined || column.allowedTransitions !== undefined) invalidWorkflow('A decision stage cannot also configure an entry prompt or allowed_transitions.');
+      column.decision = parseDecisionDefinition(value.decision);
+    }
     if (value.position !== undefined) column.position = stagePosition(value.position, 'Column ' + column.id + ' position');
     if (value.size !== undefined) column.size = stageSize(value.size, 'Column ' + column.id + ' size');
     return column;
@@ -190,6 +196,10 @@ export function parseWorkflow(yaml: string): Workflow {
     }
     for (const entry of column.allowedTransitions ?? []) {
       if (!columnIds.has(entry.to)) invalidWorkflow('Column ' + column.id + ' references unknown transition target ' + entry.to + '.');
+    }
+    for (const option of column.decision?.options ?? []) {
+      if (!columnIds.has(option.to)) invalidWorkflow('Column ' + column.id + ' decision option ' + option.id + ' references unknown stage ' + option.to + '.');
+      if (option.to === column.id) invalidWorkflow('A decision option cannot target its own stage.');
     }
   }
   const initialColumnId = input.initial_column === undefined ? columns[0]!.id : id(input.initial_column, 'Initial column');

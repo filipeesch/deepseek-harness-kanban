@@ -116,3 +116,38 @@ describe('transition access policy', () => {
     expect(transitionAccess(parsed, 'done', 'todo')).toBe('allowed');
   });
 });
+
+describe('decision stage authored destinations', () => {
+  const gated: Workflow = {
+    name: 'Gated', initialColumnId: 'work',
+    columns: [
+      { id: 'work', name: 'Work' },
+      { id: 'gate', name: 'Gate', decision: { question: 'Proceed?', options: [
+        { id: 'fix', title: 'Fix', to: 'work' },
+        { id: 'ship', title: 'Ship', to: 'done' },
+        { id: 'ship-again', title: 'Ship again', to: 'done' },
+      ] } },
+      { id: 'done', name: 'Done' },
+    ],
+    groups: [],
+  };
+
+  it('publishes the option destinations as the stage targets, one per destination', () => {
+    expect(authoredTransitions(gated, 'gate')?.targets).toEqual([{ to: 'work' }, { to: 'done' }]);
+    expect(transitionTargets(gated, 'gate').map(target => target.column.id)).toEqual(['work', 'done']);
+  });
+
+  it('offers no default destination and no card advance destination', () => {
+    expect(defaultDestination(gated, 'gate')).toBeUndefined();
+    expect(advanceDestination(gated, 'gate')).toBeUndefined();
+    expect(transitionTargets(gated, 'gate')).toHaveLength(2);
+  });
+
+  it('requires the restricted confirmation for every manual move out, including an option destination', () => {
+    expect(transitionAccess(gated, 'gate', 'work')).toBe('restricted');
+    expect(transitionAccess(gated, 'gate', 'done')).toBe('restricted');
+    expect(transitionAccess(gated, 'gate', 'gate')).toBe('reorder');
+    expect(canTransition(gated, 'gate', 'done')).toBe(false);
+    expect(nextStage(gated, 'gate')?.access).toBe('restricted');
+  });
+});

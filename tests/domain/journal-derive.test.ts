@@ -244,3 +244,38 @@ describe('board identity derivation', () => {
     expect(changes.map(change => change.kind)).toEqual(['stage.field-changed', 'board.renamed', 'board.scope-changed', 'board.rank-changed']);
   });
 });
+
+describe('decision change derivation', () => {
+  const GATED = text([
+    'name: Delivery',
+    'initial_column: backlog',
+    'columns:',
+    '  - id: backlog',
+    '    key: s1',
+    '    label: Backlog',
+    '  - id: plan',
+    '    key: s2',
+    '    label: Plan',
+    '    decision:',
+    '      question: Proceed?',
+    '      options:',
+    '        - id: approve',
+    '          title: Approve',
+    '          to: backlog',
+    '',
+  ]);
+
+  it('derives a decision field change through its authored destinations', () => {
+    const changed = GATED.replace('question: Proceed?', 'question: Continue?');
+    expect(deriveChanges({ text: GATED }, { text: changed })).toEqual([
+      { kind: 'stage.field-changed', key: 's2', field: 'decision', value: { question: 'Continue?', options: [{ id: 'approve', title: 'Approve', to: 'backlog' }] } },
+    ]);
+  });
+
+  it('treats a destination rename as one identity change, not a decision change', () => {
+    const renamed = GATED.replace('  - id: backlog\n    key: s1\n    label: Backlog', '  - id: intake\n    key: s1\n    label: Backlog').replace('          to: backlog\n', '          to: intake\n').replace('initial_column: backlog', 'initial_column: intake');
+    const changes = deriveChanges({ text: GATED }, { text: renamed });
+    expect(changes).toContainEqual({ kind: 'stage.id-changed', key: 's1', from: 'backlog', id: 'intake' });
+    expect(changes.some(change => change.kind === 'stage.field-changed' && change.field === 'decision')).toBe(false);
+  });
+});

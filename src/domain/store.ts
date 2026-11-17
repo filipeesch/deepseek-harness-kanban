@@ -1,4 +1,5 @@
-import { captureScriptedTargets, ensureLocalStageIdentity, establishStageEntry, reconcileLocalStageIdentities } from './scripted-state.js';
+import { establishStageEntry } from './scripted-state.js';
+import { captureStageTargets, ensureLocalStageIdentity, reconcileLocalStageIdentities } from './stage-identity.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import type { StateStorage } from '../shared/ports.js';
@@ -255,7 +256,7 @@ export class BoardStore {
         columnId: state.workflow.initialColumnId, position, sessionIds: [], closedSessionIds: [], effectiveCwd: requireProjectPath(project),
         worktree: null, operation: null, ...(value.autoMode === true ? { autoMode: { enabled: true as const } } : {}), ...(initialInstruction !== undefined ? { instructionPending: { columnId: initialColumn!.id, enteredAt: nextEnteredAt() } } : {}), createdAt: timestamp, updatedAt: timestamp,
       };
-      if (initialColumn !== undefined) establishStageEntry(task, initialColumn, ensureLocalStageIdentity(state, initialColumn.id, randomUUID), timestamp, randomUUID, captureScriptedTargets(state, initialColumn, randomUUID));
+      if (initialColumn !== undefined) establishStageEntry(task, initialColumn, ensureLocalStageIdentity(state, initialColumn.id, randomUUID), timestamp, randomUUID, captureStageTargets(state, initialColumn, randomUUID));
       state.tasks.push(task);
       return task;
     });

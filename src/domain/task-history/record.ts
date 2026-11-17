@@ -50,9 +50,9 @@ export function recordCreation(target: RecordTarget, columnId: string, at: strin
  * The origin says how the move happened; an absent one stores no origin at all,
  * which is what a record written before origins existed carries.
  */
-export function recordStageEntry(target: RecordTarget, fromColumnId: string, columnId: string, at: string, origin?: StageEntryOrigin): void {
+export function recordStageEntry(target: RecordTarget, fromColumnId: string, columnId: string, at: string, origin?: StageEntryOrigin, decision?: { optionId: string; note?: string }): void {
   if (fromColumnId === columnId) return;
-  append(target, { kind: 'stage', at, fromColumnId, columnId, ...(origin === undefined ? {} : { origin }) });
+  append(target, { kind: 'stage', at, fromColumnId, columnId, ...(origin === undefined ? {} : { origin }), ...(decision === undefined ? {} : { decision: { ...decision } }) });
 }
 
 /** The task recorded the destination of its next advance. */

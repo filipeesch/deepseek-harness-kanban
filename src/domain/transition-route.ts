@@ -1,7 +1,7 @@
 import { ownsScriptedEntry } from './scripted-state.js';
 import type { AdvanceOrigin, Column, Task, Workflow } from '../shared/types.js';
 import { resolveAutoAdvance, type AutoAdvancePlan } from './auto-advance.js';
-import { defaultDestination, nextStage } from './transitions.js';
+import { defaultDestination, nextStage, ownsStageRouting } from './transitions.js';
 
 /** The task fields the routing rules read. */
 export type RoutedTask = Pick<Task, 'columnId' | 'recordedTransition'> & Partial<Pick<Task, 'stageEntry' | 'scripted' | 'scriptedHandoff'>>;
@@ -52,7 +52,7 @@ export function resolveExceptionalTransition(workflow: Workflow, task: RoutedTas
       || exception.turn !== expected.turn || exception.entryId !== expected.entryId
       || !sameEntry
       || task.columnId !== expected.fromColumnId || recorded.fromColumnId !== expected.fromColumnId
-      || recorded.columnId !== expected.columnId || !recorded.reason || routesThroughScriptedEntry(workflow, task)) return undefined;
+      || recorded.columnId !== expected.columnId || !recorded.reason || routesThroughDeterministicStage(workflow, task)) return undefined;
   const source = workflow.columns.find(column => column.id === expected.fromColumnId);
   if (!source || expected.columnId === expected.fromColumnId) return undefined;
   return workflow.columns.find(column => column.id === expected.columnId);
@@ -68,14 +68,18 @@ export type ArmedTask = RoutedTask & Pick<Task, 'autoMode'>;
  * entry, which routes through its captured exit instead.
  */
 export function advanceArmedFor(origin: AdvanceOrigin, workflow: Workflow, task: ArmedTask): boolean {
-  if (routesThroughScriptedEntry(workflow, task)) return false;
+  if (routesThroughDeterministicStage(workflow, task)) return false;
   if (origin === 'auto') return task.autoMode?.enabled === true;
   return declaredTransitionReason(workflow, task) !== undefined;
 }
 
-/** Whether a scripted entry, rather than a turn-end advance, owns the task's routing. */
-export function routesThroughScriptedEntry(workflow: Workflow, task: Pick<Task, 'columnId' | 'stageEntry' | 'scripted'>): boolean {
-  return ownsScriptedEntry(task) || workflow.columns.find(column => column.id === task.columnId)?.scripted !== undefined;
+/**
+ * Whether the task's routing belongs to a deterministic stage rather than to a
+ * turn-end advance: an entry a script owns, or a stage that authors a script or a
+ * decision gate. Neither is crossed by an automatic advance or a declaration.
+ */
+export function routesThroughDeterministicStage(workflow: Workflow, task: Pick<Task, 'columnId' | 'stageEntry' | 'scripted'>): boolean {
+  return ownsScriptedEntry(task) || ownsStageRouting(workflow.columns.find(column => column.id === task.columnId));
 }
 
 /**
@@ -139,6 +143,7 @@ export type NextStageRoute =
   | { readonly kind: 'advance'; readonly column: Column; readonly source: 'recorded' | 'default' };
 
 export function resolveNextStageRoute(workflow: Workflow, task: RoutedTask): NextStageRoute {
+  if (routesThroughDeterministicStage(workflow, task)) return { kind: 'none' };
   const recorded = recordedTransition(workflow, task);
   if (recorded.kind === 'stale') return { kind: 'stale', message: staleTransitionMessage(workflow, task, recorded.reason) };
   if (recorded.kind === 'resolved') return { kind: 'advance', column: recorded.column, source: 'recorded' };
@@ -147,7 +152,7 @@ export function resolveNextStageRoute(workflow: Workflow, task: RoutedTask): Nex
 }
 
 export function resolveAdvanceRoute(workflow: Workflow, task: RoutedTask): AdvanceRoute {
-  if (ownsScriptedEntry(task)) return { kind: 'none' };
+  if (ownsScriptedEntry(task) || workflow.columns.find(column => column.id === task.columnId)?.decision !== undefined) return { kind: 'none' };
   const destination = routeDestination(workflow, task);
   if (destination.kind === 'none') return { kind: 'none' };
   if (destination.kind === 'stale') return { kind: 'stale', message: destination.message };

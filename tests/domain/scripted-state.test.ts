@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createTask, placeTask, saveBoardWorkflow, updateBoardStage } from '../../src/domain/hub-operations.js';
 import { HubStateSchema } from '../../src/domain/hub-schema.js';
-import { acceptsScriptedResult, scriptedCurrent, scriptedHandoffSchema, scriptedResultSchema, ensureLocalStageIdentity, ownsScriptedEntry, reconcileLocalStageIdentities, resolveScriptedTarget } from '../../src/domain/scripted-state.js';
+import { acceptsScriptedResult, scriptedCurrent, scriptedHandoffSchema, scriptedResultSchema, ownsScriptedEntry } from '../../src/domain/scripted-state.js';
+import { ensureLocalStageIdentity, reconcileLocalStageIdentities, resolveStageTarget } from '../../src/domain/stage-identity.js';
 import { taskHistoryEntrySchema } from '../../src/domain/task-history/entry.js';
 import { advanceArmed, resolveAdvanceRoute } from '../../src/domain/transition-route.js';
 import { resolveAdvanceDecision } from '../../src/domain/auto-advance.js';
@@ -122,7 +123,7 @@ describe('local stage association and captured targets', () => {
     expect(board.localStageIdentities?.ready).toBe(identity);
     const next = parseWorkflow(board.workflowYaml.replaceAll('ready', 'shipped'));
     reconcileLocalStageIdentities(board, next); board.workflow = next;
-    expect(resolveScriptedTarget(board, { columnId: 'done', stageIdentity: identity })?.id).toBe('shipped');
+    expect(resolveStageTarget(board, { columnId: 'done', stageIdentity: identity })?.id).toBe('shipped');
   });
   it('freezes target identities with capture-pending intent, before any source I/O', () => {
     const { hub, deps, task, board } = fixture(); const targets = structuredClone(task.scripted!.targets!);
@@ -130,7 +131,7 @@ describe('local stage association and captured targets', () => {
     task.scripted!.phase = 'stopped';
     updateBoardStage(hub, 'board', { stageId: 'done', patch: { id: 'renamed' } }, deps);
     expect(task.scripted!.targets).toEqual(targets);
-    expect(resolveScriptedTarget(board, targets.ok!)?.id).toBe('renamed');
+    expect(resolveStageTarget(board, targets.ok!)?.id).toBe('renamed');
   });
   it('does not inherit scope or route authority after removal and identifier reuse', () => {
     const { hub, deps, task, board } = fixture(); task.scripted!.phase = 'stopped';
@@ -138,7 +139,7 @@ describe('local stage association and captured targets', () => {
     const noTarget = 'columns: [{id: wait, label: Wait}]\n';
     saveBoardWorkflow(hub, 'board', noTarget, deps); saveBoardWorkflow(hub, 'board', YAML, deps);
     expect(ensureLocalStageIdentity(board, 'done', deps.id)).not.toBe(identity);
-    expect(resolveScriptedTarget(board, { columnId: 'done', stageIdentity: identity })).toBeUndefined();
+    expect(resolveStageTarget(board, { columnId: 'done', stageIdentity: identity })).toBeUndefined();
   });
   it('migrates entry and handoff references without rewriting approved program bytes', () => {
     const { task } = fixture();

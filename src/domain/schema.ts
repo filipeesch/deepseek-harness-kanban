@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { localStageIdentitiesSchema } from './scripted-state.js';
+import { localStageIdentitiesSchema } from './stage-identity.js';
 import { DATA_VERSION, type BoardState } from '../shared/types.js';
 import { absolutePath, baseTask, canonicalWorkflow, createTaskInvariantChecker, nonempty, note, project, revision, restoreLegacyStageDescriptions, workflow } from './schema-parts.js';
 import { DEFAULT_WORKFLOW_YAML, parseWorkflow } from './workflow.js';

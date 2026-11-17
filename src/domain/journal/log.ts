@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { BoardChange, JournalEvent } from './event.js';
 import { decodeEvent, encodeEvent, EVENT_FORMAT_VERSION } from './event.js';
 import { applyEvents } from './conflict.js';
-import { hasAuthoredDescriptions } from './descriptions.js';
+import { hasAuthoredDecision, hasAuthoredDescriptions } from './descriptions.js';
 
 /**
  * One board's published log: an append-only sequence of events, one JSON object per
@@ -45,15 +45,30 @@ export function headToken(log: BoardLog): string {
 /** Append events to a log, stamped with their positions. */
 export function appendEvents(log: BoardLog, changes: readonly BoardChange[], at: string): BoardLog {
   let seq = nextSequence(log);
-  return [...log, ...changes.map(change => ({ ...change, seq: seq++, at, v: requiresDescriptionFormat(change) ? EVENT_FORMAT_VERSION : 3 } as JournalEvent))];
+  return [...log, ...changes.map(change => ({ ...change, seq: seq++, at, v: eventVersion(change) } as JournalEvent))];
 }
 
-/** Version legacy-compatible events separately from events that carry descriptions. */
-function requiresDescriptionFormat(change: BoardChange): boolean {
-  if (change.kind === 'workflow.field-changed' || change.kind === 'stage.field-changed') return change.field === 'description';
-  if (change.kind === 'stage.created') return change.stage.description !== undefined;
-  if (change.kind !== 'workflow.replaced') return false;
-  return hasAuthoredDescriptions(change.text);
+/**
+ * Version each event by the newest field it carries, so a peer that understands
+ * less refuses it explicitly instead of dropping authored behavior. A stage
+ * created with a decision block needs the decision format; a replacement carries
+ * it only when its text authors one.
+ */
+function eventVersion(change: BoardChange): number {
+  if (change.kind === 'workflow.field-changed') return change.field === 'description' ? 4 : 3;
+  if (change.kind === 'stage.field-changed') {
+    if (change.field === 'decision') return EVENT_FORMAT_VERSION;
+    if (change.field === 'description') return 4;
+    return 3;
+  }
+  if (change.kind === 'stage.created') {
+    if (change.stage.decision !== undefined) return EVENT_FORMAT_VERSION;
+    if (change.stage.description !== undefined) return 4;
+    return 3;
+  }
+  if (change.kind !== 'workflow.replaced') return 3;
+  if (hasAuthoredDecision(change.text)) return EVENT_FORMAT_VERSION;
+  return hasAuthoredDescriptions(change.text) ? 4 : 3;
 }
 
 /** The events a member at the given cursor has not seen yet. */

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { NO_PENDING_USER_WORK, type Attention, type Column } from '../../src/shared/types.js';
 import { draftChanged, draftProblems, duplicateNameWarning, stageDraft, stagePatch, stageRenameBlock, transitionChoices } from '../../src/client/stage/stage-editor-draft.js';
+import { stageEditorTabs, stageTabOfField } from '../../src/client/stage/stage-tabs.js';
 
 const columns: Column[] = [
   { id: 'plan', name: 'Plan', onEnterPrompt: 'Read the brief.' },
@@ -92,5 +93,49 @@ describe('stage editor draft', () => {
     expect(busyAt({ task: { ...idle, running: true } })).toContain('running conversation');
     expect(busyAt({ task: { ...idle, background: [{ kind: 'job', label: 'Run tests' }] } })).not.toBeNull();
     expect(stageRenameBlock([{ id: 'task', columnId: 'plan', autoMode: { enabled: true } } as never], {})).toContain('auto mode');
+  });
+});
+
+describe('decision stage draft', () => {
+  const gate: Column = { id: 'gate', name: 'Gate', decision: { question: 'Proceed?', context: 'Read this.', options: [{ id: 'ship', title: 'Ship', to: 'done' }] } };
+
+  it('opens on the stored decision and sends nothing unchanged', () => {
+    const draft = stageDraft(gate);
+    expect(draft.execution).toBe('decision');
+    expect(draft.decision).toMatchObject({ question: 'Proceed?', context: 'Read this.', options: [{ id: 'ship', title: 'Ship', description: '', to: 'done' }] });
+    expect(draft.decision?.options[0]?.rowKey).toEqual(expect.any(String));
+    expect(draftChanged(draft, gate)).toBe(false);
+    expect(stagePatch(draft, gate)).toEqual({});
+  });
+
+  it('reports a missing question, an unsafe id, and an unknown destination', () => {
+    const draft = stageDraft(gate);
+    const problems = draftProblems({ ...draft, decision: { question: '  ', context: '', options: [{ id: 'not safe', title: '', description: '', to: 'ghost' }] } }, new Set(['done']));
+    expect(problems.every(problem => problem.field === 'decision')).toBe(true);
+    expect(problems.map(problem => problem.message)).toEqual(expect.arrayContaining([
+      'A decision question is required.',
+      expect.stringContaining('id must start with a letter'),
+      expect.stringContaining('requires a title'),
+      expect.stringContaining('destination is not another stage'),
+    ]));
+  });
+
+  it('reports a decision with no option', () => {
+    expect(draftProblems({ ...stageDraft(gate), decision: { question: 'Proceed?', context: '', options: [] } }, new Set(['done']))).toContainEqual({ field: 'decision', message: 'A decision requires at least one option.' });
+  });
+
+  it('clears the other modes when switching to a decision step', () => {
+    const column: Column = { id: 'plan', name: 'Plan', onEnterPrompt: 'Work.', allowedTransitions: [{ to: 'done' }] };
+    const draft = { ...stageDraft(column), execution: 'decision' as const, decision: { question: 'Proceed?', context: '', options: [{ id: 'go', title: 'Go', description: '', to: 'done' }] } };
+    expect(stagePatch(draft, column)).toMatchObject({ decision: { question: 'Proceed?', options: [{ id: 'go', title: 'Go', to: 'done' }] }, onEnterPrompt: null, allowedTransitions: null });
+  });
+
+  it('clears a stored decision when switching to another mode', () => {
+    expect(stagePatch({ ...stageDraft(gate), execution: 'agent' as const }, gate)).toMatchObject({ decision: null });
+  });
+
+  it('presents only the Stage and Decision tabs', () => {
+    expect(stageEditorTabs('decision')).toEqual(['stage', 'decision']);
+    expect(stageTabOfField('decision')).toBe('decision');
   });
 });

@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
-import ReactMarkdown from 'react-markdown';
 import type { QuestionDraftContent, QuestionDraftSlide, QuestionPage, QuestionRound, StoredQuestionDraft } from '../shared/types.js';
 import { OTHER_CHOICE, answerFor, emptyAnswer, formatAnswers, isAnswerValid } from './validation.js';
+import { ChoiceOptions, Markdown } from './choice-slide.js';
 import { canSubmit, submitState } from './submission.js';
 import { activeSlide, draftAnswer, hasContent, restoreDraft } from './draft.js';
 import { useQuestionDraft } from './use-question-draft.js';
@@ -42,16 +42,10 @@ const WEIGHT_LABELS: Record<NonNullable<QuestionPage['weight']>, string> = {
 function newSurface(roundId: string): Surface {
   return { roundId, collapsed: false, submission: 'idle', error: null, confirmingDismiss: false, dismissing: false, dismissError: null };
 }
-function Markdown({ text }: { text: string }) {
-  return <ReactMarkdown skipHtml disallowedElements={['img']}>{text}</ReactMarkdown>;
-}
 function sameSlide(left: ActiveSlide, right: ActiveSlide): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === 'notes') return true;
   return right.kind === 'page' && left.callId === right.callId;
-}
-function descriptionFor(page: QuestionPage, title: string): string {
-  return page.options?.find(option => option.title === title)?.description ?? '';
 }
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -222,34 +216,20 @@ export function QuestionForm({ round, hidden = false, storedDraft, onDraftChange
               ? <label className="kq-field">Your answer
                 <textarea className="kq-input" aria-label="Your answer" value={answer.text} disabled={disabled} onChange={event => changeAnswer(() => draft.setText(entry.callId, 'text', event.target.value))} />
               </label>
-              : <>
-                <fieldset className="kq-options" disabled={disabled}>
-                  <legend>{entry.page.type === 'exclusive' ? 'Choose one answer' : 'Choose one or more answers'}</legend>
-                  {(entry.page.options ?? []).map((option, optionIndex) => {
-                    const selected = answer.choices.includes(option.title);
-                    return <div key={option.title} className="kq-option" data-focused={optionFocus === option.title} data-selected={selected}
-                      onClick={() => { focusOption(option.title); if (entry.page.type === 'exclusive') choose(option.title, true); }}>
-                      <input id={prefix + '-option-' + optionIndex} type={entry.page.type === 'exclusive' ? 'radio' : 'checkbox'} name={prefix + '-choices-' + entry.callId}
-                        checked={selected} disabled={disabled} onChange={event => choose(option.title, event.target.checked)} onFocus={() => focusOption(option.title)} />
-                      <label htmlFor={prefix + '-option-' + optionIndex} className="kq-option-title">{option.title}</label>
-                      {entry.page.model_lean === option.title && <span className="kq-ai">AI suggests</span>}
-                    </div>;
-                  })}
-                  <div className="kq-option" data-focused={optionFocus === OTHER_CHOICE} data-selected={answer.choices.includes(OTHER_CHOICE)}
-                    onClick={() => { focusOption(OTHER_CHOICE); if (entry.page.type === 'exclusive') choose(OTHER_CHOICE, true); }}>
-                    <input id={prefix + '-other'} type={entry.page.type === 'exclusive' ? 'radio' : 'checkbox'} name={prefix + '-choices-' + entry.callId}
-                      checked={answer.choices.includes(OTHER_CHOICE)} disabled={disabled} onChange={event => choose(OTHER_CHOICE, event.target.checked)} onFocus={() => focusOption(OTHER_CHOICE)} />
-                    <label htmlFor={prefix + '-other'} className="kq-option-title">Other (write your own answer)</label>
-                  </div>
-                </fieldset>
-                <div className="kq-desc" data-other={otherActive}>
-                  {otherActive
-                    ? <textarea className="kq-input" data-fill="true" aria-label="Other answer" value={answer.other} disabled={disabled} onChange={event => changeAnswer(() => draft.setText(entry.callId, 'other', event.target.value))} />
-                    : optionFocus
-                      ? <div className="kq-desc-body"><Markdown text={descriptionFor(entry.page, optionFocus)} /></div>
-                      : <p className="kq-desc-empty">Select an option to see details.</p>}
-                </div>
-              </>}
+              : <ChoiceOptions
+                  prefix={prefix}
+                  callId={entry.callId}
+                  type={entry.page.type}
+                  options={(entry.page.options ?? []).map(option => ({ title: option.title, description: option.description }))}
+                  selected={answer.choices}
+                  disabled={disabled}
+                  focus={optionFocus}
+                  lean={entry.page.model_lean}
+                  other={{ text: answer.other, active: otherActive }}
+                  onFocus={focusOption}
+                  onSelect={choose}
+                  onOtherText={value => changeAnswer(() => draft.setText(entry.callId, 'other', value))}
+                />}
             <label className="kq-field">Notes for this answer
               <textarea className="kq-input" aria-label="Notes for this answer" value={answer.notes} disabled={disabled} onChange={event => changeAnswer(() => draft.setText(entry.callId, 'notes', event.target.value))} />
             </label>

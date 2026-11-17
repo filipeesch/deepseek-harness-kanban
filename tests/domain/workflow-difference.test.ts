@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diffWorkflow, isWorkflowDifferenceEmpty } from '../../src/domain/workflow-difference.js';
+import { diffWorkflow, isWorkflowDifferenceEmpty, summarizeDifference } from '../../src/domain/workflow-difference.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 
 const BASE = `name: Flow
@@ -113,5 +113,44 @@ describe('workflow difference', () => {
     const difference = diffWorkflow(null, parseWorkflow(BASE));
     expect(difference.stages.map(stage => stage.change)).toEqual(['added', 'added']);
     expect(difference.connections).toEqual([{ from: 'todo', to: 'done', change: 'set' }]);
+  });
+});
+
+describe('decision configuration differences', () => {
+  const options = (body: string) => ['columns:', '  - id: gate', '    label: Gate', '    decision:', '      question: Proceed?', '      options:', body, '  - id: done', '    label: Done', ''].join(String.fromCharCode(10));
+  const approve = ['        - id: approve', '          title: Approve', '          to: done'].join(String.fromCharCode(10));
+  const fix = ['        - id: fix', '          title: Fix', '          to: done'].join(String.fromCharCode(10));
+  const gated = (question: string) => parseWorkflow(['columns:', '  - id: gate', '    label: Gate', '    decision:', '      question: ' + question, '      options:', approve, '  - id: done', '    label: Done', ''].join(String.fromCharCode(10)));
+
+  it('names a changed question instead of the whole configuration', () => {
+    const diff = diffWorkflow(gated('Proceed?'), gated('Continue?'));
+    const fields = diff.stages[0]?.fields ?? [];
+    expect(fields.map(field => field.field)).toEqual(['decision.question']);
+    expect(isWorkflowDifferenceEmpty(diff)).toBe(false);
+    expect(isWorkflowDifferenceEmpty(diffWorkflow(gated('Proceed?'), gated('Proceed?')))).toBe(true);
+  });
+
+  it('names added, changed, and removed options by identity', () => {
+    const base = options(approve);
+    const added = diffWorkflow(parseWorkflow(base), parseWorkflow(options([approve, fix].join(String.fromCharCode(10)))));
+    const addedFields = added.stages[0]?.fields ?? [];
+    expect(addedFields.some(field => field.field === 'decision.options')).toBe(true);
+    expect(addedFields).toContainEqual({ field: 'decision.option:fix', from: null, to: { id: 'fix', title: 'Fix', description: null, to: 'done' } });
+
+    const changed = diffWorkflow(parseWorkflow(base), parseWorkflow(options(approve.replace('title: Approve', 'title: Approve now'))));
+    const changedFields = changed.stages[0]?.fields ?? [];
+    expect(changedFields.map(field => field.field)).toEqual(['decision.option:approve']);
+    expect(changedFields[0]).toMatchObject({ from: { title: 'Approve' }, to: { title: 'Approve now' } });
+
+    const removed = diffWorkflow(parseWorkflow(options([approve, fix].join(String.fromCharCode(10)))), parseWorkflow(base));
+    const removedFields = removed.stages[0]?.fields ?? [];
+    expect(removedFields).toContainEqual({ field: 'decision.option:fix', from: { id: 'fix', title: 'Fix', description: null, to: 'done' }, to: null });
+  });
+
+  it('summarizes the changed field names without authored text', () => {
+    const summary = summarizeDifference(diffWorkflow(gated('Proceed?'), gated('Continue?')));
+    expect(summary.stages).toEqual([{ stage: 'gate', change: 'changed', fields: ['decision.question'] }]);
+    expect(JSON.stringify(summary)).not.toContain('Proceed?');
+    expect(JSON.stringify(summary)).not.toContain('Continue?');
   });
 });

@@ -257,3 +257,47 @@ describe('parameterized transition targets', () => {
     expect(f.app.hubs.requireTask(f.task.id).task.recordedTransition).toMatchObject({ columnId: 'wait', parameters: { pipeline: 'ci-main' } });
   });
 });
+
+describe('decision stage transition tools', () => {
+  const GATED_WORKFLOW = [
+    'name: Gated',
+    'initial_column: backlog',
+    'columns:',
+    '  - id: backlog',
+    '    label: Backlog',
+    '  - id: gate',
+    '    label: Gate',
+    '    decision:',
+    '      question: Proceed?',
+    '      options:',
+    '        - id: ship',
+    '          title: Ship it',
+    '          to: done',
+    '  - id: done',
+    '    label: Done',
+    '',
+  ].join(String.fromCharCode(10));
+
+  async function gated() {
+    const f = await setup(GATED_WORKFLOW);
+    await f.app.command({ type: 'task.move', taskId: f.task.id, columnId: 'gate' });
+    return f;
+  }
+
+  it('reports the routing owner and the gate options without a declarable target', async () => {
+    const f = await gated();
+    const value = await f.named('list_allowed_transitions').execute({}, f.exec()) as Record<string, unknown>;
+    expect(value).toMatchObject({ stage: { columnId: 'gate' }, routingOwner: 'decision', declarable: false, configured: false, armed: false, recorded: null, targets: [] });
+    expect(value.defaultColumnId).toBeUndefined();
+    expect(value.decision).toEqual({ question: 'Proceed?', answeredBy: 'person', options: [{ id: 'ship', title: 'Ship it', to: 'done' }] });
+  });
+
+  it('refuses an ordinary and an exceptional declaration from the gate', async () => {
+    const f = await gated();
+    const set = f.named('set_next_transition');
+    await expect(set.execute({ column_id: 'done', reason: 'Ship it.' }, f.exec())).rejects.toThrow(/decision gate/i);
+    await expect(set.execute({ column_id: 'backlog', reason: 'Back.', exception: true }, f.exec())).rejects.toThrow(/decision gate/i);
+    expect(f.app.hubs.requireTask(f.task.id).task.recordedTransition).toBeUndefined();
+    expect(f.app.hubs.requireTask(f.task.id).task.columnId).toBe('gate');
+  });
+});

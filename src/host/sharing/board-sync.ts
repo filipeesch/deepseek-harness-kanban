@@ -11,7 +11,7 @@ import { canonicalWorkflow } from '../../domain/schema-parts.js';
 import { stageRenames } from '../../domain/journal/migrate.js';
 import { renameTaskStage } from '../../domain/stage-update.js';
 import { materializeIdentities } from '../../domain/journal/materialize.js';
-import { hasAuthoredDescriptions } from '../../domain/journal/descriptions.js';
+import { hasAuthoredDecision, hasAuthoredDescriptions } from '../../domain/journal/descriptions.js';
 import type { BoardChange, JournalEvent } from '../../domain/journal/event.js';
 import * as operations from '../../domain/hub-operations.js';
 import type { HubRepository } from '../hub-repository.js';
@@ -313,7 +313,7 @@ export class BoardSync {
     // A name match on first receive is not permission to discard local authored
     // descriptions or preset provenance, which the legacy team format cannot carry.
     const adoptWorkflow = stored.workflow === null
-      ? board.defaultPresetMode === undefined && !hasAuthoredDescriptions(board.workflowYaml)
+      ? board.defaultPresetMode === undefined && !hasAuthoredDescriptions(board.workflowYaml) && !hasAuthoredDecision(board.workflowYaml)
       : sameWorkflow(board.workflowYaml, stored.workflow);
     const orderClean = this.orderIsClean(record, hub);
     const renames = stageRenames(recovered.events.filter(event => event.seq > stored.seq));
@@ -823,7 +823,7 @@ function foldIdentity(base: { name: string | null; projectKeys: string[] | null;
 
 /** Existing providers cannot prevent an older writer from replacing new fields. */
 function assertLegacyShareable(board: { workflowYaml: string; defaultPresetMode?: 'operator' | 'host' }): void {
-  if (board.defaultPresetMode !== undefined || hasAuthoredDescriptions(board.workflowYaml)) {
+  if (board.defaultPresetMode !== undefined || hasAuthoredDescriptions(board.workflowYaml) || hasAuthoredDecision(board.workflowYaml)) {
     incompatibleStorage();
   }
 }
@@ -840,11 +840,11 @@ function isTombstoned(log: BoardLog): boolean {
 
 /** Version 3 replacements may contain authored descriptions from an older editor. */
 function requiresProtectedStorage(log: BoardLog): boolean {
-  return log.some(event => event.v >= 4 || (event.kind === 'workflow.replaced' && hasAuthoredDescriptions(event.text)));
+  return log.some(event => event.v >= 4 || (event.kind === 'workflow.replaced' && (hasAuthoredDescriptions(event.text) || hasAuthoredDecision(event.text))));
 }
 
 function compatibilityMessage(): string {
-  return 'This board cannot be synchronized safely: the currently supported storage providers cannot prevent older installations from overwriting workflow descriptions or board-default metadata.';
+  return 'This board cannot be synchronized safely: the currently supported storage providers cannot prevent older installations from overwriting workflow descriptions, decision gates, or board-default metadata.';
 }
 
 function incompatibleStorage(): never {

@@ -18,6 +18,7 @@ import { createDirectoryPicker } from './client/directory-picker.js';
 import { BoardView, createBoardPageState, type BoardPageState } from './client/board.js';
 import { allTasks } from './client/snapshot-normalize.js';
 import { AutoRunController } from './client/auto-run.js';
+import { DecisionWindowController } from './client/decision-window.js';
 import { QuestionDock, createQuestionDockServices, type QuestionDockSessions } from './client/question-dock.js';
 import { createSessionStatusPort, type SessionStatusHost } from './client/session-status.js';
 import { FeedStatus } from './client/feed-status.js';
@@ -139,6 +140,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   const bridge = new ClientBridge(ctx.remote, sessionStatus.status);
   // The command port belongs to this client generation, not to a mounted board.
   const autoRun = new AutoRunController({ run: command => bridge.api.command(command) });
+  const decisionWindow = new DecisionWindowController({ run: command => bridge.api.command(command) });
   const scopedSessions = ctx.sessions;
   const presetSource = createAgentPresetPortSource(agentPresetsNamespace(ctx), { developerTools: () => developerToolsEnabled(ctx) });
   let presetInjection: ReturnType<Context['inject']> | undefined;
@@ -243,7 +245,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     try { workspace = ctx.get('uiWorkspace') as unknown as Parameters<typeof createWorkspaceNavigation>[0]; } catch { workspace = undefined; }
     return createWorkspaceNavigation(workspace);
   }
-  function BoardPage(props: MainProps & { api: ClientApi; autoRun: AutoRunController }) {
+  function BoardPage(props: MainProps & { api: ClientApi; autoRun: AutoRunController; decisionWindow: DecisionWindowController }) {
     const leaseEnvironment = useMemo<ConversationLeaseEnvironment>(() => ({
       sessions: scopedSessions,
       lifetime: lifetime.signal,
@@ -286,6 +288,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       sessionTitles={sessionTitles}
       picker={picker}
       autoRun={props.autoRun}
+      decisionWindow={props.decisionWindow}
       nativeSeat={nativeSeat}
       {...(openSession === undefined ? {} : { onOpenSession: openSession })}
       navigation={navigation}
@@ -297,7 +300,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   function Main(props: MainProps) {
     const active = props.usePanelInfo(value => value.activePanelId === 'kanban');
     if (!active) return null; // A hidden cached page must not leave another copy of a composer mounted.
-    return <AgentPresetProvider source={presetSource} translate={ctx.locale.bind('settings.agentPreset')}><style>{clientCss}</style><FeedStatus status={bridge.status} retry={() => bridge.retry()} /><BoardPage {...props} api={bridge.api} autoRun={autoRun} /></AgentPresetProvider>;
+    return <AgentPresetProvider source={presetSource} translate={ctx.locale.bind('settings.agentPreset')}><style>{clientCss}</style><FeedStatus status={bridge.status} retry={() => bridge.retry()} /><BoardPage {...props} api={bridge.api} autoRun={autoRun} decisionWindow={decisionWindow} /></AgentPresetProvider>;
   }
   /** The strip is the only question surface: the transcript row renders nothing (no generic JSON card). */
   function HiddenDecisionRow() { return null; }
@@ -318,9 +321,10 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: 'decision_request' }, HiddenDecisionRow));
   // This subscription is the only reconciler for the shared controller; install it eagerly.
   const unsubscribeAutoRun = bridge.api.subscribe(snapshot => autoRun.reconcile(allTasks(snapshot), snapshot.scripted));
+  const unsubscribeDecisionWindow = bridge.api.subscribe(snapshot => decisionWindow.reconcile(allTasks(snapshot)));
   bridge.start();
   return async () => {
-    lifetime.abort(); autoRun.dispose(); unsubscribeAutoRun(); unsubscribeSnapshot();
+    lifetime.abort(); autoRun.dispose(); decisionWindow.dispose(); unsubscribeAutoRun(); unsubscribeDecisionWindow(); unsubscribeSnapshot();
     offTaskContext(); offStageInstruction(); offTaskMessage(); offHandoff();
     try { await presetInjection?.dispose(); } catch { /* the optional namespace fiber is best effort */ }
     try { stopNavigation?.(); navigation.detach(); } catch { /* the navigation subscription is best effort */ }

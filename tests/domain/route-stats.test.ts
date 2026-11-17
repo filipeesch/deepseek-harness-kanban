@@ -163,3 +163,23 @@ describe('route statistics', () => {
     expect(JSON.stringify(value)).not.toContain('description');
   });
 });
+
+describe('decision usage', () => {
+  const DECISION_FLOW = ['initial_column: todo', 'columns:', '  - id: todo', '    label: Todo', '  - id: gate', '    label: Gate', '    decision:', '      question: Proceed?', '      options:', '        - id: ship', '          title: Ship', '          to: done', '        - id: fix', '          title: Fix', '          to: todo', '  - id: done', '    label: Done', ''].join(String.fromCharCode(10));
+
+  it('counts a decision route and lists the option that was never used', () => {
+    const value = routeStats({ workflow: parseWorkflow(DECISION_FLOW), cards: [card('t1', [
+      { kind: 'created', at: '2026-01-01T00:00:00.000Z', columnId: 'todo' },
+      { kind: 'stage', at: '2026-01-02T00:00:00.000Z', fromColumnId: 'todo', columnId: 'gate', origin: 'manual' },
+      { kind: 'stage', at: '2026-01-03T00:00:00.000Z', fromColumnId: 'gate', columnId: 'done', origin: 'decision:ship' },
+    ])], options: WINDOW, now: '2026-01-31T00:00:00.000Z' });
+    const transition = value.transitions.find(entry => entry.from === 'gate' && entry.to === 'done');
+    expect(transition?.origins.decision).toBe(1);
+    expect(transition?.count).toBe(1);
+    expect(value.decisions).toEqual([
+      { stage: 'gate', option: 'ship', to: 'done', count: 1 },
+      { stage: 'gate', option: 'fix', to: 'todo', count: 0 },
+    ]);
+    expect(value.unused.decisions).toEqual([{ stage: 'gate', option: 'fix' }]);
+  });
+});

@@ -8,6 +8,7 @@ describe('card dominance', () => {
   it('presents each state when it is the only one', () => {
     expect(projectCardDominance(facts({ failed: true }))).toBe('error');
     expect(projectCardDominance(facts({ approval: true }))).toBe('approval');
+    expect(projectCardDominance(facts({ decision: true }))).toBe('decision');
     expect(projectCardDominance(facts({ awaitingReply: true }))).toBe('attention');
     expect(projectCardDominance(facts({ running: true }))).toBe('running');
     expect(projectCardDominance(facts({ unread: true }))).toBe('unread');
@@ -18,9 +19,10 @@ describe('card dominance', () => {
   });
 
   it('orders every state by the fixed priority', () => {
-    expect(CARD_PRESENCE_PRIORITY).toEqual(['error', 'approval', 'attention', 'running', 'unread']);
-    expect(projectCardDominance(facts({ failed: true, approval: true, awaitingReply: true, running: true, unread: true }))).toBe('error');
-    expect(projectCardDominance(facts({ approval: true, awaitingReply: true, running: true, unread: true }))).toBe('approval');
+    expect(CARD_PRESENCE_PRIORITY).toEqual(['error', 'approval', 'decision', 'attention', 'running', 'unread']);
+    expect(projectCardDominance(facts({ failed: true, approval: true, decision: true, awaitingReply: true, running: true, unread: true }))).toBe('error');
+    expect(projectCardDominance(facts({ approval: true, decision: true, awaitingReply: true, running: true, unread: true }))).toBe('approval');
+    expect(projectCardDominance(facts({ decision: true, awaitingReply: true, running: true, unread: true }))).toBe('decision');
     expect(projectCardDominance(facts({ awaitingReply: true, running: true, unread: true }))).toBe('attention');
     expect(projectCardDominance(facts({ running: true, unread: true }))).toBe('running');
     expect(projectCardDominance(facts({ unread: true }))).toBe('unread');

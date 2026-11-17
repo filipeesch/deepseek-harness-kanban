@@ -9,7 +9,7 @@ export interface CardStatusEntry { key: string; tone: 'danger' | 'pending'; labe
  * line so a turn that failed while the task was paused is never hidden by the
  * pause the agent requested.
  */
-export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: AutoModeStatus, pauseStatuses: readonly AutoModeStatus[] = []): CardStatusEntry[] {
+export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: AutoModeStatus, pauseStatuses: readonly AutoModeStatus[] = [], decision?: string): CardStatusEntry[] {
   const entries: CardStatusEntry[] = [];
   if (task.operation) {
     const operation = task.operation;
@@ -37,6 +37,7 @@ export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: 
     const noun = pending.origin === 'agent' ? 'Agent-declared transition' : 'Confirmed action';
     entries.push({ key: 'transition', tone: failed ? 'danger' : 'pending', label: failed ? noun + ' failed' : noun + ': ' + pending.status });
   }
+  if (decision !== undefined) entries.push({ key: 'decision', tone: 'pending', label: decision });
   if (runFailure !== undefined) entries.push({ key: 'instruction', tone: 'danger', label: runFailure, alert: true });
   if (autoStatus !== undefined) entries.push({ key: 'auto', tone: autoStatus.tone, label: autoStatus.label, ...(autoStatus.alert === true ? { alert: true } : {}) });
   for (const [index, value] of pauseStatuses.entries()) entries.push({ key: 'auto-pause-' + index, tone: value.tone, label: value.label, ...(value.alert === true ? { alert: true } : {}) });

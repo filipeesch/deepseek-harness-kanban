@@ -59,7 +59,7 @@ export const WORKFLOW_ARCHITECT_PRESET='kanban-workflow-architect';
 
 /** The tools only the workflow architect sees; every other agent never receives them. */
 export const WORKFLOW_DESIGN_TOOLS:readonly string[]=[
- 'get_board_yaml','get_stage','set_stage_prompt','set_stage_routes','set_stage_script','set_layout','add_stage','remove_stage','get_script_execution','test_script','validate_workflow','diff_published_board',
+ 'get_board_yaml','get_stage','set_stage_prompt','set_stage_routes','set_stage_script','set_stage_decision','set_layout','add_stage','remove_stage','get_script_execution','test_script','validate_workflow','diff_published_board',
  'get_route_stats','render_workflow_diagram','layout_metrics','list_board_revisions','diff_board_revisions','revert_board',
 ];
 

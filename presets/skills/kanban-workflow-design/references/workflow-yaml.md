@@ -1,39 +1,45 @@
 # Workflow YAML: authoring and preservation
 
-Load for one board's stages, instructions, routes, and presentation; verify against the installed parser.
+Load for authoring one board; verify against the installed parser.
 
 ## Accepted structure
 
-- Root: nonempty `columns` sequence; optional `id`, `name`, `description`, `initial_column`, `default_view`, `groups`, `model`, `agent_preset`, `mcp`, `connections`. Name defaults to `Workflow`; initial stage defaults to the first column; root `id` is metadata.
-- Column: required `id` and `label` (alias `name`); optional `key`, `description`, `allowed_transitions`, `on_enter_prompt`, `position`, `size`. Both display aliases must agree if present. `description` is optional context, not an instruction.
+- Root: nonempty `columns`; optional `id`, `name`, `description`, `initial_column`, `default_view`, `groups`, `model`, `agent_preset`, `mcp`, `connections`. Name defaults to `Workflow`; the first column is initial by default.
+- Column: required `id` and `label` (alias `name`); optional `key`, `description`, `allowed_transitions`, `on_enter_prompt`, `scripted`, `decision`, `position`, `size`. Both display aliases must agree if present. `description` is optional context, not an instruction.
 - Group: `label` (alias `name`), nonempty `columns` IDs, optional `id` (otherwise `group-1`, etc.). Groups are presentation, not destinations. Each column belongs to at most one group; group IDs are unique and cannot equal column IDs.
 - `model`: nonempty `provider`, `model`, optional nonempty `reasoning_effort`. It sets the board default for **new conversations**, not a stage model, installation default, or existing conversations. Omission means DSH default. Check host routes: the parser validates shape, not availability; an unavailable route can fall back with a notice.
-- `agent_preset`: nonempty roster identity; the agent preset **new conversations** start on. An authored preset wins; for absent YAML inspect the effective choice and its origin rather than assuming the host default. New-board metadata may select the operator, while legacy absence retains the host default. Shape, not roster membership, is validated, and a missing preset can fall back with a notice.
-- `mcp`: optional allowlist of MCP servers; an entry is a server (all its tools) or `server/tool`. Omission keeps every server visible, `[]` keeps none; shape is validated, not availability.
+- `agent_preset`: nonempty roster identity for **new conversations**. An authored preset wins; for absent YAML inspect the effective choice and origin. New-board metadata may select the operator; legacy absence keeps the host default. Shape only; a missing preset can fall back with a notice.
+- `mcp`: optional server allowlist; an entry is a server or `server/tool`. Omission keeps every server, `[]` none; shape only.
 
 IDs: 1–256 characters, ASCII letter/digit first, then letters/digits/`.`/`_`/`:`/`-`; `__proto__`, `prototype`, `constructor` are reserved. `key` is stable stage identity for sharing: preserve across edits/renames; do not add keys merely to reformat unpublished workflows.
 
-Unknown fields are rejected: no WIP limits, stage `auto_mode`, per-stage agents or presets, dependencies, parent/child fields, or `metadata`. Use `on_enter_prompt`, not `prompt`; use `columns`, not `stages`. Criteria belong in instructions; coordination belongs in prose protocols.
+Unknown fields are rejected: no WIP limits, stage `auto_mode`, per-stage agents or presets, dependencies, or `metadata`. Use `on_enter_prompt`, not `prompt`; `columns`, not `stages`. Criteria belong in instructions; coordination in prose protocols.
 
 ## Routes and conditions
 
 `allowed_transitions` mixes bare column IDs and `{to, when}` mappings. `to` is required; `when` is optional text (null/blank means no condition). Targets must exist in this document and cannot repeat. Conditions guide models; the runtime does not evaluate their truth.
 
-- **Omitted:** human moves allow any other stage; default progression uses workflow order. The diagram draws only a dashed next-stage arrow. `set_next_transition` has no configured targets to choose.
-- **Nonempty:** configured destinations in authored order; the first is default when no route is declared, regardless of conditions. Avoid self-targets: they are reorders, not routing targets.
-- **`[]`:** no permitted destinations/default advance; humans can still confirm restricted moves. This is terminal policy, not “wait until dependency.”
+- **Omitted:** any other stage is movable and default progression uses workflow order; the diagram draws one dashed next-stage arrow.
+- **Nonempty:** authored destinations in order; the first is default without a declaration. Self-targets are reorders, not routing targets.
+- **`[]`:** no destination and no default advance; humans can still confirm a restricted move. This is terminal policy, not “wait for a dependency.”
 
 A scripted version is approved once per board and stable stage. An author's inline save authorizes it; a file source, tool write, shared update, publish, or restore needs review.
 
-A scripted stage may declare required `params`. A value comes from the transition, the preceding script's completion, or the panel. Exact names bind; extras do not; a missing name repairs in place. Conversation destinations see the sent values as context; script destinations only declared names. Reserved exits: `error` takes script/completion failures, `infrastructure` guard/runtime failures (fallback `error`); configuration refusals follow none and no exit may self-target.
+A scripted stage may declare required `params`, valued from the transition, the preceding script, or the panel. Exact names bind; extras do not; a missing name repairs in place. Conversation destinations see the values as context; script destinations only declared names. Reserved exits: `error` (script/completion), `infrastructure` (guard/runtime, falls back to `error`); configuration refusals follow none, and no exit may self-target.
 
 No cross-board YAML transitions; handoffs create separate tasks through the [coordination protocol](coordination.md).
 
 ## Entry instructions and gates
 
-`on_enter_prompt` accepts multiline text; null/empty/whitespace means no instruction. Use `|`. Each executing stage needs objective/scope, required inputs, bounded actions, output/validation/acceptance evidence, failure/missing-input escalation, and routing responsibility. Explicitly state whether it requests transition discovery/declaration and what evidence justifies each route. Coordination obligations stay conditional on user authorization and tool scope.
+`on_enter_prompt` accepts multiline text; blank means none. Use `|`. Each executing stage needs objective, inputs, bounded actions, output/acceptance evidence, escalation, and routing responsibility. State whether it requests transition discovery/declaration and what evidence justifies a route; coordination obligations stay conditional on authorization and scope.
 
-Do not tell every stage to declare a route automatically: this arms a completed-turn move even with auto mode off. No instruction can be intentional manual intake, but it is not inherently a gate; see [execution mechanics](operations.md#automation-and-human-gates).
+Do not tell every stage to declare a route automatically: it arms a completed-turn move even with auto mode off. No instruction is inherently a gate; see [execution mechanics](operations.md#automation-and-human-gates).
+
+## Decision steps
+
+A `decision` step stops the flow for one authored choice. It starts no agent turn or program and is exclusive with `on_enter_prompt`, `allowed_transitions`, and `scripted`. `question` is required; `context` and option `description` are optional Markdown. One to twelve options: `id` (safe, unique, the recorded identity), `title`, optional `description`, and `to` (another existing stage; several may share one). One option is an explicit confirmation. The person answers in the drawer and the card keeps the attention tint; a cancelable five-second window precedes the host route, which carries the option and observation as the destination reason and records the choice in history. The stage owns its routing: no automatic or declared advance crosses it, and every manual move out needs the restricted confirmation. Create it with `set_stage_decision`; other stage writers refuse it until cleared or replaced.
+
+Shape: `decision: {question, context?, options: [{id, title, description?, to}]}`.
 
 ## Presentation fields
 
@@ -41,14 +47,14 @@ Preserve:
 
 - `default_view`: `board` or `workflow`; omission defaults to board until a local user choice.
 - Column `position`: `{x, y}`, finite, absolute values at most 1,000,000.
-- Column `size`: `{width, height}`, finite minimums; width 264–10,000, height 140–10,000.
-- `connections`: unique `{from, to}` pairs; optional `source`/`target` anchors `{side, at}` (`top`/`right`/`bottom`/`left`, integer 0–4); optional `segments` entries `{axis, offset}` (`x`/`y`, finite absolute offset at most 1,000,000).
+- Column `size`: `{width, height}`; width 264–10,000, height 140–10,000.
+- `connections`: unique `{from, to}`; optional `source`/`target` anchors `{side, at}` (`top`/`right`/`bottom`/`left`, 0–4); optional `segments` `{axis, offset}` (`x`/`y`, finite, |offset| ≤ 1,000,000).
 
-Connection layout adjusts drawn arrows; it permits no transitions. Undrawn pairs are ignored, not converted into edges. Do not regenerate layout for an instruction edit.
+Connection layout adjusts drawn arrows only; undrawn pairs are ignored. Do not regenerate layout for an instruction edit.
 
 ## Complete review example
 
-Manual intake, one review, terminal result. Auto mode is off for intake; this example authorizes no creation or message.
+One review, terminal result; this example authorizes no creation or message.
 
 ```yaml
 name: Evidence Review
@@ -57,7 +63,6 @@ default_view: board
 columns:
   - id: intake
     label: Intake
-    description: Collect the work and its acceptance criteria.
     allowed_transitions: [review]
   - id: review
     label: Review
@@ -67,19 +72,13 @@ columns:
       - to: done
         when: Every acceptance criterion has supporting evidence.
     on_enter_prompt: |
-      Review the deliverable against the task's stated acceptance criteria.
-      Do not change the deliverable; read it and its referenced evidence.
-      Check each criterion and report pass, fail, or unknown with its evidence.
-      If an input is missing, ask the human; pause_task only for a deliberate hold.
-      Otherwise summarize findings, then read list_allowed_transitions and declare
-      intake when changes are needed, or done only when all criteria pass, with a reason.
+      Review the deliverable against the task's acceptance criteria and evidence.
+      Report pass, fail, or unknown per criterion. Missing input: ask the human.
+      Otherwise summarize, read list_allowed_transitions, and declare intake for
+      changes or done when all criteria pass, with a reason.
   - id: done
     label: Done
     allowed_transitions: []
-groups:
-  - id: assessment
-    label: Assessment
-    columns: [intake, review]
 ```
 
 YAML writes do not migrate tasks: removing or renaming occupied IDs or admitted-transition references is rejected. A declared but unadmitted route can become stale and block progression; inspect it. Preserve IDs unless an approved migration is verified.

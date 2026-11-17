@@ -3,7 +3,7 @@ import { isAbsolute } from 'node:path';
 import { canonicalScripted } from '../domain/scripted-definition.js';
 import type { Board, Column, HubState, Project, Workflow } from '../shared/types.js';
 import type { ScriptedDefinition, ScriptedTarget } from '../shared/scripted.js';
-import { reconcileLocalStageIdentities } from '../domain/scripted-state.js';
+import { reconcileLocalStageIdentities } from '../domain/stage-identity.js';
 import { creatableProjects } from '../domain/board-project-scope.js';
 import { requireProjectPath } from '../shared/project.js';
 import { KanbanError } from '../shared/errors.js';

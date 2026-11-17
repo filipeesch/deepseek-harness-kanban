@@ -86,7 +86,31 @@ describe('Hub operations', () => {
     operations.recordExceptionalTransition(hub, task.id, 'wait', 'Requested.', { pipeline: 'ci' }, owner, deps);
     expect(task.recordedTransition?.parameters).toEqual({ pipeline: 'ci' });
     hub.boards[0]!.workflow.columns[0]!.scripted = { language: 'bash', code: 'echo ok', directory: 'task', exits: { ok: 'done' } };
-    expect(() => operations.recordExceptionalTransition(hub, task.id, 'wait', 'Requested.', { pipeline: 'ci' }, owner, deps)).toThrow(/scripted entry/i);
+    expect(() => operations.recordExceptionalTransition(hub, task.id, 'wait', 'Requested.', { pipeline: 'ci' }, owner, deps)).toThrow(/owns its routing/i);
+  });
+
+  it('freezes the identity of a decision stage and its option destinations on save', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    operations.saveBoardWorkflow(hub, 'board', [
+      'columns:',
+      '  - id: backlog',
+      '    label: Backlog',
+      '  - id: gate',
+      '    label: Gate',
+      '    decision:',
+      '      question: Proceed?',
+      '      options:',
+      '        - id: approve',
+      '          title: Approve',
+      '          to: done',
+      '  - id: done',
+      '    label: Done',
+      '',
+    ].join('\n'), deps);
+    const identities = hub.boards[0]!.localStageIdentities!;
+    expect(identities.gate).toBeDefined();
+    expect(identities.done).toBeDefined();
+    expect(new Set(Object.values(identities)).size).toBe(Object.keys(identities).length);
   });
 
   it('creates and renames boards with case-insensitive uniqueness', () => {

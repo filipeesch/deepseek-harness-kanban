@@ -59,8 +59,25 @@ export interface StagePosition { x: number; y: number }
 export type TransitionRule = { to: string; when?: string }
 /** An authored minimum size for one stage, in diagram pixels. */
 export interface StageSize { width: number; height: number }
+/** One authored decision option: a stable identity, the copy a person reads, and its destination. */
+export interface DecisionOption {
+  /** Stable identity recorded with the choice; renaming the title does not change it. */
+  id: string;
+  title: string;
+  /** Optional Markdown explanation shown beside the title. */
+  description?: string;
+  /** The stage this option routes the task to. */
+  to: string;
+}
+/** Authored decision behavior: a question, optional context, and the options a person chooses from. */
+export interface DecisionDefinition {
+  question: string;
+  /** Optional Markdown context shown above the question. */
+  context?: string;
+  options: DecisionOption[];
+}
 export interface Column {
-  id: string; name: string; description?: string; onEnterPrompt?: string; allowedTransitions?: TransitionRule[]; scripted?: ScriptedDefinition;
+  id: string; name: string; description?: string; onEnterPrompt?: string; allowedTransitions?: TransitionRule[]; scripted?: ScriptedDefinition; decision?: DecisionDefinition;
   /**
    * Stable stage identity, allocated when the stage first enters a published workflow and
    * preserved across identifier renames. Absent on a board that was never published.
@@ -80,6 +97,8 @@ export interface TransitionCondition {
 /** The stage fields one stage edit may change; an absent field is left as authored. */
 export interface StagePatch {
   scripted?: ScriptedDefinition | null;
+  /** The stage's decision configuration; `null` clears it, absent leaves it as authored. */
+  decision?: DecisionDefinition | null;
   /** New display name; absent leaves the name as authored. */
   name?: string;
   /** New stage description; `null` clears it, absent leaves it as authored. */
@@ -169,7 +188,7 @@ export interface CreateAttemptRecord {
 }
 /** Why a host advance exists: auto mode armed the completed turn, or the agent declared the transition it ends in. */
 export type AdvanceOrigin = 'auto' | 'agent';
-export interface PendingTransition { id: string; fromColumnId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; text?: string; /** Absent places the task at the start of the destination; `null` places it at the end; an id places it before that task. */ beforeTaskId?: string | null; worktreeRequest?: CreateWorktree; transitionOverride?: boolean; /** A prepared exceptional admission is never dispatchable before finalization. */ exceptionUnfinalized?: string; status: 'waiting' | 'sending' | 'failed'; error?: Problem; /** Absent means a user-confirmed transition; `auto` is the turn-end advance of an auto-mode task and `agent` the advance of a transition the agent declared. */ origin?: AdvanceOrigin; /** The reason a declared transition carries, kept for the manual retry of a failed advance. */ reason?: string; /** Values supplied by a declared transition, carried into the destination entry. */ parameters?: Record<string, string> }
+export interface PendingTransition { id: string; fromColumnId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; text?: string; /** Absent places the task at the start of the destination; `null` places it at the end; an id places it before that task. */ beforeTaskId?: string | null; worktreeRequest?: CreateWorktree; transitionOverride?: boolean; /** A prepared exceptional admission is never dispatchable before finalization. */ exceptionUnfinalized?: string; /** The decision a person made; present only for a decision stage's route. */ decision?: { optionId: string; note?: string; /** The stable identity of the destination the person saw. */ destinationIdentity: string }; status: 'waiting' | 'sending' | 'failed'; error?: Problem; /** Absent means a user-confirmed transition; `auto` is the turn-end advance of an auto-mode task and `agent` the advance of a transition the agent declared. */ origin?: AdvanceOrigin; /** The reason a declared transition carries, kept for the manual retry of a failed advance. */ reason?: string; /** Values supplied by a declared transition, carried into the destination entry. */ parameters?: Record<string, string> }
 /** Why auto mode is paused; only reasons that cannot be derived from the snapshot are recorded. */
 export const AUTO_MODE_PAUSE_REASONS = ['turn-error', 'turn-blocked', 'turn-aborted', 'turn-max-tokens', 'advance-failed', 'transition-stale'] as const;
 export type AutoModePauseReason = (typeof AUTO_MODE_PAUSE_REASONS)[number];
@@ -570,6 +589,8 @@ export type Command =
   | { type: 'task.edit'; hubId?: string; taskId: string; title?: string; description?: string; expectedRevision?: number }
   /** `beforeTaskId` absent places the task at the start of the destination; `null` places it at the end; an id places it before that task. */
   | { type: 'task.move'; hubId?: string; taskId: string; columnId: string; beforeTaskId?: string | null; overrideTransition?: boolean }
+  /** Apply a decision stage's chosen option after the person's five-second window closes. */
+  | { type: 'task.decide'; hubId?: string; taskId: string; entryId: string; optionId: string; destinationIdentity: string; note?: string }
   | { type: 'task.autoMode'; hubId?: string; taskId: string; enabled: boolean }
   /** Record the pause the agent requested; the task stays put and auto mode stays enabled. */
   | { type: 'task.pause'; hubId?: string; taskId: string; reason: string }

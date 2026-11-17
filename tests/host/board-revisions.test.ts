@@ -132,6 +132,24 @@ describe('board revisions', () => {
     expect(diff.difference.stages.find((stage: { stage: string }) => stage.stage === 'todo')?.fields).toContainEqual({ field: 'onEnterPrompt', from: 'Start.', to: 'Also verify.' });
   });
 
+  it('compares a decision configuration by stage', async () => {
+    const f = await setup();
+    const boardId = await boardWith(f, 'Gated flow', FLOW);
+    await run(f, 'set_stage_decision', { board_id: boardId, stage_id: 'todo', question: 'Proceed?', options: [{ id: 'ship', title: 'Ship', to: 'done' }] });
+    await run(f, 'set_stage_decision', { board_id: boardId, stage_id: 'todo', question: 'Continue?' });
+    const list = await run(f, 'list_board_revisions', { board_id: boardId });
+    const newest = list.revisions[0]!.revision;
+    const previous = list.revisions[1]!.revision;
+    const diff = await run(f, 'diff_board_revisions', { board_id: boardId, from: previous, to: newest });
+    const fields = diff.difference.stages.find((stage: { stage: string }) => stage.stage === 'todo')?.fields ?? [];
+    expect(fields.some((field: { field: string }) => field.field === 'decision.question')).toBe(true);
+    const summary = await run(f, 'diff_board_revisions', { board_id: boardId, from: previous, to: newest, detail: 'summary' });
+    const summaryFields = summary.difference.stages.find((stage: { stage: string }) => stage.stage === 'todo')?.fields ?? [];
+    expect(summaryFields).toContain('decision.question');
+    expect(JSON.stringify(summary.difference)).not.toContain('Proceed?');
+    expect(JSON.stringify(summary.difference)).not.toContain('Continue?');
+  });
+
   it('rejects a revision it no longer retains', async () => {
     const f = await setup();
     const boardId = await boardWith(f, 'Archived flow', FLOW);
