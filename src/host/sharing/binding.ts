@@ -5,7 +5,7 @@ import { emptyRecord } from './state.js';
 import type { SharingBinding, SharingProviderId, SharingProviderResolver } from './provider.js';
 import type { SharedLayoutStore } from './ports.js';
 import type { HubRepository } from '../hub-repository.js';
-import type { BoardSync } from './board-sync.js';
+import type { BoardConnectionPort } from './sync/connection.js';
 import { normalizeSharingInterval } from './interval.js';
 
 /** The commands that change where a Hub publishes, and the state those changes need. */
@@ -13,7 +13,8 @@ export interface BindingLifecycleOptions {
   readonly hubs: HubRepository;
   readonly store: HubSharingStore;
   readonly providers: SharingProviderResolver;
-  readonly boards: BoardSync;
+  /** The four connection-time operations a location change drives, and nothing more. */
+  readonly boards: BoardConnectionPort;
   readonly layout: (hubId: string, binding: SharingBinding, state: Record<string, unknown>) => SharedLayoutStore;
   readonly now: () => string;
   readonly save: (record: HubSharingRecord) => Promise<void>;
@@ -106,5 +107,5 @@ export class BindingLifecycle {
 }
 
 function versionProblem(): { code: string; message: string } {
-  return { code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED', message: 'The team configuration was written by a newer plugin version. Update the plugin to read or publish it.' };
+  return { code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED', message: 'This team storage was written by a newer plugin version. Update dsh-kanban to read or publish it.' };
 }

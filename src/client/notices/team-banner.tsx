@@ -44,29 +44,34 @@ export function TeamChangesBanner({ view, boardId, pending, dismissedSignature, 
   const updateRequired = board?.state === 'update-required';
   const boardUpdates = board?.state === 'updates-available';
   const boardDraft = board?.state === 'draft';
-  // Naming the board matters as soon as more than one is published, because the
-  // banner speaks for the active tab.
-  const named = view.boards.filter(entry => entry.bound).length > 1 && board !== undefined ? ' “' + board.name + '”' : '';
-  const message = updateRequired
-    ? 'This team board was written by a newer plugin version. Update dsh-kanban, then refresh' + named + '.'
-    : boardReview
-      ? 'Your team changed this board' + named + ' in a way that needs a choice.'
-      : boardUpdates
-        ? 'Your team published changes to this board' + named + '.'
-        : boardDraft
-          ? 'You have changes to send for this board' + named + '.'
-          : view.drafts > 0
-            ? 'You have changes to send.'
-            : view.updates > 0
-              ? 'Your team published changes to this Hub.'
-              : view.conflicts > 0
-                ? 'Some team boards require attention.'
-                : view.blockers[0]?.message ?? 'Team changes cannot be applied until the blocking boards are resolved.';
-  const primary = boardDraft && boardId !== undefined && onPublish !== undefined
-    ? { label: 'Publish board', run: () => onPublish(boardId) }
-    : boardUpdates && boardId !== undefined && onUpdate !== undefined
-      ? { label: 'Get updates', run: () => onUpdate(boardId) }
-      : null;
+  // The banner speaks for the active board, so it names that board whenever the work
+  // is its own and says so plainly when the work belongs to another board of the Hub.
+  const named = board === undefined ? '' : ' “' + board.name + '”';
+  const blocked = view.blockers.length > 0;
+  const message = blocked
+    ? view.blockers[0]!.message
+    : updateRequired
+      ? 'This team board was written by a newer plugin version. Update dsh-kanban, then refresh' + named + '.'
+      : boardReview
+        ? 'Your team changed this board' + named + ' in a way that needs a choice.'
+        : boardUpdates
+          ? 'Your team published changes to this board' + named + '.'
+          : boardDraft
+            ? 'You have changes to send for this board' + named + '.'
+            : view.drafts > 0
+              ? board === undefined ? 'Boards of this Hub have changes to send.' : 'Another board of this Hub has changes to send.'
+              : view.updates > 0
+                ? board === undefined ? 'Your team published changes to this Hub.' : 'Another board of this Hub has team changes to get.'
+                : 'Some team boards require attention.';
+  // A blocked storage offers no action: the reason is presented here, before the user
+  // activates an action that could only fail afterwards.
+  const primary = blocked
+    ? null
+    : boardDraft && boardId !== undefined && onPublish !== undefined
+      ? { label: 'Publish board', run: () => onPublish(boardId) }
+      : boardUpdates && boardId !== undefined && onUpdate !== undefined
+        ? { label: 'Get updates', run: () => onUpdate(boardId) }
+        : null;
   return <div className="kb-share-banner" role="status">
     <p>{message}</p>
     <div className="kb-actions">

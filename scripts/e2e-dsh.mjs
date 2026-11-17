@@ -17,7 +17,7 @@ if (args.includes('--only') && only === undefined) {
   process.exit(2);
 }
 if (!checkoutArg) {
-  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only background-delete|board|conversation|decision|deletion|hubs|schedules|override|native-drawer|sidebar|auto-run|auto-mode|declared|create-start|prepare|board-model|project|messages|history|workflow-architect|scripted|transit] [--skip-build]');
+  console.error('Usage: node scripts/e2e-dsh.mjs --checkout /path/to/deepseek-harness [--check] [--only background-delete|board|conversation|decision|deletion|hubs|schedules|override|native-drawer|sidebar|auto-run|auto-mode|declared|create-start|prepare|board-model|project|messages|history|workflow-architect|scripted|sharing|transit] [--skip-build]');
   process.exit(2);
 }
 const checkout = resolve(checkoutArg);
@@ -86,6 +86,7 @@ const scenarioTemplates = new Map([
   ['scripted', ['kanban-scripted.e2e.template.ts', 'kanban-scripted.e2e.ts']],
   ['transit', ['kanban-transit.e2e.template.ts', 'kanban-transit.e2e.ts']],
   ['decision', ['kanban-decision.e2e.template.ts', 'kanban-decision.e2e.ts']],
+  ['sharing', ['kanban-sharing.e2e.template.ts', 'kanban-sharing.e2e.ts']],
 ]);
 if (only !== undefined && !scenarioTemplates.has(only)) fail('unknown --only value: ' + only);
 // A group is one [template, target] pair or a list of them, so one selector can

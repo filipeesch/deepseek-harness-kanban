@@ -25,7 +25,7 @@ export function TeamSettings({ hub, sharing, auth, api, run }: { hub: HubState; 
     <h3>Team Settings</h3>
     <p className="kb-hint">Projects, tasks, notes, and Hub names stay on this machine.</p>
     <Tabs label="Team settings areas" values={areas} selected={selected} onSelect={value => setArea(value as 'Connection' | 'Changes')} id={id} />
-    {unavailable && <p className="kb-error" role="alert"><strong>Update the plugin</strong><span>This team storage was written by a newer plugin version. Reading and publishing stay blocked until the plugin is updated.</span></p>}
+    {unavailable && <p className="kb-error" role="alert"><strong>Update dsh-kanban</strong><span>This team storage was written by a newer plugin version. Reading and publishing stay blocked until dsh-kanban is updated.</span></p>}
     <div className="kb-share-panel" role="tabpanel" id={id + '-panel-' + selected} aria-labelledby={id + '-tab-' + selected}>
       {selected === 'Connection'
         ? <ConnectionArea hub={hub} sharing={sharing} auth={auth} api={api} act={actions.run} pending={actions.pending} />

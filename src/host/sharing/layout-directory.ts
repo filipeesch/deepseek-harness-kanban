@@ -6,6 +6,7 @@ import {
   SHARED_BOARD_DIRECTORY, SHARED_BOARD_EXTENSION, SHARED_BOARD_KEY_PATTERN, SHARED_LAYOUT_FILE, SHARED_LAYOUT_VERSION,
 } from '../../domain/sharing/layout.js';
 import { appendEvents, decodeBoardLog, encodeBoardLog, headToken, type BoardLog } from '../../domain/journal/log.js';
+import { parseBoardLog } from './board-compatibility.js';
 import type { BoardChange } from '../../domain/journal/event.js';
 import type { AppendOptions, BoardLogSnapshot, LayoutStampSnapshot, SharedLayoutStore, StorageReview } from './ports.js';
 
@@ -136,7 +137,7 @@ export class DirectoryLayoutStore implements SharedLayoutStore {
     if (probe === null) return null;
     const text = await this.readOptional(this.logPath(key));
     if (text === null) return null;
-    const log = parseLog(text, key);
+    const log = parseBoardLog(text, key);
     return { probe, head: headToken(log), log };
   }
 
@@ -174,7 +175,7 @@ export class DirectoryLayoutStore implements SharedLayoutStore {
     await this.writeAtomically(this.logPath(key), encoded);
     // A folder offers no conditional write, so the written content is verified.
     const written = await this.readOptional(this.logPath(key));
-    if (written === null || headToken(parseLog(written, key)) !== headToken(log)) {
+    if (written === null || headToken(parseBoardLog(written, key)) !== headToken(log)) {
       throw new KanbanError('SHARING_CONCURRENT_WRITE', 'The board changed while it was being written. Review the team changes before retrying.', { key });
     }
   }
@@ -208,16 +209,6 @@ function looksLikeBoardCopy(name: string): boolean {
   if (name.startsWith(TEMP_PREFIX)) return false;
   const key = name.slice(0, -SHARED_BOARD_EXTENSION.length);
   return !SHARED_BOARD_KEY_PATTERN.test(key);
-}
-
-function parseLog(text: string, key: string): BoardLog {
-  const decoded = decodeBoardLog(text);
-  if (!decoded.ok) {
-    if (decoded.reason === 'unsupported-version') throw new KanbanError('SHARING_DOCUMENT_VERSION_UNSUPPORTED', 'The team configuration was written by a newer plugin version. Update the plugin to read or publish it.', { key, version: decoded.version });
-    if (decoded.reason === 'unknown-kind') throw new KanbanError('SHARING_DOCUMENT_VERSION_UNSUPPORTED', 'The team configuration carries a change this plugin does not know. Update the plugin to read or publish it.', { key, kind: decoded.kind });
-    throw new KanbanError('SHARING_INVALID_DOCUMENT', 'The board log is invalid.', { key, message: decoded.message });
-  }
-  return decoded.log;
 }
 
 /** The published layout path of one board, for a provider that needs to name the file itself. */

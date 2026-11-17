@@ -8,6 +8,7 @@ import type { ConnectionLayout, TransitionRule, Workflow } from '../../shared/ty
 import { connectionKey } from '../connection-anchor.js';
 import { transitionRule } from '../transition-rule.js';
 import { parseWorkflow } from '../workflow.js';
+import { sameWorkflowContent } from '../workflow-content.js';
 import { assignStageIdentities, seedStageIdentities, stageIdentitySeeds } from '../stage-identity.js';
 import type { BoardChange, StageDefinition } from './event.js';
 
@@ -83,7 +84,10 @@ function identityMap(workflow: Workflow): Map<string, string> {
 /** Derive the changes that turn the published board into the local board. */
 export function deriveChanges(previous: BoardVersion | null, local: BoardVersion, options: DeriveOptions = {}): BoardChange[] {
   if (previous === null) return local.text.trim().length === 0 ? [] : [{ kind: 'workflow.replaced', text: local.text }];
-  if (previous.text === local.text) return [];
+  // A text that carries the same content — comments, formatting, or the authored stage
+  // identity lines aside — publishes nothing, which keeps the derivation in step with
+  // the board state that sharing reports.
+  if (sameWorkflowContent(previous.text, local.text)) return [];
   // A published stage without an authored identity predates the identity model (or was
   // hand-edited), so its identifier is its genesis identity. Seeding fills only the
   // missing ones, so a partially keyed state is handled like a fully keyed one instead
@@ -212,6 +216,8 @@ export interface BoardMirror {
   readonly name: string | null;
   readonly projectKeys: readonly string[] | null;
   readonly rank: string | null;
+  /** The recorded default preset choice; absent or null means the board records none. */
+  readonly presetMode?: 'operator' | 'host' | null;
 }
 
 /** The local board as derivation sees it. */
@@ -220,6 +226,8 @@ export interface BoardLocal {
   readonly name: string;
   readonly projectKeys: readonly string[] | null;
   readonly rank: string | null;
+  /** The recorded default preset choice; absent or null means the board records none. */
+  readonly presetMode?: 'operator' | 'host' | null;
 }
 
 /** Two project scopes are the same when both allow every project or they name the same keys. */
@@ -241,6 +249,7 @@ export function deriveBoardChanges(mirror: BoardMirror | null, local: BoardLocal
     if (local.name.trim().length > 0) genesis.push({ kind: 'board.renamed', name: local.name });
     genesis.push({ kind: 'board.scope-changed', projectKeys: local.projectKeys === null ? null : [...local.projectKeys] });
     if (local.rank !== null) genesis.push({ kind: 'board.rank-changed', rank: local.rank });
+    if (local.presetMode !== undefined) genesis.push({ kind: 'board.preset-changed', mode: local.presetMode });
     return genesis;
   }
   const changes = deriveChanges({ text: mirror.workflow }, { text: local.workflow }, options);
@@ -249,5 +258,6 @@ export function deriveBoardChanges(mirror: BoardMirror | null, local: BoardLocal
     changes.push({ kind: 'board.scope-changed', projectKeys: local.projectKeys === null ? null : [...local.projectKeys] });
   }
   if (local.rank !== null && mirror.rank !== local.rank) changes.push({ kind: 'board.rank-changed', rank: local.rank });
+  if ((mirror.presetMode ?? null) !== (local.presetMode ?? null)) changes.push({ kind: 'board.preset-changed', mode: local.presetMode ?? null });
   return changes;
 }

@@ -7,7 +7,17 @@ import { isDomainId } from '../validation.js';
 import { PROJECT_KEY_PATTERN } from '../project-key.js';
 
 /** The newest event format this installation understands. */
-export const EVENT_FORMAT_VERSION = 5;
+export const EVENT_FORMAT_VERSION = 6;
+
+/**
+ * The format each later field first needs. An event states the minimum format that
+ * represents it, so a board that carries no new field stays readable by older peers.
+ */
+export const DECISION_EVENT_VERSION = 5;
+export const BOARD_PRESET_EVENT_VERSION = 6;
+
+/** The event format that first carries a scripted stage definition. */
+export const SCRIPTED_EVENT_VERSION = 2;
 
 /** One change to a board workflow, before the log stamps its position and time. */
 export type BoardChange =
@@ -33,6 +43,8 @@ export type BoardChange =
   | { kind: 'board.renamed'; name: string }
   | { kind: 'board.scope-changed'; projectKeys: string[] | null }
   | { kind: 'board.rank-changed'; rank: string }
+  // The board's recorded default preset choice. Absent means no event; null clears one.
+  | { kind: 'board.preset-changed'; mode: 'operator' | 'host' | null }
   | { kind: 'board.removed' };
 
 /** One authored stage as an event carries it when the stage first appears. */
@@ -76,7 +88,7 @@ const projectKey = z.string().refine(value => PROJECT_KEY_PATTERN.test(value), '
 const rank = z.string().refine(value => RANK_PATTERN.test(value), 'Expected an orderable board position.');
 
 /** Retained events keep the format they were written with, so every supported one decodes. */
-const stamped = { seq: z.number().int().min(0), at: z.string().min(1), v: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(EVENT_FORMAT_VERSION)]) };
+const stamped = { seq: z.number().int().min(0), at: z.string().min(1), v: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(EVENT_FORMAT_VERSION)]) };
 const shape = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('workflow.replaced'), text: z.string().min(1), ...stamped }),
   z.strictObject({ kind: z.literal('workflow.field-changed'), field: z.enum(['name', 'defaultView', 'description']), value: z.string().nullable(), ...stamped }),
@@ -95,6 +107,7 @@ const shape = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('board.renamed'), name: z.string().min(1).refine(value => value.trim().length > 0, 'Expected a nonempty board name.'), ...stamped }),
   z.strictObject({ kind: z.literal('board.scope-changed'), projectKeys: z.array(projectKey).nullable(), ...stamped }),
   z.strictObject({ kind: z.literal('board.rank-changed'), rank, ...stamped }),
+  z.strictObject({ kind: z.literal('board.preset-changed'), mode: z.enum(['operator', 'host']).nullable(), ...stamped }),
   z.strictObject({ kind: z.literal('board.removed'), ...stamped }),
 ]);
 
@@ -104,7 +117,7 @@ export const EVENT_KINDS: readonly string[] = [
   'stage.created', 'stage.field-changed', 'stage.id-changed', 'stage.removed', 'stage.layout-set',
   'group.created', 'group.field-changed', 'group.removed',
   'connection.set', 'connection.removed',
-  'board.renamed', 'board.scope-changed', 'board.rank-changed', 'board.removed',
+  'board.renamed', 'board.scope-changed', 'board.rank-changed', 'board.preset-changed', 'board.removed',
 ];
 
 /** The alphabet a published board position is written with, so ranks compare as text. */
@@ -129,7 +142,8 @@ export function decodeEvent(raw: unknown): EventDecode {
   const kind = value.kind;
   if (version < 4 && ((kind === 'workflow.field-changed' || kind === 'stage.field-changed') && value.field === 'description' || kind === 'stage.created' && typeof value.stage === 'object' && value.stage !== null && Object.hasOwn(value.stage, 'description'))) return { ok: false, reason: 'unsupported-version', version: 4 };
   if (version < 5 && (kind === 'stage.field-changed' && value.field === 'decision' || kind === 'stage.created' && typeof value.stage === 'object' && value.stage !== null && Object.hasOwn(value.stage, 'decision'))) return { ok: false, reason: 'unsupported-version', version: 5 };
-  if (version === 1 && (kind === 'stage.field-changed' && value.field === 'scripted' || kind === 'stage.created' && typeof value.stage === 'object' && value.stage !== null && Object.hasOwn(value.stage, 'scripted'))) return { ok: false, reason: 'unsupported-version', version: EVENT_FORMAT_VERSION };
+  if (version < 6 && kind === 'board.preset-changed') return { ok: false, reason: 'unsupported-version', version: 6 };
+  if (version === 1 && (kind === 'stage.field-changed' && value.field === 'scripted' || kind === 'stage.created' && typeof value.stage === 'object' && value.stage !== null && Object.hasOwn(value.stage, 'scripted'))) return { ok: false, reason: 'unsupported-version', version: SCRIPTED_EVENT_VERSION };
   if (typeof kind !== 'string' || !EVENT_KINDS.includes(kind)) return { ok: false, reason: 'unknown-kind', kind: typeof kind === 'string' ? kind : String(kind) };
   const parsed = shape.safeParse(value);
   if (!parsed.success) {

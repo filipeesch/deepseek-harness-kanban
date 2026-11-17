@@ -22,6 +22,7 @@ export function summarizeChanges(changes: readonly BoardChange[]): SharingChange
       case 'board.renamed': return { kind: change.kind, name: change.name };
       case 'board.scope-changed': return { kind: change.kind, projects: change.projectKeys === null ? 0 : change.projectKeys.length, closed: change.projectKeys?.length === 0 };
       case 'board.rank-changed': return { kind: change.kind };
+      case 'board.preset-changed': return { kind: change.kind, mode: change.mode };
       case 'board.removed': return { kind: change.kind };
     }
   });

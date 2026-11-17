@@ -70,6 +70,18 @@ describe('sharing view', () => {
     expect(view.updates).toBe(1);
   });
 
+  it('never offers a board that needs a plugin update for adoption', () => {
+    const view = buildSharingView(record({
+      published: { flow: { key: 'flow', name: 'Flow', rank: 'i', removed: false }, newer: { key: 'newer', name: 'Newer', rank: 'n', removed: false } },
+      boards: {
+        flow: { ...emptyBoard(), seq: 0, head: 'h', probe: 'p', present: true, workflow: flow(), name: 'Flow', rank: 'i' },
+        newer: { ...emptyBoard(), probe: 'p', present: true, problem: { code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED', message: 'This board log was written by a newer plugin version.' } },
+      },
+    }), hubWith([{ id: 'board', name: 'Flow' }]), { provider });
+    expect(view.incoming).toEqual([]);
+    expect(view.updates).toBe(0);
+  });
+
   it('reports a board removed by the team as an orphan row', () => {
     const view = buildSharingView(record({ boards: { flow: { ...emptyBoard(), present: true, workflow: flow(), removal: true, updates: 1 } } }), hubWith([{ id: 'board', name: 'Flow' }]), { provider });
     expect(view.boards[0]).toMatchObject({ state: 'orphan' });

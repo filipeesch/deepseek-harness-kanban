@@ -5,7 +5,8 @@ import {
   boardLogPath, readLayoutStamp, serializeLayoutStamp,
   SHARED_BOARD_DIRECTORY, SHARED_BOARD_EXTENSION, SHARED_BOARD_KEY_PATTERN, SHARED_LAYOUT_FILE, SHARED_LAYOUT_VERSION,
 } from '../../domain/sharing/layout.js';
-import { appendEvents, decodeBoardLog, encodeBoardLog, headToken, type BoardLog } from '../../domain/journal/log.js';
+import { appendEvents, encodeBoardLog, headToken, type BoardLog } from '../../domain/journal/log.js';
+import { parseBoardLog } from './board-compatibility.js';
 import type { BoardChange } from '../../domain/journal/event.js';
 import { GitClone } from './git-clone.js';
 import type { AppendOptions, BoardLogSnapshot, LayoutStampSnapshot, SharedLayoutStore } from './ports.js';
@@ -99,7 +100,7 @@ export class GitLayoutStore implements SharedLayoutStore {
     if (commit === null) return null;
     const text = await this.clone.showFile(commit, boardLogPath(key));
     if (text === null) return null;
-    const log = parseLog(text, key);
+    const log = parseBoardLog(text, key);
     return { probe: commit, head: headToken(log), log };
   }
 
@@ -125,7 +126,7 @@ export class GitLayoutStore implements SharedLayoutStore {
     // at the exact commit the push will extend, so a teammate's append is never replaced.
     if (commit !== null) {
       const fresh = await this.clone.showFile(commit, boardLogPath(key));
-      if (fresh !== null && headToken(parseLog(fresh, key)) !== current.head) {
+      if (fresh !== null && headToken(parseBoardLog(fresh, key)) !== current.head) {
         throw new KanbanError('SHARING_STALE_TOKEN', 'The board changed since it was read. Get the team updates before publishing.', { key });
       }
     }
@@ -148,14 +149,4 @@ export class GitLayoutStore implements SharedLayoutStore {
     if (head === null) throw new KanbanError('SHARING_FAILED', 'The published board could not be committed.');
     return head;
   }
-}
-
-function parseLog(text: string, key: string): BoardLog {
-  const decoded = decodeBoardLog(text);
-  if (!decoded.ok) {
-    if (decoded.reason === 'unsupported-version') throw new KanbanError('SHARING_DOCUMENT_VERSION_UNSUPPORTED', 'The team configuration was written by a newer plugin version. Update the plugin to read or publish it.', { key, version: decoded.version });
-    if (decoded.reason === 'unknown-kind') throw new KanbanError('SHARING_DOCUMENT_VERSION_UNSUPPORTED', 'The team configuration carries a change this plugin does not know. Update the plugin to read or publish it.', { key, kind: decoded.kind });
-    throw new KanbanError('SHARING_INVALID_DOCUMENT', 'The board log is invalid.', { key, message: decoded.message });
-  }
-  return decoded.log;
 }

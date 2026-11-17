@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeEvent, encodeEvent, EVENT_FORMAT_VERSION, EVENT_KINDS, type JournalEvent } from '../../src/domain/journal/event.js';
+import { BOARD_PRESET_EVENT_VERSION, decodeEvent, encodeEvent, EVENT_FORMAT_VERSION, EVENT_KINDS, type JournalEvent } from '../../src/domain/journal/event.js';
 
 const base = { seq: 3, at: '2026-01-01T00:00:00.000Z', v: 1 } as const;
 
@@ -24,6 +24,8 @@ describe('journal event codec', () => {
       { kind: 'board.scope-changed', projectKeys: ['app', 'ops'], ...base },
       { kind: 'board.scope-changed', projectKeys: null, ...base },
       { kind: 'board.rank-changed', rank: 'i5', ...base },
+      { kind: 'board.preset-changed', mode: 'operator', ...base, v: BOARD_PRESET_EVENT_VERSION },
+      { kind: 'board.preset-changed', mode: null, ...base, v: BOARD_PRESET_EVENT_VERSION },
       { kind: 'board.removed', ...base },
     ];
     expect(new Set(events.map(event => event.kind))).toEqual(new Set(EVENT_KINDS));
@@ -67,6 +69,15 @@ describe('journal event codec', () => {
     expect(decodeEvent(event)).toEqual({ ok: true, event });
     expect(decodeEvent({ ...event, v: 3 })).toEqual({ ok: false, reason: 'unsupported-version', version: 4 });
     expect(decodeEvent({ ...event, value: [] }).ok).toBe(false);
+  });
+
+  it('requires the board preset event format for a recorded default choice', () => {
+    const event = { ...base, v: BOARD_PRESET_EVENT_VERSION, kind: 'board.preset-changed', mode: 'host' };
+    expect(decodeEvent(event)).toEqual({ ok: true, event });
+    expect(decodeEvent({ ...event, mode: null })).toEqual({ ok: true, event: { ...event, mode: null } });
+    expect(decodeEvent({ ...event, v: BOARD_PRESET_EVENT_VERSION - 1 })).toEqual({ ok: false, reason: 'unsupported-version', version: BOARD_PRESET_EVENT_VERSION });
+    expect(decodeEvent({ ...event, mode: 'implicit' }).ok).toBe(false);
+    expect(decodeEvent({ ...event, extra: true }).ok).toBe(false);
   });
 
   it('reports an unknown event kind instead of skipping it', () => {

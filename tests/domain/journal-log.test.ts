@@ -16,6 +16,23 @@ function event(seq: number, change: BoardChange) {
   return { ...change, seq, at: AT, v: 1 } as never;
 }
 
+describe('board metadata beside a checkpoint', () => {
+  it('recovers a recorded default choice even when a later whole-workflow event exists', () => {
+    const log = appendEvents(genesisLog(BASE), [{ kind: 'board.preset-changed', mode: 'operator' }], AT);
+    const checkpointed = appendEvents(log, [{ kind: 'workflow.replaced', text: BASE.replace('Plan', 'Planning') }], AT);
+    expect(checkpointed.at(-1)?.kind).toBe('workflow.replaced');
+    const recovered = replay(checkpointed, null);
+    expect(recovered.ok).toBe(true);
+    if (!recovered.ok) return;
+    expect(recovered.text).toContain('Planning');
+    // Recovery of the workflow starts at the checkpoint, but board metadata is folded
+    // from the log itself, so a fresh installation still sees the recorded choice.
+    const firstLook = eventsAfter(checkpointed, -1);
+    expect(firstLook.some(entry => entry.kind === 'board.preset-changed')).toBe(true);
+    expect(firstLook.find(entry => entry.kind === 'board.preset-changed')).toMatchObject({ mode: 'operator', v: 6 });
+  });
+});
+
 describe('board event application', () => {
   it('applies a batch in order', () => {
     const result = applyEvents(BASE, [
@@ -70,6 +87,7 @@ describe('append-only board log', () => {
     const decision = { question: 'Proceed?', options: [{ id: 'approve', title: 'Approve', to: 'backlog' }] };
     const log = appendEvents(genesisLog(BASE), [{ kind: 'stage.field-changed', key: 's2', field: 'decision', value: decision }], AT);
     expect(log.at(-1)?.v).toBe(5);
+    expect(log.at(-1)?.kind).toBe('stage.field-changed');
     const decoded = decodeBoardLog(encodeBoardLog(log));
     expect(decoded.ok).toBe(true);
     if (!decoded.ok) return;

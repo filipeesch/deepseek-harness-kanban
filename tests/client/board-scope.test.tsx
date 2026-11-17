@@ -165,13 +165,13 @@ describe('outdated team configuration', () => {
 
   it('asks for a plugin update in the Team Settings panel', () => {
     render(<TeamSettings hub={fixture().state.hubs[0]!} sharing={sharing} />);
-    expect(screen.getByText('Update the plugin')).toBeTruthy();
+    expect(screen.getByText('Update dsh-kanban')).toBeTruthy();
     expect(screen.getAllByText(/newer plugin version/).length).toBeGreaterThan(0);
   });
 
   it('clears the warning for a supported document', () => {
     render(<TeamSettings hub={fixture().state.hubs[0]!} sharing={{ ...sharing, status: 'published', error: undefined, blockers: [] }} />);
-    expect(screen.queryByText('Update the plugin')).toBeNull();
+    expect(screen.queryByText('Update dsh-kanban')).toBeNull();
   });
 
   it('carries the update message on the Hub publishing indicator', () => {

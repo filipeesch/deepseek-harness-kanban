@@ -25,6 +25,8 @@ export interface StoredBoard {
   projectKeys: string[] | null;
   /** The applied position in the Hub's board order. */
   rank: string | null;
+  /** The applied default preset choice; null and absent both mean the board records none. */
+  presetMode?: 'operator' | 'host' | null;
   /** Published events observed beyond the cursor. */
   updates: number;
   /** The observed log carries a removal event this installation has not applied. */
@@ -79,6 +81,7 @@ const storedBoard = z.strictObject({
   name: z.string().nullable(),
   projectKeys: z.array(z.string()).nullable(),
   rank: z.string().nullable(),
+  presetMode: z.enum(['operator', 'host']).nullable().optional(),
   updates: z.number().int().min(0),
   removal: z.boolean(),
   incoming: z.string().nullable(),
