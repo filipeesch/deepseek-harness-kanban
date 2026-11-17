@@ -25,6 +25,36 @@ const BEFORE = text([
   '    to: plan',
 ]);
 
+describe('authored identity lines', () => {
+  it('derives nothing when only an authored identity changed', () => {
+    const rekeyed = BEFORE.replace('key: s2', 'key: authored-2');
+    expect(rekeyed).not.toBe(BEFORE);
+    expect(deriveChanges({ text: BEFORE }, { text: rekeyed })).toEqual([]);
+  });
+});
+
+describe('board default derivation', () => {
+  it('records the choice when a board is published whole', () => {
+    const changes = deriveBoardChanges(null, { workflow: BEFORE, name: 'Delivery', projectKeys: null, rank: 'i', presetMode: 'operator' });
+    expect(changes).toContainEqual({ kind: 'board.preset-changed', mode: 'operator' });
+  });
+
+  it('publishes no default event for a board that records no choice', () => {
+    const changes = deriveBoardChanges(null, { workflow: BEFORE, name: 'Delivery', projectKeys: null, rank: 'i' });
+    expect(changes.some(change => change.kind === 'board.preset-changed')).toBe(false);
+  });
+
+  it('derives a change and a clear for the recorded choice', () => {
+    const applied = { workflow: BEFORE, name: 'Delivery', projectKeys: null, rank: 'i', presetMode: 'operator' as const };
+    expect(deriveBoardChanges(applied, { workflow: BEFORE, name: 'Delivery', projectKeys: null, rank: 'i', presetMode: 'host' }))
+      .toEqual([{ kind: 'board.preset-changed', mode: 'host' }]);
+    expect(deriveBoardChanges(applied, { workflow: BEFORE, name: 'Delivery', projectKeys: null, rank: 'i' }))
+      .toEqual([{ kind: 'board.preset-changed', mode: null }]);
+    expect(deriveBoardChanges(applied, { workflow: BEFORE, name: 'Delivery', projectKeys: null, rank: 'i', presetMode: 'operator' }))
+      .toEqual([]);
+  });
+});
+
 describe('board change derivation', () => {
   it('derives nothing for an unchanged board', () => {
     expect(deriveChanges({ text: BEFORE }, { text: BEFORE })).toEqual([]);

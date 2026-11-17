@@ -1,9 +1,8 @@
-import { canonicalWorkflow } from '../schema-parts.js';
 import { parseWorkflow } from '../workflow.js';
 import type { SharingChangeSummary } from '../../shared/types.js';
 import { summarizeChanges } from '../journal/summary.js';
-import { hasAuthoredDescriptions } from '../journal/descriptions.js';
-import { deriveBoardChanges, sameScope } from '../journal/derive.js';
+import { deriveBoardChanges } from '../journal/derive.js';
+import { boardDiffers } from './document.js';
 import type { LocalSharedBoard } from './projection.js';
 
 /**
@@ -36,6 +35,8 @@ export interface BoardMirrorView {
   readonly incoming: string | null;
   readonly conflict: 'identity' | 'lifecycle' | null;
   readonly problem: { readonly code: string; readonly message: string } | null;
+  /** The recorded default preset choice this installation applied. */
+  readonly presetMode?: 'operator' | 'host' | null;
 }
 
 export interface BoardEvaluationInput {
@@ -59,11 +60,6 @@ export interface BoardEvaluation {
   readonly conflict: 'identity' | 'lifecycle' | null;
 }
 
-function sameWorkflow(left: string, right: string): boolean {
-  try { return canonicalWorkflow(parseWorkflow(left)) === canonicalWorkflow(parseWorkflow(right)); }
-  catch { return left === right; }
-}
-
 /**
  * Evaluate one board. The state names what the user has to do and the draft flag says
  * whether a publish is due. A bound board whose log is absent is a draft: with removal
@@ -81,17 +77,13 @@ export function evaluateBoard(input: BoardEvaluationInput): BoardEvaluation {
   if (mirror?.conflict != null) return { ...base, key, state: 'needs-review', draft: false, updates: mirror.updates, conflict: mirror.conflict };
   // Local work and team updates can coexist: the state names the blocking action, but
   // the draft flag still records that this installation has unpublished changes.
-  const localDraft = mirror !== null && mirror.workflow !== null && (local.defaultPresetMode !== undefined || hasAuthoredDescriptions(local.workflow) || !sameWorkflow(local.workflow, mirror.workflow)
-    || mirror.name !== local.name
-    || !sameScope(mirror.projectKeys, local.projectKeys)
-    || mirror.rank !== rank);
+  const localDraft = mirror !== null && mirror.workflow !== null && boardDiffers(
+    { workflow: local.workflow, name: local.name, projectKeys: local.projectKeys, rank, presetMode: local.defaultPresetMode },
+    { workflow: mirror.workflow, name: mirror.name, projectKeys: mirror.projectKeys, rank: mirror.rank, presetMode: mirror.presetMode },
+  );
   if ((mirror?.updates ?? 0) > 0) return { ...base, key, state: 'updates-available', draft: localDraft, updates: mirror!.updates, conflict: null };
   if (mirror === null || mirror.workflow === null || mirror.present === false) return { ...base, key, state: 'draft', draft: true, updates: 0, conflict: null };
-  const draft = local.defaultPresetMode !== undefined || hasAuthoredDescriptions(local.workflow) || !sameWorkflow(local.workflow, mirror.workflow)
-    || mirror.name !== local.name
-    || !sameScope(mirror.projectKeys, local.projectKeys)
-    || mirror.rank !== rank;
-  return { ...base, key, state: draft ? 'draft' : 'in-sync', draft, updates: 0, conflict: null };
+  return { ...base, key, state: localDraft ? 'draft' : 'in-sync', draft: localDraft, updates: 0, conflict: null };
 }
 
 /** The local stages that hold tasks and that the resulting workflow does not define. */
@@ -111,8 +103,8 @@ export function boardChanges(input: { local: LocalSharedBoard; mirror: BoardMirr
   const { local, mirror, rank } = input;
   if (mirror === null || mirror.workflow === null) return [{ kind: 'board.created' }];
   const changes = deriveBoardChanges(
-    { workflow: mirror.workflow, name: mirror.name, projectKeys: mirror.projectKeys, rank: mirror.rank },
-    { workflow: local.workflow, name: local.name, projectKeys: local.projectKeys, rank },
+    { workflow: mirror.workflow, name: mirror.name, projectKeys: mirror.projectKeys, rank: mirror.rank, presetMode: mirror.presetMode },
+    { workflow: local.workflow, name: local.name, projectKeys: local.projectKeys, rank, presetMode: local.defaultPresetMode },
   );
   return summarizeChanges(changes);
 }

@@ -46,7 +46,7 @@ Delete only a confirmed empty board, with local or team scope when bound; projec
 
 ## Local success versus publishing
 
-Writes remain local until published. Inspect `sharing` and `diff_published_board`. Current providers cannot safely sync descriptions, decision gates, or preset metadata against older writers: report `SHARING_COMPATIBILITY_UNAVAILABLE`. Sharing carries workflows, not tasks.
+Writes remain local until published. Inspect `sharing` and `diff_published_board`. Descriptions, decision gates, and a board's default preset publish in the board's own log; an older peer reports a plugin update and never overwrites it. Sharing carries workflows, not tasks.
 
 ## Automation and human gates
 

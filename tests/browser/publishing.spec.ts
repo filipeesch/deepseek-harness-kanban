@@ -36,7 +36,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
     const row = page.getByRole('list', { name: 'Published boards' }).getByRole('listitem').filter({ hasText: 'Harness board' });
     await expect(row.getByText('Plugin update required')).toBeVisible();
     await expect(row.getByRole('button', { name: /Publish|Use the team version|Keep the local version/ })).toHaveCount(0);
-    await expect(page.getByText('Update the plugin', { exact: true })).toBeVisible();
+    await expect(page.getByText('Update dsh-kanban', { exact: true })).toBeVisible();
     await expectLegible(page, '.kb-share-board-state');
     await shot(page, 'scripted-team-update-required-' + colorScheme + '.png');
   });
@@ -161,7 +161,7 @@ test('explains an unavailable repository', async ({ page }) => {
 
 test('shows both banner directions and a count on both tab rows', async ({ page }) => {
   await page.goto(HARNESS + '?scenario=sharing&sharing=updates');
-  await expect(page.getByText('Your team published changes to this board.')).toBeVisible();
+  await expect(page.getByText('Your team published changes to this board “Harness board”.')).toBeVisible();
   await expect(page.getByRole('img', { name: /boards? to get/ }).first()).toBeVisible();
   await expect(page.getByRole('img', { name: 'Team updates available for this board (2)' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Get updates' })).toBeVisible();
@@ -170,7 +170,7 @@ test('shows both banner directions and a count on both tab rows', async ({ page 
   await shot(page, 'sharing-banner-updates.png', false);
 
   await page.goto(HARNESS + '?scenario=sharing&sharing=draft');
-  await expect(page.getByText('You have changes to send for this board.')).toBeVisible();
+  await expect(page.getByText('You have changes to send for this board “Harness board”.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Publish board' })).toBeVisible();
   await expect(page.getByRole('img', { name: '1 board to publish' })).toBeVisible();
   await expect(page.getByRole('img', { name: 'Board changes not sent (2)' })).toBeVisible();
@@ -180,7 +180,7 @@ test('shows both banner directions and a count on both tab rows', async ({ page 
   await expect.poll(async () => (await sharingCommands(page))[0]).toMatchObject({ type: 'sharing.publishBoard', boardId: 'board' });
 
   await page.goto(HARNESS + '?scenario=sharing&sharing=review');
-  await expect(page.getByText('Your team changed this board in a way that needs a choice.')).toBeVisible();
+  await expect(page.getByText('Your team changed this board “Harness board” in a way that needs a choice.')).toBeVisible();
   await expect(page.getByRole('img', { name: 'Team review needed' })).toBeVisible();
   await expect(page.getByRole('img', { name: 'This board needs a team review' })).toBeVisible();
 
@@ -329,4 +329,12 @@ test('renders the connection surface with the host theme tokens in both appearan
   expect(dark.label).toBe(dark.expectedLabel);
   expect(dark.contrast, 'the primary label is legible in dark').toBeGreaterThanOrEqual(4.5);
   await shot(page, 'local-folder-dark.png');
+});
+test('names a recorded board default in the change list', async ({ page }) => {
+  await page.goto(HARNESS + '?scenario=publishing&sharing=draft-preset&theme=host');
+  await openChanges(page);
+  const row = page.getByRole('list', { name: 'Published boards' }).getByRole('listitem').filter({ hasText: 'Harness board' });
+  await expect(row.getByText('Board default preset set to the workflow operator')).toBeVisible();
+  await expectLegible(page, '.kb-share-board-state');
+  await shot(page, 'team-settings-preset-change.png');
 });

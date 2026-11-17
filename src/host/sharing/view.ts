@@ -4,6 +4,8 @@ import { projectSharingBoards } from '../../domain/sharing/projection.js';
 import { planRanks } from '../../domain/sharing/board-rank.js';
 import type { ProviderDescription } from './provider.js';
 import type { HubSharingRecord, StoredBoard } from './state.js';
+import { mirrorView } from './sync/identity.js';
+import { needsPluginUpdate } from './board-compatibility.js';
 
 /** The provider facts the view needs; they never come from the stored record. */
 export interface SharingViewContext {
@@ -34,13 +36,13 @@ export function buildSharingView(record: HubSharingRecord, hub: HubState, contex
     const rank = key === undefined ? null : planned?.get(key) ?? stored?.rank ?? null;
     const evaluation = evaluateBoard({
       local: board,
-      mirror: stored === null ? null : { cursor: stored.seq, present: stored.present, workflow: stored.workflow, name: stored.name, projectKeys: stored.projectKeys, rank: stored.rank, updates: stored.updates, removal: stored.removal, incoming: stored.incoming, conflict: stored.conflict, problem: stored.problem },
+      mirror: stored === null ? null : mirrorView(stored),
       orphaned: record.orphans[board.boardId] !== undefined,
       rank,
     });
     const review = evaluation.state === 'needs-review';
     const changes = evaluation.state === 'draft' || review
-      ? boardChanges({ local: board, mirror: stored === null ? null : { cursor: stored.seq, present: stored.present, workflow: stored.workflow, name: stored.name, projectKeys: stored.projectKeys, rank: stored.rank, updates: stored.updates, removal: stored.removal, incoming: stored.incoming, conflict: stored.conflict, problem: stored.problem }, rank })
+      ? boardChanges({ local: board, mirror: stored === null ? null : mirrorView(stored), rank })
       : [];
     return {
       boardId: board.boardId,
@@ -65,7 +67,7 @@ export function buildSharingView(record: HubSharingRecord, hub: HubState, contex
   });
   const bound = new Set(boundKeys);
   const incoming = Object.values(record.published)
-    .filter(entry => !entry.removed && !bound.has(entry.key))
+    .filter(entry => !entry.removed && !bound.has(entry.key) && !needsPluginUpdate(record.boards[entry.key]?.problem))
     .map(entry => ({ key: entry.key, name: entry.name }));
   const removed = Object.entries(record.removed)
     .filter(([key]) => record.published[key] !== undefined && !record.published[key]!.removed)

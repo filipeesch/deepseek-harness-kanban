@@ -40,7 +40,7 @@ export function canPublishBoard(view: HubSharingView | undefined, boardId: strin
 export function describeChange(change: SharingChangeSummary): string {
   switch (change.kind) {
     case 'workflow.replaced': return 'The workflow is replaced as a whole';
-    case 'workflow.field-changed': return change.field === 'name' ? 'The workflow name changed' : 'The default view changed';
+    case 'workflow.field-changed': return change.field === 'name' ? 'The workflow name changed' : change.field === 'description' ? 'The workflow description changed' : 'The default view changed';
     case 'workflow.initial-changed': return 'The initial stage changed to “' + change.columnId + '”';
     case 'stage.created': return 'Stage “' + change.name + '” added';
     case 'stage.field-changed': return change.field === 'name' ? 'Stage “' + change.stage + '” renamed' : 'Stage “' + change.stage + '” changed its ' + fieldLabel(change.field);
@@ -55,6 +55,7 @@ export function describeChange(change: SharingChangeSummary): string {
     case 'board.renamed': return 'Board renamed to “' + change.name + '”';
     case 'board.scope-changed': return change.closed ? 'Board closed for new tasks' : change.projects === 0 ? 'Board now accepts every project' : 'Board project scope changed to ' + change.projects + (change.projects === 1 ? ' project' : ' projects');
     case 'board.rank-changed': return 'Board position changed';
+    case 'board.preset-changed': return change.mode === null ? 'Board default preset cleared' : change.mode === 'operator' ? 'Board default preset set to the workflow operator' : 'Board default preset set to the host default';
     case 'board.removed': return 'Board removed for the team';
     default: return 'Board changed';
   }

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { BoardChange, JournalEvent } from './event.js';
-import { decodeEvent, encodeEvent, EVENT_FORMAT_VERSION } from './event.js';
+import { BOARD_PRESET_EVENT_VERSION, DECISION_EVENT_VERSION, decodeEvent, encodeEvent } from './event.js';
 import { applyEvents } from './conflict.js';
 import { hasAuthoredDecision, hasAuthoredDescriptions } from './descriptions.js';
 
@@ -55,19 +55,21 @@ export function appendEvents(log: BoardLog, changes: readonly BoardChange[], at:
  * it only when its text authors one.
  */
 function eventVersion(change: BoardChange): number {
+  // A board's recorded default preset choice needs a format no earlier peer reads.
+  if (change.kind === 'board.preset-changed') return BOARD_PRESET_EVENT_VERSION;
   if (change.kind === 'workflow.field-changed') return change.field === 'description' ? 4 : 3;
   if (change.kind === 'stage.field-changed') {
-    if (change.field === 'decision') return EVENT_FORMAT_VERSION;
+    if (change.field === 'decision') return DECISION_EVENT_VERSION;
     if (change.field === 'description') return 4;
     return 3;
   }
   if (change.kind === 'stage.created') {
-    if (change.stage.decision !== undefined) return EVENT_FORMAT_VERSION;
+    if (change.stage.decision !== undefined) return DECISION_EVENT_VERSION;
     if (change.stage.description !== undefined) return 4;
     return 3;
   }
   if (change.kind !== 'workflow.replaced') return 3;
-  if (hasAuthoredDecision(change.text)) return EVENT_FORMAT_VERSION;
+  if (hasAuthoredDecision(change.text)) return DECISION_EVENT_VERSION;
   return hasAuthoredDescriptions(change.text) ? 4 : 3;
 }
 

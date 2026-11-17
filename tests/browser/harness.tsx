@@ -76,8 +76,12 @@ function harnessSharing(kind: string): HubSharingView {
   };
   const draftBoard = { ...view.boards[0]!, state: 'draft' as const, draft: true, detail: { changes: [{ kind: 'stage.field-changed' as const, stage: 'explore', field: 'name' }, { kind: 'board.renamed' as const, name: 'Renamed board' }] } };
   if (kind === 'draft') return { ...view, drafts: 1, boards: [draftBoard] };
+  if (kind === 'draft-other') return { ...view, drafts: 1, boards: [view.boards[0]!, { ...draftBoard, boardId: 'other', key: 'other-board', name: 'Other board' }] };
+  if (kind === 'draft-preset') return { ...view, drafts: 1, boards: [{ ...view.boards[0]!, state: 'draft' as const, draft: true, detail: { changes: [{ kind: 'board.preset-changed' as const, mode: 'operator' as const }] } }] };
   if (kind === 'updates') return { ...view, status: 'updates-available', updates: 1, boards: [{ ...view.boards[0]!, state: 'updates-available', updates: 2, detail: { changes: [{ kind: 'stage.id-changed', from: 'explore', to: 'discover' }] } }], incoming: [{ key: 'team-board', name: 'Team board' }] };
-  if (kind === 'update-required') return { ...view, status: 'needs-review', conflicts: 1, blockers: [{ code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED', message: 'The team configuration was written by a newer plugin version. Update the plugin to read or publish it.' }], boards: [{ ...view.boards[0]!, state: 'update-required' }] };
+  if (kind === 'update-required') return { ...view, status: 'needs-review', conflicts: 1, blockers: [{ code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED', message: 'This team storage was written by a newer plugin version. Update dsh-kanban to read or publish it.' }], boards: [{ ...view.boards[0]!, state: 'update-required' }] };
+  // One board of an otherwise readable storage was written by a newer peer.
+  if (kind === 'update-required-board') return { ...view, status: 'needs-review', conflicts: 1, boards: [{ ...view.boards[0]!, state: 'update-required' }] };
   if (kind === 'review') return { ...view, status: 'needs-review', conflicts: 1, boards: [{ ...view.boards[0]!, state: 'needs-review', detail: { changes: [{ kind: 'stage.id-changed', from: 'explore', to: 'discover' }], local: workflowYaml(), team: workflowYaml(true), localName: 'Harness board', teamName: 'Team board' } }] };
   if (kind === 'orphan') return { ...view, boards: [{ ...view.boards[0]!, state: 'orphan' }] };
   if (kind === 'pending-orphan') return { ...view, status: 'updates-available', updates: 1, boards: [{ ...view.boards[0]!, state: 'orphan', updates: 1 }] };

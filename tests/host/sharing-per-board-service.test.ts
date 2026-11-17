@@ -10,7 +10,7 @@ import { BoardRevisions } from '../../src/host/revisions.js';
 import { createRevisionStore } from '../../src/host/revision-storage.js';
 import type { EncodedRevisionLog } from '../../src/domain/revisions/log.js';
 import type { BoardRevisionPort } from '../../src/host/board-administration.js';
-import type { HubSharingStore } from '../../src/host/sharing/state.js';
+import { emptyBoard, type HubSharingStore } from '../../src/host/sharing/state.js';
 import type { ProviderDescription, ProviderState, SharingBinding, SharingProviderId } from '../../src/host/sharing/provider.js';
 import type { SharedLayoutStore } from '../../src/host/sharing/ports.js';
 import { type BoardLog } from '../../src/domain/journal/log.js';
@@ -100,7 +100,7 @@ describe('per-board publishing service', () => {
     await f.close();
   });
 
-  it('refuses richer data without a compatible-writer storage boundary before publication', async () => {
+  it('publishes the metadata a board log can carry', async () => {
     for (const feature of ['operator', 'host', 'workflow-description', 'stage-description'] as const) {
       const f = await fixture();
       await f.hubs.hub('hub').transact(draft => {
@@ -110,34 +110,42 @@ describe('per-board publishing service', () => {
           ? FLOW.replace('name: Flow', 'name: Flow\ndescription: Details')
           : FLOW.replace('label: Plan', 'label: Plan\n    description: Details'), f.hubs.operationDeps());
       }, f.hubs.requireHub('hub').revision);
-      await expect(f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } })).rejects.toMatchObject({ code: 'SHARING_COMPATIBILITY_UNAVAILABLE' });
-      expect(f.layout.stampVersion).toBeNull();
-      expect(await f.layout.listLogs()).toEqual([]);
+      await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
+      expect(f.layout.stampVersion).toBe(4);
+      const log = (await f.layout.readLog(keyOf(f, boardOf(f))!))!.log;
+      if (feature === 'operator' || feature === 'host') {
+        expect(log).toContainEqual(expect.objectContaining({ kind: 'board.preset-changed', mode: feature, v: 6 }));
+      } else {
+        expect(log.some(event => event.kind === 'workflow.replaced' && event.text.includes('description: Details'))).toBe(true);
+      }
+      expect(f.service.view('hub')!.boards[0]).toMatchObject({ state: 'in-sync', bound: true });
       await f.close();
     }
   });
 
-  it('refuses blank authored descriptions and legacy logs that carry them', async () => {
-    const documents = [
+  it('accepts an authored blank description and a legacy log that carries descriptions', async () => {
+    const blank = [
       FLOW.replace('name: Flow', 'name: Flow\ndescription: ""'),
       FLOW.replace('name: Flow', 'name: Flow\ndescription: "   "'),
       FLOW.replace('label: Plan', 'label: Plan\n    description: ""'),
       FLOW.replace('label: Plan', 'label: Plan\n    description: "   "'),
-      FLOW.replace('label: Plan', 'label: Plan\n    description: Historical'),
     ];
-    for (const workflow of documents) {
+    for (const workflow of blank) {
       const local = await fixture();
       await local.hubs.hub('hub').transact(draft => { operations.saveBoardWorkflow(draft, 'board', workflow, local.hubs.operationDeps()); }, local.hubs.requireHub('hub').revision);
-      await expect(local.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } })).rejects.toMatchObject({ code: 'SHARING_COMPATIBILITY_UNAVAILABLE' });
+      await local.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
+      expect(local.layout.stampVersion).toBe(4);
       expect(local.hubs.requireHub('hub').boards[0]!.workflowYaml).toBe(workflow);
-      expect(local.layout.stampVersion).toBeNull();
       await local.close();
-      const oldLog = publishedLog(FLOW, 'Team board', 'i').map(event => event.kind === 'workflow.replaced' ? { ...event, text: workflow, v: 3 } : event);
-      const remote = await fixture({ logs: { team: oldLog } });
-      await expect(remote.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } })).rejects.toMatchObject({ code: 'SHARING_COMPATIBILITY_UNAVAILABLE' });
-      expect(remote.layout.logOf('team')).toEqual(oldLog);
-      await remote.close();
     }
+    const historical = FLOW.replace('label: Plan', 'label: Plan\n    description: Historical');
+    const oldLog = publishedLog(historical, 'Team board', 'i').map(event => event.kind === 'workflow.replaced' ? { ...event, text: historical, v: 3 } : event);
+    const remote = await fixture({ logs: { team: oldLog } });
+    await remote.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
+    await remote.service.receive('hub');
+    await remote.service.getUpdates('hub');
+    expect(remote.hubs.requireHub('hub').boards.find(board => board.name === 'Team board')!.workflowYaml).toContain('description: Historical');
+    await remote.close();
   });
 
   it('creates a board the team publishes, from its log', async () => {
@@ -150,6 +158,19 @@ describe('per-board publishing service', () => {
     expect(created).toBeDefined();
     expect(created?.defaultPresetMode).toBeUndefined();
     expect(f.service.view('hub')?.boards.find(board => board.name === 'Team board')).toMatchObject({ state: 'in-sync', bound: true });
+    await f.close();
+  });
+
+  it('applies the default preset one board log records', async () => {
+    const base = publishedLog(FLOW, 'Team board', 'i');
+    const log: BoardLog = [...base, { kind: 'board.preset-changed', mode: 'host', seq: base.length, at: NOW, v: 6 }];
+    const f = await fixture({ logs: { team: log } });
+    await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
+    await f.service.receive('hub');
+    await f.service.getUpdates('hub');
+    const created = f.hubs.requireHub('hub').boards.find(board => board.name === 'Team board');
+    expect(created?.defaultPresetMode).toBe('host');
+    expect(f.service.view('hub')!.boards.find(board => board.boardId === created!.id)).toMatchObject({ state: 'in-sync' });
     await f.close();
   });
 
@@ -168,8 +189,12 @@ describe('per-board publishing service', () => {
     }, hub.revision);
     const key = keyOf(f, boardId)!;
     const snapshot = await f.layout.readLog(key);
-    await f.layout.appendChanges(key, [{ kind: 'stage.id-changed', key: 's1', from: 'backlog', id: 'inbox' }], { expectedHead: snapshot!.head, message: 'm', at: NOW });
+    await f.layout.appendChanges(key, [
+      { kind: 'stage.id-changed', key: 's1', from: 'backlog', id: 'inbox' },
+      { kind: 'stage.field-changed', key: 's2', field: 'description', value: 'Review step' },
+    ], { expectedHead: snapshot!.head, message: 'm', at: NOW });
     await f.service.getUpdates('hub');
+    expect(f.hubs.requireHub('hub').boards[0]!.workflowYaml).toContain('description: Review step');
     expect(f.hubs.requireHub('hub').tasks.find(candidate => candidate.id === 'task')!.columnId).toBe('inbox');
     expect(f.hubs.requireHub('hub').boards[0]!.workflowYaml).toContain('id: inbox');
     await f.close();
@@ -189,26 +214,28 @@ describe('per-board publishing service', () => {
     await f.service.getUpdates('hub');
     expect(f.hubs.requireHub('hub').boards[0]!.workflowYaml).toContain('description: Local details');
     expect(stateOf(f, boardId)).toBe('draft');
-    await expect(f.service.publishBoard('hub', boardId)).rejects.toMatchObject({ code: 'SHARING_COMPATIBILITY_UNAVAILABLE' });
+    await f.service.publishBoard('hub', boardId);
+    const published = (await f.layout.readLog(key))!.log;
+    expect(published).toContainEqual(expect.objectContaining({ kind: 'stage.field-changed', field: 'description', value: 'Local details' }));
+    expect(stateOf(f, boardId)).toBe('in-sync');
     await f.close();
   });
 
-  it('refuses an unsafe v3 replacement observed after connection', async () => {
+  it('applies a legacy v3 replacement that carries a description', async () => {
     const f = await fixture();
     await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
     const boardId = boardOf(f);
-    const before = f.hubs.requireHub('hub').boards[0]!.workflowYaml;
     const key = keyOf(f, boardId)!;
     const snapshot = (await f.layout.readLog(key))!;
-    f.layout.injectLog(key, [...snapshot.log, { kind: 'workflow.replaced', text: FLOW.replace('name: Flow', 'name: Flow\ndescription: ""'), v: 3, seq: snapshot.log.length, at: NOW }]);
+    f.layout.injectLog(key, [...snapshot.log, { kind: 'workflow.replaced', text: FLOW.replace('name: Flow', 'name: Flow\ndescription: Historical'), v: 3, seq: snapshot.log.length, at: NOW }]);
     await f.service.check('hub', true);
-    expect(stateOf(f, boardId)).toBe('update-required');
-    await expect(f.service.updateBoard('hub', boardId)).rejects.toMatchObject({ code: 'SHARING_COMPATIBILITY_UNAVAILABLE' });
-    expect(f.hubs.requireHub('hub').boards[0]!.workflowYaml).toBe(before);
+    expect(stateOf(f, boardId)).toBe('updates-available');
+    await f.service.updateBoard('hub', boardId);
+    expect(f.hubs.requireHub('hub').boards[0]!.workflowYaml).toContain('description: Historical');
     await f.close();
   });
 
-  it('applies an unrelated legacy board when another bound board is incompatible', async () => {
+  it('applies a board whose log carries a description and an unrelated legacy board', async () => {
     const f = await fixture({ logs: { board: publishedLog(FLOW, 'Board', 'h'), other: publishedLog(SECOND, 'Other', 'i') } });
     await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
     await f.service.receive('hub');
@@ -216,13 +243,13 @@ describe('per-board publishing service', () => {
     const otherSnapshot = (await f.layout.readLog('other'))!;
     await f.layout.appendChanges('board', [{ kind: 'workflow.field-changed', field: 'description', value: 'Unsupported' }], { expectedHead: boardSnapshot.head, message: 'm', at: NOW });
     await f.layout.appendChanges('other', [{ kind: 'workflow.field-changed', field: 'name', value: 'Team updated' }], { expectedHead: otherSnapshot.head, message: 'm', at: NOW });
-    await expect(f.service.getUpdates('hub')).rejects.toMatchObject({ code: 'SHARING_COMPATIBILITY_UNAVAILABLE' });
+    await f.service.getUpdates('hub');
     expect(f.hubs.requireHub('hub').boards.find(board => board.name === 'Other')!.workflowYaml).toContain('Team updated');
-    expect(f.hubs.requireHub('hub').boards.find(board => board.name === 'Board')!.workflowYaml).not.toContain('Unsupported');
+    expect(f.hubs.requireHub('hub').boards.find(board => board.name === 'Board')!.workflowYaml).toContain('Unsupported');
     await f.close();
   });
 
-  it('refuses version 4 team data on an unprotected provider', async () => {
+  it('applies version 4 team data', async () => {
     const f = await fixture();
     await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
     const boardId = boardOf(f);
@@ -230,13 +257,13 @@ describe('per-board publishing service', () => {
     const snapshot = (await f.layout.readLog(key))!;
     await f.layout.appendChanges(key, [{ kind: 'workflow.field-changed', field: 'description', value: 'Team details' }], { expectedHead: snapshot.head, message: 'm', at: NOW });
     await f.service.check('hub', true);
-    expect(stateOf(f, boardId)).toBe('update-required');
-    await expect(f.service.updateBoard('hub', boardId)).rejects.toMatchObject({ code: 'SHARING_COMPATIBILITY_UNAVAILABLE' });
-    expect(f.hubs.requireHub('hub').boards[0]!.workflowYaml).not.toContain('Team details');
+    expect(stateOf(f, boardId)).toBe('updates-available');
+    await f.service.updateBoard('hub', boardId);
+    expect(f.hubs.requireHub('hub').boards[0]!.workflowYaml).toContain('Team details');
     await f.close();
   });
 
-  it('refuses decision team data on an unprotected provider', async () => {
+  it('applies decision team data', async () => {
     const f = await fixture();
     await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
     const boardId = boardOf(f);
@@ -244,9 +271,9 @@ describe('per-board publishing service', () => {
     const snapshot = (await f.layout.readLog(key))!;
     await f.layout.appendChanges(key, [{ kind: 'stage.field-changed', key: 's2', field: 'decision', value: { question: 'Proceed?', options: [{ id: 'ship', title: 'Ship', to: 'backlog' }] } }], { expectedHead: snapshot.head, message: 'm', at: NOW });
     await f.service.check('hub', true);
-    expect(stateOf(f, boardId)).toBe('update-required');
-    await expect(f.service.updateBoard('hub', boardId)).rejects.toMatchObject({ code: 'SHARING_COMPATIBILITY_UNAVAILABLE' });
-    expect(f.hubs.requireHub('hub').boards[0]!.workflowYaml).not.toContain('Proceed?');
+    expect(stateOf(f, boardId)).toBe('updates-available');
+    await f.service.updateBoard('hub', boardId);
+    expect(f.hubs.requireHub('hub').boards[0]!.workflowYaml).toContain('Proceed?');
     await f.close();
   });
 
@@ -291,6 +318,84 @@ describe('per-board publishing service', () => {
     await f.layout.appendChanges(key, [{ kind: 'workflow.field-changed', field: 'name', value: 'Renamed' }], { expectedHead: snapshot!.head, message: 'm', at: NOW });
     await f.service.check('hub', true);
     await expect(f.service.publishBoard('hub', boardId)).rejects.toThrow(expect.objectContaining({ code: 'SHARING_PUBLISH_BLOCKED' }));
+    await f.close();
+  });
+
+  it('re-reads a board that carries a plugin-update state instead of keeping it forever', async () => {
+    const f = await fixture();
+    await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
+    const boardId = boardOf(f);
+    const key = keyOf(f, boardId)!;
+    // What a check records when a newer peer wrote the log, with the probe that matched.
+    const record = f.store.load('hub')!;
+    record.boards[key] = { ...record.boards[key]!, problem: { code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED', message: 'A newer plugin version wrote this board.' } };
+    await f.store.save(record);
+    expect(stateOf(f, boardId)).toBe('update-required');
+    // The plugin was updated: the next check reads the log again and clears the state.
+    await f.service.check('hub', true);
+    expect(stateOf(f, boardId)).toBe('in-sync');
+    await f.close();
+  });
+
+  it('adopts a previously unreadable board under the team\'s name after a plugin update', async () => {
+    const f = await fixture();
+    await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
+    // A newer peer published a board this installation could not read at connect time.
+    f.layout.injectLog('newer', publishedLog(FLOW, 'Newer board', 'n'));
+    const probe = (await f.layout.listLogs()).find(entry => entry.key === 'newer')!.probe;
+    const record = f.store.load('hub')!;
+    record.published.newer = { key: 'newer', name: 'Newer board', rank: 'n', removed: false };
+    record.boards.newer = { ...emptyBoard(), probe, present: true, problem: { code: 'SHARING_DOCUMENT_VERSION_UNSUPPORTED', message: 'A newer plugin version wrote this board.' } };
+    await f.store.save(record);
+    expect(f.service.view('hub')!.incoming).toEqual([]);
+    // The plugin was updated: the next update adopts the board under its published name.
+    await f.service.getUpdates('hub');
+    const created = f.hubs.requireHub('hub').boards.find(board => board.name === 'Newer board');
+    expect(created).toBeDefined();
+    expect(stateOf(f, created!.id)).toBe('in-sync');
+    expect(f.store.load('hub')!.boards.newer!.problem).toBeNull();
+    await f.close();
+  });
+
+  it('keeps a board whose only local change is its name when the team removes it', async () => {
+    const f = await fixture();
+    await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
+    const boardId = boardOf(f);
+    await f.hubs.hub('hub').transact(draft => { operations.renameBoard(draft, boardId, 'Renamed locally', f.hubs.operationDeps()); }, f.hubs.requireHub('hub').revision);
+    expect(stateOf(f, boardId)).toBe('draft');
+    const key = keyOf(f, boardId)!;
+    const snapshot = (await f.layout.readLog(key))!;
+    await f.layout.appendChanges(key, [{ kind: 'board.removed' }], { expectedHead: snapshot.head, message: 'remove', at: NOW });
+    await f.service.getUpdates('hub');
+    expect(f.hubs.requireHub('hub').boards.some(board => board.id === boardId)).toBe(true);
+    expect(f.hubs.requireHub('hub').boards[0]!.name).toBe('Renamed locally');
+    expect(stateOf(f, boardId)).toBe('orphan');
+    await f.close();
+  });
+
+  it('publishes a board that matches its applied version without appending an event', async () => {
+    const f = await fixture();
+    await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
+    const boardId = boardOf(f);
+    const key = keyOf(f, boardId)!;
+    const before = (await f.layout.readLog(key))!.log.length;
+    await f.service.publishBoard('hub', boardId);
+    expect((await f.layout.readLog(key))!.log.length).toBe(before);
+    expect(stateOf(f, boardId)).toBe('in-sync');
+    await f.close();
+  });
+
+  it('reports a board as up to date while only its tasks move', async () => {
+    const f = await fixture();
+    await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
+    const boardId = boardOf(f);
+    await f.hubs.hub('hub').transact(draft => {
+      draft.tasks.push({ id: 'task', boardId, projectId: 'project', title: 'T', description: '', columnId: 'backlog', position: 0, sessionIds: [], closedSessionIds: [], effectiveCwd: '/repo', worktree: null, operation: null, createdAt: NOW, updatedAt: NOW } as never);
+      return draft;
+    }, f.hubs.requireHub('hub').revision);
+    await f.hubs.hub('hub').transact(draft => { operations.placeTask(draft, 'task', 'plan', 'end', Date.parse(NOW), { at: NOW }); return draft; }, f.hubs.requireHub('hub').revision);
+    expect(stateOf(f, boardId)).toBe('in-sync');
+    expect(f.service.view('hub')!.drafts).toBe(0);
     await f.close();
   });
 
@@ -397,7 +502,22 @@ describe('per-board publishing service', () => {
     await f.close();
   });
 
-  it('keeps a metadata-only local change when the team removes a board', async () => {
+  it('publishes a metadata-only local change as the board default event', async () => {
+    for (const mode of ['operator', 'host'] as const) {
+      const f = await fixture();
+      await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
+      const boardId = boardOf(f);
+      await f.hubs.hub('hub').transact(draft => { draft.boards[0]!.defaultPresetMode = mode; }, f.hubs.requireHub('hub').revision);
+      expect(stateOf(f, boardId)).toBe('draft');
+      await f.service.publishAll('hub');
+      const log = (await f.layout.readLog(keyOf(f, boardId)!))!.log;
+      expect(log).toContainEqual(expect.objectContaining({ kind: 'board.preset-changed', mode }));
+      expect(stateOf(f, boardId)).toBe('in-sync');
+      await f.close();
+    }
+  });
+
+  it('keeps an unpublished board default when the team removes the board', async () => {
     for (const mode of ['operator', 'host'] as const) {
       const f = await fixture();
       await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
@@ -405,7 +525,6 @@ describe('per-board publishing service', () => {
       const original = f.hubs.requireHub('hub').boards[0]!.workflowYaml;
       await f.hubs.hub('hub').transact(draft => { draft.boards[0]!.defaultPresetMode = mode; }, f.hubs.requireHub('hub').revision);
       expect(stateOf(f, boardId)).toBe('draft');
-      await expect(f.service.publishAll('hub')).rejects.toMatchObject({ code: 'SHARING_PUBLISH_BLOCKED' });
       const key = keyOf(f, boardId)!;
       const snapshot = (await f.layout.readLog(key))!;
       await f.layout.appendChanges(key, [{ kind: 'board.removed' }], { expectedHead: snapshot.head, message: 'remove', at: NOW });
@@ -520,7 +639,7 @@ describe('per-board publishing service', () => {
     await f.close();
   });
 
-  it('keeps local descriptions and provenance when the first receive matches by name', async () => {
+  it('adopts the published board and its recorded defaults when the first receive matches by name', async () => {
     for (const variant of ['root', 'stage', 'blank', 'operator', 'host'] as const) {
       const f = await fixture({ logs: { board: publishedLog(SECOND, 'Board', 'i') } });
       await f.hubs.hub('hub').transact(draft => {
@@ -533,13 +652,13 @@ describe('per-board publishing service', () => {
           operations.saveBoardWorkflow(draft, board.id, text, f.hubs.operationDeps());
         }
       }, f.hubs.requireHub('hub').revision);
-      const before = f.hubs.requireHub('hub').boards[0]!;
       await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
       await f.service.receive('hub');
       const after = f.hubs.requireHub('hub').boards[0]!;
-      expect(after.workflowYaml).toBe(before.workflowYaml);
-      expect(after.defaultPresetMode).toBe(before.defaultPresetMode);
-      expect(stateOf(f, after.id)).toBe('draft');
+      // The published log records no default, so the adopted board records none either.
+      expect(after.workflowYaml).toContain('name: Second');
+      expect(after.defaultPresetMode).toBeUndefined();
+      expect(stateOf(f, after.id)).toBe('in-sync');
       await f.close();
     }
   });
@@ -561,6 +680,26 @@ describe('per-board publishing service', () => {
     await f.service.receive('hub');
     expect(f.hubs.requireHub('hub').boards[0]!.workflowYaml).toContain('name: Second');
     expect(f.service.view('hub')!.boards[0]).toMatchObject({ state: 'in-sync', bound: true });
+    await f.close();
+  });
+
+  it('previews and replaces a team board that carries descriptions and a decision gate', async () => {
+    const rich = FLOW
+      .replace('    label: Plan', '    label: Plan' + NL + '    description: Review step' + NL + '    decision:' + NL + '      question: Proceed?' + NL + '      options:' + NL + '        - id: ship' + NL + '          title: Ship' + NL + '          to: backlog');
+    const source = await fixture();
+    await source.hubs.hub('hub').transact(draft => {
+      operations.saveBoardWorkflow(draft, draft.boards[0]!.id, rich, source.hubs.operationDeps());
+    }, source.hubs.requireHub('hub').revision);
+    await source.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/source' } });
+    const log = source.layout.logOf(keyOf(source, boardOf(source))!)!;
+    await source.close();
+    const f = await fixture({ logs: { rich: log } });
+    await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
+    expect(f.service.view('hub')!.previewBoards?.map(board => board.name)).toEqual(['Board']);
+    await f.service.publishInitial('hub', true);
+    expect(f.service.view('hub')!.boards).toHaveLength(1);
+    expect(f.service.view('hub')!.boards[0]!.state).toBe('in-sync');
+    expect(f.layout.logOf('rich')!.some(event => event.kind === 'board.removed')).toBe(true);
     await f.close();
   });
 

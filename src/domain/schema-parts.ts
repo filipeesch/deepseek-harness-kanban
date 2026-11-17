@@ -261,6 +261,15 @@ export function canonicalWorkflow(value: Workflow): string {
 }
 
 /**
+ * What a workflow publishes: its meaning and its diagram layout, never its stage
+ * identity. Two documents that differ only in the authored `key` lines are the same
+ * board to a publish, so sharing compares them through this.
+ */
+export function workflowContent(value: Workflow): string {
+  return workflowShape(value, true, false);
+}
+
+/**
  * The workflow without its diagram layout: the flow two versions must share to merge.
  * The stable identity is excluded: it says which stage is which, not what the stage
  * means, so a board that gained identities is still comparable to one that has none.

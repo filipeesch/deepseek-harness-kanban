@@ -57,11 +57,14 @@ async function fixture(legacy = true) {
 }
 
 describe('Google Drive Local runtime wiring', () => {
-  it('refuses new board provenance when the provider cannot protect it', async () => {
+  it('publishes a board that records a default preset choice', async () => {
     const f = await fixture(false);
     const hubId = f.hubs.defaultHubId();
-    await expect(f.runtime.service.connect({ type: 'sharing.connect', hubId, provider: 'google-drive-local', settings: { path: f.folder } })).rejects.toMatchObject({ code: 'SHARING_COMPATIBILITY_UNAVAILABLE' });
-    await expect(readFile(path.join(f.folder, SHARED_LAYOUT_FILE), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    await f.runtime.service.connect({ type: 'sharing.connect', hubId, provider: 'google-drive-local', settings: { path: f.folder } });
+    expect(await readFile(path.join(f.folder, SHARED_LAYOUT_FILE), 'utf8')).toContain('version: 4');
+    const board = f.hubs.requireHub(hubId).boards[0]!;
+    expect(board.defaultPresetMode).toBe('operator');
+    expect(f.runtime.service.view(hubId)!.boards.find(entry => entry.boardId === board.id)).toMatchObject({ state: 'in-sync', bound: true });
     await f.runtime.close();
     await f.hubs.close();
   });

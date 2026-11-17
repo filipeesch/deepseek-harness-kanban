@@ -450,6 +450,7 @@ export type SharingChangeSummary =
   | { kind: 'board.renamed'; name: string }
   | { kind: 'board.scope-changed'; projects: number; closed: boolean }
   | { kind: 'board.rank-changed' }
+  | { kind: 'board.preset-changed'; mode: 'operator' | 'host' | null }
   | { kind: 'board.removed' };
 export interface SharingBoardView {
   boardId: string; key?: string; name: string; state: SharingBoardState; bound: boolean;

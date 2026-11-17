@@ -58,7 +58,7 @@ export function ChangesArea({ hub, sharing, act, pending, api, run }: { hub: Hub
             <button type="button" className="kb-button" disabled={pending !== null || suspended} onClick={() => void act('resolve-local', { type: 'sharing.resolve', hubId: hub.id, boardId: board.boardId, choice: 'local' })}>Keep the local version</button>
           </>}
           {board.state === 'needs-review' && board.key === undefined && <span className="kb-share-board-state">A local board already uses this name. Rename or publish it first.</span>}
-          {board.state === 'update-required' && <span className="kb-share-board-state">Update the plugin to use this team board.</span>}
+          {board.state === 'update-required' && <span className="kb-share-board-state">Update dsh-kanban to use this team board.</span>}
           {board.state === 'orphan' && <>
             <button type="button" className="kb-button" disabled={pending !== null || suspended} onClick={() => void act('orphan', { type: 'sharing.publishOrphan', hubId: hub.id, boardId: board.boardId })}>Publish as a new board</button>
             {run !== undefined && api !== undefined && <button type="button" className="kb-button" disabled={pending !== null || suspended} onClick={() => { setRemovalProblem(null); void run({ type: 'board.delete', hubId: hub.id, boardId: board.boardId, confirmed: true, sharing: 'local' }).catch(failure => setRemovalProblem(asProblem(failure))); }}>Delete here</button>}

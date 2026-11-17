@@ -48,10 +48,47 @@ describe('per-board evaluation', () => {
     }
   });
 
-  it('treats preset metadata and authored blank descriptions as local drafts', () => {
-    for (const candidate of [local({ key: 'delivery', defaultPresetMode: 'host' }), local({ key: 'delivery', defaultPresetMode: 'operator' }), local({ key: 'delivery', workflow: BASE.replace('name: Delivery', 'name: Delivery\ndescription: ""') })]) {
-      expect(evaluateBoard({ local: candidate, mirror: mirror(), orphaned: false, rank: 'i' })).toMatchObject({ state: 'draft', draft: true });
-      expect(evaluateBoard({ local: candidate, mirror: mirror({ updates: 1 }), orphaned: false, rank: 'i' })).toMatchObject({ state: 'updates-available', draft: true });
+  it('compares the recorded default choice instead of counting it as pending work', () => {
+    // A board that records the same choice the installation applied is up to date.
+    expect(evaluateBoard({ local: local({ key: 'delivery', defaultPresetMode: 'operator' }), mirror: mirror({ presetMode: 'operator' }), orphaned: false, rank: 'i' }))
+      .toMatchObject({ state: 'in-sync', draft: false });
+    // A different choice, a recorded one with no applied counterpart, and a cleared one
+    // are all local work.
+    expect(evaluateBoard({ local: local({ key: 'delivery', defaultPresetMode: 'host' }), mirror: mirror({ presetMode: 'operator' }), orphaned: false, rank: 'i' }))
+      .toMatchObject({ state: 'draft', draft: true });
+    expect(evaluateBoard({ local: local({ key: 'delivery', defaultPresetMode: 'operator' }), mirror: mirror(), orphaned: false, rank: 'i' }))
+      .toMatchObject({ state: 'draft', draft: true });
+    expect(evaluateBoard({ local: local({ key: 'delivery' }), mirror: mirror({ presetMode: 'operator' }), orphaned: false, rank: 'i' }))
+      .toMatchObject({ state: 'draft', draft: true });
+  });
+
+  it('does not treat an authored blank description as a change', () => {
+    expect(evaluateBoard({ local: local({ key: 'delivery', workflow: BASE.replace('name: Delivery', 'name: Delivery\ndescription: ""') }), mirror: mirror(), orphaned: false, rank: 'i' }))
+      .toMatchObject({ state: 'in-sync', draft: false });
+  });
+
+  it('is a draft exactly when a publish would append a change', () => {
+    // A document that omits its authored identity lines is the same board: the publish
+    // derivation matches identities, so the state rule must not count them as a change.
+    const withoutIdentities = BASE.split(NL).filter(line => !line.trim().startsWith('key:')).join(NL);
+    const rekeyed = BASE.replace('key: s2', 'key: authored-2');
+    const cases: Array<{ local: LocalSharedBoard; mirror: BoardMirrorView | null; rank: string }> = [
+      { local: local({ key: 'delivery', workflow: withoutIdentities }), mirror: mirror(), rank: 'i' },
+      { local: local({ key: 'delivery', workflow: rekeyed }), mirror: mirror(), rank: 'i' },
+      { local: local({ key: 'delivery' }), mirror: mirror(), rank: 'i' },
+      { local: local({ key: 'delivery', name: 'Renamed' }), mirror: mirror(), rank: 'i' },
+      { local: local({ key: 'delivery', projectKeys: ['app'] }), mirror: mirror(), rank: 'i' },
+      { local: local({ key: 'delivery', workflow: BASE.replace('label: Plan', 'label: Planning') }), mirror: mirror(), rank: 'i' },
+      { local: local({ key: 'delivery', workflow: BASE.replace('label: Plan', 'label: Plan\n    description: Details') }), mirror: mirror(), rank: 'i' },
+      { local: local({ key: 'delivery', defaultPresetMode: 'operator' }), mirror: mirror({ presetMode: 'operator' }), rank: 'i' },
+      { local: local({ key: 'delivery', defaultPresetMode: 'host' }), mirror: mirror({ presetMode: 'operator' }), rank: 'i' },
+      { local: local({ key: 'delivery', workflow: BASE.replace('name: Delivery', 'name: Delivery\ndescription: ""') }), mirror: mirror(), rank: 'i' },
+      { local: local({ key: 'delivery' }), mirror: mirror(), rank: 'n' },
+    ];
+    for (const scenario of cases) {
+      const draft = evaluateBoard({ ...scenario, orphaned: false }).draft;
+      const changes = boardChanges(scenario);
+      expect({ draft, appended: changes.length > 0 }).toEqual({ draft: changes.length > 0, appended: changes.length > 0 });
     }
   });
 

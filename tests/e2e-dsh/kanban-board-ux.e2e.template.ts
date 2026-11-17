@@ -246,8 +246,8 @@ it('refuses a team configuration written by a newer plugin version', async () =>
   await writeFile(documentPath, ['version: 5', ''].join('\n'), 'utf8');
   await page.getByRole('button', { name: 'Refresh' }).click();
   // The panel states the remedy; nothing is applied or published over the newer layout.
-  await expect(page.getByText('Update the plugin', { exact: true })).toBeVisible();
-  await expect(page.getByText('Reading and publishing stay blocked until the plugin is updated.')).toBeVisible();
+  await expect(page.getByText('Update dsh-kanban', { exact: true })).toBeVisible();
+  await expect(page.getByText('Reading and publishing stay blocked until dsh-kanban is updated.')).toBeVisible();
   await page.getByRole('button', { name: 'Close Kanban configuration' }).click();
   await expect(page.getByRole('img', { name: 'Team review needed' })).toBeVisible();
 });

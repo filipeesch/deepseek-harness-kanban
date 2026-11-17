@@ -3,7 +3,8 @@ import {
   driveBoardFileName, readLayoutStamp, serializeLayoutStamp,
   DRIVE_BOARD_FILE_PREFIX, SHARED_LAYOUT_VERSION,
 } from '../../domain/sharing/layout.js';
-import { appendEvents, decodeBoardLog, encodeBoardLog, headToken, type BoardLog } from '../../domain/journal/log.js';
+import { appendEvents, encodeBoardLog, headToken, type BoardLog } from '../../domain/journal/log.js';
+import { parseBoardLog } from './board-compatibility.js';
 import type { BoardChange } from '../../domain/journal/event.js';
 import { GoogleDriveClient, type GoogleDriveFile } from './google-drive-client.js';
 import type { ProviderState } from './provider.js';
@@ -154,7 +155,7 @@ export class GoogleDriveLayoutStore implements SharedLayoutStore {
     if (file === null) return null;
     const probe = file.headRevisionId ?? file.id;
     const content = await this.client.getContent(file.id);
-    const log = parseLog(content.content, key);
+    const log = parseBoardLog(content.content, key);
     return { probe, head: headToken(log), log };
   }
 
@@ -178,7 +179,7 @@ export class GoogleDriveLayoutStore implements SharedLayoutStore {
     const written = await this.client.updateContent(file!.id, encodeBoardLog(log));
     // Verify the head that landed, because two writers can race on one file.
     const content = await this.client.getContent(file!.id);
-    if (headToken(parseLog(content.content, key)) !== headToken(log)) {
+    if (headToken(parseBoardLog(content.content, key)) !== headToken(log)) {
       throw new KanbanError('SHARING_CONCURRENT_WRITE', 'The board changed while it was being written. Review the team changes before retrying.', { key });
     }
     return { probe: written.headRevisionId ?? file!.id, head: headToken(log), log };
@@ -204,12 +205,3 @@ function keyOf(file: GoogleDriveFile): string | null {
   return /^[a-z0-9][a-z0-9-]{0,63}$/.test(key) ? key : null;
 }
 
-function parseLog(text: string, key: string): BoardLog {
-  const decoded = decodeBoardLog(text);
-  if (!decoded.ok) {
-    if (decoded.reason === 'unsupported-version') throw new KanbanError('SHARING_DOCUMENT_VERSION_UNSUPPORTED', 'The team configuration was written by a newer plugin version. Update the plugin to read or publish it.', { key, version: decoded.version });
-    if (decoded.reason === 'unknown-kind') throw new KanbanError('SHARING_DOCUMENT_VERSION_UNSUPPORTED', 'The team configuration carries a change this plugin does not know. Update the plugin to read or publish it.', { key, kind: decoded.kind });
-    throw new KanbanError('SHARING_INVALID_DOCUMENT', 'The board log is invalid.', { key, message: decoded.message });
-  }
-  return decoded.log;
-}

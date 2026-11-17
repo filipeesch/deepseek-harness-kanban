@@ -71,7 +71,7 @@ export class HubSharingService {
       hubs: this.options.hubs,
       store: this.options.store,
       providers: this.options.providers,
-      boards: this.sync,
+      boards: this.sync.connection,
       layout,
       now: this.now,
       save,

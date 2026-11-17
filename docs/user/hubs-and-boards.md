@@ -40,7 +40,7 @@ The authored model and preset are part of the workflow and are covered by workfl
 
 New boards that author no preset start their conversations on **Kanban Workflow Operator**, a default held outside the YAML: an explicit host choice and a legacy absence remain distinct, and the author can still choose another roster preset. Existing boards and conversations are not changed.
 
-Workflow and stage descriptions and the new-board preset default are new team metadata. While the supported providers cannot exclude older writers from the same storage, a board that carries them stays local and its publish or synchronization is refused with `SHARING_COMPATIBILITY_UNAVAILABLE` instead of risking data loss; legacy-compatible board content may still be shared. See [Team sharing](team-sharing.md).
+Workflow and stage descriptions, decision gates, and the new-board preset default are part of what the team shares: they travel in the board's own log and are preserved through publishing, receiving, and revisions. Each board negotiates its format on its own, so an installation on an older plugin version reports that board as requiring a plugin update instead of applying or overwriting it, and the rest of the Hub keeps synchronizing. See [Team sharing](team-sharing.md).
 
 While the Workflow sub-section holds unsaved edits, the Defaults controls stay available and only the save is unavailable, with a way to open Workflow.
 
