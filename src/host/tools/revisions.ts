@@ -3,7 +3,7 @@ import type { KanbanApp } from '../app.js';
 import type { BoardRevisions } from '../revisions.js';
 import { workflowWriteControls, type WorkflowAuthoringPort } from './authoring.js';
 import { parseWorkflow } from '../../domain/workflow.js';
-import { diffWorkflow } from '../../domain/workflow-difference.js';
+import { diffWorkflow, summarizeDifference } from '../../domain/workflow-difference.js';
 import { KanbanError, invariant } from '../../shared/errors.js';
 import { actorOf, digestRefusal, flag, normal, refusal, text, written } from './support.js';
 import { assertBoardWriteAllowed, resolveBoard, type ToolArgs } from './scope.js';
@@ -29,10 +29,11 @@ export function revisionTools(app: KanbanApp, revisions: BoardRevisions | undefi
       return { boardId: board.id, ...(await port.list(board.id, { ...(args.limit === undefined ? {} : { limit: args.limit }), ...(args.before === undefined ? {} : { before: args.before }) })) };
     }, true),
 
-    normal('diff_board_revisions', 'Compare two retained revisions of one board, including workflow differences and default preset provenance. Reading changes nothing.', {
+    normal('diff_board_revisions', 'Compare two retained revisions of one board, including workflow differences and default preset provenance, and name every changed decision field. Reading changes nothing. The default detail is full; summary names the changed fields without any authored text.', {
       board_id: text('Board ID.', true),
       from: { type: 'integer', required: true, description: 'The revision the comparison starts from, as list_board_revisions reported it.' },
       to: { type: 'integer', required: true, description: 'The revision the comparison ends at.' },
+      detail: text('Detail level: full reports each field with its values; summary reports field names only. Defaults to full.'),
       hub_id: text('Hub ID. Optional when the board identifier is enough.'),
     }, async (args, exec) => {
       const port = requireRevisions(revisions);
@@ -40,7 +41,9 @@ export function revisionTools(app: KanbanApp, revisions: BoardRevisions | undefi
       const from = await port.stateAt(board.id, args.from);
       const to = await port.stateAt(board.id, args.to);
       invariant(from !== undefined && to !== undefined, 'REVISION_NOT_RETAINED', 'The board no longer retains one of those revisions.');
-      return { boardId: board.id, from: args.from, to: args.to, difference: { ...diffWorkflow(parseWorkflow(from.text), parseWorkflow(to.text)), ...(from.presetMode === to.presetMode ? {} : { defaultPresetMode: { from: from.presetMode ?? null, to: to.presetMode ?? null } }) } };
+      invariant(args.detail === undefined || args.detail === 'full' || args.detail === 'summary', 'INVALID_INPUT', 'The detail level is full or summary.');
+      const difference = diffWorkflow(parseWorkflow(from.text), parseWorkflow(to.text));
+      return { boardId: board.id, from: args.from, to: args.to, detail: args.detail ?? 'full', difference: { ...(args.detail === 'summary' ? summarizeDifference(difference) : difference), ...(from.presetMode === to.presetMode ? {} : { defaultPresetMode: { from: from.presetMode ?? null, to: to.presetMode ?? null } }) } };
     }, true),
 
     normal('revert_board', 'Restore one board workflow and its default preset provenance to a retained revision, saving it as a new revision through the same validated write path.' + reportNote + ' Pass confirmed true only after the user explicitly confirmed the restore.', {

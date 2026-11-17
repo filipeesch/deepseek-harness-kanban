@@ -8,7 +8,7 @@ import type { StageEditorTab } from './stage-tabs.js';
  * the tab that owns the field is derived from it instead of being restated.
  */
 export interface StageProblem {
-  readonly field: 'name' | 'id' | 'execution' | 'transitions' | 'source' | 'env' | 'params' | 'exits';
+  readonly field: 'name' | 'id' | 'execution' | 'transitions' | 'source' | 'env' | 'params' | 'exits' | 'decision';
   readonly message: string;
 }
 

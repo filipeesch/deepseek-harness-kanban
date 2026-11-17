@@ -370,3 +370,62 @@ describe('the board MCP allowlist', () => {
     expect(workflowMeaning(one)).toBe(workflowMeaning(two));
   });
 });
+
+
+describe('decision stage configuration', () => {
+  const decisionYaml = (fields: string, options = '        - id: approve\n          title: Approve\n          to: done\n') => [
+    'columns:',
+    '  - id: gate',
+    '    label: Gate',
+    '    decision:',
+    fields,
+    '      options:',
+    options,
+    '  - id: done',
+    '    label: Done',
+    '',
+  ].join('\n');
+
+  it('accepts a decision stage and keeps it free of the other modes', () => {
+    const workflow = parseWorkflow(decisionYaml('      question: Proceed?'));
+    const stage = workflow.columns[0]!;
+    expect(stage.decision?.question).toBe('Proceed?');
+    expect(stage.decision?.options).toEqual([{ id: 'approve', title: 'Approve', to: 'done' }]);
+    expect(stage.onEnterPrompt).toBeUndefined();
+    expect(stage.allowedTransitions).toBeUndefined();
+    expect(stage.scripted).toBeUndefined();
+  });
+
+  it('accepts a single option as an explicit confirmation', () => {
+    expect(parseWorkflow(decisionYaml('      question: Confirm?')).columns[0]?.decision?.options).toHaveLength(1);
+  });
+
+  it('keeps the stage description separate from the question', () => {
+    const workflow = parseWorkflow('columns:\n  - id: gate\n    label: Gate\n    description: A gate.\n    decision:\n      question: Proceed?\n      options:\n        - id: a\n          title: A\n          to: done\n  - id: done\n    label: Done\n');
+    expect(workflow.columns[0]?.description).toBe('A gate.');
+    expect(workflow.columns[0]?.decision?.question).toBe('Proceed?');
+  });
+
+  it('rejects a decision combined with an entry prompt or an allowed-transition list', () => {
+    expect(() => parseWorkflow(decisionYaml('      question: Proceed?\n    on_enter_prompt: Work.'))).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+    expect(() => parseWorkflow(decisionYaml('      question: Proceed?\n    allowed_transitions: []'))).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+  });
+
+  it('rejects a decision combined with a scripted or deterministic program', () => {
+    const script = '      question: Proceed?\n    scripted:\n      language: bash\n      code: echo ok\n      exits:\n        ok: done';
+    expect(() => parseWorkflow(decisionYaml(script))).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+    const legacy = '      question: Proceed?\n    deterministic:\n      language: bash\n      code: echo ok\n      exits:\n        ok: done';
+    expect(() => parseWorkflow(decisionYaml(legacy))).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+  });
+
+  it('rejects an unknown destination and a self destination', () => {
+    expect(() => parseWorkflow(decisionYaml('      question: Proceed?', '    - id: a\n      title: A\n      to: elsewhere\n'))).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+    expect(() => parseWorkflow(decisionYaml('      question: Proceed?', '    - id: a\n      title: A\n      to: gate\n'))).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+  });
+
+  it('rejects a repeated option id and an unsupported field', () => {
+    const repeated = '    - id: a\n      title: A\n      to: done\n    - id: a\n      title: B\n      to: done\n';
+    expect(() => parseWorkflow(decisionYaml('      question: Proceed?', repeated))).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+    expect(() => parseWorkflow(decisionYaml('      question: Proceed?\n      when: never'))).toThrow(expect.objectContaining({ code: 'INVALID_WORKFLOW' }));
+  });
+});

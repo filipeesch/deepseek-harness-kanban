@@ -201,3 +201,19 @@ describe('advance route', () => {
     expect(resolveAdvanceRoute(workflow(), { columnId: 'done' })).toEqual({ kind: 'none' });
   });
 });
+
+describe('decision stage routing ownership', () => {
+  const gated = flow(
+    column('work'),
+    column('gate', { decision: { question: 'Pick', options: [{ id: 'a', title: 'A', to: 'done' }] } }),
+    column('done'),
+  );
+
+  it('resolves no recorded transition and refuses every advance out of the gate', () => {
+    expect(recordedTransition(gated, { columnId: 'gate' })).toEqual({ kind: 'none' });
+    expect(advanceArmed(gated, { columnId: 'gate', autoMode: { enabled: true }, recordedTransition: recorded('gate', 'done', 'Ship.') })).toBe(false);
+    expect(resolveAdvanceRoute(gated, { columnId: 'gate' })).toEqual({ kind: 'none' });
+    expect(resolveNextStageRoute(gated, { columnId: 'gate' })).toEqual({ kind: 'none' });
+    expect(routeDestination(gated, { columnId: 'gate' })).toEqual({ kind: 'none' });
+  });
+});

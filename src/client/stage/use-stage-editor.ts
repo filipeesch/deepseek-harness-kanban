@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useScriptSummaries } from '../scripted-context.js';
 import { scriptedDraft } from './scripted-draft.js';
+import { emptyDecisionDraft } from './decision-draft.js';
 import type { Attention, Column, Task } from '../../shared/types.js';
 import type { RunCommand } from '../ui.js';
 import { useWorkflowSave } from '../workflow-save.js';
@@ -33,7 +34,14 @@ export function useStageEditor({ hubId, boardId, revision, column, columns, task
   const renameBlock = stageRenameBlock(tasks, attention, scripted);
 
   const change = useCallback(<K extends keyof StageEditorDraft>(key: K, value: StageEditorDraft[K]) => {
-    setDraft(current => key === 'execution' && value === 'scripted' ? { ...current, execution: 'scripted', scripted: current.scripted ?? scriptedDraft(), onEnterPrompt: '', mode: 'any', transitions: [] } : { ...current, [key]: value });
+    setDraft(current => {
+      if (key !== 'execution') return { ...current, [key]: value };
+      // A mode switch owns the stage: the other mode's authored fields are cleared
+      // in the same draft, so saving never composes a conflicting stage.
+      if (value === 'scripted') return { ...current, execution: 'scripted', scripted: current.scripted ?? scriptedDraft(), onEnterPrompt: '', mode: 'any', transitions: [] };
+      if (value === 'decision') return { ...current, execution: 'decision', decision: current.decision ?? emptyDecisionDraft(), onEnterPrompt: '', mode: 'any', transitions: [] };
+      return { ...current, execution: 'agent' };
+    });
   }, []);
 
   const chooseDestination = useCallback((to: string, chosen: boolean) => {

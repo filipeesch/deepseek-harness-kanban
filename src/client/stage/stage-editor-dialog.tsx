@@ -8,6 +8,8 @@ import { InstructionSection } from './instruction-section.js';
 import { ProgramSection } from './program-section.js';
 import { InputsSection } from './inputs-section.js';
 import { ExitsSection } from './exits-section.js';
+import { DecisionSection } from './decision-section.js';
+import { emptyDecisionDraft } from './decision-draft.js';
 import { ApprovalSection } from './approval-section.js';
 import { TransitionsSection } from './transitions-section.js';
 import { StageSavedNotice } from './stage-saved-notice.js';
@@ -82,8 +84,9 @@ export function StageEditorDialog({ hubId, boardId, revision, initialStageId, co
   const editor = useStageEditor({ hubId, boardId, revision, column, columns, tasks, attention, run, onSaved: handleSaved });
   const { draft } = editor;
   draftRef.current = draft;
-  const scripted = draft.execution === 'scripted';
-  const tabs = stageEditorTabs(scripted);
+  const execution = draft.execution ?? 'agent';
+  const scripted = execution === 'scripted';
+  const tabs = stageEditorTabs(execution);
   // A requested tab that the stage has no content for falls back to Stage immediately,
   // so the editor never paints a tab row with no panel under it.
   const selected: StageEditorTab = tabs.includes(tab) ? tab : 'stage';
@@ -136,7 +139,7 @@ export function StageEditorDialog({ hubId, boardId, revision, initialStageId, co
         />
         <fieldset className="kb-fieldset">
           <legend>Behavior</legend>
-          <label className="kb-field">Execution mode<select className="kb-input" aria-label="Execution mode" disabled={editor.pending} value={draft.execution ?? 'agent'} onChange={event => editor.change('execution', event.target.value as 'agent' | 'scripted')}><option value="agent">Agent instruction or manual</option><option value="scripted">Scripted step</option></select></label>
+          <label className="kb-field">Execution mode<select className="kb-input" aria-label="Execution mode" disabled={editor.pending} value={execution} onChange={event => editor.change('execution', event.target.value as 'agent' | 'scripted' | 'decision')}><option value="agent">Agent instruction or manual</option><option value="scripted">Scripted step</option><option value="decision">Decision step</option></select></label>
           <ProblemNotice message={problem('execution')} />
           <InitialSection
             isInitial={column.id === initialStageId}
@@ -171,6 +174,10 @@ export function StageEditorDialog({ hubId, boardId, revision, initialStageId, co
     {
       tab: 'inputs',
       render: () => <InputsSection draft={scriptedDraftNow} problem={problem} disabled={editor.pending} onChange={value => editor.change('scripted', value)} />,
+    },
+    {
+      tab: 'decision',
+      render: () => <DecisionSection draft={draft.decision ?? emptyDecisionDraft()} choices={transitionChoices(columns, column.id)} problem={problem} disabled={editor.pending} onChange={value => editor.change('decision', value)} />,
     },
     {
       tab: 'approval',

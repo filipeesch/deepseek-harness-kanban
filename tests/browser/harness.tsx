@@ -10,10 +10,17 @@ import { DirectoryPickerProvider } from '../../src/client/services.js';
 import { AgentPresetProvider } from '../../src/client/agent-preset-context.js';
 import type { AgentPresetPortSource } from '../../src/client/agent-preset-port.js';
 import { QuestionForm } from '../../src/questions/QuestionForm.js';
+import { TaskCard } from '../../src/client/task-card.js';
+import { DecisionPanel } from '../../src/client/decision-panel.js';
+import { DecisionWindowController } from '../../src/client/decision-window.js';
+import { StageEditorDialog } from '../../src/client/stage/stage-editor-dialog.js';
+import { AutoRunController } from '../../src/client/auto-run.js';
+import { autoModeView } from '../../src/client/auto-mode.js';
+import { EMPTY_ATTENTION } from '../../src/shared/types.js';
 import { FeedStatus } from '../../src/client/feed-status.js';
 import { QuestionDock, type QuestionDockServices } from '../../src/client/question-dock.js';
 import { SessionDiagnosis } from '../../src/client/session-diagnosis.js';
-import type { BoardState, ClientApi, Command, HubSharingView, QuestionRound, RoundPage, StoredQuestionDraft } from '../../src/shared/types.js';
+import type { BoardState, ClientApi, Column, Command, HubSharingView, QuestionRound, RoundPage, StoredQuestionDraft, Task } from '../../src/shared/types.js';
 import { createHarnessApi, workflowYaml, type TestSnapshot } from './fake-api.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import { themeFixture } from './theme-fixture.js';
@@ -487,6 +494,58 @@ function FeedStatusScenario() {
   </>;
 }
 
+/** A task card and the gate strip, both bound to one real decision window. */
+function DecisionScenario() {
+  const base = harness.snapshot().state.hubs[0]!.tasks[0]!;
+  const columns: Column[] = [
+    { id: 'gate', name: 'Gate', decision: { question: 'How should this proceed?', context: 'The review left findings.', options: [
+      { id: 'ship', title: 'Ship it', description: 'Send it to done.', to: 'done' },
+      { id: 'fix', title: 'Fix it', to: 'review' },
+    ] } },
+    { id: 'review', name: 'Review' },
+    { id: 'done', name: 'Done' },
+  ];
+  const workflow = { name: 'Gated', initialColumnId: 'gate', columns, groups: [] };
+  const task: Task = { ...base, id: 'decision-task', title: 'Choose the path', columnId: 'gate', position: 0, operation: null, pendingTransition: undefined, sessionIds: [], closedSessionIds: [], worktree: null, stageEntry: { id: 'entry-gate', columnId: 'gate', stageIdentity: 'gate', enteredAt: '2026-01-01T00:00:00.000Z' } };
+  const [controller] = useState(() => {
+    const query = new URLSearchParams(window.location.search);
+    const windowMs = query.get('windowMs');
+    const fail = query.get('fail') === '1';
+    return new DecisionWindowController({
+      ...(windowMs === null ? {} : { windowMs: Number(windowMs) }),
+      run: async command => {
+        const target = window as unknown as { __decisionCommands?: unknown[] };
+        target.__decisionCommands = [...(target.__decisionCommands ?? []), command];
+        if (fail) throw new Error('The destination stage changed before the choice was applied.');
+        return harness.snapshot();
+      },
+    });
+  });
+  const [autoRun] = useState(() => new AutoRunController({ run: async () => harness.snapshot() }));
+  return <div className="dsh-kanban" style={{ display: 'grid', gap: 18, alignContent: 'start', padding: 24, width: 560 }}>
+    <TaskCard task={task} column={columns[0]!} projectName="API" attention={EMPTY_ATTENTION} selectionMode={false} selected={false}
+      autoRun={autoRun} autoMode={autoModeView(task, workflow)} onToggleAutoMode={() => {}} onOpen={() => {}} onToggleSelect={() => {}} onBeginDrag={() => {}} shouldSuppressClick={() => false}
+      decision={{ label: 'Decision needed' }} decisionWindow={controller} />
+    <DecisionPanel task={task} column={columns[0]} columns={columns} controller={controller} />
+  </div>;
+}
+
+/** The stage editor opened on a stage that authors a decision gate. */
+function DecisionEditorScenario() {
+  const columns: Column[] = [
+    { id: 'gate', name: 'Gate', decision: { question: 'How should this proceed?', context: 'The review left findings.', options: [
+      { id: 'ship', title: 'Ship it', description: 'Send it to done.', to: 'done' },
+      { id: 'fix', title: 'Fix it', to: 'review' },
+    ] } },
+    { id: 'review', name: 'Review' },
+    { id: 'done', name: 'Done' },
+  ];
+  return <StageEditorDialog hubId="hub" boardId="board" revision={1} initialStageId="gate" column={columns[0]!} columns={columns} tasks={[]} attention={{}}
+    api={harness.api}
+    run={async command => { const target = window as unknown as { __editorCommands?: unknown[] }; target.__editorCommands = [...(target.__editorCommands ?? []), command]; return harness.snapshot(); }}
+    onClose={() => {}} onSaved={() => {}} />;
+}
+
 function App() {
   if (scenario === 'session-diagnosis') return <>
     <style>{themeFixture}</style><style>{styles}</style><ThemeSync />
@@ -539,6 +598,8 @@ function App() {
   if (scenario === 'sharing') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} /></div></>;
   if (scenario === 'drawer-peek') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><DrawerPeekScenario /></div></>;
   if (scenario === 'drawer-sidebar') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><DrawerSidebarScenario /></div></>;
+  if (scenario === 'decision-editor') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><DecisionEditorScenario /></>;
+  if (scenario === 'decision') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><DecisionScenario /></>;
   if (scenario === 'question') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban"><QuestionScenario /></div></>;
   if (scenario === 'feed-status') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><FeedStatusScenario /></>;
   if (scenario === 'task-message') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><TaskMessageScenario /></div></>;

@@ -1,5 +1,23 @@
 import type { Column, TransitionRule, Workflow } from '../shared/types.js';
 
+/** Whether a stage owns its routing deterministically instead of a turn-end advance. */
+export function ownsStageRouting(column: Pick<Column, 'scripted' | 'decision'> | undefined): boolean {
+  return column?.scripted !== undefined || column?.decision !== undefined;
+}
+
+/**
+ * The destinations a stage authors, whichever mode authored them: a conventional
+ * stage's transition list, a scripted stage's named exits, or a decision stage's
+ * options. A stage that authors no list returns null and permits any other stage.
+ * Several authored names may resolve to one destination; the graph and the manual
+ * access rule see each destination once.
+ */
+export function authoredStageTargets(column: Pick<Column, 'scripted' | 'decision' | 'allowedTransitions'>): readonly TransitionRule[] | null {
+  if (column.decision !== undefined) return [...new Set(column.decision.options.map(option => option.to))].map(to => ({ to }));
+  if (column.scripted !== undefined) return [...new Set(Object.values(column.scripted.exits))].map(to => ({ to }));
+  return column.allowedTransitions ?? null;
+}
+
 /** How a move from one existing stage to another relates to the workflow rule. */
 export type TransitionAccess = 'reorder' | 'allowed' | 'restricted';
 
@@ -30,7 +48,7 @@ export function authoredTransitions(workflow: Workflow, columnId: string): Autho
   if (index < 0) return null;
   const column = workflow.columns[index]!;
   const next = workflow.columns[index + 1];
-  return { targets: column.scripted === undefined ? column.allowedTransitions ?? null : [...new Set(Object.values(column.scripted.exits))].map(to => ({ to })),  ...(next === undefined ? {} : { next }) };
+  return { targets: authoredStageTargets(column),  ...(next === undefined ? {} : { next }) };
 }
 
 /** Classifies a move between existing stages without applying any policy beyond the workflow. */
@@ -39,6 +57,9 @@ export function transitionAccess(workflow: Workflow, from: string, to: string): 
   if (from === to) return 'reorder';
   const authored = authoredTransitions(workflow, from);
   if (authored === null) return null;
+  // A decision gate is the authored way out: every other stage is a bypass, even
+  // one the gate's own options name, so a manual move always asks first.
+  if (workflow.columns.find(column => column.id === from)?.decision !== undefined) return 'restricted';
   return authored.targets === null || authored.targets.some(rule => rule.to === to) ? 'allowed' : 'restricted';
 }
 
@@ -49,8 +70,8 @@ export function transitionAccess(workflow: Workflow, from: string, to: string): 
  */
 export function transitionTargets(workflow: Workflow, columnId: string): ResolvedTransition[] {
   const source = workflow.columns.find(column => column.id === columnId);
-  const rules = source?.scripted === undefined ? source?.allowedTransitions : [...new Set(Object.values(source.scripted.exits))].map(to => ({ to }));
-  if (rules === undefined) return [];
+  const rules = source === undefined ? null : authoredStageTargets(source);
+  if (rules === null) return [];
   const targets: ResolvedTransition[] = [];
   for (const rule of rules) {
     if (rule.to === columnId) continue;
@@ -69,7 +90,7 @@ export function defaultDestination(workflow: Workflow, fromColumnId: string): Co
   const index = workflow.columns.findIndex(column => column.id === fromColumnId);
   if (index < 0) return undefined;
   const source = workflow.columns[index]!;
-  if (source.scripted !== undefined) return undefined;
+  if (ownsStageRouting(source)) return undefined;
   if (source.allowedTransitions !== undefined) {
     const first = source.allowedTransitions[0];
     if (first === undefined) return undefined;
@@ -93,7 +114,7 @@ export function transitionDestinations(workflow: Workflow, from: string): Transi
 export function advanceDestination(workflow: Workflow, from: string): TransitionDestination | undefined {
   const index = workflow.columns.findIndex(column => column.id === from);
   if (index < 0) return undefined;
-  if (workflow.columns[index]!.scripted !== undefined) return undefined;
+  if (ownsStageRouting(workflow.columns[index]!)) return undefined;
   if (workflow.columns[index]!.allowedTransitions?.length === 0) return undefined;
   return nextStage(workflow, from);
 }

@@ -1,4 +1,5 @@
-import { captureScriptedTargets, establishStageEntry, ensureLocalStageIdentity, ownsScriptedEntry, reconcileLocalStageIdentities } from './scripted-state.js';
+import { establishStageEntry, ownsScriptedEntry } from './scripted-state.js';
+import { captureStageTargets, ensureLocalStageIdentity, reconcileLocalStageIdentities } from './stage-identity.js';
 import { openSessionIds } from '../shared/conversations.js';
 import { declaredParameterNames, validateParameterValues } from './scripted-parameters.js';
 import { KanbanError, invariant } from '../shared/errors.js';
@@ -14,7 +15,7 @@ import { applyHold, clearAutoModeState, normalizePauseReason } from './auto-mode
 import { normalizeTransitionReason } from './transition-reason.js';
 import { renameTaskStage, updateStage } from './stage-update.js';
 import { describeStageActivity, hasInFlightWork, persistedStageActivity } from '../shared/stage-activity.js';
-import { transitionTargets } from './transitions.js';
+import { ownsStageRouting, transitionTargets } from './transitions.js';
 import { assertProjectSave, buildProject } from './project-registration.js';
 import { assertKnownProjectKeys, assertProjectCreatable, boardsAllowingKey, normalizeProjectKeys } from './board-project-scope.js';
 import { requireProjectKey } from './project-key.js';
@@ -220,9 +221,14 @@ export function saveBoardWorkflow(hub: HubState, boardId: string, yaml: string, 
   // A saved scripted stage can be reviewed before any card enters, so the
   // write freezes its stable identity and its destinations' identities.
   for (const column of workflow.columns) {
-    if (column.scripted === undefined) continue;
-    ensureLocalStageIdentity(board, column.id, deps.id);
-    for (const destination of Object.values(column.scripted.exits)) ensureLocalStageIdentity(board, destination, deps.id);
+    if (column.scripted !== undefined) {
+      ensureLocalStageIdentity(board, column.id, deps.id);
+      for (const destination of Object.values(column.scripted.exits)) ensureLocalStageIdentity(board, destination, deps.id);
+    }
+    if (column.decision !== undefined) {
+      ensureLocalStageIdentity(board, column.id, deps.id);
+      for (const option of column.decision.options) ensureLocalStageIdentity(board, option.to, deps.id);
+    }
   }
   board.updatedAt = timestamp(deps);
   hub.updatedAt = timestamp(deps);
@@ -374,7 +380,7 @@ export function createTask(hub: HubState, input: { boardId: string; projectId: s
     ...(entryInstruction(initialColumn) !== undefined ? { instructionPending: { columnId: initialColumn!.id, enteredAt: nextEnteredAt(Date.parse(at)) } } : {}),
     createdAt: at, updatedAt: at,
   };
-  if (initialColumn !== undefined) establishStageEntry(task, initialColumn, ensureLocalStageIdentity(board, initialColumn.id, deps.id), at, deps.id, captureScriptedTargets(board, initialColumn, deps.id));
+  if (initialColumn !== undefined) establishStageEntry(task, initialColumn, ensureLocalStageIdentity(board, initialColumn.id, deps.id), at, deps.id, captureStageTargets(board, initialColumn, deps.id));
   recordCreation(task, board.workflow.initialColumnId, at);
   hub.tasks.push(task);
   hub.updatedAt = at;
@@ -522,7 +528,7 @@ export function recordExceptionalTransition(hub: HubState, taskId: string, colum
   const task = requireTask(hub, taskId);
   const board = boardForTask(hub, task);
   const source = board.workflow.columns.find(column => column.id === task.columnId);
-  invariant(source && source.scripted === undefined && !ownsScriptedEntry(task), 'INVALID_TARGET', 'A scripted entry controls its own exits.');
+  invariant(source && !ownsStageRouting(source) && !ownsScriptedEntry(task), 'INVALID_TARGET', 'A stage that owns its routing does not accept a declared transition.');
   const sameEntry = owner.entryId === undefined
     ? task.stageEntry === undefined && task.scripted === undefined && task.scriptedHandoff === undefined
     : task.stageEntry?.id === owner.entryId && task.stageEntry.columnId === owner.fromColumnId;
@@ -653,7 +659,7 @@ export function deleteNote(hub: HubState, taskId: string, noteId: string, deps: 
   return note;
 }
 
-export function placeTask(hub: HubState, taskId: string, columnId: string, placement: Placement, enteredAt: number, options: { retainAgentPause?: boolean; at: string; /** How the move happened; absent records no origin. */ origin?: StageEntryOrigin; parameters?: Readonly<Record<string, string>> }): void {
+export function placeTask(hub: HubState, taskId: string, columnId: string, placement: Placement, enteredAt: number, options: { retainAgentPause?: boolean; at: string; /** How the move happened; absent records no origin. */ origin?: StageEntryOrigin; parameters?: Readonly<Record<string, string>>; decision?: { optionId: string; note?: string } }): void {
   const task = requireTask(hub, taskId);
   const board = boardForTask(hub, task);
   placeTaskIn(

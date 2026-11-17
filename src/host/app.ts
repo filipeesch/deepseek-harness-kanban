@@ -76,7 +76,8 @@ import { createScriptedImpact } from './scripted-impact.js';
 import { scriptedEqual } from '../domain/scripted-definition.js';
 import type { ScriptedDefinition } from '../shared/scripted.js';
 import { declaredParameterNames, validateParameterValues } from '../domain/scripted-parameters.js';
-import { ensureLocalStageIdentity } from '../domain/scripted-state.js';
+import { composeDecisionReason, normalizeDecisionNote } from '../domain/decision-definition.js';
+import { ensureLocalStageIdentity } from '../domain/stage-identity.js';
 import { recordScriptedHandoff } from '../domain/task-history/record.js';
 import { testStageScript, type ScriptTestInput, type ScriptTestResult } from './script-test.js';
 import { ConversationObservationIndex, createObservedFactsSource } from './conversation-observation.js';
@@ -84,6 +85,16 @@ import { classifySessionFailure } from '../domain/session-observation.js';
 
 async function pathExists(value:string):Promise<boolean>{try{await lstat(value);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}}
 function isEvent(value:unknown):value is {type:string;seq:number;data:unknown}{return Boolean(value&&typeof value==='object'&&'type'in value&&typeof value.type==='string'&&'seq'in value&&typeof value.seq==='number'&&Number.isSafeInteger(value.seq)&&'data'in value);}
+/** A failed decision route can be replaced by a new confirmation; any other pending transition blocks. */
+function blockingDecision(pending: PendingTransition | undefined): boolean {
+  return pending !== undefined && !(pending.status === 'failed' && pending.decision !== undefined);
+}
+
+/** The stable identity of one stage, matching the projection the board exposes. */
+function stageIdentityOf(board: Pick<Board, 'workflow' | 'localStageIdentities'>, columnId: string): string {
+  return board.localStageIdentities?.[columnId] ?? board.workflow.columns.find(column => column.id === columnId)?.key ?? columnId;
+}
+
 function userPromptTime(event:unknown):number|undefined{
  if(!isEvent(event)||event.type!=='user/message')return undefined;
  const source=(event.data as {source?:{kind?:unknown}}|null)?.source;
@@ -1321,6 +1332,7 @@ export class KanbanApp {
    case 'operation.dismiss':await this.dismissFailedAdvance(command.taskId);break;
    case 'retainedCheckout.dismiss':this.dismissRetainedCheckouts(command.paths);break;
    case 'task.move':await this.move(command);this.exceptionalTurn.forget(command.taskId);break;
+   case 'task.decide':await this.decide(command);break;
    // Changing the setting forgets a turn that has not settled yet, so enabling — or
    // resuming a paused task — never advances a turn that ended before the change.
    case 'task.autoMode':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).setAutoMode(command.taskId,command.enabled);this.turnAdvance.forget(command.taskId);break;}
@@ -1379,6 +1391,84 @@ export class KanbanApp {
    },
   };
  }
+  /**
+   * The one admission path for a decision choice. The client submits it after its
+   * five-second window; the host re-reads the entry, the option, the destination,
+   * and the destination's stable identity, then persists exactly one pending
+   * transition the drain applies durably. Nothing is recorded when any of them
+   * changed in the meantime.
+   */
+  private async decide(command: Extract<Command, { type: 'task.decide' }>): Promise<void> {
+    this.assertContext(command.taskId);
+    this.assertProjectRelocation(this.locatedTask(command.taskId).project, 'answering a decision');
+    // A task that predates stage entries gets one when the gate first addresses it;
+    // the reported entry identifier then binds the choice to that exact entry.
+    if (this.locatedTask(command.taskId).task.stageEntry === undefined) await this.ensureDecisionEntry(command.taskId);
+    const initial = this.locatedTask(command.taskId);
+    const expectedEntryId = command.entryId.length === 0 ? initial.task.stageEntry?.id ?? '' : command.entryId;
+    const stage = initial.board.workflow.columns.find(column => column.id === initial.task.columnId);
+    invariant(stage?.decision !== undefined, 'DECISION_NOT_AVAILABLE', 'This task is not waiting in a decision stage.');
+    invariant(initial.task.stageEntry?.id === expectedEntryId && initial.task.stageEntry.columnId === initial.task.columnId,
+      'STALE_DECISION', 'The stage entry changed before the choice was applied.');
+    invariant(!initial.task.operation && !blockingDecision(initial.task.pendingTransition), 'TASK_BUSY', 'Resolve the current task operation before deciding.');
+    const option = stage.decision.options.find(value => value.id === command.optionId);
+    invariant(option !== undefined, 'DECISION_OPTION_GONE', 'The chosen option is no longer authored by this stage.');
+    const destination = initial.board.workflow.columns.find(column => column.id === option.to);
+    invariant(destination !== undefined, 'INVALID_TARGET', 'The chosen destination stage does not exist.');
+    const destinationIdentity = command.destinationIdentity;
+    invariant(destinationIdentity === stageIdentityOf(initial.board, option.to), 'STALE_DECISION', 'The destination stage changed before the choice was applied.');
+    const note = normalizeDecisionNote(command.note);
+    const reason = composeDecisionReason(option, note);
+    const instruction = entryInstruction(destination);
+    // A destination that authors an instruction needs its target conversation, as an
+    // automatic advance does; the choice itself never creates one for a silent stage.
+    const sessionId = instruction === undefined ? undefined
+      : firstOpenSessionId(initial.task) ?? (await this.createConversationNow(initial.task.id, { allowUndecided: true })).sessionId;
+    const latest = this.locatedTask(command.taskId);
+    const latestStage = latest.board.workflow.columns.find(column => column.id === latest.task.columnId);
+    invariant(latest.task.stageEntry?.id === expectedEntryId && latest.task.stageEntry.columnId === latest.task.columnId,
+      'STALE_DECISION', 'The stage entry changed before the choice was applied.');
+    invariant(!latest.task.operation && !blockingDecision(latest.task.pendingTransition), 'TASK_BUSY', 'Resolve the current task operation before deciding.');
+    const latestOption = latestStage?.decision?.options.find(value => value.id === command.optionId);
+    invariant(latestOption !== undefined && latestOption.to === option.to && stageIdentityOf(latest.board, latestOption.to) === destinationIdentity,
+      'STALE_DECISION', 'The option or its destination changed before the choice was applied.');
+    const transition: PendingTransition = {
+      id: randomUUID(), fromColumnId: latest.task.columnId, columnId: destination.id,
+      mode: instruction === undefined ? 'move' : 'run', status: 'waiting',
+      // The gate's confirm action is the explicit confirmation of this authored route;
+      // a decision stage classifies every manual move as restricted, so the drain needs it.
+      transitionOverride: true,
+      decision: { optionId: command.optionId, ...(note === undefined ? {} : { note }), destinationIdentity }, reason,
+      ...(instruction === undefined ? {} : { text: instruction, sessionId: sessionId! }),
+    };
+    await this.hubs.hub(latest.hubId).transact(draft => {
+      const task = draft.tasks.find(value => value.id === command.taskId);
+      const board = task && draft.boards.find(value => value.id === task.boardId);
+      invariant(task !== undefined && board !== undefined, 'TASK_NOT_FOUND', 'Task does not exist.');
+      invariant(task.stageEntry?.id === expectedEntryId && task.stageEntry.columnId === task.columnId,
+        'STALE_DECISION', 'The stage entry changed before the choice was applied.');
+      invariant(!task.operation && !blockingDecision(task.pendingTransition), 'TASK_BUSY', 'Resolve the current task operation before deciding.');
+      const current = board.workflow.columns.find(column => column.id === task.columnId)?.decision;
+      const currentOption = current?.options.find(value => value.id === command.optionId);
+      invariant(currentOption !== undefined && currentOption.to === option.to && stageIdentityOf(board, currentOption.to) === destinationIdentity,
+        'STALE_DECISION', 'The option or its destination changed before the choice was applied.');
+      task.pendingTransition = transition;
+    });
+  }
+
+  /** Establish the stage entry a legacy task lacked before the gate can bind a choice to it. */
+  private async ensureDecisionEntry(taskId: string): Promise<void> {
+    const found = this.locatedTask(taskId);
+    if (found.task.stageEntry !== undefined) return;
+    await this.hubs.hub(found.hubId).transact(hub => {
+      const task = hub.tasks.find(value => value.id === taskId)!;
+      if (task.stageEntry !== undefined) return;
+      const board = hub.boards.find(value => value.id === task.boardId)!;
+      const stageIdentity = ensureLocalStageIdentity(board, task.columnId, () => randomUUID());
+      task.stageEntry = { id: randomUUID(), columnId: task.columnId, stageIdentity, enteredAt: task.createdAt };
+    });
+  }
+
  private async move(command:Extract<Command,{type:'task.move'}>):Promise<void>{
   this.assertContext(command.taskId);this.assertNoHandoffAdmission(command.taskId);const located=this.locatedTask(command.taskId);const store=this.hubs.hub(located.hubId);const state=store.snapshot();const task=located.task;const board=state.boards.find(b=>b.id===task.boardId);invariant(board,'BOARD_NOT_FOUND','The task board does not exist.');const column=board.workflow.columns.find(c=>c.id===command.columnId);
   const sameColumn=task.columnId===column?.id;
@@ -1493,10 +1583,10 @@ export class KanbanApp {
   try{do{this.driveAgain=false;this.pendingTransitions.refresh(this.locator.summaries());for(const taskId of [...this.pendingTransitions.list()]){const located=this.locator.byTask(taskId);const task=located?.task;const pending=task?.pendingTransition;if(!located||!task||!pending||pending.status!=='waiting'||pending.exceptionUnfinalized!==undefined||task.operation||this.exceptionalAdmissionTasks.has(task.id)||this.scriptedSurface.isReserved(task.id)||(pending.worktreeRequest&&task.worktree?.status!=='ready'))continue;const store=this.hubs.hub(located.hubId);
    // The pending transition distinguishes a declared transition from an automatic
    // advance; an absent origin is the operator's own move.
-   const origin:StageEntryOrigin=pending.origin==='agent'?'agent':pending.origin==='auto'?'auto':'manual';
+   const decision=pending.decision;const origin:StageEntryOrigin=decision!==undefined?('decision:'+decision.optionId) as StageEntryOrigin:pending.origin==='agent'?'agent':pending.origin==='auto'?'auto':'manual';
    try{
-    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');if(pending.parameters!==undefined||(pending.origin==='agent'&&pending.transitionOverride===true)){const destination=board.workflow.columns.find(column=>column.id===pending.columnId);const names=declaredParameterNames(destination?.scripted?.params);if(names.length>0||pending.parameters!==undefined){const checked=validateParameterValues(names,pending.parameters);invariant(checked.ok,'INVALID_PARAMETERS',checked.ok?'':checked.message);}}
-      operations.placeTask(d,t.id,pending.columnId,placementFromAnchor(pending.beforeTaskId),nextEnteredAt(),{retainAgentPause:pending.origin!==undefined,origin,at:this.hubs.operationDeps().now(),...(pending.parameters===undefined?{}:{parameters:pending.parameters})});if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});if(pending.origin===undefined)this.turnAdvance.forget(task.id);
+    await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(decision!==undefined&&t.columnId!==pending.columnId){const source=board.workflow.columns.find(column=>column.id===pending.fromColumnId);const option=source?.decision?.options.find(option=>option.id===decision.optionId);invariant(option!==undefined&&option.to===pending.columnId&&stageIdentityOf(board,pending.columnId)===decision.destinationIdentity,'STALE_DECISION','The option or its destination changed before the choice was applied.');}if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');if(pending.parameters!==undefined||(pending.origin==='agent'&&pending.transitionOverride===true)){const destination=board.workflow.columns.find(column=>column.id===pending.columnId);const names=declaredParameterNames(destination?.scripted?.params);if(names.length>0||pending.parameters!==undefined){const checked=validateParameterValues(names,pending.parameters);invariant(checked.ok,'INVALID_PARAMETERS',checked.ok?'':checked.message);}}
+      operations.placeTask(d,t.id,pending.columnId,placementFromAnchor(pending.beforeTaskId),nextEnteredAt(),{retainAgentPause:pending.origin!==undefined,origin,at:this.hubs.operationDeps().now(),...(pending.parameters===undefined?{}:{parameters:pending.parameters}),...(decision===undefined?{}:{decision})});if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});if(pending.origin===undefined)this.turnAdvance.forget(task.id);
     if(pending.mode==='run'){
      invariant(pending.sessionId&&pending.text,'INVALID_TARGET','Confirmed execution is missing its target or instruction.');
      await admitStageInstruction(this.stageInstructionDeps(),{taskId:task.id,columnId:pending.columnId,instruction:pending.text,sessionId:pending.sessionId,requestId:pending.id,...(pending.reason===undefined?{}:{transition:{fromColumnId:pending.fromColumnId,reason:pending.reason}})});

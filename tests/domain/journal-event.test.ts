@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeEvent, encodeEvent, EVENT_KINDS, type JournalEvent } from '../../src/domain/journal/event.js';
+import { decodeEvent, encodeEvent, EVENT_FORMAT_VERSION, EVENT_KINDS, type JournalEvent } from '../../src/domain/journal/event.js';
 
 const base = { seq: 3, at: '2026-01-01T00:00:00.000Z', v: 1 } as const;
 
@@ -49,7 +49,17 @@ describe('journal event codec', () => {
   });
 
   it('reports a newer event version instead of guessing', () => {
-    expect(decodeEvent({ ...base, v: 5, kind: 'stage.removed', key: 's1' })).toEqual({ ok: false, reason: 'unsupported-version', version: 5 });
+    expect(decodeEvent({ ...base, v: EVENT_FORMAT_VERSION + 1, kind: 'stage.removed', key: 's1' })).toEqual({ ok: false, reason: 'unsupported-version', version: EVENT_FORMAT_VERSION + 1 });
+  });
+
+  it('requires the decision event format for a decision change', () => {
+    const decision = { question: 'Proceed?', options: [{ id: 'a', title: 'Approve', to: 'done' }] };
+    const field = { ...base, v: 5, kind: 'stage.field-changed', key: 's1', field: 'decision', value: decision };
+    expect(decodeEvent(field).ok).toBe(true);
+    expect(decodeEvent({ ...field, v: 4 })).toEqual({ ok: false, reason: 'unsupported-version', version: 5 });
+    expect(decodeEvent({ ...field, value: { question: '' } }).ok).toBe(false);
+    expect(decodeEvent({ ...base, v: 5, kind: 'stage.created', stage: { id: 's1', key: 's1', name: 'Gate', decision } }).ok).toBe(true);
+    expect(decodeEvent({ ...base, v: 4, kind: 'stage.created', stage: { id: 's1', key: 's1', name: 'Gate', decision } })).toEqual({ ok: false, reason: 'unsupported-version', version: 5 });
   });
 
   it('requires version 4 for description fields', () => {

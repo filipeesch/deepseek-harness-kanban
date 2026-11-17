@@ -1,5 +1,5 @@
 import type { Column, Workflow } from '../shared/types.js';
-import { authoredTransitions } from './transitions.js';
+import { authoredStageTargets, authoredTransitions } from './transitions.js';
 import { workflowGraph } from './workflow-graph.js';
 
 /** Something a composed workflow admits that its author should look at. */
@@ -37,9 +37,8 @@ const DESTRUCTURED_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 function destinations(column: Column): Set<string> | null {
   // A stage that authors no restriction permits any other stage, so nothing it
   // names can be a disallowed destination.
-  if (column.scripted !== undefined) return new Set(Object.values(column.scripted.exits));
-  if (column.allowedTransitions === undefined) return null;
-  return new Set(column.allowedTransitions.map(rule => rule.to));
+  const targets = authoredStageTargets(column);
+  return targets === null ? null : new Set(targets.map(rule => rule.to));
 }
 
 /** Every stage reachable from the initial stage along drawn connections. */

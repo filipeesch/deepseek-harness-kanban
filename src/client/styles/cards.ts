@@ -45,6 +45,7 @@ export const cardStyles = String.raw`
 .dsh-kanban .kb-card[data-presence=error]{background:color-mix(in srgb,var(--kb-state-error) var(--kb-state-tint),var(--kb-surface))}
 .dsh-kanban .kb-card[data-presence=attention]{background:color-mix(in srgb,var(--kb-state-attention) var(--kb-state-tint),var(--kb-surface))}
 .dsh-kanban .kb-card[data-presence=approval]{background:color-mix(in srgb,var(--kb-state-attention) var(--kb-state-tint),var(--kb-surface))}
+.dsh-kanban .kb-card[data-presence=decision]{background:color-mix(in srgb,var(--kb-state-attention) var(--kb-state-tint),var(--kb-surface))}
 .dsh-kanban .kb-card[data-presence=running]{background:color-mix(in srgb,var(--kb-state-running) var(--kb-state-tint),var(--kb-surface))}
 .dsh-kanban .kb-card[data-presence=unread]{background:color-mix(in srgb,var(--kb-state-unread) var(--kb-state-tint),var(--kb-surface))}
 /* The diagram publishes the bounded inverse of its zoom on the canvas; the column

@@ -62,7 +62,7 @@ const imageContent = ((_args: unknown, raw: unknown) => {
 /** The read-only measurement tools and the diagram drawing. */
 export function insightsTools(app: KanbanApp, rasterizer: Rasterizer = createRasterizer(), images?: WorkflowImagePort): ToolDefinition[] {
   return [
-    normal('get_route_stats', 'Report how one board workflow was used: each drawn transition with its uses by origin, each named script exit including the unused ones, each stage with its entries and time spent, the cards parked now and for how long, per-card loops, and the configured routes and exits no card used in the window. Reads aggregate identifiers, counts, and durations only; it never carries card text or conversation content. Reading changes nothing.', {
+    normal('get_route_stats', 'Report how one board workflow was used: each drawn transition with its uses by origin, each named script exit and each configured decision option, including the unused ones, each stage with its entries and time spent, the cards parked now and for how long, per-card loops, and the configured routes and exits no card used in the window. Reads aggregate identifiers, counts, and durations only; it never carries card text or conversation content. Reading changes nothing.', {
       board_id: text('Board ID.', true),
       since: text('Start of the window, as an ISO timestamp. Defaults to 90 days before until.'),
       until: text('End of the window, as an ISO timestamp. Defaults to now.'),

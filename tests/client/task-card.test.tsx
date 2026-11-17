@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { TaskCard, type TaskCardProps } from '../../src/client/task-card.js';
 import { cardStatusEntries } from '../../src/client/card-status-entries.js';
 import { autoModeView } from '../../src/client/auto-mode.js';
 import { AutoRunController } from '../../src/client/auto-run.js';
+import { DecisionWindowController } from '../../src/client/decision-window.js';
 import { EMPTY_ATTENTION, type Attention, type Column, type ContextOperation, type Task } from '../../src/shared/types.js';
 import { fixture } from './helpers.js';
 
@@ -374,5 +375,28 @@ describe('card presence', () => {
     const withOperation = setup({ task: { ...baseTask, operation: failedOperation } });
     expect(withOperation.card.getAttribute('data-presence')).toBe('none');
     expect(withOperation.card.querySelector('.kb-card-status-line')).toBeTruthy();
+  });
+});
+
+describe('decision gate on a task card', () => {
+  const gateColumn: Column = { id: 'gate', name: 'Gate', decision: { question: 'Proceed?', options: [{ id: 'ship', title: 'Ship', to: 'done' }] } };
+  const gateTask: Task = { ...baseTask, columnId: 'gate', stageEntry: { id: 'entry-gate', columnId: 'gate', stageIdentity: 'gate', enteredAt: '2026-01-01T00:00:00.000Z' } };
+
+  it('presents the awaiting-decision tint, mark, and status line', () => {
+    const { card } = setup({ task: gateTask, column: gateColumn, decision: { label: 'Confirmation needed' }, next: undefined });
+    expect(card.getAttribute('data-presence')).toBe('decision');
+    expect(within(card).getByRole('img', { name: 'Decision needed' })).toBeTruthy();
+    expect(within(card).getByText('Confirmation needed')).toBeTruthy();
+  });
+
+  it('counts the window down and cancels from the card', () => {
+    const controller = new DecisionWindowController({ run: async () => fixture() });
+    const cancel = vi.spyOn(controller, 'cancel');
+    const { card } = setup({ task: gateTask, column: gateColumn, decision: { label: 'Confirmation needed' }, decisionWindow: controller, next: undefined });
+    act(() => controller.arm({ taskId: gateTask.id, entryId: 'entry-gate', optionId: 'ship', destinationId: 'done', destinationIdentity: 'done-key',
+          destinationName: 'Done' }));
+    const countdown = within(card).getByRole('button', { name: /Moving to Done in \d+ seconds/ });
+    fireEvent.click(countdown);
+    expect(cancel).toHaveBeenCalledWith(gateTask.id);
   });
 });

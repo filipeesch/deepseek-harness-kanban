@@ -1,0 +1,21 @@
+[{
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "text" },
+      { "type": "text-delta", "index": 0, "text": "Gate turn received." },
+      { "type": "block-end", "index": 0, "block": { "type": "text", "text": "Gate turn received." } },
+      { "type": "usage", "usage": { "inputTokens": 64, "outputTokens": 3, "totalTokens": 67 } },
+      { "type": "finish", "reason": { "kind": "stop" } }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "text" },
+      { "type": "text-delta", "index": 0, "text": "Gate turn received." },
+      { "type": "block-end", "index": 0, "block": { "type": "text", "text": "Gate turn received." } },
+      { "type": "usage", "usage": { "inputTokens": 64, "outputTokens": 3, "totalTokens": 67 } },
+      { "type": "finish", "reason": { "kind": "stop" } }
+    ]
+  }
+]

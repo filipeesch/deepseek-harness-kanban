@@ -10,7 +10,7 @@ export interface CardStatusEntry { key: string; tone: 'danger' | 'pending'; labe
  * diagnostic pause is a separate line so a turn that failed while the task was
  * paused is never hidden by the pause the agent requested.
  */
-export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: AutoModeStatus, pauseStatuses: readonly AutoModeStatus[] = [], sessionObservation?: SessionObservation): CardStatusEntry[] {
+export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: AutoModeStatus, pauseStatuses: readonly AutoModeStatus[] = [], sessionObservation?: SessionObservation, decision?: string): CardStatusEntry[] {
   const entries: CardStatusEntry[] = [];
   if (task.operation) {
     const operation = task.operation;
@@ -38,6 +38,7 @@ export function cardStatusEntries(task: Task, runFailure?: string, autoStatus?: 
     const noun = pending.origin === 'agent' ? 'Agent-declared transition' : 'Confirmed action';
     entries.push({ key: 'transition', tone: failed ? 'danger' : 'pending', label: failed ? noun + ' failed' : noun + ': ' + pending.status });
   }
+  if (decision !== undefined) entries.push({ key: 'decision', tone: 'pending', label: decision });
   if (runFailure !== undefined) entries.push({ key: 'instruction', tone: 'danger', label: runFailure, alert: true });
   // A Session the plugin cannot observe is a failure about the conversation, so it
   // sits with the other conversation-derived facts and never replaces them.

@@ -87,6 +87,33 @@ columns:
 
 A stage can run code instead of an agent instruction; see [Scripted steps](scripted-steps.md) for the fields that replace a stage's instruction and transitions.
 
+## Decision gates
+
+A stage can stop the flow for a person's explicit choice instead of running an agent instruction or a program. In the stage editor choose **Decision** on the Stage tab; the Decision tab carries the question, optional Markdown context, and one to twelve options. Each option has an **Id** (the identity a recorded choice keeps), a **Title**, an optional **Description**, and a **Destination** stage; several options may share a destination. One option is a valid explicit confirmation. A decision stage cannot also author an instruction, an allowed-transition list, or a scripted program: switching to **Decision** clears the other mode.
+
+```yaml
+columns:
+  - id: review_gate
+    label: Review gate
+    decision:
+      question: How should this review proceed?
+      context: Address any findings before shipping.
+      options:
+        - id: fix
+          title: Fix in place
+          to: in_progress
+        - id: ship
+          title: Ship it
+          to: released
+```
+
+A task in the gate stays in its stage until the person answers. The card presents the awaiting-input tint, a **Decision needed** mark, and a status line; the drawer presents the gate above its sections, in every section and without requiring a conversation. Select one option, optionally add an **Observation** (up to 776 characters), and activate **Confirm choice**; selecting alone does nothing.
+
+Confirming opens a cancelable five-second window on the card and in the panel. The task moves only when the window closes; **Cancel**, a reload, or closing the app applies nothing and leaves the gate waiting. The choice moves the task to the option's destination and records it in **History** with the option and the observation. When the destination authors an instruction, that instruction is sent with the choice as its reason, reading `Decision: <title>` and the observation; a scripted destination starts its own execution instead.
+
+The gate owns its routing. A completed turn does not advance out of a decision stage, whether or not auto mode is on, and no agent can declare its route, including with the exceptional flag. Every manual move out of the stage asks for the restricted-transition confirmation. A workflow edit that removes or retargets an option before the card is first placed refuses the pending choice; after the move is recorded, a later edit does not invalidate it.
+
+
 ## Edit one stage
 
 The stage editor's **Edit stage** action, and the pencil on every stage header, opens one dialog for a single stage. Its identity section edits the stage name, the optional **Stage description**, and the stable ID. The board always presents it; the workflow diagram presents it disabled while its layout is locked.

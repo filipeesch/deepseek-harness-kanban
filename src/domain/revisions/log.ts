@@ -165,6 +165,11 @@ export function describeChange(previous: string, next: string): string {
     stages(counts.removed, 'removed');
     stages(counts.changed, 'changed');
     const layout = difference.stages.some(stage => stage.fields?.some(field => field.field === 'position' || field.field === 'size')) || difference.connections.length > 0;
+    const decision = difference.stages.filter(stage => stage.fields?.some(field => field.field.startsWith('decision')));
+    if (decision.length > 0) {
+      const names = [...new Set(decision.flatMap(stage => (stage.fields ?? []).filter(field => field.field.startsWith('decision')).map(field => field.field === 'decision' ? 'configuration' : field.field.slice('decision.'.length))))];
+      parts.push('decision ' + names.join('/') + ' changed in ' + decision.map(stage => stage.stage).join(', '));
+    }
     if (layout) parts.push('layout changed');
     if (difference.groups.length > 0) parts.push('groups changed');
     if (difference.workflow.length > 0) parts.push('workflow settings changed');

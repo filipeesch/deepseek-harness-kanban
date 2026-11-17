@@ -4,7 +4,7 @@ import type { HubTask, Problem } from '../shared/types.js';
 import type { StageEntryOrigin } from '../shared/task-history.js';
 import { KanbanError } from '../shared/errors.js';
 import type { LocatedTask } from './hub-repository.js';
-import { captureScriptedTargets } from '../domain/scripted-state.js';
+import { captureStageTargets } from '../domain/stage-identity.js';
 import { boundedRedactedParameters, declaredParameterNames, declaredParameterValues, missingParameterNames, validateParameterValues } from '../domain/scripted-parameters.js';
 import { recordScriptedExecution, recordScriptedHandoff } from '../domain/task-history/record.js';
 import { classifyFailureCode, failureDetail, failureDetailValues } from '../domain/scripted-failure.js';
@@ -260,7 +260,7 @@ export class ScriptedSupervisor {
       if (!definition || !column) throw new KanbanError('SCRIPTED_CONFIGURATION_REQUIRED', 'Configure a script or change stages before pressing Play.');
       const superseded = task.scripted;
       if (superseded && !superseded.result && !['stopped', 'failed'].includes(superseded.phase)) recordScriptedExecution(task, { at: this.now(), executionId: superseded.executionId, columnId: task.columnId, outcome: 'stopped', ...historyParameters(superseded) });
-      task.scripted = { entryId, executionId: this.id(), stageIdentity: task.stageEntry.stageIdentity, definition: structuredClone(definition), targets: captureScriptedTargets(located.board, column, this.id), ...(superseded?.parameters === undefined ? {} : { parameters: { ...superseded.parameters } }), phase: 'capture-pending', startedAt: this.now(), attempt: 0, restartCount: 0 };
+      task.scripted = { entryId, executionId: this.id(), stageIdentity: task.stageEntry.stageIdentity, definition: structuredClone(definition), targets: captureStageTargets(located.board, column, this.id), ...(superseded?.parameters === undefined ? {} : { parameters: { ...superseded.parameters } }), phase: 'capture-pending', startedAt: this.now(), attempt: 0, restartCount: 0 };
     });
     // A new execution supersedes any scheduled delivery re-check for this task.
     this.clearRecheck(taskId);

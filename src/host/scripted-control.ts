@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { ensureLocalStageIdentity } from '../domain/scripted-state.js';
+import { ensureLocalStageIdentity } from '../domain/stage-identity.js';
 import { KanbanError } from '../shared/errors.js';
 import type { ScriptedTarget } from '../shared/scripted.js';
 import type { ScriptedApprovalScope, ScriptedRuntime, ScriptedScope } from './scripted/ports.js';

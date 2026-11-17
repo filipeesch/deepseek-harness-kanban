@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { ScriptedDefinition } from '../../shared/scripted.js';
 import { scriptedDefinitionSchema } from '../scripted-definition.js';
-import type { ColumnGroup, ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset, StagePosition, StageSize, TransitionRule } from '../../shared/types.js';
+import { decisionDefinitionSchema } from '../decision-definition.js';
+import type { ColumnGroup, ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset, DecisionDefinition, StagePosition, StageSize, TransitionRule } from '../../shared/types.js';
 import { isDomainId } from '../validation.js';
 import { PROJECT_KEY_PATTERN } from '../project-key.js';
 
 /** The newest event format this installation understands. */
-export const EVENT_FORMAT_VERSION = 4;
+export const EVENT_FORMAT_VERSION = 5;
 
 /** One change to a board workflow, before the log stamps its position and time. */
 export type BoardChange =
@@ -16,6 +17,7 @@ export type BoardChange =
   | { kind: 'stage.created'; stage: StageDefinition }
   | { kind: 'stage.field-changed'; key: string; field: 'name'; value: string }
   | { kind: 'stage.field-changed'; key: string; field: 'scripted'; value: ScriptedDefinition | null }
+  | { kind: 'stage.field-changed'; key: string; field: 'decision'; value: DecisionDefinition | null }
   | { kind: 'stage.field-changed'; key: string; field: 'description'; value: string | null }
   | { kind: 'stage.field-changed'; key: string; field: 'onEnterPrompt'; value: string | null }
   | { kind: 'stage.field-changed'; key: string; field: 'allowedTransitions'; value: TransitionRule[] | null }
@@ -40,6 +42,7 @@ export interface StageDefinition {
   name: string;
   description?: string;
   scripted?: ScriptedDefinition;
+  decision?: DecisionDefinition;
   onEnterPrompt?: string;
   allowedTransitions?: TransitionRule[];
   position?: StagePosition;
@@ -68,18 +71,18 @@ const anchor = z.strictObject({ side: z.enum(['top', 'right', 'bottom', 'left'])
 const segment = z.strictObject({ axis: z.enum(['x', 'y']), offset: z.number().finite() });
 const connection = z.strictObject({ from: identifier, to: identifier, source: anchor.optional(), target: anchor.optional(), segments: z.array(segment).optional() });
 const group = z.strictObject({ id: identifier, name: z.string().min(1), columnIds: z.array(identifier).min(1) });
-const stage = z.strictObject({ id: identifier, key: identifier, name: z.string().min(1), description: z.string().optional(), scripted: scriptedDefinitionSchema.optional(), onEnterPrompt: z.string().optional(), allowedTransitions: transitionList.optional(), position: position.optional(), size: size.optional() });
+const stage = z.strictObject({ id: identifier, key: identifier, name: z.string().min(1), description: z.string().optional(), scripted: scriptedDefinitionSchema.optional(), decision: decisionDefinitionSchema.optional(), onEnterPrompt: z.string().optional(), allowedTransitions: transitionList.optional(), position: position.optional(), size: size.optional() });
 const projectKey = z.string().refine(value => PROJECT_KEY_PATTERN.test(value), 'Expected a safe project key.');
 const rank = z.string().refine(value => RANK_PATTERN.test(value), 'Expected an orderable board position.');
 
 /** Retained events keep the format they were written with, so every supported one decodes. */
-const stamped = { seq: z.number().int().min(0), at: z.string().min(1), v: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(EVENT_FORMAT_VERSION)]) };
+const stamped = { seq: z.number().int().min(0), at: z.string().min(1), v: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(EVENT_FORMAT_VERSION)]) };
 const shape = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('workflow.replaced'), text: z.string().min(1), ...stamped }),
   z.strictObject({ kind: z.literal('workflow.field-changed'), field: z.enum(['name', 'defaultView', 'description']), value: z.string().nullable(), ...stamped }),
   z.strictObject({ kind: z.literal('workflow.initial-changed'), columnId: identifier, ...stamped }),
   z.strictObject({ kind: z.literal('stage.created'), stage, ...stamped }),
-  z.strictObject({ kind: z.literal('stage.field-changed'), key: identifier, field: z.enum(['name', 'description', 'onEnterPrompt', 'allowedTransitions', 'scripted']), value: z.union([z.string(), transitionList, scriptedDefinitionSchema, z.null()]), ...stamped }),
+  z.strictObject({ kind: z.literal('stage.field-changed'), key: identifier, field: z.enum(['name', 'description', 'onEnterPrompt', 'allowedTransitions', 'scripted', 'decision']), value: z.union([z.string(), transitionList, scriptedDefinitionSchema, decisionDefinitionSchema, z.null()]), ...stamped }),
   z.strictObject({ kind: z.literal('stage.id-changed'), key: identifier, from: identifier, id: identifier, ...stamped }),
   z.strictObject({ kind: z.literal('stage.removed'), key: identifier, ...stamped }),
   z.strictObject({ kind: z.literal('stage.layout-set'), key: identifier, position: position.nullable(), size: size.nullable(), ...stamped }),
@@ -125,6 +128,7 @@ export function decodeEvent(raw: unknown): EventDecode {
   if (version > EVENT_FORMAT_VERSION) return { ok: false, reason: 'unsupported-version', version };
   const kind = value.kind;
   if (version < 4 && ((kind === 'workflow.field-changed' || kind === 'stage.field-changed') && value.field === 'description' || kind === 'stage.created' && typeof value.stage === 'object' && value.stage !== null && Object.hasOwn(value.stage, 'description'))) return { ok: false, reason: 'unsupported-version', version: 4 };
+  if (version < 5 && (kind === 'stage.field-changed' && value.field === 'decision' || kind === 'stage.created' && typeof value.stage === 'object' && value.stage !== null && Object.hasOwn(value.stage, 'decision'))) return { ok: false, reason: 'unsupported-version', version: 5 };
   if (version === 1 && (kind === 'stage.field-changed' && value.field === 'scripted' || kind === 'stage.created' && typeof value.stage === 'object' && value.stage !== null && Object.hasOwn(value.stage, 'scripted'))) return { ok: false, reason: 'unsupported-version', version: EVENT_FORMAT_VERSION };
   if (typeof kind !== 'string' || !EVENT_KINDS.includes(kind)) return { ok: false, reason: 'unknown-kind', kind: typeof kind === 'string' ? kind : String(kind) };
   const parsed = shape.safeParse(value);
@@ -148,6 +152,7 @@ function fieldValueMismatch(event: JournalEvent): string | null {
     if (event.field === 'scripted' && event.value !== null && !scriptedDefinitionSchema.safeParse(event.value).success) return 'A scripted change requires a definition or null.';
     if (event.field === 'name' && typeof event.value !== 'string') return 'A stage name change requires text.';
     if (event.field === 'description' && !(typeof event.value === 'string' || event.value === null)) return 'A stage description change requires text or null.';
+    if (event.field === 'decision' && event.value !== null && !decisionDefinitionSchema.safeParse(event.value).success) return 'A decision change requires a decision configuration or null.';
     if (event.field === 'onEnterPrompt' && !(typeof event.value === 'string' || event.value === null)) return 'A stage instruction change requires text or null.';
     if (event.field === 'allowedTransitions' && !(event.value === null || Array.isArray(event.value))) return 'A stage transition change requires a list or null.';
   }

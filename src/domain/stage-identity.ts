@@ -1,5 +1,9 @@
-import type { Workflow } from '../shared/types.js';
+import { z } from 'zod';
+import type { Board, Column, Workflow } from '../shared/types.js';
+import type { ScriptedTarget } from '../shared/scripted.js';
 import { isDomainId } from './validation.js';
+
+const id = z.string().refine(isDomainId);
 
 /** What a previous version of a workflow knew about one stage's identity. */
 export interface StageIdentitySeed {
@@ -78,4 +82,61 @@ export function seedStageIdentities(workflow: Workflow): Workflow {
 /** Every stage identity a workflow carries, which is what a later match reads. */
 export function stageIdentitySeeds(workflow: Workflow): StageIdentitySeed[] {
   return workflow.columns.map(column => (column.key === undefined ? { id: column.id } : { id: column.id, key: column.key }));
+}
+/** The stored association between an authored stage identifier and its stable local identity. */
+export const localStageIdentitiesSchema = z.record(id, id).refine(value => new Set(Object.values(value)).size === Object.keys(value).length, 'Local stage associations must be unique.');
+
+/** One stage destination frozen as an identity, never as a reusable authored identifier. */
+export const stageTargetSchema = z.strictObject({ columnId: id, stageIdentity: id });
+
+/** Resolve a captured identity, never a newly reused authored identifier. */
+export function resolveStageTarget(board: Pick<Board, 'workflow' | 'localStageIdentities'>, target: ScriptedTarget): Column | undefined {
+  return board.workflow.columns.find(column => (board.localStageIdentities?.[column.id] ?? column.key) === target.stageIdentity);
+}
+
+/** Reconcile only existing associations; a removed/recreated identifier receives a fresh identity. */
+export function reconcileLocalStageIdentities(board: Pick<Board, 'workflow' | 'localStageIdentities'>, next: Workflow): void {
+  if (board.localStageIdentities === undefined) return;
+  const previous = board.workflow.columns;
+  const mapping: Record<string, string> = {};
+  for (const column of next.columns) {
+    const old = previous.find(item => column.key !== undefined && item.key === column.key) ?? previous.find(item => item.id === column.id && item.key === undefined);
+    if (old !== undefined && board.localStageIdentities[old.id] !== undefined) mapping[column.id] = board.localStageIdentities[old.id]!;
+  }
+  board.localStageIdentities = mapping;
+}
+
+/** Allocate local scope without manufacturing an authored publication key. */
+export function ensureLocalStageIdentity(board: Pick<Board, 'workflow' | 'localStageIdentities'>, columnId: string, allocate: () => string): string {
+  const column = board.workflow.columns.find(item => item.id === columnId);
+  if (column === undefined) throw new Error('The stage no longer exists.');
+  const existing = board.localStageIdentities?.[columnId];
+  if (existing !== undefined) {
+    if (!isDomainId(existing) || Object.entries(board.localStageIdentities ?? {}).some(([id, value]) => id !== columnId && value === existing)) throw new Error('The local stage association is invalid or reused by another stage.');
+    return existing;
+  }
+  const used = new Set(Object.entries(board.localStageIdentities ?? {}).filter(([id]) => id !== columnId).map(([, identity]) => identity));
+  for (const other of board.workflow.columns) if (other.id !== columnId && other.key !== undefined) used.add(other.key);
+  for (let attempt = 0; attempt < 10_000; attempt++) {
+    const identity = column.key ?? allocate();
+    if (!isDomainId(identity) || used.has(identity)) {
+      if (column.key !== undefined) throw new Error('The authored stage identity conflicts with another local association.');
+      continue;
+    }
+    (board.localStageIdentities ??= {})[columnId] = identity;
+    return identity;
+  }
+  throw new Error('Could not allocate a unique local stage identity.');
+}
+
+/**
+ * Freeze the destinations of one stage's authored routing mode: a scripted
+ * stage's named exits or a decision stage's options.
+ */
+export function captureStageTargets(board: Pick<Board, 'workflow' | 'localStageIdentities'>, column: Column, allocate: () => string): Record<string, ScriptedTarget> {
+  if (column.decision !== undefined) {
+    return Object.fromEntries(column.decision.options.map(option => [option.id, { columnId: option.to, stageIdentity: ensureLocalStageIdentity(board, option.to, allocate) }]));
+  }
+  if (column.scripted === undefined) return {};
+  return Object.fromEntries(Object.entries(column.scripted.exits).map(([name, columnId]) => [name, { columnId, stageIdentity: ensureLocalStageIdentity(board, columnId, allocate) }]));
 }

@@ -92,6 +92,7 @@ Then use the already-running DSH GUI: **Plugins → Add plugin**, add the absolu
 | --- | --- |
 | Hubs, boards, project scope, board defaults, and board configuration | [Hubs and boards](docs/user/hubs-and-boards.md) |
 | Workflow YAML, workflow and stage descriptions, the stage editor, and the workflow diagram | [Workflows](docs/user/workflows.md) |
+| Decision gates that stop a task for an authored choice | [Workflows](docs/user/workflows.md#decision-gates) |
 | Moving cards, stage instructions, declared transitions, and auto mode | [Execution](docs/user/execution.md) |
 | The task drawer, native conversations, notes, history, relations, and question rounds | [Conversations](docs/user/conversations.md) |
 | Publishing a Hub through Git, Google Drive, or a local folder, and team files | [Team sharing](docs/user/team-sharing.md) |

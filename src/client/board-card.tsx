@@ -6,6 +6,8 @@ import { advanceDestination } from '../domain/transitions.js';
 import { useScriptSummary } from './scripted-context.js';
 import { ownedScript } from './scripted-view.js';
 import type { AutoRunController, AutoRunInput } from './auto-run.js';
+import type { DecisionWindowController } from './decision-window.js';
+import { decisionGate, decisionLabel } from './decision-view.js';
 
 export interface BoardCardProps {
   task: Task;
@@ -16,6 +18,7 @@ export interface BoardCardProps {
   selectionMode: boolean;
   selected: boolean;
   autoRun: AutoRunController;
+  decisionWindow?: DecisionWindowController;
   autoModePending: boolean;
   onToggleAutoMode: (taskId: string, enabled: boolean) => void;
   onOpen: (taskId: string) => void;
@@ -40,11 +43,12 @@ export interface BoardCardProps {
  * fresh objects.
  */
 export const BoardCard = memo(function BoardCard({
-  task, column, projectName, attention, workflow, selectionMode, selected, autoRun, autoModePending,
+  task, column, projectName, attention, workflow, selectionMode, selected, autoRun, decisionWindow, autoModePending,
   onToggleAutoMode, onOpen, onToggleSelect, onBeginDrag, shouldSuppressClick, onMoveTask, advancePending = false, onRun,
   arrivalToken, onArrivalEnd, sessionObservation,
 }: BoardCardProps) {
   const scriptOwned = ownedScript(task, useScriptSummary(task.id)) !== undefined;
+  const gate = decisionGate(task, workflow.columns);
   return <TaskCard
     task={task}
     column={column}
@@ -54,6 +58,8 @@ export const BoardCard = memo(function BoardCard({
     selectionMode={selectionMode}
     selected={selected}
     autoRun={autoRun}
+    {...(decisionWindow === undefined ? {} : { decisionWindow })}
+    {...(gate === undefined ? {} : { decision: { label: decisionLabel(gate.decision!.options.length) } })}
     autoModePending={autoModePending}
     onToggleAutoMode={onToggleAutoMode}
     onOpen={onOpen}

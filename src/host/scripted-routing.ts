@@ -1,5 +1,5 @@
 import { evaluateScriptedHold, type ScriptedHoldInput, type HoldConversation } from '../domain/scripted-hold.js';
-import { resolveScriptedTarget } from '../domain/scripted-state.js';
+import { resolveStageTarget } from '../domain/stage-identity.js';
 import { bindHandoffParameterValues, declaredParameterNames } from '../domain/scripted-parameters.js';
 import { entryInstruction } from '../domain/stage-entry.js';
 import { placeTask } from '../domain/hub-operations.js';
@@ -110,7 +110,7 @@ export function createScriptedRouter(ports: ScriptedRoutingPorts): (request: Sup
       if (!target || capture?.fingerprint !== request.capture.fingerprint || result.target?.stageIdentity !== target.stageIdentity) {
         return { status: 'failed', error: { code: 'INVALID_CAPTURED_ROUTE', message: 'The saved result does not identify an approved captured destination.' } } as const;
       }
-      const destination = resolveScriptedTarget(board, target);
+      const destination = resolveStageTarget(board, target);
       if (!destination || destination.id === task.columnId) return { status: 'failed', error: { code: 'SCRIPTED_TARGET_REMOVED', message: 'The captured destination no longer exists as the same stage. Repair the workflow and retry delivery explicitly.' } } as const;
       const fromColumnId = task.columnId;
       const instruction = entryInstruction(destination);

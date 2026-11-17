@@ -57,9 +57,9 @@ The action SHALL be focusable and SHALL activate from the keyboard as readily as
 
 ### Requirement: Stage editor form
 
-The stage edit action SHALL open one modal editor for a single stage. The editor SHALL present its content as five tabs — Stage, Execution, Routing, Inputs, and Approval — and SHALL present its save action and its cancel action in a footer that remains visible while the active tab's content scrolls. A stage that authors no program SHALL present the Stage, Execution, and Routing tabs only, and a stage that authors a program SHALL present all five. The editor SHALL hold one width and one height across every tab, so selecting another tab never resizes the overlay, and only the active tab's panel SHALL scroll.
+The stage edit action SHALL open one modal editor for a single stage. The editor SHALL present its content as a tab set — Stage, Execution, Routing, Inputs, Approval, and Decision — and SHALL present its save action and its cancel action in a footer that remains visible while the active tab's content scrolls. A stage that authors neither a program nor a decision configuration SHALL present the Stage, Execution, and Routing tabs only; a stage that authors a program SHALL present the Stage, Execution, Routing, Inputs, and Approval tabs; and a stage that authors a decision configuration SHALL present the Stage and Decision tabs only. The editor SHALL hold one width and one height across every tab, so selecting another tab never resizes the overlay, and only the active tab's panel SHALL scroll.
 
-The Stage tab SHALL present the stage's display name, identifier, execution mode, and whether it is the board's initial stage, together with the action that makes it initial. The Execution tab SHALL present the entry instruction of a stage that authors no program, and the program of a stage that authors one. The Routing tab SHALL present the allowed transitions of a stage that authors no program, and the named exits of a stage that authors one. The Inputs tab SHALL present the declared parameters and the authorized local variable names. The Approval tab SHALL present the stored executable version and its approval state.
+The Stage tab SHALL present the stage's display name, its optional description, its identifier, its execution mode (agent instruction or manual, scripted step, or decision step), and whether it is the board's initial stage, together with the action that makes it initial. The Execution tab SHALL present the entry instruction of a stage that authors no program, and the program of a stage that authors one. The Routing tab SHALL present the allowed transitions of a stage that authors neither a program nor a decision configuration, and the named exits of a stage that authors a program; a stage that authors a decision configuration SHALL present no routing fields on that tab, because its options are its destinations. The Inputs tab SHALL present the declared parameters and the authorized local variable names. The Approval tab SHALL present the stored executable version and its approval state. The Decision tab SHALL present the question, the optional Markdown context, and the ordered options, each with its identifier, title, optional description, and destination chosen from the board's other existing stages, together with the actions that add, reorder, and remove an option.
 
 The editor SHALL edit a draft: changing a field SHALL NOT store anything until the save action is activated, and the cancel action, the Escape key, and the close action SHALL dismiss the editor without storing anything and without changing the stage. Selecting another tab SHALL NOT store, discard, or validate anything, and SHALL keep the draft and its caret and undo history for every field it holds.
 
@@ -67,7 +67,7 @@ The save action SHALL be unavailable while the draft holds no change and while a
 
 After a successful save the editor SHALL close and the board SHALL present the stored stage, except when the saved stage's executable version still requires approval as `scripted-steps` defines it: the editor SHALL then present the stored version's approval state and the approval action for that stored version instead of the draft form, and SHALL offer no further edit of the closed draft.
 
-The program form SHALL edit Bash or TypeScript, exactly one inline code or external file source, the task-or-base-project directory choice, named output routes, authorized local variable names as defined by `scripted-steps`, and the declared parameters, each with a required name and an optional description. The parameter declaration SHALL be edited independently of any entry's values: the form SHALL NOT present, accept, or store an entry's parameter values. The inline program SHALL be editable as multiline code that the user can enlarge. The form SHALL make an agent instruction and a program mutually exclusive and SHALL reject a conflicting configuration rather than silently running both. It SHALL distinguish the saved authored configuration from the captured version of any existing execution: saving SHALL NOT start code, replace an active snapshot, or restart a task. Local variable values SHALL be managed for the selected project and stable stage through the native credential mechanism, not serialized into shared workflow text; their dedicated surface SHALL report configured or missing state without returning stored values to the browser, and the editor SHALL NOT present stored values.
+The program form SHALL edit Bash or TypeScript, exactly one inline code or external file source, the task-or-base-project directory choice, named output routes, authorized local variable names as defined by `scripted-steps`, and the declared parameters, each with a required name and an optional description. The parameter declaration SHALL be edited independently of any entry's values: the form SHALL NOT present, accept, or store an entry's parameter values. The inline program SHALL be editable as multiline code that the user can enlarge. The form SHALL make an agent instruction, a program, and a decision configuration mutually exclusive and SHALL reject a conflicting configuration rather than silently storing both. It SHALL distinguish the saved authored configuration from the captured version of any existing execution: saving SHALL NOT start code, replace an active snapshot, or restart a task. Local variable values SHALL be managed for the selected project and stable stage through the native credential mechanism, not serialized into shared workflow text; their dedicated surface SHALL report configured or missing state without returning stored values to the browser, and the editor SHALL NOT present stored values.
 
 #### Scenario: Open the editor with the stored stage
 
@@ -76,6 +76,13 @@ The program form SHALL edit Bash or TypeScript, exactly one inline code or exter
 - **AND** its Execution tab presents that instruction
 - **AND** its Routing tab presents those two targets
 - **AND** no change is stored
+
+#### Scenario: Open the editor for a decision stage
+
+- **WHEN** the user opens the editor for a stage that authors a decision configuration
+- **THEN** the editor presents the Stage and Decision tabs
+- **AND** the Decision tab presents the stored question, context, and options
+- **AND** the editor presents no Execution, Routing, Inputs, or Approval tab
 
 #### Scenario: Discard a draft
 
@@ -499,3 +506,32 @@ The editor SHALL mark every tab that holds a validation problem and SHALL announ
 - **WHEN** the user corrects the only problem on a marked tab
 - **THEN** that tab no longer announces a problem
 - **AND** the stored stage is unchanged until the user saves
+
+### Requirement: Decision editing in the stage editor
+
+The editor SHALL make the decision step a third execution mode beside the agent instruction or manual mode and the scripted step. Choosing the decision mode SHALL present the Decision tab and SHALL hide the fields that belong to the other two modes. Saving a decision draft SHALL require a nonempty question and at least one option, with a unique identifier, a nonempty title, and a destination that is another existing stage; an invalid option SHALL be presented inline on the Decision tab and the save SHALL store nothing. Saving a decision draft SHALL remove the stage's entry instruction, allowed-transition list, and scripted configuration in the same write, and choosing either of the other modes SHALL remove the stage's decision configuration in that write, so a stage never authors two modes. The stage description SHALL remain a Stage-tab field in every mode and SHALL NOT be edited through the question field. Editing a decision draft SHALL NOT move a card, answer a gate, or change a recorded choice.
+
+#### Scenario: Save a decision draft
+
+- **WHEN** the user chooses the decision mode, writes a question, adds two valid options, and saves
+- **THEN** the stage authors the decision configuration
+- **AND** the editor closes and the board presents the stored stage
+- **AND** no card moves and no gate is answered
+
+#### Scenario: Reject an incomplete decision draft
+
+- **WHEN** the user saves a decision draft with no question or an option without a title or destination
+- **THEN** the editor presents the problem inline on the Decision tab
+- **AND** nothing is stored
+
+#### Scenario: Replace the stage mode
+
+- **WHEN** the user changes a stage that authors a program or an instruction into the decision mode and saves
+- **THEN** the stage authors only the decision configuration
+- **AND** the previous mode's authored fields are removed in the same write
+
+#### Scenario: Keep the description in every mode
+
+- **WHEN** the stage has a description and the user saves a decision draft
+- **THEN** the description remains authored as before
+- **AND** it is not replaced by the decision question

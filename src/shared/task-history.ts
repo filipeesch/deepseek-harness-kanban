@@ -21,14 +21,14 @@ export type WorktreeHistoryAction = (typeof WORKTREE_HISTORY_ACTIONS)[number];
  * an automatic advance, a named script exit, or the reserved error route. A script
  * or error origin names the exit that routed the card.
  */
-export type StageEntryOrigin = 'manual' | 'agent' | 'auto' | `script:${string}` | `error:${string}`;
+export type StageEntryOrigin = 'manual' | 'agent' | 'auto' | `script:${string}` | `error:${string}` | `decision:${string}`;
 
 /** One settled fact about a task's flow, with the moment it happened. */
 export type TaskHistoryEntry =
   | { readonly kind: 'scripted-execution'; readonly at: string; readonly executionId: string; readonly columnId: string; readonly outcome: 'completed' | 'stopped' | 'failed'; readonly exit?: string; readonly message?: string; readonly error?: Problem; /** Bounded values that execution used; absent when its stage declared none. */ readonly parameters?: Record<string, string> }
   | { readonly kind: 'scripted-handoff'; readonly at: string; readonly deliveryId: string; readonly executionId: string; readonly fromColumnId: string; readonly columnId: string; readonly outcome: 'accepted' | 'failed'; readonly exit: string; readonly message: string; /** Bounded values the source sent with the result; never the destination's execution values. */ readonly parameters?: Record<string, string>; readonly error?: Problem }
   | { readonly kind: 'created'; readonly at: string; readonly columnId: string }
-  | { readonly kind: 'stage'; readonly at: string; readonly fromColumnId: string; readonly columnId: string; /** Absent on an entry recorded before origins were stored; never backfilled. */ readonly origin?: StageEntryOrigin }
+  | { readonly kind: 'stage'; readonly at: string; readonly fromColumnId: string; readonly columnId: string; /** Absent on an entry recorded before origins were stored; never backfilled. */ readonly origin?: StageEntryOrigin; /** Present when a person's decision produced this entry. */ readonly decision?: { readonly optionId: string; readonly note?: string } }
   | { readonly kind: 'intent'; readonly at: string; readonly fromColumnId: string; readonly columnId: string }
   | {
     readonly kind: 'auto-mode';

@@ -1,4 +1,5 @@
-import { captureScriptedTargets, establishStageEntry, ensureLocalStageIdentity } from './scripted-state.js';
+import { establishStageEntry } from './scripted-state.js';
+import { captureStageTargets, ensureLocalStageIdentity } from './stage-identity.js';
 import { declaredParameterValues } from './scripted-parameters.js';
 import type { HubTask, Task, Workflow } from '../shared/types.js';
 import type { StageEntryOrigin } from '../shared/task-history.js';
@@ -34,6 +35,8 @@ export interface TaskPlacementOptions {
   readonly allocateId?: () => string;
   /** Values a declared transition supplies for the destination's declared parameters. */
   readonly parameters?: Readonly<Record<string, string>>;
+  /** The decision a person made, recorded with the stage entry it produced. */
+  readonly decision?: { readonly optionId: string; readonly note?: string };
 }
 
 /** Place one task in a stage of its board, recording the stage entry the move settles. */
@@ -59,13 +62,13 @@ export function placeTaskIn(board: TaskPlacementBoard, task: HubTask, columnId: 
       const used = superseded.parameters === undefined || superseded.attempt === 0 ? {} : declaredParameterValues(superseded.capture?.params ?? Object.keys(superseded.parameters), superseded.parameters);
       recordScriptedExecution(task, { at: options.at, executionId: superseded.executionId, columnId: sourceColumnId, outcome: 'stopped', ...(Object.keys(used).length === 0 ? {} : { parameters: used }) });
     }
-    recordStageEntry(task as Task, sourceColumnId, columnId, options.at, options.origin);
+    recordStageEntry(task as Task, sourceColumnId, columnId, options.at, options.origin, options.decision === undefined ? undefined : { optionId: options.decision.optionId, ...(options.decision.note === undefined ? {} : { note: options.decision.note }) });
     const destinationColumn = board.workflow.columns.find(value => value.id === columnId);
     if (entryInstruction(destinationColumn) !== undefined) task.instructionPending = { columnId, enteredAt };
     else delete task.instructionPending;
     if (destinationColumn !== undefined) {
       const allocate = options.allocateId ?? (() => globalThis.crypto.randomUUID());
-      establishStageEntry(task, destinationColumn, ensureLocalStageIdentity(board, columnId, allocate), options.at, allocate, captureScriptedTargets(board, destinationColumn, allocate), options.parameters);
+      establishStageEntry(task, destinationColumn, ensureLocalStageIdentity(board, columnId, allocate), options.at, allocate, captureStageTargets(board, destinationColumn, allocate), options.parameters);
     }
   }
   // A cleared pause is an auto mode change wherever it happens, so a placement

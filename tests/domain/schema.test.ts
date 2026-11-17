@@ -383,4 +383,15 @@ describe('the persisted board default agent preset', () => {
     state.workflow = { ...parseWorkflow(yaml), agentPreset: '' };
     expect(BoardStateSchema.safeParse(state).success).toBe(false);
   });
+
+  it('round-trips a decision stage through the persisted schema and the canonical shape', () => {
+    const yaml = 'name: Gated\ninitial_column: gate\ncolumns:\n  - id: gate\n    label: Gate\n    decision:\n      question: Proceed?\n      options:\n        - id: approve\n          title: Approve\n          to: done\n  - id: done\n    label: Done\n';
+    const workflow = parseWorkflow(yaml);
+    const state = { ...initialState(), workflowYaml: yaml, workflow };
+    expect(BoardStateSchema.safeParse(state).success).toBe(true);
+    expect(canonicalWorkflow(workflow)).toContain('"approve"');
+    const dropped = { ...workflow, columns: [{ ...workflow.columns[0]!, decision: undefined }, workflow.columns[1]!] };
+    expect(BoardStateSchema.safeParse({ ...state, workflow: dropped }).success).toBe(false);
+  });
+
 });

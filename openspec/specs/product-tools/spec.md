@@ -358,16 +358,23 @@ The plugin SHALL expose `list_hubs` so an agent can discover Hubs, and `list_boa
 
 ### Requirement: Board workflow read payload
 
-The plugin SHALL replace `get_board_summary` with `get_workflow_summary` and SHALL NOT declare or dispatch the former. The new tool SHALL resolve a board as specified by board-anchored discovery and return a concise live workflow projection with board and Hub identity, optional workflow description, initial stage, and each stage's identifier, name, optional description, and script, agent-instruction, or no-instruction type. It SHALL describe the routing policy, including targets and documentary conditions or named script exits, and distinguish unrestricted, explicitly empty, configured, and scripted routes. Conditions are documentary, not executable predicates. The projection SHALL include board project scope and sharing status. Missing or blank descriptions SHALL be absent, and unknown or unavailable state SHALL be explicit rather than fabricated.
+The plugin SHALL replace `get_board_summary` with `get_workflow_summary` and SHALL NOT declare or dispatch the former. The new tool SHALL resolve a board as specified by board-anchored discovery and return a concise live workflow projection with board and Hub identity, optional workflow description, initial stage, and each stage's identifier, name, optional description, and script, agent-instruction, decision, or no-instruction type. It SHALL describe the routing policy, including targets and documentary conditions or named script exits, and distinguish unrestricted, explicitly empty, configured, scripted, and decision routes. Conditions are documentary, not executable predicates. For a stage that authors a decision configuration it SHALL report the bounded question and each option's identifier, title, and destination, and SHALL NOT report the option descriptions; the gate is documentary here and the projection SHALL NOT answer it. The projection SHALL include board project scope and sharing status. Missing or blank descriptions SHALL be absent, and unknown or unavailable state SHALL be explicit rather than fabricated.
 
-Only when the requested board is the calling task's own board SHALL the result include that task's current stage and automatic-mode enabled, paused, and held state. It SHALL NOT attribute a task from another board to the requested board. The response SHALL omit task counts, Hub revision, model and preset settings, MCP configuration, layout, full YAML, script code, and full entry prompts. The workflow architect retains `get_board_yaml`, `get_stage`, and Hub revision reads under the existing architect-only gate; the summary SHALL NOT broaden other roles' access. The workflow projection SHALL fit within 6 KiB per page in UTF-8, report omitted records and counts explicitly, and expose a continuation cursor. An individually oversized description or condition SHALL be indicated and remain readable in pages through the same tool without silent truncation.
+Only when the requested board is the calling task's own board SHALL the result include that task's current stage and automatic-mode enabled, paused, and held state. It SHALL NOT attribute a task from another board to the requested board. The response SHALL omit task counts, Hub revision, model and preset settings, MCP configuration, layout, full YAML, script code, and full entry prompts. The workflow architect retains `get_board_yaml`, `get_stage`, and Hub revision reads under the existing architect-only gate; the summary SHALL NOT broaden other roles' access. The workflow projection SHALL fit within 6 KiB per page in UTF-8, report omitted records and counts explicitly, and expose a continuation cursor. An individually oversized description, condition, or decision question SHALL be indicated and remain readable in pages through the same tool without silent truncation.
 
 #### Scenario: Read a complete board workflow
 
 - **WHEN** an agent calls `get_workflow_summary` with a board identifier
 - **THEN** the result contains the initial stage and stages with their IDs, names, optional descriptions, types, and routing policy
 - **AND** it contains the workflow description when authored, board project scope, and sharing status
-- **AND** it distinguishes unrestricted, explicitly empty, configured, and scripted routes without treating conditions as executable predicates
+- **AND** it distinguishes unrestricted, explicitly empty, configured, scripted, and decision routes without treating conditions as executable predicates
+
+#### Scenario: Read a decision gate
+
+- **WHEN** an agent calls `get_workflow_summary` for a board whose workflow authors a decision stage
+- **THEN** the stage is reported with the decision type
+- **AND** the result contains the bounded question and each option's identifier, title, and destination
+- **AND** it contains no option description and no answer
 
 #### Scenario: Omit the authored document from the workflow payload
 
@@ -412,7 +419,7 @@ Only when the requested board is the calling task's own board SHALL the result i
 
 - **WHEN** a workflow summary exceeds an applied response limit
 - **THEN** the result identifies the truncation and offers continuation or another read mechanism for all routes
-- **AND** authored descriptions are not silently truncated
+- **AND** authored descriptions and decision questions are not silently truncated
 
 #### Scenario: Remove the previous summary tool
 
@@ -1189,3 +1196,41 @@ NOT change what a product tool does when it is declared.
 - **WHEN** an agent runs on the host default preset or on the workflow architect preset
 - **THEN** it keeps its existing product tool surface except for the replacement of `get_board_summary` by `get_workflow_summary`
 - **AND** the workflow-architect-only declaration is unchanged
+
+### Requirement: Decision stages in the transition tools
+
+For a task whose current stage authors a decision configuration, `list_allowed_transitions` SHALL report that the stage owns its routing and that the person answers it, and SHALL report the gate's options as informational destinations with their titles and destinations without presenting them as declarable targets or as a default destination. `set_next_transition` SHALL refuse both an ordinary declaration and an exceptional declaration from such a stage with an actionable result, and the refusal SHALL leave the task's stage, recorded transition, and position unchanged. Neither tool SHALL answer the gate or move the task.
+
+#### Scenario: Report a decision-owned stage
+
+- **WHEN** an agent calls `list_allowed_transitions` for a task in a decision stage
+- **THEN** the result states that the stage owns its routing and waits for the person
+- **AND** it reports the gate's options with their destinations
+- **AND** it reports no default destination
+
+#### Scenario: Refuse an ordinary declaration
+
+- **WHEN** an agent calls `set_next_transition` with a target for a task in a decision stage
+- **THEN** the tool refuses with an actionable result
+- **AND** the task and its recorded transition are unchanged
+
+#### Scenario: Refuse an exceptional declaration
+
+- **WHEN** an agent calls `set_next_transition` with the exception flag for a task in a decision stage
+- **THEN** the tool refuses with an actionable result
+- **AND** no exceptional intent is recorded
+
+### Requirement: Decision authoring stays behind the workflow architect gate
+
+`set_stage_decision` SHALL be a workflow-design tool. It SHALL be declared only for an agent whose preset is the workflow architect preset, and for every other calling agent it SHALL be absent from the declared tool set and SHALL NOT be dispatchable. It SHALL be listed among the design tools that requirement names for that preset.
+
+#### Scenario: Expose decision authoring to the workflow architect
+
+- **WHEN** an agent whose preset is the workflow architect preset receives the plugin's tools
+- **THEN** `set_stage_decision` is a declared operation
+
+#### Scenario: Withhold decision authoring from other roles
+
+- **WHEN** an agent whose preset is not the workflow architect preset receives the plugin's tool declarations
+- **THEN** `set_stage_decision` is absent
+- **AND** a call to it is reported as an unknown tool rather than as a permission refusal

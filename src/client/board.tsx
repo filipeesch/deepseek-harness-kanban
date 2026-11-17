@@ -11,6 +11,7 @@ import type { SessionTitles } from './conversation-label.js';
 import type { ConversationLeaseEnvironment } from './conversation-leases.js';
 import { AutoRunController } from './auto-run.js';
 import { BoardCard } from './board-card.js';
+import { DecisionWindowController } from './decision-window.js';
 import { BoardHeader } from './board/board-header.js';
 import { BoardBody, BoardEmptyStates, ProjectsEmptyState } from './board/board-frames.js';
 import { NoticeStack } from './board/notice-stack.js';
@@ -70,6 +71,8 @@ export interface BoardViewProps {
   picker?: DirectoryPickerPort | null;
   /** Owned by its provider, which also reconciles it; the board reconciles only its own fallback. */
   autoRun?: AutoRunController;
+  /** Owned by its provider, which also reconciles it; the board reconciles only its own fallback. */
+  decisionWindow?: DecisionWindowController;
   /** Native slots and locale used by the first-execution model stage; absent in isolated harnesses. */
   nativeSeat?: PreparationSeat;
   /** Opens one native conversation, used by a schedule's last-run link. */
@@ -83,7 +86,7 @@ export interface BoardViewProps {
 const EMPTY_TASKS: readonly Task[] = [];
 const EMPTY_PROJECTS: readonly Project[] = [];
 
-export function BoardView({ api, renderConversation, pageState, sessionTitles, conversationLeases, picker = null, autoRun: providedAutoRun, nativeSeat, onOpenSession, onMarkAllRead, navigation }: BoardViewProps) {
+export function BoardView({ api, renderConversation, pageState, sessionTitles, conversationLeases, picker = null, autoRun: providedAutoRun, decisionWindow: providedDecisionWindow, nativeSeat, onOpenSession, onMarkAllRead, navigation }: BoardViewProps) {
   const [localPageState] = useState(createBoardPageState); const preferences = pageState ?? localPageState;
   // A peek belongs to the mounted board. Leaving the panel unmounts it, so returning
   // to Kanban starts the drawer on a conversation instead of a stale peek.
@@ -194,7 +197,11 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
   const runRef = useRef(run); runRef.current = run;
   const [fallbackAutoRun] = useState(() => new AutoRunController({ run: command => runRef.current(command) }));
   const autoRun = providedAutoRun ?? fallbackAutoRun;
+  const [fallbackDecisionWindow] = useState(() => new DecisionWindowController({ run: command => runRef.current(command) }));
+  const decisionWindow = providedDecisionWindow ?? fallbackDecisionWindow;
   useEffect(() => { if (providedAutoRun) return; return () => fallbackAutoRun.dispose(); }, [providedAutoRun, fallbackAutoRun]);
+  useEffect(() => { if (providedDecisionWindow) return; return () => fallbackDecisionWindow.dispose(); }, [providedDecisionWindow, fallbackDecisionWindow]);
+  useEffect(() => { if (providedDecisionWindow || !snapshot) return; fallbackDecisionWindow.reconcile(allTasks(snapshot)); }, [providedDecisionWindow, snapshot, fallbackDecisionWindow]);
   // Owned fallback only: a provided controller is reconciled by the client generation that owns it.
   useEffect(() => { if (providedAutoRun || !snapshot) return; fallbackAutoRun.reconcile(allTasks(snapshot), snapshot.scripted); }, [providedAutoRun, snapshot, fallbackAutoRun]);
   // One memory of what became of each conversation's board model, for as long as
@@ -409,7 +416,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       const found = snapshot?.conversationObservations?.[sessionId];
       return found === undefined ? [] : [found];
     }));
-    return <BoardCard key={task.id} task={task} column={column} projectName={project} attention={attention} workflow={workflow} selectionMode={selectionMode} selected={selectedIds.has(task.id)} autoRun={autoRun} autoModePending={autoModePending.has(task.id)} onToggleAutoMode={toggleAutoMode} onOpen={openTask} onToggleSelect={toggleSelect} onBeginDrag={begin} shouldSuppressClick={shouldSuppressClick} onMoveTask={advanceTask} advancePending={advancePending.has(task.id)} onRun={moves.requestRun} {...(observation === undefined ? {} : { sessionObservation: observation })} />;
+    return <BoardCard key={task.id} task={task} column={column} projectName={project} attention={attention} workflow={workflow} selectionMode={selectionMode} selected={selectedIds.has(task.id)} autoRun={autoRun} decisionWindow={decisionWindow} autoModePending={autoModePending.has(task.id)} onToggleAutoMode={toggleAutoMode} onOpen={openTask} onToggleSelect={toggleSelect} onBeginDrag={begin} shouldSuppressClick={shouldSuppressClick} onMoveTask={advanceTask} advancePending={advancePending.has(task.id)} onRun={moves.requestRun} {...(observation === undefined ? {} : { sessionObservation: observation })} />;
   }
 
   function onBoardPointerDown(event: React.PointerEvent<HTMLDivElement>) {
@@ -524,7 +531,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
           navigation?.suppressNextNavigation?.(sessionId);
           onOpenSession(sessionId);
         },
-      })} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} onForce={destructive.openForce} onToggleAutoMode={toggleAutoMode} autoModePending={autoModePending.has(selected.id)} sessionTitles={sessionTitles} {...(conversationLeases === undefined ? {} : { conversationLeases })} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} />}
+      })} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} onForce={destructive.openForce} onToggleAutoMode={toggleAutoMode} autoModePending={autoModePending.has(selected.id)} sessionTitles={sessionTitles} {...(conversationLeases === undefined ? {} : { conversationLeases })} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} decisionWindow={decisionWindow} />}
       {destructive.state.view && (() => {
         const view = destructive.state.view;
         const task = state.tasks.find(value => value.id === view.request.taskId);

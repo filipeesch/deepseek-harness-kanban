@@ -1,19 +1,21 @@
 import { z } from 'zod';
 import { AUTO_MODE_HISTORY_ACTIONS, WORKTREE_HISTORY_ACTIONS, type TaskHistoryEntry } from '../../shared/task-history.js';
 import { parameterValuesSchema } from '../scripted-state.js';
+import { DECISION_LIMITS } from '../decision-definition.js';
 import { isDomainId } from '../validation.js';
 
 /** The validated shape of one task's flow record. */
 const identifier = z.string().refine(isDomainId, 'Expected a safe identifier.');
 const moment = z.string().datetime({ offset: true });
 const failure = z.strictObject({ code: z.string().min(1), message: z.string(), details: z.record(z.string(), z.unknown()).optional() });
-const stageOrigin = z.string().regex(/^(?:manual|agent|auto|(?:script|error):[A-Za-z][A-Za-z0-9_-]*)$/, 'Expected a stage entry origin.');
+const stageOrigin = z.string().regex(/^(?:manual|agent|auto|decision:[A-Za-z][A-Za-z0-9_-]{0,63}|(?:script|error):[A-Za-z][A-Za-z0-9_-]*)$/, 'Expected a stage entry origin.');
+const decisionRecord = z.strictObject({ optionId: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/), note: z.string().min(1).max(DECISION_LIMITS.noteLength).optional() });
 
 export const taskHistoryEntrySchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('scripted-execution'), at: moment, executionId: identifier, columnId: identifier, outcome: z.enum(['completed', 'stopped', 'failed']), exit: z.string().optional(), message: z.string().optional(), error: failure.optional(), parameters: parameterValuesSchema.optional() }),
   z.strictObject({ kind: z.literal('scripted-handoff'), at: moment, deliveryId: identifier, executionId: identifier, fromColumnId: identifier, columnId: identifier, outcome: z.enum(['accepted', 'failed']), exit: z.string(), message: z.string(), parameters: parameterValuesSchema.optional(), error: failure.optional() }),
   z.strictObject({ kind: z.literal('created'), at: moment, columnId: identifier }),
-  z.strictObject({ kind: z.literal('stage'), at: moment, fromColumnId: identifier, columnId: identifier, origin: stageOrigin.optional() }),
+  z.strictObject({ kind: z.literal('stage'), at: moment, fromColumnId: identifier, columnId: identifier, origin: stageOrigin.optional(), decision: decisionRecord.optional() }),
   z.strictObject({ kind: z.literal('intent'), at: moment, fromColumnId: identifier, columnId: identifier }),
   z.strictObject({
     kind: z.literal('auto-mode'), at: moment, action: z.enum(AUTO_MODE_HISTORY_ACTIONS),
@@ -36,6 +38,10 @@ export function taskHistoryIssue(entry: TaskHistoryEntry): string | null {
   // identifier on both sides, which is the truthful result of that rename. The
   // record's write path still refuses a placement that changes no stage.
   if ((entry.kind === 'scripted-execution' || entry.kind === 'scripted-handoff') && entry.outcome === 'failed' && entry.error === undefined) return 'A failed scripted outcome requires its diagnostic.';
+  if (entry.kind === 'stage') {
+    if (entry.decision !== undefined && entry.origin !== 'decision:' + entry.decision.optionId) return 'A decision entry requires the decision origin of its option.';
+    if (entry.origin?.startsWith('decision:') === true && entry.decision === undefined) return 'A decision origin requires the option it records.';
+  }
   if (entry.kind === 'auto-mode') {
     const paused = entry.action === 'paused' || entry.action === 'agent-paused';
     if (paused && (entry.reason === undefined || entry.reason.trim().length === 0)) return 'A pause entry requires the reason that paused it.';

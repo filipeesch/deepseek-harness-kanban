@@ -11,6 +11,7 @@ import type { ScriptedStageReview, ScriptedSummary, ScriptedVariablesView } from
 import { SCRIPTED_HOLD_CODES, SCRIPTED_PHASES } from './shared/scripted.js';
 import { PENDING_USER_WORK_KINDS } from './domain/pending-user-work.js';
 import { scriptedDefinitionSchema } from './domain/scripted-definition.js';
+import { DECISION_LIMITS, decisionDefinitionSchema } from './domain/decision-definition.js';
 export const PACKAGE_NAME = 'dsh-kanban';
 const id=z.string().min(1).max(200);
 const revision=z.number().int().nonnegative().optional();
@@ -38,6 +39,7 @@ const stagePatchSchema=z.object({
  description:z.string().nullable().optional(),
  onEnterPrompt:z.string().nullable().optional(),
  scripted:scriptedDefinitionSchema.nullable().optional(),
+ decision:decisionDefinitionSchema.nullable().optional(),
  initial:z.literal(true).optional(),
  allowedTransitions:z.array(z.object({to:id,when:z.string().optional()}).strict()).nullable().optional(),
  transitionCondition:z.object({to:id,when:z.string().nullable()}).strict().optional(),
@@ -64,6 +66,7 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  newTaskSchema.extend({type:z.literal('task.create'),hubId}).strict(),
  z.object({type:z.literal('task.edit'),hubId,taskId:id,title:z.string().optional(),description:z.string().optional(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('task.move'),hubId,taskId:id,columnId:id,beforeTaskId:id.nullable().optional(),overrideTransition:z.boolean().optional()}).strict(),
+ z.object({type:z.literal('task.decide'),hubId,taskId:id,entryId:z.string().max(128),optionId:id,destinationIdentity:id,note:z.string().max(DECISION_LIMITS.noteLength).optional()}).strict(),
  z.object({type:z.literal('task.scriptedPlay'),taskId:id}).strict(),
  z.object({type:z.literal('task.scriptedRunAgain'),taskId:id,entryId:id}).strict(),
  z.object({type:z.literal('task.scriptedCancelJob'),taskId:id,jobId:id}).strict(),

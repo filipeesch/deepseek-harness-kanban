@@ -39,7 +39,7 @@ export interface HistoryViewInput {
   /** The record to present; absent means the task recorded nothing yet. */
   readonly history: readonly TaskHistoryEntry[] | undefined;
   /** The board's stages, so a recorded reference reads with the stage's current name. */
-  readonly columns: readonly Pick<Column, 'id' | 'name'>[];
+  readonly columns: readonly Pick<Column, 'id' | 'name' | 'decision'>[];
   /** The moment the reader is looking at, so the current stage's duration stays honest. */
   readonly now: number;
   /** The reader's locale; the browser's when omitted. */
@@ -154,6 +154,7 @@ function stageOrigin(origin: StageEntryOrigin | undefined): string {
   if (origin === 'manual') return 'Moved by an operator';
   if (origin === 'agent') return 'Moved by an agent-declared transition';
   if (origin === 'auto') return 'Moved by an automatic advance';
+  if (origin.startsWith('decision:')) return 'Moved by a decision';
   if (origin.startsWith('error:')) return 'Moved by the reserved error route';
   return 'Moved by script exit ' + origin.slice('script:'.length);
 }
@@ -183,7 +184,12 @@ function worktreeRow(entry: Extract<TaskHistoryEntry, { kind: 'worktree' }>): { 
   }
 }
 
-function present(entry: TaskHistoryEntry, columns: readonly Pick<Column, 'id' | 'name'>[]): { event: string; detail: string; tone: HistoryTone; evidence?: string } {
+function optionLabel(columns: readonly Pick<Column, 'id' | 'name' | 'decision'>[], stageId: string, optionId: string): string {
+  const option = columns.find(column => column.id === stageId)?.decision?.options.find(value => value.id === optionId);
+  return option?.title ?? optionId;
+}
+
+function present(entry: TaskHistoryEntry, columns: readonly Pick<Column, 'id' | 'name' | 'decision'>[]): { event: string; detail: string; tone: HistoryTone; evidence?: string } {
   switch (entry.kind) {
     case 'scripted-execution': {
       // The synthetic result message and the diagnostic are the same sentence; show
@@ -194,7 +200,7 @@ function present(entry: TaskHistoryEntry, columns: readonly Pick<Column, 'id' | 
     }
     case 'scripted-handoff': return { event: 'Script handoff ' + entry.outcome, detail: transition(entry.fromColumnId, entry.columnId, columns) + ' · Execution ' + entry.executionId + ' · Delivery ' + entry.deliveryId + ' · Exit ' + entry.exit + parameterText(entry.parameters, 'Sent parameters') + ' — ' + entry.message + (entry.error ? ' — ' + entry.error.message : ''), tone: entry.outcome === 'failed' ? 'warning' : 'neutral' };
     case 'created': return { event: 'Created', detail: stageName(columns, entry.columnId), tone: 'accent' };
-    case 'stage': return { event: 'Stage changed', detail: transition(entry.fromColumnId, entry.columnId, columns) + ' · ' + stageOrigin(entry.origin), tone: 'accent' };
+    case 'stage': return { event: 'Stage changed', detail: transition(entry.fromColumnId, entry.columnId, columns) + ' · ' + stageOrigin(entry.origin) + (entry.decision === undefined ? '' : ' · Decision: ' + optionLabel(columns, entry.fromColumnId, entry.decision.optionId) + (entry.decision.note === undefined ? '' : ' — ' + entry.decision.note)), tone: 'accent' };
     case 'intent': return { event: 'Next stage recorded', detail: transition(entry.fromColumnId, entry.columnId, columns), tone: 'neutral' };
     case 'auto-mode': return autoModeRow(entry);
     case 'worktree': return worktreeRow(entry);

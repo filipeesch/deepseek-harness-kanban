@@ -66,6 +66,18 @@ describe('append-only board log', () => {
     expect(nextSequence(log)).toBe(3);
   });
 
+  it('versions and replays a decision configuration', () => {
+    const decision = { question: 'Proceed?', options: [{ id: 'approve', title: 'Approve', to: 'backlog' }] };
+    const log = appendEvents(genesisLog(BASE), [{ kind: 'stage.field-changed', key: 's2', field: 'decision', value: decision }], AT);
+    expect(log.at(-1)?.v).toBe(5);
+    const decoded = decodeBoardLog(encodeBoardLog(log));
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    const result = replay(decoded.log, null);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(parseWorkflow(result.text).columns[1]?.decision).toEqual(decision);
+  });
+
   it('encodes and replays description events for a capable peer', () => {
     const log = appendEvents(genesisLog(BASE), [
       { kind: 'workflow.field-changed', field: 'description', value: 'Workflow details' },

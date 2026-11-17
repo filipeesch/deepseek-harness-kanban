@@ -34,7 +34,7 @@ export const questionCss = String.raw`
 .kq-options legend{margin-bottom:4px;padding:0;font-size:12px;font-weight:500;color:var(--dsw-alias-label-secondary,currentColor)}
 .kq-option{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--dsw-radius-sm);font-size:13px;color:var(--dsw-alias-label-secondary,currentColor);cursor:pointer;user-select:none}
 .kq-option:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.kq-option[data-focused=true]{background:var(--dsw-alias-state-business-tertiary);color:var(--dsw-alias-state-business-primary,currentColor)}
+.kq-option[data-focused=true]{background:var(--dsw-alias-state-business-tertiary);color:var(--dsw-alias-label-primary,currentColor)}
 .kq-option[data-selected=true] .kq-option-title{font-weight:500}
 .kq-option input{flex:none;margin:0;accent-color:var(--dsw-alias-state-business-primary)}
 .kq-option-title{flex:1;min-width:0;overflow-wrap:anywhere}

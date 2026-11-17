@@ -29,19 +29,27 @@ function transitionView(located: LocatedTask, destinationId?: string, port?: Tas
   const fallback = defaultDestination(board.workflow, task.columnId);
   const destination = destinationId === undefined ? undefined : board.workflow.columns.find(column => column.id === destinationId);
   invariant(destinationId === undefined || destination !== undefined, 'INVALID_TARGET', 'The requested destination does not exist in this task’s board.');
+  const decision = source?.decision;
+  // A stage that owns its routing reports who owns it, so a reader never mistakes
+  // authored destinations for targets it may declare.
+  const routingOwner = source?.scripted !== undefined ? 'scripted' : decision !== undefined ? 'decision' : 'stage';
+  const declarable = source?.allowedTransitions !== undefined;
   return {
+    routingOwner,
+    declarable,
+    ...(decision === undefined ? {} : { decision: { question: decision.question, answeredBy: 'person', options: decision.options.map(option => ({ id: option.id, title: option.title, to: option.to })) } }),
     ...(destination === undefined ? {} : { requestedDestination: { columnId: destination.id, name: destination.name, parameters: (destination.scripted?.params ?? []).map(parameter => ({ name: parameter.name, ...(parameter.description === undefined ? {} : { description: parameter.description }) })) } }),
     hubId,
     taskId: task.id,
     board: { id: board.id, name: board.name },
     stage: { columnId: task.columnId, name: source?.name ?? task.columnId },
     configured: source?.allowedTransitions !== undefined,
-    targets: transitionTargets(board.workflow, task.columnId).map(target => ({
+    targets: decision === undefined ? transitionTargets(board.workflow, task.columnId).map(target => ({
       columnId: target.column.id,
       name: target.column.name,
       ...(target.rule.when === undefined ? {} : { when: target.rule.when }),
       ...(target.column.scripted?.params === undefined ? {} : { parameters: target.column.scripted.params.map(parameter => ({ name: parameter.name, ...(parameter.description === undefined ? {} : { description: parameter.description }) })) }),
-    })),
+    })) : [],
     ...(fallback === undefined ? {} : { defaultColumnId: fallback.id }),
     recorded: recorded === undefined
       ? null
@@ -77,6 +85,10 @@ export function transitionTools(port: TaskRoutingPort): ToolDefinition[] {
         invariant(args.column_id !== undefined || args.parameters === undefined, 'INVALID_PARAMETERS',
           'Parameters require a destination stage. Omit parameters to clear the recorded transition.');
         const located = requireOwnTask(port, exec);
+        // The gate is answered by the person through the task surface; no product tool
+        // declares a route out of it, with or without the exception flag.
+        invariant(located.board.workflow.columns.find(column => column.id === located.task.columnId)?.decision === undefined,
+          'DECISION_OWNED_ROUTE', 'This stage is a decision gate. The person answers it through the gate; no agent declares its route.');
         if (args.exception === true && args.column_id !== undefined && !transitionTargets(located.board.workflow, located.task.columnId).some(target => target.column.id === args.column_id)) {
           invariant(args.column_id !== located.task.columnId && located.board.workflow.columns.some(column => column.id === args.column_id), 'INVALID_TARGET', 'An exceptional destination must be another existing stage in this task’s board.');
           invariant(port.recordExceptionalTransition && exec.agent?.id, 'EXCEPTION_TURN_UNAVAILABLE', 'The originating open turn cannot be verified on this host. Use a configured transition or ask the workflow architect to update the workflow.');

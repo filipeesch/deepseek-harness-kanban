@@ -169,3 +169,20 @@ describe('history formatting', () => {
     expect(formatDuration(27 * 60 * 60_000)).toBe('1 d 3 h');
   });
 });
+
+describe('decision rows', () => {
+  const columns = [...COLUMNS, { id: 'gate', name: 'Gate', decision: { question: 'Proceed?', options: [{ id: 'fix', title: 'Fix it', to: 'plan' }] } }];
+  const view = (entry: TaskHistoryEntry, current = columns) => buildHistoryRows({ history: [entry], columns: current, now: Date.parse(THIRD), locale: 'en-US', timeZone: 'UTC' })[0];
+
+  it('names the chosen option and the observation', () => {
+    const row = view({ kind: 'stage', at: SECOND, fromColumnId: 'gate', columnId: 'plan', origin: 'decision:fix', decision: { optionId: 'fix', note: 'Please fix the copy.' } });
+    expect(row).toMatchObject({ event: 'Stage changed', detail: 'Gate → Plan · Moved by a decision · Decision: Fix it — Please fix the copy.', tone: 'accent' });
+  });
+
+  it('reads the option title from the current workflow and falls back to its identifier', () => {
+    const renamed = columns.map(column => (column.id === 'gate' ? { ...column, decision: { question: 'Proceed?', options: [{ id: 'fix', title: 'Correct it', to: 'plan' }] } } : column));
+    expect(view({ kind: 'stage', at: SECOND, fromColumnId: 'gate', columnId: 'plan', origin: 'decision:fix', decision: { optionId: 'fix' } }, renamed)?.detail).toContain('Decision: Correct it');
+    const removed = columns.map(column => (column.id === 'gate' ? { ...column, decision: { question: 'Proceed?', options: [{ id: 'ship', title: 'Ship', to: 'plan' }] } } : column));
+    expect(view({ kind: 'stage', at: SECOND, fromColumnId: 'gate', columnId: 'plan', origin: 'decision:fix', decision: { optionId: 'fix' } }, removed)?.detail).toContain('Decision: fix');
+  });
+});

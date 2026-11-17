@@ -394,3 +394,39 @@ describe('adding and removing stages', () => {
     expect(parseWorkflow((await run(f, 'get_board_yaml', { board_id: boardId })).yaml).columns.map((column: { id: string }) => column.id)).toEqual(['todo', 'review', 'done']);
   });
 });
+
+describe('decision stage authoring', () => {
+  it('writes, edits, and clears a decision configuration', async () => {
+    const f = await setup();
+    const boardId = await boardWith(f, LINKED);
+    const created = await run(f, 'set_stage_decision', { board_id: boardId, stage_id: 'review', question: 'Proceed?', context: 'Read this.', options: [{ id: 'ship', title: 'Ship it', description: 'Send it.', to: 'done' }] });
+    expect(created.report.stages).toContainEqual({ stage: 'review', change: 'changed', fields: expect.arrayContaining(['decision', 'decision.question', 'decision.options', 'decision.option:ship']) });
+    expect(created.report.mode).toBe('summary');
+    expect(JSON.stringify(created.report)).not.toContain('Proceed?');
+    expect(JSON.stringify(created.report)).not.toContain('Send it.');
+    expect(created.saved).toBe(true);
+    const authored = parseWorkflow(await authoredDocument(f, boardId)).columns.find(column => column.id === 'review')!;
+    expect(authored.decision).toEqual({ question: 'Proceed?', context: 'Read this.', options: [{ id: 'ship', title: 'Ship it', description: 'Send it.', to: 'done' }] });
+    expect(authored.allowedTransitions).toBeUndefined();
+    const edited = await run(f, 'set_stage_decision', { board_id: boardId, stage_id: 'review', options: [{ id: 'fix', title: 'Fix it', to: 'todo' }] });
+    expect(edited.report.stages).toContainEqual({ stage: 'review', change: 'changed', fields: expect.arrayContaining(['decision.options', 'decision.option:fix', 'decision.option:ship']) });
+    expect(edited.saved).toBe(true);
+    expect(parseWorkflow(await authoredDocument(f, boardId)).columns.find(column => column.id === 'review')?.decision?.options).toEqual([{ id: 'fix', title: 'Fix it', to: 'todo' }]);
+    const cleared = await run(f, 'set_stage_decision', { board_id: boardId, stage_id: 'review', clear: true });
+    expect(cleared.saved).toBe(true);
+    expect(parseWorkflow(await authoredDocument(f, boardId)).columns.find(column => column.id === 'review')?.decision).toBeUndefined();
+  });
+
+  it('refuses a partial first write, an unknown destination, and a conflicting writer', async () => {
+    const f = await setup();
+    const boardId = await boardWith(f, LINKED);
+    const partial = await run(f, 'set_stage_decision', { board_id: boardId, stage_id: 'review', question: 'Proceed?' });
+    expect(partial.saved).toBe(false);
+    const unknown = await run(f, 'set_stage_decision', { board_id: boardId, stage_id: 'review', question: 'Proceed?', options: [{ id: 'ship', title: 'Ship', to: 'ghost' }] });
+    expect(unknown.saved).toBe(false);
+    await run(f, 'set_stage_decision', { board_id: boardId, stage_id: 'review', question: 'Proceed?', options: [{ id: 'ship', title: 'Ship', to: 'done' }] });
+    const prompt = await run(f, 'set_stage_prompt', { board_id: boardId, stage_id: 'review', prompt: 'Work.' });
+    expect(prompt.saved).toBe(false);
+    expect(parseWorkflow(await authoredDocument(f, boardId)).columns.find(column => column.id === 'review')?.decision?.question).toBe('Proceed?');
+  });
+});
