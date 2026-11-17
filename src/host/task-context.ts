@@ -1,7 +1,8 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm';
-import type { Board, Task, Workflow } from '../shared/types.js';
+import type { Board, ConversationFacts, HubSharingView, Task, Workflow } from '../shared/types.js';
+import { projectWorkflowSummary, readWorkflowSummaryState, workflowSummaryPage, WORKFLOW_SUMMARY_BUDGET, type WorkflowHeldState, type WorkflowSharing } from './workflow-summary.js';
 import type { TaskLocator } from './task-locator.js';
 import { createSessionHistory, type SessionEventsReader } from './session-history.js';
 
@@ -19,6 +20,8 @@ declare module '@deepseek-ai/dsh-llm' {
 export interface TaskContextOptions {
   history?: SessionEventsReader;
   report?: (error: unknown) => void;
+  sharingView?: (hubId: string) => HubSharingView | undefined;
+  conversationFacts?: (sessionId: string) => Promise<ConversationFacts>;
 }
 
 /** The task envelope injected once before the first user message of a task conversation. */
@@ -37,10 +40,13 @@ export function buildTaskContextText(task: Task, stageName: string, hubName: str
   ].join('\n');
 }
 
-export function createTaskContextMessage(task: Task, workflow: Workflow, hubName: string, board: Board): UserMessage {
+export function createTaskContextMessage(task: Task, workflow: Workflow, hubName: string, board: Board, hubId = '', state: { sharing: WorkflowSharing; held: WorkflowHeldState } = { sharing: 'unavailable', held: 'unavailable' }): UserMessage {
+  const { sharing, held } = state;
   const column = workflow.columns.find(value => value.id === task.columnId);
+  const label = 'Workflow first-contact snapshot (not live; use get_workflow_summary for current details):\n';
+  const page = workflowSummaryPage(projectWorkflowSummary(board, { id: hubId, name: hubName }, sharing, task, held), undefined, WORKFLOW_SUMMARY_BUDGET - Buffer.byteLength(label));
   return createUserMessage({
-    content: [{ type: 'text', text: buildTaskContextText(task, column?.name ?? task.columnId, hubName, board) }],
+    content: [{ type: 'text', text: buildTaskContextText(task, column?.name ?? task.columnId, hubName, board) + '\n\n' + label + JSON.stringify(page, null, 2) }],
     source: { kind: 'kanban-task' },
   });
 }
@@ -81,7 +87,9 @@ export function registerTaskContextInjection(ctx: Context, locator: Pick<TaskLoc
     // Only a durable user message proves the context was already delivered. Do not
     // memo an injection that may be discarded with an aborted decision.
     if (events.some(isUserMessage)) { checked.add(payload.agent); return decision; }
-    return { ...decision, messages: [createTaskContextMessage(task, located.board.workflow, located.hub.name, located.board), ...decision.messages] };
+    const { sharing, held } = await readWorkflowSummaryState(located.hubId, task, { ...options, report });
+    if (payload.signal.aborted) return decision;
+    return { ...decision, messages: [createTaskContextMessage(task, located.board.workflow, located.hub.name, located.board, located.hubId, { sharing, held }), ...decision.messages] };
   }, { prepend: true });
 
   const offCreated = ctx.on('agent/created', ({ agent, source }) => {

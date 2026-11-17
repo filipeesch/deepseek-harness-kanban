@@ -12,6 +12,7 @@ describe('scripted authoring draft', () => {
     expect(stagePatch(draft, column)).toEqual({});
     expect(scriptedDefinition(draft.scripted!)).toEqual(column.scripted);
     expect(stagePatch({ ...draft, name: 'CI' }, column)).toEqual({ name: 'CI' });
+    expect(stagePatch({ ...draft, description: 'Wait for CI' }, column)).toEqual({ description: 'Wait for CI' });
   });
   it('rejects a draft that authors a program and an instruction at once', () => {
     const mixed = { ...stageDraft(column), onEnterPrompt: 'also run', mode: 'restricted' as const, transitions: [{ to: 'done', when: '' }] };

@@ -4,6 +4,8 @@ import type { ConversationIdleReport } from './conversation-idle.js';
 export interface StateStorage { load(): Promise<unknown | null>; save(state: BoardState): Promise<void> }
 /** Durable Hub-record storage. The adapter owns the DSH domain; the repository owns the write chain. */
 export interface HubStorage {
+  /** After a rejected save, loadAll reads authoritative durable state or throws; a domain cache does not qualify. */
+  readonly verifiedReadAfterFailedSave?: true;
   loadAll(): Promise<{ hubs: HubState[]; meta: KanbanMeta }>;
   saveHub(state: HubState): Promise<void>;
   deleteHub(id: string): Promise<void>;

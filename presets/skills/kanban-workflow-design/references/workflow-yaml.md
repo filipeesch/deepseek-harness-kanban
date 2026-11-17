@@ -4,11 +4,11 @@ Load for one board's stages, instructions, routes, and presentation; verify agai
 
 ## Accepted structure
 
-- Root: nonempty `columns` sequence; optional `id`, `name`, `initial_column`, `default_view`, `groups`, `model`, `agent_preset`, `mcp`, `connections`. Name defaults to `Workflow`; initial stage defaults to the first column; root `id` is metadata.
-- Column: required `id` and `label` (alias `name`); optional `key`, `description`, `allowed_transitions`, `on_enter_prompt`, `position`, `size`. Both display aliases must agree if present. `description` is text, not an instruction; preserve it in exact YAML though the parsed payload omits it.
+- Root: nonempty `columns` sequence; optional `id`, `name`, `description`, `initial_column`, `default_view`, `groups`, `model`, `agent_preset`, `mcp`, `connections`. Name defaults to `Workflow`; initial stage defaults to the first column; root `id` is metadata.
+- Column: required `id` and `label` (alias `name`); optional `key`, `description`, `allowed_transitions`, `on_enter_prompt`, `position`, `size`. Both display aliases must agree if present. `description` is optional context, not an instruction.
 - Group: `label` (alias `name`), nonempty `columns` IDs, optional `id` (otherwise `group-1`, etc.). Groups are presentation, not destinations. Each column belongs to at most one group; group IDs are unique and cannot equal column IDs.
 - `model`: nonempty `provider`, `model`, optional nonempty `reasoning_effort`. It sets the board default for **new conversations**, not a stage model, installation default, or existing conversations. Omission means DSH default. Check host routes: the parser validates shape, not availability; an unavailable route can fall back with a notice.
-- `agent_preset`: nonempty roster identity; the agent preset **new conversations** start on. Omission means the host default preset; shape, not roster membership, is validated, and a missing preset can fall back with a notice.
+- `agent_preset`: nonempty roster identity; the agent preset **new conversations** start on. An authored preset wins; for absent YAML inspect the effective choice and its origin rather than assuming the host default. New-board metadata may select the operator, while legacy absence retains the host default. Shape, not roster membership, is validated, and a missing preset can fall back with a notice.
 - `mcp`: optional allowlist of MCP servers; an entry is a server (all its tools) or `server/tool`. Omission keeps every server visible, `[]` keeps none; shape is validated, not availability.
 
 IDs: 1–256 characters, ASCII letter/digit first, then letters/digits/`.`/`_`/`:`/`-`; `__proto__`, `prototype`, `constructor` are reserved. `key` is stable stage identity for sharing: preserve across edits/renames; do not add keys merely to reformat unpublished workflows.
@@ -82,4 +82,4 @@ groups:
     columns: [intake, review]
 ```
 
-Literal or whole-document writes do not migrate tasks: removing or renaming an occupied ID, or an admitted pending transition's reference, is rejected. A declared but unadmitted route can become stale and block progression; inspect it rather than relying on orphan checks. Preserve IDs unless an approved migration is verified.
+YAML writes do not migrate tasks: removing or renaming occupied IDs or admitted-transition references is rejected. A declared but unadmitted route can become stale and block progression; inspect it. Preserve IDs unless an approved migration is verified.

@@ -32,6 +32,7 @@ const PRESETS: readonly PresetRow[] = [
   { rowId: 'preset-kanban-workflow-architect', id: 'kanban-workflow-architect', name: 'Kanban Workflow Architect', order: 20, skill: 'kanban-workflow-design' },
   { rowId: 'preset-kanban-project-planner', id: 'kanban-project-planner', name: 'Kanban Project Planner', order: 21, skill: 'kanban-project-planning' },
   { rowId: 'preset-kanban-project-manager', id: 'kanban-project-manager', name: 'Kanban Project Manager', order: 22, skill: 'kanban-project-orchestration' },
+  { rowId: 'preset-kanban-workflow-operator', id: 'kanban-workflow-operator', name: 'Kanban Workflow Operator', order: 23, skill: 'kanban-workflow-operation' },
 ];
 
 // Preserve Loader expressions rather than quietly treating !!js as plain text.
@@ -113,10 +114,41 @@ describe('shipped agent presets', () => {
       expect(plugin({ plugins }, 'kanban-skills')!.config).toMatchObject({ providerName: 'kanban-bundled', includeDefaultRoots: false });
       expect(plugin({ plugins }, 'tool-skill')).toBeDefined();
       // The two project roles declare a tool boundary; the architect keeps the gate it ships.
-      expect(plugin({ plugins }, 'preset-tools') === undefined, definition.id).toBe(definition.id === 'kanban-workflow-architect');
+      expect(plugin({ plugins }, 'preset-tools') === undefined, definition.id).toBe(['kanban-workflow-architect', 'kanban-workflow-operator'].includes(definition.id));
       // A question to the person goes through decision_request in both project roles.
-      expect(plugin({ plugins }, 'tool-ask-user') === undefined, definition.id).toBe(definition.id !== 'kanban-workflow-architect');
+      expect(plugin({ plugins }, 'tool-ask-user') === undefined, definition.id).toBe(!['kanban-workflow-architect', 'kanban-workflow-operator'].includes(definition.id));
     }
+  });
+
+  it('preserves the complete pinned PTC plugin composition without remounting the host', async () => {
+    // Fixture: dsh-v0.2.2-rc.1, commit 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db,
+    // packages/bundle/web-app/presets/ptc.patch.yml. Update intentionally when the host pin changes.
+    const pinned = readPatch(await readFile(path.join(root, 'tests/fixtures/pinned-ptc-preset.yml'), 'utf8'));
+    const original = pinned[0]!.insert[0]!.config!.plugins as Entry[];
+    const { presets } = await composition();
+    const operator = presets[3]!;
+    const entries = operator.plugins.filter(entry => entry.id !== 'kanban-skills');
+    expect(entries.map(entry => entry.id)).toEqual(original.map(entry => entry.id));
+    for (let i = 0; i < entries.length; i++) {
+      if (entries[i]!.id === 'persona') {
+        expect(entries[i]!.name).toBe(original[i]!.name);
+        continue;
+      }
+      expect(entries[i], entries[i]!.id).toEqual(original[i]);
+    }
+    expect(plugin(operator, 'tool-executor-ptc')?.name).toBe('@deepseek-ai/dsh-tool-executor-ptc');
+    expect(plugin(operator, 'preset-tools')).toBeUndefined();
+    expect(plugin(operator, 'planning')).toBeDefined();
+  });
+
+  it('keeps workflow operation and authoring guidance within their roles', async () => {
+    const operator = await readFile(path.join(skillRoot, 'kanban-workflow-operation/SKILL.md'), 'utf8');
+    for (const phrase of ['current stage', 'scripted stage', 'without a script or instruction', 'list_allowed_transitions', 'current stage instruction', 'user directly requests', 'automatic mode', 'explicit direct user request', 'not proof of user intent']) {
+      expect(operator).toContain(phrase);
+    }
+    const architect = await readFile(path.join(skillRoot, 'kanban-workflow-design/SKILL.md'), 'utf8');
+    expect(architect).toContain('at most 150 characters');
+    expect(architect).toContain('not other authors');
   });
 
   it('keeps the architect able to inspect and validate a workflow', async () => {
@@ -186,7 +218,7 @@ describe('shipped agent presets', () => {
   it('lets the manager read, note, message, and route without writing a card', async () => {
     const { presets } = await composition();
     const entries = allowed(presets[2]!);
-    for (const name of ['get_card', 'get_cards', 'list_cards', 'get_board_summary', 'create_note', 'update_note', 'send_task_message', 'list_allowed_transitions', 'set_next_transition', 'pause_task', 'resume_task', 'decision_request']) {
+    for (const name of ['get_card', 'get_cards', 'list_cards', 'get_workflow_summary', 'create_note', 'update_note', 'send_task_message', 'list_allowed_transitions', 'set_next_transition', 'pause_task', 'resume_task', 'decision_request']) {
       expect(entries, name).toContain(name);
     }
     for (const name of ['create_card', 'edit_card', 'create_relation', 'delete_relation', 'create_team_file', 'read_team_file', 'create_board', 'update_board']) {

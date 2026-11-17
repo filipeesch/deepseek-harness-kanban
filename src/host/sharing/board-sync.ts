@@ -11,6 +11,7 @@ import { canonicalWorkflow } from '../../domain/schema-parts.js';
 import { stageRenames } from '../../domain/journal/migrate.js';
 import { renameTaskStage } from '../../domain/stage-update.js';
 import { materializeIdentities } from '../../domain/journal/materialize.js';
+import { hasAuthoredDescriptions } from '../../domain/journal/descriptions.js';
 import type { BoardChange, JournalEvent } from '../../domain/journal/event.js';
 import * as operations from '../../domain/hub-operations.js';
 import type { HubRepository } from '../hub-repository.js';
@@ -43,7 +44,7 @@ export type RemovalScope = 'local' | 'team';
 
 /** Two authored workflows are the same when their parsed content is the same. */
 function sameWorkflow(left: string, right: string): boolean {
-  try { return canonicalWorkflow(parseWorkflow(left)) === canonicalWorkflow(parseWorkflow(right)); }
+  try { return hasAuthoredDescriptions(left) === hasAuthoredDescriptions(right) && canonicalWorkflow(parseWorkflow(left)) === canonicalWorkflow(parseWorkflow(right)); }
   catch { return left === right; }
 }
 
@@ -51,10 +52,10 @@ export class BoardSync {
   constructor(private readonly options: BoardSyncOptions) {}
 
   /** Record one workflow write this layer applied from, or published to, team storage. */
-  private async noteRevision(hubId: string, boardId: string, previous: string | null, next: string): Promise<void> {
+  private async noteRevision(hubId: string, boardId: string, previous: string | null, next: string, presetMode: 'operator' | 'host' | undefined): Promise<void> {
     const revisions = this.options.revisions;
     if (revisions === undefined) return;
-    try { await revisions.record({ hubId, boardId, previous, next, actor: { kind: 'team', source: 'team storage' }, origin: 'team' }); }
+    try { await revisions.record({ hubId, boardId, previous, next, previousPresetMode: previous === null ? undefined : presetMode, nextPresetMode: presetMode, actor: { kind: 'team', source: 'team storage' }, origin: 'team' }); }
     catch (error) { this.options.report?.(error); }
   }
 
@@ -107,6 +108,17 @@ export class BoardSync {
         throw error;
       }
       if (snapshot === null) continue;
+      // An unbound tombstone cannot affect a local board and must not obstruct
+      // observation of unrelated live boards, even if its old contents are newer.
+      if (!bound.has(entry.key) && isTombstoned(snapshot.log)) {
+        published[entry.key] = { key: entry.key, name: stored.name ?? entry.key, rank: stored.rank, removed: true };
+        continue;
+      }
+      if (requiresProtectedStorage(snapshot.log)) {
+        boards[entry.key] = { ...stored, probe: entry.probe, present: true, problem: { code: 'SHARING_COMPATIBILITY_UNAVAILABLE', message: compatibilityMessage() }, updates: 0, removal: false, conflict: null, incoming: null };
+        published[entry.key] = { key: entry.key, name: stored.name ?? entry.key, rank: stored.rank, removed: false };
+        continue;
+      }
       const pending = eventsAfter(snapshot.log, stored.seq);
       const removal = pending.some(event => event.kind === 'board.removed');
       const identity = foldIdentity({ name: stored.name, projectKeys: stored.projectKeys, rank: stored.rank }, pending);
@@ -237,6 +249,7 @@ export class BoardSync {
     const layout = this.layoutFor(record);
     const snapshot = await layout.readLog(key);
     if (snapshot === null) throw new KanbanError('SHARING_DOCUMENT_MISSING', 'The team board has no published log.', { key });
+    if (requiresProtectedStorage(snapshot.log)) incompatibleStorage();
     const hub = this.options.hubs.requireHub(record.hubId);
     const boardId = Object.entries(record.bindings).find(([, bound]) => bound === key)?.[0];
     const board = boardId === undefined ? undefined : hub.boards.find(candidate => candidate.id === boardId);
@@ -267,12 +280,15 @@ export class BoardSync {
       const createdText = materializeIdentities(published);
       const created = await this.options.hubs.hub(record.hubId).transact(draft => {
         const added = operations.addBoard(draft, name, this.deps());
+        // A legacy team board is not a newly authored board. Its absent provenance
+        // retains the legacy host-default behavior.
+        delete added.defaultPresetMode;
         operations.saveBoardWorkflow(draft, added.id, createdText, this.deps());
         operations.setBoardProjectScope(draft, added.id, appliedScope(snapshot.log), this.deps());
         if (orderClean && identity.rank !== null) reorderBoundBoards(draft, { ...record.bindings, [added.id]: key }, { ...record.boards, [key]: { ...stored, rank: identity.rank } });
         return added.id;
       }, hub.revision);
-      await this.noteRevision(record.hubId, created, null, createdText);
+      await this.noteRevision(record.hubId, created, null, createdText, undefined);
       // A board that no longer exists must not keep a binding to this key.
       const bindings = { ...record.bindings };
       for (const [boundId, boundKey] of Object.entries(bindings)) if (boundKey === key) delete bindings[boundId];
@@ -294,7 +310,11 @@ export class BoardSync {
     const identity = foldIdentity({ name: stored.name, projectKeys: stored.projectKeys, rank: stored.rank }, recovered.events);
     const adoptName = stored.name !== null && board.name === stored.name;
     const adoptScope = sameScope(stored.projectKeys, board.allowedProjectKeys ?? null);
-    const adoptWorkflow = stored.workflow === null || sameWorkflow(board.workflowYaml, stored.workflow);
+    // A name match on first receive is not permission to discard local authored
+    // descriptions or preset provenance, which the legacy team format cannot carry.
+    const adoptWorkflow = stored.workflow === null
+      ? board.defaultPresetMode === undefined && !hasAuthoredDescriptions(board.workflowYaml)
+      : sameWorkflow(board.workflowYaml, stored.workflow);
     const orderClean = this.orderIsClean(record, hub);
     const renames = stageRenames(recovered.events.filter(event => event.seq > stored.seq));
     const appliedText = recovered.text;
@@ -319,7 +339,7 @@ export class BoardSync {
       if (adoptScope && !sameScope(identity.projectKeys, board.allowedProjectKeys ?? null)) operations.setBoardProjectScope(draft, board.id, identity.projectKeys === null ? undefined : [...identity.projectKeys], this.deps());
       if (orderClean && identity.rank !== null) reorderBoundBoards(draft, record.bindings, { ...record.boards, [key]: { ...stored, rank: identity.rank } });
     }, hub.revision);
-    if (adoptWorkflow && workflowChanged) await this.noteRevision(record.hubId, board.id, board.workflowYaml, appliedText);
+    if (adoptWorkflow && workflowChanged) await this.noteRevision(record.hubId, board.id, board.workflowYaml, appliedText, board.defaultPresetMode);
     await this.options.save({
       ...record,
       boards: { ...record.boards, [key]: { ...stored, seq: recovered.cursor, head: snapshot.head, probe: snapshot.probe, present: true, workflow: appliedText, name: identity.name, projectKeys: identity.projectKeys, rank: identity.rank, updates: 0, removal: false, incoming: null, conflict: null, problem: null } },
@@ -345,7 +365,8 @@ export class BoardSync {
     const board = hub.boards.find(candidate => candidate.id === boardId);
     const hasTasks = hub.tasks.some(task => task.boardId === boardId);
     const stored = record.boards[key] ?? emptyBoard();
-    const dirty = stored.workflow !== null && board !== undefined && board.workflowYaml !== stored.workflow;
+    // Version 3 never carries preset provenance, so any local value is unpublished.
+    const dirty = board !== undefined && (board.defaultPresetMode !== undefined || (stored.workflow !== null && board.workflowYaml !== stored.workflow));
     // The placement is kept with its cursor at the removal: a board the team publishes
     // again is then measured from that event, not replayed from the beginning.
     const boards = { ...record.boards, [key]: { ...stored, seq: lastSequence(snapshot.log), head: snapshot.head, probe: snapshot.probe, present: true, workflow: stored.workflow, updates: 0, removal: true, conflict: null, incoming: null, problem: null } };
@@ -373,6 +394,7 @@ export class BoardSync {
     const layout = this.layoutFor(record);
     const snapshot = await layout.readLog(key);
     invariant(snapshot !== null, 'SHARING_NOT_CONFLICT', 'The team board has no published board.');
+    if (requiresProtectedStorage(snapshot.log)) incompatibleStorage();
     const stored = record.boards[key] ?? emptyBoard();
     if (choice === 'team') {
       const head = replay(snapshot.log, null);
@@ -394,7 +416,7 @@ export class BoardSync {
         if (identity.name !== null && identity.name !== board.name) operations.renameBoard(draft, boardId, identity.name, this.deps());
         operations.setBoardProjectScope(draft, boardId, identity.projectKeys === null ? undefined : [...identity.projectKeys], this.deps());
       }, hub.revision);
-      await this.noteRevision(hubId, boardId, board.workflowYaml, head.text);
+      await this.noteRevision(hubId, boardId, board.workflowYaml, head.text, board.defaultPresetMode);
     } catch (error) {
       throw this.refusal(error, head.text, hub, board);
     }
@@ -430,6 +452,8 @@ export class BoardSync {
     const planned = planRanks(order, ranks) ?? rebalanceRanks(order);
     const failures: string[] = [];
     for (const board of hub.boards) {
+      try { assertLegacyShareable(board); }
+      catch (error) { failures.push(board.name + ': ' + (error instanceof Error ? error.message : String(error))); continue; }
       const key = record.bindings[board.id];
       const view = this.evaluate(record, local.find(entry => entry.boardId === board.id)!);
       const rank = key === undefined ? null : planned.get(key) ?? record.boards[key]?.rank ?? null;
@@ -464,6 +488,7 @@ export class BoardSync {
     const hub = this.options.hubs.requireHub(record.hubId);
     const board = hub.boards.find(candidate => candidate.id === boardId);
     invariant(board, 'BOARD_NOT_FOUND', 'Board does not exist.');
+    assertLegacyShareable(board);
     let key = record.bindings[boardId];
     const layout = this.layoutFor(record);
     if (key !== undefined) {
@@ -472,8 +497,15 @@ export class BoardSync {
       if (stored.conflict != null) throw new KanbanError('SHARING_PUBLISH_BLOCKED', 'This board needs a review before it can be published.', { key, boardId });
       if (stored.updates > 0 || stored.removal) throw new KanbanError('SHARING_PUBLISH_BLOCKED', 'This board has team changes that have not been applied. Get this board updates before publishing it.', { key, boardId, pending: stored.updates });
     }
-    await this.ensureStamp(layout);
+    const prior = key === undefined ? undefined : record.boards[key]?.workflow;
+    if (prior != null) assertLegacyShareable({ workflowYaml: prior });
     const snapshot = key === undefined ? null : await layout.readLog(key);
+    if (snapshot !== null) {
+      const team = publishedWorkflow(snapshot.log);
+      if (team !== null) assertLegacyShareable({ workflowYaml: team });
+      if (requiresProtectedStorage(snapshot.log)) incompatibleStorage();
+    }
+    await this.ensureStamp(layout);
     if (key !== undefined && snapshot !== null) {
       const stored = record.boards[key] ?? emptyBoard();
       // A bound board whose published events were never applied must not publish over
@@ -568,7 +600,7 @@ export class BoardSync {
     const located = this.options.hubs.findBoard(boardId);
     invariant(located, 'BOARD_NOT_FOUND', 'Board does not exist.');
     await this.options.hubs.hub(located.hubId).transact(draft => { operations.saveBoardWorkflow(draft, boardId, seeded, this.deps()); return draft; }, located.hub.revision);
-    await this.noteRevision(located.hubId, boardId, workflow, seeded);
+    await this.noteRevision(located.hubId, boardId, workflow, seeded, located.board.defaultPresetMode);
     return seeded;
   }
 
@@ -606,6 +638,9 @@ export class BoardSync {
     try {
       const snapshot = await layout.readLog(key);
       if (snapshot === null) return true;
+      const team = publishedWorkflow(snapshot.log);
+      if (team !== null) assertLegacyShareable({ workflowYaml: team });
+      if (requiresProtectedStorage(snapshot.log)) incompatibleStorage();
       await layout.appendChanges(key, [{ kind: 'board.removed' }], { expectedHead: snapshot.head, message: 'Remove published Kanban board', at: this.options.now() });
       return true;
     } catch (error) {
@@ -651,6 +686,9 @@ export class BoardSync {
     const record = this.requireRecord(hubId);
     const orphan = record.orphans[boardId];
     invariant(orphan !== undefined, 'SHARING_NOT_ORPHAN', 'The board is not an orphan.');
+    const board = this.options.hubs.requireHub(hubId).boards.find(candidate => candidate.id === boardId);
+    invariant(board, 'BOARD_NOT_FOUND', 'Board does not exist.');
+    assertLegacyShareable(board);
     const orphans = { ...record.orphans };
     delete orphans[boardId];
     const taken = new Set([...Object.keys(record.published), ...Object.values(record.bindings)]);
@@ -665,10 +703,13 @@ export class BoardSync {
     for (const listed of await layout.listLogs()) {
       const snapshot = await layout.readLog(listed.key);
       if (snapshot === null) continue;
+      // A tombstoned board is not offered for adoption; its old contents must not
+      // block the preview of unrelated live boards.
+      if (isTombstoned(snapshot.log)) continue;
+      if (requiresProtectedStorage(snapshot.log)) incompatibleStorage();
       const workflow = publishedWorkflow(snapshot.log);
       if (workflow === null) continue;
       const identity = foldIdentity({ name: null, projectKeys: null, rank: null }, snapshot.log);
-      if (snapshot.log.some(event => event.kind === 'board.removed')) continue;
       boards.push({ key: listed.key, name: identity.name ?? listed.key, projectKeys: identity.projectKeys, rank: identity.rank, workflow });
     }
     return boards;
@@ -692,13 +733,23 @@ export class BoardSync {
 
   /** Replace the published configuration with this Hub's boards, tombstoning what it drops. */
   async publishInitial(record: HubSharingRecord): Promise<void> {
+    // Refuse before tombstoning any team logs, not after a partial replacement.
+    for (const board of this.options.hubs.requireHub(record.hubId).boards) assertLegacyShareable(board);
     const layout = this.layoutFor(record);
     // The keys that were published stay known while the replacement is written, so the
     // new logs cannot collide with the logs that were just tombstoned.
     const published: Record<string, PublishedBoard> = {};
+    const snapshots: Array<{ key: string; snapshot: BoardLogSnapshot }> = [];
     for (const listed of await layout.listLogs()) {
       const snapshot = await layout.readLog(listed.key);
       if (snapshot === null) continue;
+      const team = publishedWorkflow(snapshot.log);
+      if (team !== null) assertLegacyShareable({ workflowYaml: team });
+      if (requiresProtectedStorage(snapshot.log)) incompatibleStorage();
+      snapshots.push({ key: listed.key, snapshot });
+    }
+    for (const { key, snapshot } of snapshots) {
+      const listed = { key };
       published[listed.key] = { key: listed.key, name: record.published[listed.key]?.name ?? listed.key, rank: record.published[listed.key]?.rank ?? null, removed: true };
       if (snapshot.log.some(event => event.kind === 'board.removed')) continue;
       await layout.appendChanges(listed.key, [{ kind: 'board.removed' }], { expectedHead: snapshot.head, message: 'Replace published Kanban configuration', at: this.options.now() });
@@ -768,6 +819,36 @@ function foldIdentity(base: { name: string | null; projectKeys: string[] | null;
     else if (event.kind === 'board.rank-changed') rank = event.rank;
   }
   return { name, projectKeys, rank };
+}
+
+/** Existing providers cannot prevent an older writer from replacing new fields. */
+function assertLegacyShareable(board: { workflowYaml: string; defaultPresetMode?: 'operator' | 'host' }): void {
+  if (board.defaultPresetMode !== undefined || hasAuthoredDescriptions(board.workflowYaml)) {
+    incompatibleStorage();
+  }
+}
+
+/** A replacement after a removal republishes that board under the same key. */
+function isTombstoned(log: BoardLog): boolean {
+  for (let index = log.length - 1; index >= 0; index--) {
+    const event = log[index]!;
+    if (event.kind === 'board.removed') return true;
+    if (event.kind === 'workflow.replaced') return false;
+  }
+  return false;
+}
+
+/** Version 3 replacements may contain authored descriptions from an older editor. */
+function requiresProtectedStorage(log: BoardLog): boolean {
+  return log.some(event => event.v >= 4 || (event.kind === 'workflow.replaced' && hasAuthoredDescriptions(event.text)));
+}
+
+function compatibilityMessage(): string {
+  return 'This board cannot be synchronized safely: the currently supported storage providers cannot prevent older installations from overwriting workflow descriptions or board-default metadata.';
+}
+
+function incompatibleStorage(): never {
+  throw new KanbanError('SHARING_COMPATIBILITY_UNAVAILABLE', compatibilityMessage());
 }
 
 function versionError(version: number): { code: string; message: string } {

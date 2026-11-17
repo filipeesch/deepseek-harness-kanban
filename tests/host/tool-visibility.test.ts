@@ -42,7 +42,9 @@ describe('workflow design tool visibility', () => {
     dispose();
     const gated = registrations.filter(entry => entry.when !== undefined).map(entry => entry.name).sort();
     expect(gated).toEqual([...WORKFLOW_DESIGN_TOOLS].sort());
-    expect(registrations.find(entry => entry.name === 'get_board_summary')?.when).toBeUndefined();
+    expect(registrations.find(entry => entry.name === 'get_workflow_summary')).toBeDefined();
+    expect(registrations.find(entry => entry.name === 'get_workflow_summary')?.when).toBeUndefined();
+    expect(registrations.some(entry => entry.name === 'get_board_summary')).toBe(false);
     expect(registrations.find(entry => entry.name === 'create_board')?.when).toBeUndefined();
   });
 

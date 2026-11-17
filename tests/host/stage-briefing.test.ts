@@ -36,15 +36,16 @@ describe('transition briefing', () => {
     expect(briefing).toContain('- REWORK — The review requested changes.');
     expect(briefing).toContain('- DONE — The review approved the work.');
     expect(briefing).toContain('No transition recorded.');
-    expect(briefing).toContain('with none declared the advance uses DONE.');
+    expect(briefing).toContain('an independently enabled automatic advance uses DONE.');
+    expect(briefing).not.toContain('Declare the transition');
     expect(briefing).toContain('set_next_transition');
   });
 
   it('states the required reason and the end-of-turn timing', () => {
     const briefing = buildTransitionBriefing(twoTargets(), { columnId: 'review' })!;
-    expect(briefing).toContain('pass column_id with the target listed above and reason with the reason for it');
+    expect(briefing).toContain('passing column_id and reason');
     expect(briefing).toContain('A declared transition requires a reason');
-    expect(briefing).toContain('the task follows it at the end of the turn');
+    expect(briefing).toContain('after a completed turn');
   });
 
   it('states that nothing advances without a declaration when there is no default', () => {

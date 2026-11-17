@@ -130,6 +130,13 @@ function label(value: Record<string, unknown>, context: string): string {
   return text(value.label ?? value.name, context + ' label');
 }
 
+/** Preserve authored text while treating whitespace-only descriptions as absent. */
+function optionalDescription(value: unknown, context: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') invalidWorkflow(context + ' must be text.');
+  return value.trim() ? value : undefined;
+}
+
 /** Parse only the supported presentation/transition subset of workflow YAML. */
 export function parseWorkflow(yaml: string): Workflow {
   if (typeof yaml !== 'string' || !yaml.trim()) invalidWorkflow('Workflow YAML must be nonempty text.');
@@ -144,15 +151,16 @@ export function parseWorkflow(yaml: string): Workflow {
     invalidWorkflow('Invalid workflow YAML: ' + (error instanceof Error ? error.message : String(error)));
   }
   const input = record(raw, 'Workflow');
-  keys(input, ['id', 'name', 'initial_column', 'default_view', 'columns', 'groups', 'model', 'agent_preset', 'mcp', 'connections'], 'workflow', COLUMN_NOTE);
+  keys(input, ['id', 'name', 'description', 'initial_column', 'default_view', 'columns', 'groups', 'model', 'agent_preset', 'mcp', 'connections'], 'workflow', COLUMN_NOTE);
   if (input.id !== undefined) id(input.id, 'Workflow ID');
   const name = input.name === undefined ? 'Workflow' : text(input.name, 'Workflow name');
   if (!Array.isArray(input.columns) || input.columns.length === 0) invalidWorkflow('Workflow requires at least one column.');
   const columns: Column[] = input.columns.map((item, index) => {
     const value = record(item, 'Column ' + index);
     keys(value, ['id', 'key', 'label', 'name', 'description', 'allowed_transitions', 'on_enter_prompt', 'scripted', 'deterministic', 'position', 'size'], 'column', COLUMN_NOTE);
-    if (value.description !== undefined && typeof value.description !== 'string') invalidWorkflow('Column description must be text.');
     const column: Column = { id: id(value.id, 'Column ID'), name: label(value, 'Column') };
+    const description = optionalDescription(value.description, 'Column description');
+    if (description !== undefined) column.description = description;
     if (value.key !== undefined) column.key = id(value.key, 'Column ' + column.id + ' key');
     if (value.allowed_transitions !== undefined) column.allowedTransitions = rules(value.allowed_transitions, 'allowed_transitions');
     if (value.on_enter_prompt !== undefined && value.on_enter_prompt !== null) {
@@ -207,6 +215,8 @@ export function parseWorkflow(yaml: string): Workflow {
   if (new Set(groups.map(group => group.id)).size !== groups.length) invalidWorkflow('Group IDs must be unique.');
   if (groups.some(group => columnIds.has(group.id))) invalidWorkflow('Group IDs must not collide with column IDs.');
   const workflow: Workflow = { name, initialColumnId, columns, groups };
+  const description = optionalDescription(input.description, 'Workflow description');
+  if (description !== undefined) workflow.description = description;
   if (input.default_view !== undefined) workflow.defaultView = view(input.default_view);
   if (input.model !== undefined) workflow.model = modelSelection(input.model, 'Workflow model');
   if (input.agent_preset !== undefined) workflow.agentPreset = text(input.agent_preset, 'Workflow agent_preset');

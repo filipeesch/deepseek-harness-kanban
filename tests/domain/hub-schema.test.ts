@@ -10,6 +10,23 @@ function task(overrides: Partial<HubTask> = {}): HubTask {
 function hubWith(...tasks: HubTask[]): HubState { const hub = sampleHub(); hub.tasks = tasks; return hub; }
 
 describe('HubState schema', () => {
+  it('opens old stored and migrated Hub projections with authored stage descriptions', () => {
+    const hub = hubWith();
+    const board = hub.boards[0]!;
+    const yaml = '# preserved\nname: Flow\ninitial_column: backlog\ncolumns:\n  - id: backlog\n    label: Backlog\n    description: Legacy details\n';
+    board.workflowYaml = yaml;
+    board.workflow.name = 'Flow';
+    const stored = StoredHubStateSchema.parse(hub);
+    expect(stored.boards[0]!.workflow.columns[0]!.description).toBe('Legacy details');
+    const opened = HubStateSchema.parse(stored);
+    expect(opened.boards[0]!.workflowYaml).toBe(yaml);
+    expect(opened.boards[0]!.workflow.columns[0]!.description).toBe('Legacy details');
+    expect(HubStateSchema.parse(hub).boards[0]!.workflow.columns[0]!.description).toBe('Legacy details');
+    expect(board.workflow.columns[0]!.description).toBeUndefined();
+    opened.boards[0]!.workflow.columns[0]!.description = 'Tampered';
+    expect(HubStateSchema.safeParse(opened).success).toBe(false);
+  });
+
   it('accepts a valid Hub with a board, project, and task', () => {
     expect(HubStateSchema.safeParse(hubWith(task())).success).toBe(true);
   });

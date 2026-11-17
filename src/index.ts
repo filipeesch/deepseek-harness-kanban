@@ -231,7 +231,7 @@ export async function apply(ctx:Context):Promise<void>{
  // The board's tool policy needs the app's task lookup, and the app needs the
  // policy port. One deferred hop keeps the dependency one-directional.
  let applyBoardToolPolicy:(sessionId:string)=>Promise<void>=async()=>undefined;
- const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,models:sessionModels,presets:sessionPresets,tools:{apply:sessionId=>applyBoardToolPolicy(sessionId)},mcpServers:()=>{const manager=ctx.get('mcpManager') as {list?:()=>ReadonlyArray<{name:string}>}|undefined;try{return manager?.list?.().map(server=>server.name)??[];}catch{return [];}},report,revisions,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
+ const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,models:sessionModels,presets:sessionPresets,turnBoundary:{boundary:id=>{const agent=ctx.agents.get(SessionId(id));return agent?ctx.agents.turnBoundaryOf(agent.session):undefined;}},tools:{apply:sessionId=>applyBoardToolPolicy(sessionId)},mcpServers:()=>{const manager=ctx.get('mcpManager') as {list?:()=>ReadonlyArray<{name:string}>}|undefined;try{return manager?.list?.().map(server=>server.name)??[];}catch{return [];}},report,revisions,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
  // Two independent policies: the board owns the MCP namespace, and the preset ships
  // its own product-tool boundary. Neither names a tool of the other's namespace, so
  // their deny masks compose by union instead of intersecting into an empty surface.
@@ -336,7 +336,7 @@ export async function apply(ctx:Context):Promise<void>{
  offScheduleStatus=ctx.on('agent/status',({agent})=>scheduleWatcher.observe(String(agent.id)));
  offSignals=registerAttentionSignals(ctx,app);
  offGuards=registerTaskExecutionGuards(ctx,app.locator,app);
- offContext=registerTaskContextInjection(ctx,app.locator,{history,report});
+ offContext=registerTaskContextInjection(ctx,app.locator,{history,report,sharingView:hubId=>app.boards.sharingView(hubId),conversationFacts:id=>app.conversationFacts(id)});
  offHandoff=registerScriptedHandoffInjection(ctx,{locateBySession:id=>app.locator.bySession(id),events:async id=>(await history.read(id)).events,reserve:(taskId,entryId,id)=>app.reserveScriptedHandoff(taskId,entryId,id),accept:(taskId,entryId,id)=>app.acceptScriptedHandoff(taskId,entryId,id),report});
  const adopter=new ForkAdopter({
   locate:sessionId=>{const located=app.locator.bySession(sessionId);return located===undefined?undefined:{hubId:located.hubId,taskId:located.task.id,effectiveCwd:located.task.effectiveCwd};},

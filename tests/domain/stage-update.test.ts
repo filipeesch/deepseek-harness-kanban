@@ -30,6 +30,22 @@ function stage(text: string, id: string) {
 }
 
 describe('stage update', () => {
+  it.each(['one\n\n', 'one\n\n\n', 'one\ntwo', 'one\n'])('round-trips a multiline description with trailing newlines: %j', description => {
+    const block = updateStage({ text: AUTHORED, stageId: 'plan', patch: { description } });
+    expect(parseWorkflow(block.text).columns.find(stage => stage.id === 'plan')?.description).toBe(description);
+    const flowText = 'columns:\n  - {id: plan, label: Plan}\n';
+    const flow = updateStage({ text: flowText, stageId: 'plan', patch: { description } });
+    expect(parseWorkflow(flow.text).columns[0]?.description).toBe(description);
+  });
+
+  it('updates and clears an optional description while preserving unrelated authored YAML', () => {
+    const updated = updateStage({ text: AUTHORED, stageId: 'plan', patch: { description: '  Clarify the scope.  ' } });
+    expect(parseWorkflow(updated.text).columns.find(stage => stage.id === 'plan')?.description).toBe('  Clarify the scope.  ');
+    expect(updated.text).toContain('# The delivery flow, authored by hand.');
+    const cleared = updateStage({ text: updated.text, stageId: 'plan', patch: { description: null } });
+    expect(parseWorkflow(cleared.text).columns.find(stage => stage.id === 'plan')?.description).toBeUndefined();
+    expect(cleared.text).toContain('# The delivery flow, authored by hand.');
+  });
   it('changes only the edited name and keeps every authored character', () => {
     const result = updateStage({ text: AUTHORED, stageId: 'plan', patch: { name: 'Planning' } });
     expect(stage(result.text, 'plan').column.name).toBe('Planning');

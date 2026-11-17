@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { BoardStateSchema, initialState } from '../../src/domain/schema.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
@@ -38,6 +39,37 @@ describe('persisted board schema', () => {
     state.tasks[0]!.history = [{ kind: 'auto-mode', at: '2026-10-21T10:00:00.000Z', action: 'paused' }];
     expect(BoardStateSchema.safeParse(state).success).toBe(false);
     state.tasks[0]!.history = [{ kind: 'worktree', at: '2026-10-21T10:00:00.000Z', action: 'created', path: '/trees/one' }];
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+  });
+
+  it('recovers legacy stage descriptions without changing the document or its digest', () => {
+    const yaml = '# exact source\nname: Flow\ncolumns:\n  - id: backlog\n    label: Backlog\n    description: |\n      Legacy stage text\n  - id: done\n    label: Done\n';
+    const state = populatedState();
+    state.workflowYaml = yaml;
+    state.workflow = parseWorkflow(yaml);
+    delete state.workflow.columns[0]!.description;
+    const digest = createHash('sha256').update(yaml).digest('hex');
+    const restored = BoardStateSchema.parse(state);
+    expect(restored.workflow.columns[0]!.description).toBe('Legacy stage text\n');
+    expect(restored.workflowYaml).toBe(yaml);
+    expect(createHash('sha256').update(restored.workflowYaml).digest('hex')).toBe(digest);
+    expect(state.workflow.columns[0]!.description).toBeUndefined();
+    expect(BoardStateSchema.parse(restored)).toEqual(restored);
+  });
+
+  it('compares descriptions canonically and rejects explicit mismatches', () => {
+    const yaml = 'description: Flow text\ncolumns:\n  - id: backlog\n    label: Backlog\n    description: Stage text\n  - id: done\n    label: Done\n';
+    const state = populatedState();
+    state.workflowYaml = yaml;
+    state.workflow = parseWorkflow(yaml);
+    const original = state.workflow;
+    expect(canonicalWorkflow(original)).not.toBe(canonicalWorkflow({ ...original, description: 'Changed' }));
+    expect(workflowMeaning(original)).not.toBe(workflowMeaning({ ...original, columns: [{ ...original.columns[0]!, description: 'Changed' }, ...original.columns.slice(1)] }));
+    expect(BoardStateSchema.safeParse(state).success).toBe(true);
+    state.workflow.description = 'Wrong';
+    expect(BoardStateSchema.safeParse(state).success).toBe(false);
+    state.workflow.description = 'Flow text';
+    state.workflow.columns[0]!.description = 'Wrong';
     expect(BoardStateSchema.safeParse(state).success).toBe(false);
   });
 

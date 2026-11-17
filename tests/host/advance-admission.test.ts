@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { admitTurnAdvance, type AdvanceAdmissionDeps } from '../../src/host/advance-admission.js';
+import { admitExceptionalTurnAdvance, type ExceptionalAdmissionDeps } from '../../src/host/exceptional-admission.js';
+import { ExceptionalTurnObserver } from '../../src/host/exceptional-turn.js';
 import type { LocatedTask } from '../../src/host/hub-repository.js';
 import { resolveAutoAdvance, type AutoAdvancePlan } from '../../src/domain/auto-advance.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
@@ -57,11 +59,13 @@ function fixture(overrides: Partial<AdvanceAdmissionDeps> = {}, seed: { board?: 
   const created: string[] = [];
   const dispatched: number[] = [];
   const reported: unknown[] = [];
-  const deps: AdvanceAdmissionDeps = {
+  const deps: ExceptionalAdmissionDeps = {
     locate: (): LocatedTask => ({ hubId: 'hub', hub: state.hub, board: state.hub.boards[0]!, project, task: state.hub.tasks[0]! }),
     transact: async (_hubId, change) => { change(state.hub); },
     resolveSession: async () => { created.push('session-2'); return 'session-2'; },
     pending: async () => pending[pending.length - 1]!,
+    ready: async () => !pending[pending.length - 1]!.kinds.length && pending[pending.length - 1]!.queuedPrompts === 0,
+    reconcileFinalization: async () => 'prepared',
     dispatch: async () => { dispatched.push(1); },
     report: error => { reported.push(error); },
     ...overrides,
@@ -75,7 +79,161 @@ const admitAuto = (deps: AdvanceAdmissionDeps, taskId: string, value: AutoAdvanc
 const admitDeclared = (deps: AdvanceAdmissionDeps, taskId: string, value: AutoAdvancePlan) => admitTurnAdvance(deps, taskId, value, 'agent');
 const declared = (columnId: string, reason = 'The work needs a plan.') => ({ fromColumnId: 'backlog', columnId, at: now, reason });
 
+describe('exceptional turn-end admission', () => {
+  const expected = { id: 'exception-1', sessionId: 's1', turn: 1, entryId: 'entry-1', fromColumnId: 'backlog', columnId: 'done' };
+  function exceptional() {
+    return task({ stageEntry: { id: 'entry-1', columnId: 'backlog', stageIdentity: 'backlog-id', enteredAt: now },
+      recordedTransition: { ...declared('done', 'User asked.'), exception: { id: expected.id, sessionId: expected.sessionId, turn: expected.turn, entryId: expected.entryId } } });
+  }
+  it('commits one durable override only for its observed turn', async () => {
+    const f = fixture({}, { task: exceptional() });
+    expect(await admitExceptionalTurnAdvance(f.deps, 'task', expected, () => true)).toBe(true);
+    expect(f.state.hub.tasks[0]!.pendingTransition).toMatchObject({ columnId: 'done', origin: 'agent', transitionOverride: true, reason: 'User asked.' });
+    expect(f.state.hub.tasks[0]!.recordedTransition).toBeUndefined();
+    expect(f.dispatched).toHaveLength(1);
+  });
+  it('expires unobserved and pending declarations without dispatch', async () => {
+    const f = fixture({}, { task: exceptional() });
+    expect(await admitExceptionalTurnAdvance(f.deps, 'task', expected, () => false)).toBe(false);
+    expect(f.state.hub.tasks[0]!.recordedTransition).toBeUndefined();
+    const g = fixture({}, { task: exceptional() });
+    g.pending.push(pendingUserWork(['decision-question']));
+    expect(await admitExceptionalTurnAdvance(g.deps, 'task', expected, () => true)).toBe(false);
+    expect(g.state.hub.tasks[0]!.recordedTransition).toBeUndefined();
+    expect(g.dispatched).toHaveLength(0);
+  });
+  it('does not erase a newer declaration during admission', async () => {
+    const f = fixture({}, { task: exceptional() });
+    f.deps.pending = async () => {
+      f.state.hub.tasks[0]!.recordedTransition = declared('plan', 'Replacement.');
+      return NO_PENDING_USER_WORK;
+    };
+    expect(await admitExceptionalTurnAdvance(f.deps, 'task', expected, () => true)).toBe(false);
+    expect(f.state.hub.tasks[0]!.recordedTransition?.columnId).toBe('plan');
+    expect(f.dispatched).toHaveLength(0);
+  });
+  it('admits independently of auto mode and expires held or busy tasks', async () => {
+    const disabled = exceptional(); delete disabled.autoMode;
+    const f = fixture({}, { task: disabled });
+    expect(await admitExceptionalTurnAdvance(f.deps, 'task', expected, () => true)).toBe(true);
+    for (const change of [
+      { autoMode: { enabled: true, hold: { reason: 'Wait', at: now } } },
+      { operation: { id: 'busy' } },
+      { instructionPending: { columnId: 'backlog', enteredAt: 1 } },
+    ]) {
+      const value = Object.assign(exceptional(), change) as HubTask;
+      const g = fixture({}, { task: value });
+      expect(await admitExceptionalTurnAdvance(g.deps, 'task', expected, () => true)).toBe(false);
+      expect(g.state.hub.tasks[0]!.recordedTransition).toBeUndefined();
+      expect(g.dispatched).toHaveLength(0);
+    }
+  });
+  it('revalidates the identity and observed token inside the transaction', async () => {
+    for (const mutate of [
+      (value: HubTask) => { value.stageEntry!.id = 'changed-entry'; },
+      (value: HubTask) => { value.recordedTransition!.columnId = 'plan'; },
+      (value: HubTask) => { value.autoMode!.hold = { reason: 'Wait', at: now }; },
+    ]) {
+      const f = fixture({}, { task: exceptional() });
+      f.deps.transact = async (_hub, change) => { mutate(f.state.hub.tasks[0]!); change(f.state.hub); };
+      expect(await admitExceptionalTurnAdvance(f.deps, 'task', expected, () => true)).toBe(false);
+      expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
+    }
+    const f = fixture({}, { task: exceptional() });
+    let live = true;
+    f.deps.transact = async (_hub, change) => { live = false; change(f.state.hub); };
+    expect(await admitExceptionalTurnAdvance(f.deps, 'task', expected, () => live)).toBe(false);
+    expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
+  });
+  it('revokes admission when another session starts or gains pending work at the transaction barrier', async () => {
+    for (const event of [
+      { type: 'turn/start', seq: 12, data: { turn: 2 } },
+      { type: 'agent/inbox/spliced', seq: 13, data: {} },
+    ]) {
+      const value = exceptional(); value.sessionIds.push('s2');
+      const f = fixture({}, { task: value });
+      let finished!: () => void;
+      const done = new Promise<void>(resolve => { finished = resolve; });
+      let observer!: ExceptionalTurnObserver;
+      let first = true;
+      f.deps.transact = async (_hub, change) => {
+        if (first) {
+          first = false;
+          f.pending.push(pendingUserWork(['decision-question']));
+          observer.observe('s2', event);
+        }
+        change(f.state.hub);
+      };
+      observer = new ExceptionalTurnObserver({
+        taskForSession: () => 'task', matches: () => true,
+        admit: async (taskId, identity, token) => { try { await admitExceptionalTurnAdvance(f.deps, taskId, identity, token); } finally { finished(); } },
+        expire: async () => {}, report: error => { throw error; },
+      });
+      observer.register('task', expected);
+      observer.observe('s1', { type: 'turn/end', seq: 4, data: { turn: 1, reason: { kind: 'completed' } } });
+      await done;
+      expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
+      expect(f.state.hub.tasks[0]!.recordedTransition).toBeUndefined();
+      expect(f.dispatched).toHaveLength(0);
+    }
+  });
+  it('removes the exact waiting admission when its token expires during persistence', async () => {
+    const f = fixture({}, { task: exceptional() });
+    let live = true, first = true;
+    f.deps.transact = async (_hub, change) => {
+      change(f.state.hub);
+      if (first) { first = false; live = false; }
+    };
+    expect(await admitExceptionalTurnAdvance(f.deps, 'task', expected, () => live)).toBe(false);
+    expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
+    expect(f.dispatched).toHaveLength(0);
+  });
+  it('rechecks the token at finalization and treats later events as after admission', async () => {
+    for (const beforeCallback of [true, false]) {
+      const f = fixture({}, { task: exceptional() });
+      let live = true, writes = 0;
+      f.deps.transact = async (_hub, change) => {
+        writes++;
+        if (writes === 2 && beforeCallback) live = false;
+        change(f.state.hub);
+        if (writes === 2 && !beforeCallback) live = false;
+      };
+      const admitted = await admitExceptionalTurnAdvance(f.deps, 'task', expected, () => live);
+      expect(admitted).toBe(!beforeCallback);
+      if (beforeCallback) {
+        expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
+        expect(f.dispatched).toHaveLength(0);
+      } else {
+        expect(f.state.hub.tasks[0]!.pendingTransition?.exceptionUnfinalized).toBeUndefined();
+        expect(f.dispatched).toHaveLength(1);
+      }
+    }
+  });
+  it('expires a preparation if the final activity recheck is unavailable', async () => {
+    const f = fixture({}, { task: exceptional() });
+    f.deps.ready = async () => { throw Error('unavailable'); };
+    expect(await admitExceptionalTurnAdvance(f.deps, 'task', expected, () => true)).toBe(false);
+    expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
+    expect(f.state.hub.tasks[0]!.recordedTransition).toBeUndefined();
+    expect(f.dispatched).toHaveLength(0);
+  });
+  it('retains admitted pending work after dispatch failure', async () => {
+    const f = fixture({}, { task: exceptional() });
+    f.deps.dispatch = async () => { throw Error('dispatch failure'); };
+    await expect(admitExceptionalTurnAdvance(f.deps, 'task', expected, () => true)).rejects.toThrow('dispatch failure');
+    expect(f.state.hub.tasks[0]!.pendingTransition).toMatchObject({ columnId: 'done', transitionOverride: true });
+    expect(f.state.hub.tasks[0]!.pendingTransition?.exceptionUnfinalized).toBeUndefined();
+  });
+});
+
 describe('turn-end advance admission', () => {
+  it('drops an ordinary admission whose triggering generation expires at transaction time', async () => {
+    const f = fixture(); let live = true;
+    f.deps.transact = async (_hub, change) => { live = false; change(f.state.hub); };
+    await admitTurnAdvance(f.deps, 'task', plan(), 'auto', () => live);
+    expect(f.state.hub.tasks[0]!.pendingTransition).toBeUndefined();
+    expect(f.dispatched).toHaveLength(0);
+  });
   it('persists one captured transition and dispatches it', async () => {
     const f = fixture();
     await admitAuto(f.deps, 'task', plan());
@@ -83,6 +241,17 @@ describe('turn-end advance admission', () => {
     expect(value.pendingTransition).toMatchObject({ fromColumnId: 'backlog', columnId: 'plan', mode: 'run', status: 'waiting', origin: 'auto', text: 'Plan it.', sessionId: 's1' });
     expect(f.dispatched).toHaveLength(1);
     expect(f.created).toHaveLength(0);
+  });
+
+  it('does not carry unadmitted exceptional reason or parameters into an automatic default', async () => {
+    const f = fixture({}, { task: task({ recordedTransition: {
+      ...declared('done', 'Exceptional reason'), parameters: { pipeline: 'private' },
+      exception: { id: 'exception-1', sessionId: 's1', turn: 1, entryId: 'entry-1' },
+    } }) });
+    await admitAuto(f.deps, 'task', plan());
+    expect(f.state.hub.tasks[0]!.pendingTransition).toMatchObject({ columnId: 'plan', origin: 'auto' });
+    expect(f.state.hub.tasks[0]!.pendingTransition?.reason).toBeUndefined();
+    expect(f.state.hub.tasks[0]!.pendingTransition?.parameters).toBeUndefined();
   });
 
   it('creates the target conversation when every tab is closed', async () => {

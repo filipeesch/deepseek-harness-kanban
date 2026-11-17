@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools';
 import { productToolDefinitions } from '../../src/host/tools.js';
+import { parseWorkflow } from '../../src/domain/workflow.js';
 import { fixture } from './helpers.js';
 
 const COMMENTED = `# Keep this comment
@@ -301,7 +302,7 @@ describe('adding and removing stages', () => {
     const value = await run(f, 'add_stage', { board_id: boardId, after: 'review', stage_yaml: 'id: deploy\nlabel: Deploy\nallowed_transitions: [done]' });
     expect(value.report.valid).toBe(true);
     expect(value.report.stages).toContainEqual({ stage: 'deploy', change: 'added' });
-    const workflow = (await run(f, 'get_board_summary', { board_id: boardId, include_workflow: true })).workflow;
+    const workflow = parseWorkflow((await run(f, 'get_board_yaml', { board_id: boardId })).yaml);
     expect(workflow.columns.map((column: { id: string }) => column.id)).toEqual(['todo', 'review', 'deploy', 'done']);
   });
 
@@ -309,7 +310,7 @@ describe('adding and removing stages', () => {
     const f = await setup();
     const boardId = await boardWith(f, LINKED);
     await run(f, 'add_stage', { board_id: boardId, stage_yaml: '  - id: archive\n    label: Archive' });
-    const workflow = (await run(f, 'get_board_summary', { board_id: boardId, include_workflow: true })).workflow;
+    const workflow = parseWorkflow((await run(f, 'get_board_yaml', { board_id: boardId })).yaml);
     expect(workflow.columns.map((column: { id: string }) => column.id)).toEqual(['todo', 'review', 'done', 'archive']);
   });
 
@@ -339,7 +340,7 @@ describe('adding and removing stages', () => {
     expect(text).not.toContain('id: done');
     expect(text).not.toContain('[review, done]');
     expect(text).toContain('columns: ["todo","review"]');
-    const workflow = (await run(f, 'get_board_summary', { board_id: boardId, include_workflow: true })).workflow;
+    const workflow = parseWorkflow((await run(f, 'get_board_yaml', { board_id: boardId })).yaml);
     expect(workflow.columns.map((column: { id: string }) => column.id)).toEqual(['todo', 'review']);
   });
 
@@ -370,7 +371,7 @@ describe('adding and removing stages', () => {
     expect(value.report.valid).toBe(true);
     const text = await authoredDocument(f, boardId);
     expect(text).not.toContain('groups:');
-    expect((await run(f, 'get_board_summary', { board_id: boardId, include_workflow: true })).workflow.groups).toEqual([]);
+    expect(parseWorkflow((await run(f, 'get_board_yaml', { board_id: boardId })).yaml).groups).toEqual([]);
   });
 
   it('refuses without confirmation', async () => {
@@ -390,6 +391,6 @@ describe('adding and removing stages', () => {
     expect(value.report.affectedCards).toEqual([{ taskId: task.id, stage: 'done', reason: 'stage-removed' }]);
     expect(JSON.stringify(value)).not.toContain('Secret title');
     expect(JSON.stringify(value)).not.toContain('Secret description');
-    expect((await run(f, 'get_board_summary', { board_id: boardId, include_workflow: true })).workflow.columns.map((column: { id: string }) => column.id)).toEqual(['todo', 'review', 'done']);
+    expect(parseWorkflow((await run(f, 'get_board_yaml', { board_id: boardId })).yaml).columns.map((column: { id: string }) => column.id)).toEqual(['todo', 'review', 'done']);
   });
 });

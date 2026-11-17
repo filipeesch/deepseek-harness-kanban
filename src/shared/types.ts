@@ -60,7 +60,7 @@ export type TransitionRule = { to: string; when?: string }
 /** An authored minimum size for one stage, in diagram pixels. */
 export interface StageSize { width: number; height: number }
 export interface Column {
-  id: string; name: string; onEnterPrompt?: string; allowedTransitions?: TransitionRule[]; scripted?: ScriptedDefinition;
+  id: string; name: string; description?: string; onEnterPrompt?: string; allowedTransitions?: TransitionRule[]; scripted?: ScriptedDefinition;
   /**
    * Stable stage identity, allocated when the stage first enters a published workflow and
    * preserved across identifier renames. Absent on a board that was never published.
@@ -82,6 +82,8 @@ export interface StagePatch {
   scripted?: ScriptedDefinition | null;
   /** New display name; absent leaves the name as authored. */
   name?: string;
+  /** New stage description; `null` clears it, absent leaves it as authored. */
+  description?: string | null;
   /** New entry instruction; `null` clears it, absent leaves it as authored. */
   onEnterPrompt?: string | null;
   /** `true` makes this stage the workflow's initial stage; absent leaves the initial stage as authored. */
@@ -106,7 +108,7 @@ export interface ConnectionAnchor { side: StageSide; at: number }
 export interface ConnectionSegmentOffset { axis: ConnectionAxis; offset: number }
 /** One authored connection layout, identified by its source and target stage. */
 export interface ConnectionLayout { from: string; to: string; source?: ConnectionAnchor; target?: ConnectionAnchor; segments?: ConnectionSegmentOffset[] }
-export interface Workflow { name: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[]; /** Absent means the board opens the column board. */ defaultView?: WorkflowView; /** The model every new conversation of the board starts on; absent keeps the deployment default. */ model?: ModelSelection; /** The agent preset every new conversation of the board starts on; absent keeps the host default preset. */ agentPreset?: string; /** The MCP servers and tools every conversation of the board may use; absent keeps every server visible and an empty list keeps none. */ mcp?: string[]; /** Authored connection layouts; an absent entry keeps the automatic route. */ connections?: ConnectionLayout[] }
+export interface Workflow { name: string; description?: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[]; /** Absent means the board opens the column board. */ defaultView?: WorkflowView; /** The model every new conversation of the board starts on; absent keeps the deployment default. */ model?: ModelSelection; /** An authored preset for new conversations; absence defers to board default provenance. */ agentPreset?: string; /** The MCP servers and tools every conversation of the board may use; absent keeps every server visible and an empty list keeps none. */ mcp?: string[]; /** Authored connection layouts; an absent entry keeps the automatic route. */ connections?: ConnectionLayout[] }
 export interface Worktree { path: string; branch: string; owned: boolean; status: 'preparing' | 'ready' | 'error'; error?: Problem }
 export interface CreateWorktree { mode: 'new' | 'existing'; path: string; branchName: string; sourceBranch?: string }
 /**
@@ -167,7 +169,7 @@ export interface CreateAttemptRecord {
 }
 /** Why a host advance exists: auto mode armed the completed turn, or the agent declared the transition it ends in. */
 export type AdvanceOrigin = 'auto' | 'agent';
-export interface PendingTransition { id: string; fromColumnId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; text?: string; /** Absent places the task at the start of the destination; `null` places it at the end; an id places it before that task. */ beforeTaskId?: string | null; worktreeRequest?: CreateWorktree; transitionOverride?: boolean; status: 'waiting' | 'sending' | 'failed'; error?: Problem; /** Absent means a user-confirmed transition; `auto` is the turn-end advance of an auto-mode task and `agent` the advance of a transition the agent declared. */ origin?: AdvanceOrigin; /** The reason a declared transition carries, kept for the manual retry of a failed advance. */ reason?: string; /** Values supplied by a declared transition, carried into the destination entry. */ parameters?: Record<string, string> }
+export interface PendingTransition { id: string; fromColumnId: string; columnId: string; mode: 'move' | 'run'; sessionId?: string; text?: string; /** Absent places the task at the start of the destination; `null` places it at the end; an id places it before that task. */ beforeTaskId?: string | null; worktreeRequest?: CreateWorktree; transitionOverride?: boolean; /** A prepared exceptional admission is never dispatchable before finalization. */ exceptionUnfinalized?: string; status: 'waiting' | 'sending' | 'failed'; error?: Problem; /** Absent means a user-confirmed transition; `auto` is the turn-end advance of an auto-mode task and `agent` the advance of a transition the agent declared. */ origin?: AdvanceOrigin; /** The reason a declared transition carries, kept for the manual retry of a failed advance. */ reason?: string; /** Values supplied by a declared transition, carried into the destination entry. */ parameters?: Record<string, string> }
 /** Why auto mode is paused; only reasons that cannot be derived from the snapshot are recorded. */
 export const AUTO_MODE_PAUSE_REASONS = ['turn-error', 'turn-blocked', 'turn-aborted', 'turn-max-tokens', 'advance-failed', 'transition-stale'] as const;
 export type AutoModePauseReason = (typeof AUTO_MODE_PAUSE_REASONS)[number];
@@ -177,7 +179,7 @@ export interface AutoModeHold { reason: string; at: string }
 /** Per-task auto mode: arms the host advance on the next completed turn. */
 export interface AutoModeState { enabled: boolean; pause?: AutoModePause; hold?: AutoModeHold }
 /** One transition recorded for a task's current stage, the stage it was recorded for, and the reason the agent gave. */
-export interface RecordedTransition { fromColumnId: string; columnId: string; at: string; /** Absent only on a recording stored before reasons existed; such a recording never arms an advance by itself. */ reason?: string; /** Values for the destination stage's declared parameters, applied when the entry is established. */ parameters?: Record<string, string> }
+export interface RecordedTransition { fromColumnId: string; columnId: string; at: string; exception?: { id: string; sessionId: string; turn: number; entryId: string }; /** Absent only on a recording stored before reasons existed; such a recording never arms an advance by itself. */ reason?: string; /** Values for the destination stage's declared parameters, applied when the entry is established. */ parameters?: Record<string, string> }
 export interface Task {
   stageEntry?: TaskStageEntry;
   scripted?: ScriptedControl;
@@ -215,6 +217,8 @@ export interface Board {
   /** Local-only stable associations; configuring a stage never publishes an identity. */
   localStageIdentities?: Record<string, string>;
   id: string; name: string; workflowYaml: string; workflow: Workflow;
+  /** New-board default provenance. Absence on a legacy board means host default. */
+  defaultPresetMode?: 'operator' | 'host';
   /** Absent means every project of the Hub may create tasks on this board; an empty list closes it to creation. */
   allowedProjectKeys?: string[];
   createdAt: string; updatedAt: string;
@@ -303,7 +307,7 @@ export interface KanbanState { hubs: HubState[]; settings: KanbanSettings }
  * The board view the interface reads. It is projected from a Hub on every snapshot and
  * never persisted, so it may carry derived fields the stored board does not keep.
  */
-export interface BoardState { boardId?: string; localStageIdentities?: Record<string, string>; schemaVersion: 2; revision: number; workflowYaml: string; workflow: Workflow; projects: Project[]; tasks: Task[]; notes: Note[]; relations?: BoardRelation[]; settings?: BoardSettings }
+export interface BoardState { boardId?: string; effectiveDefaultPreset?: string; localStageIdentities?: Record<string, string>; schemaVersion: 2; revision: number; workflowYaml: string; workflow: Workflow; projects: Project[]; tasks: Task[]; notes: Note[]; relations?: BoardRelation[]; settings?: BoardSettings }
 /**
  * One relation as the interface reads it. Both endpoints are resolved here so the
  * drawer can name a card on another board without holding that board's task list.
@@ -552,7 +556,7 @@ export type Command =
   | { type: 'board.create'; hubId: string; name: string }
   | { type: 'board.rename'; hubId: string; boardId: string; name: string; expectedRevision?: number }
   | { type: 'board.delete'; hubId: string; boardId: string; confirmed: boolean; expectedRevision?: number; sharing?: 'local' | 'team' }
-  | { type: 'board.workflow.save'; hubId: string; boardId: string; yaml: string; expectedRevision?: number }
+  | { type: 'board.workflow.save'; hubId: string; boardId: string; yaml: string; expectedRevision?: number; presetChoice?: 'host' | 'named' }
   | { type: 'board.stage.update'; hubId: string; boardId: string; stageId: string; patch: StagePatch; expectedRevision?: number }
   /** An absent `projectKeys` allows every project of the Hub; an empty list closes the board to creation. */
   | { type: 'board.projects.save'; hubId: string; boardId: string; projectKeys?: string[]; expectedRevision?: number }

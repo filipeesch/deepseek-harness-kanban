@@ -3,6 +3,7 @@ import * as operations from '../../src/domain/hub-operations.js';
 import { sampleHub, operationDeps } from './hub-helpers.js';
 import { transitions } from '../support/transition-rules.js';
 import { HubStateSchema } from '../../src/domain/hub-schema.js';
+import { resolveExceptionalTransition } from '../../src/domain/transition-route.js';
 import type { HubTask } from '../../src/shared/types.js';
 
 /**
@@ -15,6 +16,79 @@ function place(hub: Parameters<typeof operations.placeTask>[0], taskId: string, 
 }
 
 describe('Hub operations', () => {
+  it('records an exceptional declaration only for the verified current entry and turn', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    hub.boards[0]!.workflow.columns.push({ id: 'done', name: 'Done' }, { id: 'other', name: 'Other' });
+    hub.boards[0]!.workflow.columns[0]!.allowedTransitions = transitions('done');
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Task', description: '' }, deps);
+    task.sessionIds.push('session-1');
+    const owner = { sessionId: 'session-1', turn: 2, entryId: task.stageEntry!.id, fromColumnId: 'backlog', isCurrent: () => true };
+    operations.recordTransition(hub, task.id, 'done', 'Normal.', undefined, deps);
+    for (const bad of [{ ...owner, isCurrent: () => false }, { ...owner, entryId: 'wrong' }, { ...owner, sessionId: 'other-session' }]) {
+      expect(() => operations.recordExceptionalTransition(hub, task.id, 'other', 'Requested.', undefined, bad, deps)).toThrow();
+      expect(task.recordedTransition?.columnId).toBe('done');
+    }
+    expect(() => operations.recordExceptionalTransition(hub, task.id, 'other', '', undefined, owner, deps)).toThrow();
+    expect(() => operations.recordExceptionalTransition(hub, task.id, 'missing', 'Requested.', undefined, owner, deps)).toThrow();
+    expect(() => operations.recordExceptionalTransition(hub, task.id, 'done', 'Requested.', undefined, owner, deps)).toThrow();
+    operations.recordExceptionalTransition(hub, task.id, 'other', ' Requested. ', undefined, owner, deps);
+    expect(task.recordedTransition).toMatchObject({ fromColumnId: 'backlog', columnId: 'other', reason: 'Requested.', exception: { sessionId: 'session-1', turn: 2, entryId: owner.entryId, id: expect.any(String) } });
+    expect(task.columnId).toBe('backlog');
+    const exceptionId = task.recordedTransition!.exception!.id;
+    operations.recordTransition(hub, task.id, 'done', 'Replacement.', undefined, deps);
+    expect(operations.clearExceptionalTransition(hub, task.id, exceptionId, deps)).toBe(false);
+    expect(task.recordedTransition?.columnId).toBe('done');
+    operations.recordExceptionalTransition(hub, task.id, 'other', 'Requested again.', undefined, owner, deps);
+    expect(operations.clearExceptionalTransition(hub, task.id, task.recordedTransition!.exception!.id, deps)).toBe(true);
+    expect(task.recordedTransition).toBeUndefined();
+  });
+
+  it('can clear an exception even when its source configures no transitions', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    hub.boards[0]!.workflow.columns.push({ id: 'other', name: 'Other' });
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Task', description: '' }, deps);
+    task.sessionIds.push('s1');
+    const owner = { sessionId: 's1', turn: 1, entryId: task.stageEntry!.id, fromColumnId: 'backlog', isCurrent: () => true };
+    operations.recordExceptionalTransition(hub, task.id, 'other', 'Requested.', undefined, owner, deps);
+    operations.recordTransition(hub, task.id, undefined, undefined, undefined, deps);
+    expect(task.recordedTransition).toBeUndefined();
+  });
+
+  it('binds an unambiguous legacy entry without manufacturing its timestamp', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    const board = hub.boards[0]!;
+    board.workflow.columns.push({ id: 'done', name: 'Done' }, { id: 'other', name: 'Other' });
+    board.workflow.columns[0]!.allowedTransitions = transitions('done');
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Legacy', description: '' }, deps);
+    task.sessionIds.push('s1'); delete task.stageEntry;
+    const owner = { sessionId: 's1', turn: 1, fromColumnId: 'backlog', isCurrent: () => true };
+    operations.recordExceptionalTransition(hub, task.id, 'other', 'Requested.', undefined, owner, deps);
+    expect(task.stageEntry).toBeUndefined();
+    const recording = structuredClone(task.recordedTransition!);
+    const exception = recording.exception!;
+    expect(exception.entryId).toBe(exception.id);
+    const identity = { ...exception, fromColumnId: 'backlog', columnId: 'other' };
+    expect(resolveExceptionalTransition(board.workflow, task, identity)?.id).toBe('other');
+    place(hub, task.id, 'done', 'end', 1); place(hub, task.id, 'backlog', 'end', 2);
+    task.recordedTransition = recording;
+    expect(resolveExceptionalTransition(board.workflow, task, identity)).toBeUndefined();
+  });
+
+  it('validates scripted destination parameters and never overrides scripted source authority', () => {
+    const hub = sampleHub(); const deps = operationDeps();
+    hub.boards[0]!.workflow.columns.push({ id: 'wait', name: 'Wait', scripted: { language: 'bash', code: 'echo ok', directory: 'task', params: [{ name: 'pipeline' }], exits: { ok: 'done' } } }, { id: 'done', name: 'Done' });
+    hub.boards[0]!.workflow.columns[0]!.allowedTransitions = transitions('done');
+    const task = operations.createTask(hub, { boardId: 'board', projectId: 'project', title: 'Task', description: '' }, deps);
+    task.sessionIds.push('s1');
+    const owner = { sessionId: 's1', turn: 1, entryId: task.stageEntry!.id, fromColumnId: 'backlog', isCurrent: () => true };
+    expect(() => operations.recordExceptionalTransition(hub, task.id, 'wait', 'Requested.', undefined, owner, deps)).toThrow(/pipeline/);
+    expect(() => operations.recordExceptionalTransition(hub, task.id, 'wait', 'Requested.', { pipeline: 'ci', extra: 'bad' }, owner, deps)).toThrow(/extra/);
+    operations.recordExceptionalTransition(hub, task.id, 'wait', 'Requested.', { pipeline: 'ci' }, owner, deps);
+    expect(task.recordedTransition?.parameters).toEqual({ pipeline: 'ci' });
+    hub.boards[0]!.workflow.columns[0]!.scripted = { language: 'bash', code: 'echo ok', directory: 'task', exits: { ok: 'done' } };
+    expect(() => operations.recordExceptionalTransition(hub, task.id, 'wait', 'Requested.', { pipeline: 'ci' }, owner, deps)).toThrow(/scripted entry/i);
+  });
+
   it('creates and renames boards with case-insensitive uniqueness', () => {
     const hub = sampleHub(); const deps = operationDeps();
     const second = operations.addBoard(hub, 'Delivery', deps);

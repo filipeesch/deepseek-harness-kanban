@@ -66,6 +66,33 @@ describe('append-only board log', () => {
     expect(nextSequence(log)).toBe(3);
   });
 
+  it('encodes and replays description events for a capable peer', () => {
+    const log = appendEvents(genesisLog(BASE), [
+      { kind: 'workflow.field-changed', field: 'description', value: 'Workflow details' },
+      { kind: 'stage.field-changed', key: 's2', field: 'description', value: 'Stage details' },
+      { kind: 'stage.created', stage: { id: 'review', key: 's3', name: 'Review', description: 'New details' } },
+    ], AT);
+    expect(log.map(item => item.v)).toEqual([3, 4, 4, 4]);
+    const decoded = decodeBoardLog(encodeBoardLog(log));
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    const result = replay(decoded.log, null);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const workflow = parseWorkflow(result.text);
+      expect(workflow.description).toBe('Workflow details');
+      expect(workflow.columns[1]?.description).toBe('Stage details');
+      expect(workflow.columns[2]?.description).toBe('New details');
+    }
+  });
+
+  it('versions replacements containing empty descriptions without validating generic payloads', () => {
+    for (const value of [BASE.replace('name: Delivery', 'name: Delivery\ndescription: ""'), BASE.replace('label: Plan', 'label: Plan\n    description: "  "'), 'columns: [{id: a, label: A, description: ""}]']) {
+      expect(appendEvents([], [{ kind: 'workflow.replaced', text: value }], AT)[0]!.v).toBe(4);
+    }
+    expect(appendEvents([], [{ kind: 'workflow.replaced', text: 'arbitrary storage payload' }], AT)[0]!.v).toBe(3);
+  });
+
   it('changes its head token when anything changes', () => {
     const first = genesisLog(BASE);
     const second = appendEvents(first, changes, AT);

@@ -29,7 +29,7 @@ export function revisionTools(app: KanbanApp, revisions: BoardRevisions | undefi
       return { boardId: board.id, ...(await port.list(board.id, { ...(args.limit === undefined ? {} : { limit: args.limit }), ...(args.before === undefined ? {} : { before: args.before }) })) };
     }, true),
 
-    normal('diff_board_revisions', 'Compare two retained revisions of one board workflow and report the semantic difference by stage, group, and connection. Reading changes nothing.', {
+    normal('diff_board_revisions', 'Compare two retained revisions of one board, including workflow differences and default preset provenance. Reading changes nothing.', {
       board_id: text('Board ID.', true),
       from: { type: 'integer', required: true, description: 'The revision the comparison starts from, as list_board_revisions reported it.' },
       to: { type: 'integer', required: true, description: 'The revision the comparison ends at.' },
@@ -37,13 +37,13 @@ export function revisionTools(app: KanbanApp, revisions: BoardRevisions | undefi
     }, async (args, exec) => {
       const port = requireRevisions(revisions);
       const { board } = resolveBoard(app, args as ToolArgs, exec);
-      const fromText = await port.textAt(board.id, args.from);
-      const toText = await port.textAt(board.id, args.to);
-      invariant(fromText !== undefined && toText !== undefined, 'REVISION_NOT_RETAINED', 'The board no longer retains one of those revisions.');
-      return { boardId: board.id, from: args.from, to: args.to, difference: diffWorkflow(parseWorkflow(fromText), parseWorkflow(toText)) };
+      const from = await port.stateAt(board.id, args.from);
+      const to = await port.stateAt(board.id, args.to);
+      invariant(from !== undefined && to !== undefined, 'REVISION_NOT_RETAINED', 'The board no longer retains one of those revisions.');
+      return { boardId: board.id, from: args.from, to: args.to, difference: { ...diffWorkflow(parseWorkflow(from.text), parseWorkflow(to.text)), ...(from.presetMode === to.presetMode ? {} : { defaultPresetMode: { from: from.presetMode ?? null, to: to.presetMode ?? null } }) } };
     }, true),
 
-    normal('revert_board', 'Restore one board workflow to the document a retained revision holds, saving it as a new revision through the same validated write path.' + reportNote + ' Pass confirmed true only after the user explicitly confirmed the restore.', {
+    normal('revert_board', 'Restore one board workflow and its default preset provenance to a retained revision, saving it as a new revision through the same validated write path.' + reportNote + ' Pass confirmed true only after the user explicitly confirmed the restore.', {
       board_id: text('Board ID.', true),
       to_revision: { type: 'integer', required: true, description: 'The revision to restore, as list_board_revisions reported it.' },
       confirmed: flag('Explicit confirmation of the restore; it is refused without it.'),
@@ -55,12 +55,13 @@ export function revisionTools(app: KanbanApp, revisions: BoardRevisions | undefi
       const port = requireRevisions(revisions);
       invariant(args.confirmed === true, 'CONFIRMATION_REQUIRED', 'Confirm restoring the board to that revision.');
       const { board } = resolveBoard(app, args as ToolArgs, exec);
-      const target = await port.textAt(board.id, args.to_revision);
+      const target = await port.stateAt(board.id, args.to_revision);
       invariant(target !== undefined, 'REVISION_NOT_RETAINED', 'The board no longer retains revision ' + args.to_revision + '.');
       try {
         const value = await authoring.saveWorkflowReviewed({
           boardId: board.id, ...(args.hub_id === undefined ? {} : { hubId: args.hub_id }),
-          expectedRevision: args.expected_revision, actor: actorOf(exec), origin: 'tool', replace: true, compose: () => target,
+          expectedRevision: args.expected_revision, actor: actorOf(exec), origin: 'tool', replace: true, compose: () => target.text,
+          restorePresetMode: { value: target.presetMode },
           ...(args.expect_sha256 === undefined ? {} : { expectSha256: args.expect_sha256 }),
           ...(args.dry_run === true ? { dryRun: true } : {}),
           ...(args.detail === undefined ? {} : { detail: args.detail }),

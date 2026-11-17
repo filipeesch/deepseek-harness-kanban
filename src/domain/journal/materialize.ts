@@ -39,6 +39,7 @@ export function stageIdentifier(workflow: Workflow, key: string): string {
 /** One stage as authored lines, ready to be inserted as a sequence item. */
 function stageLines(stage: StageDefinition): string[] {
   const lines = ['id: ' + scalar(stage.id), 'key: ' + scalar(stage.key), 'label: ' + scalar(stage.name)];
+  if (stage.description !== undefined) lines.push('description: ' + scalar(stage.description));
   if (stage.onEnterPrompt !== undefined && stage.onEnterPrompt.trim().length > 0) {
     // The shared renderer chooses a block scalar and keeps the authored trailing-newline style.
     lines.push(...textField('on_enter_prompt', stage.onEnterPrompt, '', false).split(String.fromCharCode(10)));
@@ -66,6 +67,7 @@ function groupLines(group: ColumnGroup): string[] {
 /** One stage as a single-line flow mapping, for a columns list authored in flow style. */
 function stageFlow(stage: StageDefinition): string {
   const fields = ['id: ' + scalar(stage.id), 'key: ' + scalar(stage.key), 'label: ' + scalar(stage.name)];
+  if (stage.description !== undefined) fields.push('description: ' + scalar(stage.description));
   if (stage.onEnterPrompt !== undefined && stage.onEnterPrompt.trim().length > 0) fields.push('on_enter_prompt: ' + scalar(stage.onEnterPrompt));
   if (stage.allowedTransitions !== undefined) {
     const rules = stage.allowedTransitions.map(rule => (rule.when === undefined ? '{to: ' + scalar(rule.to) + '}' : '{to: ' + scalar(rule.to) + ', when: ' + scalar(rule.when) + '}'));
@@ -163,7 +165,7 @@ export function materialize(text: string, change: BoardChange): string {
     case 'workflow.field-changed':
       return writeRootField({
         text,
-        fieldKeys: change.field === 'name' ? ['name'] : ['default_view'],
+        fieldKeys: change.field === 'name' ? ['name'] : change.field === 'description' ? ['description'] : ['default_view'],
         render: (_existing, _indent, field) => (change.value === null ? null : field + ': ' + scalar(change.value)),
         invalid,
       });
@@ -187,6 +189,7 @@ export function materialize(text: string, change: BoardChange): string {
           invalid,
         });
       }
+      if (change.field === 'description') return writeSequenceItemField({ text, sequenceKey: 'columns', idKey: 'id', id: stageId, fieldKeys: ['description'], render: (_existing, _indent, field) => change.value === null ? null : field + ': ' + scalar(change.value), invalid });
       if (change.field === 'scripted') return updateStage({ text, stageId, patch: { scripted: change.value, ...(change.value === null ? {} : { onEnterPrompt: null, allowedTransitions: null }) } }).text;
       const patch = change.field === 'name'
         ? { name: change.value }

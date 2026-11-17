@@ -1,36 +1,23 @@
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
-import type { HubSharingView } from '../../shared/types.js';
 import type { KanbanApp } from '../app.js';
 import type { BoardAdministration } from '../board-administration.js';
 import { isProjectAllowed } from '../../domain/board-project-scope.js';
 import { isPublishedProject } from '../../shared/project.js';
 import { normal, text } from './support.js';
-import { boardSummary, resolveBoard, resolveHub, type ToolArgs } from './scope.js';
-
-function sharingSummary(view:HubSharingView|undefined,boardId:string){
- const board=view?.boards.find(entry=>entry.boardId===boardId);
- return {
-  status:view?.status??'not-published',
-  ...(view===undefined?{}:{updates:view.updates,conflicts:view.conflicts,blockers:view.blockers}),
-  bound:board?.bound===true,
-  ...(board===undefined?{}:{boardState:board.state}),
- };
-}
+import { resolveBoard, resolveHub, taskContext, type ToolArgs } from './scope.js';
+import { projectWorkflowSummary, readWorkflowSummaryState, workflowSummaryPage } from '../workflow-summary.js';
 
 export function discoveryTools(app:KanbanApp,boards:BoardAdministration):ToolDefinition[]{
  return [
   normal('list_hubs','List the Hubs available in this installation. Use this before discovering boards.',{},async()=>app.hubs.list().map(hub=>({id:hub.id,name:hub.name,boardCount:hub.boards.length})),true),
   normal('list_boards','List the boards of a Hub. Pass hub_id, or use this from a task conversation to infer its Hub.',{hub_id:text('Hub ID. Optional in a task conversation.')},async(args,exec)=>{const {hub}=resolveHub(app,args as ToolArgs,exec);return hub.boards.map(board=>({id:board.id,hubId:hub.id,name:board.name,columns:board.workflow.columns.map(column=>({id:column.id,name:column.name}))}));},true),
   normal('list_projects','List the projects owned by a board\'s Hub. Each project states whether the requested board allows it to create a card.',{board_id:text('Board ID. Optional in a task conversation.'),hub_id:text('Hub ID; only used to resolve a board when supplied with board_id.')},async(args,exec)=>{const {board,hub}=resolveBoard(app,args as ToolArgs,exec);return hub.projects.map(project=>({...project,allowed:!isPublishedProject(project)&&isProjectAllowed(board,project)}));},true),
-  normal('get_board_summary','Summarize one board and its workflow columns without modifying tasks. Set include_workflow to read the parsed workflow including the board\'s default model, default agent preset, and MCP allowlist, the Hub revision, and the publishing state. The exact authored document is read with get_board_yaml, and one stage of it with get_stage.',{board_id:text('Board ID. Optional in a task conversation.'),include_workflow:{type:'boolean',description:'Include the parsed workflow, the board default model as defaultModel, the board default agent preset as defaultAgentPreset, the board MCP allowlist as mcp (null when it names none, an empty list when it keeps no server), the Hub revision, and the publishing state.'}},async(args,exec)=>{
+  normal('get_workflow_summary','Read a compact live workflow summary. Use nextCursor for omitted records; concatenate oversizedRecordFragment text in order and JSON.parse it. Conditions are documentary, not executable.',{board_id:text('Board ID. Optional in a task conversation.'),cursor:text('Continuation cursor from the previous page. Start again if the summary changed.')},async(args,exec)=>{
    const {board,hub}=resolveBoard(app,args as ToolArgs,exec);
-   const view=boards.read(board.id,hub.id);
-   const summary={...boardSummary(view.board,hub),hubRevision:view.hubRevision};
-   if(args.include_workflow!==true)return summary;
-   // defaultModel and defaultAgentPreset state the board's own choices explicitly:
-   // null says the board names none and its conversations use the host defaults. The
-   // authored text is deliberately absent: it is large, and get_board_yaml returns it exactly.
-   return {...summary,initialColumnId:view.board.workflow.initialColumnId,groups:view.board.workflow.groups,workflow:view.board.workflow,defaultModel:view.board.workflow.model??null,defaultAgentPreset:view.board.workflow.agentPreset??null,mcp:view.board.workflow.mcp??null,sharing:sharingSummary(boards.sharingView(hub.id),board.id)};
+   const located=taskContext(app,exec);
+   const own=located?.board.id===board.id && located.hubId===hub.id ? located.task : undefined;
+   const {sharing,held}=await readWorkflowSummaryState(hub.id,own,{sharingView:id=>boards.sharingView(id),conversationFacts:id=>app.conversationFacts(id)});
+   return workflowSummaryPage(projectWorkflowSummary(board,hub,sharing,own,held),args.cursor);
   },true),
  ];
 }

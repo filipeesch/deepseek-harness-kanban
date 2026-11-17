@@ -1,6 +1,6 @@
 {
   "name": "dsh-kanban",
-  "version": "0.36.7",
+  "version": "0.37.0",
   "private": true,
   "type": "module",
   "description": "Task-centered Kanban, worktrees, and native conversations for DeepSeek Harness",

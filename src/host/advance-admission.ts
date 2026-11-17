@@ -77,7 +77,8 @@ function requireArmed(origin: AdvanceOrigin, workflow: Workflow, task: Task): vo
  * the transaction committed, throws and the coordinator records the admission
  * failure instead of retrying silently.
  */
-export async function admitTurnAdvance(deps: AdvanceAdmissionDeps, taskId: string, plan: AutoAdvancePlan, origin: AdvanceOrigin): Promise<void> {
+export async function admitTurnAdvance(deps: AdvanceAdmissionDeps, taskId: string, plan: AutoAdvancePlan, origin: AdvanceOrigin, isCurrent: () => boolean = () => true): Promise<void> {
+  if (!isCurrent()) return;
   const located = deps.locate(taskId);
   if (blocked(located, origin) || located.task.columnId !== plan.fromColumnId) return;
   requireSameDestination(located, plan);
@@ -85,7 +86,7 @@ export async function admitTurnAdvance(deps: AdvanceAdmissionDeps, taskId: strin
   const instruction = entryInstruction(destination);
   const sessionId = instruction === undefined ? undefined : firstOpenSessionId(located.task) ?? await deps.resolveSession(located.task);
   const latest = deps.locate(taskId);
-  if (blocked(latest, origin) || latest.task.columnId !== plan.fromColumnId) return;
+  if (!isCurrent() || blocked(latest, origin) || latest.task.columnId !== plan.fromColumnId) return;
   requireSameDestination(latest, plan);
   // The settle evaluation and the durable decision are different observations:
   // a question, approval, or queued prompt admitted in between stops the advance.
@@ -93,18 +94,22 @@ export async function admitTurnAdvance(deps: AdvanceAdmissionDeps, taskId: strin
   let waitState: PendingUserWork;
   try { waitState = await deps.pending(latest.task); }
   catch (error) { deps.report(error); return; }
-  if (hasPendingUserWork(waitState)) return;
+  if (!isCurrent() || hasPendingUserWork(waitState)) return;
   // The reason belongs to the destination, not to the origin: an auto-mode task
   // that declared its route still carries the justification into the next stage.
   const reason = declaredTransitionReason(latest.board.workflow, latest.task);
-  const parameters = latest.task.recordedTransition?.parameters;
+  // Unadmitted exceptional intent never lends its parameters to an independent
+  // automatic default, even if the workflow later configures that destination.
+  const parameters = latest.task.recordedTransition?.exception === undefined ? latest.task.recordedTransition?.parameters : undefined;
   const transition: PendingTransition = {
     id: randomUUID(), fromColumnId: plan.fromColumnId, columnId: destination.id, mode: instruction !== undefined ? 'run' : 'move', status: 'waiting', origin,
     ...(reason === undefined ? {} : { reason }),
     ...(parameters === undefined ? {} : { parameters: { ...parameters } }),
     ...(instruction !== undefined ? { text: instruction, sessionId: sessionId! } : {}),
   };
+  let accepted = false;
   await deps.transact(latest.hubId, draft => {
+    if (!isCurrent()) return;
     const value = draft.tasks.find(candidate => candidate.id === taskId)!;
     invariant(!value.operation && !value.pendingTransition, 'REVISION_CONFLICT', 'Task changed before the automatic advance could be admitted.');
     invariant(value.columnId === plan.fromColumnId, 'REVISION_CONFLICT', 'Task moved before the automatic advance could be admitted.');
@@ -115,6 +120,7 @@ export async function admitTurnAdvance(deps: AdvanceAdmissionDeps, taskId: strin
     requireRoute(destination, board.workflow, value);
     value.pendingTransition = transition;
     if (value.autoMode?.pause !== undefined) delete value.autoMode.pause;
+    accepted = true;
   });
-  await deps.dispatch();
+  if (accepted) await deps.dispatch();
 }
