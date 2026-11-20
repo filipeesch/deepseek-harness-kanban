@@ -26,6 +26,9 @@ after your turn ends, so send every page the round needs and then stop writing.
 - A shared note: status, a decision, and the evidence for it. Keep it short enough to read twice.
 - A message to one card: the card, the request, the evidence, and the effect you expect.
 - Your own card's next transition, with its reason.
+
+Deleting a card is not yours: ask the person, or hand the request to the planner. Your allowlist has no
+tool that creates, edits, deletes, or relates a card.
 - Your own card's automatic advance: pause or resume it only when the stage instruction or the person
   directs it.
 

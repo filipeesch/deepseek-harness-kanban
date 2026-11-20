@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis';
 import os from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { createScriptedRuntime } from './host/scripted/index.js';
+import { createScriptedLease, createScriptedRuntime } from './host/scripted/index.js';
 import type {} from '@deepseek-ai/dsh-typert-registry';
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-subagent';
@@ -233,7 +233,12 @@ export async function apply(ctx:Context):Promise<void>{
  // The board's tool policy needs the app's task lookup, and the app needs the
  // policy port. One deferred hop keeps the dependency one-directional.
  let applyBoardToolPolicy:(sessionId:string)=>Promise<void>=async()=>undefined;
- const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,models:sessionModels,presets:sessionPresets,turnBoundary:{boundary:id=>{const agent=ctx.agents.get(SessionId(id));return agent?ctx.agents.turnBoundaryOf(agent.session):undefined;}},tools:{apply:sessionId=>applyBoardToolPolicy(sessionId)},mcpServers:()=>{const manager=ctx.get('mcpManager') as {list?:()=>ReadonlyArray<{name:string}>}|undefined;try{return manager?.list?.().map(server=>server.name)??[];}catch{return [];}},report,revisions,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
+ // A native execution lease outlives the host that wrote it, so the reader is wired
+ // from the private directory alone and outside the optional execution-provider fiber
+ // below: a destructive admission must still see the lease when no runtime is mounted.
+ const profile=ctx.get('profileContext') as {readonly dir:string}|undefined;
+ const scriptedLease=profile&&isAbsolute(profile.dir)?createScriptedLease(join(profile.dir,'kanban-private','scripted')):undefined;
+ const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,...(scriptedLease===undefined?{}:{scriptedLease}),models:sessionModels,presets:sessionPresets,turnBoundary:{boundary:id=>{const agent=ctx.agents.get(SessionId(id));return agent?ctx.agents.turnBoundaryOf(agent.session):undefined;}},tools:{apply:sessionId=>applyBoardToolPolicy(sessionId)},mcpServers:()=>{const manager=ctx.get('mcpManager') as {list?:()=>ReadonlyArray<{name:string}>}|undefined;try{return manager?.list?.().map(server=>server.name)??[];}catch{return [];}},report,revisions,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
  // The repair is composed here so the app keeps no file-system or format dependency:
  // it delegates to a pipeline whose safety rules are its own.
  app.attachSessionRepair(createHostSessionRepair({
@@ -260,7 +265,6 @@ export async function apply(ctx:Context):Promise<void>{
   report,
  });
  applyBoardToolPolicy=async sessionId=>{const agent=await resolveSessionAgent(ctx,sessionId);if(agent!==undefined){boardToolPolicy.track(agent as PolicyAgent);confinedStartPin.track(agent as {session:unknown});}};
- const profile=ctx.get('profileContext') as {readonly dir:string}|undefined;
  if(profile&&isAbsolute(profile.dir)){
   // Optional child injection grants access without making conventional boards
   // depend on providers that might not be installed in this profile.

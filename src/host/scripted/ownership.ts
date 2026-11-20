@@ -102,6 +102,18 @@ export class NativeExecutionOwnership {
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; return failure('OWNERSHIP_UNCERTAIN', 'The task native ownership record is unreadable.'); }
     await this.reclaimRecord(path, record);
   }
+  /**
+   * Read-only ownership check for a caller that must not mutate anything yet. It
+   * fails closed on a present or unprovable lease, so a surface that cannot reclaim
+   * still cannot proceed past an owner it does not understand.
+   */
+  async assertNoTaskLease(scope: ScriptedScope, taskId: string): Promise<void> {
+    const key = createHash('sha256').update(JSON.stringify([scope.hubId, scope.projectId, taskId])).digest('hex');
+    const path = join(this.directory, key + '.json');
+    try { await readFile(path); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; failure('OWNERSHIP_UNCERTAIN', 'This task native ownership record cannot be read, so its execution lease cannot be ruled out. Restore access to the record and resolve the scripted context in the interface before deleting the card.'); }
+    failure('OWNERSHIP_EXISTS', 'This task still holds a native execution lease. Reclaim it in the interface before deleting the card.');
+  }
   private async reclaimRecord(path: string, record: OwnerRecord): Promise<void> {
     if (!record.host || !Array.isArray(record.guards)) failure('OWNERSHIP_UNCERTAIN', 'This native owner has no authenticated lifetime proof.');
     try {

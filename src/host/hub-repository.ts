@@ -528,7 +528,12 @@ export class HubRepository {
     });
   }
 
-  async transact<T>(hubId: string, change: (draft: HubState) => T | Promise<T>, expectedRevision?: number, validate?: (draft: HubState) => void): Promise<T> {
+  /**
+   * One transaction. `beforeCommit` runs after every check and immediately before the
+   * write is handed to storage, which is the last point a caller can still refuse it:
+   * a storage write that has begun cannot be called back.
+   */
+  async transact<T>(hubId: string, change: (draft: HubState) => T | Promise<T>, expectedRevision?: number, validate?: (draft: HubState) => void, beforeCommit?: () => void): Promise<T> {
     return this.mutate(async () => {
       const current = this.requireHub(hubId);
       invariant(!this.uncertainHubs.has(hubId), 'EXCEPTION_COMMIT_UNCERTAIN', 'Reopen the repository before writing this Hub; an exceptional finalization remains unverified.');
@@ -549,6 +554,9 @@ export class HubRepository {
       draft.updatedAt = this.now();
       const next = parseHub(draft, 'Kanban state is invalid.');
       this.assertCrossHubOwnership(next);
+      // The handoff to storage is the point of no return: once the write starts it
+      // cannot be cancelled, so the caller refusal happens exactly here.
+      beforeCommit?.();
       try { await this.persistHub(next); }
       catch (error) {
         if (current.tasks.some(task => task.pendingTransition?.exceptionUnfinalized !== undefined)
@@ -639,8 +647,8 @@ export class HubStore {
     return this.repository.subscribe(() => listener(this.snapshot()));
   }
 
-  transact<T>(change: (draft: HubState) => T | Promise<T>, expectedRevision?: number): Promise<T> {
-    return this.repository.transact(this.hubId, change, expectedRevision);
+  transact<T>(change: (draft: HubState) => T | Promise<T>, expectedRevision?: number, beforeCommit?: () => void): Promise<T> {
+    return this.repository.transact(this.hubId, change, expectedRevision, undefined, beforeCommit);
   }
 
   requireTask(taskId: string, state: HubState = this.snapshot()): HubTask { return operations.requireTask(state, taskId); }
@@ -721,9 +729,6 @@ export class HubStore {
   }
   async deleteRelations(relationIds: readonly string[]): Promise<HubRelation[]> {
     return this.transact(draft => operations.deleteRelations(draft, relationIds, this.deps()));
-  }
-  async deleteTask(taskId: string): Promise<HubTask> {
-    return this.transact(draft => operations.deleteTask(draft, taskId));
   }
   async addBoard(name: string): Promise<Board> { return this.transact(draft => operations.addBoard(draft, name, this.deps())); }
   async renameBoard(boardId: string, name: string, expectedRevision?: number): Promise<Board> {

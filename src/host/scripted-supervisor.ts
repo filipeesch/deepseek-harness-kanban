@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ScriptedCapture, ScriptedControl, ScriptedHold, ScriptedInput, ScriptedResult, StepCompletion } from '../shared/scripted.js';
 import type { HubTask, Problem } from '../shared/types.js';
 import type { StageEntryOrigin } from '../shared/task-history.js';
-import { KanbanError } from '../shared/errors.js';
+import { KanbanError, invariant } from '../shared/errors.js';
 import type { LocatedTask } from './hub-repository.js';
 import { captureStageTargets } from '../domain/stage-identity.js';
 import { boundedRedactedParameters, declaredParameterNames, declaredParameterValues, missingParameterNames, validateParameterValues } from '../domain/scripted-parameters.js';
@@ -269,6 +269,23 @@ export class ScriptedSupervisor {
   }
 
   /** Must finish before deleting/relocating a task directory. Refused moves do not call this. */
+  /**
+   * Refuse an admission while this process still owns the task, without stopping,
+   * reclaiming, writing, or rescheduling anything.
+   *
+   * It answers only what this process knows: an in-memory execution and the current
+   * scripted control. The task execution lease lives on disk and outlives this
+   * process, so the filesystem lease reader reads it; re-reading it here through an
+   * optional runtime would let an absent provider answer differently from the file.
+   */
+  async assertContextFree(taskId: string): Promise<void> {
+    const predecessor = this.owners.get(taskId) ?? this.uncertainOwners.get(taskId);
+    invariant(predecessor === undefined, 'EXECUTION_CONTEXT_CHANGED', 'A scripted execution still owns this task; stop it before deleting the card.');
+    const located = this.ports.locate(taskId);
+    if (located === undefined) return;
+    const control = located.task.scripted;
+    invariant(control === undefined || control.phase === 'stopped' || control.phase === 'failed', 'EXECUTION_CONTEXT_CHANGED', 'A scripted execution still owns this task; stop it before deleting the card.');
+  }
   async beforeContextChange(taskId: string): Promise<void> {
     this.clearRecheck(taskId);
     const predecessor = this.owners.get(taskId) ?? this.uncertainOwners.get(taskId);

@@ -18,7 +18,7 @@ Every relation SHALL have both endpoints in the Hub that stores it, and SHALL NO
 
 Epic relations SHALL NOT form a cycle. A requested epic relation that would make a task its own ancestor, directly or through other epic relations, SHALL be rejected with an actionable problem naming the tasks involved, and SHALL NOT be stored.
 
-Deleting a task SHALL remove every relation in which that task is the source or the target. A stored relation whose endpoint task is absent from the Hub SHALL be invalid state, rejected by the Hub's own validation, rather than tolerated data that reads must filter.
+Removing a task from its Hub SHALL remove, in the same mutation, every relation in which that task is the source or the target, and SHALL remove the task's shared notes with it. Every path that removes a task SHALL apply that same cascade: the interface deletion, the background destructive execution the confirmed deletion command admits, and any direct aggregate delete. A stored relation whose endpoint task is absent from the Hub SHALL be invalid state, rejected by the Hub's own validation, rather than tolerated data that reads must filter.
 
 #### Scenario: Record an epic relation
 
@@ -67,6 +67,12 @@ Deleting a task SHALL remove every relation in which that task is the source or 
 - **WHEN** a task that has relations is deleted
 - **THEN** every relation in which that task is an endpoint is removed
 - **AND** every other relation remains readable
+
+#### Scenario: Remove incident relations through every deletion path
+
+- **WHEN** a card that takes part in a relation between cards is deleted from the task drawer, from the board bulk selection, or by an agent through the card deletion tool
+- **THEN** the deletion succeeds and removes that card's incident relations in the same mutation
+- **AND** the Hub remains valid state, and no deletion fails because a relation would have outlived its endpoint
 
 #### Scenario: Never publish relations
 
