@@ -11,6 +11,7 @@ import { HubRepository } from './host/hub-repository.js';
 import { openRevisionStorage } from './host/revision-storage.js';
 import { BoardRevisions } from './host/revisions.js';
 import { createWorkflowImagePort } from './host/workflow-image.js';
+import { createPlanFilePort } from './host/plan-files.js';
 import { openKanbanStorage } from './host/storage.js';
 import { openQuestionStorage } from './host/question-storage.js';
 import { openSharingStorage } from './host/sharing/state.js';
@@ -40,7 +41,7 @@ import { KanbanController } from './host/controller.js';
 import { registerProductTools } from './host/tools.js';
 import { createBoardToolPolicy, type PolicyAgent } from './host/board-tool-policy.js';
 import { boardAllowlistFor } from './host/board-policy-source.js';
-import { createPresetReadOnlyPin, READ_ONLY_PRESET_IDS } from './host/preset-readonly.js';
+import { CONFINED_START_PRESET_IDS, createConfinedStartPin } from './host/preset-readonly.js';
 import { KanbanError } from './shared/errors.js';
 import { registerTaskContextInjection } from './host/task-context.js';
 import { registerScriptedHandoffInjection } from './host/scripted-handoff.js';
@@ -251,14 +252,14 @@ export async function apply(ctx:Context):Promise<void>{
   restrict:(agent,deny)=>(agent as unknown as {ctx:Context}).ctx.tools.restrict({deny:[...deny]}),
   report,
  });
- const readOnlyPin=createPresetReadOnlyPin({
+ const confinedStartPin=createConfinedStartPin({
   presetOf:session=>{const presets=ctx.get('agentPresets') as {presetForSession?:(session:unknown)=>string|null;stateOf?:(session:unknown)=>string|null}|undefined;const read=presets?.presetForSession??presets?.stateOf;try{return read===undefined||presets===undefined?null:read.call(presets,session);}catch{return null;}},
-  presets:new Set(READ_ONLY_PRESET_IDS),
+  presets:new Set(CONFINED_START_PRESET_IDS),
   currentMode:session=>{const policy=ctx.get('sandboxPolicy') as {overrideOf?:(session:Session)=>string|undefined}|undefined;try{return policy?.overrideOf?.(session as Session);}catch{return undefined;}},
   pin:session=>setSandboxMode(session as Session,'read-only'),
   report,
  });
- applyBoardToolPolicy=async sessionId=>{const agent=await resolveSessionAgent(ctx,sessionId);if(agent!==undefined){boardToolPolicy.track(agent as PolicyAgent);readOnlyPin.track(agent as {session:unknown});}};
+ applyBoardToolPolicy=async sessionId=>{const agent=await resolveSessionAgent(ctx,sessionId);if(agent!==undefined){boardToolPolicy.track(agent as PolicyAgent);confinedStartPin.track(agent as {session:unknown});}};
  const profile=ctx.get('profileContext') as {readonly dir:string}|undefined;
  if(profile&&isAbsolute(profile.dir)){
   // Optional child injection grants access without making conventional boards
@@ -333,10 +334,21 @@ export async function apply(ctx:Context):Promise<void>{
  offWire=ctx.typert.register(TYPERT_HOST);
  exposeRootContext(ctx);
  ctx.plugin(KanbanController,app);
- offTools=registerProductTools(ctx,app,taskMessages,{revisions,images:createWorkflowImagePort(ctx)});
+ // The plan authority anchors on the directory the conversation was created in,
+// which the native session header records and the working-directory tool cannot
+// change. A model that entered another directory cannot move a plan write there.
+const sessionOrigin=(session:unknown):string|undefined=>{
+ try{const header=(session as {header?:{cwd?:string}}|undefined)?.header;return typeof header?.cwd==='string'?header.cwd:undefined;}catch{return undefined;}
+};
+// The parent link lives in the immutable session header, so a child resolves its
+// owning card even when the parent conversation is not loaded in this process.
+const sessionParent=(session:unknown):string|undefined=>{
+ try{const id=(session as {header?:{parentSession?:unknown}}|undefined)?.header?.parentSession;return id===undefined?undefined:String(id);}catch{return undefined;}
+};
+offTools=registerProductTools(ctx,app,taskMessages,{revisions,images:createWorkflowImagePort(ctx),plans:createPlanFilePort(ctx),sessionOrigin,sessionParent});
  // An agent starts here for every lifecycle edge: a new conversation, a resume, and
  // a delegated child that joins its parent's preset revision.
- const offAgentCreated=ctx.on('agent/created',({agent})=>{boardToolPolicy.track(agent);readOnlyPin.track(agent);return undefined;},{global:true});
+ const offAgentCreated=ctx.on('agent/created',({agent})=>{boardToolPolicy.track(agent);confinedStartPin.track(agent);return undefined;},{global:true});
  const offToolsChanged=ctx.on('tools/change',()=>boardToolPolicy.refresh(),{global:true});
  const offAgentDisposed=ctx.on('agent/disposed',({agent})=>boardToolPolicy.forget(agent),{global:true});
  offBoardPolicy=()=>{offAgentCreated();offToolsChanged();offAgentDisposed();};

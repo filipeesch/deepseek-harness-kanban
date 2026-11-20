@@ -20,10 +20,12 @@ import { validationTools } from './validation.js';
 import { sharingTools } from './sharing.js';
 import { revisionTools } from './revisions.js';
 import { insightsTools } from './insights.js';
+import { planTools } from './plan-files.js';
 import type { BoardRevisions } from '../revisions.js';
 import type { WorkflowImagePort } from '../workflow-image.js';
 import type { Rasterizer } from '../rasterizer.js';
 import type { InterCardMessaging } from '../inter-card-messaging.js';
+import type { PlanFilePort } from '../../shared/ports.js';
 
 /** The optional services the workflow-design tools need; absent keeps the core tool surface. */
 export interface ProductToolExtras {
@@ -32,6 +34,12 @@ export interface ProductToolExtras {
  readonly rasterizer?:Rasterizer;
  /** The native activity source a card read reports; absent falls back to the app's own facts. */
  readonly activity?:TaskActivitySource;
+ /** The confined plan-file port; absent withholds the plan tools from every agent. */
+ readonly plans?:PlanFilePort;
+ /** Read the directory a conversation was created in; the plan authority anchors there. */
+ readonly sessionOrigin?:(session:unknown)=>string|undefined;
+ /** Read a session parent, so a delegated child resolves the task that owns it. */
+ readonly sessionParent?:(session:unknown)=>string|undefined;
 }
 export function productToolDefinitions(app:KanbanApp,boards:BoardAdministration=app.boards,messaging?:InterCardMessaging,extras:ProductToolExtras={}):ToolDefinition[]{
  return [
@@ -50,6 +58,7 @@ export function productToolDefinitions(app:KanbanApp,boards:BoardAdministration=
   ...autoModeTools(app),
   ...teamFileTools(app),
   ...(messaging===undefined?[]:messageTools(messaging)),
+  ...(extras.plans===undefined?[]:planTools({source:app,plans:extras.plans,origin:extras.sessionOrigin??(()=>undefined),parentOf:extras.sessionParent??(()=>undefined)})),
   ...questionTools(),
  ];
 }
@@ -57,36 +66,56 @@ export function productToolDefinitions(app:KanbanApp,boards:BoardAdministration=
 /** The preset that owns the workflow-design tools. */
 export const WORKFLOW_ARCHITECT_PRESET='kanban-workflow-architect';
 
+/** The preset that owns the plan-file tools. */
+export const PROJECT_PLANNER_PRESET='kanban-project-planner';
+
 /** The tools only the workflow architect sees; every other agent never receives them. */
 export const WORKFLOW_DESIGN_TOOLS:readonly string[]=[
  'get_board_yaml','get_stage','set_stage_prompt','set_stage_routes','set_stage_script','set_stage_decision','set_layout','add_stage','remove_stage','get_script_execution','test_script','validate_workflow','diff_published_board',
  'get_route_stats','render_workflow_diagram','layout_metrics','list_board_revisions','diff_board_revisions','revert_board',
 ];
 
+/** The tools only the project planner sees; every other agent never receives them. */
+export const PLAN_TOOLS:readonly string[]=['write_plan','patch_plan'];
+
 /**
- * The step-time gate for the workflow-design tools. The preset projection is the
- * only authority; an unavailable projection withholds the tools instead of
- * widening access, because a missing answer is not a permission.
+ * The step-time gate for a preset's tools. The preset projection is the only
+ * authority; an unavailable projection withholds the tools instead of widening
+ * access, because a missing answer is not a permission. One factory serves every
+ * preset-scoped tool set, so a second role cannot inherit a gate that forgot
+ * that rule.
  */
 interface PresetRoster {
  presetForSession?(session:unknown):string|null;
  stateOf?(session:unknown):string|null;
 }
-export function workflowArchitectGate(ctx:Context):(context:ToolActivationContext)=>boolean{
+export function presetGate(ctx:Context,presetId:string):(context:ToolActivationContext)=>boolean{
  return ({agent})=>{
-  let presets:PresetRoster|undefined;
-  try{presets=ctx.get('agentPresets') as PresetRoster|undefined;}catch{return false;}
-  const read=presets?.presetForSession??presets?.stateOf;
-  if(read===undefined||presets===undefined)return false;
-  try{return read.call(presets,agent.session)===WORKFLOW_ARCHITECT_PRESET;}catch{return false;}
+  // The service lookup, the method lookup, and the call all sit inside one
+  // guard: reading the accessor off the service can itself throw, and a step
+  // admission must withhold these tools rather than abort the whole catalog.
+  try{
+   const presets=ctx.get('agentPresets') as PresetRoster|undefined;
+   const read=presets?.presetForSession??presets?.stateOf;
+   if(presets===undefined||typeof read!=='function')return false;
+   return read.call(presets,agent.session)===presetId;
+  }catch{return false;}
  };
+}
+
+/** The step-time gate for the workflow-design tools. */
+export function workflowArchitectGate(ctx:Context):(context:ToolActivationContext)=>boolean{
+ return presetGate(ctx,WORKFLOW_ARCHITECT_PRESET);
 }
 
 export function registerProductTools(ctx:Context,app:KanbanApp,messaging?:InterCardMessaging,extras:ProductToolExtras={}):()=>void{
  const disposers:Array<()=>void>=[];
- const gated=new Set(WORKFLOW_DESIGN_TOOLS);
- const gate=workflowArchitectGate(ctx);
- try{for(const definition of productToolDefinitions(app,app.boards,messaging,extras)){if(ctx.tools.get(definition.name))throw new KanbanError('TOOL_CONFLICT','Another plugin already provides '+definition.name+'.');disposers.push(ctx.tools.register(definition,gated.has(definition.name)?{when:gate}:{}));}}
+ const architectGate=workflowArchitectGate(ctx);
+ const plannerGate=presetGate(ctx,PROJECT_PLANNER_PRESET);
+ const design=new Set(WORKFLOW_DESIGN_TOOLS);
+ const plan=new Set(PLAN_TOOLS);
+ const gateOf=(name:string)=>design.has(name)?architectGate:plan.has(name)?plannerGate:undefined;
+ try{for(const definition of productToolDefinitions(app,app.boards,messaging,extras)){if(ctx.tools.get(definition.name))throw new KanbanError('TOOL_CONFLICT','Another plugin already provides '+definition.name+'.');const gate=gateOf(definition.name);disposers.push(ctx.tools.register(definition,gate===undefined?{}:{when:gate}));}}
  catch(error){for(const off of disposers.reverse())off();throw error;}
  return()=>{for(const off of disposers.reverse())off();};
 }

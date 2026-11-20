@@ -24,7 +24,11 @@ Updating source alone does not update an installation: build and update or recon
 
 ## Kanban Project Planner
 
-**Kanban Project Planner** (`kanban-project-planner`) investigates a project and agrees its requirements, architecture, and task breakdown. It reads repositories and runs shell commands under a session pinned to the sandbox's read-only mode, has no tool that writes a file, and holds the card and note tools it needs to plan, plus web access and delegation. Its delegated children join the same preset revision and are pinned the same way. It cannot administer a board or edit a workflow.
+**Kanban Project Planner** (`kanban-project-planner`) investigates a project and agrees its requirements, architecture, and task breakdown.
+
+It writes the plan as a file and nothing else. `write_plan` creates or replaces a Markdown plan, and `patch_plan` applies literal replacements to one that exists; both write at `plans/<segment>/<file>.md` in the conversation workspace, where the segment is the card title in a task conversation or a project name you supply in an ordinary chat.
+
+It still reads repositories and runs shell commands under a session pinned to the sandbox's read-only mode, holds the card and note tools it needs to plan, and has web access and delegation. Its delegated children join the same preset revision and are pinned the same way. Reading a plan uses the host file tools. It never stages or commits a plan, and it cannot administer a board or edit a workflow.
 
 ## Kanban Project Manager
 

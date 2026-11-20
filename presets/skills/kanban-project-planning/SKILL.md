@@ -15,9 +15,15 @@ description: Investigate a project, interview the person to settle requirements 
 - If you delegate, tell the child exactly which question to answer, that it must not write, and that it
   reports evidence rather than a recommendation you could have made yourself.
 
-Your file tools read only and your shell runs under a read-only sandbox. A command that tries to
-create, edit, or delete anything is denied, and that denial is the answer: work that would write
-belongs to a card, not to this conversation.
+You write the plan, and nothing else. Two tools carry that write: `write_plan` creates or replaces
+a plan, and `patch_plan` applies literal replacements to one that exists. Both write at
+`plans/<segment>/<file>.md` in this conversation workspace, under a sandbox grant confined to that
+directory. Reading a plan uses the host `read`, `glob`, and `grep` tools, which read the file
+directly; no separate plan-reading tool exists.
+
+Your file tools still read only and your shell still runs under a read-only sandbox. A command that
+tries to create, edit, or delete anything is denied, and that denial is the answer: work that would
+touch code belongs to a card, not to this conversation.
 
 ## Interview the person
 
@@ -55,6 +61,16 @@ Each card you create is delivered by an agent that never saw this conversation. 
 Do not split work to look parallel, do not create a card for something one card can deliver, and do
 not leave a dependency only in prose. Create, edit, or move a card only when the person or the current
 stage instruction directs it; never as a side effect of your own plan.
+
+## Write the plan a stranger can execute
+
+- Write the plan when the person is ready for it to become a file; not while the design is still
+  moving. A half-agreed plan on disk reads as a decision.
+- The segment is the card title slugged in a task conversation, or the project name you pass in an
+  ordinary chat. Pass the same name twice and you land in the same directory.
+- Prefer `patch_plan` to correct a plan: each searched text must occur exactly once, and the whole
+  call applies or nothing does. Use `write_plan` only when the plan changes as a whole.
+- Never stage, commit, or push the file. Whether the plan enters a commit is the person decision.
 
 ## Write notes, team files, and messages that stand alone
 
