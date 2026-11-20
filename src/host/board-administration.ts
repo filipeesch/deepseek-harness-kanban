@@ -14,6 +14,9 @@ import { parseWorkflow } from '../domain/workflow.js';
 import { effectiveBoardPreset } from '../domain/board-preset.js';
 import type { ScriptedImpactPort } from './scripted-impact.js';
 import { describeStageActivity, hasInFlightWork } from '../shared/stage-activity.js';
+import { renameTaskStage } from '../domain/stage-update.js';
+import { reconcileLocalStageIdentities } from '../domain/stage-identity.js';
+import { boardNameKey, entryRefusal, incomingIdentities, orphanedText, replacementOutcome } from '../domain/workflow-transfer/plan.js';
 
 /** The narrow publishing surface a board write needs; no dependency on the Kanban app. */
 export interface BoardSharingPort {
@@ -112,6 +115,56 @@ export interface BoardRevisionPort {
 }
 
 export interface CreateBoardInput { hubId?: string; name: string; workflowYaml?: string; revision?: RevisionAttribution | false }
+/**
+ * One import application: the settled plan, the document behind it, and the Hub
+ * it lands in.
+ *
+ * The import walks the plan inside this writer's tail, so an import can never
+ * interleave with a board write from another surface. Each board is applied on
+ * its own: a board that cannot be written is reported and the next one still is,
+ * which is what makes an import deliberately not atomic.
+ */
+export interface ImportBoardInput {
+  readonly hubId: string;
+  readonly entries: readonly ImportEntryInput[];
+}
+
+/** One entry as the apply receives it, already settled by the surface. */
+export interface ImportEntryInput {
+  /** The name the document carries. */
+  readonly name: string;
+  /** The destination the settlement named. */
+  readonly destination: 'create' | 'replace' | 'copy' | 'skip' | 'blocked';
+  /** The board a replacement overwrites. */
+  readonly targetBoardId: string | null;
+  /** The name a copy is created under. */
+  readonly copyName: string | null;
+  /** The authored workflow document the entry writes. */
+  readonly workflowYaml: string;
+  /** The recorded default-preset choice the entry carries. */
+  readonly presetMode: 'operator' | 'host' | null;
+  /**
+   * The project scope the entry writes, already filtered against the destination Hub.
+   * Undefined means the board accepts every project; an empty list keeps it closed.
+   */
+  readonly projectScope: readonly string[] | undefined;
+  /** The stable stage identities the entry carries. */
+  readonly stageIdentities: Readonly<Record<string, string>> | null;
+}
+
+/** One entry as applying it ended, which the result enumerates. */
+export type ImportEntryOutcome =
+  | { readonly name: string; readonly status: 'created'; readonly boardId: string }
+  | { readonly name: string; readonly status: 'replaced'; readonly boardId: string }
+  | { readonly name: string; readonly status: 'skipped' }
+  | { readonly name: string; readonly status: 'failed'; readonly reason: string; readonly code: string };
+
+/** The result of one applied import. */
+export interface ImportResult {
+  readonly hubId: string;
+  readonly outcomes: readonly ImportEntryOutcome[];
+}
+
 export interface UpdateBoardInput { hubId?: string; boardId: string; name?: string; workflowYaml?: string; expectedRevision?: number; revision?: RevisionAttribution | false; presetChoice?: 'host' | 'named'; restorePresetMode?: { value: 'operator' | 'host' | undefined } }
 export interface SaveBoardWorkflowInput { hubId?: string; boardId: string; yaml: string; expectedRevision?: number; revision?: RevisionAttribution; presetChoice?: 'host' | 'named' }
 /** An absent `projectKeys` allows every project of the Hub; an empty list closes the board. */
@@ -551,6 +604,195 @@ export class BoardAdministration {
     } catch (error) {
       throw attachReport(error, report);
     }
+  }
+
+
+  /**
+   * Apply one settled import.
+   *
+   * Every entry is written through the same enqueue the other board writes use,
+   * so an import cannot interleave with a board write from another surface. Each
+   * entry is applied on its own and a failure is collected rather than thrown: a
+   * document that partly applies must report exactly which boards landed.
+   *
+   * A replacement first realigns the cards whose stage was renamed while keeping
+   * its identity, then stores the workflow. The existing orphan refusal still
+   * governs the result, so a card that would truly be stranded refuses that board
+   * and leaves every other board alone.
+   */
+  async importBoards(input: ImportBoardInput): Promise<ImportResult> {
+    return this.enqueue(async () => {
+      const hubId = this.options.hubs.resolveHubId(input.hubId);
+      const outcomes: ImportEntryOutcome[] = [];
+      for (const entry of input.entries) {
+        try { outcomes.push(await this.applyImportEntry(hubId, entry)); }
+        catch (error) {
+          const refused = problem(error);
+          outcomes.push({ name: entry.name, status: 'failed', reason: refused.message, code: refused.code });
+        }
+      }
+      return { hubId, outcomes };
+    });
+  }
+
+  /** One entry of an import, applied on its own. */
+  private async applyImportEntry(hubId: string, entry: ImportEntryInput): Promise<ImportEntryOutcome> {
+    if (entry.destination === 'skip') return { name: entry.name, status: 'skipped' };
+    // A blocked entry is reported rather than written. Its reason is derived from
+    // this Hub's own state, so a surface cannot describe a refusal it invented.
+    if (entry.destination === 'blocked') {
+      return { name: entry.name, status: 'failed', reason: this.importBlockReason(hubId, entry), code: 'TRANSFER_ENTRY_BLOCKED' };
+    }
+    if (entry.destination === 'replace') {
+      invariant(entry.targetBoardId !== null, 'TRANSFER_UNKNOWN_ENTRY', 'A replacement must name the board it overwrites.');
+      // The approved target must still be the board this name resolves to. When it
+      // is not, the entry is reported rather than redirected to whatever board now
+      // holds the name, which would be a write the person never approved.
+      const current = this.options.hubs.requireHub(hubId);
+      const target = current.boards.find(board => board.id === entry.targetBoardId);
+      if (target === undefined) throw new KanbanError('TRANSFER_TARGET_CHANGED', 'Board "' + entry.name + '" was not replaced: the board it would overwrite was removed or renamed while the import was being prepared.');
+      if (boardNameKey(target.name) !== boardNameKey(entry.name)) throw new KanbanError('TRANSFER_TARGET_CHANGED', 'Board "' + entry.name + '" was not replaced: the board it would overwrite is now named "' + target.name + '". Read the file again to choose its destination.');
+      return { name: entry.name, status: 'replaced', boardId: await this.replaceImported(hubId, entry.targetBoardId, entry) };
+    }
+    const name = entry.destination === 'copy' ? entry.copyName ?? entry.name : entry.name;
+    // A creation whose name a board now holds is refused rather than guessed at, so
+    // the plan the person saw is the plan that is applied.
+    if (this.options.hubs.requireHub(hubId).boards.some(board => boardNameKey(board.name) === boardNameKey(name))) {
+      throw new KanbanError('TRANSFER_TARGET_CHANGED', 'Board "' + name + '" was not created: a board with that name exists now. Read the file again to choose its destination.');
+    }
+    return { name, status: 'created', boardId: await this.createImported(hubId, name, entry) };
+  }
+
+  /**
+   * Why one entry cannot be applied, read from this Hub rather than from the caller.
+   *
+   * A replacement whose incoming document loses a stage names that stage and the
+   * cards it holds, which is what the person must move before importing again.
+   */
+  private importBlockReason(hubId: string, entry: ImportEntryInput): string {
+    const readable = entryRefusal({ name: entry.name, workflowYaml: entry.workflowYaml, presetMode: entry.presetMode, projectKeys: null, stageIdentities: entry.stageIdentities });
+    if (readable !== null) return '"' + entry.name + '" cannot be applied: ' + readable;
+    const target = entry.targetBoardId === null ? undefined : this.options.hubs.requireHub(hubId).boards.find(board => board.id === entry.targetBoardId);
+    if (target === undefined) return '"' + entry.name + '" cannot be applied: the board it would replace no longer exists.';
+    const hub = this.options.hubs.requireHub(hubId);
+    const cards = new Map<string, number>();
+    for (const task of hub.tasks) {
+      if (task.boardId !== target.id) continue;
+      cards.set(task.columnId, (cards.get(task.columnId) ?? 0) + 1);
+    }
+    const outcome = replacementOutcome({ stored: target, incoming: entry.workflowYaml, cards, associations: entry.stageIdentities });
+    // A blocked entry has to say something; an empty outcome means the workflow
+    // itself was unreadable, which the plan already reported.
+    if (outcome.stranded.length === 0) return 'Board "' + target.name + '" was not replaced: it changed while the import was being prepared.';
+    return 'Board "' + target.name + '" was not replaced: ' + orphanedText(outcome.stranded) + ' in a stage the imported workflow does not define. Move those cards, then import again.';
+  }
+
+  /** Create one board from an imported entry, with its document, preset, scope, and identities. */
+  private async createImported(hubId: string, name: string, entry: ImportEntryInput): Promise<string> {
+    const deps = this.deps();
+    const boardId = await this.options.hubs.hub(hubId).transact(draft => {
+      const created = operations.addBoard(draft, name, deps);
+      // The imported associations are written before the save, so the save treats them as
+      // the board's own: it reconciles and then freezes only what the document still
+      // lacks. Merging afterwards would collide with an identity the save just reserved.
+      // Seeded before the save so it never reserves an identity the document names, and
+      // restored after it because the save reconciles the map against the board it found,
+      // and a freshly created board has none: that would drop every imported association.
+      if (entry.stageIdentities !== null) created.localStageIdentities = { ...entry.stageIdentities };
+      operations.saveBoardWorkflow(draft, created.id, entry.workflowYaml, deps);
+      const board = operations.requireBoard(draft, created.id);
+      // An absent import choice stays absent, so the board keeps the host default.
+      if (entry.presetMode === null) delete board.defaultPresetMode;
+      else board.defaultPresetMode = entry.presetMode;
+      operations.setBoardProjectScope(draft, created.id, entry.projectScope, deps);
+      // The document associations are restored over the save result, which reconciled
+      // against an empty board and would otherwise drop them, and the resulting map is
+      // what the board keeps.
+      if (entry.stageIdentities !== null) board.localStageIdentities = { ...board.localStageIdentities, ...entry.stageIdentities };
+      incomingIdentities(board.workflow, board.localStageIdentities ?? null);
+      return created.id;
+    });
+    const board = this.requireBoard(hubId, boardId);
+    this.noteLocalChange(hubId);
+    await this.noteRevision(hubId, boardId, null, board.workflowYaml, undefined, board.defaultPresetMode, { actor: { kind: 'operator' }, origin: 'editor' });
+    return boardId;
+  }
+
+  /**
+   * Replace one board's workflow from an imported entry.
+   *
+   * The realignment runs inside the same transaction that stores the document, so
+   * the Hub never observes a card in a stage its board does not define. A card
+   * whose stage identity no incoming stage carries is left alone and the existing
+   * orphan refusal reports it, refusing only this board.
+   */
+  private async replaceImported(hubId: string, boardId: string, entry: ImportEntryInput): Promise<string> {
+    const located = this.locate(boardId, hubId);
+    const previous = located.board.workflowYaml;
+    const previousPresetMode = located.board.defaultPresetMode;
+    const deps = this.deps();
+    const incoming = parseWorkflow(entry.workflowYaml);
+    const incomingById = new Set(incoming.columns.map(column => column.id));
+    // The identities the board will hold, resolved BEFORE any card moves: the imported
+    // associations merged with what the stored board already associates. A rename must
+    // resolve against this final map, otherwise a card could follow an identity the
+    // merge then changes, landing it in a stage that no longer carries it.
+    // The identities the board will hold, computed with the SAME rule the save applies:
+    // `reconcileLocalStageIdentities` carries a stored association across a rename by
+    // the authored `key`, and `ensureLocalStageIdentity` then freezes one for every
+    // stage a script or decision names. Using a different rule here would move a card
+    // to a stage whose persisted identity is not the one that chose it.
+    const projected = structuredClone(located.board);
+    reconcileLocalStageIdentities(projected, incoming);
+    // The imported association wins over the projected one, matching the order the
+    // board associations are written below; reading them in the opposite order would
+    // resolve a card through an identity the commit then replaces.
+    const finalAssociations: Record<string, string> = { ...(projected.localStageIdentities ?? {}), ...(entry.stageIdentities ?? {}) };
+    for (const column of incoming.columns) if (column.key !== undefined) finalAssociations[column.id] = finalAssociations[column.id] ?? column.key;
+    const incomingByIdentity = new Map<string, string>();
+    for (const [columnId, identity] of incomingIdentities(incoming, finalAssociations)) incomingByIdentity.set(identity, columnId);
+    await this.options.hubs.hub(hubId).transact(draft => {
+      const stored = operations.requireBoard(draft, boardId);
+      // One rename per removed stage, resolved once from the identities the stored
+      // board held and the ones the document brings, then carried into every card
+      // of the board: a card in another stage still names the old identifier in its
+      // own history, pending transition, instruction marker, and scripted handoff.
+      const renames = new Map<string, string>();
+      for (const column of stored.workflow.columns) {
+        if (incomingById.has(column.id)) continue;
+        const identity = stored.localStageIdentities?.[column.id] ?? column.key;
+        const target = identity === undefined ? undefined : incomingByIdentity.get(identity);
+        if (target !== undefined) renames.set(column.id, target);
+      }
+      for (const task of draft.tasks) {
+        if (task.boardId !== boardId || renames.size === 0) continue;
+        for (const [from, to] of renames) renameTaskStage(task, from, to);
+      }
+      // The board takes the map the plan already resolved, not a merge over the OLD one.
+      // Seeding the old map would let reconcile drop an imported association and carry the
+      // previous stage identity onto the renamed stage, which is the collision that used to
+      // refuse a legitimate replacement. Seeding the final map also makes the save see every
+      // imported association as the board own, so it never freezes over one.
+      stored.localStageIdentities = { ...finalAssociations };
+      operations.saveBoardWorkflow(draft, boardId, entry.workflowYaml, deps);
+      const board = operations.requireBoard(draft, boardId);
+      // The imported name is the board's name, so a difference in capitalisation
+      // still lands under the name the document carries.
+      if (entry.name !== stored.name) operations.renameBoard(draft, boardId, entry.name, deps);
+      if (entry.presetMode === null) delete board.defaultPresetMode;
+      else board.defaultPresetMode = entry.presetMode;
+      operations.setBoardProjectScope(draft, boardId, entry.projectScope, deps);
+      // The save reconciles the map from the authored keys, which would drop the
+      // associations the resolution above relied on. The resolved map is restored over the
+      // save result, so the persisted identities are exactly the ones that chose where each
+      // card went, and only then validated.
+      board.localStageIdentities = { ...finalAssociations };
+      incomingIdentities(board.workflow, board.localStageIdentities);
+    });
+    const board = this.requireBoard(hubId, boardId);
+    this.noteLocalChange(hubId);
+    await this.noteRevision(hubId, boardId, previous, board.workflowYaml, previousPresetMode, board.defaultPresetMode, { actor: { kind: 'operator' }, origin: 'editor' });
+    return boardId;
   }
 
   async editWorkflow(input: EditBoardWorkflowInput, policy: BoardPublishingPolicy = 'never'): Promise<BoardWriteResult> {

@@ -8,7 +8,7 @@ import { mergeSnapshotFrame, type MergedHostSnapshot } from './client/snapshot-m
 import { ConversationReadState } from './client/conversation-read-state.js';
 import type { KeyValueStorage } from './client/key-value-storage.js';
 import type { KanbanRemote } from './remote.js';
-import type { ClientApi, Command, HostSnapshot, KanbanSnapshot, Outcome, Problem, QuestionFeedFrame, QuestionRound, SharingCommand, SnapshotRequest } from './shared/types.js';
+import type { ClientApi, Command, HostSnapshot, KanbanSnapshot, Outcome, Problem, QuestionFeedFrame, QuestionRound, SharingCommand, SnapshotRequest, WorkflowExportRequest, WorkflowImportReadRequest } from './shared/types.js';
 import { QuestionRoundCache, type QuestionRoundView } from './client/question-round-cache.js';
 import { QuestionDraftState, type QuestionDraftPort } from './client/question-draft-state.js';
 import { asProblem } from './client/problem.js';
@@ -88,6 +88,10 @@ export class ClientBridge {
       branches: async (taskId: string) => unwrap(await remote.kanban.branches({ taskId })),
       modelCatalog: async (refresh = false) => unwrap(await remote.kanban.modelCatalog(refresh ? { refresh: true } : {})),
       mcpServers: async () => unwrap(await remote.kanban.mcpServers({})),
+      // A host that predates the transfer surface exposes neither read, and the
+      // Boards section then offers no transfer action instead of failing.
+      ...(remote.kanban.exportWorkflows === undefined ? {} : { exportWorkflows: async (request: WorkflowExportRequest) => unwrap(await remote.kanban.exportWorkflows!(request)) }),
+      ...(remote.kanban.readWorkflowImport === undefined ? {} : { readWorkflowImport: async (request: WorkflowImportReadRequest) => unwrap(await remote.kanban.readWorkflowImport!(request)) }),
       ...(remote.kanban.readTaskAttachment === undefined ? {} : { readTaskAttachment: async (request: { hubId?: string; taskId: string; attachmentId: string }) => unwrap(await remote.kanban.readTaskAttachment(request)) }),
       ...(remote.kanban.saveQuestionAttachment === undefined ? {} : { saveQuestionAttachment: async (request: { sessionId: string; name: string; data: string }) => unwrap(await remote.kanban.saveQuestionAttachment(request)) }),
       ...(remote.kanban.readQuestionAttachment === undefined ? {} : { readQuestionAttachment: async (request: { sessionId: string; id: string }) => unwrap(await remote.kanban.readQuestionAttachment(request)) }),
@@ -117,12 +121,18 @@ export class ClientBridge {
   private async unarySnapshot(request: () => Promise<RemoteResult<Outcome<HostSnapshot>>>): Promise<KanbanSnapshot> {
     const epoch = this.clientEpoch;
     const response = unwrap(await request());
-    const { commandReceipt, ...snapshot } = response;
+    const { commandReceipt, workflowImport, ...snapshot } = response;
     if (epoch === this.clientEpoch) this.accept(snapshot);
     // An old in-flight response cannot relabel its former host state as a new baseline.
     if (!this.merged) throw new Error('The Kanban stream generation changed before a current snapshot was available. Retry the request.');
-    // Identity belongs to the admitted command even when a newer feed model has won.
-    return commandReceipt ? { ...this.merged, commandReceipt } : this.merged;
+    // Identity belongs to the admitted command even when a newer feed model has won,
+    // so the receipt and the import outcome are reattached to whatever state the
+    // client holds now instead of being lost to a newer frame.
+    return {
+      ...this.merged,
+      ...(commandReceipt === undefined ? {} : { commandReceipt }),
+      ...(workflowImport === undefined ? {} : { workflowImport }),
+    };
   }
   private makeControl(): RemoteSnapshotStream<Baseline, Update> {
     const remote = this.remote;

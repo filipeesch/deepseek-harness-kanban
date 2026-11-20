@@ -597,7 +597,7 @@ export interface AttachmentCleanupWarning { taskId: string; taskTitle: string; m
  * `state` is present on baselines and command responses and omitted from an update frame that
  * did not change the state revision; the client merges it with the state it already holds.
  */
-export interface HostSnapshot { scripted?: Record<string, ScriptedSummary>; commandReceipt?: CommandReceipt; state?: KanbanState; stateRevision: number; conversations: Record<string, ConversationFacts>; /** Conversations the plugin could not observe, keyed by Session id; omitted when empty. */ conversationObservations?: Record<string, SessionObservation>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; /** Runtime state of every Hub's schedules; omitted when empty. */ scheduleRuntime?: Record<string, HubScheduleRuntime>; /** Transient, in-memory retained checkouts; omitted when empty. */ retainedCheckouts?: RetainedCheckout[]; /** Transient warnings about attachment bytes a deletion could not remove; omitted when empty. */ attachmentCleanupWarnings?: AttachmentCleanupWarning[]; sequence: number }
+export interface HostSnapshot { scripted?: Record<string, ScriptedSummary>; /** The outcome of the import this response answered, when it answered one. */ workflowImport?: WorkflowImportResult; commandReceipt?: CommandReceipt; state?: KanbanState; stateRevision: number; conversations: Record<string, ConversationFacts>; /** Conversations the plugin could not observe, keyed by Session id; omitted when empty. */ conversationObservations?: Record<string, SessionObservation>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; /** Runtime state of every Hub's schedules; omitted when empty. */ scheduleRuntime?: Record<string, HubScheduleRuntime>; /** Transient, in-memory retained checkouts; omitted when empty. */ retainedCheckouts?: RetainedCheckout[]; /** Transient warnings about attachment bytes a deletion could not remove; omitted when empty. */ attachmentCleanupWarnings?: AttachmentCleanupWarning[]; sequence: number }
 /** A snapshot that carries the board state: every unary response, baseline, and command result. */
 export type FullHostSnapshot = HostSnapshot & { state: KanbanState };
 /** A request for one unary snapshot; every field is an optional hint, never a required read. */
@@ -675,13 +675,19 @@ export type Command =
   | { type: 'schedule.save'; hubId: string; scheduleId?: string; title: string; prompt: string; cron: string; timeZone: string; projectId: string; model?: ModelSelection; newConversation: boolean; archiveWhenIdle: boolean; expectedRevision?: number }
   | { type: 'schedule.delete'; hubId: string; scheduleId: string; confirmed: boolean; expectedRevision?: number }
   | { type: 'schedule.setEnabled'; hubId: string; scheduleId: string; enabled: boolean; expectedRevision?: number }
-  | { type: 'schedule.runNow'; hubId: string; scheduleId: string };
+  | { type: 'schedule.runNow'; hubId: string; scheduleId: string }
+  /** Apply a settled workflow import; each entry is applied on its own and the result enumerates them. */
+  | { type: 'hub.workflows.import'; hubId: string; archive: string; decisions: WorkflowImportDecision[] };
 export type Outcome<T> = { ok: true; value: T } | { ok: false; error: Problem };
 export interface ClientApi {
   scriptedReview?(request: { boardId: string; stageId: string; taskId?: string }): Promise<ScriptedStageReview>;
   scriptedVariables?(taskId: string): Promise<ScriptedVariablesView>;
   snapshot(request?: SnapshotRequest): Promise<KanbanSnapshot>;
   command(command: Command): Promise<KanbanSnapshot>;
+  /** Read one export without writing anything; absent on older hosts. */
+  exportWorkflows?(request: WorkflowExportRequest): Promise<WorkflowExportResult>;
+  /** Read what one document would do to a Hub without writing anything; absent on older hosts. */
+  readWorkflowImport?(request: WorkflowImportReadRequest): Promise<WorkflowImportPlan>;
   sharing(command: SharingCommand): Promise<KanbanSnapshot>;
   localDrive(request: LocalDriveRequest): Promise<LocalDriveResult>;
   branches(taskId: string): Promise<string[]>;
@@ -705,6 +711,43 @@ export interface ClientApi {
   sessionRepair?(sessionId: string): Promise<SessionRepairResult>;
   subscribe(listener: (snapshot: KanbanSnapshot) => void): () => void;
 }
+/** One board an export reports as carrying content the document cannot transport. */
+export interface WorkflowExportAdvisory { boardName: string; reason: 'external-script-source'; detail: string }
+/** One finished export: the exact compressed bytes, its suggested name, and its advisories. */
+export interface WorkflowExportResult { archive: string; fileName: string; boardCount: number; advisories: readonly WorkflowExportAdvisory[] }
+export interface WorkflowExportRequest { hubId?: string; boardIds: string[] }
+
+/** How one imported entry would land in the destination Hub. */
+export type WorkflowImportDestination = 'create' | 'replace' | 'copy' | 'skip' | 'blocked';
+/** One card a replacement would strand in a stage the incoming workflow does not define. */
+export interface WorkflowImportOrphan { columnId: string; stageIdentity: string; cards: number }
+/** One stage a replacement would rename while keeping its cards. */
+export interface WorkflowImportRealignment { from: string; to: string; cards: number }
+/** One planned entry of an import, as the surface renders it. */
+export interface WorkflowImportEntry {
+  name: string;
+  destination: WorkflowImportDestination;
+  targetBoardId: string | null;
+  copyName: string | null;
+  orphaned: readonly WorkflowImportOrphan[];
+  realigned: readonly WorkflowImportRealignment[];
+  droppedProjectKeys: readonly string[];
+  scopeOpened: boolean;
+  blockReason: 'invalid-workflow' | 'name-conflict' | 'stale-plan' | null;
+  detail: string | null;
+  externalScriptSources: readonly string[];
+}
+/** What one document would do to one Hub. */
+export interface WorkflowImportPlan { hubId: string; origin: string; entries: readonly WorkflowImportEntry[] }
+export interface WorkflowImportReadRequest { hubId?: string; archive: string }
+/** The settlement one conflicting entry applies with. */
+export type WorkflowImportSettlement = 'replace' | 'copy' | 'skip';
+export interface WorkflowImportDecision { name: string; settlement: WorkflowImportSettlement; copyName?: string; /** The board the person saw this entry targeting. */ targetBoardId?: string | null }
+export interface WorkflowImportApplyRequest { hubId?: string; archive: string; decisions: WorkflowImportDecision[] }
+/** One entry as applying it ended. */
+export interface WorkflowImportOutcome { name: string; status: 'created' | 'replaced' | 'skipped' | 'failed'; boardId?: string; reason?: string; code?: string }
+/** The result of one applied import. */
+export interface WorkflowImportResult { hubId: string; outcomes: WorkflowImportOutcome[] }
 export interface QuestionOption { title: string; description: string }
 export interface QuestionPage {
   question: string; type: 'exclusive' | 'non_exclusive' | 'freetext'; context?: string;

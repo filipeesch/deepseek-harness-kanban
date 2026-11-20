@@ -86,6 +86,9 @@ import { recordScriptedHandoff } from '../domain/task-history/record.js';
 import { testStageScript, type ScriptTestInput, type ScriptTestResult } from './script-test.js';
 import { ConversationObservationIndex, createObservedFactsSource } from './conversation-observation.js';
 import { classifySessionFailure } from '../domain/session-observation.js';
+import { exportBoards } from './workflow-transfer/export.js';
+import { analyzeTransfer, boardOfWorkflow, scopeOf, settlePlan } from './workflow-transfer/import.js';
+import type { WorkflowExportRequest, WorkflowExportResult, WorkflowImportDecision, WorkflowImportPlan, WorkflowImportReadRequest, WorkflowImportResult } from '../shared/types.js';
 
 async function pathExists(value:string):Promise<boolean>{try{await lstat(value);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}}
 function isEvent(value:unknown):value is {type:string;seq:number;data:unknown}{return Boolean(value&&typeof value==='object'&&'type'in value&&typeof value.type==='string'&&'seq'in value&&typeof value.seq==='number'&&Number.isSafeInteger(value.seq)&&'data'in value);}
@@ -311,6 +314,50 @@ export class KanbanApp {
   */
  mcpServers():readonly string[]{
   try{return [...(this.options.mcpServers?.()??[])];}catch(error){this.options.report?.(error);return [];}
+ }
+
+ /**
+  * Read one export of the chosen boards. Nothing is written, so an export never
+  * advances a revision and never publishes a board.
+  */
+ exportWorkflows(request:WorkflowExportRequest):WorkflowExportResult{
+  return exportBoards(this.hubs, {hubId:this.hubs.resolveHubId(request.hubId), boardIds:request.boardIds});
+ }
+ /**
+  * Read what one document would do to a Hub. Nothing is written, so a person can
+  * read the plan and settle its conflicts before applying anything.
+  */
+ readWorkflowImport(request:WorkflowImportReadRequest):WorkflowImportPlan{
+  return analyzeTransfer(this.hubs, {hubId:this.hubs.resolveHubId(request.hubId), archive:request.archive});
+ }
+ /**
+  * Apply one settled import through the board writer. Each entry lands on its own,
+  * so the result is the only statement of which boards were written.
+  */
+ async importWorkflows(request:{hubId:string;archive:string;decisions:readonly WorkflowImportDecision[]}):Promise<WorkflowImportResult>{
+  const hubId=this.hubs.resolveHubId(request.hubId);
+  const settled=settlePlan(this.hubs, {hubId, archive:request.archive, decisions:request.decisions});
+  const entries=settled.entries.map(entry=>{
+   const board=boardOfWorkflow(entry, settled.boards);
+   return {
+    name:entry.name,
+    destination:entry.destination,
+    targetBoardId:entry.targetBoardId,
+    copyName:entry.copyName,
+    workflowYaml:board.workflowYaml,
+    presetMode:board.presetMode,
+    projectScope:scopeOf(board, settled.hub),
+    stageIdentities:board.stageIdentities,
+   };
+  });
+  const result=await this.boards.importBoards({hubId, entries});
+  this.markChanged();
+  return {hubId:result.hubId, outcomes:result.outcomes.map(outcome=>({
+   name:outcome.name,
+   status:outcome.status,
+   ...(outcome.status==='created'||outcome.status==='replaced'?{boardId:outcome.boardId}:{}),
+   ...(outcome.status==='failed'?{reason:outcome.reason,code:outcome.code}:{}),
+  }))};
  }
  /** Attach isolated execution after composition; task records remain the only authority. */
  attachScriptedRuntime(nativeRuntime:ScriptedRuntime):()=>Promise<void>{
@@ -1576,7 +1623,7 @@ export class KanbanApp {
  }
  private async execute(command:Command,policy:HostCommandPolicy={}):Promise<FullHostSnapshot>{
   invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');
-  let commandReceipt:HostSnapshot['commandReceipt'];
+  let commandReceipt:HostSnapshot['commandReceipt'];let importResult:WorkflowImportResult|undefined;
   switch(command.type){
    case 'hub.create':{const hub=await this.hubs.createHub(command.name);commandReceipt={kind:'hub',id:hub.id};break;}
    case 'hub.rename':{await this.hubs.renameHub(command.hubId,command.name,command.expectedRevision);break;}
@@ -1602,6 +1649,7 @@ export class KanbanApp {
     break;
    }
    case 'board.projects.save':await this.boards.saveProjectScope({hubId:command.hubId,boardId:command.boardId,...(command.projectKeys===undefined?{}:{projectKeys:command.projectKeys}),...(command.expectedRevision===undefined?{}:{expectedRevision:command.expectedRevision})},'never');break;
+   case 'hub.workflows.import':{importResult=await this.importWorkflows({hubId:command.hubId,archive:command.archive,decisions:command.decisions});break;}
    case 'project.save':{const store=this.hubStore(command.hubId);const state=this.hubs.requireHub(store.hubId);const existing=command.project.id===undefined?undefined:state.projects.find(project=>project.id===command.project.id);invariant(!existing?.operation,'PROJECT_BUSY','Resolve the recorded project relocation before saving the project.');const value=await store.saveProject(await this.project(command.project),command.expectedRevision);commandReceipt={kind:'project',id:value.id};break;}
    case 'project.relocate':{
     invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm the project relocation and its migration impact.');
@@ -1747,7 +1795,7 @@ export class KanbanApp {
    case 'schedule.setEnabled':{const store=this.hubStore(command.hubId);await store.setScheduleEnabled(command.scheduleId,command.enabled,command.expectedRevision);break;}
    case 'schedule.runNow':{const store=this.hubStore(command.hubId);store.requireSchedule(command.scheduleId);await this.requireScheduleRuntime().runNow(store.hubId,command.scheduleId);break;}
   }
-  this.scriptedRuntime?.sync();await this.dispatchPending();const snapshot=await this.snapshot({},'cache');return {...snapshot,...(commandReceipt?{commandReceipt}:{})};
+  this.scriptedRuntime?.sync();await this.dispatchPending();const snapshot=await this.snapshot({},'cache');return {...snapshot,...(commandReceipt?{commandReceipt}:{}),...(importResult?{workflowImport:importResult}:{})};
  }
  /**
   * The in-memory command guard. It runs before any pending transition is cleared,

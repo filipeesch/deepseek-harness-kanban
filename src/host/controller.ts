@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis';
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
-import type { Command, FullHostSnapshot, HostSnapshot, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionDraftContent, QuestionFeedFrame, QuestionRound, ModelCatalog, SessionInspection, SessionRepairResult, SharingCommand, SnapshotRequest, StoredQuestionDraft, WorktreeDefaults } from '../shared/types.js';
+import type { Command, FullHostSnapshot, HostSnapshot, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionDraftContent, QuestionFeedFrame, QuestionRound, ModelCatalog, SessionInspection, SessionRepairResult, SharingCommand, SnapshotRequest, StoredQuestionDraft, WorkflowExportRequest, WorkflowExportResult, WorkflowImportPlan, WorkflowImportReadRequest, WorktreeDefaults } from '../shared/types.js';
 import { problem, KanbanError } from '../shared/errors.js';
 import type { KanbanApp } from './app.js';
 import type { ScriptedStageReview, ScriptedVariablesView } from '../shared/scripted.js';
@@ -23,6 +23,8 @@ export class KanbanController extends TypertRemoteService {
  @Remote async scriptedVariables(request:{taskId:string}):Promise<Outcome<ScriptedVariablesView>>{return this.attempt(()=>this.app.scriptedVariables(request.taskId));}
  @Remote async modelCatalog(request:{refresh?:boolean}):Promise<Outcome<ModelCatalog>>{return this.attempt(()=>this.app.modelCatalog(request.refresh===true));}
  @Remote async mcpServers(_request:Record<string,never>):Promise<Outcome<string[]>>{return this.attempt(async()=>[...this.app.mcpServers()]);}
+ @Remote async exportWorkflows(request:WorkflowExportRequest):Promise<Outcome<WorkflowExportResult>>{return this.attempt(()=>Promise.resolve(this.app.exportWorkflows(request)));}
+ @Remote async readWorkflowImport(request:WorkflowImportReadRequest):Promise<Outcome<WorkflowImportPlan>>{return this.attempt(()=>Promise.resolve(this.app.readWorkflowImport(request)));}
  @Remote async saveQuestionAttachment(request:{sessionId:string;name:string;data:string}):Promise<Outcome<{id:string;name:string;bytes:number}>>{return this.attempt(()=>this.app.saveQuestionAttachment(request.sessionId,request.name,request.data));}
  @Remote async readQuestionAttachment(request:{sessionId:string;id:string}):Promise<Outcome<{name:string;data:string}>>{return this.attempt(()=>this.app.readQuestionAttachment(request.sessionId,{id:request.id}));}
  @Remote async removeQuestionAttachment(request:{sessionId:string;id:string}):Promise<Outcome<void>>{return this.attempt(()=>this.app.removeQuestionAttachment(request.sessionId,{id:request.id}));}
