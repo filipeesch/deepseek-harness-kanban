@@ -147,16 +147,38 @@ describe('relation writes', () => {
   });
 });
 
-describe('relation lifecycle with task deletion', () => {
+describe('task removal cascade', () => {
   it('removes every relation of the deleted task and keeps unrelated ones', () => {
     const { hub, deps, ids } = hubWithTasks(4);
     operations.createRelations(hub, [
       { type: 'epic', from: ids[0]!, to: ids[1]! },
       { type: 'related', from: ids[2]!, to: ids[3]! },
     ], deps);
-    operations.deleteTask(hub, ids[0]!);
+    operations.removeTaskCascade(hub, ids[0]!);
     expect(hub.relations).toHaveLength(1);
     expect(hub.relations?.[0]?.type).toBe('related');
+    expect(HubStateSchema.safeParse(hub).success).toBe(true);
+  });
+
+  it('removes the task notes with the task', () => {
+    const { hub, deps, ids } = hubWithTasks(2);
+    operations.saveNote(hub, ids[0]!, { content: 'Kept card note' }, deps);
+    operations.saveNote(hub, ids[1]!, { content: 'Other card note' }, deps);
+    operations.removeTaskCascade(hub, ids[0]!);
+    expect(hub.tasks.map(task => task.id)).toEqual([ids[1]]);
+    expect(hub.notes.map(note => note.content)).toEqual(['Other card note']);
+    expect(HubStateSchema.safeParse(hub).success).toBe(true);
+  });
+
+  it('keeps deleteTask as the same cascade', () => {
+    const { hub, deps, ids } = hubWithTasks(3);
+    operations.createRelations(hub, [
+      { type: 'epic', from: ids[0]!, to: ids[1]! },
+      { type: 'epic', from: ids[1]!, to: ids[2]! },
+    ], deps);
+    operations.deleteTask(hub, ids[1]!);
+    expect(hub.tasks.map(task => task.id)).toEqual([ids[0], ids[2]]);
+    expect(hub.relations).toEqual([]);
     expect(HubStateSchema.safeParse(hub).success).toBe(true);
   });
 });

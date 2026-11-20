@@ -35,7 +35,7 @@ import { OperationQueue } from './operation-queue.js';
 import { ProjectRelocationCoordinator } from './project-relocation.js';
 import { RepositoryProjectRelocationStore } from './project-relocation-store.js';
 import { bindingMatches } from './context-operation-admission.js';
-import { replaceableByDeletion } from '../shared/context-operation.js';
+import { assertFreshDestructiveJournal, replaceableByDeletion } from '../shared/context-operation.js';
 import { AttentionCoordinator, type AttentionTask } from './attention.js';
 import { SnapshotAssembler } from './snapshot-assembler.js';
 import { PendingTransitionIndex } from './pending-transition-index.js';
@@ -44,6 +44,8 @@ import { PendingWorkRunner } from './pending-work.js';
 import { PublishScheduler } from './publish-scheduler.js';
 import { isGitProject, requireGitProject, requireProjectPath } from '../shared/project.js';
 import { containsPath } from './git.js';
+import { previewDeletion } from './deletion-preview.js';
+import { resolveDeletionTarget } from './deletion-target.js';
 import { defaultWorktreeDestination, taskTitleSlug } from '../shared/worktree-name.js';
 import { prepareFirstExecution } from './first-execution.js';
 import { worktreeDecision } from '../domain/first-execution.js';
@@ -118,9 +120,31 @@ function boardSharingPort(sharing:HubSharingService):BoardSharingPort{
   publishAll:hubId=>sharing.publishAll(hubId),
  };
 }
+/**
+ * The filesystem-only native execution lease reader.
+ *
+ * It is host wiring beside the app, not part of the optional execution runtime: a lease
+ * outlives the host that wrote it, and the runtime is mounted (and detached) through
+ * optional provider injection. Tying the check to that runtime turns an absent provider
+ * into a silent pass, which is exactly what a destructive operation must not do.
+ */
+export interface ScriptedLeasePort {
+ assertNoTaskLease(scope:{hubId:string;boardId:string;projectId:string;stageIdentity:string},taskId:string):Promise<void>;
+}
+/**
+ * Host-only command policy: values a caller passes beside the command, never on the
+ * wire. `CommandSchema` is strict and has no policy field, so nothing a model or an
+ * interface client sends can set them.
+ */
+export interface HostCommandPolicy {
+ /** Refuse a journal that already carries force or discard consent this call never stated. */
+ freshDestructive?: boolean;
+ /** Cancellation of the caller that admitted this command, honored until the journal is handed to storage. */
+ signal?: AbortSignal;
+}
 /** One created conversation and, when its board named defaults, how the model and preset fared. */
 export interface CreatedConversation { sessionId: string; model?: ConversationModelOutcome; preset?: ConversationPresetOutcome }
-export interface AppOptions { turnBoundary?:TurnBoundaryPort; history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; /** Records each accepted workflow write; absent keeps no local history. */ revisions?:BoardRevisionPort; questionStore?:QuestionStore; questionDraftStore?:QuestionDraftStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; /** Applies a board's default agent preset to one conversation; absent means no board preset is applied. */ presets?:SessionPresetPort; /** The MCP servers this host reports for the board allowlist control; absent reports none. */ mcpServers?:()=>readonly string[]; /** Applies a board's MCP tool policy to one conversation agent; absent means no board policy is applied. */ tools?:{apply:(sessionId:string)=>Promise<void>}; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number; /** The plugin-owned task attachment store; absent disables the task file surface. */ taskAttachments?:import('./task-attachments/store.js').TaskAttachmentStore; /** The answer-file store, in its own directory so a conversation identity cannot address task files. */ answerAttachments?:import('./task-attachments/store.js').TaskAttachmentStore }
+export interface AppOptions { turnBoundary?:TurnBoundaryPort; history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; /** Records each accepted workflow write; absent keeps no local history. */ revisions?:BoardRevisionPort; questionStore?:QuestionStore; questionDraftStore?:QuestionDraftStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; /** Applies a board's default agent preset to one conversation; absent means no board preset is applied. */ presets?:SessionPresetPort; /** The MCP servers this host reports for the board allowlist control; absent reports none. */ mcpServers?:()=>readonly string[]; /** Applies a board's MCP tool policy to one conversation agent; absent means no board policy is applied. */ tools?:{apply:(sessionId:string)=>Promise<void>}; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number; /** The plugin-owned task attachment store; absent disables the task file surface. */ taskAttachments?:import('./task-attachments/store.js').TaskAttachmentStore; /** The answer-file store, in its own directory so a conversation identity cannot address task files. */ answerAttachments?:import('./task-attachments/store.js').TaskAttachmentStore; /** The filesystem-only lease reader every agent deletion must consult; absent only where no scripted execution storage exists. */ scriptedLease?:ScriptedLeasePort }
 /** Coordinates Hub-scoped commands while the host continues to own sessions and execution. */
 export class KanbanApp {
  readonly questions=new QuestionIndex();
@@ -180,6 +204,8 @@ export class KanbanApp {
  /** Attaches the repair pipeline; absent means the repair action is refused. */
  private repairer:{repair(sessionId:string):Promise<SessionRepairResult>}|undefined;
  private scriptedRuntime:ScriptedSupervisor|undefined;
+ /** Survives runtime detachment, so a lease left by a previous host is still seen. */
+ private readonly scriptedLease:ScriptedLeasePort|undefined;
  private scriptedApproval:ScriptedApprovalService|undefined;
  /** The native runtime a write report asks for the fingerprint of a proposed executable. */
  private nativeScripted:ScriptedRuntime|undefined;
@@ -201,6 +227,7 @@ export class KanbanApp {
    closing:()=>this.closing,
    ...(this.options.report?{report:this.options.report}:{}),
   });
+  this.scriptedLease=options.scriptedLease;
   this.retainedCheckoutExists=options.retainedCheckoutExists??entryExists;
   this.retainedCheckoutPruneIntervalMs=options.retainedCheckoutPruneIntervalMs??15000;
   if(options.teamFiles)this.teamFiles=options.teamFiles;
@@ -287,6 +314,10 @@ export class KanbanApp {
  }
  /** Attach isolated execution after composition; task records remain the only authority. */
  attachScriptedRuntime(nativeRuntime:ScriptedRuntime):()=>Promise<void>{
+  // Attaching execution is what makes a lease possible, so the host must have wired the
+  // filesystem reader from the same private directory. Without it an agent deletion
+  // could not verify ownership, so the composition is refused here instead.
+  invariant(this.scriptedLease!==undefined,'EXECUTION_LEASE_UNVERIFIABLE','Wiring scripted execution requires the filesystem lease reader, or an agent deletion cannot verify native ownership.');
   this.nativeScripted=nativeRuntime;
   const route=createScriptedRouter({hubs:this.hubs,sessions:this.sessions,pending:task=>readPendingUserWork(this.factsSource,task.sessionIds),reserved:id=>this.scriptedSurface.isReserved(id)||this.contextAdmissions.has(id),notify:()=>{void this.dispatchScriptedHandoffs().catch(error=>this.options.report?.(error));}});
   const transact=<T>(taskId:string,change:(task:HubTask,located:LocatedTask)=>T):Promise<T>=>{
@@ -1402,7 +1433,7 @@ export class KanbanApp {
  saveNote(input:Extract<Command,{type:'note.save'}>){return this.serial(()=>this.saveNoteNow(input));}
  private async saveNoteNow(input:Extract<Command,{type:'note.save'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).saveNote(input.taskId,{id:input.noteId,content:input.content,tags:input.tags});}
  private async deleteNoteNow(input:Extract<Command,{type:'note.delete'}>) {invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');const located=this.locatedTask(input.taskId);return this.hubs.hub(located.hubId).deleteNote(input.taskId,input.noteId);}
- async command(command:Command):Promise<FullHostSnapshot>{
+ async command(command:Command,policy:HostCommandPolicy={}):Promise<FullHostSnapshot>{
   if(command.type.startsWith('task.scripted'))return this.execute(command);
   // Cancellation interrupts a pass that is still awaiting Git, so it cannot queue
   // behind the serial lane that pass holds.
@@ -1411,7 +1442,37 @@ export class KanbanApp {
    :((command.type==='task.delete'||command.type==='worktree.remove')&&command.confirmed)||command.type==='worktree.create'||command.type==='worktree.attach'||command.type==='worktree.discardCreate'||command.type==='operation.return'?[command.taskId]:[];
   for(const id of ids)invariant(!this.contextAdmissions.has(id),'CONTEXT_ADMISSION_PENDING','Another operation is changing this task context.');
   for(const id of ids)this.contextAdmissions.add(id);
-  try { const preparing=this.prepareScriptedContext(command); if(preparing)await preparing; return await this.serial(()=>this.execute(command)); }
+  try {
+   if(command.type==='task.delete'&&policy.signal?.aborted===true)throw policy.signal.reason;
+   if(policy.freshDestructive===true&&command.type==='task.delete')assertFreshDestructiveJournal(this.locatedTask(command.taskId).task);
+   // Preparation can stop and reclaim a scripted execution, which changes the card, so a
+   // caller that may still be cancelled must not run it: the card may not change before
+   // the write is known to happen. It still may not pass a native owner it cannot prove
+   // is gone, so a cancellable deletion asserts the live context read-only instead.
+   if(policy.signal===undefined){
+    const preparing=this.prepareScriptedContext(command);
+    if(preparing)await preparing;
+   }else if(command.type==='task.delete'){
+    // Two authorities, because each is blind to what the other sees. The supervisor
+    // knows this process: an in-memory execution and the current scripted control.
+    // The filesystem reader knows the lease file, which outlives the host that wrote it
+    // and survives runtime detachment.
+    const located=this.locatedTask(command.taskId);
+    const leaseScope={hubId:located.hubId,boardId:located.board.id,projectId:located.project.id,stageIdentity:located.task.stageEntry?.stageIdentity??'unbound'};
+    if(this.scriptedRuntime)await this.scriptedRuntime.assertContextFree(command.taskId);
+    // Absent reader means this host has no scripted execution storage, so no lease can
+    // exist for any card. A host that does attach execution is refused at composition
+    // unless it wired the reader too.
+    if(this.scriptedLease)await this.scriptedLease.assertNoTaskLease(leaseScope,command.taskId);
+   }
+   // The wait for the shared lane is the last place a cancellation can still stop this
+   // deletion, so the check runs inside the turn that would record it. After the journal
+   // is handed to storage the deletion is never interrupted.
+   return await this.serial(()=>{
+    if(command.type==='task.delete')policy.signal?.throwIfAborted();
+    return this.execute(command,policy);
+   });
+  }
   finally { for(const id of ids){this.contextAdmissions.delete(id);this.scriptedRuntime?.reconcile(id);} }
  }
  /** Cancellation may wait for native drain, so it stays outside the global command lane. */
@@ -1431,6 +1492,41 @@ export class KanbanApp {
  private assertScriptContextStopped(taskId:string):void{
   this.assertNoHandoffAdmission(taskId);const control=this.locatedTask(taskId).task.scripted;
   invariant(!this.scriptedRuntime?.hasContextOwner(taskId)&&(!control||(['stopped','failed'].includes(control.phase)&&!['OWNERSHIP_UNCERTAIN','OWNERSHIP_CONFLICT','EXECUTION_OWNERSHIP_UNCERTAIN'].includes(control.error?.code??''))),'EXECUTION_CONTEXT_CHANGED','A new script execution owns this task; stop it before changing its directory.');
+ }
+
+/** The card deletion tool port: the Hub lookup the scope rule needs. */
+ requireHub(hubId:string):HubState{return this.hubs.requireHub(hubId);}
+ /**
+  * The card deletion tool consequence read. It composes the deletion-target
+  * resolution the cleanup itself applies, so a plain-folder checkout is reported
+  * as retained before anything is admitted.
+  */
+ async preview(input:{hub:HubState;task:HubTask;project:Project}){
+  const { task, project } = input;
+  return previewDeletion({
+   hub: input.hub, task, project,
+   resolveTarget: () => resolveDeletionTarget({ task, project, git: this.git }),
+   git: this.git,
+  });
+ }
+ /**
+  * The card deletion tool admission. It goes through the command lane, so the
+  * agent path shares the interface confirmation, target, and script-context
+  * checks instead of reaching the worktree coordinator directly.
+  */
+ async requestDeletion(input:{hubId:string;taskId:string;expectedWorktreePath:string|null;signal:AbortSignal}):Promise<{phase:string}>{
+  // The policy is restated as a host-only flag, so the shared command and the
+  // per-task lane both refuse a journal carrying consent this call never stated.
+  await this.command({
+   type: 'task.delete', hubId: input.hubId, taskId: input.taskId, confirmed: true,
+   expectedWorktreePath: input.expectedWorktreePath,
+  }, { freshDestructive: true, signal: input.signal });
+  // A refusal before admission throws; a recorded operation reports its phase.
+  // The admission phase is `queued` by construction: the journal is persisted in
+  // that phase before the repository lane is handed the job. Reading the task
+  // here would race the worker, which may already have advanced the phase or
+  // removed the card entirely.
+  return { phase: 'queued' };
  }
 
  /** The pause tools' port: run the command, then re-read the task it changed. */
@@ -1478,7 +1574,7 @@ export class KanbanApp {
    return this.locatedTask(taskId);
   });
  }
- private async execute(command:Command):Promise<FullHostSnapshot>{
+ private async execute(command:Command,policy:HostCommandPolicy={}):Promise<FullHostSnapshot>{
   invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');
   let commandReceipt:HostSnapshot['commandReceipt'];
   switch(command.type){
@@ -1613,12 +1709,12 @@ export class KanbanApp {
    }
    case 'note.save':{const value=await this.saveNoteNow(command);commandReceipt={kind:'note',id:value.id};break;}
    case 'note.delete':{const value=await this.deleteNoteNow(command);commandReceipt={kind:'note',id:value.id};break;}
-   case 'task.delete':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm task data/worktree removal and native conversation archiving.');this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'delete');this.assertScriptContextStopped(command.taskId);await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'delete',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true});break;
+   case 'task.delete':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm task data/worktree removal and native conversation archiving.');this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'delete');this.assertScriptContextStopped(command.taskId);await this.worktrees.request(command.taskId,{kind:'delete',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true,clearPending:true,...(policy.freshDestructive===true?{freshDestructive:true}:{}),...(policy.signal===undefined?{}:{signal:policy.signal})});break;
    case 'worktree.create':this.assertScriptContextStopped(command.taskId);this.assertContext(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'create',mode:command.mode,path:command.path,branchName:command.branchName,sourceBranch:command.sourceBranch},command.background===true?{background:true}:{});break;
    case 'worktree.attach':this.assertScriptContextStopped(command.taskId);this.assertContext(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.request(command.taskId,{kind:'attach',path:command.path});break;
    case 'worktree.discardCreate':this.assertScriptContextStopped(command.taskId);this.assertProjectRelocation(this.locatedTask(command.taskId).project,'recovering its worktree');invariant(!this.locatedTask(command.taskId).task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');await this.worktrees.discardCreate(command.taskId,command.confirmed);break;
    case 'worktree.dismiss':{this.assertContext(command.taskId);const located=this.locatedTask(command.taskId);invariant(isGitProject(located.project),'PROJECT_NOT_GIT','Worktree choices require a Git-backed project.');invariant(!located.task.pendingTransition,'TASK_BUSY','Resolve the confirmed transition first.');invariant(!located.task.worktree,'WORKTREE_EXISTS','The task already has a worktree.');if(located.task.worktreeDismissed!==true)await this.hubs.hub(located.hubId).dismissWorktree(command.taskId);break;}
-   case 'worktree.remove':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm removal of the worktree while preserving the task and branch.');this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'remove');this.assertScriptContextStopped(command.taskId);await this.clearPending(command.taskId);await this.worktrees.request(command.taskId,{kind:'remove',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true});break;
+   case 'worktree.remove':invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm removal of the worktree while preserving the task and branch.');this.assertProjectRelocation(this.locatedTask(command.taskId).project,'changing its worktree');this.assertDestructiveTarget(command.taskId,command.expectedWorktreePath,'remove');this.assertScriptContextStopped(command.taskId);await this.worktrees.request(command.taskId,{kind:'remove',discardChanges:command.discardChanges??false,expectedWorktreePath:command.expectedWorktreePath,...(command.force===true?{force:true}:{})},{background:true,clearPending:true});break;
    case 'operation.retry':{
     const located=this.locatedTask(command.taskId);const store=this.hubs.hub(located.hubId);const task=located.task;this.assertProjectRelocation(located.project,'retrying a context operation');if(task.operation){await this.worktrees.retry(command.taskId,{background:true});const current=store.snapshot().tasks.find(t=>t.id===command.taskId);if(current&&!current.operation&&current.pendingTransition?.worktreeRequest&&current.pendingTransition.status==='failed')await store.transact(d=>{const p=d.tasks.find(t=>t.id===command.taskId)!.pendingTransition!;p.status='waiting';delete p.error;});}else if(task.pendingTransition){await store.transact(d=>{const t=d.tasks.find(t=>t.id===command.taskId)!;if(t.pendingTransition){t.pendingTransition.status='waiting';delete t.pendingTransition.error;}});}await this.dispatchPending();break;
    }

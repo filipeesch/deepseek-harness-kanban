@@ -36,9 +36,9 @@ export class RepositoryWorktreeStore implements WorktreeStore {
     return { hubId: located.hubId, hub: located.hub, task: located.task, project: located.project };
   }
 
-  transactTask<T>(taskId: string, change: (draft: HubState) => T): Promise<T> {
+  transactTask<T>(taskId: string, change: (draft: HubState) => T, beforeCommit?: () => void): Promise<T> {
     const located = this.hubs.requireTask(taskId);
-    return this.hubs.transact(located.hubId, change);
+    return this.hubs.transact(located.hubId, change, undefined, beforeCommit);
   }
 
   worktreeBindings(): readonly WorktreeBinding[] { return this.hubs.worktreeBindings(); }

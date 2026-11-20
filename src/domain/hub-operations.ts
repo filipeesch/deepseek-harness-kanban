@@ -705,16 +705,30 @@ export function placeTask(hub: HubState, taskId: string, columnId: string, place
   );
 }
 
-export function deleteTask(hub: HubState, taskId: string): HubTask {
+/**
+ * Remove one task and everything the Hub stores for it, in a single mutation: the
+ * task record, its shared notes, and every relation in which it is an endpoint.
+ * A stored relation whose endpoint is gone would be invalid state, so no caller
+ * may remove a task without also removing its relations; every path that removes
+ * a task goes through this cascade instead of filtering the collections itself.
+ *
+ * The task must already exist. The removal does not touch the Hub revision, the
+ * relations of other tasks, or any other stored collection, so a caller can run
+ * it inside a transaction that holds further checks of its own.
+ */
+export function removeTaskCascade(hub: HubState, taskId: string): HubTask {
   const task = requireTask(hub, taskId);
   // The attachment metadata leaves with the task in this same mutation; the bytes
   // are the caller's to delete, because the domain owns no filesystem.
   hub.tasks = hub.tasks.filter(value => value.id !== taskId);
   hub.notes = hub.notes.filter(note => note.taskId !== taskId);
-  // A relation whose endpoint is gone would be invalid state, so the delete that
-  // removes the task removes its relations in the same mutation.
   if (hub.relations !== undefined) hub.relations = hub.relations.filter(relation => relation.from !== taskId && relation.to !== taskId);
   return task;
+}
+
+/** Delete one task through the shared cascade. */
+export function deleteTask(hub: HubState, taskId: string): HubTask {
+  return removeTaskCascade(hub, taskId);
 }
 
 /** One requested relation; the aggregate normalizes its endpoints and allocates its identity. */

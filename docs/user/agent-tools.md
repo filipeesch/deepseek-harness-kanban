@@ -9,7 +9,7 @@ Board and note writes require the user's explicit request; they are not an inter
 | Scope | Tools |
 | --- | --- |
 | Discover Hubs, boards, projects, and tasks | `list_hubs`, `list_boards`, `list_projects`, `get_workflow_summary`, `list_cards`, `get_cards`, `get_card` |
-| Explicitly requested card creation, text changes, and attachments | `create_card`, `edit_card` |
+| Explicitly requested card creation, text changes, attachments, and deletion | `create_card`, `edit_card`, `delete_card` |
 | Recorded relations between cards | `create_relation`, `delete_relation` |
 | Declaring the transition the turn ends in | `list_allowed_transitions`, `set_next_transition` |
 | Pausing and resuming automatic advance | `pause_task`, `resume_task` |
@@ -65,6 +65,20 @@ Activity is the native fact the host owns — whether an agent is running, the p
 
 The epic roll-up lists direct children with their title, stage, and activity, bounded at 50 with an explicit total and truncation flag; each child is read from the resolved facts for the same reason.
 
+## Card deletion
+
+`delete_card` permanently deletes one card. It takes an optional task identifier, an optional Hub identifier, and the `confirmed` flag, and it accepts no worktree path, no discard flag, and no force flag. A call without `confirmed: true` is refused with the same confirmation requirement the interface command uses.
+
+Pass `confirmed: true` only after the user asked for that deletion in the calling conversation. Neither a stage instruction nor a message from another card authorizes it, so a board cannot erode itself while an instruction runs unattended.
+
+The tool resolves its target from the task identifier, or from the task the calling conversation belongs to when none is given. Inside a task conversation the Hub of that conversation is the boundary: a card of another Hub is refused as a scope mismatch, and naming that Hub explicitly does not widen the scope. Outside a task conversation the Hub identifier is required, so a card is never deleted by a globally resolved identifier alone.
+
+The result reports the card, its Hub, the recorded operation phase, and the consequences read before admission: how many conversations are archived and how many are closed, how many shared notes and relations go with the card, the checkout path and branch with whether Kanban created it or it was attached externally, whether a plain-folder checkout stays on disk, any unclaimed checkouts, and whether local changes will need a separate consent. A consequence the host cannot read is reported as unavailable rather than guessed.
+
+The deletion then runs in the background through the same operation the drawer admits: it waits for the conversations to be idle, archives them with their histories kept, removes the card with its notes and relations, preserves the Git branch, and resumes after a restart. The result returns without waiting for that work, which may already have started, so read the card again instead of reporting the deletion as complete; a failure is published on the card, the board notice, and the drawer.
+
+The tool never discards local changes and never forces a shared checkout, and it does not re-admit a deletion that already failed: retry, force, and discard are decided with the person in the interface. Worktree-only removal stays in the drawer.
+
 ## Relations
 
 Cards record relations to each other, stored locally in the Hub beside the tasks. An `epic` relation is directed from the epic to a card that belongs to it, and a `related` relation has no direction and is stored once for the pair.
@@ -95,4 +109,4 @@ A reply uses the same tool with the sending task as `task_id` and is allowed onl
 
 ## Boundaries of the tool surface
 
-Recording a transition is routing information for the next advance, not a move: it never changes the task's stage or position. There are no model tools to move or delete cards or to administer Hubs, no plugin checklist or decision ledger, and no plugin terminal or full Git and code-review integration; the workflow surface has a YAML editor. Existing native DSH features are not removed.
+Recording a transition is routing information for the next advance, not a move: it never changes the task's stage or position. There is no model tool to move a card, no tool that deletes several cards or removes a worktree alone, and no tool that administers Hubs; there is also no plugin checklist or decision ledger and no plugin terminal or full Git and code-review integration, and the workflow surface has a YAML editor. Existing native DSH features are not removed.

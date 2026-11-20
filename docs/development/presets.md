@@ -28,11 +28,15 @@ Preserve the architect, planner, and manager boundaries and the existing tool au
 
 Ship the planner and manager presets as one role each, and keep their boundaries enforced by composition, the sandbox, and tool masks rather than by persona wording. A role's product-tool allowlist lives in its own preset row through the preset-tools service in [the preset tools](<../../src/preset-tools.ts>); a board's MCP allowlist lives in the root `mcp` field of its workflow. The two policies own different namespaces, so a deny mask on one never intersects the other into an empty tool set. Never widen a role's allowlist to make an instruction work: change the instruction, or explain that the role cannot do it.
 
+Card deletion follows the same boundary: the planner holds it, because the role that agrees a card breakdown also retires a card the person dropped, and the manager does not, because the manager writes nothing on cards. The operator and the architect declare no role mask, so they inherit the tool the same way they inherit card creation.
+
 Keep a role preset independent of any board: no stage, handoff sequence, approval gate, or scope-change cycle belongs in its persona or skill. Those are authored in the stage instructions of the board that selects the preset. A role skill states the role, its tools and their absence, how it investigates or observes, when it asks the person, and how it writes notes, cards, and messages.
 
 ## The read-only guarantee
 
-Keep the read-only guarantee real. The planner mounts file tools without write or edit, and its session is pinned to the sandbox's read-only mode at every agent start, including a resumed conversation and an inherited delegated child. A pin the host records is a person-owned setting: the guarantee is that the agent starts confined and cannot widen it, never that a person cannot.
+Keep the confinement guarantee real. The planner mounts file tools without write or edit, and its session is pinned to the sandbox's read-only mode at every agent start, including a resumed conversation and an inherited delegated child. A pin the host records is a person-owned setting: the guarantee is that the agent starts confined and cannot widen it, never that a person cannot.
+
+The role has exactly one write capability: the plan tools `write_plan` and `patch_plan`, declared only for the planner preset through the gate in [the product tools](<../../src/host/tools/index.ts>) and confined to `plans/<segment>/` in the conversation workspace. Keep that exception narrow. A plan write passes its own per-call sandbox policy rooted at the plan directory, so it never consults the session mode and never widens it; the confinement is enforced by the plugin and again by the host, so neither check is trusted alone. Do not relax the pin, mount a general write or edit tool, or add an escalation argument to make a planner task work: work that touches code belongs to a card.
 
 ## The manager
 

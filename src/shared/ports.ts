@@ -141,3 +141,61 @@ export interface TaskMessageDeliveryPort {
   /** Deliver at most once per delivery identity; a repeated identity is skipped. */
   deliver(sessionId: string, delivery: TaskMessageDelivery): Promise<void>;
 }
+/**
+ * The confined plan-file write a role with no general file tool reaches instead.
+ * The adapter owns the sandbox policy and the canonical path identity, so a
+ * caller cannot widen a plan write by asking for a mode, a root, or a path.
+ */
+export interface PlanFilePort {
+  /** Create or replace one plan file under `plans/<segment>/` in the conversation workspace. */
+  write(request: PlanFileWrite): Promise<PlanFileOutcome>;
+  /** Apply literal replacements to an existing plan file, all or nothing. */
+  patch(request: PlanFilePatch): Promise<PlanFileOutcome>;
+}
+
+/** One plan write. The path is already validated as a plan path by the domain rule. */
+export interface PlanFileWrite {
+  /** The calling conversation's agent; the adapter exchanges it for the workspace directory. */
+  readonly agent: unknown;
+  /**
+   * The session whose recorded origin directory anchors the authority. A plan is
+   * written under where the conversation was created, never under a directory the
+   * model can change with the working-directory tool.
+   */
+  readonly session: unknown;
+  /** Read that recorded origin directory, or undefined when it cannot be read. */
+  readonly origin: (session: unknown) => string | undefined;
+  /** Workspace-relative path of the plan file. */
+  readonly relativePath: string;
+  /** Complete Markdown content of the plan. */
+  readonly content: string;
+}
+
+/** One plan patch, in the same path shape a write uses. */
+export interface PlanFilePatch {
+  /** The calling conversation's agent; the adapter exchanges it for the workspace directory. */
+  readonly agent: unknown;
+  /**
+   * The session whose recorded origin directory anchors the authority. A plan is
+   * written under where the conversation was created, never under a directory the
+   * model can change with the working-directory tool.
+   */
+  readonly session: unknown;
+  /** Read that recorded origin directory, or undefined when it cannot be read. */
+  readonly origin: (session: unknown) => string | undefined;
+  /** Workspace-relative path of the plan file. */
+  readonly relativePath: string;
+  /** Literal replacements applied in order; each must match exactly once in the file. */
+  readonly edits: readonly PlanEditRequest[];
+}
+
+/** One literal replacement of a plan patch. */
+export interface PlanEditRequest { readonly old: string; readonly new: string }
+
+/** What one plan write reported. */
+export interface PlanFileOutcome {
+  /** Whether the call created the file or replaced it. */
+  readonly operation: 'create' | 'update';
+  /** Absolute path of the file in the workspace, for the model-facing result. */
+  readonly path: string;
+}

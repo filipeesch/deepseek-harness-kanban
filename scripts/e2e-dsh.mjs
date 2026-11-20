@@ -86,6 +86,7 @@ const scenarioTemplates = new Map([
   ['scripted', ['kanban-scripted.e2e.template.ts', 'kanban-scripted.e2e.ts']],
   ['transit', ['kanban-transit.e2e.template.ts', 'kanban-transit.e2e.ts']],
   ['decision', ['kanban-decision.e2e.template.ts', 'kanban-decision.e2e.ts']],
+  ['planner', ['kanban-planner.e2e.template.ts', 'kanban-planner.e2e.ts']],
   ['sharing', ['kanban-sharing.e2e.template.ts', 'kanban-sharing.e2e.ts']],
 ]);
 if (only !== undefined && !scenarioTemplates.has(only)) fail('unknown --only value: ' + only);

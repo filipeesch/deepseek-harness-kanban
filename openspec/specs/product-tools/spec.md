@@ -10,15 +10,15 @@ Reference note: Railyin's [card tool definitions](<https://github.com/filipeesch
 
 ### Requirement: Restricted board tool surface
 
-The plugin SHALL expose tools for discovering Hubs, boards, and projects; reading board and task information, including reading several tasks in one call through `get_cards`; creating tasks; editing task titles and descriptions; reading a task's recorded relations and writing or removing them through `create_relation` and `delete_relation`; creating, listing, and tag-aware updating of shared task notes; reading the transitions available from a task's current stage and declaring, with a reason, the transition that task will follow next through `list_allowed_transitions` and `set_next_transition`; pausing and resuming a task's automatic advance through `pause_task` and `resume_task`; administering the boards of a Hub through `create_board`, `update_board`, `edit_board_yaml`, and `delete_board`, together with the concise `get_workflow_summary`; searching, reading, creating, editing, and deleting the Hub's team files through `search_team_files`, `read_team_file`, `create_team_file`, `edit_team_file`, and `delete_team_file`; sending a message from a task conversation to another task in the same Hub through `send_task_message`; and, for the workflow architect, reading a board's exact workflow document and one of its stages through `get_board_yaml` and `get_stage`, authoring stages through `set_stage_prompt`, `set_stage_routes`, `set_layout`, `add_stage`, and `remove_stage`, writing one stage's scripted configuration through `set_stage_script`, reviewing a supplied document without saving it through `validate_workflow`, running one stage's authored program in an isolated test execution through `test_script`, reading one task's scripted execution state and the reason a saved result is held through `get_script_execution`, comparing a board's local document with the version this installation last applied from the team through `diff_published_board`, measuring a workflow through `get_route_stats`, `render_workflow_diagram`, and `layout_metrics`, and reading a board's revision history through `list_board_revisions`, `diff_board_revisions`, and `revert_board`. Its product tool surface SHALL NOT include moving tasks, deleting tasks, deleting notes, Hub creation, rename, or deletion, decision-ledger tools, or a plugin-owned TODO checklist. Neither declaring a transition, pausing a task, nor writing a relation SHALL move a task, change its stage or position, send a message, or start an execution during the call; an ordinary declared transition SHALL be followed by the task's next completed turn, while an exceptional declaration is bound to its originating completed turn as specified below.
+The plugin SHALL expose tools for discovering Hubs, boards, and projects; reading board and task information, including reading several tasks in one call through `get_cards`; creating tasks; editing task titles and descriptions; deleting a task through `delete_card`; reading a task's recorded relations and writing or removing them through `create_relation` and `delete_relation`; creating, listing, and tag-aware updating of shared task notes; reading the transitions available from a task's current stage and declaring, with a reason, the transition that task will follow next through `list_allowed_transitions` and `set_next_transition`; pausing and resuming a task's automatic advance through `pause_task` and `resume_task`; administering the boards of a Hub through `create_board`, `update_board`, `edit_board_yaml`, and `delete_board`, together with the concise `get_workflow_summary`; searching, reading, creating, editing, and deleting the Hub's team files through `search_team_files`, `read_team_file`, `create_team_file`, `edit_team_file`, and `delete_team_file`; sending a message from a task conversation to another task in the same Hub through `send_task_message`; and, for the workflow architect, reading a board's exact workflow document and one of its stages through `get_board_yaml` and `get_stage`, authoring stages through `set_stage_prompt`, `set_stage_routes`, `set_layout`, `add_stage`, and `remove_stage`, writing one stage's scripted configuration through `set_stage_script`, reviewing a supplied document without saving it through `validate_workflow`, running one stage's authored program in an isolated test execution through `test_script`, reading one task's scripted execution state and the reason a saved result is held through `get_script_execution`, comparing a board's local document with the version this installation last applied from the team through `diff_published_board`, measuring a workflow through `get_route_stats`, `render_workflow_diagram`, and `layout_metrics`, and reading a board's revision history through `list_board_revisions`, `diff_board_revisions`, and `revert_board`. Its product tool surface SHALL NOT include moving tasks, deleting notes, Hub creation, rename, or deletion, decision-ledger tools, or a plugin-owned TODO checklist. Neither declaring a transition, pausing a task, nor writing a relation SHALL move a task, change its stage or position, send a message, or start an execution during the call; an ordinary declared transition SHALL be followed by the task's next completed turn, while an exceptional declaration is bound to its originating completed turn as specified below.
 
 The document, stage, authoring, measurement, revision, scripted-execution, validation, and comparison tools SHALL be declared only for an agent whose preset is the workflow architect preset. For every other calling agent they SHALL be absent from the declared tool set and SHALL NOT be dispatchable, and the plugin SHALL NOT merely refuse them at call time while still declaring them.
 
 #### Scenario: Discover available product operations
 
 - **WHEN** an agent receives the plugin's board and note tools
-- **THEN** Hub, board, and project discovery, board and task reading, reading several tasks in one call, card relation reading and writing, task creation, task text editing, shared note creation, listing, and tag-aware updating, transition discovery and declaration, task pause and resume, board creation, board rename, board workflow reading and writing, empty-board deletion, team file search, reading, creation, editing, and deletion, and cross-card message sending are available operations
-- **AND** board movement, task deletion, note deletion, Hub administration, decision-ledger operations, and a plugin-owned TODO checklist are not exposed as part of that tool surface
+- **THEN** Hub, board, and project discovery, board and task reading, reading several tasks in one call, task creation, task text editing, task deletion, card relation reading and writing, shared note creation, listing, and tag-aware updating, transition discovery and declaration, task pause and resume, board creation, board rename, board workflow reading and writing, empty-board deletion, team file search, reading, creation, editing, and deletion, and cross-card message sending are available operations
+- **AND** board movement, note deletion, Hub administration, decision-ledger operations, and a plugin-owned TODO checklist are not exposed as part of that tool surface
 
 #### Scenario: Inspect the board administration tool names
 
@@ -37,6 +37,12 @@ The document, stage, authoring, measurement, revision, scripted-execution, valid
 - **WHEN** an agent receives the plugin's card tools
 - **THEN** the surface contains `create_relation` and `delete_relation`
 - **AND** no tool moves a task by writing a relation
+
+#### Scenario: Inspect the card deletion tool name
+
+- **WHEN** an agent receives the plugin's card tools
+- **THEN** the surface contains `delete_card`
+- **AND** it contains no tool that deletes several tasks in one call, and no tool that removes a task's worktree alone
 
 #### Scenario: Do not move a task by recording a transition
 
@@ -138,6 +144,8 @@ The plugin's note tools SHALL operate on the same shared task note collection as
 
 Creating, editing, or deleting a task, creating, renaming, editing, or deleting a board, and creating, editing, or deleting a Hub's team file SHALL require an explicit user request for that change. Sending a cross-card message, declaring a transition, and creating or removing a card relation SHALL require the user's explicit request in that conversation, an explicit direction in the stage instruction delivered to it, or an explicit request in a cross-card message from another task. The plugin SHALL NOT add another product-specific approval dialog for a write that the user, that stage instruction, or that peer request explicitly requested. This requirement SHALL NOT bypass native DSH permission behavior, and a cross-card message received from another task SHALL NOT satisfy it for any change other than declaring a transition and writing the relation it asks for.
 
+Deleting a task through `delete_card` SHALL require the user's explicit request in the calling conversation and nothing weaker: neither a stage instruction delivered to that conversation, nor a cross-card message from another task, nor the agent's own judgement SHALL authorize it. The tool's `confirmed` parameter SHALL carry the agent's assertion of that request, and a call without it SHALL be refused before any operation is recorded.
+
 #### Scenario: Create a task at the user's request
 
 - **WHEN** the user explicitly asks an agent to create a task and the agent invokes the corresponding board operation
@@ -157,6 +165,29 @@ Creating, editing, or deleting a task, creating, renaming, editing, or deleting 
 
 - **WHEN** the user explicitly asks an agent to delete an empty board and the agent invokes `delete_board` with confirmation
 - **THEN** the requested board can be deleted without an additional product-specific confirmation dialog
+
+#### Scenario: Delete a task at the user's request
+
+- **WHEN** the user explicitly asks an agent in that conversation to delete a task and the agent invokes `delete_card` with the confirmation assertion
+- **THEN** the deletion is admitted without an additional product-specific confirmation dialog
+
+#### Scenario: Refuse a deletion the stage instruction only implies
+
+- **WHEN** the stage instruction delivered to the calling conversation names a card as no longer needed and the agent invokes `delete_card`
+- **THEN** the call is refused because no user in that conversation requested the deletion
+- **AND** no operation is recorded
+
+#### Scenario: Refuse a deletion without the confirmation assertion
+
+- **WHEN** an agent invokes `delete_card` without `confirmed`
+- **THEN** the call is refused before any operation is recorded
+- **AND** the card is unchanged
+
+#### Scenario: Do not delete on a peer message
+
+- **WHEN** a cross-card message asks the receiving agent to delete the card it works on or any other card
+- **THEN** `delete_card` still requires the user in the receiving conversation to request that deletion
+- **AND** the message alone authorizes no deletion
 
 #### Scenario: Do not use cards for unsolicited agent tracking
 
@@ -243,7 +274,7 @@ Task creation through tools SHALL use the target board's configured initial work
 
 ### Requirement: Availability outside task-bound chats
 
-Board and task read tools SHALL be available in task conversations and ordinary DSH chats. Creating or editing a task SHALL NOT require the calling chat to be associated with a task card. Board administration writes SHALL be available only in an ordinary DSH chat that is not owned by a task; a session owned by a task, including a subagent descendant of a task conversation, SHALL be rejected without changing board state. Board-scoped tools SHALL require an explicitly discovered board identifier in an ordinary DSH chat and SHALL resolve it from the task in a task conversation. Team file tools SHALL be available in task conversations and ordinary DSH chats alike, SHALL resolve the Hub from the task in a task conversation, and SHALL NOT require a board identifier or a task identifier. `send_task_message` SHALL be available only inside a conversation associated with a task. An ordinary DSH chat, a session that no task owns, and a subagent descendant of a task conversation SHALL be rejected with an actionable error without delivering anything.
+Board and task read tools SHALL be available in task conversations and ordinary DSH chats. Creating or editing a task SHALL NOT require the calling chat to be associated with a task card. Board administration writes SHALL be available only in an ordinary DSH chat that is not owned by a task; a session owned by a task, including a subagent descendant of a task conversation, SHALL be rejected without changing board state. Board-scoped tools SHALL require an explicitly discovered board identifier in an ordinary DSH chat and SHALL resolve it from the task in a task conversation. Deleting a task through `delete_card` SHALL be available in both, and SHALL resolve its Hub scope from the task in a task conversation and from an explicit Hub identifier otherwise. Team file tools SHALL be available in task conversations and ordinary DSH chats alike, SHALL resolve the Hub from the task in a task conversation, and SHALL NOT require a board identifier or a task identifier. `send_task_message` SHALL be available only inside a conversation associated with a task. An ordinary DSH chat, a session that no task owns, and a subagent descendant of a task conversation SHALL be rejected with an actionable error without delivering anything.
 
 #### Scenario: Use board tools from an ordinary DSH chat
 
@@ -257,6 +288,16 @@ Board and task read tools SHALL be available in task conversations and ordinary 
 - **THEN** the same approved read operation set is available there
 - **AND** the board identifier can be inferred from the task
 
+#### Scenario: Delete a card from an ordinary DSH chat
+
+- **WHEN** a user in an ordinary DSH chat asks an agent to delete a card and the agent names the Hub that owns it
+- **THEN** the deletion is admitted for that card
+- **AND** a card in another Hub is refused rather than deleted
+
+#### Scenario: Delete a card from a task conversation
+
+- **WHEN** a user in a task conversation asks an agent to delete a card that belongs to the same Hub
+- **THEN** the Hub scope is resolved from the calling conversation without an explicit Hub identifier
 #### Scenario: Reject board administration from a task conversation
 
 - **WHEN** an agent invokes `create_board`, `update_board`, `edit_board_yaml`, or `delete_board` from a task conversation or from a subagent descendant of one
@@ -1178,17 +1219,22 @@ Every accepted write SHALL report the digest of the exact document it stored, so
 The plugin SHALL declare a product tool for an agent only when that agent's preset allows it. A preset
 that names a role allowlist SHALL receive exactly the product tools in that allowlist: a product tool
 outside it SHALL be absent from the declared tool set and SHALL NOT be dispatchable, rather than
-declared and refused at call time. An agent whose preset is not a project role, including an agent on
+declared and refused at call time. `write_plan` and `patch_plan` SHALL additionally be declared only
+for an agent whose preset is the project planner preset, independently of any allowlist: for every
+other agent, including an agent on the host default preset, the workflow architect preset, the
+project manager preset, or the workflow operator preset, they SHALL be absent from the declared tool
+set and SHALL NOT be dispatchable. An agent whose preset is not a project role, including an agent on
 the host default preset and the workflow architect, SHALL keep its existing product tool surface apart from the replacement of `get_board_summary` by `get_workflow_summary`,
 and the workflow-architect-only declaration stated in the product tool surface requirement SHALL
-remain unchanged. The allowlist SHALL be read from the preset's own composition, so two boards that
+remain unchanged. The card deletion tool SHALL belong to the planner allowlist and SHALL be absent from
+the manager allowlist. The allowlist SHALL be read from the preset's own composition, so two boards that
 select different role presets get different surfaces without a board setting. This restriction SHALL
 NOT bypass native DSH permission behavior or any authorization the tool already enforces, and it SHALL
 NOT change what a product tool does when it is declared.
 
 #### Scenario: Select the planner's surface
 
-- **WHEN** an agent runs on a preset that allows board reading, card creation and editing, relations, notes, messages, transitions, pause and resume, team files, and the structured-question tool
+- **WHEN** an agent runs on a preset that allows board reading, card creation and editing, relations, notes, messages, transitions, pause and resume, team files, the plan file tools, and the structured-question tool
 - **THEN** those product tools are declared for it
 - **AND** the workflow-authoring and board-administration tools are not
 
@@ -1197,6 +1243,7 @@ NOT change what a product tool does when it is declared.
 - **WHEN** an agent runs on a preset that allows board reading, notes, messages, transitions, pause and resume, and the structured-question tool
 - **THEN** exactly those product tools are declared for it
 - **AND** no card creation or card editing tool is declared
+- **AND** neither plan file tool is declared
 
 #### Scenario: Absence rather than refusal
 
@@ -1204,12 +1251,102 @@ NOT change what a product tool does when it is declared.
 - **THEN** the tool does not appear in its declared tool set
 - **AND** a call to it is reported as an unknown tool rather than as a permission refusal
 
+#### Scenario: The manager cannot delete a card
+
+- **WHEN** an agent runs on the manager preset's allowlist
+- **THEN** the card deletion tool is not declared for it
+- **AND** a manager conversation that needs a card removed asks the person or the planner instead
+
+#### Scenario: The planner can delete a card
+
+- **WHEN** an agent runs on the planner preset's allowlist
+- **THEN** the card deletion tool is declared for it alongside card creation and editing
+- **AND** the workflow-authoring and board-administration tools remain absent
+
+#### Scenario: Withhold the plan tools from every other agent
+
+- **WHEN** an agent whose preset is not the project planner preset receives the plugin's tool declarations
+- **THEN** neither `write_plan` nor `patch_plan` is declared
+- **AND** a call to either is not dispatched
 #### Scenario: Leave other presets alone
 
 - **WHEN** an agent runs on the host default preset or on the workflow architect preset
 - **THEN** it keeps its existing product tool surface except for the replacement of `get_board_summary` by `get_workflow_summary`
 - **AND** the workflow-architect-only declaration is unchanged
 
+### Requirement: Plan file tools write only inside the plan directory
+
+The plugin SHALL expose `write_plan` and `patch_plan` as product tools that write a Markdown plan
+file under `plans/<segment>/` inside the calling conversation's workspace, and SHALL NOT write it
+anywhere else. The plugin SHALL prove that each component of the resolved target is a direct,
+non-link entry of its validated parent, and SHALL refuse a target reached through a symlink, a `..`
+segment, or an absolute path supplied in the arguments. Containment SHALL be proven for the segment
+directory and for the file itself, not only for the file parent. The write SHALL be refused when the
+mounted filesystem backend does not confine, because a backend that ignores the per-call policy would
+write without a fence. Both tools SHALL accept only a file name and the plan content, and SHALL
+derive the directory themselves; neither SHALL accept an escalation argument, a sandbox mode, or a
+directory outside `plans/`. A refused path SHALL return an actionable problem and SHALL write
+nothing.
+
+`write_plan` SHALL create the file when it is absent and replace it entirely when it exists.
+`patch_plan` SHALL require an existing file, SHALL apply each searched text that occurs exactly once,
+SHALL apply all of its replacements together or none, and SHALL refuse an absent file or a searched
+text that occurs zero times or more than once. Neither tool SHALL delete a plan, list a directory,
+write a file whose name is not `.md`, stage a change in Git, or create a commit.
+
+The tools SHALL be available in a task conversation and in an ordinary DSH chat. In a task
+conversation the segment SHALL be derived from the owning card's title, with no argument needed; in an
+ordinary DSH chat the segment SHALL come from a name the caller supplies and SHALL be normalized by
+the same rule. The same project planned twice SHALL therefore land in the same directory. Writing a
+plan SHALL NOT require the conversation to belong to a task, a board identifier, or a Hub.
+
+#### Scenario: Write a plan in a task conversation
+
+- **WHEN** an agent on the planner preset calls `write_plan` with a file name and content from a task conversation
+- **THEN** the file is written under `plans/<segment>/` in the conversation's workspace, with the segment derived from the card's title
+- **AND** no argument supplied the segment
+
+#### Scenario: Write a plan in an ordinary chat
+
+- **WHEN** an agent on the planner preset calls `write_plan` with a project name, a file name, and content from an ordinary DSH chat
+- **THEN** the file is written under `plans/<segment>/` in the conversation's workspace, with the segment normalized from that name
+- **AND** no board identifier or task identifier was required
+
+#### Scenario: Escape the plan directory
+
+- **WHEN** a call supplies a file name or segment that resolves outside `plans/<segment>/`, such as `../src/index.ts` or an absolute path
+- **THEN** the tool refuses with an actionable problem
+- **AND** nothing is written anywhere
+
+#### Scenario: Replace an existing plan
+
+- **WHEN** `write_plan` targets a file that already exists
+- **THEN** the file's content is replaced by the supplied content
+- **AND** the previous content is not preserved at another path
+
+#### Scenario: Patch an existing plan
+
+- **WHEN** `patch_plan` targets an existing file and every searched text occurs exactly once
+- **THEN** all replacements are applied
+- **AND** the result is reported with the file's path
+
+#### Scenario: Refuse an ambiguous or absent patch target
+
+- **WHEN** `patch_plan` targets an absent file, or a searched text that occurs zero times or more than once
+- **THEN** the tool refuses with an actionable problem
+- **AND** the file is left unchanged
+
+#### Scenario: Refuse a non-Markdown plan
+
+- **WHEN** a call names a file whose name does not end in `.md`
+- **THEN** the tool refuses with an actionable problem
+- **AND** nothing is written
+
+#### Scenario: Leave Git alone
+
+- **WHEN** either plan tool writes a plan file
+- **THEN** no change is staged, committed, or pushed
+- **AND** whether the file enters a commit stays the person's decision
 ### Requirement: Decision stages in the transition tools
 
 For a task whose current stage authors a decision configuration, `list_allowed_transitions` SHALL report that the stage owns its routing and that the person answers it, and SHALL report the gate's options as informational destinations with their titles and destinations without presenting them as declarable targets or as a default destination. `set_next_transition` SHALL refuse both an ordinary declaration and an exceptional declaration from such a stage with an actionable result, and the refusal SHALL leave the task's stage, recorded transition, and position unchanged. Neither tool SHALL answer the gate or move the task.
@@ -1299,3 +1436,123 @@ The plugin SHALL expose a host method that returns the exact stored bytes of a f
 - **WHEN** the client asks for the bytes of a reference whose stored object does not exist
 - **THEN** the method fails with an actionable problem
 - **AND** no bytes are returned
+### Requirement: Card deletion tool
+
+The plugin SHALL expose `delete_card` as a product tool that permanently deletes one card. The tool SHALL accept an optional task identifier, a confirmation flag, and an optional Hub identifier, and SHALL NOT accept a worktree path, a discard flag, or a force flag.
+
+The tool SHALL resolve its target from the task identifier when one is given and otherwise from the task that owns the calling conversation, and it SHALL reject a call that names neither. A blank task identifier SHALL be rejected instead of being read as an omission, because reading it as one would redirect the deletion to the caller's own card. Inside a task conversation the Hub of that conversation SHALL be the boundary: a card of another Hub SHALL be rejected, whether or not the call also names that Hub. Outside a task conversation the Hub identifier SHALL be required, so a card is never deleted by a globally resolved identifier alone. A task identifier that resolves to a task of another Hub SHALL be rejected with an actionable problem that names the scope mismatch, and SHALL NOT be reported as a missing task.
+
+The tool SHALL report the consequences it reads immediately before admission: the conversation count including how many are closed, the number of shared notes, the number of relations that join the card to another, the checkout path and branch, whether that checkout is a Git-managed worktree created by Kanban or attached externally, whether the associated project is a plain folder so the checkout will remain on disk, whether unclaimed checkouts remain, and whether the checkout currently holds local changes that require a separate discard confirmation. A consequence the host cannot determine SHALL be reported as unavailable rather than guessed, and SHALL NOT prevent admission.
+
+The tool SHALL admit the deletion through the same confirmed deletion command the interface uses, passing the worktree binding it just read as the expected target, and SHALL return without waiting for the background cleanup, which the queue may already have started. The result SHALL identify the card and its Hub, report the recorded operation phase, and carry the consequence summary. The tool SHALL NOT wait for the cleanup, SHALL NOT report the card as deleted, and SHALL NOT offer to retry, force, or discard.
+
+The tool SHALL honor cancellation of its own call until the deletion journal is handed to storage, and SHALL NOT honor it afterwards: a storage write that has begun cannot be called back, so that handoff is the point of no return. The check SHALL run before the command side effects, and again inside the transaction that writes the journal, which is the first moment after the repository write queue; a call cancelled while either queue is busy SHALL be refused with nothing recorded. A card SHALL NOT lose its pending transition without the journal that replaces it: the removal SHALL happen in the same write that records the journal. An admitted deletion SHALL always finish or fail through its own recovery surfaces.
+
+The tool SHALL NOT stop a running conversation, SHALL NOT discard local worktree changes, SHALL NOT bypass any existing deletion refusal, and SHALL refuse a card that still holds a native scripted execution lease: it SHALL check that ownership read-only, without stopping or reclaiming anything, and in both cases SHALL direct the person to interface recovery — when the lease is present, and when its record is unreadable so that no lease can be ruled out. That check SHALL read the lease from the host's execution storage itself, independently of whether an execution runtime is currently attached, because a lease outlives the host that wrote it; a host that mounts scripted execution without that reader SHALL be refused at composition rather than admit a deletion it cannot verify. A queued preflight failure, including local changes that require consent, SHALL be recorded on the card operation and reported through the existing recovery surfaces rather than as a tool-level error. The tool SHALL NOT re-admit a recorded deletion that failed, because that journal may carry force or discard consent the person gave in the interface: such a call SHALL be refused with an actionable problem that directs the person to interface recovery, and the recorded journal and its checkout SHALL be left untouched. A refusal raised before admission SHALL be reported as an actionable problem with no operation recorded.
+#### Scenario: Delete a card in the calling conversation Hub
+
+- **WHEN** the user asks an agent in a task conversation to delete another card of the same Hub and the agent invokes `delete_card` for that card with confirmation
+- **THEN** the deletion is admitted and the tool returns without waiting for the cleanup
+- **AND** the result identifies the card, its Hub, the queued operation phase, and the consequences read before admission
+
+#### Scenario: Delete the card that owns the calling conversation
+
+- **WHEN** the user asks an agent to delete the card its own conversation belongs to and the agent invokes `delete_card` without a task identifier
+- **THEN** that card deletion is admitted
+- **AND** the tool returns normally and the card is removed once every conversation of that card is idle
+
+#### Scenario: Reject a card of another Hub
+
+- **WHEN** the tool receives a task identifier whose card belongs to a different Hub than the calling scope
+- **THEN** no operation is recorded and the card is unchanged
+- **AND** the tool reports a scope mismatch distinct from a missing task
+
+#### Scenario: Reject a call with no resolvable target
+
+- **WHEN** the tool runs outside a task conversation and the call names no task identifier, or names a task identifier that exists nowhere
+- **THEN** the tool reports an actionable problem
+- **AND** no operation is recorded
+
+#### Scenario: Report local changes without discarding them
+
+- **WHEN** the target card has a worktree with local changes and the tool is invoked
+- **THEN** the consequence summary reports that local changes require a separate discard confirmation
+- **AND** the admitted deletion does not discard them, and the queued preflight records the applicable failure on the card
+
+#### Scenario: Report a plain folder checkout as retained
+
+- **WHEN** the target card checkout belongs to a project that is not Git-backed
+- **THEN** the consequence summary reports that the checkout will remain on disk
+- **AND** the deletion still removes the card and its shared notes and archives its conversations
+
+#### Scenario: Report consequences for a card without a worktree
+
+- **WHEN** the target card has no associated worktree
+- **THEN** the consequence summary reports that no checkout is associated
+- **AND** it still reports the conversation and note counts and the relation count
+
+#### Scenario: Return without waiting for the cleanup
+
+- **WHEN** the tool admits a deletion whose conversations are idle and whose checkout is removable
+- **THEN** the tool returns the queued phase without waiting for the checkout removal or the native archiving
+- **AND** the card remains on the board with a queued or in-progress deletion status until the cleanup completes
+
+#### Scenario: Reject a blank task identifier
+
+- **WHEN** the call passes a task identifier that is empty or only whitespace
+- **THEN** the tool reports an actionable problem naming the mistake
+- **AND** no operation is recorded and the caller's own card is untouched
+
+#### Scenario: Refuse to reopen a failed deletion
+
+- **WHEN** the target card has a recorded deletion that failed
+- **THEN** the tool refuses with a problem that directs the person to interface recovery
+- **AND** the recorded journal and its checkout are unchanged, even when the journal carries a force or discard consent
+
+#### Scenario: Refuse a Hub that is not the calling boundary
+
+- **WHEN** a task conversation names a Hub other than its own, or names a card of another Hub
+- **THEN** the tool rejects the scope with an actionable problem
+- **AND** no operation is recorded
+
+#### Scenario: Require a Hub outside a task conversation
+
+- **WHEN** the tool runs outside a task conversation and the call names no Hub
+- **THEN** the tool refuses and asks for the Hub that owns the card
+- **AND** no operation is recorded
+
+#### Scenario: Report an unreadable consequence as unavailable
+
+- **WHEN** the checkout disposition or the local-change read cannot be determined
+- **THEN** the consequence summary reports that fact as unavailable instead of a clean or retained checkout
+- **AND** the deletion is still admitted, leaving the decision to the queued preflight
+
+#### Scenario: Do not admit a cancelled call
+
+- **WHEN** the call is cancelled while the consequences are still being read, while the command waits for the host lane, or while the journal write waits for the repository queue
+- **THEN** the tool does not issue the deletion command, or the command is refused before the journal is handed to storage
+- **AND** no operation is recorded, the card keeps its pending transition, and nothing is archived or removed
+
+#### Scenario: Never interrupt an admitted deletion
+
+- **WHEN** the call is cancelled after the deletion journal was handed to storage
+- **THEN** the deletion keeps running or failing through its own recovery surfaces
+- **AND** the card is not left in a state without a journal
+
+#### Scenario: Refuse a card that still holds a native execution lease
+
+- **WHEN** the target card still holds a native scripted execution lease, or that lease cannot be read
+- **THEN** the tool refuses with an actionable problem that directs the person to interface recovery
+- **AND** it stops nothing, reclaims nothing, records no operation, and leaves the checkout untouched
+
+#### Scenario: Refuse a lease left by a previous host
+
+- **WHEN** the target card holds a native lease written by an earlier host, and the current host has no scripted execution runtime attached
+- **THEN** the tool still refuses with the actionable ownership problem
+- **AND** no operation is recorded, no conversation is archived, and the checkout is untouched
+
+#### Scenario: Expose no discard or force
+
+- **WHEN** the tool parameter surface is read
+- **THEN** it contains no parameter that discards local changes and no parameter that forces a shared checkout removal
+- **AND** neither recovery is reachable through this tool

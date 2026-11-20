@@ -3,7 +3,7 @@ import type { ContextOperation, HubState, Problem, Task } from '../shared/types.
 
 /** The narrow write surface a journal needs, satisfied by the coordinator's store. */
 export interface JournalStore {
-  transactTask<T>(taskId: string, change: (draft: HubState) => T): Promise<T>;
+  transactTask<T>(taskId: string, change: (draft: HubState) => T, beforeCommit?: () => void): Promise<T>;
 }
 
 /**
